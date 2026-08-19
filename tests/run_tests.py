@@ -14,6 +14,7 @@ does, which is the same bar the plugin itself has to clear.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -92,6 +93,17 @@ for name in ("server.pem", "app.key", "id_rsa", "id_ed25519.pub", "cert.crt",
     check(f"blocks {name}", redact.is_blocked(Path("/x") / name))
 for name in ("main.py", "app.js", "schema.sql", "keyboard.py", "monkey.go"):
     check(f"does not block {name}", not redact.is_blocked(Path("/x") / name))
+
+# ---------------------------------------------------------------- manifest
+manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
+market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+check("plugin declares a version", bool(manifest.get("version")))
+check("version is semver-shaped",
+      bool(re.fullmatch(r"\d+\.\d+\.\d+", manifest.get("version", ""))))
+check("marketplace lists this plugin", any(p["name"] == manifest["name"] for p in market["plugins"]))
+# Installed copies only refresh when this field moves, so a fix shipped without bumping it reaches
+# nobody — the marketplace updates and the cached plugin stays exactly as it was.
+check("marketplace has a description", bool(market.get("description")))
 
 # ---------------------------------------------------------------- fixture repo
 fixture = Path(tempfile.mkdtemp(prefix="chamnan-test-")).resolve()
