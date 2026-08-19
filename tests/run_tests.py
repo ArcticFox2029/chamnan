@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import catalogs  # noqa: E402
 import mapper  # noqa: E402
+import peek as peek_mod  # noqa: E402
 import redact  # noqa: E402
 import schema  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -213,6 +214,45 @@ check("broken config falls back to defaults", ws.enabled("map", fixture))
 # before the hook is exercised — otherwise it correctly injects nothing and the test reads as a
 # failure of the hook rather than of the fixture.
 (fixture / ".chamnan" / "MAP.md").write_text(rendered, encoding="utf-8")
+
+# ---------------------------------------------------------------- peek
+import csv as _csv, sqlite3 as _sq, zipfile as _zip
+pk = fixture / "peekables"
+pk.mkdir(exist_ok=True)
+with (pk / "rows.csv").open("w", newline="") as fh:
+    w = _csv.writer(fh); w.writerow(["id", "city", "amount"])
+    for i in range(900):
+        w.writerow([i, "Rotterdam" if i % 2 else "Busan", i * 3])
+out = peek_mod.peek(pk / "rows.csv")
+check("peek names the columns", "`city`" in out)
+check("peek counts the rows", "900 data rows" in out)
+check("peek stays far under the file size", len(out) < 2000)
+out = peek_mod.peek(pk / "rows.csv", find="Busan")
+check("peek --find returns matching lines with numbers", "line " in out and "Busan" in out)
+check("peek --find leaves out the misses", "Rotterdam" not in out)
+
+(pk / "shape.json").write_text(json.dumps({"a": {"b": [1, 2, 3]}, "c": "x"}))
+out = peek_mod.peek(pk / "shape.json")
+check("peek shows json structure", "list" in out or "int" in out)
+check("PEEK NEVER PRINTS JSON VALUES", '"x"' not in out)
+
+con = _sq.connect(pk / "s.db")
+con.execute("CREATE TABLE bays(id INTEGER PRIMARY KEY, code TEXT)")
+con.executemany("INSERT INTO bays VALUES(?,?)", [(i, f"b{i}") for i in range(40)])
+con.commit(); con.close()
+out = peek_mod.peek(pk / "s.db")
+check("peek reads a sqlite schema", "bays" in out and "code" in out)
+
+with _zip.ZipFile(pk / "book.xlsx", "w") as z:
+    z.writestr("xl/workbook.xml", '<sheets><sheet name="Ledger"/></sheets>')
+out = peek_mod.peek(pk / "book.xlsx")
+check("peek reads spreadsheet sheet names", "Ledger" in out)
+
+(pk / "junk.csv").write_bytes(bytes(range(256)) * 20)
+out = peek_mod.peek(pk / "junk.csv")
+check("peek survives a malformed file", "could not read" in out or "printable" in out)
+check("peek reports the saving", "instead of" in out)
+check("peek refuses a directory", "not a file" in peek_mod.peek(pk))
 
 # ---------------------------------------------------------------- log retention
 import time

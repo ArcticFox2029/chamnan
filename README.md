@@ -250,6 +250,24 @@ A stale index is worse than no index: it is confidently wrong, and the next sess
 | `/chamnan:promote` | keep a scratch script as a tool |
 | `/chamnan:report` | show context-per-turn, before and after |
 | `chamnan-map` · `chamnan-report` · `chamnan-promote` | the same things from a shell |
+| `chamnan-peek <file>` | the shape of one file instead of the whole thing — columns, sheets, members, schema, pages |
+| `chamnan-peek <file> --find X` | only the parts that match, with line numbers |
+
+### Reading an attachment without reading it
+
+The index says a directory holds twelve thousand documents so that nobody goes looking. `peek` is
+the other half: when a task genuinely needs one of them, opening it whole is the wrong move and
+skipping it is also the wrong move.
+
+A 3.5 MB CSV is about a million tokens. Its column list, row count and three sample rows are 108,
+and for almost every question anyone asks of a CSV that is the answer — 9,455x smaller. A SQLite
+file gives up its tables and row counts in 39. `--find` narrows further: the matching rows of a
+60,000-row file, with their line numbers, in 240.
+
+Understands CSV/TSV, JSON, ZIP-based formats including .xlsx/.docx/.apk, tar archives, SQLite, PDF
+(including text extraction via zlib), PNG/JPEG/GIF headers, and plain text. Formats with no
+standard-library reader — Parquet, Avro, ORC — are identified and measured, and say so rather than
+guessing. A malformed file reports what went wrong instead of raising.
 
 ## Tests
 
