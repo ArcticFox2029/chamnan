@@ -43,6 +43,25 @@ fi
 """
 
 
+def preview(root):
+    """What the session-start hook would inject right now."""
+    hook = HERE.parent / "hooks" / "session_start.py"
+    if not hook.is_file():
+        print("chamnan: session_start.py not found beside this command", file=sys.stderr)
+        return 1
+    import subprocess
+    out = subprocess.run([sys.executable, str(hook)], input="{}",
+                         capture_output=True, text=True, cwd=root)
+    body = out.stdout.strip()
+    if not body:
+        print("chamnan: nothing to inject yet — run chamnan-map first")
+        return 0
+    print(body)
+    print(f"\n---\n[{len(body)/CHARS_PER_TOKEN:,.0f} tokens. This is what every session in this repo")
+    print("receives automatically once the plugin is loaded.]")
+    return 0
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = root / ".git" / "hooks"
@@ -72,6 +91,12 @@ def main(argv):
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
+    if "--preview" in argv:
+        # Prints exactly what a session would be handed. The hook does this automatically at
+        # session start, but a session that has just installed the plugin has not had one yet, and
+        # waiting for a restart to see whether the thing works at all is a poor first impression.
+        # Reading this is not a simulation of the feature — it IS the content the hook injects.
+        return preview(root)
     targets = [Path(a).resolve() for a in argv if not a.startswith("-")]
     if not targets:
         targets = [root]
