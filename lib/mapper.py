@@ -29,7 +29,9 @@ import re
 import sys
 from pathlib import Path
 
+import assets as assets_mod
 import catalogs as catalogs_mod
+import deploy as deploy_mod
 import redact
 import schema as schema_mod
 
@@ -437,9 +439,12 @@ def render(files, root):
     tables = schema_mod.scan(root, files)
     routes = catalogs_mod.scan_routes(root, files)
     env_pairs, env_unsafe = catalogs_mod.scan_env(root, files)
+    stored = assets_mod.scan(root, {f["path"] for f in files}, EXT_LANG)
     for section_text in (schema_mod.render(tables),
                          catalogs_mod.render_routes(routes),
-                         catalogs_mod.render_env(env_pairs, env_unsafe)):
+                         catalogs_mod.render_env(env_pairs, env_unsafe),
+                         deploy_mod.render(deploy_mod.scan(root)),
+                         assets_mod.render(stored)):
         if section_text:
             lines += ["", "---", "", section_text]
 
