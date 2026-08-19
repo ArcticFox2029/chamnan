@@ -70,16 +70,33 @@ def main(argv):
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
-    target = Path(argv[0]).resolve() if argv and not argv[0].startswith("-") else root
+    targets = [Path(a).resolve() for a in argv if not a.startswith("-")]
+    if not targets:
+        targets = [root]
+    # Silently ignoring the second path was worse than refusing it: `chamnan-map src game` looked
+    # like it had indexed both and indexed only src, so the map was wrong in a way nothing showed.
+    target = targets[0]
     if not ws.enabled("map", root):
         print("chamnan: map is disabled in .chamnan/config.json")
         return 0
     ws.prune_logs(root)
-    files = mapper.scan(target)
+    files = []
+    seen_paths = set()
+    for one in targets:
+        for f in mapper.scan(one):
+            # Paths are made relative to the repo root so several scanned directories share one
+            # namespace instead of each restarting from its own root.
+            rel = str((one / f["path"]).relative_to(root))
+            if rel in seen_paths:
+                continue
+            seen_paths.add(rel)
+            f["path"] = rel
+            files.append(f)
+    files.sort(key=lambda f: f["path"])
     if not files:
         print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
         return 1
-    text = mapper.render(files, target)
+    text = mapper.render(files, root)
     out = ws.ensure(root) / "MAP.md"
     out.write_text(text, encoding="utf-8")
 
@@ -87,7 +104,11 @@ def main(argv):
     index_chars = text.index("## Full Detail")
     have, total = coverage(files)
     pct = have / total * 100 if total else 0
-    scope = "" if target == root else f"  (scanned {target.relative_to(root)} only)"
+    if targets == [root]:
+        scope = ""
+    else:
+        names = ", ".join(str(x.relative_to(root)) for x in targets)
+        scope = f"  (scanned {names})"
     print(f"chamnan map -> {out.relative_to(root)}{scope}")
     print(f"  {total} source file(s), {src/CHARS_PER_TOKEN:,.0f} tokens of code")
     print(f"  Quick Index  {index_chars/CHARS_PER_TOKEN:>8,.0f} tokens  ({index_chars/src*100:.1f}% of the source)")

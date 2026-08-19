@@ -165,6 +165,17 @@ stops the plugin becoming the cost it exists to remove — that part is paid on 
 Everything below `## Full Detail` — function signatures, table columns — is never injected. It is
 grepped for one heading at a time.
 
+When a repo is large enough that even the index exceeds the budget, it is **rolled up by directory
+rather than truncated**. Cutting at a byte offset drops whatever sorts last, so on a 196-file repo
+everything from roughly `s` onward disappears from the session with nothing to show that an entire
+area of the code exists — and the agent greps for it, which is the cost this is meant to remove. The
+roll-up keeps every directory visible with its file count and a sample, and the full entry for any
+one of them is still a grep away. Measured on that repo: 8,762 tokens of index became 560, with all
+seven top-level directories still named.
+
+`chamnan-map src game` indexes several directories into one map when the whole tree is more than you
+work in.
+
 ## Secrets
 
 `MAP.md` is built by copying source comments, and this README suggests committing it. That
@@ -244,7 +255,7 @@ A stale index is worse than no index: it is confidently wrong, and the next sess
 python3 tests/run_tests.py
 ```
 
-80 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
+87 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.

@@ -106,7 +106,21 @@ def ensure(root=None):
     ws = workspace(root)
     for sub in ("", "skills", "tools", "logs"):
         (ws / sub).mkdir(parents=True, exist_ok=True)
+    # Merge rather than skip. A config written by an older version is missing every key added
+    # since, and nothing says so — the user edits the key they remember, it does nothing, and the
+    # setting appears broken. Found the first time this plugin was upgraded in place: the file
+    # still held a key that had been deleted and none of the three that replaced it.
     cfg = ws / "config.json"
-    if not cfg.exists():
-        cfg.write_text(json.dumps(DEFAULT_CONFIG, indent=2) + "\n", encoding="utf-8")
+    current = {}
+    if cfg.exists():
+        try:
+            current = json.loads(cfg.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+    merged = dict(DEFAULT_CONFIG)
+    # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale option
+    # cannot sit in the file looking as though it still does something.
+    merged.update({k: v for k, v in current.items() if k in DEFAULT_CONFIG})
+    if merged != current:
+        cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return ws

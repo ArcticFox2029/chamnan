@@ -203,6 +203,16 @@ check("prune reports what it removed", removed == 1)
 check("prune is safe when logs/ is missing", ws.prune_logs(Path(tempfile.mkdtemp())) == 0)
 check("no dead config keys", "claude_md_token_budget" not in ws.DEFAULT_CONFIG)
 
+# ---------------------------------------------------------------- upgrading a stale config
+stale = fixture / ".chamnan" / "config.json"
+stale.write_text(json.dumps({"map": False, "a_key_that_was_removed": 1}))
+ws.ensure(fixture)
+after = json.loads(stale.read_text())
+check("upgrade keeps a setting the user changed", after["map"] is False)
+check("upgrade adds keys introduced since", "index_token_budget" in after)
+check("upgrade drops a key that no longer exists", "a_key_that_was_removed" not in after)
+stale.write_text(json.dumps(ws.DEFAULT_CONFIG))
+
 # ---------------------------------------------------------------- hooks
 def run_hook(name, payload):
     return subprocess.run([str(ROOT / "hooks" / name)], input=json.dumps(payload),
@@ -231,6 +241,21 @@ small_out = run_hook("bulk_read_notice.py",
 check("bulk read silent on a small source file", not small_out.strip())
 check("bulk read ignores non-Read tools",
       not run_hook("bulk_read_notice.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}}).strip())
+
+# Over budget, the index must roll up by directory rather than lose its tail: truncating at a byte
+# offset drops whatever sorts last, so a whole area of the repo vanishes with nothing to show it did.
+wide = fixture / ".chamnan" / "MAP.md"
+many = "\n".join(f"- **`pkg{i%4}/mod{i:03d}.py`** (10L, 2fn) — does something number {i}"
+                 for i in range(400))
+wide.write_text("# Architecture map — big\n\n## Quick Index\n\n" + many + "\n\n## Full Detail\n")
+big_out = run_hook("session_start.py", {})
+check("over-budget index stays inside the budget",
+      len(big_out) < ws.DEFAULT_CONFIG["index_token_budget"] * 3.6 * 1.5)
+check("over-budget index keeps every directory visible",
+      all(f"**pkg{i}/**" in big_out for i in range(4)))
+check("over-budget index says it rolled up", "Rolled up by directory" in big_out)
+check("over-budget index does not silently truncate", "mod399" not in big_out or "pkg3" in big_out)
+wide.write_text(rendered, encoding="utf-8")
 
 start_out = run_hook("session_start.py", {})
 check("session start injects the index", "Architecture index" in start_out)
