@@ -75,8 +75,11 @@ def scan(root, files):
                        "summary": summary or tables.get(key, {}).get("summary", ""),
                        "columns": columns or tables.get(key, {}).get("columns", [])}
 
-    # .sql files are not in mapper's list (it indexes code, not DDL), so they are read here.
-    for path in sorted(root.rglob("*.sql")):
+    # Schema files are not in mapper's extension table — it indexes code, and a .sql or .prisma
+    # file is a declaration of shape, not code — so they are read directly here. Prisma was missed
+    # entirely until a multi-service fixture showed a service whose whole store was invisible: its
+    # models are in schema.prisma and nothing else in the repo mentions them.
+    for path in sorted(list(root.rglob("*.sql")) + list(root.rglob("*.prisma"))):
         if any(p in (".git", "node_modules", "vendor", "__pycache__") for p in path.parts) \
                 or redact.is_blocked(path):
             continue
@@ -85,6 +88,8 @@ def scan(root, files):
         except OSError:
             continue
         rel = str(path.relative_to(root))
+        for m in PRISMA_MODEL.finditer(text):
+            add(m.group(1), rel, _summary_above(text, m.start()))
         for m in SQL_TABLE.finditer(text):
             body_end = text.find(";", m.end())
             body = text[m.end(): body_end if body_end > 0 else m.end() + 2000]
