@@ -274,9 +274,11 @@ outside the expected length slipped the pattern.
   unusual declarations. A map is a navigation index, not a compiler front-end — a miss costs one
   grep. Currently: C, C++, Objective-C, Arduino, C#, Swift, Java/Kotlin, Scala, Go, Rust, Zig, Nim,
   JS/TS, Dart, Ruby, Elixir, Lua, PHP, shell, Terraform, plus Protobuf and GraphQL schemas.
-- Measured against eight real open-source repositories (smallchat, fmt, gson, requests, cobra,
-  ripgrep, sinatra, guzzle) rather than fixtures. Summary coverage on them runs 55-100%; the low
-  end is projects that genuinely do not write file-level comments, not a failure to read them.
+- Measured against sixteen real open-source repositories across C, C++, Java, Kotlin, C#, Swift,
+  Go, Rust, Python, Ruby, PHP, Dart, Elixir, Lua and TypeScript, rather than fixtures. Summary
+  coverage on them runs 7-100%, and the low end is real: those projects write a licence header
+  where a description would go. A licence is not a description, so it is not counted as one —
+  which is why these figures are lower, and truer, than the ones this README carried before.
 - Nothing here executes the code it reads.
 - `chamnan-report` needs history on both sides of installation before it can compare anything.
 
