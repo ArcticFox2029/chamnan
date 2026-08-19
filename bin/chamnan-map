@@ -121,6 +121,14 @@ def main(argv):
         if marker in text[:index_chars]:
             print(f"  + {label} section included")
 
+    if mapper.PARSE_WARNINGS:
+        print(f"\n  {len(mapper.PARSE_WARNINGS)} file(s) raised a parse warning while being read:")
+        for path, count, msg in mapper.PARSE_WARNINGS[:4]:
+            rel = path.replace(str(root) + "/", "")
+            print(f"    {rel} — {msg}")
+        print("  Harmless today; several of these become hard errors in a future Python, and")
+        print("  py_compile does not report them, so nothing else in a normal check will.")
+
     budget = ws.load_config(root).get("index_token_budget", 3000)
     injected = index_chars / CHARS_PER_TOKEN
     if injected > budget:

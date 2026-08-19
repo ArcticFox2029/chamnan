@@ -24,6 +24,7 @@ Never imports or executes the code it reads.
 """
 import argparse
 import ast
+import warnings
 import re
 import sys
 from pathlib import Path
@@ -41,6 +42,9 @@ SKIP_DIRS = {
 }
 MAX_FILE_BYTES = 2_000_000
 CHARS_PER_TOKEN = 3.6  # rough English/code average; only used for the report, never for logic
+
+# Filled by extract_python: (path, count, first message). Reported as a total by bin/chamnan-map.
+PARSE_WARNINGS = []
 
 
 def _clip(text, limit=110):
@@ -79,8 +83,20 @@ def leading_comment(source):
 
 # --- Python: real parsing, because the stdlib gives it for free -------------------------------
 def extract_python(source, path):
+    """Parses one file. Warnings raised BY THE FILE are captured, not printed.
+
+    An indexing tool that echoes the parse warnings of the code it reads looks broken — the output
+    is chamnan's, the warning is somebody else's file, and the reader has no way to tell. They are
+    counted and reported as a total instead, which is the useful half: a real invalid escape
+    sequence in a 3,000-line file had gone unnoticed here because py_compile stays silent about it,
+    and it becomes a hard SyntaxError in a future Python.
+    """
     try:
-        tree = ast.parse(source, filename=str(path))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            tree = ast.parse(source, filename=str(path))
+        if caught:
+            PARSE_WARNINGS.append((str(path), len(caught), str(caught[0].message)))
     except SyntaxError:
         return None, [], []
     doc = _clip(ast.get_docstring(tree) or "")
