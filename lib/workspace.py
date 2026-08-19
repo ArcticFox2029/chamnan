@@ -45,6 +45,19 @@ DEFAULT_CONFIG = {
     # file. A notice, never a block — the one time someone genuinely needs to read package-lock.json
     # is the one time refusing would be most wrong.
     "warn_on_bulk_reads": True,
+    # How replies in this repo should be written. "off" is the default and changes nothing.
+    #
+    # This is the smallest lever in the plugin and it is worth saying so where the option lives:
+    # output is 8.8% of a bill, and the best-known style-compression plugin was independently
+    # benchmarked at 8.5% of output tokens — roughly 0.7% of what you pay. It is here because a
+    # workspace that already decides what a session reads may as well be able to say how it
+    # answers, and because a per-repo setting is the honest scope for that decision: a codebase
+    # can want terse answers without every other project on the machine getting them too.
+    #
+    #   "off"      no instruction is injected (default)
+    #   "concise"  drop preamble, restatement and closing offers; keep full sentences
+    #   "terse"    the above, plus fragments and tables over prose wherever they fit
+    "reply_style": "off",
 }
 VCS_MARKERS = (".git", ".hg", ".svn")
 

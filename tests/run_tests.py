@@ -323,6 +323,17 @@ check("over-budget index says it rolled up", "Rolled up by directory" in big_out
 check("over-budget index does not silently truncate", "mod399" not in big_out or "pkg3" in big_out)
 wide.write_text(rendered, encoding="utf-8")
 
+cfgp = fixture / ".chamnan" / "config.json"
+check("reply_style is off by default", ws.DEFAULT_CONFIG["reply_style"] == "off")
+check("nothing injected while it is off", "Reply style" not in run_hook("session_start.py", {}))
+cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "terse"}))
+styled = run_hook("session_start.py", {})
+check("a chosen style is injected", "Reply style for this repo" in styled)
+check("the style says how to switch it off", "config.json" in styled)
+cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "nonsense"}))
+check("an unknown style injects nothing", "Reply style" not in run_hook("session_start.py", {}))
+cfgp.write_text(json.dumps(ws.DEFAULT_CONFIG))
+
 start_out = run_hook("session_start.py", {})
 check("session start injects the index", "Architecture index" in start_out)
 check("SESSION START NEVER INJECTS A SECRET", "Hunter2Pass" not in start_out)

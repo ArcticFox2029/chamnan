@@ -23,6 +23,9 @@ import workspace as ws  # noqa: E402
 
 CHARS_PER_TOKEN = 3.6
 MAX_STATE_CHARS = 4000
+# Injected only when .chamnan/config.json asks for it. Off by default: changing how a session
+# answers is the user's call, not a side effect of installing an indexing tool.
+REPLY_STYLES = {'concise': 'Answer without preamble, without restating the question, and without a closing offer of further help. Lead with the result, then the reasoning only where it changes what the reader would do. Keep full sentences and normal courtesy — this is about removing filler, not about sounding curt.', 'terse': 'Lead with the result. Drop preamble, restatement and closing offers. Prefer a table or a list wherever one carries the content, and sentence fragments where a full sentence adds nothing. Never pad to seem thorough. Say uncertain things once, plainly, and move on.'}
 MAX_TOOLS = 12
 
 
@@ -109,6 +112,12 @@ def main():
                 "\n".join(lines) +
                 f"\n\nFull text in `{(wsdir/'skills').relative_to(root)}/`. Load one when it applies; "
                 f"do not read them all."))
+
+    style = cfg.get("reply_style", "off")
+    if style in REPLY_STYLES:
+        out.append(section("Reply style for this repo", REPLY_STYLES[style] +
+                           "\n\n_Set by `reply_style` in .chamnan/config.json; remove it to "
+                           "restore the default voice._"))
 
     if not out:
         return 0
