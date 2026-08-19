@@ -125,7 +125,11 @@ def extract_python(source, path):
             tree = ast.parse(source, filename=str(path))
         if caught:
             PARSE_WARNINGS.append((str(path), len(caught), str(caught[0].message)))
-    except SyntaxError:
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        # SyntaxError is the expected one. ValueError is a file with a .py extension whose contents
+        # are not text at all — a null byte makes ast.parse raise it, and catching only SyntaxError
+        # meant one vendored binary blob aborted the scan of an entire repository with a traceback.
+        # RecursionError is deeply nested literals. None of these should cost more than one file.
         return None, [], []
     doc = _clip(ast.get_docstring(tree) or "")
     doc = doc.split(". ")[0] if doc else ""
@@ -254,13 +258,24 @@ def _is_empty_module(source, lang):
     if lang == "py":
         try:
             return not ast.parse(source).body
-        except SyntaxError:
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
             return False
     for line in source.splitlines():
         s = line.strip()
         if s and not s.startswith(("#", "//", "/*", "*", "--", "<!--")):
             return False
     return True
+
+
+def _extract_one(source, path, lang):
+    """Dispatch to the right extractor. Separated from scan() so the caller can wrap exactly this
+    in one try and keep a bad file from taking the run down with it."""
+    if lang == "py":
+        parsed = extract_python(source, path)
+        if parsed[0] is None and not parsed[1]:
+            return leading_comment(source), [], [], []
+        return parsed
+    return extract_regex(source, lang)
 
 
 def scan(root):
@@ -285,21 +300,22 @@ def scan(root):
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if lang == "py":
-            parsed = extract_python(source, path)
-            if parsed[0] is None and not parsed[1]:
-                doc, funcs, classes, consts = leading_comment(source), [], [], []
-            else:
-                doc, funcs, classes, consts = parsed
-        else:
-            doc, funcs, classes, consts = extract_regex(source, lang)
+        # One try around everything this file touches, not around each call. Two separate crashes
+        # were found the same way — ast.parse raising ValueError on a .py file whose contents were
+        # binary — because each new call site had to remember to guard itself. A map missing one
+        # line is useful; a traceback is not, and it takes the other 195 files with it.
+        try:
+            doc, funcs, classes, consts = _extract_one(source, path, lang)
+            describable = bool(source.strip()) and not _is_empty_module(source, lang)
+        except Exception:
+            doc, funcs, classes, consts, describable = "", [], [], [], False
         files.append({
             # A file with no statements at all — an empty __init__.py, a file of only comments —
             # has nothing to describe, so counting it as "missing a summary" both understates the
             # coverage figure and pushes the user to write a sentence about a file with no code in
             # it. It stays in the index (it exists, and the agent should know that) but sits out of
             # the denominator.
-            "describable": bool(source.strip()) and not _is_empty_module(source, lang),
+            "describable": describable,
             "path": str(path.relative_to(root)), "lang": lang, "chars": len(source),
             "lines": source.count("\n") + 1, "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
