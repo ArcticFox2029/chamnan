@@ -138,6 +138,20 @@ check("python docstring becomes summary",
       any(f["path"] == "src/billing.py" and "Charges cards" in f["doc"] for f in files))
 check("python # header becomes summary",
       any(f["path"] == "src/hashed.py" and "Reads config" in f["doc"] for f in files))
+(fixture / "src" / "__init__.py").write_text("")
+(fixture / "src" / "onlycomments.py").write_text("# just a note\n# and another\n")
+empties = mapper.scan(fixture)
+check("an empty file is still listed in the index",
+      any(f["path"] == "src/__init__.py" for f in empties))
+check("an empty file is not counted as missing a summary",
+      any(f["path"] == "src/__init__.py" and not f["describable"] for f in empties))
+check("a comment-only file with no code is not counted either",
+      any(f["path"] == "src/onlycomments.py" and not f["describable"] for f in empties))
+check("a real file still counts",
+      any(f["path"] == "src/billing.py" and f["describable"] for f in empties))
+(fixture / "src" / "__init__.py").unlink()
+(fixture / "src" / "onlycomments.py").unlink()
+
 check("undocumented file has empty summary",
       any(f["path"] == "src/bare.py" and not f["doc"] for f in files))
 

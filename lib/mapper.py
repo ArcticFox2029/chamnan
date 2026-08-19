@@ -175,6 +175,21 @@ def extract_regex(source, lang):
     return leading_comment(source), funcs, classes, consts
 
 
+def _is_empty_module(source, lang):
+    """True when the file declares nothing. Python is checked properly; other languages fall back to
+    "is there anything that is not blank or a comment", which is all a regex can honestly claim."""
+    if lang == "py":
+        try:
+            return not ast.parse(source).body
+        except SyntaxError:
+            return False
+    for line in source.splitlines():
+        s = line.strip()
+        if s and not s.startswith(("#", "//", "/*", "*", "--", "<!--")):
+            return False
+    return True
+
+
 def scan(root):
     files = []
     for path in sorted(root.rglob("*")):
@@ -206,6 +221,12 @@ def scan(root):
         else:
             doc, funcs, classes, consts = extract_regex(source, lang)
         files.append({
+            # A file with no statements at all — an empty __init__.py, a file of only comments —
+            # has nothing to describe, so counting it as "missing a summary" both understates the
+            # coverage figure and pushes the user to write a sentence about a file with no code in
+            # it. It stays in the index (it exists, and the agent should know that) but sits out of
+            # the denominator.
+            "describable": bool(source.strip()) and not _is_empty_module(source, lang),
             "path": str(path.relative_to(root)), "lang": lang, "chars": len(source),
             "lines": source.count("\n") + 1, "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,

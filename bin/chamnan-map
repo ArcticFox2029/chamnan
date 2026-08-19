@@ -23,8 +23,9 @@ CHARS_PER_TOKEN = 3.6  # reporting only; never used in a decision
 
 
 def coverage(files):
-    described = [f for f in files if f["doc"]]
-    return len(described), len(files)
+    """Counts only files that could carry a summary — see mapper.scan's `describable`."""
+    countable = [f for f in files if f.get("describable", True)]
+    return len([f for f in countable if f["doc"]]), len(countable)
 
 
 HOOK_MARKER = "# >>> chamnan"
@@ -115,7 +116,9 @@ def main(argv):
     print(f"  Quick Index  {index_chars/CHARS_PER_TOKEN:>8,.0f} tokens  ({index_chars/src*100:.1f}% of the source)")
     print(f"  Full Detail  {(len(text)-index_chars)/CHARS_PER_TOKEN:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
-    print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%)")
+    skipped = len(files) - total
+    note = f", {skipped} with no code to describe" if skipped else ""
+    print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%{note})")
 
     for label, marker in (("data model", "## Data model\n"), ("API surface", "## API surface"),
                           ("config", "## Configuration")):
@@ -147,7 +150,7 @@ def main(argv):
         print(f"\n  Under the {budget:,}-token session budget — injected per session as-is,"
               f" one line per file.")
     if pct < 70:
-        missing = [f["path"] for f in files if not f["doc"]][:8]
+        missing = [f["path"] for f in files if not f["doc"] and f.get("describable", True)][:8]
         print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
         print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")
         for m in missing:
