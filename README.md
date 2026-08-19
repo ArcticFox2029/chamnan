@@ -272,7 +272,11 @@ outside the expected length slipped the pattern.
 
 - Python is parsed properly (`ast`); every other language is read with regex, which will miss
   unusual declarations. A map is a navigation index, not a compiler front-end — a miss costs one
-  grep. Currently: JS/TS, Go, shell, Ruby, Rust, Java/Kotlin, Terraform, PHP.
+  grep. Currently: C, C++, Objective-C, Arduino, C#, Swift, Java/Kotlin, Scala, Go, Rust, Zig, Nim,
+  JS/TS, Dart, Ruby, Elixir, Lua, PHP, shell, Terraform, plus Protobuf and GraphQL schemas.
+- Measured against eight real open-source repositories (smallchat, fmt, gson, requests, cobra,
+  ripgrep, sinatra, guzzle) rather than fixtures. Summary coverage on them runs 55-100%; the low
+  end is projects that genuinely do not write file-level comments, not a failure to read them.
 - Nothing here executes the code it reads.
 - `chamnan-report` needs history on both sides of installation before it can compare anything.
 

@@ -52,36 +52,64 @@ def _clip(text, limit=110):
     return text[: limit - 1] + "…" if len(text) > limit else text
 
 
-COMMENT_PREFIX = re.compile(r"^\s*(?:/\*+|\*+/?|//+|#+|--+|<!--)\s?")
+COMMENT_PREFIX = re.compile(r"^\s*(?:/\*+!?|\*+/?|//+!?|#+|--+|<!--|;;+)\s?")
+# Lines that open a file without saying anything about it. Skipping them is what makes a summary
+# say what the file is FOR: harvesting them gave every shell script the summary "!/bin/bash", and
+# gave PHP nothing at all — a PHP file opens with <?php, which is not a comment, so the reader
+# stopped on line one and 132 of 132 guzzle files came back blank.
+SKIP_OPENERS = re.compile(
+    r"^\s*(?:#!|<\?php\b|<\?=|declare\s*\(|namespace\s|use\s|package\s|@file:|"
+    r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|pragma|ifndef|if\s|endif))", re.I)
+# Only the /* ... */ family. Python never reaches leading_comment with a docstring — ast handles
+# those — so a triple-quote branch here would be dead code carrying its own escaping hazards.
+BLOCK_OPEN = re.compile(r"^\s*/\*+!?")
+BLOCK_CLOSE = "*/"
 
 
 def leading_comment(source):
-    """The file's opening comment block, used as its one-line summary.
+    """The file's opening comment, used as its one-line summary.
 
-    Most languages have no docstring, but nearly every file that matters opens with a comment
-    saying what it is. Reading three lines of that beats guessing from the filename."""
+    Block comments are read as blocks. The first version required every line to carry a comment
+    marker, which holds for // and # but not for the /* ... */ form where the inner lines usually
+    carry nothing — so a Rust file opening with `/*!` produced the summary "!" and a C file
+    produced none. Found by running against ripgrep, fmt and guzzle, each of which failed
+    differently for this one reason.
+    """
+    lines = source.splitlines()
+    i = 0
+    while i < len(lines) and (not lines[i].strip() or SKIP_OPENERS.match(lines[i])):
+        i += 1
+        if i > 30:          # a preamble this long is not hiding a summary
+            return ""
+    if i >= len(lines):
+        return ""
+
     out = []
-    for line in source.splitlines()[:14]:
-        stripped = line.strip()
-        # A shebang is a comment to the parser and noise to the reader: harvesting it makes every
-        # shell script's summary start with "!/bin/bash" instead of saying what the script does.
-        if stripped.startswith("#!"):
-            continue
-        if not stripped:
-            if out:
+    opener = BLOCK_OPEN.match(lines[i])
+    if opener:
+        first = lines[i][opener.end():]
+        if BLOCK_CLOSE in first:
+            return _clip(COMMENT_PREFIX.sub("", first.split(BLOCK_CLOSE)[0]).strip())
+        out.append(first)
+        for line in lines[i + 1: i + 20]:
+            if BLOCK_CLOSE in line:
+                out.append(line.split(BLOCK_CLOSE)[0])
                 break
-            continue
-        if not COMMENT_PREFIX.match(line):
-            break
-        text = COMMENT_PREFIX.sub("", line).strip().rstrip("*/").strip()
-        if text:
-            out.append(text)
-        if len(out) >= 3:
-            break
-    return _clip(" ".join(out))
+            out.append(COMMENT_PREFIX.sub("", line))
+            if len(" ".join(out)) > 220:
+                break
+    else:
+        for line in lines[i: i + 14]:
+            if not COMMENT_PREFIX.match(line):
+                break
+            text = COMMENT_PREFIX.sub("", line).strip()
+            if text:
+                out.append(text)
+            if len(out) >= 4:
+                break
+    return _clip(" ".join(x.strip() for x in out if x.strip()))
 
 
-# --- Python: real parsing, because the stdlib gives it for free -------------------------------
 def extract_python(source, path):
     """Parses one file. Warnings raised BY THE FILE are captured, not printed.
 
@@ -147,11 +175,56 @@ REGEX_RULES = {
     "tf": [("class", r'^resource\s+"([^"]+)"\s+"([^"]+)"'),
            ("func", r'^(?:module|data)\s+"([^"]+)"')],
     "php": [("func", r"^\s*function\s+(\w+)\s*\(([^)]*)\)"), ("class", r"^\s*class\s+(\w+)")],
+    # C and C++ have no dependable line-anchored declaration form: a definition may return a
+    # pointer, span several lines, or sit behind a macro. These catch the common shapes and miss
+    # the exotic ones, which is the accepted trade for an index — a miss costs one grep.
+    "c": [
+        ("func", r"^[A-Za-z_][\w \t\*&:<>,]*?\b(\w+)\s*\(([^;)]*)\)\s*(?:const\s*)?\{"),
+        ("class", r"^\s*(?:typedef\s+)?(?:struct|class|union|enum)\s+(\w+)"),
+        ("const", r"^\s*#define\s+([A-Z][A-Z0-9_]{2,})"),
+    ],
+    "cs": [
+        ("func", r"^\s*(?:(?:public|private|protected|internal|static|async|override|virtual)\s+)+[\w<>\[\],\.]+\s+(\w+)\s*\(([^)]*)\)"),
+        ("class", r"^\s*(?:public\s+|internal\s+)?(?:sealed\s+|abstract\s+|static\s+|partial\s+)*(?:class|struct|interface|record|enum)\s+(\w+)"),
+    ],
+    "swift": [
+        ("func", r"^\s*(?:(?:public|private|internal|open|static|class)\s+)*func\s+(\w+)\s*\(([^)]*)\)"),
+        ("class", r"^\s*(?:public\s+)?(?:final\s+)?(?:class|struct|enum|protocol|extension)\s+(\w+)"),
+    ],
+    "dart": [
+        ("func", r"^\s*(?:[\w<>,\?\[\] ]+\s+)?(\w+)\s*\(([^)]*)\)\s*(?:async\s*)?\{"),
+        ("class", r"^\s*(?:abstract\s+)?(?:class|mixin|enum|extension)\s+(\w+)"),
+    ],
+    "lua": [("func", r"^\s*(?:local\s+)?function\s+([\w.:]+)\s*\(([^)]*)\)")],
+    "scala": [("func", r"^\s*(?:private\s+|protected\s+)?def\s+(\w+)\s*[\(\[:]"),
+              ("class", r"^\s*(?:case\s+)?(?:class|object|trait|enum)\s+(\w+)")],
+    "ex": [("func", r"^\s*def(?:p)?\s+(\w+[?!]?)\s*[\(,\s]"),
+           ("class", r"^\s*defmodule\s+([\w.]+)")],
+    "zig": [("func", r"^\s*(?:pub\s+)?fn\s+(\w+)\s*\(([^)]*)\)"),
+            ("const", r"^\s*(?:pub\s+)?const\s+([A-Z][A-Za-z0-9_]{2,})\s*=")],
+    "nim": [("func", r"^\s*(?:proc|func|method|iterator)\s+(\w+)\s*[\*]?\s*\(([^)]*)\)"),
+            ("class", r"^\s*(\w+)\*?\s*=\s*(?:ref\s+)?object")],
+    # An index of what a service exposes. On a repo of handlers the .proto answers "does an endpoint
+    # for X exist" in a fraction of the tokens the handlers would cost.
+    "proto": [("class", r"^\s*(?:service|message|enum)\s+(\w+)"),
+              ("func", r"^\s*rpc\s+(\w+)\s*\(([^)]*)\)")],
+    "graphql": [("class", r"^\s*(?:type|input|interface|enum|union)\s+(\w+)")],
 }
 EXT_LANG = {
     ".py": "py", ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js", ".ts": "js", ".tsx": "js",
     ".go": "go", ".sh": "sh", ".bash": "sh", ".command": "sh", ".zsh": "sh",
     ".rb": "rb", ".rs": "rs", ".java": "java", ".kt": "java", ".tf": "tf", ".php": "php",
+    # The C family was missing entirely until a run against real repositories: a C project reported
+    # zero files and a C++ one six of 142. Headers are indexed too — in C and C++ the header is
+    # usually where the interface a reader came looking for actually lives. .ino is Arduino, which
+    # is C++ with a different extension.
+    ".c": "c", ".h": "c", ".cpp": "c", ".cc": "c", ".cxx": "c", ".hpp": "c", ".hh": "c",
+    ".hxx": "c", ".m": "c", ".mm": "c", ".ino": "c", ".pde": "c",
+    ".cs": "cs", ".swift": "swift", ".dart": "dart", ".lua": "lua",
+    ".scala": "scala", ".ex": "ex", ".exs": "ex", ".zig": "zig", ".nim": "nim",
+    # Interface definitions rather than code, and that is the point: on a service repo the question
+    # "what does this expose" is answered by the .proto or the schema, not by the handlers.
+    ".proto": "proto", ".graphql": "graphql", ".gql": "graphql",
 }
 # Leading comment markers stripped when harvesting a file's opening comment as its summary.
 def extract_regex(source, lang):
