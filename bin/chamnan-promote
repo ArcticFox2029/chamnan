@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""chamnan promote — turn a one-off script into a tool the repo keeps.
+
+Measured on one developer over 34 days: 2,104 of 17,290 Bash calls (12.2%) wrote a script inline,
+and 1,486 distinct paths under /tmp were touched — about 44 throwaway files a day. Most deserve to
+be thrown away. The ones that do not are the checks and reports that get re-derived every few days,
+each time costing the tokens to think them up again and arriving slightly different, which is worse
+than the cost: a regression check that is rewritten each run is not a regression check.
+
+  chamnan promote <file> <name> [--desc "..."]   install a script as a permanent tool
+  chamnan promote --list                          show what this repo already has
+"""
+import json
+import shutil
+import stat
+import sys
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import workspace as ws  # noqa: E402
+
+
+def index_path(root):
+    return ws.workspace(root) / "tools" / "index.json"
+
+
+def load_index(root):
+    try:
+        return json.loads(index_path(root).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def show(root):
+    entries = load_index(root)
+    if not entries:
+        print("chamnan: no promoted tools yet.")
+        print("  When a script proves worth keeping: chamnan promote <file> <name>")
+        return 0
+    print(f"chamnan tools — {len(entries)} in {ws.workspace(root).name}/tools/\n")
+    for e in entries:
+        used = e.get("runs", 0)
+        print(f"  {e['name']:<24} {e.get('desc','') or '(no description)'}")
+        print(f"  {'':24} added {e.get('added','?')[:10]}, run {used}x")
+    return 0
+
+
+def main(argv):
+    root = ws.find_root()
+    if not ws.enabled("promote", root):
+        print("chamnan: promote is disabled in .chamnan/config.json")
+        return 0
+    if not argv or argv[0] in ("--list", "-l"):
+        return show(root)
+    if len(argv) < 2:
+        print(__doc__.strip().splitlines()[-3], file=sys.stderr)
+        return 2
+
+    src = Path(argv[0]).expanduser().resolve()
+    name = argv[1]
+    desc = ""
+    if "--desc" in argv:
+        i = argv.index("--desc")
+        desc = " ".join(argv[i + 1:]).strip()
+    if not src.is_file():
+        print(f"chamnan: no such file: {src}", file=sys.stderr)
+        return 1
+
+    tools = ws.ensure(root) / "tools"
+    dest = tools / (name if Path(name).suffix else name + src.suffix)
+    if dest.exists():
+        print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
+              file=sys.stderr)
+        return 1
+    shutil.copy2(src, dest)
+    dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    entries = load_index(root)
+    entries.append({
+        "name": dest.name, "desc": desc,
+        "added": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "origin": str(src), "runs": 0,
+    })
+    index_path(root).write_text(json.dumps(entries, indent=1, ensure_ascii=False) + "\n",
+                                encoding="utf-8")
+    rel = dest.relative_to(root)
+    print(f"chamnan: promoted -> {rel}")
+    print(f"  run it with:  {rel}")
+    if not desc:
+        print("  no description given — add one so a future session knows when to reach for it:")
+        print(f"    chamnan promote --list   (then edit {index_path(root).relative_to(root)})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

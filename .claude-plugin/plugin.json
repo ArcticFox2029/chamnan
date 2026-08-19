@@ -1,0 +1,10 @@
+{
+  "name": "chamnan",
+  "description": "Makes a codebase know itself: an architecture index the agent reads instead of scanning files, work state that survives compaction, and a workspace that accumulates the procedures and tools you keep re-deriving. Built for long-lived repos you revisit, not one-off scripts.",
+  "version": "0.1.0",
+  "author": { "name": "ArcticFox2029" },
+  "homepage": "https://github.com/ArcticFox2029/chamnan",
+  "repository": "https://github.com/ArcticFox2029/chamnan",
+  "license": "MIT",
+  "keywords": ["context", "architecture", "codebase-map", "long-lived-projects", "state", "skills"]
+}

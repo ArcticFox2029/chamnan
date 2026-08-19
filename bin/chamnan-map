@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""chamnan map — build .chamnan/MAP.md from the repository's source, and report what it cost.
+
+The map exists so an agent can answer "which file do I open for X" without reading or grepping the
+tree. Measured across three real repositories (Python, JS+shell, mixed), the Quick Index came to
+0.3-3.1% of the source it indexes, and answered 6 of 6 navigation questions on its own.
+
+The coverage number printed at the end is not decoration. The index is built from each file's
+opening comment, so a repository that does not write them gets an index of filenames and function
+counts, which is worth far less. Reporting coverage tells the user which lever to pull.
+"""
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import mapper  # noqa: E402
+import workspace as ws  # noqa: E402
+
+CHARS_PER_TOKEN = 3.6  # reporting only; never used in a decision
+
+
+def coverage(files):
+    described = [f for f in files if f["doc"]]
+    return len(described), len(files)
+
+
+HOOK_MARKER = "# >>> chamnan"
+HOOK_BODY = """{marker}
+# Keeps .chamnan/MAP.md in step with the code. A stale index is worse than none: it is confidently
+# wrong, and the next session believes it. Never fails a commit — if chamnan errors, the commit
+# proceeds and the index is simply not refreshed.
+if command -v chamnan-map >/dev/null 2>&1; then
+  if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
+    chamnan-map >/dev/null 2>&1 || true
+    git add .chamnan/MAP.md >/dev/null 2>&1 || true
+  fi
+fi
+# <<< chamnan
+"""
+
+
+def install_git_hook(root):
+    """Opt-in only, and never destructive to a hook the user already has."""
+    hooks = root / ".git" / "hooks"
+    if not hooks.parent.is_dir():
+        print("chamnan: not a git repository — nothing to install into", file=sys.stderr)
+        return 1
+    hooks.mkdir(parents=True, exist_ok=True)
+    target = hooks / "pre-commit"
+    body = HOOK_BODY.format(marker=HOOK_MARKER)
+    if target.exists():
+        existing = target.read_text(encoding="utf-8", errors="replace")
+        if HOOK_MARKER in existing:
+            print(f"chamnan: already installed in {target.relative_to(root)}")
+            return 0
+        target.write_text(existing.rstrip() + "\n\n" + body, encoding="utf-8")
+        print(f"chamnan: appended to your existing {target.relative_to(root)}")
+    else:
+        target.write_text("#!/bin/sh\n\n" + body, encoding="utf-8")
+        target.chmod(0o755)
+        print(f"chamnan: installed {target.relative_to(root)}")
+    print("  The index now refreshes on every commit that touches tracked files.")
+    print(f"  Remove it by deleting the block marked '{HOOK_MARKER}'.")
+    return 0
+
+
+def main(argv):
+    root = ws.find_root()
+    if "--install-git-hook" in argv:
+        return install_git_hook(root)
+    target = Path(argv[0]).resolve() if argv and not argv[0].startswith("-") else root
+    if not ws.enabled("map", root):
+        print("chamnan: map is disabled in .chamnan/config.json")
+        return 0
+    ws.prune_logs(root)
+    files = mapper.scan(target)
+    if not files:
+        print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
+        return 1
+    text = mapper.render(files, target)
+    out = ws.ensure(root) / "MAP.md"
+    out.write_text(text, encoding="utf-8")
+
+    src = sum(f["chars"] for f in files)
+    index_chars = text.index("## Full Detail")
+    have, total = coverage(files)
+    pct = have / total * 100 if total else 0
+    scope = "" if target == root else f"  (scanned {target.relative_to(root)} only)"
+    print(f"chamnan map -> {out.relative_to(root)}{scope}")
+    print(f"  {total} source file(s), {src/CHARS_PER_TOKEN:,.0f} tokens of code")
+    print(f"  Quick Index  {index_chars/CHARS_PER_TOKEN:>8,.0f} tokens  ({index_chars/src*100:.1f}% of the source)")
+    print(f"  Full Detail  {(len(text)-index_chars)/CHARS_PER_TOKEN:>8,.0f} tokens  (grep this, never read it whole)")
+    bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
+    print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%)")
+
+    for label, marker in (("data model", "## Data model\n"), ("API surface", "## API surface"),
+                          ("config", "## Configuration")):
+        if marker in text[:index_chars]:
+            print(f"  + {label} section included")
+
+    budget = ws.load_config(root).get("index_token_budget", 3000)
+    injected = index_chars / CHARS_PER_TOKEN
+    if injected > budget:
+        print(f"\n  ! the injected part is {injected:,.0f} tokens, over the {budget:,} budget in"
+              f" .chamnan/config.json.")
+        print(f"  That part is re-read every session, so it has to stay small or this plugin becomes")
+        print(f"  the cost it exists to remove. Either raise the budget deliberately, or narrow the")
+        print(f"  scan (`chamnan-map <subdir>`) so it indexes the part you actually work in.")
+    if pct < 70:
+        missing = [f["path"] for f in files if not f["doc"]][:8]
+        print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
+        print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")
+        for m in missing:
+            print(f"    - {m}")
+        if ws.enabled("agents", root):
+            print(f"  Ask Claude: \"add a one-line opening comment to the files chamnan listed\"")
+            print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")
+        else:
+            # agents are switched off, so pointing at an agent the user disabled would be noise.
+            print(f"  Agents are disabled in .chamnan/config.json, so add these by hand or")
+            print(f"  re-enable \"agents\" to have a cheap-model agent write them.")
+        lang = ws.load_config(root).get("language", "en")
+        if lang == "en":
+            print("\n  Those comments will be written in English, which costs fewer tokens for the")
+            print("  same meaning and is re-read every session (measured ~1.5x versus Thai, on one")
+            print("  tokenizer — not Claude's, so treat it as a direction rather than a figure).")
+            print("  If your team would rather read them in another language, that is a fair trade:")
+            print("  set \"language\" in .chamnan/config.json, or just tell Claude which to use.")
+        else:
+            print(f"\n  Comments will be written in: {lang}  (\"language\" in .chamnan/config.json)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

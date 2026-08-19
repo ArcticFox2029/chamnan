@@ -1,0 +1,7 @@
+# chamnan's own workspace, created when the plugin is run inside this repo during development.
+# Generated from the code, so committing it would only produce diff noise.
+.chamnan/
+
+__pycache__/
+*.pyc
+.DS_Store
