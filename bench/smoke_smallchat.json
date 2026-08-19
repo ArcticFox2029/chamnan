@@ -1,0 +1,53 @@
+{
+  "baseline": {
+    "bare": {
+      "input_tokens": 2,
+      "cache_creation": 14376,
+      "cache_read": 21884,
+      "output_tokens": 4,
+      "context_total": 36262,
+      "cost_usd": 0.15576900000000002,
+      "num_turns": 1,
+      "wall_s": 7.3,
+      "answer": "OK"
+    },
+    "chamnan": {
+      "input_tokens": 2,
+      "cache_creation": 16519,
+      "cache_read": 21884,
+      "output_tokens": 4,
+      "context_total": 38405,
+      "cost_usd": 0.176242,
+      "num_turns": 1,
+      "wall_s": 5.0,
+      "answer": "OK"
+    }
+  },
+  "runs": {
+    "arch-langs::bare": {
+      "input_tokens": 4,
+      "cache_creation": 7988,
+      "cache_read": 51394,
+      "output_tokens": 379,
+      "context_total": 59386,
+      "cost_usd": 0.11604300000000001,
+      "num_turns": 3,
+      "wall_s": 12.4,
+      "answer": "**Two** (or three, counting the build script):\n\n- **C** — `chatlib.c`, `chatlib.h`, `smallchat-client.c`, `smallchat-server.c`\n- **Markdown** — `README.md`\n- **Make** — `Makefile` (build script, not a general-purpose language)\n\nSo: one actual programming language, C.",
+      "dimension": "architecture index"
+    },
+    "arch-langs::chamnan": {
+      "input_tokens": 4,
+      "cache_creation": 8746,
+      "cache_read": 52348,
+      "output_tokens": 216,
+      "context_total": 61098,
+      "cost_usd": 0.11905400000000002,
+      "num_turns": 2,
+      "wall_s": 11.9,
+      "answer": "**One programming language: C** (`chatlib.c`, `chatlib.h`, `smallchat-client.c`, `smallchat-server.c`).\n\nThe only other non-prose file is a `Makefile` (Make build syntax), plus `README.md` — neither is a general-purpose programming language.",
+      "dimension": "architecture index"
+    }
+  },
+  "corpus": "/Users/wasuplao/Documents/test-chamnan/smallchat"
+}

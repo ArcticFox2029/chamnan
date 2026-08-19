@@ -19,9 +19,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import rollup  # noqa: E402
+import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
-CHARS_PER_TOKEN = 3.6
 MAX_STATE_CHARS = 4000
 # Injected only when .chamnan/config.json asks for it. Off by default: changing how a session
 # answers is the user's call, not a side effect of installing an indexing tool.
@@ -66,9 +66,9 @@ def main():
             text = mp.read_text(encoding="utf-8", errors="replace")
             cut = text.find("## Full Detail")
             index = text[:cut] if cut > 0 else text
-            budget_chars = int(cfg.get("index_token_budget", 3000) * CHARS_PER_TOKEN)
-            if len(index) > budget_chars:
-                index = rollup.collapse(index, mp.relative_to(root))
+            budget = cfg.get("index_token_budget", 3000)
+            if not tokens.fits(index, budget):
+                index = rollup.collapse(index, mp.relative_to(root), budget)
             out.append(section("Architecture index", index))
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")

@@ -34,6 +34,7 @@ import catalogs as catalogs_mod
 import deploy as deploy_mod
 import redact
 import schema as schema_mod
+import tokens
 
 # Directories that are never source: dependency trees, build output, VCS internals, caches.
 SKIP_DIRS = {
@@ -43,7 +44,6 @@ SKIP_DIRS = {
     "site-packages", ".gradle", ".cache", "tmp", "logs",
 }
 MAX_FILE_BYTES = 2_000_000
-CHARS_PER_TOKEN = 3.6  # rough English/code average; only used for the report, never for logic
 
 # Filled by extract_python: (path, count, first message). Reported as a total by bin/chamnan-map.
 PARSE_WARNINGS = []
@@ -400,6 +400,7 @@ def scan(root):
             # the denominator.
             "describable": describable,
             "path": str(path.relative_to(root)), "lang": lang, "chars": len(source),
+            "tokens": tokens.estimate(source),
             "lines": source.count("\n") + 1, "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
         })
@@ -491,15 +492,17 @@ def main():
     out.write_text(text, encoding="utf-8")
 
     if a.measure:
-        src = sum(f["chars"] for f in files)
+        src = sum(f["tokens"] for f in files)
         idx = text.index("## Full Detail")
         langs = {}
         for f in files:
             langs[f["lang"]] = langs.get(f["lang"], 0) + 1
-        print(f"{root.name:<22} {len(files):>4} ไฟล์  {'+'.join(f'{k}:{v}' for k,v in sorted(langs.items(), key=lambda x:-x[1]))}")
-        print(f"  source ทั้งหมด    {src/CHARS_PER_TOKEN:>10,.0f} โทเคน")
-        print(f"  map ทั้งไฟล์      {len(text)/CHARS_PER_TOKEN:>10,.0f} โทเคน   ({len(text)/src*100:>5.1f}% ของ source)")
-        print(f"  Quick Index      {idx/CHARS_PER_TOKEN:>10,.0f} โทเคน   ({idx/src*100:>5.1f}% ของ source)")
+        map_tok = tokens.estimate(text)
+        idx_tok = tokens.estimate(text[:idx])
+        print(f"{root.name:<22} {len(files):>4} files  {'+'.join(f'{k}:{v}' for k,v in sorted(langs.items(), key=lambda x:-x[1]))}")
+        print(f"  whole source     {src:>10,.0f} tokens")
+        print(f"  whole map        {map_tok:>10,.0f} tokens   ({map_tok/src*100:>5.1f}% of the source)")
+        print(f"  Quick Index      {idx_tok:>10,.0f} tokens   ({idx_tok/src*100:>5.1f}% of the source)")
     else:
         print(f"wrote {out}")
     return 0

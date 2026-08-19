@@ -17,9 +17,8 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 
 import mapper  # noqa: E402
 import rollup  # noqa: E402
+import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
-
-CHARS_PER_TOKEN = 3.6  # reporting only; never used in a decision
 
 
 def coverage(files):
@@ -57,7 +56,7 @@ def preview(root):
         print("chamnan: nothing to inject yet — run chamnan-map first")
         return 0
     print(body)
-    print(f"\n---\n[{len(body)/CHARS_PER_TOKEN:,.0f} tokens. This is what every session in this repo")
+    print(f"\n---\n[{tokens.estimate(body):,.0f} tokens. This is what every session in this repo")
     print("receives automatically once the plugin is loaded.]")
     return 0
 
@@ -127,8 +126,10 @@ def main(argv):
     out = ws.ensure(root) / "MAP.md"
     out.write_text(text, encoding="utf-8")
 
-    src = sum(f["chars"] for f in files)
+    src = sum(f["tokens"] for f in files)
     index_chars = text.index("## Full Detail")
+    index_tokens = tokens.estimate(text[:index_chars])
+    detail_tokens = tokens.estimate(text[index_chars:])
     have, total = coverage(files)
     pct = have / total * 100 if total else 0
     if targets == [root]:
@@ -137,9 +138,9 @@ def main(argv):
         names = ", ".join(str(x.relative_to(root)) for x in targets)
         scope = f"  (scanned {names})"
     print(f"chamnan map -> {out.relative_to(root)}{scope}")
-    print(f"  {total} source file(s), {src/CHARS_PER_TOKEN:,.0f} tokens of code")
-    print(f"  Quick Index  {index_chars/CHARS_PER_TOKEN:>8,.0f} tokens  ({index_chars/src*100:.1f}% of the source)")
-    print(f"  Full Detail  {(len(text)-index_chars)/CHARS_PER_TOKEN:>8,.0f} tokens  (grep this, never read it whole)")
+    print(f"  {total} source file(s), {src:,.0f} tokens of code")
+    print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({index_tokens/src*100:.1f}% of the source)")
+    print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
     skipped = len(files) - total
     note = f", {skipped} with no code to describe" if skipped else ""
@@ -163,9 +164,8 @@ def main(argv):
     # Saying "over budget" without saying what happens next made a working roll-up look like a
     # warning the user had to act on.
     budget = ws.load_config(root).get("index_token_budget", 3000)
-    index_tokens = index_chars / CHARS_PER_TOKEN
     if index_tokens > budget:
-        rolled = len(rollup.collapse(text[:index_chars], out.name)) / CHARS_PER_TOKEN
+        rolled = tokens.estimate(rollup.collapse(text[:index_chars], out.name, budget))
         print(f"\n  Over the {budget:,}-token session budget, so session start will roll this up by")
         print(f"  directory: ~{rolled:,.0f} tokens injected per session instead of {index_tokens:,.0f},")
         print(f"  with every directory still named and the full entry a grep away in MAP.md.")

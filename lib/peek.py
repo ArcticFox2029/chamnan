@@ -28,7 +28,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
-CHARS_PER_TOKEN = 3.6
+import tokens
 DEFAULT_BUDGET = 400           # tokens of output; the whole point is to stay small
 SAMPLE_ROWS = 3
 MAX_MEMBERS = 25
@@ -316,10 +316,12 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
                 *peek_binary(path)]
 
     out = "\n".join(header + [""] + [str(x) for x in body])
-    limit = int(budget * CHARS_PER_TOKEN)
-    if len(out) > limit:
-        out = out[:limit] + f"\n\n_[truncated at {budget} tokens — narrow it with --find]_"
-    saved = size / CHARS_PER_TOKEN
-    out += (f"\n\n_[{len(out)/CHARS_PER_TOKEN:,.0f} tokens instead of ~{saved:,.0f} for the whole "
-            f"file{' — ' + format(saved/max(len(out)/CHARS_PER_TOKEN, 1), ',.0f') + '× smaller' if saved > 1000 else ''}]_")
+    cut = tokens.cut_at(out, budget)
+    if cut < len(out):
+        out = out[:cut] + f"\n\n_[truncated at {budget} tokens — narrow it with --find]_"
+    # `size` is the file on disk in bytes; the peeked text is what actually reaches the model.
+    saved = size / 2.4
+    spent = tokens.estimate(out)
+    out += (f"\n\n_[{spent:,.0f} tokens instead of ~{saved:,.0f} for the whole "
+            f"file{' — ' + format(saved/max(spent, 1), ',.0f') + '× smaller' if saved > 1000 else ''}]_")
     return out

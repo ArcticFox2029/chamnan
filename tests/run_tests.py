@@ -29,6 +29,7 @@ import mapper  # noqa: E402
 import peek as peek_mod  # noqa: E402
 import redact  # noqa: E402
 import schema  # noqa: E402
+import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
 def fake(*parts):
@@ -316,7 +317,7 @@ many = "\n".join(f"- **`pkg{i%4}/mod{i:03d}.py`** (10L, 2fn) — does something 
 wide.write_text("# Architecture map — big\n\n## Quick Index\n\n" + many + "\n\n## Full Detail\n")
 big_out = run_hook("session_start.py", {})
 check("over-budget index stays inside the budget",
-      len(big_out) < ws.DEFAULT_CONFIG["index_token_budget"] * 3.6 * 1.5)
+      tokens.estimate(big_out) < ws.DEFAULT_CONFIG["index_token_budget"] * 1.5)
 check("over-budget index keeps every directory visible",
       all(f"**pkg{i}/**" in big_out for i in range(4)))
 check("over-budget index says it rolled up", "Rolled up by directory" in big_out)
@@ -337,6 +338,63 @@ cfgp.write_text(json.dumps(ws.DEFAULT_CONFIG))
 start_out = run_hook("session_start.py", {})
 check("session start injects the index", "Architecture index" in start_out)
 check("SESSION START NEVER INJECTS A SECRET", "Hunter2Pass" not in start_out)
+
+# ---------------------------------------------------------------- token estimation
+# A flat characters-per-token constant used to decide how much index reached the session, and it
+# was calibrated on English. Measured against the real API, Thai runs about 1.2 characters per
+# token and Chinese under 1.0, so a 4,523-character Thai index that the old constant scored at
+# 1,256 tokens actually cost 3,153 — it was injected whole against a 3,000-token budget. These
+# checks exist so that regression cannot return quietly.
+check("ascii is far cheaper per character than CJK",
+      tokens.estimate("a" * 500) < tokens.estimate("\u4e2d" * 500) / 2)
+check("Thai costs more per character than ascii",
+      tokens.estimate("\u0e01" * 500) > tokens.estimate("a" * 500) * 1.5)
+check("CJK is estimated at roughly one token per character",
+      0.9 <= tokens.estimate("\u4e2d" * 500) / 500 <= 1.1)
+check("an empty string costs nothing", tokens.estimate("") == 0)
+
+# Slicing by characters is what made the budget wrong, so cut_at must answer in token space.
+thai_doc = "\u0e01\u0e02\u0e03\u0e04\u0e05" * 400
+check("cut_at respects the budget for a dense script",
+      tokens.estimate(thai_doc[:tokens.cut_at(thai_doc, 100)]) <= 101)
+check("cut_at respects the budget for ascii",
+      tokens.estimate(("word " * 400)[:tokens.cut_at("word " * 400, 100)]) <= 101)
+check("cut_at keeps short text whole", tokens.cut_at("short", 1000) == len("short"))
+check("a zero budget cuts everything", tokens.cut_at("anything", 0) == 0)
+check("fits agrees with estimate", tokens.fits("a" * 100, tokens.estimate("a" * 100) + 1))
+
+# The bug in one assertion: a Thai index in the band the old constant got wrong must roll up.
+thai_index = ("# Architecture map\n\n## Quick Index\n\n"
+              + "".join(f"- **`src/m{i:03d}.py`** (6L, 1fn) \u2014 "
+                        "\u0e17\u0e33\u0e2b\u0e19\u0e49\u0e32\u0e17\u0e35\u0e48"
+                        "\u0e23\u0e31\u0e1a\u0e02\u0e49\u0e2d\u0e21\u0e39\u0e25"
+                        "\u0e08\u0e32\u0e01\u0e40\u0e0b\u0e47\u0e19\u0e40\u0e0b\u0e2d\u0e23\u0e4c"
+                        "\u0e41\u0e25\u0e49\u0e27\u0e2a\u0e48\u0e07\u0e15\u0e48\u0e2d\n"
+                        for i in range(90))
+              + "\n## Full Detail\n")
+check("the old constant would have called this Thai index affordable",
+      len(thai_index) / 3.6 < 3000)
+check("the real estimate calls the same Thai index over budget",
+      tokens.estimate(thai_index) > 3000)
+
+wide.write_text(thai_index, encoding="utf-8")
+thai_out = run_hook("session_start.py", {})
+check("A THAI INDEX IN THAT BAND IS ROLLED UP, NOT INJECTED WHOLE",
+      tokens.estimate(thai_out) < 3000)
+check("the rolled-up Thai index still names its directory", "src" in thai_out)
+
+# The roll-up groups rows it recognises. Given rows it does not, it used to hand its input straight
+# back and the caller injected an over-budget index believing it had been folded.
+import rollup  # noqa: E402
+unknown = "# Map\n\n## Quick Index\n\n" + "".join(
+    f"* src/m{i:03d}.py does something\n" for i in range(900))
+check("an index in an unrecognised row format is still cut to the budget",
+      tokens.estimate(rollup.collapse(unknown, "MAP.md", 3000)) <= 3000)
+check("a cut index says it was cut", "Cut to fit" in rollup.collapse(unknown, "MAP.md", 3000))
+check("collapse without a budget stays backward compatible",
+      rollup.collapse(unknown, "MAP.md") == rollup.collapse(unknown, "MAP.md", None))
+check("a map already inside the budget is left alone",
+      "Cut to fit" not in rollup.collapse("# Map\n\n- **`a.py`** \u2014 x\n", "MAP.md", 3000))
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
