@@ -249,10 +249,22 @@ with _zip.ZipFile(pk / "book.xlsx", "w") as z:
 out = peek_mod.peek(pk / "book.xlsx")
 check("peek reads spreadsheet sheet names", "Ledger" in out)
 
+# An extension is a claim, not a fact: the csv reader parses binary data happily and used to emit
+# a column list made of control characters.
 (pk / "junk.csv").write_bytes(bytes(range(256)) * 20)
 out = peek_mod.peek(pk / "junk.csv")
 check("peek survives a malformed file", "could not read" in out or "printable" in out)
-check("peek reports the saving", "instead of" in out)
+check("binary named .csv is not parsed as a table", "columns:" not in out)
+check("binary named .csv claims no saving", "instead of" not in out)
+
+# UTF-8 that is not Latin must not be mistaken for binary by the same sniff.
+(pk / "thai.csv").write_text("ท่าเรือ,น้ำหนัก\nฮัมบวร์ก,26000\n", encoding="utf-8")
+check("Thai text is still read as a table", "columns:" in peek_mod.peek(pk / "thai.csv"))
+
+(pk / "real.csv").write_text("id,lane\n" + "".join(f"s{i},DEHAM\n" for i in range(300)),
+                             encoding="utf-8")
+check("peek reports the saving on a file that could have been read whole",
+      "instead of" in peek_mod.peek(pk / "real.csv"))
 check("peek refuses a directory", "not a file" in peek_mod.peek(pk))
 
 # ---------------------------------------------------------------- log retention

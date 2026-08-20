@@ -51,6 +51,27 @@ MAGIC = [
 ]
 
 
+def _looks_binary(path):
+    """True when a file claiming to be text is not. A NUL byte settles it; otherwise judge by how
+    much of the first block is outside the printable range, which mojibake fails and real text --
+    including Thai, Japanese and Cyrillic, whose UTF-8 bytes decode cleanly -- passes."""
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return False
+    if not head:
+        return False
+    if b"\x00" in head:
+        return True
+    try:
+        text = head.decode("utf-8")
+    except UnicodeDecodeError:
+        return True
+    odd = sum(1 for ch in text if ord(ch) < 32 and ch not in "\t\n\r")
+    return odd > len(text) * 0.05
+
+
 def _human(n):
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
@@ -372,6 +393,15 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
                 f"_[nothing read]_")
     ext = path.suffix.lower()
     header = [f"# {path.name}", f"{_human(size)} · {ext or 'no extension'}"]
+
+    # An extension is a claim, not a fact. Handed binary data named .csv, the csv reader parses it
+    # perfectly happily -- errors="replace" guarantees it never raises -- and the result was a
+    # column list of raw control characters going straight into the session. Sniff the bytes first
+    # and let the binary handler describe it instead; that handler exists precisely to say "this is
+    # not text" without pretending to read it.
+    if (ext in (".csv", ".tsv", ".tab", ".json") or ext in TEXT_LIKE) and _looks_binary(path):
+        return "\n".join(header + ["", *[str(x) for x in peek_binary(path)]]) + \
+               "\n\n" + _cost_note(path, ".bin", size, "")
 
     try:
         if ext in (".csv", ".tsv", ".tab"):

@@ -6,8 +6,27 @@ A Claude Code plugin that makes a repository know itself, so an agent stops redi
 It builds an index the agent reads instead of scanning files, keeps work state that survives
 compaction, and accumulates the procedures and tools you keep re-deriving.
 
-It is built for codebases you come back to. On a script you write once, it will cost you more
-than it returns — see [Who this is not for](#who-this-is-not-for).
+## Read this before installing
+
+**chamnan is for one main folder you work in over and over, doing work that repeats.**
+
+Everything it does is amortised. It spends tokens once — building the index, writing down a
+procedure, keeping a tool — and collects on every session after that. Both halves of the sentence
+above are load-bearing, and they are load-bearing for different reasons:
+
+| | why it matters |
+|---|---|
+| **One main folder** | The index is built once and read at the start of every session in that repo. Across a hundred sessions it is close to free. On a repo you open once, you paid the whole cost and collected nothing. |
+| **Work that repeats** | The procedures and tools fill up from things you hit more than once. If nothing recurs, they stay empty and there is nothing to collect. |
+
+If that describes your day, this was built for you. **If it does not, it will cost you more than
+it returns, and you should not install it** — that is not modesty, it is arithmetic. There is no
+setting that makes a one-off repo pay off.
+
+A five-second test — if you answer no to either, close this page:
+
+- Will you still be working in this same folder next month?
+- Have you explained the same thing about this codebase to Claude more than twice?
 
 ---
 
@@ -110,17 +129,31 @@ missing. That is not a footnote; it is the difference between this working and n
 
 ## Who this is for
 
-- Developers on a codebase they will be in for months
-- Testers re-running the same checks
-- Infra and IT work with runbooks and repeated procedures
-- Teams where a new session has to pick up where the last one stopped
+The same folder, most days, and the same shapes of work coming round again. Concretely:
+
+- **A developer on one codebase for months.** The repo is large enough that you cannot hold it in
+  your head, so every session starts with the agent re-learning where things are.
+- **A tester re-running the same checks.** The steps are the same each time and they live in your
+  head, in a note, or in a script you rewrite.
+- **Infra, ops and IT.** Runbooks, deploys, the same six procedures, and a deployment tree the
+  agent has to re-read before it can say anything useful about it.
+- **A team handing sessions to each other.** What the last session worked out has to survive into
+  the next one, and today it does not.
+
+The thread is repetition in one place. That is the only thing chamnan converts into savings.
 
 ## Who this is not for
 
-- **One-off scripts and throwaway prototypes.** You pay the setup and never collect. Genuinely
-  net-negative; use something else.
+Stated plainly, because installing this on the wrong repo makes your bill worse, not better:
+
+- **You move between many repos and rarely return.** The index is paid for on the session that
+  builds it and collected on the sessions after. If there are no sessions after, you only paid.
+- **One-off scripts and throwaway prototypes.** Same arithmetic, faster. Genuinely net-negative.
+- **Every task is different.** Procedures and tools accumulate from recurrence. Nothing recurs,
+  nothing accumulates, and two of the six parts never do anything.
 - **Writing, chat, fiction, anything without code.** There is no structure here for it to index.
-- **Repos with no comments and no intention of adding any.** The index degrades to filenames.
+- **Repos with no comments and no intention of adding any.** The index degrades to filenames,
+  which the agent could already see.
 - **Anyone wanting a token discount without changing how they work.** The saving comes from the
   agent reading an index instead of a tree. If it goes back to reading the tree, nothing is saved.
 
