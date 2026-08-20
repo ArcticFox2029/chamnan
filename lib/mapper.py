@@ -18,7 +18,10 @@ Output has the same two-part shape as the original, and the shape is the point:
 On this repo the index is 10% of the file, so the habit "read the index, grep the detail" is what
 actually saves the context, not the file existing.
 
-  python3 map_project.py <repo> [--out PATH] [--measure]
+  python3 lib/mapper.py <repo> [--out PATH] [--measure]
+
+That is this module's own entry point, and its flags are not the plugin command's:
+chamnan-map takes --preview and --install-git-hook, and does not accept --measure.
 
 Never imports or executes the code it reads.
 """
