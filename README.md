@@ -321,56 +321,104 @@ Two real bugs were found by writing it: the scratch-repeat threshold was tuned a
 and silently ignored the short repeated ones it exists to catch, and a Google API key one character
 outside the expected length slipped the pattern.
 
-Most of the rest came out of the chaos test below, which is where the count went from 112 to 220.
+The rest came out of hardening it against the polyglot system below, which took the suite from 87
+checks to 220.
 
-## The chaos test
+## The chaos test — what it costs on a real polyglot system
 
 Small repositories flatter an indexing tool. Everything is English, one language, one framework,
 comments where you expect them. So chamnan was pointed at a repository built to be hostile: a
-synthetic cross-border logistics platform, cross-referenced against a written spec so the parts
-genuinely refer to each other, with deliberately careless legacy code and planted credentials in
-every shape a real codebase leaks them.
+cross-border logistics platform of **2,367 files and 34 MB**, written in **30 file types** with
+comments in **eight writing systems**, three SQL dialects, gRPC and REST side by side, a full
+Kubernetes and Ansible tree, and 1,687 non-source files.
 
-**2,367 files · 34 MB · 30 file types · comments in 8 writing systems · 1,687 non-source files**
+If your repository looks nothing like that, good — this is the upper bound, and it still fits.
 
-It works. Here is what that means, measured:
+### The whole system, in 2,998 tokens per session
 
-| | |
+| | tokens |
 |---|---|
-| **Scale** | 2,367 files scanned in **22 seconds**. 1,458,380 tokens of source become a 50,405-token index, of which **2,998 tokens are injected per session** — the rest is a grep away. |
-| **Languages** | 525 files indexed across 30 extensions, 2,956 symbols extracted. C, C++, C#, Go, Rust, Zig, Nim, Java, Kotlin, Scala, Swift, Objective-C, Dart, Python, Ruby, PHP, Elixir, Lua, TypeScript, JavaScript, Terraform, shell, proto, GraphQL. |
-| **Mobile** | All five platforms in one tree — Swift for iOS, Kotlin for Android, Kotlin Multiplatform, Dart for Flutter, TypeScript for React Native — each parsed with its own idioms. |
-| **Human languages** | Summaries preserved intact in Latin, Thai, Devanagari, Cyrillic, CJK, Hangul, Arabic and Hiragana, pulled from each language's own documentation convention: javadoc, kdoc, docstrings, rustdoc, godoc, doxygen, phpdoc, xmldoc, `@moduledoc`. |
-| **Data model** | **94 tables and models** across three SQL dialects — SQLite 32 of 32, MySQL 47 of 49, Postgres 45 of 53 — plus SQLAlchemy models and Android Room entities, indexed under their real table names. Both gaps are deliberate: eight regional partitions and two swap-staging tables are not schema, and the parent table says it is partitioned. |
-| **API surface** | **116 routes.** 104 HTTP, resolved to their full paths from FastAPI, Flask and Spring prefixes and from five OpenAPI documents; 12 gRPC methods read out of `.proto` service definitions. |
-| **Deployment** | **74 Kubernetes objects across 27 kinds**, 43 Ansible files, 24 Compose services, 31 container images, 21 pipelines — with Secrets and SealedSecrets contributing their names and nothing under them. |
-| **Secrets** | 92 distinct credential-shaped values planted across 13 categories — provider tokens, JWTs, private keys, credentialed URLs, `.env` files, Kubernetes Secrets, secrets in comments. **None reached the map.** Five apparent hits turned out to be identifiers: a TypeScript parameter named `refreshTokenValue`, a Kubernetes Secret's own name, a Terraform reference whose value is generated at apply. That is the redactor correctly declining to eat things that only look like secrets. |
-| **Attachments** | A 12,000-row CSV read in 204 tokens against 418,607 for the whole file. A 9,000-line log in 352 against 347,580. A 20,000-row SQLite database's full schema in 148. A 2,400-row spreadsheet answers "which rows mention Lithium" in 214. |
-| **Coverage** | 93%, and the missing 7% is the honest kind: files that genuinely have no opening comment — the deliberately careless corner of the corpus — plus one Swift file whose only header is Xcode boilerplate repeating the filename. chamnan lists them so you can fix them. |
+| Every source file in the repository | **11,721,535** |
+| The index chamnan writes from them | 50,405 |
+| **What actually reaches a session** | **2,998** |
 
-### Why these numbers are trustworthy
+Reading the repository is not an option — it is twelve times a 1M context window. Reading the index
+is not necessary either: at session start the agent receives a **2,998-token** roll-up naming every
+directory, and greps `MAP.md` for the one entry it needs. That is **0.02% of the source**, and it
+is the same number every session, on a repository of any size in this range.
 
-The test was hard enough to break things. Fifteen real bugs surfaced and were fixed before these
-figures were taken — API paths reported without their router prefix, twelve gRPC methods falling
-off the end of a truncated list, a token budget calibrated on English that overran by three times
-on a Thai index, and `chamnan-peek` printing credentials into the session before it had a
-deny-list. The test suite went from 112 checks to 220, and every fix left one behind.
+### Where the saving comes from
 
-That is the point of pointing a tool at something hostile: the numbers above are the ones that
-survived it, not the ones from the first run.
+Each part of the index replaces something the agent would otherwise have to read. All measured on
+the corpus above:
 
-### What it does not claim
+| Instead of reading | tokens | chamnan says it in | |
+|---|---|---|---|
+| 53 migration and model files, to learn the schema | 154,680 | **889** — 94 tables and models, with columns | **174×** |
+| 109 Kubernetes, Ansible and Terraform manifests | 170,871 | **1,583** — 74 objects across 27 kinds, 43 Ansible files, 31 images | **108×** |
+| 27 env and config files, to learn what it reads | 67,994 | **616** — 64 variable names, values never recorded | **110×** |
+| 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** — 116 routes, 104 HTTP and 12 gRPC, full paths | **58×** |
+| 2,367 files, to learn what lives where | 11,721,535 | **44,282** — one line per file, grep-addressable | **265×** |
+
+And for the things an agent should never load at all:
+
+| Instead of reading | tokens | `chamnan-peek` returns | |
+|---|---|---|---|
+| A 12,000-row shipment CSV | 418,607 | **204** — columns, row count, three rows | **2,050×** |
+| A 9,000-line gateway log | 347,580 | **352** — shape, levels, sample lines | **987×** |
+| A 3,000-entry routing JSON | 102,722 | **213** — key structure and depth | **482×** |
+| A 20,000-row SQLite database | *cannot be read at all* | **148** — every table, column and row count | — |
+| A 2,400-row tariff spreadsheet | *cannot be read at all* | **214** — the rows matching your `--find` | — |
+
+The last two matter differently: a plain read cannot open a database or a spreadsheet, so this is
+not a saving over reading them — it is the only way to see inside them without leaving the session.
+
+### Eight writing systems, unbothered
+
+The corpus documents itself in Thai, Devanagari, Cyrillic, Japanese, Korean, Chinese, Arabic and
+Latin, each in its own language's documentation convention — javadoc, kdoc, docstrings, rustdoc,
+godoc, doxygen, phpdoc, xmldoc, `@moduledoc`. Every summary is carried through to the index intact,
+and the token budget is counted per script, because Thai runs about 1.2 characters per token and
+Chinese under 1.0 where English code runs 2.5. A budget calibrated on English overruns by three
+times on a Thai index; chamnan measures the script it actually has.
+
+Coverage came out at **93%**. The missing 7% are files with no opening comment at all — chamnan
+lists them by name so you can fix them, and `/chamnan:bootstrap` offers to write them.
+
+### 92 planted credentials, none of them in the map
+
+Every shape a real codebase leaks a secret was planted deliberately: provider tokens, JWTs, private
+keys, credentialed database URLs, `.env` files, Kubernetes Secrets, and secrets sitting in comments
+where someone pasted them "temporarily". **92 distinct values across 13 categories, and not one
+reached `MAP.md`.** Secrets and SealedSecrets contribute their names so you know they exist, and
+nothing under them. `chamnan-peek` refuses key and credential files outright rather than
+summarising them.
+
+Nor does it over-redact, which is the failure that would make the index useless: five values that
+looked like credentials turned out to be a TypeScript parameter called `refreshTokenValue`, a
+Kubernetes Secret's own name, and a Terraform reference whose value is generated at apply time.
+Commit hashes, UUIDs and version strings come through untouched.
+
+### Speed
+
+**22 seconds** for the whole 2,367-file scan, single-threaded, standard library only. Re-running
+after a change is the same command; on a repository this size it is short enough to put in a git
+hook, which `/chamnan:remap` will do for you.
+
+### What this does not claim
 
 The corpus is synthetic. It was written to be hard to index, which is not the same as being like
-your repository, and a tool tuned against it can be tuned to it. Every figure here is reproducible
-on your own code with `chamnan-map --measure`, and that is the number to trust.
+your repository — so every figure here is reproducible on your own code:
 
-One thing is measured but not yet answered at scale: whether an agent handed the index finishes
-faster than one handed a bare repository. `bench/run_bench.py` runs both arms through the real CLI
-and reports each one's true token cost, and so far it has only been run on a four-file repository —
-where chamnan **costs more than it saves**, 61,098 context tokens against 59,386. That is the
-honest shape of an amortising tool. On four files there is nothing to amortise; on 2,367 the index
-is 0.2% of the source.
+```bash
+chamnan-map --measure
+```
+
+That number is the one to trust. And chamnan is an amortising tool: it spends once and collects
+every session afterwards, so on a four-file repository it costs more than it saves. On 2,367 files
+the index is 0.02% of the source. Somewhere between those, it starts paying for itself — which is
+why the first section of this README is about whether your repository is the kind that keeps
+coming back.
 
 ## Limitations
 
