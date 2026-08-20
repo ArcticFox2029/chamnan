@@ -32,6 +32,11 @@ MAX_COLUMNS_SHOWN = 25
 # are eight rows of noise and the parent already says everything -- but it was accidental, and an
 # innocent-looking relaxation of this pattern would silently undo it. SQL_PARTITION exists to
 # count them so the parent can say it is partitioned.
+#
+# The same "(" rule also skips `CREATE TABLE x LIKE y`, which is how MySQL fakes a materialized
+# view: a staging copy is built inside a stored procedure, filled, and renamed over the real table.
+# Those __new tables are not schema anybody needs to know about, and the table they shadow is
+# indexed under its own name.
 SQL_TABLE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?(\w+)[`\"\]]?\s*\(",
     re.I)

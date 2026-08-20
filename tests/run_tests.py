@@ -709,6 +709,19 @@ check("the parent says it is partitioned and how many",
 check("a SQL comment above the table becomes its summary",
       "sensor sample" in found["telemetry_readings"]["summary"])
 
+# MySQL fakes a materialized view by building a staging copy inside a procedure and renaming it
+# over the real one. The staging table is not schema; the table it shadows is indexed already.
+(sc / "0010_mysql_analytics.sql").write_text(
+    "CREATE TABLE analytics.mv_lane_performance_daily (\n  lane TEXT,\n  on_time REAL\n);\n"
+    "CREATE PROCEDURE analytics.refresh_lane_performance()\nBEGIN\n"
+    "    DROP TABLE IF EXISTS analytics.mv_lane_performance_daily__new;\n"
+    "    CREATE TABLE analytics.mv_lane_performance_daily__new\n"
+    "        LIKE analytics.mv_lane_performance_daily;\nEND\n", encoding="utf-8")
+my = {x["name"].lower() for x in schema.scan(sc, sfiles)}
+check("the real MySQL rollup table is indexed", "mv_lane_performance_daily" in my)
+check("A SWAP STAGING TABLE IS NOT INDEXED AS SCHEMA",
+      "mv_lane_performance_daily__new" not in my)
+
 check("A ROOM ENTITY IS INDEXED BY ITS TABLE NAME, NOT ITS CLASS",
       "shipments" in found and "shipmententity" not in found)
 check("a JPA @Table name wins over the class name",

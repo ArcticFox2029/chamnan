@@ -308,7 +308,7 @@ guessing. A malformed file reports what went wrong instead of raising.
 python3 tests/run_tests.py
 ```
 
-87 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
+220 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.
@@ -320,6 +320,68 @@ numbers and credential-free URLs come through untouched.
 Two real bugs were found by writing it: the scratch-repeat threshold was tuned against long scripts
 and silently ignored the short repeated ones it exists to catch, and a Google API key one character
 outside the expected length slipped the pattern.
+
+Most of the rest were found by the chaos test below, and each one that was fixed left a check
+behind.
+
+## The chaos test
+
+Small repositories flatter an indexing tool. Everything is English, one language, one framework,
+comments where you expect them. So chamnan was pointed at a repository built to be hostile:
+**2,367 files, 34 MB, 30 file types, comments in eight scripts**, deliberately careless legacy
+code, planted credentials in every shape a real codebase leaks them, and 1,687 non-source files.
+It is a synthetic platform — a cross-border logistics system, cross-referenced against a written
+spec so the parts genuinely refer to each other.
+
+**It found fifteen real bugs.** That is the result worth reporting. A stress test whose only
+finding is "everything passed" mostly proves the test was easy.
+
+### What it found
+
+| | |
+|---|---|
+| **peek printed credentials into the session** | Pointed at a credentials file it returned the AWS key, the Stripe key, the Slack token and the database password verbatim, and it opened `.key` private keys. The map had been scrubbed since redaction existed; the command that opens an arbitrary path on request never was. |
+| **The token budget was calibrated on English** | A single characters-per-token constant decided how much index reached each session. Measured against the API: English code is 2.47 chars/token, Thai 1.19, Chinese 0.96. A 4,523-character Thai index scored 1,256 tokens and cost 3,153 — injected whole against a budget of 3,000. |
+| **The budget failed open** | When the roll-up could not group a map's rows it returned them unchanged, and the caller injected an over-budget index believing it had been folded. |
+| **API paths were wrong, not just short** | `GET /rates` for an endpoint at `/v1/fx/rates`. Router prefixes were never resolved. A missing path sends the agent to grep; a wrong one gets called and 404s. |
+| **A whole protocol vanished** | Twelve gRPC methods fell off the end of one flat alphabetical list cut at sixty REST paths. The index described a two-surface platform as though it had one. |
+| **Specs were found by filename** | `contracts/openapi/routing-service.yaml` is the normal layout; five OpenAPI documents contributed nothing. |
+| **Deployment manifests were labelled payload** | The Ansible tree, `go.mod` and the `.csproj` files sat under a heading reading *"do not read these to understand the system"*. |
+| **`"ci"` was matched as a substring** | It fired on `pricing`, `Specific`, `civic` and `civil_registry`, and filed an Ansible inventory as a CI pipeline. |
+| **Doc-tool markup reached the index** | `@file of_crc.h @brief`, `<summary>`, `{@code x}` — 56 of 530 rows opened with punctuation meant for a parser. |
+| **A loop was listed as a function** | `for(var i = 0; i < 16; i++)` and `when(status)` among 57 of 3,013 extracted symbols. |
+| **Views, Room and JPA entities were invisible** | `CREATE MATERIALIZED VIEW` had no pattern; Room's annotation contains `Index(...)`, which the entity regex stopped at; Kotlin writes `data class`. |
+| **Every FastAPI route was counted twice** | Two patterns matched the same decorator, so the index carried the right path and a wrong one for the same endpoint. |
+
+Plus three smaller ones: `.env` values were unquoted and slipped the redactor, `credentials.ini`
+was on the deny-list only under its stem-less name, and the `--measure` report printed in Thai.
+
+### What held up
+
+| | |
+|---|---|
+| Scale | 2,367 files scanned in **22 s**; 1,458,380 tokens of source → a 50,405-token index → **2,998 tokens injected per session** |
+| Languages | 525 files indexed across 30 extensions; 2,956 symbols extracted |
+| Human languages | Summaries preserved in Latin, Thai, Devanagari, Cyrillic, CJK, Hangul, Arabic and Hiragana — pulled from each language's own doc convention |
+| Schema | **94 tables and models** across three SQL dialects — SQLite 32/32, MySQL 47/49, Postgres 45/53 — plus SQLAlchemy and Room. Every gap is deliberate and tested: eight regional partitions and two swap-staging tables are not schema |
+| API | 116 routes: 104 HTTP from decorators and five OpenAPI documents, 12 gRPC from `.proto` |
+| Deployment | 74 Kubernetes objects across 27 kinds, 43 Ansible files, 24 Compose services, 31 images, 21 pipelines — with Secrets and SealedSecrets contributing their names and nothing under them |
+| **Secrets** | 92 distinct credential-shaped values planted across 13 categories. **None reached the map.** Five apparent hits were identifiers — a TypeScript parameter, a Kubernetes Secret's name, a Terraform reference whose value is generated at apply — which is the redactor correctly declining to eat things that merely look like secrets |
+| Attachments | A 12,000-row CSV in 204 tokens against 418,607 for the file; a 9,000-line log in 352 against 347,580; a 20,000-row SQLite schema in 148 |
+| Coverage, honestly | 93%. The missing 7% are files that genuinely have no opening comment — the deliberately careless corner — and one Swift file whose only header is Xcode's boilerplate repeating the filename |
+
+### What it did not settle
+
+The corpus is synthetic. It was written to be hard to index, which is not the same as being what
+your repository is like, and a tool tuned against it can be tuned to it. Every number above is
+reproducible on your own code with `chamnan-map --measure`, and that is the number to trust.
+
+Two things remain unmeasured rather than proven: whether an agent given the index actually answers
+faster than one given a bare repository, and by how much. `bench/run_bench.py` runs both arms
+through the real CLI and reports the token cost of each, but the comparison has only been run on a
+four-file repository so far — where chamnan **costs more** than it saves, 59,386 context tokens
+against 61,098. That is the honest shape of the thing: it is an amortising tool, and on something
+small there is nothing to amortise.
 
 ## Limitations
 
