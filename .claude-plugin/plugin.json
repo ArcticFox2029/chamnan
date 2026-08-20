@@ -1,7 +1,7 @@
 {
   "name": "chamnan",
   "description": "Makes a codebase know itself: an architecture index the agent reads instead of scanning files, work state that survives compaction, and a workspace that accumulates the procedures and tools you keep re-deriving. Built for long-lived repos you revisit, not one-off scripts.",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "author": {
     "name": "ArcticFox2029"
   },

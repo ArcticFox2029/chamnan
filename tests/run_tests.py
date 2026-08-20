@@ -766,6 +766,35 @@ check("the count says how many of each", "gRPC" in rendered.splitlines()[2])
 
 shutil.rmtree(ct, ignore_errors=True)
 
+# ---------------------------------------------------------------- control flow is not a function
+# `for (var i = 0; i < 16; i++) {` fits the "name(args) {" shape the Dart rule looks for, and
+# Kotlin's `= when(status) {` backtracks into the Java rule. 57 of 3,013 extracted symbols were
+# statements listed as functions of the file.
+_d, dfuncs, _c, _k = mapper.extract_regex(
+    "String makeId(String prefix) {\n"
+    "  for (var i = 0; i < 16; i++) {\n    buf.write(alphabet[rand.nextInt(32)]);\n  }\n"
+    "  if (prefix.isEmpty) {\n    throw ArgumentError('empty');\n  }\n"
+    "  return buf.toString();\n}\n", "dart")
+dnames = {f.split("(")[0] for f, _ in dfuncs}
+check("A DART LOOP IS NOT A FUNCTION", "for" not in dnames)
+check("a dart conditional is not a function", "if" not in dnames)
+check("the real dart function is still found", "makeId" in dnames)
+
+_d, kfuncs, _c, _k = mapper.extract_regex(
+    "public String label(Status status) {\n    return when(status) {\n"
+    "        Status.OPEN -> \"open\";\n    };\n}\n", "java")
+knames = {f.split("(")[0] for f, _ in kfuncs}
+check("A KOTLIN WHEN IS NOT A FUNCTION", "when" not in knames)
+check("the real method is still found", "label" in knames)
+
+# Elixir genuinely allows ? and ! in names, and those are not typos to be cleaned up.
+_d, efuncs, _c, _k = mapper.extract_regex(
+    "defmodule X do\n  def permanent?(reason) do\n    true\n  end\n"
+    "  def verify_coverage!(map) do\n    :ok\n  end\nend\n", "ex")
+enames = {f.split("(")[0] for f, _ in efuncs}
+check("an Elixir predicate keeps its question mark", "permanent?" in enames)
+check("an Elixir bang function keeps its bang", "verify_coverage!" in enames)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

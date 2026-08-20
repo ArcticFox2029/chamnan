@@ -353,6 +353,20 @@ EXT_LANG = {
     ".proto": "proto", ".graphql": "graphql", ".gql": "graphql",
 }
 # Leading comment markers stripped when harvesting a file's opening comment as its summary.
+# Control flow reads exactly like a call, and the per-language rules cannot tell them apart: Dart's
+# `for (var i = 0; i < 16; i++) {` fits "name(args) {" perfectly, and Kotlin's `= when(status) {`
+# backtracks into the Java rule. 57 of 3,013 extracted symbols were statements like these, listed
+# in the index as functions of the file. One shared deny-list is cheaper and safer than tightening
+# a dozen regexes, and nothing here is ever a real function name in any language chamnan indexes.
+NOT_A_FUNCTION = {
+    "if", "else", "elif", "for", "foreach", "while", "do", "switch", "when", "case", "match",
+    "try", "catch", "except", "finally", "with", "using", "guard", "defer", "return", "yield",
+    "throw", "throws", "await", "async", "lock", "synchronized", "unless", "until", "loop",
+    "select", "go", "spawn", "assert", "sizeof", "typeof", "instanceof", "new", "delete",
+    "print", "printf", "in", "is", "as", "and", "or", "not",
+}
+
+
 def extract_regex(source, lang):
     funcs, classes, consts = [], [], []
     rules = REGEX_RULES.get(lang, [])
@@ -361,6 +375,8 @@ def extract_regex(source, lang):
             groups = [g for g in m.groups() if g is not None]
             name = groups[0]
             if kind == "func":
+                if name.lower() in NOT_A_FUNCTION:
+                    continue
                 args = groups[1] if len(groups) > 1 else ""
                 sig = f"{name}({_clip(args, 46)})"
                 if sig not in [f for f, _ in funcs]:
