@@ -13,9 +13,11 @@ built while you work with it**, so an agent stops rediscovering both. It builds 
 reads instead of scanning files, keeps the work state and the decisions that would otherwise be
 lost between sessions, and accumulates the procedures and tools you keep re-deriving.
 
-> **Using Kiro?** This is the Claude Code plugin. The Kiro Power is a separate repository —
-> **[ArcticFox2029/chamnan-kiro](https://github.com/ArcticFox2029/chamnan-kiro)**. Same scanner,
-> same artifacts; the context reaches a session through Kiro's steering files instead of hooks.
+> **Using Kiro instead of Claude Code?** There is a Kiro Power, in its own repository:
+> **[→ chamnan for Kiro](https://github.com/ArcticFox2029/chamnan-kiro)**
+>
+> Same scanner, same artifacts. The context reaches a session through Kiro's steering files rather
+> than hooks, and the bulk-read notice arrives at the next `catch-up` rather than before the read.
 
 ## Read this before installing
 
@@ -781,7 +783,7 @@ chamnan-map
 ```
 
 The corpus itself is published, so none of it has to be taken on trust:
-**[ArcticFox2029/chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)**. Steps, exact
+**[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)**. Steps, exact
 output and the two things to get right first are under **Try it on the test corpus** below.
 
 chamnan is an amortising tool: it spends once and collects on every session afterwards. On a
@@ -794,7 +796,7 @@ this README.
 Every corpus figure above — in **Evidence**, and every token count in **The chaos test** —
 came from one synthetic corpus, and that corpus is published, so none of it has to be taken on
 trust:
-**[ArcticFox2029/chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — 800 files,
+**[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — 800 files,
 72 file types, comments in eight writing systems, three SQL dialects, and one corner of
 deliberately careless code with no comments at all.
 
@@ -1000,7 +1002,7 @@ in 1.3 — which took the suite from 87 checks to 378.
 
 ## More documentation
 
-- **[chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic corpus every figure in **Evidence** was measured on, so you can reproduce them rather than take them on trust. See **Try it on the test corpus** above.
+- **[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic codebase the Evidence and chaos-test figures were measured on: 800 files, 72 file types, comments in eight writing systems. Download it and reproduce them rather than take them on trust; steps are under [Try it on the test corpus](#try-it-on-the-test-corpus) above.
 
 | | |
 |---|---|
