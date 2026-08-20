@@ -54,8 +54,28 @@ PARSE_WARNINGS = []
 DECORATION = re.compile(r"(?:[=*#_~-]\s*){4,}")
 
 
+# Doc-tool markers that carry no information once the summary is in the index. `@file of_crc.h`
+# restates the filename the row already shows, and `@brief` is punctuation for a parser, not words
+# for a reader -- yet on a firmware tree in doxygen house style those two ate the front of 69 rows
+# out of 430. `@param` and friends are dropped with whatever follows them because the index has a
+# one-line budget and an argument list is not the file's job. `@ref X` keeps X, which is a real
+# cross-reference to another file.
+DOC_TAG_HEAD = re.compile(r"^\s*[\\@]file\s+\S+\s*", re.I)
+DOC_TAG_MARKER = re.compile(r"[\\@](?:brief|short|summary|ref|see|link|endlink)\b\s*", re.I)
+DOC_TAG_TAIL = re.compile(
+    r"[\\@](?:param(?:\[[^\]]*\])?|returns?|retval|throws?|exception|author|date|version|since|"
+    r"copyright|note|warning|deprecated|todo|inheritdoc|tparam)\b.*$", re.I | re.S)
+
+
+def _strip_doc_tags(text):
+    text = DOC_TAG_HEAD.sub("", text)
+    text = DOC_TAG_TAIL.sub("", text)
+    return DOC_TAG_MARKER.sub("", text)
+
+
 def _clip(text, limit=110):
     text = DECORATION.sub(" ", text or "")
+    text = _strip_doc_tags(text)
     text = " ".join(text.split())
     return text[: limit - 1] + "…" if len(text) > limit else text
 

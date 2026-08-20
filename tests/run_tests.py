@@ -576,6 +576,27 @@ check("genuine payload is still reported", "attachments" in stored)
 
 shutil.rmtree(dep, ignore_errors=True)
 
+# ---------------------------------------------------------------- doc-tool markers
+# On a firmware tree written in doxygen house style, 69 of 430 index rows opened with
+# "@file of_crc.h @brief" -- a restatement of the filename the row already shows, followed by a
+# marker meant for a parser. Both are pure cost in a one-line summary.
+check("@file and its argument are dropped",
+      mapper._clip("@file of_crc.h @brief declares three CRC variants") == "declares three CRC variants")
+check("a backslash-style marker is dropped too",
+      mapper._clip("\\brief Validates a container code.") == "Validates a container code.")
+check("@param and everything after it is dropped",
+      mapper._clip("Validates a code. @param code the BIC code @return true") == "Validates a code.")
+check("@ref keeps the thing it refers to",
+      "alert_rules.h" in mapper._clip("@brief @ref alert_rules.h implementation"))
+check("markers are stripped whatever language follows",
+      mapper._clip("@brief Prüft die Konfiguration.") == "Prüft die Konfiguration.")
+check("AN EMAIL ADDRESS IS NOT A DOC TAG",
+      "a@b.com" in mapper._clip("Contact a@b.com about this module"))
+check("A PYTHON DECORATOR IS NOT A DOC TAG",
+      "@staticmethod" in mapper._clip("Explains why @staticmethod is used here"))
+check("a summary with no tags is untouched",
+      mapper._clip("Plain summary of the module.") == "Plain summary of the module.")
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
