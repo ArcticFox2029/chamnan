@@ -776,6 +776,19 @@ trust:
 chamnan-map
 ```
 
+The corpus itself is published, so the figures above are checkable rather than merely stated:
+**[ArcticFox2029/chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)**. Clone it, run
+`plant_secrets.py` to fill in the planted credentials, and point `chamnan-map` at it.
+
+Read one number carefully when you do. The published corpus omits the 1,192 binary attachments and
+five bulk seed-data SQL files — 20 MB that git stores badly and that test nothing the schema files
+do not. Those are most of the 11,560,484 tokens, so the ratio you will measure is **26×, not 223×**.
+The index barely moves (51,894 against 51,937), because attachments were never described in it —
+they were listed as stored material, which is the entire point of that section. The 223× figure is
+the honest one for a repository that carries its payload beside its source; 26× is the honest one
+for source alone. Both are the same tool on the same corpus, and the difference is what you keep in
+your repository, not what chamnan does with it.
+
 chamnan is an amortising tool: it spends once and collects on every session afterwards. On a
 four-file repository it costs more than it saves. On 2,365 files the index is 0.4% of the source.
 Which side of that your repository sits on is the whole question, and it is the first section of
