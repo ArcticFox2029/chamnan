@@ -13,6 +13,10 @@ built while you work with it**, so an agent stops rediscovering both. It builds 
 reads instead of scanning files, keeps the work state and the decisions that would otherwise be
 lost between sessions, and accumulates the procedures and tools you keep re-deriving.
 
+> **Using Kiro?** This is the Claude Code plugin. The Kiro Power is a separate repository —
+> **[ArcticFox2029/chamnan-kiro](https://github.com/ArcticFox2029/chamnan-kiro)**. Same scanner,
+> same artifacts; the context reaches a session through Kiro's steering files instead of hooks.
+
 ## Read this before installing
 
 **chamnan is for one main folder you work in over and over, doing work that repeats.**
@@ -776,23 +780,84 @@ trust:
 chamnan-map
 ```
 
-The corpus itself is published, so the figures above are checkable rather than merely stated:
-**[ArcticFox2029/chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)**. Clone it, run
-`plant_secrets.py` to fill in the planted credentials, and point `chamnan-map` at it.
-
-Read one number carefully when you do. The published corpus omits the 1,192 binary attachments and
-five bulk seed-data SQL files — 20 MB that git stores badly and that test nothing the schema files
-do not. Those are most of the 11,560,484 tokens, so the ratio you will measure is **26×, not 223×**.
-The index barely moves (51,894 against 51,937), because attachments were never described in it —
-they were listed as stored material, which is the entire point of that section. The 223× figure is
-the honest one for a repository that carries its payload beside its source; 26× is the honest one
-for source alone. Both are the same tool on the same corpus, and the difference is what you keep in
-your repository, not what chamnan does with it.
+The corpus itself is published, so none of it has to be taken on trust:
+**[ArcticFox2029/chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)**. Steps, exact
+output and the two things to get right first are under **Try it on the test corpus** below.
 
 chamnan is an amortising tool: it spends once and collects on every session afterwards. On a
 four-file repository it costs more than it saves. On 2,365 files the index is 0.4% of the source.
 Which side of that your repository sits on is the whole question, and it is the first section of
 this README.
+
+## Try it on the test corpus
+
+Every corpus figure above — in **Evidence**, and every token count in **The chaos test** —
+came from one synthetic corpus, and that corpus is published, so none of it has to be taken on
+trust:
+**[ArcticFox2029/chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — 800 files,
+72 file types, comments in eight writing systems, three SQL dialects, and one corner of
+deliberately careless code with no comments at all.
+
+Roughly two minutes, and it touches nothing you own:
+
+```bash
+# 1. the corpus and this repository, side by side — see the note below about "side by side"
+git clone https://github.com/ArcticFox2029/chamnan-corpus.git
+git clone https://github.com/ArcticFox2029/chamnan.git
+
+# 2. fill in the planted credentials. They ship as __PLANTED_…__ placeholders, because
+#    GitHub's secret scanning cannot tell an invented AKIA string from a real one.
+cd chamnan-corpus
+python3 plant_secrets.py
+
+# 3. index it
+../chamnan/bin/chamnan-map
+```
+
+```
+529 source file(s), 1,373,242 tokens of code
+Quick Index    53,652 tokens  (3.9% of the source)
+Full Detail   132,999 tokens  (grep this, never read it whole)
+described    [###################.] 517/529 files (98%)
+
+Over the 3,000-token session budget, so session start will roll this up by
+directory: ~2,970 tokens injected per session instead of 53,652
+```
+
+Then the test that matters more than the ratio — whether any of the credentials you just planted
+came out the other end:
+
+```bash
+grep -cE 'AKIA[A-Z0-9]{16}|sk_live_|ghp_|glpat-|SG\.|xoxb-|sk-ant-|BEGIN [A-Z ]*PRIVATE KEY' .chamnan/MAP.md
+```
+
+`0`. Eleven credential shapes, plus the generated database password read straight out of the DSN it
+was planted in.
+
+### Two things to get right before you run it
+
+**Clone the corpus beside your own repositories, never inside one.** `find_root` walks up from the
+working directory looking for `.chamnan/`, then for a `.git`. Nested inside a repository of yours,
+that walk finds *yours* — so the scan measures your code, writes `.chamnan/` into your tree, and
+reports a number that has nothing to do with the corpus. The corpus clone brings its own `.git`,
+which is what keeps the boundary where you expect it.
+
+**Run `python3 plant_secrets.py --revert` before committing anything**, if you keep the corpus
+around in a repository of your own. A planted corpus is rejected by GitHub push protection, and an
+`AKIA` string is forwarded to AWS by partner scanning within minutes — for a fixture that
+corresponds to no account anywhere. `--check` says which state a working copy is in.
+
+### Read one number carefully
+
+The published corpus omits the 1,192 binary attachments and five bulk seed-data SQL files — 20 MB
+that git stores badly and that test nothing the schema files do not. Those are most of the
+11,560,484 tokens quoted above, so the ratio you will measure is **26×, not 223×**.
+
+The index barely moves (53,652 against 51,937), because attachments were never *described* in it —
+they were listed as stored material, which is the entire point of that section. 223× is the honest
+figure for a repository that carries its payload beside its source; 26× is the honest figure for
+source alone. Same tool, same corpus; the difference is what you keep in your repository, not what
+chamnan does with it.
 
 ## Troubleshooting
 
@@ -934,6 +999,8 @@ The rest came out of hardening it against the polyglot system below, and from th
 in 1.3 — which took the suite from 87 checks to 378.
 
 ## More documentation
+
+- **[chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic corpus every figure in **Evidence** was measured on, so you can reproduce them rather than take them on trust. See **Try it on the test corpus** above.
 
 | | |
 |---|---|
