@@ -726,6 +726,16 @@ outside the expected length slipped the pattern.
 The rest came out of hardening it against the polyglot system below, which took the suite from 87
 checks to 220.
 
+## More documentation
+
+| | |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | How the parts fit together — what runs locally, what is generated, what a session receives |
+| [docs/data-flow.md](docs/data-flow.md) | Where your code goes when chamnan runs, and where it does not |
+| [docs/verification.md](docs/verification.md) | What to run before tagging a release, and what a good result looks like |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, adding language support, what a pull request is expected to include |
+
+
 ## License
 
 MIT

@@ -1,0 +1,103 @@
+# Data flow
+
+Where your code goes when chamnan runs, and where it does not.
+
+```mermaid
+flowchart TD
+    SRC["Source repository<br/><i>on your machine</i>"]
+
+    PROC["chamnan local processing<br/><code>lib/mapper.py</code> · <code>lib/schema.py</code> ·<br/><code>lib/catalogs.py</code> · <code>lib/deploy.py</code> · <code>lib/assets.py</code>"]
+    RED["<b>lib/redact.py</b><br/>every output passes here"]
+
+    subgraph OUT[".chamnan/ — on disk, in your repository"]
+        MAP["<b>MAP.md</b><br/>index"]
+        META["<b>Metadata</b><br/>table names, route paths,<br/>env var <i>names</i>, object kinds"]
+        LOCAL["<b>Local state</b><br/>STATE.md · config.json ·<br/>skills/ · tools/ · logs/"]
+    end
+
+    NET(["Network"])
+
+    SRC -- "read only" --> PROC
+    PROC --> RED
+    RED --> MAP
+    RED --> META
+    RED --> LOCAL
+
+    PROC -. "no path exists" .-x NET
+    OUT -. "nothing is sent" .-x NET
+```
+
+Every arrow that exists stays inside your machine. The two crossed arrows are the point of the
+diagram: chamnan has no network code, so there is no path from the scanner or from `.chamnan/` to
+anywhere off-disk.
+
+## Processing happens locally
+
+The scanner is Python running on your machine, using only the standard library. It opens files
+read-only, extracts what it needs, and writes to `.chamnan/`.
+
+There is no network call anywhere in the plugin — not for telemetry, not for updates, not for
+analysis. There is no service, no account, and no key to configure. The only process chamnan ever
+starts is a second copy of Python to run its own session-start hook, which is what
+`chamnan-map --preview` does so you can see what a session would receive.
+
+It does not invoke `git` either. The one thing it writes outside `.chamnan/` is a `pre-commit`
+hook, and only when you ask for it with `chamnan-map --install-git-hook`.
+
+## What is generated
+
+| | contains | does **not** contain |
+|---|---|---|
+| `MAP.md` — index | one line per file, taken from that file's opening comment; function and class names | file bodies, function bodies, or any code |
+| Metadata sections | table and column names, route methods and paths, Kubernetes object kinds and names, Ansible and Compose file paths | row data, request payloads, Secret contents |
+| Configuration section | environment variable **names** | environment variable **values** — the patterns match the name and stop at the `=`, so a value is never captured |
+| `STATE.md` | whatever Claude writes about work in progress | anything a script put there — no script writes this file |
+| `skills/`, `tools/` | procedures and scripts you chose to keep | anything added without you asking |
+| `logs/` | what commands ran and when | pruned on every run, per `log_retention_days` |
+
+Whatever is about to be written passes through `lib/redact.py` first — one choke point on the
+finished document rather than one per section, so a section added later cannot slip past it.
+Provider tokens, private-key blocks, credentialed URLs and secret-shaped assignments become
+`<REDACTED>`. Kubernetes Secrets contribute their **name**, so you know one exists, and nothing
+underneath it.
+
+Some files are never opened by the scanner at all: `.pem`, `.key`, `.pfx`, `.p12`, `.crt`, `.cer`,
+`.jks`, `id_rsa*`, `.htpasswd`, `.netrc`, `*.db`, `*.sqlite`, `*.bak`, `*.dump` and similar.
+`chamnan-peek` keeps its own, narrower refusal list — it will show a database's schema, because
+table names are not a secret, but it refuses keys and credential files outright.
+
+## What is not sent externally
+
+Nothing, by chamnan.
+
+That sentence is worth reading precisely, because chamnan is a plugin inside Claude Code and the
+two are different programs. chamnan writes files to your disk. What Claude Code then does with
+your repository — including sending file contents to the API when it reads them — is Claude Code's
+behaviour, unchanged by whether this plugin is installed.
+
+What installing chamnan changes is the *shape* of that: a session that starts with an index tends
+to read fewer whole files, because it already knows where things are. That is a consequence of
+better navigation, not a control, and it is not a guarantee about any particular session.
+
+## chamnan is not a sandbox
+
+Stated in the README and repeated here because it is the single most important thing to be clear
+about:
+
+> **chamnan is not a sandbox, and this is not defence in depth for your session.** It defends the
+> one thing it controls: its own output. A plugin hook cannot rewrite what the `Read` tool returns
+> — `PostToolUse` exposes only `additionalContext` and `systemMessage` — so no plugin can filter
+> what Claude reads from your disk. If you ask Claude to open `.env`, it opens `.env`, and chamnan
+> is not in that path.
+
+Two further limits, also from the README:
+
+- The redaction patterns are **narrow by design**, and narrow means some things get through. A
+  credential in a shape nobody has seen before, or a bare high-entropy string with no assignment
+  around it, will not match. Widening until nothing escapes would replace commit hashes, UUIDs and
+  version strings too, and an index full of `<REDACTED>` is not an index.
+- **Review `MAP.md` before its first commit**, the same way you would review any generated file you
+  are about to publish.
+
+See the README's `## Secrets` section for the full statement, and
+[architecture.md](architecture.md) for how the pieces fit together.
