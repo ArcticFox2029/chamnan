@@ -25,6 +25,17 @@ MAX_EXTS_SHOWN = 6
 # fact from "this tree is 900 PNGs".
 NOTABLE = {".csv", ".json", ".xml", ".parquet", ".avro", ".sql", ".log", ".md"}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "vendor", ".terraform", "dist"}
+# Build and project manifests are not payload. They declare dependencies and project layout, which
+# is exactly what someone joining the repo needs, and this section's headline tells the reader not
+# to open them to understand the system. Being counted here made that sentence false about go.mod
+# and the .csproj files -- so they are left out rather than mislabelled.
+BUILD_MANIFESTS = {".csproj", ".fsproj", ".vbproj", ".sln", ".props", ".targets", ".sbt",
+                   ".gradle", ".mod", ".sum", ".cabal", ".nimble", ".gemspec", ".podspec",
+                   ".cmake", ".bazel", ".bzl", ".lock"}
+BUILD_NAMES = {"go.mod", "go.sum", "cargo.toml", "package.json", "pyproject.toml", "setup.cfg",
+               "gemfile", "podfile", "config.ru", "rakefile", "makefile", "cmakelists.txt",
+               "build.gradle", "settings.gradle", "pom.xml", "composer.json", "mix.exs",
+               "pubspec.yaml", "build.zig", "meson.build", "build", "workspace"}
 
 
 def _human(size):
@@ -47,6 +58,8 @@ def scan(root, source_paths, ext_lang):
         if any(p in SKIP_DIRS or p.startswith(".") for p in rel.parts[:-1]):
             continue
         if str(rel) in source_paths or path.suffix.lower() in ext_lang:
+            continue
+        if path.suffix.lower() in BUILD_MANIFESTS or path.name.lower() in BUILD_NAMES:
             continue
         top = rel.parts[0] if len(rel.parts) > 1 else "(root)"
         try:

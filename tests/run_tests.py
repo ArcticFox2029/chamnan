@@ -28,6 +28,8 @@ import catalogs  # noqa: E402
 import mapper  # noqa: E402
 import peek as peek_mod  # noqa: E402
 import redact  # noqa: E402
+import assets as assets_mod  # noqa: E402
+import deploy as deploy_mod  # noqa: E402
 import schema  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -524,6 +526,55 @@ check("credentials.ini is blocked by stem, not just by exact name",
 check("an ordinary config file is not blocked", not redact.is_blocked(Path("settings.ini")))
 
 shutil.rmtree(leak, ignore_errors=True)
+
+# ---------------------------------------------------------------- deployment classification
+# "ci" was matched as a substring of the whole path, so it fired on services/pricing,
+# apps/ios/Sources/Specific and charts/civic -- and on deploy/ansible/inventories/ci/, which is
+# how an Ansible inventory came out labelled a CI pipeline.
+dep = Path(tempfile.mkdtemp(prefix="chamnan-dep-"))
+for rel, body in [
+    ("deploy/ansible/ansible.cfg", "[defaults]\ninventory = inventories/production\n"),
+    ("deploy/ansible/inventories/ci/hosts.yml", "all:\n  hosts:\n    of-ci-01:\n"),
+    ("deploy/ansible/inventories/production/group_vars/all.yml", "of_kafka_version: 3.7\n"),
+    ("deploy/ansible/roles/of_common/tasks/main.yml", "- name: install base packages\n"),
+    ("deploy/k8s/telemetry.yaml", "kind: Deployment\nmetadata:\n  name: telemetry-ingest\n"),
+    (".github/workflows/build.yml", "on: push\njobs:\n  build:\n"),
+    ("services/pricing/config/rates.yml", "base_rate_bp: 250\n"),
+    ("charts/civic/values.yaml", "replicaCount: 2\n"),
+]:
+    (dep / rel).parent.mkdir(parents=True, exist_ok=True)
+    (dep / rel).write_text(body, encoding="utf-8")
+
+d = deploy_mod.scan(dep)
+check("an Ansible inventory is Ansible, not a CI pipeline",
+      "deploy/ansible/inventories/ci/hosts.yml" in d["ansible"])
+check("AN ANSIBLE INVENTORY IS NEVER FILED UNDER CI",
+      "deploy/ansible/inventories/ci/hosts.yml" not in d["ci"])
+check("group_vars counts as Ansible even though it is not under roles/",
+      "deploy/ansible/inventories/production/group_vars/all.yml" in d["ansible"])
+check("ansible.cfg counts as Ansible", "deploy/ansible/ansible.cfg" in d["ansible"])
+check("a real workflow file is still CI", ".github/workflows/build.yml" in d["ci"])
+check("'pricing' is not mistaken for CI", "services/pricing/config/rates.yml" not in d["ci"])
+check("'civic' is not mistaken for CI", "charts/civic/values.yaml" not in d["ci"])
+check("kubernetes objects are still found", "Deployment" in d["k8s"])
+
+# The assets inventory says "payload, not code -- do not read these to understand the system".
+# That sentence has to be true of everything under it, and it was not true of the Ansible tree.
+(dep / "attachments").mkdir(exist_ok=True)
+for i in range(20):
+    (dep / "attachments" / f"scan_{i:03d}.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 200)
+(dep / "services" / "pricing").mkdir(parents=True, exist_ok=True)
+for name in ("go.mod", "go.sum", "Pricing.csproj", "build.sbt", "Makefile", "config.ru",
+             "pom.xml", "package.json", "Cargo.toml", "mix.exs", "pubspec.yaml", "Gemfile",
+             "settings.gradle", "CMakeLists.txt"):
+    (dep / "services" / "pricing" / name).write_text("x\n", encoding="utf-8")
+
+stored = assets_mod.scan(dep, set() | d["claimed"], {".py": "python"})
+check("A DEPLOYMENT MANIFEST IS NEVER CALLED PAYLOAD", "deploy" not in stored)
+check("BUILD MANIFESTS ARE NEVER CALLED PAYLOAD", "services" not in stored)
+check("genuine payload is still reported", "attachments" in stored)
+
+shutil.rmtree(dep, ignore_errors=True)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
