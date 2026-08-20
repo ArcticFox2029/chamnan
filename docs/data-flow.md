@@ -10,18 +10,25 @@ flowchart TD
     RED["<b>lib/redact.py</b><br/>every output passes here"]
 
     subgraph OUT[".chamnan/ — on disk, in your repository"]
-        MAP["<b>MAP.md</b><br/>index"]
+        MAP["<b>MAP.md</b><br/>index · impact"]
         META["<b>Metadata</b><br/>table names, route paths,<br/>env var <i>names</i>, object kinds"]
-        LOCAL["<b>Local state</b><br/>STATE.md · config.json ·<br/>skills/ · tools/ · logs/"]
+        LOCAL["<b>Written by you or Claude</b><br/>STATE.md · sessions/ · memory/ ·<br/>milestones.md · skills/ · tools/"]
+        CFG["<b>Workspace</b><br/>config.json · logs/"]
     end
 
+    YOU["You, and Claude at your request<br/><i>/chamnan:resume · :remember · :milestone · :capture</i>"]
+    HOOK["session-start hook<br/><i>scrubs again on the way in</i>"]
     NET(["Network"])
 
     SRC -- "read only" --> PROC
     PROC --> RED
-    RED --> MAP
-    RED --> META
-    RED --> LOCAL
+    RED -- "scrubbed on write" --> MAP
+    RED -- "scrubbed on write" --> META
+    PROC --> CFG
+
+    YOU -- "written directly" --> LOCAL
+    LOCAL --> HOOK
+    MAP --> HOOK
 
     PROC -. "no path exists" .-x NET
     OUT -. "nothing is sent" .-x NET
@@ -30,6 +37,11 @@ flowchart TD
 Every arrow that exists stays inside your machine. The two crossed arrows are the point of the
 diagram: chamnan has no network code, so there is no path from the scanner or from `.chamnan/` to
 anywhere off-disk.
+
+The split down the middle matters. **The scanner writes `MAP.md` and the metadata sections**, and
+everything it writes is scrubbed on the way out. **You and Claude write the rest** — the state
+file, session records, memory and milestones — directly, without the scanner in the path, so those
+are scrubbed on the way *in* instead, as the hook reads them.
 
 ## Processing happens locally
 
@@ -52,11 +64,17 @@ hook, and only when you ask for it with `chamnan-map --install-git-hook`.
 | Metadata sections | table and column names, route methods and paths, Kubernetes object kinds and names, Ansible and Compose file paths | row data, request payloads, Secret contents |
 | Configuration section | environment variable **names** | environment variable **values** — the patterns match the name and stop at the `=`, so a value is never captured |
 | `STATE.md` | whatever Claude writes about work in progress | anything a script put there — no script writes this file |
+| `sessions/` | what was unfinished at the end of a stretch of work | the conversation; the record is a summary you or Claude wrote |
+| `memory/` | decisions, lessons and standing rules — the reasoning behind the code | anything added without you asking for it |
+| `milestones.md` | changes that reshaped the repository, and why | status, owners or dates-as-deadlines; this is not project management |
 | `skills/`, `tools/` | procedures and scripts you chose to keep | anything added without you asking |
 | `logs/` | what commands ran and when | pruned on every run, per `log_retention_days` |
 
 Whatever is about to be written passes through `lib/redact.py` first — one choke point on the
-finished document rather than one per section, so a section added later cannot slip past it.
+finished document rather than one per section, so a section added later cannot slip past it. The
+same redactor runs on the way **in**: `STATE.md`, session records, memory rules and milestone titles
+are scrubbed as the session-start hook reads them, because those are free text about the repository
+and therefore the likeliest place for a hostname or a pasted connection string to land.
 Provider tokens, private-key blocks, credentialed URLs and secret-shaped assignments become
 `<REDACTED>`. Kubernetes Secrets contribute their **name**, so you know one exists, and nothing
 underneath it.

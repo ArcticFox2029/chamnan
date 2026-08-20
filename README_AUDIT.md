@@ -672,17 +672,67 @@ word would cost more than it clarifies.
 
 Note: `plugin.json` still reads **version 1.2.0**. The bump is a separate step, deliberately.
 
+# Chamnan 1.3.1 — documentation patch
+
+Scope: documentation alignment only. No source, no behaviour, no features, no README positioning
+change.
+
+## TASK-01 — Architecture and data-flow diagrams
+
+Status: COMPLETE. Staged, not committed.
+
+Both diagrams predated the 1.3.0 release. `docs/data-flow.md` named **none** of the new stores —
+`sessions`, `memory`, `milestones` and `impact` all returned zero occurrences — so the "if it
+already covers it, leave it" branch did not apply.
+
+### `docs/architecture.md`
+
+The diagram now groups the workspace as **Understand · Remember · Reuse · Project history**,
+matching the README's capability model, and shows all nine stores rather than four. Every write
+edge names the command that performs it. Also updated: the *What is generated* table (4 → **9**
+rows) and *What Claude consumes*, which had listed four things and now lists seven with the
+measured **507-token** figure attached.
+
+Two places where the requested sketch and the code disagree, drawn from the code and stated in
+prose beneath the diagram:
+
+- **Workflows is a detector, not a store.** `lib/workflows.py` notices a repeated command sequence
+  and suggests capturing it; what gets written is a procedure in `skills/`. It has no directory,
+  so it appears as a detection node rather than a fourth box under *Reuse*.
+- **Decisions is a subdirectory of `memory/`**, not a peer of it.
+
+A duplicated "Solid arrows are what chamnan does" paragraph was left behind by the edit and
+removed.
+
+### `docs/data-flow.md`
+
+The `.chamnan/` subgraph now shows the new stores, and the table gained rows for `sessions/`,
+`memory/` and `milestones.md` — each with its **does not contain** column, which is where the
+honest boundary lives: a session record is a summary and not the conversation; milestones carry no
+status, owner or deadline.
+
+**One accuracy fix I introduced and then corrected.** My first pass drew `redact → local state`,
+which says the scanner writes `STATE.md`, `sessions/` and `memory/` through the redactor. It does
+not — you and Claude write those directly, and they are scrubbed on the way **in**, as the hook
+reads them. The diagram now splits the two paths and the prose says which is which. Getting this
+backwards in a security document would have been the worst kind of wrong: plausible, and the
+opposite of the truth.
+
+### Validation
+
+`git diff --check` clean. Both diagrams: every edge references a declared node, `subgraph`/`end`
+balanced, fences balanced. All three `docs/` pages: no broken anchors, no broken relative links.
+`python3 tests/run_tests.py` → 378/378, unchanged — no source file was touched.
+
+### Next
+
+Version bump 1.3.0 → 1.3.1 as its own commit, then `claude plugin tag --push` and the release.
+
+---
+
+# Chamnan 1.3.0 Continuity Layer — RELEASED
+
 ## Where 1.3.0 stands
-
-All feature tasks complete, staging reviewed, README rewritten, marketplace metadata aligned.
-Staged, not committed.
-
-Remaining before release:
-1. Bump `plugin.json` version 1.2.0 → 1.3.0, as its own commit.
-2. `claude plugin tag --push` → `chamnan--v1.3.0`, then the GitHub release.
-3. Optional, its own task: extend `docs/architecture.md`'s diagram to the four new stores — it
-   still shows only MAP/STATE/procedures/tools.
-
 ---
 
 # Chamnan 1.2.0 Community & Trust Release — RELEASED
