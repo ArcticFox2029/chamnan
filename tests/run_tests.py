@@ -396,6 +396,77 @@ check("collapse without a budget stays backward compatible",
 check("a map already inside the budget is left alone",
       "Cut to fit" not in rollup.collapse("# Map\n\n- **`a.py`** \u2014 x\n", "MAP.md", 3000))
 
+# ---------------------------------------------------------------- attachments that are real files
+# The corpus these handlers were first tried against turned out to be text files with binary
+# extensions, so every one of them took the fallback branch and the run proved nothing. These
+# build genuine containers instead.
+import sqlite3 as _sq  # noqa: E402
+import zipfile as _zf  # noqa: E402
+
+att = Path(tempfile.mkdtemp(prefix="chamnan-att-"))
+
+
+def _xlsx(path, rows):
+    def cell(c, r, v):
+        return (f'<c r="{chr(65+c)}{r}" t="inlineStr"><is><t>{v}</t></is></c>')
+    body = "".join(f'<row r="{r}">' + "".join(cell(c, r, v) for c, v in enumerate(row)) + "</row>"
+                   for r, row in enumerate(rows, 1))
+    with _zf.ZipFile(path, "w") as z:
+        z.writestr("xl/workbook.xml", '<workbook><sheets><sheet name="Tariffs" sheetId="1"/>'
+                                      "</sheets></workbook>")
+        z.writestr("xl/worksheets/sheet1.xml", f"<worksheet><sheetData>{body}</sheetData></worksheet>")
+
+
+def _docx(path, paras):
+    body = "".join(f"<w:p><w:r><w:t>{x}</w:t></w:r></w:p>" for x in paras)
+    with _zf.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", f"<w:document><w:body>{body}</w:body></w:document>")
+
+
+_xlsx(att / "t.xlsx", [["hs_code", "description", "duty_pct"],
+                       ["2935.34", "Lithium cells, prismatic", "4.7"],
+                       ["9237.81", "Woven cotton fabric", "14.6"],
+                       ["4311.91", "Marine diesel injectors", "3.1"]])
+sheet = peek_mod.peek(att / "t.xlsx")
+check("a spreadsheet reports its columns, not just its zip members", "`hs_code`" in sheet)
+check("a spreadsheet shows sample row content", "Woven cotton fabric" in sheet)
+hit = peek_mod.peek(att / "t.xlsx", find="Lithium")
+check("--find returns only the matching spreadsheet rows", "Lithium" in hit)
+check("--find leaves the other rows out", "Woven cotton fabric" not in hit)
+
+_docx(att / "t.docx", ["Standard Carriage Terms",
+                       "1. Demurrage accrues after the fifth free day.",
+                       "Annex C: the escalation contact is the Hamburg duty officer."])
+doc = peek_mod.peek(att / "t.docx")
+check("a document reports its paragraph text", "Demurrage accrues" in doc)
+found = peek_mod.peek(att / "t.docx", find="escalation")
+check("--find returns the matching clause", "Hamburg duty officer" in found)
+check("--find leaves the other clauses out", "Demurrage accrues" not in found)
+
+dbp = att / "t.sqlite"
+_c = _sq.connect(dbp)
+_c.executescript("CREATE TABLE shipment (id TEXT PRIMARY KEY, lane TEXT);"
+                 "INSERT INTO shipment VALUES ('a','DEHAM-SGSIN'),('b','NLRTM-USNYC');")
+_c.commit(); _c.close()
+
+# The cost note used to divide bytes on disk by a constant and call the result a saving, for every
+# file -- including ones a plain read cannot open at all, where the number it compared against
+# could never have been spent.
+sql_note = peek_mod.peek(dbp)
+check("a database reports its schema", "`shipment`" in sql_note)
+check("A BINARY NEVER CLAIMS A SAVING OVER READING IT WHOLE", "instead of" not in sql_note)
+check("a binary says why instead", "cannot open" in sql_note)
+
+(att / "big.csv").write_text("id,lane,kg\n" + "".join(f"s{i},DEHAM-SGSIN,{i}\n"
+                                                      for i in range(4000)), encoding="utf-8")
+csv_note = peek_mod.peek(att / "big.csv")
+check("a text file does claim a saving, because reading it whole is possible",
+      "instead of" in csv_note)
+check("the saving is measured against the real text, not the byte count",
+      "4,000 data rows" in csv_note)
+
+shutil.rmtree(att, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

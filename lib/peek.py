@@ -127,6 +127,62 @@ def peek_json(path, find=None):
 
 
 # ------------------------------------------------------------------ archives
+# ------------------------------------------------------------------ OOXML bodies
+# A .docx and a .xlsx are zips, and listing their members says nothing a reader wants: the
+# clause and the column are inside one XML part. Both are read here rather than left to the
+# archive listing, because a contract and a price table are the two attachments most likely
+# to be the actual reason someone opened the file.
+_CELL = re.compile(r"<c\b([^>]*)>(.*?)</c>|<c\b([^>]*)/>", re.S)
+_VAL = re.compile(r"<v>(.*?)</v>", re.S)
+_INLINE = re.compile(r"<t[^>]*>(.*?)</t>", re.S)
+_ROW = re.compile(r"<row\b[^>]*>(.*?)</row>", re.S)
+_PARA = re.compile(r"<w:p\b[^>]*>(.*?)</w:p>", re.S)
+_RUN = re.compile(r"<w:t[^>]*>(.*?)</w:t>", re.S)
+
+
+def _unxml(s):
+    return (s.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
+             .replace("&apos;", "'").replace("&amp;", "&"))
+
+
+def _sheet_rows(zf, names, limit):
+    """Rows of the first worksheet, resolving both shared and inline strings."""
+    sheet = next((n for n in names if re.fullmatch(r"xl/worksheets/sheet1?\.xml", n)), None)
+    if not sheet:
+        return []
+    shared = []
+    if "xl/sharedStrings.xml" in names:
+        shared = [_unxml(s) for s in
+                  _INLINE.findall(zf.read("xl/sharedStrings.xml").decode("utf-8", "replace"))]
+    xml = zf.read(sheet).decode("utf-8", "replace")
+    rows = []
+    for body in _ROW.findall(xml):
+        cells = []
+        for attrs, inner, _empty in _CELL.findall(body):
+            if not attrs and not inner:
+                cells.append("")
+                continue
+            if 't="s"' in attrs:                       # index into the shared string table
+                v = _VAL.search(inner)
+                idx = int(v.group(1)) if v and v.group(1).isdigit() else -1
+                cells.append(shared[idx] if 0 <= idx < len(shared) else "")
+            elif 't="inlineStr"' in attrs:
+                cells.append(_unxml("".join(_INLINE.findall(inner))))
+            else:
+                v = _VAL.search(inner)
+                cells.append(_unxml(v.group(1)) if v else "")
+        rows.append(cells)
+        if len(rows) >= limit:
+            break
+    return rows
+
+
+def _docx_paragraphs(zf):
+    xml = zf.read("word/document.xml").decode("utf-8", "replace")
+    paras = [_unxml("".join(_RUN.findall(body))).strip() for body in _PARA.findall(xml)]
+    return [p for p in paras if p]
+
+
 def peek_zip(path, find=None):
     with zipfile.ZipFile(path) as zf:
         names = zf.namelist()
@@ -136,11 +192,31 @@ def peek_zip(path, find=None):
             book = zf.read("xl/workbook.xml").decode("utf-8", "replace")
             sheets = re.findall(r'<sheet[^>]*name="([^"]+)"', book)
             out.append("spreadsheet sheets: " + ", ".join(f"`{s}`" for s in sheets))
-            shared = "xl/sharedStrings.xml"
-            if shared in names:
-                strings = re.findall(r"<t[^>]*>([^<]{1,40})</t>",
-                                     zf.read(shared).decode("utf-8", "replace"))
-                out.append("first cell strings: " + ", ".join(strings[:12]))
+            # Bounded on purpose: reading past a few hundred rows to sample three of them
+            # would spend the memory this module exists to avoid.
+            rows = _sheet_rows(zf, names, 400 if find else SAMPLE_ROWS + 1)
+            if rows:
+                head = rows[0]
+                out.append(f"{len(head)} columns on `{sheets[0] if sheets else 'sheet1'}`")
+                out.append("columns: " + ", ".join(f"`{c}`" for c in head[:MAX_KEYS] if c))
+                if find:
+                    hits = [r for r in rows[1:] if any(find.lower() in c.lower() for c in r)]
+                    out.append(f"\nrows matching {find!r} ({len(hits[:8])} of {len(hits)} shown):")
+                    out += ["  " + " | ".join(c[:28] for c in r[:8]) for r in hits[:8]]
+                else:
+                    out.append("\nfirst rows:")
+                    out += ["  " + " | ".join(c[:28] for c in r[:8])
+                            for r in rows[1:SAMPLE_ROWS + 1]]
+        if "word/document.xml" in names:
+            paras = _docx_paragraphs(zf)
+            out.append(f"{len(paras):,} paragraph(s) of text")
+            if find:
+                hits = [(i, p) for i, p in enumerate(paras, 1) if find.lower() in p.lower()]
+                out.append(f"\nparagraphs matching {find!r} ({len(hits[:6])} of {len(hits)} shown):")
+                out += [f"  ¶{i}: {p[:220]}" for i, p in hits[:6]]
+            else:
+                out.append("\nopening text:")
+                out += [f"  {p[:220]}" for p in paras[:4]]
         if "docProps/core.xml" in names:
             core = zf.read("docProps/core.xml").decode("utf-8", "replace")
             for tag in ("dc:title", "dc:creator", "dcterms:created"):
@@ -319,9 +395,28 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     cut = tokens.cut_at(out, budget)
     if cut < len(out):
         out = out[:cut] + f"\n\n_[truncated at {budget} tokens — narrow it with --find]_"
-    # `size` is the file on disk in bytes; the peeked text is what actually reaches the model.
-    saved = size / 2.4
+    return out + "\n\n" + _cost_note(path, ext, size, out)
+
+
+def _cost_note(path, ext, size, out):
+    """Say what the peek cost, and only claim a saving where the alternative actually exists.
+
+    The first version of this line divided the file's size on disk by a characters-per-token
+    constant and reported the result as what reading it whole would have cost -- for every file,
+    including a SQLite database, where it announced a 9,962x saving over a number that could never
+    have been spent, because Read cannot open a database at all. Nor can it open a PNG. And for a
+    .xlsx or a .docx the bytes on disk are deflate-compressed, so even where a comparison exists
+    the size is the wrong basis for it. A tool whose whole subject is token honesty cannot round
+    its own headline up.
+    """
     spent = tokens.estimate(out)
-    out += (f"\n\n_[{spent:,.0f} tokens instead of ~{saved:,.0f} for the whole "
-            f"file{' — ' + format(saved/max(spent, 1), ',.0f') + '× smaller' if saved > 1000 else ''}]_")
-    return out
+    if ext in TEXT_LIKE or ext in (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson", ""):
+        try:
+            whole = tokens.estimate(path.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            return f"_[{spent:,.0f} tokens]_"
+        ratio = f" — {whole/max(spent, 1):,.0f}× smaller" if whole > spent * 2 else ""
+        return f"_[{spent:,.0f} tokens instead of {whole:,.0f} for the whole file{ratio}]_"
+    return (f"_[{spent:,.0f} tokens. The file itself is {_human(size)} of {ext.lstrip('.') or 'binary'} "
+            f"that a plain read cannot open, so this is not a saving over reading it — "
+            f"it is the only way to see inside it without leaving the session.]_")
