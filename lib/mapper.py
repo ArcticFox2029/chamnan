@@ -67,9 +67,28 @@ DOC_TAG_TAIL = re.compile(
     r"copyright|note|warning|deprecated|todo|inheritdoc|tparam)\b.*$", re.I | re.S)
 
 
+# C# and VB document with XML rather than @tags, and `<summary>` was reaching the index on 46 of
+# 530 rows. Only known tag NAMES are matched: stripping anything between angle brackets would eat
+# List<String> and Map<K, V> out of perfectly good prose.
+XML_DOC_TAIL = re.compile(
+    r"</?(?:param|typeparam|returns|exception|value|example|seealso|permission)\b[^>]*>.*$",
+    re.I | re.S)
+XML_DOC_WRAP = re.compile(
+    r"</?(?:summary|remarks|para|c|code|list|item|term|description|inheritdoc|b|i)\b[^>]*>", re.I)
+# <see cref="Thing"/> and <paramref name="thing"/> carry a real reference; keep it, drop the tag.
+XML_DOC_REF = re.compile(r"<(?:see|seealso|paramref|typeparamref)\b[^>]*?"
+                         r"(?:cref|name)\s*=\s*[\"']([^\"']+)[\"'][^>]*/?>", re.I)
+# javadoc's inline markup: {@code fleet.drivers} means the words, not the braces.
+JAVADOC_INLINE = re.compile(r"\{@(?:code|link|linkplain|literal|value)\s+([^}]*)\}")
+
+
 def _strip_doc_tags(text):
     text = DOC_TAG_HEAD.sub("", text)
+    text = XML_DOC_TAIL.sub("", text)
     text = DOC_TAG_TAIL.sub("", text)
+    text = XML_DOC_REF.sub(r"\1", text)
+    text = XML_DOC_WRAP.sub("", text)
+    text = JAVADOC_INLINE.sub(r"\1", text)
     return DOC_TAG_MARKER.sub("", text)
 
 

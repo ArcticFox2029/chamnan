@@ -597,6 +597,25 @@ check("A PYTHON DECORATOR IS NOT A DOC TAG",
 check("a summary with no tags is untouched",
       mapper._clip("Plain summary of the module.") == "Plain summary of the module.")
 
+# C# and VB document with XML, not @tags, and <summary> was reaching 46 of 530 index rows.
+check("an XML summary wrapper is stripped",
+      mapper._clip("<summary> Picking endpoints. </summary>") == "Picking endpoints.")
+check("an inline <c> code span keeps its content",
+      mapper._clip("Mounts waves under <c>/v1</c>.") == "Mounts waves under /v1.")
+check("a <see cref> keeps what it points at",
+      "PickWave" in mapper._clip('Returns a <see cref="PickWave"/> for the shift.'))
+check("<param> and everything after it is dropped",
+      mapper._clip('Validates input. <param name="code">the BIC</param>') == "Validates input.")
+check("javadoc {@code} keeps the words, not the braces",
+      mapper._clip("{@code fleet.drivers} is the read model.") == "fleet.drivers is the read model.")
+check("javadoc {@link} keeps the target",
+      "Driver" in mapper._clip("See {@link Driver} for details."))
+# Stripping anything between angle brackets would eat these out of ordinary prose.
+check("A JAVA GENERIC SURVIVES IN A SUMMARY",
+      mapper._clip("Builds a List<String> of lane codes.") == "Builds a List<String> of lane codes.")
+check("A MULTI-ARG GENERIC SURVIVES TOO",
+      "Map<K, V>" in mapper._clip("Keeps a Map<K, V> index in memory."))
+
 # ---------------------------------------------------------------- route prefixes
 # A decorator gives the path relative to where the router is mounted, and the mount is declared
 # elsewhere in the file. Reporting only the relative half put `GET /{quote_id}` in the index for an
