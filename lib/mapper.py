@@ -35,6 +35,7 @@ from pathlib import Path
 import assets as assets_mod
 import catalogs as catalogs_mod
 import deploy as deploy_mod
+import impact as impact_mod
 import redact
 import schema as schema_mod
 import tokens
@@ -300,7 +301,10 @@ REGEX_RULES = {
     "js": [
         ("func", r"^(?:export\s+)?(?:async\s+)?function\s+(\w+)\s*\(([^)]*)\)"),
         ("func", r"^(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*=>"),
-        ("class", r"^(?:export\s+)?class\s+(\w+)"),
+        ("func", r"^\s{2,}(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+)*"
+                 r"(?:async\s+)?(?!if|for|while|switch|catch|return|constructor\b)"
+                 r"(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\], |]+\s*)?\{"),
+        ("class", r"^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)"),
         ("const", r"^(?:export\s+)?const\s+([A-Z][A-Z0-9_]{2,})\s*="),
     ],
     "go": [
@@ -310,8 +314,10 @@ REGEX_RULES = {
     ],
     "sh": [("func", r"^(?:function\s+)?(\w+)\s*\(\)\s*\{")],
     "rb": [("func", r"^\s*def\s+(\w+)"), ("class", r"^\s*class\s+(\w+)")],
-    "rs": [("func", r"^(?:pub\s+)?fn\s+(\w+)\s*\(([^)]*)\)"),
-           ("class", r"^(?:pub\s+)?(?:struct|enum|trait)\s+(\w+)")],
+    "rs": [("func", r"^\s*(?:pub(?:\([\w:]+\))?\s+)?(?:default\s+)?(?:const\s+)?"
+                    r"(?:async\s+)?(?:unsafe\s+)?"
+                    r"fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)"),
+           ("class", r"^\s*(?:pub(?:\([\w:]+\))?\s+)?(?:struct|enum|trait|union)\s+(\w+)")],
     "java": [("func", r"^\s*(?:public|private|protected).*?\s(\w+)\s*\(([^)]*)\)\s*\{"),
              ("class", r"^\s*(?:public\s+)?(?:class|interface|enum)\s+(\w+)")],
     # Kotlin borrowed Java's rules and it cost almost everything: a visibility modifier is
@@ -328,7 +334,14 @@ REGEX_RULES = {
     ],
     "tf": [("class", r'^resource\s+"([^"]+)"\s+"([^"]+)"'),
            ("func", r'^(?:module|data)\s+"([^"]+)"')],
-    "php": [("func", r"^\s*function\s+(\w+)\s*\(([^)]*)\)"), ("class", r"^\s*class\s+(\w+)")],
+    # A method is the normal shape in PHP, and the bare `function` rule caught none of them:
+    # measured on a 22-file service, 66 of 139 declarations carried a visibility modifier and were
+    # invisible, along with every `final class`.
+    "php": [
+        ("func", r"^\s*(?:(?:public|private|protected|static|final|abstract)\s+)*"
+                 r"function\s+&?(\w+)\s*\(([^)]*)\)"),
+        ("class", r"^\s*(?:(?:final|abstract|readonly)\s+)*(?:class|interface|trait|enum)\s+(\w+)"),
+    ],
     # C and C++ have no dependable line-anchored declaration form: a definition may return a
     # pointer, span several lines, or sit behind a macro. These catch the common shapes and miss
     # the exotic ones, which is the accepted trade for an index — a miss costs one grep.
@@ -490,6 +503,9 @@ def scan(root):
             "describable": describable,
             "path": str(path.relative_to(root)), "lang": lang, "chars": len(source),
             "tokens": tokens.estimate(source),
+            # Collected while the source is open rather than in a second pass: lib/impact.py then
+            # only has to resolve and invert, which is arithmetic on what is already in memory.
+            "imports": impact_mod.extract_imports(source, lang),
             "lines": source.count("\n") + 1, "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
         })
@@ -542,6 +558,15 @@ def render(files, root):
             lines += ["", "---", "", section_text]
 
     lines += ["", "---", "", "## Full Detail", ""]
+
+    # Below the marker, deliberately. Everything above it is injected into every session, and a
+    # per-file relationship listing in front of a session that was never going to touch those
+    # files is exactly the cost this plugin exists to remove. It is read at the moment of changing
+    # one path, by grepping for that path.
+    impact_section = impact_mod.render(impact_mod.build(files))
+    if impact_section:
+        lines += [impact_section, ""]
+
     detail = schema_mod.render_detail(tables)
     if detail:
         lines += [detail, ""]

@@ -20,6 +20,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
 HEREDOC = re.compile(r"<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*\n(.*?)\n\1", re.S)
@@ -69,6 +70,36 @@ def jaccard(a, b):
     return len(a & b) / len(a | b)
 
 
+def notice_workflow(payload, wsdir):
+    """Record this command's signatures and speak if a sequence has just reached the threshold.
+
+    Returns True when it said something, so the caller does not also fire the script-repeat hint.
+    Two notices in one turn is how a useful nudge becomes noise.
+    """
+    if (payload.get("tool_name") or "") != "Bash":
+        return False
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    sigs = workflows.signatures(command)
+    if not sigs:
+        return False
+
+    log = wsdir / "logs" / "commands.jsonl"
+    before = workflows.repeated(workflows.record(
+        log, [], datetime.now().astimezone().isoformat(timespec="seconds")))
+    history = workflows.record(
+        log, sigs, datetime.now().astimezone().isoformat(timespec="seconds"))
+    found = workflows.repeated(history)
+    if not found:
+        return False
+    sequence, count = found
+    # Only the crossing speaks. If this exact sequence already qualified before this command, the
+    # threshold was passed earlier and saying so again is repetition.
+    if before and before[0] == sequence:
+        return False
+    print(workflows.describe(sequence, count))
+    return True
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -77,6 +108,12 @@ def main():
     root = ws.find_root()
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
+        return 0
+
+    # A plain Bash command carries no script body, so the path below ignores it entirely — and a
+    # repeated SEQUENCE of them is the thing that leaves no file behind at all. Checked first, and
+    # only one of the two ever speaks in a single turn.
+    if notice_workflow(payload, wsdir):
         return 0
 
     text = body_of(payload)

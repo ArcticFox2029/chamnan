@@ -106,6 +106,7 @@ def main(argv):
         print("chamnan: map is disabled in .chamnan/config.json")
         return 0
     ws.prune_logs(root)
+    ws.prune_sessions(root)
     files = []
     seen_paths = set()
     for one in targets:

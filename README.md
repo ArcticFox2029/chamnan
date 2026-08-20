@@ -2,9 +2,10 @@
 
 **ชำนาญ** *(cham-nan)* — Thai for the fluency that only comes from doing something again.
 
-A Claude Code plugin that makes a repository know itself, so an agent stops rediscovering it.
-It builds an index the agent reads instead of scanning files, keeps work state that survives
-compaction, and accumulates the procedures and tools you keep re-deriving.
+A Claude Code plugin that makes a repository know itself **and preserve the engineering context
+built while you work with it**, so an agent stops rediscovering both. It builds an index the agent
+reads instead of scanning files, keeps the work state and the decisions that would otherwise be
+lost between sessions, and accumulates the procedures and tools you keep re-deriving.
 
 ## Read this before installing
 
@@ -30,10 +31,52 @@ A five-second test — if you answer no to either, close this page:
 
 ---
 
-## The problem it aims at
+## The real problem: agents forget
 
-Most token-saving tools compress what the model *writes*. Measured on one developer's 34 days of
-real Claude Code usage, that is the small half:
+An agent working in your repository keeps arriving at the same conclusions, because everything it
+worked out last time is gone:
+
+- **a new session starts with nothing.** It has your files and no idea which ones matter.
+- **a long session compacts.** Whatever it had figured out about the codebase goes with it.
+- **the reasoning disappears.** Why a fix took the shape it did, what was ruled out and why —
+  none of that is in the diff.
+- **the repository does not explain its own experience.** Code says what. Git says when. Neither
+  says why, or what has already been tried.
+
+So the same four questions get answered from scratch, over and over: *where does this live · why
+was it built this way · how did we solve this before · what happened last session.*
+
+### The core idea
+
+chamnan turns what gets discovered during the work into **repository-local artifacts** — plain
+markdown, committed beside the code:
+
+| | |
+|---|---|
+| `MAP.md` | what exists, and what depends on what |
+| `STATE.md` | what is being worked on right now |
+| `sessions/` | where the last stretch of work stopped |
+| `memory/` | decisions, lessons and standing rules |
+| `skills/` · `tools/` | procedures and scripts worth keeping |
+| `milestones.md` | the changes that reshaped the repository |
+
+**The agent does not learn.** Nothing is trained, nothing persists outside the directory, and the
+next session still starts from zero — it just starts from zero *in a repository that explains
+itself*. The continuity is in the artifacts, not in the model.
+
+### Two kinds of cost
+
+| | what it is | what answers it |
+|---|---|---|
+| **Discovery cost** | finding where code lives and how it connects | `MAP.md`, the Impact section |
+| **Re-solving cost** | working out again what was already worked out | procedures, tools, memory, decisions, session records |
+
+**Token reduction is the consequence, not the aim.** An agent that already knows where the payment
+logic lives does not grep for it; one that can read why the retry was written that way does not
+re-derive it. Fewer tokens is what less repeated work looks like on a bill.
+
+That said, the arithmetic is worth seeing, because it is the reason this approach targets reading
+rather than writing. Measured on one developer's 34 days of real Claude Code usage:
 
 | | share of cost |
 |---|---|
@@ -45,21 +88,71 @@ The most popular output-compression plugin advertises 65% savings; [JetBrains be
 measured 8.5% of output tokens — roughly 0.7% of a bill, with no loss of quality. It does what it
 says; it is just aimed at the smaller half.
 
-chamnan aims at the other 91%: not by compressing context, but by making most of it unnecessary.
+## The compounding effect
+
+chamnan spends once and collects on every session afterwards, so what it is worth depends on how
+long you stay:
+
+| | what the repository holds |
+|---|---|
+| **Day 1** | `MAP.md` — the agent stops scanning the tree |
+| **Day 30** | `+ STATE.md`, session records, the first procedures and tools |
+| **Day 180** | `+ decisions`, `+ lessons`, `+ rules`, `+ milestones`, and the workflows that turned out to repeat |
+
+Nothing here is automatic accumulation of everything that happens. Each artifact is written
+deliberately, by you or by Claude at your request, because it was worth keeping. What grows is
+**repository-specific knowledge**, and it grows because you keep coming back to the same code.
+
+The same arithmetic cuts the other way, and it is the reason the first section of this README is
+about whether your repository is the kind that keeps coming back: **on a four-file repository this
+costs more than it saves.** There is nothing to amortise.
 
 ## What it does
+
+Four capabilities. Everything listed is shipped and running today.
+
+### Understand — what exists, and what is connected to it
 
 | | |
 |---|---|
 | **Index** | `MAP.md` — one line per file, generated from the code. The agent reads the index; it greps the detail; it stops reading the tree. |
+| **Impact** | Who depends on a file, and which tests cover it. A file's own imports are already at the top of that file; the reverse edge is what costs a search. Grep it for one path before changing it. |
 | **Data model** | Table and model names with a one-line summary, pulled from DDL, migrations and ORM models — instead of a schema dump. Only appears if the repo defines one. |
-| **API surface** | Method, path and handler, pulled from route decorators and OpenAPI documents — instead of the whole spec. Only appears if the repo serves one. |
+| **API surface** | Method, path and handler, from route decorators, OpenAPI documents and `.proto` service definitions — instead of the whole spec. |
 | **Configuration** | The environment variable names the repo reads. **Names only, never values** — and it warns if `.env` is not gitignored. |
 | **Deployment** | What actually runs, read from Kubernetes, Ansible, Compose, Helm and CI manifests: kinds and names, images, roles, pipelines. A Secret contributes its name and nothing under it. |
 | **Stored material** | The non-source trees — scanned paperwork, exports, archives — as counts, sizes and dominant extensions. It exists to stop an agent going to look, which costs far more than the section does. Never opened, never read. |
-| **State** | `STATE.md` — injected at session start, so compaction stops erasing what the last session worked out. |
+
+### Remember — what was being done, and why
+
+| | |
+|---|---|
+| **State** | `STATE.md` — what is being worked on right now, injected at session start so compaction stops erasing it. |
+| **Resume** | One record per session under `.chamnan/sessions/`. Only what was *unfinished* reaches the next session; a session that finished cleanly injects nothing at all. |
+| **Memory** | `decisions/`, `lessons/`, `rules/`. Rules are standing constraints, so they go in front of the agent every session; decisions and lessons contribute a title and are read when the title looks relevant. |
+
+### Reuse — what has already been solved
+
+| | |
+|---|---|
 | **Procedures** | Skills the agent writes *itself* when it hits something complex or repeated. Not a shipped library — a mechanism. |
 | **Tools** | Notices when the same scratch script is written a third time, and offers to keep it. |
+| **Workflows** | Notices when the same commands run in the same order on a third separate day, and offers to write the sequence down. |
+
+### Evolve — what the repository has learned about itself
+
+| | |
+|---|---|
+| **Milestones** | The handful of changes that reshaped the repository: what moved, why it was worth doing, which areas it touched. |
+
+Repeated engineering work becoming reusable repository knowledge — **not model training, and not
+automation of the developer.** It is a mechanism for preserving work that would otherwise only
+exist in whoever did it.
+
+### Supporting
+
+| | |
+|---|---|
 | **Measurement** | Reports context-per-turn for your repo, before and after. Your number, not ours. |
 | **Routing** | Its own agents run on a cheap model, because "read this file, write one line" does not need an expensive one. |
 
@@ -78,6 +171,8 @@ The same folder, most days, and the same shapes of work coming round again. Conc
   agent has to re-read before it can say anything useful about it.
 - **A team handing sessions to each other.** What the last session worked out has to survive into
   the next one, and today it does not.
+- **Anyone who wants the agent to accumulate context about their project** — weeks or months on the
+  same system, repeatedly extending it, tired of explaining the same things.
 
 The thread is repetition in one place. That is the only thing chamnan converts into savings.
 
@@ -147,20 +242,27 @@ Everything lives in one directory at the repository root, and nothing outside it
 
 ```
 .chamnan/
-├── MAP.md         the architecture index          (written by chamnan-map)
-├── STATE.md       what you are working on         (written by Claude, at milestones)
-├── config.json    which parts are on              (written on first run, merged on upgrade)
-├── skills/        procedures you chose to keep     (starts empty)
-├── tools/         scratch scripts you kept         (starts empty)
-└── logs/          bounded by log_retention_days    (starts empty)
+├── MAP.md          the architecture index          (written by chamnan-map)
+├── STATE.md        what you are working on         (written by Claude, at milestones)
+├── milestones.md   changes that reshaped the repo  (written by /chamnan:milestone)
+├── config.json     which parts are on              (written on first run, merged on upgrade)
+├── sessions/       where each session stopped      (written by /chamnan:resume)
+├── memory/
+│   ├── decisions/  a choice, and why               (written by /chamnan:remember)
+│   ├── lessons/    something that cost time once
+│   └── rules/      standing constraints — injected every session
+├── skills/         procedures you chose to keep     (starts empty)
+├── tools/          scratch scripts you kept         (starts empty)
+└── logs/           bounded by log_retention_days    (starts empty)
 ```
 
-`MAP.md`, `config.json` and the three directories appear the moment the index is first built.
-`STATE.md` is written by Claude during step 4 rather than by a script, so it does not exist until
-bootstrap reaches that step — the session-start hook simply skips it while it is absent.
+`MAP.md`, `config.json` and every directory appear the moment the index is first built. The rest
+are written when you ask for them: `STATE.md` during bootstrap, the others by their skills. The
+session-start hook skips whatever is absent, so a repository that only ever builds an index stays
+exactly that simple.
 
-Add `.chamnan/logs/` to `.gitignore` if you would rather not carry it. `MAP.md` and `STATE.md` are
-worth committing: that is how the next person, and the next session, gets them.
+Add `.chamnan/logs/` to `.gitignore` if you would rather not carry it. Everything else is worth
+committing — that is how the next person, and the next session, gets it.
 
 ### Trying it without installing
 
@@ -173,6 +275,85 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only, and nothing is written until you run
 `/chamnan:bootstrap` or `chamnan-map`.
+
+## What's new in 1.3
+
+Six additions, all repository-local markdown, all bounded at the injection rather than in the
+store. Measured with every one of them populated: **507 tokens** reach a session.
+
+### Better Resume Work
+
+One record per session under `.chamnan/sessions/`, written by `/chamnan:resume`. Only
+**`Remaining` and `Blockers`** reach the next session — `Done` is history and the file list is
+recoverable from git. A session that finished cleanly injects nothing at all, because an empty
+record is worse than none.
+
+It does not replace `STATE.md`. `STATE.md` is one overwritten file about the present; a session
+record is one of many about a particular stretch of work.
+
+### Smart Session Memory
+
+`.chamnan/memory/` with three categories, used three different ways:
+
+| | | reaches a session as |
+|---|---|---|
+| `rules/` | a standing constraint | **the full text**, capped |
+| `decisions/` | a choice, and why | its title |
+| `lessons/` | something that cost time once | its title |
+
+Titles cost a line each and buy the ability to load the right file; injecting the bodies would cost
+everything and buy nothing extra. **Not pruned by age** — a session record stops mattering, a
+decision does not, and a timer would delete the oldest entries, which are the ones nobody can
+reconstruct.
+
+### Impact Map
+
+Who depends on a file, and which tests cover it — in `MAP.md`, **below the Full Detail marker**, so
+it is grepped when you are about to change one path and never injected into sessions that will not
+touch it.
+
+    - **`payment/service.py`** — used by `checkout/api.py`; **tested by** `tests/test_payment.py`
+
+One hop, capped. No transitive closure, no cycle analysis, no database. Imports are collected while
+the scanner already has each file open, so it adds no second read: measured at **0.673 s across 529
+files**, 9.5% of scan time.
+
+### Better Capture
+
+The existing hint noticed the same *script* written a third time. This notices the same **commands,
+in the same order, on a third separate day** — the deployment check or debugging routine that
+leaves no file behind at all.
+
+Four guards keep it quiet: arguments and paths are discarded so the same routine matches across
+branches; 33 commands too common to mean anything are ignored; three distinct steps minimum; three
+distinct days, so repeating something three times in one sitting counts once. It speaks once, and
+never in the same turn as the script hint.
+
+### Project Milestones
+
+`.chamnan/milestones.md` — the handful of changes that reshaped the repository, with **why** it was
+worth doing and **which areas moved together**. A git log rarely says the first and never says the
+second.
+
+Not project management: no status, no owner, no due date. Only the two most recent titles are
+injected, so forty milestones cost the same per session as two.
+
+### Better Language Support
+
+Prioritised by measuring symbols per thousand lines across a 529-file polyglot corpus, then
+inspecting each low number before touching anything:
+
+| | before | after | |
+|---|---|---|---|
+| PHP | 82 symbols | **163** | the rule matched only a bare `function`, so 66 of 139 declarations were invisible |
+| Rust | 66 | **150** | only an optional `pub` was allowed, missing every `async fn` |
+| TypeScript / JS | 173 | **191** | class methods are indented; every rule was anchored at `^` |
+| shell | 14 | **14** | **left alone** — its scripts are commands, not functions, so the low number is honest |
+
+`MIN_YIELD` now asserts a minimum symbol count for twelve languages against ordinary-code fixtures,
+so *a language partially understood beats one falsely claiming full support* is a test rather than
+a slogan.
+
 
 ## Bootstrap does not rewrite your code
 
@@ -315,6 +496,10 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `index_token_budget` | `3000` | integer, tokens | Ceiling on the part of `MAP.md` injected every session. Over budget, the index is rolled up by directory rather than truncated, so nothing disappears silently. |
 | `warn_on_bulk_reads` | `true` | `true` / `false` | A notice before a read pulls in a lock file, a minified bundle or a very large file. A notice, never a block. |
 | `reply_style` | `"off"` | `"off"` / `"concise"` / `"terse"` | Injects a per-repo instruction on how answers should be written. `off` injects nothing; `concise` drops preamble, restatement and closing offers while keeping full sentences; `terse` adds fragments and tables over prose. An unrecognised value injects nothing. |
+| `resume` | `true` | `true` / `false` | Session records under `.chamnan/sessions/`, and injecting the unfinished part of the most recent one. |
+| `session_retention_days` | `30` | integer, days | Session records older than this are deleted on the next `chamnan-map` or `chamnan-report`. Longer than the log window, because a record from three weeks ago is still the answer to "what was I doing". |
+| `memory` | `true` | `true` / `false` | `.chamnan/memory/`. Rules are injected in full; decisions and lessons contribute a title and are read on demand. **Not pruned by age** — a session record stops mattering, a decision does not. |
+| `milestones` | `true` | `true` / `false` | `.chamnan/milestones.md`. Only the two most recent titles are injected, so the file's length costs nothing per session. |
 
 Each part is independent — switching one off does not affect the others.
 
@@ -337,6 +522,9 @@ In Claude Code:
 | `/chamnan:remap` | rebuild the index after the repo's shape changed |
 | `/chamnan:capture` | record a procedure worth keeping |
 | `/chamnan:promote` | keep a scratch script as a tool |
+| `/chamnan:resume` | write down where this session stopped, so the next one continues |
+| `/chamnan:remember` | record why something is the way it is — a decision, a lesson, a rule |
+| `/chamnan:milestone` | record a change that reshaped the repository |
 | `/chamnan:report` | show context-per-turn, before and after |
 
 From a shell, in the repository:
@@ -710,7 +898,7 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
 python3 tests/run_tests.py
 ```
 
-220 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
+378 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.
@@ -723,8 +911,8 @@ Two real bugs were found by writing it: the scratch-repeat threshold was tuned a
 and silently ignored the short repeated ones it exists to catch, and a Google API key one character
 outside the expected length slipped the pattern.
 
-The rest came out of hardening it against the polyglot system below, which took the suite from 87
-checks to 220.
+The rest came out of hardening it against the polyglot system below, and from the continuity work
+in 1.3 — which took the suite from 87 checks to 378.
 
 ## More documentation
 

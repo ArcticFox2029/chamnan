@@ -1,0 +1,91 @@
+---
+description: Record why something is the way it is — a decision and its reasoning, a lesson that cost time, or a standing constraint. Use when the reasoning behind a choice would be expensive to reconstruct later.
+---
+
+# Write down why
+
+The code says what. The git history says when. Neither says **why**, and why is the expensive part
+to reconstruct — usually at the moment somebody is about to undo it.
+
+## When to write an entry
+
+Write one when the answer to "why is it like this?" took real work to arrive at, and would take
+real work to arrive at again.
+
+Good reasons to write:
+
+- a choice was made between two viable options and the loser is not obvious from the code
+- something was tried, failed, and the failure is not visible in the repository
+- a constraint exists that a newcomer would break without knowing
+
+Do **not** write an entry when:
+
+- the code already says it — a well-named function does not need a memory entry
+- the git history already says it — a good commit message is the right place for "what changed"
+- it is a task, not knowledge — that is `STATE.md` or a session record
+- it is a procedure — that is `/chamnan:capture`
+
+**This is not a conversation log.** Never paste a transcript. Write the conclusion.
+
+## Pick a category
+
+The three are used differently, which is why they are separate:
+
+| | | |
+|---|---|---|
+| `decisions/` | A choice and its reasoning | *"Postgres over SQLite — two writers, and SQLite's locking showed up under load."* |
+| `lessons/` | Something that cost time once | *"Editing `src/` while the app runs throws an AttributeError. It is a hot-reload artifact, not a bug — restart clears it."* |
+| `rules/` | A standing constraint | *"Never add a Cloud fallback for embeddings — a different model means an incompatible vector space."* |
+
+**Rules are injected into every session.** Decisions and lessons contribute their title, and the
+agent reads the file when the title looks relevant. So put a constraint in `rules/` only if it
+should be in front of the agent before it starts — otherwise it is a decision, and the difference
+matters to what every session costs.
+
+## Where it goes
+
+```
+.chamnan/memory/<category>/<short-slug>.md
+```
+
+A short, specific filename: `postgres-over-sqlite.md`, not `database.md`. The filename is what
+appears in the session listing beside the title, so it should be recognisable on its own.
+
+## The format
+
+```markdown
+# One line saying what this is about
+
+<Two or three sentences. What was decided or learned, and why.>
+
+<If something was ruled out, say what and why — that is usually the half
+that stops somebody re-treading it.>
+```
+
+No frontmatter. The first `# ` line is the title; everything else is prose. Keep an entry short —
+if it needs headings and subsections, it is documentation and belongs in `docs/`.
+
+Write the reasoning, not just the conclusion. *"We use Postgres"* is worth nothing in six months;
+*"Postgres, because two processes write concurrently and SQLite's locking failed under load"* is
+worth the file.
+
+## What not to put in it
+
+- **No credentials, tokens, hostnames or connection strings.** These files are committed. The
+  session-start hook redacts what it injects, but that does not clean the file on disk.
+- No pasted conversation, no logs, no stack traces. Name the error; do not paste the session.
+- Nothing that expires. An entry that will be wrong next month is a note, not a memory.
+
+## Housekeeping
+
+Memory is **not** pruned by age. A session record stops mattering; a decision does not, and
+deleting on a timer would throw away the oldest entries, which are usually the ones nobody can
+reconstruct.
+
+Growth is bounded where it costs something instead — at the injection. Rules are capped by length
+and the title list by count, so a repository with forty entries costs the same per session as one
+with four.
+
+Entries are ordinary markdown. Edit them when they change; delete them when they stop being true.
+A memory nobody prunes by hand eventually contains something false, and a false entry is worse than
+a missing one. Set `"memory": false` in `.chamnan/config.json` to switch the whole thing off.

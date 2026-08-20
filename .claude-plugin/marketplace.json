@@ -1,6 +1,6 @@
 {
   "name": "chamnan",
-  "description": "chamnan \u2014 one plugin that makes a long-lived codebase know itself, so an agent stops rediscovering it on every session.",
+  "description": "chamnan \u2014 one plugin that preserves a long-lived repository's engineering context, so an agent stops rediscovering the same work every session.",
   "owner": {
     "name": "ArcticFox2029"
   },
@@ -8,7 +8,7 @@
     {
       "name": "chamnan",
       "source": "./",
-      "description": "Makes a codebase know itself: an architecture index the agent reads instead of scanning files, work state that survives compaction, and a workspace that accumulates the procedures and tools you keep re-deriving. For long-lived repos, not one-off scripts."
+      "description": "Makes a repository know itself and preserve the engineering context built while you work with it, so an agent stops rediscovering both. An architecture index and an impact map instead of scanning files; work state, session records and the decisions behind them instead of losing context between sessions; the procedures, tools and workflows you keep re-deriving. Everything is repository-local markdown, committed beside the code. For long-lived repos you revisit, not one-off scripts."
     }
   ]
 }

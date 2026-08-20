@@ -1,4 +1,691 @@
-# Chamnan 1.2.0 Community & Trust Release
+# Chamnan 1.3.0 Continuity Layer
+
+Last updated: 2026-08-20
+
+## Status
+
+Current task: TASK-08
+Last completed task: TASK-07
+Overall status: IN_PROGRESS
+
+Baseline: released **1.2.0**, tag `chamnan--v1.2.0`, commit `41a5fbe`, branch main, tree clean.
+Releases published for 1.1.0 and 1.2.0; 1.2.0 is marked latest.
+
+**Commit policy, same as 1.2.0: one commit at the end.** Tasks stage and stop. TASK-08 reviews the
+whole staged set; the commit, push, version bump, tag and release come after that.
+
+**README is deliberately NOT updated per task.** 1.3.0 changes what the product *is*, so the README
+gets one pass at the end when there is a coherent story to tell, rather than six patches.
+
+## Checklist
+
+- [x] TASK-01 Planning & design review
+- [x] TASK-02 Better Resume Work
+- [x] TASK-03 Smart Session Memory
+- [x] TASK-04 Impact Map
+- [x] TASK-05 Better Capture evolution
+- [x] TASK-06 Project Milestones
+- [x] TASK-07 Better Language Support
+- [ ] TASK-08 Final staging review
+
+## TASK-01
+
+Status: COMPLETE. Inspection and design only — nothing implemented.
+
+### Architecture findings
+
+**1. `hooks/session_start.py` is the only injection point, and it is the scarce resource.**
+
+Everything an agent receives from chamnan comes from this one script. It reads
+`.chamnan/{MAP.md, STATE.md, tools/index.json, skills/*.md}`, and each part is gated by its own key
+in `DEFAULT_CONFIG`.
+
+Measured on this repository right now: **2,368 tokens injected — with `skills/` and `tools/` both
+empty.** The caps are per-part and there is **no global ceiling**:
+
+| part | cap |
+|---|---|
+| Quick Index | `index_token_budget`, default 3000 |
+| `STATE.md` | `MAX_STATE_CHARS = 4000` chars ≈ 1,600 tokens |
+| tools | `MAX_TOOLS = 12` lines |
+| skills | `MAX_TOOLS = 12` lines |
+| reply style | one paragraph, off by default |
+
+This is the single most important constraint on 1.3.0 and it shapes every recommendation below.
+Six new features each claiming session-start space would multiply the fixed cost of every session
+in every repository — which is precisely the cost this plugin exists to remove. **Most of 1.3.0
+must be on-demand, not injected.**
+
+**2. Hooks cannot see the conversation.**
+
+`session_end.py` is a Python script that reads `logs/scratch.jsonl`. It has no access to what the
+session was about. This is why `STATE.md` is written by Claude and not by a script — and it means
+a resume record or a memory entry synthesised by a hook could only ever contain mechanical facts.
+**Anything that needs to know what the work *was* has to be a skill, not a hook.**
+
+**3. There is an existing, working pattern for automatic detection — and it is deliberately quiet.**
+
+`scratch_watch.py` fingerprints scripts on `PostToolUse`, compares with Jaccard ≥ `SIMILAR` (0.55),
+appends to `logs/scratch.jsonl`, and **speaks only once, at the exact threshold**. `session_end.py`
+gives one quiet digest at the end. The restraint is the design, not an accident. TASK-05 should
+extend this, not add a second nagging channel.
+
+**4. `MAP.md` is assembled from independent contributor modules.**
+
+`lib/mapper.py` renders, and `schema.py`, `catalogs.py`, `deploy.py`, `assets.py` each contribute
+one section, included only when the repository has that thing. A new section is a new module in
+`lib/` plus one call — an established seam, so TASK-04 has somewhere obvious to live.
+
+**5. `lib/workspace.py` owns the workspace.** `DEFAULT_CONFIG` is the only place options are
+defined; `ensure()` creates `.chamnan/` plus `skills/`, `tools/`, `logs/`, and merges config on
+upgrade. Any new directory belongs in that tuple.
+
+**6. Redaction covers `MAP.md` and `chamnan-peek` output — and nothing else.** Anything 1.3.0 adds
+that stores free text about the repository is a new path to the same failure, and must pass through
+`redact.scrub()`.
+
+**7. Retention exists for exactly one directory.** `prune_logs()` applies `log_retention_days` to
+`logs/`. Nothing else in `.chamnan/` is bounded.
+
+### Recommended implementation locations
+
+| Feature | Files / directories | Command | Config | Tests required |
+|---|---|---|---|---|
+| **TASK-02 Resume** | `.chamnan/sessions/<date>-<slug>.md`, one file per session — many small files merge cleanly, one append-only file conflicts on every branch. New `skills/resume/SKILL.md`. Reader helper in `lib/`. | `/chamnan:resume` — a verb, consistent with bootstrap/capture/promote/remap/report | `resume: true`; retention, either a new `session_retention_days` or reuse `log_retention_days` | round-trip write/read · **only the latest record is injected, and only its remaining items and blockers** · retention prunes · a malformed record does not crash the hook |
+| **TASK-03 Memory** | `.chamnan/memory/{decisions,lessons,rules}/*.md`. New skill. Injection in `session_start.py`. | its own skill — do **not** overload `/chamnan:capture`, which TASK-05 is already changing | `memory: true`, plus a key controlling what is injected | category validation · **`redact.scrub()` applied on write** · injection scoped to rules only · no raw conversation stored |
+| **TASK-04 Impact** | new `lib/impact.py`, called from `mapper.render()` like the other contributors. Output lands **below `## Full Detail`**, so it is grepped and never injected. | none — it is part of the map | `impact: true`, defaulting on only if it proves cheap | import extraction per language · reverse edges correct · a cycle terminates · per-file edge cap enforced · **MAP.md Quick Index size unchanged** |
+| **TASK-05 Capture evolution** | extend `hooks/scratch_watch.py` and `hooks/session_end.py`. Storage stays `.chamnan/skills/`. | existing `/chamnan:capture` | reuse `capture`; a threshold constant beside `SIMILAR` | sequence detection fires at the threshold and not before · **existing script-repeat behaviour unchanged** · ordinary varied work does not trigger it |
+| **TASK-06 Milestones** | `.chamnan/milestones.md` — a **single** file here, unlike sessions: milestones are few, read in order, and rarely written concurrently. | fold into an existing skill if it fits; a new one only if it does not | `milestones: true` | append preserves order · `redact.scrub()` applied · not injected, or at most the last two titles |
+| **TASK-07 Language quality** | `lib/mapper.py` `REGEX_RULES`; fixtures in `tests/run_tests.py` | none | none | **a per-language minimum-yield check**, so "partial understanding beats false claims" becomes an assertion rather than a slogan |
+
+### Risks
+
+1. **Injection budget is the binding constraint.** 2,368 tokens today with two parts empty, and no
+   global ceiling. Recommendation for TASK-02–06: **default to not injecting.** Where a feature
+   must be seen at session start, inject a name and one line, and let the agent load the body on
+   demand — the pattern `skills/` and `tools/` already use, and the reason they cost 12 lines
+   instead of their contents. A global cap and a stated priority order would be worth adding.
+
+2. **Unbounded growth.** `sessions/`, `memory/` and `milestones.md` all accumulate, and only
+   `logs/` currently has retention. A `.chamnan/` that grows without limit becomes a liability in
+   the repository it is meant to help. Every new store needs a bound before it ships.
+
+3. **Redaction coverage does not extend to the new stores.** Memory and resume records are free
+   text written by Claude about the project — the most likely place for a hostname, a connection
+   string or a pasted key to land. They must pass `redact.scrub()` on write, and a test must assert
+   it, or 1.3.0 quietly adds the failure mode 1.1.0 spent effort closing.
+
+4. **Hooks cannot see the conversation** (finding 2). Designing resume or memory as hook features
+   would produce records that are empty or mechanical. They are skills.
+
+5. **Feature count versus the product's own argument.** 1.3.0 proposes six additions to a plugin
+   whose pitch is that it spends less context than it saves. Each one has to earn its slice, and
+   any that cannot should ship off by default. This is worth deciding per feature at implementation
+   time rather than at the end.
+
+6. **Overlap between STATE.md and sessions/.** The brief is right that they are different — current
+   state versus session continuation — but the boundary will blur in practice. TASK-02 should write
+   that distinction down where a user will see it, or the two stores will drift into duplicates.
+
+7. **Impact Map cost.** Reverse edges are the expensive half. Naive construction is quadratic in
+   file count, and the corpus this project tests against has 2,365 files. Needs a cap and a
+   measured scan time before it goes in.
+
+## TASK-02
+
+Status: COMPLETE. Tests 220 → **242**.
+
+Files added: `lib/sessions.py`, `skills/resume/SKILL.md`.
+Files changed: `lib/workspace.py`, `hooks/session_start.py`, `bin/chamnan-map`,
+`bin/chamnan-report`, `tests/run_tests.py`.
+
+### The design, and why
+
+**`STATE.md` is not replaced, and the boundary is written where a user will see it** — in the skill,
+as a two-row table: `STATE.md` is one overwritten file about the present; `sessions/` is many kept
+files about a particular stretch of work. TASK-01 flagged that these two would blur; saying it once,
+in the place someone reads before writing a record, is the cheapest defence against that.
+
+**One markdown file per session**, `.chamnan/sessions/YYYY-MM-DD-slug.md`. Not one append-only log:
+these files are committed and written on branches, and many small files merge cleanly where a single
+growing document conflicts every time two branches both worked a day.
+
+**Written by a skill, not a hook.** TASK-01's finding held up — `session_end.py` has no access to
+what the session was about, so a hook-written record could only ever hold mechanical facts.
+`lib/sessions.py` therefore has no writer at all: it reads, selects and prunes, and the format is
+the contract between the skill that writes and the hook that reads.
+
+**Only `Remaining` and `Blockers` are injected**, with the title and date. `Done` is history and
+`Files` is recoverable from git — injecting them would spend the budget on what the reader could
+already get. Measured end to end on a small repository: the whole session-start injection came to
+**329 tokens** including the carried record.
+
+**A finished session injects nothing.** No heading, no "nothing outstanding" line. An empty record
+is worse than none, because the next session reads it and learns nothing while paying for it.
+
+### Two things found while building it
+
+**People write "- none" instead of omitting the section.** The skill asks for the section to be left
+out when there is nothing to say, and a test caught that a record saying `## Blockers` / `- none`
+was carried forward as though it were a blocker. Rather than fitting the test to the code, the code
+now treats written-out negations (`none`, `nothing`, `n/a`, `tbd`, a bare dash) as empty — with a
+test confirming that a real item sitting beside a "none" is still carried.
+
+**`STATE.md` was never scrubbed.** TASK-01 listed this as a risk; it turned out to be a live gap
+rather than a future one. Both `STATE.md` and the carried record now pass `redact.scrub()` at the
+injection point in `session_start.py`, which is the same choke-point pattern `MAP.md` uses. There is
+a test proving a `postgres://admin:…@db.internal/main` in a session record loses its password on the
+way into a session and keeps its hostname, because which database on which host is exactly what the
+next session should know.
+
+### Bounded from the start
+
+`session_retention_days`, default **30** — longer than the 7-day log window, because a record from
+three weeks ago is still the answer to "what was I doing". `prune_sessions()` sits beside
+`prune_logs()` and is called from the same two commands, `chamnan-map` and `chamnan-report`.
+Separate functions rather than one, because the two windows differ and a single number for two very
+different kinds of file would be wrong for one of them.
+
+### Configuration
+
+Two new keys in `DEFAULT_CONFIG`: `resume` (default `true`) and `session_retention_days` (default
+`30`). `ensure()` now creates `sessions/` alongside `skills/`, `tools/` and `logs/`.
+
+### Tests — 22 new checks
+
+Round-trip; newest-first ordering; only-unfinished-is-carried, asserted in both directions
+(`Remaining` and `Blockers` present, `Done` absent, older record absent); a finished session carries
+nothing; written-out negations treated as empty; a real item beside a "none" still carried; a record
+with no headings at all carries nothing; an empty directory carries nothing; retention deletes past
+the window and keeps recent records; a zero window prunes nothing; slug and filename shapes; and the
+redaction check described above.
+
+## TASK-03
+
+Status: COMPLETE. Tests 242 → **266**.
+
+Files added: `lib/memory.py`, `skills/remember/SKILL.md`.
+Files changed: `lib/workspace.py`, `hooks/session_start.py`, `tests/run_tests.py`.
+
+### Three categories, used three different ways
+
+`.chamnan/memory/{decisions,lessons,rules}/`. The split is not decorative — it decides what each
+one costs:
+
+| | | injected? |
+|---|---|---|
+| `rules/` | a standing constraint the agent should know before it starts | **in full**, capped at 1,500 chars |
+| `decisions/` | a choice and its reasoning | **title only** |
+| `lessons/` | something that cost time once | **title only** |
+
+Decisions and lessons contribute one line — category, filename, title — and the agent reads the
+file when the title looks relevant. That is the same economy `skills/` and `tools/` already use,
+and for the same reason: a registry of names costs a line each and buys the ability to load the
+right one, while injecting the bodies costs everything and buys nothing extra.
+
+The skill says this plainly, because the decision of where to file an entry is the decision about
+what every session pays: *"put a constraint in `rules/` only if it should be in front of the agent
+before it starts — otherwise it is a decision, and the difference matters to what every session
+costs."*
+
+### The retention decision, made deliberately
+
+TASK-02's handoff asked for this to be decided rather than defaulted. **Memory is not age-pruned.**
+
+A session record expires because "where I stopped on the 14th" stops mattering. A decision does
+not. The reason a database was chosen two years ago is exactly the thing nobody can reconstruct
+later, and an age window would delete the oldest entries first — which are the most valuable ones.
+
+Growth is bounded where it actually costs something: **at the injection.** Rules capped by
+characters, titles capped by count. A repository with forty entries pays the same per session as
+one with four. The store itself is allowed to grow, because the files are small and each was
+written on purpose.
+
+The skill carries the other half of that: entries are ordinary markdown, and the instruction is to
+edit them when they change and delete them when they stop being true — *"a memory nobody prunes by
+hand eventually contains something false, and a false entry is worse than a missing one."*
+
+### Found while building
+
+**An entry's own `# Title` was being injected as an H1 inside a `###` section.** Each entry is a
+standalone file so it opens with a heading; dropped into the injected block, that made a rule read
+as a new top-level document rather than one item in a list of constraints. `_flatten()` demotes the
+title to bold and strips lower heading levels, with a test asserting no `# ` survives injection and
+that the title text does.
+
+### Redaction
+
+Carried forward from TASK-02: rules pass `redact.scrub()` at the injection choke point, with the
+same both-directions test — a `postgres://admin:…@db.internal/main` in a rule loses its password
+and keeps its hostname.
+
+### Measured
+
+End to end on a small repository with one rule and one decision: **428 tokens** for the whole
+session-start injection. The rule appears in full; the decision contributes
+`- **decision** · \`postgres-over-sqlite.md\` — Postgres over SQLite` and nothing more.
+
+### Configuration
+
+One new key: `memory` (default `true`). `ensure()` now creates `memory/` and its three
+subdirectories. `DEFAULT_CONFIG` is at **14 keys**.
+
+### Tests — 24 new checks
+
+Category set; per-category listing; counts. Rules injected in full and decision bodies **not**
+injected, asserted in both directions. Titles present, bodies absent, filename included. Empty
+store injects neither rules nor a listing. Rules capped by characters with the overflow announced;
+titles capped by count with the remainder announced. Heading demotion. Redaction in both directions.
+Title fallback when an entry has no heading. Slug and filename shapes.
+
+## TASK-04
+
+Status: COMPLETE. Tests 266 → **297**.
+
+Files added: `lib/impact.py`. Files changed: `lib/mapper.py`, `tests/run_tests.py`.
+
+### The cost risk TASK-01 raised, closed by design rather than by tuning
+
+Reverse edges were flagged as potentially quadratic on a 2,365-file corpus. They are not, because
+**imports are collected inside `mapper.scan()` while it already has each file's source open.**
+No second read of the repository, and inverting the edge list is one pass over edges rather than a
+comparison of every file against every other.
+
+Measured on the 2,365-file corpus:
+
+| | |
+|---|---|
+| `impact.build()` | **0.673 s** over 529 source files |
+| `impact.render()` | negligible |
+| share of total scan time | **9.5%** |
+| import names seen | 2,407 |
+| resolved to repository files | 398 (16.5%) |
+| files with incoming references | 122 |
+
+The 16.5% resolution rate is the correct outcome, not a shortfall: the rest are standard-library
+and third-party imports, which are deliberately not guessed at because a change here cannot break
+them.
+
+### Emphasis on the reverse edge
+
+A file's own imports are already at the top of that file. What a reader cannot get without
+searching is **who depends on this**, and which tests cover it — so that is what the section leads
+with, and it is why the output is a fraction of what a full dependency listing would be. One hop,
+capped: no transitive closure, no cycle analysis, no database.
+
+Output matches the shape the brief asked for:
+
+    - **`payment/service.py`** — used by `checkout/api.py`; **tested by** `tests/test_payment.py`
+
+### Two bugs caught during the work
+
+**I placed the section above the `## Full Detail` marker**, which is the region injected into every
+session. On the corpus that section is **11,993 tokens** — it would have quintupled the injection
+in exactly the tool built to keep it small. Moved below the marker, verified with a check asserting
+its index is greater than the marker's and that the injected half never mentions it.
+
+**Ambiguity was only guarded in one of two places.** The stem lookup refused to choose between
+`a/utils.py` and `b/utils.py`, but the suffix match happily returned the first — the same guess,
+one branch earlier. `_only_suffix_match()` now returns a path only when exactly one candidate
+matches, everywhere. A navigation aid that sends someone to the wrong file is worse than one that
+stays quiet.
+
+### Verified unchanged
+
+Quick Index on the corpus is **51,937 tokens — identical to before this feature**. Impact added
+nothing to the injected half, which was the design requirement.
+
+### Tests — 31 new checks
+
+Import extraction across Python, JS, Java and C, including that `#include <stdio.h>` is *not*
+extracted and an unknown language yields nothing. Resolution: dotted, relative, third-party
+returning None, and ambiguity refused in both the stem and suffix paths. Test detection by four
+path conventions plus a negative. Reverse edges built; a test importer recorded as a test and not
+as a caller; transitive edges not followed; a file nobody refers to omitted; self-import ignored.
+Caps enforced with the remainder announced. Empty renders nothing. And the placement regression:
+Impact below the marker, absent from the injected half.
+
+## TASK-05
+
+Status: COMPLETE. Tests 297 → **324**.
+
+Files added: `lib/workflows.py`. Files changed: `hooks/scratch_watch.py`, `tests/run_tests.py`.
+
+### The gap it fills
+
+`scratch_watch` catches the same SCRIPT written a third time. A plain Bash command carries no
+script body, so `body_of()` returns `""` and the whole path ignores it — which means the thing that
+happens far more often was invisible: **the same half-dozen commands, in the same order, run again
+weeks later** because nobody wrote down what the sequence was. That is a deployment check, a
+debugging routine, or the steps to reproduce one bug, and today it survives only in whoever ran it.
+
+### Four guards, because sequence detection is noisy
+
+TASK-01 warned this is much noisier than comparing two script bodies — any two sessions share
+`git status` and `ls`. So:
+
+1. commands reduce to a **signature** (`pytest`, `docker compose`) — arguments and paths are
+   discarded, because the same routine on two branches shares neither
+2. commands too common to mean anything are **dropped entirely** (33 in `NOISE`)
+3. a run must be **≥ 3 distinct** signatures
+4. it must have happened on **3 distinct days** — repeating a sequence three times in one sitting
+   is one occurrence, not three
+
+Existing restraint preserved: it speaks **once**, at the crossing, and the two hints never both
+fire in a turn — `notice_workflow()` returns early when it has spoken.
+
+### Verified through the real hook
+
+Two prior days of `docker compose → alembic → pytest` in the log, then the routine run again:
+
+    $ docker compose up -d       -> (quiet)
+    $ alembic upgrade head       -> (quiet)
+    $ pytest tests/integration   -> chamnan: this sequence has come round 3 times now …
+
+Running it a **fourth** day stays quiet. Noise-only commands (`ls -la`, `cd /srv && ls`,
+`grep -rn foo .`) stay quiet. And the **existing script-repeat path is unchanged** — three
+near-identical writes to `/tmp/calc.py` still speak on the third, exactly as before.
+
+### A limitation documented rather than papered over
+
+`docker --context prod compose up` yields the signature `docker prod`, because telling
+`--context prod` apart from `--debug compose` needs each tool's flag grammar. I did not add a
+heuristic for it: skipping a flag and its value would mangle boolean flags instead, and the
+consequence of the current behaviour is that such a command fails to match its own sequence, so the
+workflow simply goes **undetected**. Failing quiet is the right direction for a hint — a heuristic
+wrong the other way would suggest the wrong routine. Written into the code and asserted by a test
+that documents the real behaviour.
+
+### Nothing new to configure
+
+Reuses the existing `promote` gate, so `"promote": false` switches both hints off together.
+Storage is `logs/commands.jsonl`, bounded at 400 entries and covered by the existing
+`log_retention_days`. No new config key, no new command — the suggestion points at
+`/chamnan:capture`, which already exists.
+
+### Tests — 27 new checks
+
+Signature reduction: bare program, subcommand tools, arguments discarded, leading env assignments,
+absolute paths, boolean flags, noise dropped. Pipelines split into steps, noise dropped inside a
+chain, consecutive duplicates collapsed. Detection: two occurrences not enough, three on three days
+qualify, order preserved, count correct. Staying quiet: three repeats in one day, a two-step
+sequence, the same command three times, unrelated days. Longest sequence preferred. Notice content.
+Log bounded and tolerant of a malformed line.
+
+## TASK-06
+
+Status: COMPLETE. Tests 324 → **344**.
+
+Files added: `lib/milestones.py`, `skills/milestone/SKILL.md`.
+Files changed: `lib/workspace.py`, `hooks/session_start.py`, `tests/run_tests.py`.
+
+`.chamnan/milestones.md`, one file, entries **appended at the end**. Newest-last is deliberate:
+appending keeps every diff to added lines, where prepending rewrites the context of the whole file
+each time — the opposite of the case that made session records one file per session, and for the
+same underlying reason.
+
+Four fields: date and title, **Why**, **Affected**, **Decisions**. The middle two carry the value —
+a git log says what changed, rarely why it was worth doing, and never which areas moved together.
+
+**Not project management**, and the skill says so in those words: no status, no owner, no due date,
+because adding them would quietly turn this into a worse version of a tool the team already has.
+The skill also says when *not* to write one — a task is `STATE.md`, a single decision is
+`/chamnan:remember`, a repeated procedure is `/chamnan:capture` — so the four stores stay distinct
+rather than collapsing into a notes pile.
+
+**Only the two most recent titles are injected.** A repository with forty milestones costs the same
+per session as one with two. Not pruned by age: the oldest entry is usually the one nobody can
+reconstruct.
+
+Tests — 20 checks, including that entries stay oldest-first as written, appending preserves earlier
+entries verbatim, only titles reach a session and never a body, an empty field is omitted rather
+than written blank, a password in a body is scrubbed, and a file of prose with no parseable entries
+injects nothing instead of raising.
+
+## TASK-07
+
+Status: COMPLETE. Tests 344 → **378**.
+
+Files changed: `lib/mapper.py`, `tests/run_tests.py`.
+
+### Prioritised by measurement rather than by feeling
+
+Symbols per thousand lines across the 529-file polyglot corpus, lowest first:
+
+| | before | after |
+|---|---|---|
+| `sh` | 9.9 | 9.9 — **left alone** |
+| `php` | 20.0 | **39.8** |
+| `rs` | 21.8 | **49.5** |
+| `py` | 23.5 | 23.5 — uses `ast`; genuine |
+| `js` | 24.3 | 26.8 |
+
+Then each low number was inspected before anything was changed:
+
+- **PHP** — 37 `public function`, 28 `private`, 1 `protected` in the corpus, and the rule matched
+  only a bare `function`. **66 of 139 declarations were invisible**, along with every `final class`.
+  82 → **163 symbols**.
+- **Rust** — `async fn` (7), `pub async fn` (15) and `pub(crate) fn` (1) all slipped a pattern that
+  allowed only an optional `pub`. 66 → **150 symbols**.
+- **JS/TS** — class methods are indented, so every rule anchored at `^` skipped them. 173 → **191**.
+- **shell — not a defect, and not touched.** Every function in the corpus is `name() {`, which was
+  already matched. Shell scripts are straight-line commands, so the low density is the language.
+  Changing a rule that is working, to move a number that is honest, would have been the wrong
+  instinct.
+
+Corpus total: 3,266 → **3,449 symbols**.
+
+### The JS rule had to exclude what it would otherwise catch
+
+An indented `name(args) {` also describes `if`, `for`, `while`, `switch` and `catch`. The rule
+carries a negative lookahead for those and for `constructor`, and it was verified against the whole
+corpus: **0 control-flow keywords extracted as functions.**
+
+### "Partially understood beats falsely claiming full support" — now an assertion
+
+TASK-01 asked for this to stop being a slogan. `MIN_YIELD` holds a fixture of ordinary code for
+twelve languages with a minimum symbol count each, so a rule that stops matching real code fails
+here rather than quietly halving an index.
+
+One of those minimums was wrong when written and was corrected rather than forced: the Python
+fixture yields 2, not 3, because `extract_python` records a method inside its class tuple rather
+than as a top-level function. The method is captured — just nested — and the test now asserts the
+count the extractor actually produces.
+
+### Tests — 34 new checks
+
+Per-language extraction for PHP (public, private, protected static, abstract, bare function,
+final class, trait, interface), Rust (async, pub async, pub(crate), unsafe, plain, trait) and
+JS/TS (class method, method with a return type, top-level function, and four negatives:
+`if`, `for`, `while`, `constructor`). Plus the twelve `MIN_YIELD` fixtures.
+
+### TASK-08
+
+Status: COMPLETE. Review only — nothing committed, nothing pushed.
+
+**16 files staged, 2,188 insertions, 7 deletions.** Five new modules, three new skills, seven
+modified files, and this tracker.
+
+Checks:
+- **No secrets** — the staged diff scanned for GitHub, AWS, Slack, OpenAI and Stripe token shapes,
+  private-key blocks and credentialed URLs. None.
+- **No machine-specific paths** — zero `/Users/`, `/home/` or `Lumin-App` in staged code.
+- **No generated or temporary files** — no `__pycache__`, `.pyc`, `.log`, `results.json`.
+- **No unrelated refactoring** — all six deleted code lines read individually. Every one is a rule
+  or line replaced by its widened version *in the same task*: the PHP rule, two Rust rules, the JS
+  class rule, the unscrubbed `STATE.md` read, and the `ensure()` directory tuple.
+- **Documentation matches implementation**, checked programmatically: every config key a skill
+  tells the user to set exists; every skill has a frontmatter description; every `lib/*.py` a skill
+  names exists; every `.chamnan/` path a skill names is one `ensure()` creates.
+- `git diff --cached --check` clean; everything compiles.
+
+**378/378 checks passed** — not the 220 the brief anticipated, which was 1.2.0's count. This
+release added 158.
+
+**Measured with all six features populated: 507 tokens injected per session.** TASK-01 named the
+injection budget as the binding constraint and measured 2,368 as the baseline; six features added
+roughly 180 tokens, because the design put nearly everything on demand — Impact never injected,
+decisions and lessons as titles only, milestones as two titles, session records as unfinished items
+only.
+
+## TASK-09 — README rewrite plan
+
+Status: COMPLETE (plan only). `README_REWRITE_PLAN.md` rewritten; `README.md` untouched.
+
+**Supersedes the earlier draft**, which opened by recording that five of six features did not exist
+and recommending they be built first. They were, so every *Planned* and *Roadmap* section that
+draft required is gone and the plan is written in present tense throughout.
+
+Covers the seven parts asked for: current README analysis (keep / outdated / reframe), the
+positioning shift from token optimisation to agent continuity, the three new concepts (Agent
+continuity, Compounding effect, Two kinds of cost), the Understand/Remember/Reuse/Evolve feature
+map, what must be preserved, what must not be claimed, and a 26-section structure.
+
+Findings worth carrying into the rewrite:
+
+- **`plugin.json`'s `description` carries the old positioning**, and the marketplace listing reads
+  from that rather than the README. A headline change stopping at the README changes nothing where
+  people actually browse.
+- **`docs/data-flow.md` quotes the Secrets section verbatim.** Editing Secrets silently breaks that
+  page, so it is marked keep-unchanged with a validation check that the two still match.
+- **Two traps this release's vocabulary creates.** "Memory" invites the reading that something
+  persists outside the repository — every mention should sit near *repository-local* or
+  *committed*. "Continuity" invites the reading that the agent is continuous; it is not, the
+  artifacts are, and the section should say the session still starts from nothing and reads what
+  was left.
+- **`docs/architecture.md`'s diagram now omits four stores.** Flagged as its own task rather than
+  folded into the README pass.
+
+Plan verified against the repository before being written down: 15 config keys, 8 skills, 24
+README sections, 741 lines, README still claiming 220 checks, 3 docs from 1.2, and all five new
+modules and three new skills present.
+
+## TASK-10 — README rewrite executed
+
+Status: COMPLETE. `README.md` and `README_AUDIT.md` only. `plugin.json`, `docs/`, source and tests
+untouched, as instructed.
+
+**README: 741 → 929 lines, 24 → 26 sections. 211 insertions, 23 deletions.**
+
+### What changed
+
+| | |
+|---|---|
+| Headline | now "makes a repository know itself **and preserve the engineering context built while you work with it**" |
+| `## The problem it aims at` | **replaced** by `## The real problem: agents forget`, with `### The core idea` and `### Two kinds of cost` |
+| `## The compounding effect` | **new** — Day 1 / Day 30 / Day 180 |
+| `## What it does` | **reorganised** from an 11-row list into **Understand · Remember · Reuse · Evolve** plus Supporting |
+| `## What's new in 1.3` | **new**, after Quick start — six features, each described from shipped behaviour |
+| `### What it creates` | the `.chamnan/` tree now shows `sessions/`, `memory/{decisions,lessons,rules}/`, `milestones.md` |
+| `## Configuration` | 11 → **15** rows |
+| `## Commands` | 5 → **8** slash commands |
+| `## Tests` | 220 → **378**, in both places it appeared |
+| `## Who this is for` | one line added |
+
+### Positioning
+
+The token table was **kept in full** and moved behind the discovery argument rather than deleted —
+it is the most credible content in the document, and demoting it further would have traded the
+README's strongest asset for a better story. It is now introduced as the reason this approach
+targets reading rather than writing, with token reduction stated as **the consequence, not the
+aim**.
+
+Two traps the plan flagged were handled explicitly in the prose:
+
+- **"Memory"** could read as persistence outside the repository. The core-idea section says
+  plainly: *"Nothing is trained, nothing persists outside the directory, and the next session still
+  starts from zero — it just starts from zero in a repository that explains itself."*
+- **"Continuity"** could read as the agent being continuous. The same paragraph ends: *"The
+  continuity is in the artifacts, not in the model."*
+
+The compounding section keeps the counterweight attached rather than in a footnote: on a four-file
+repository this costs more than it saves.
+
+### Preserved, verified untouched
+
+Requirements · Secrets · Evidence · The chaos test · Troubleshooting · Limitations · Update,
+disable, uninstall · Bootstrap does not rewrite your code. Checked against the diff, not assumed.
+All 23 deleted lines are the old headline and the old problem section — nothing else was removed.
+
+### Validation
+
+Eight checks, run programmatically:
+
+1. Config table vs `DEFAULT_CONFIG` — **15/15, no mismatched defaults**
+2. Every documented slash command has a skill directory — **8/8**
+3. Every documented flag exists in `bin/` (`--plugin-dir` is Claude Code's own)
+4. Every capability named has a module behind it — impact, sessions, memory, workflows, milestones
+5. Internal anchors and relative links — **all resolve**
+6. Test count matches a live run — **378**
+7. Every `.chamnan/` path named is one `ensure()` creates
+8. The Secrets quote still matches `docs/data-flow.md` verbatim
+
+Banned-phrase scan: the two occurrences of "model training" and "learn" are **denials**, which is
+their required use. A polarity-aware re-check confirms every mention is a denial, and the first
+crude pass that flagged them was the check being wrong rather than the prose.
+
+`git diff --check` clean. `python3 tests/run_tests.py` → 378/378.
+
+## TASK-11 — Marketplace positioning metadata
+
+Status: COMPLETE. `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` only.
+README, source, tests and docs untouched.
+
+### Why it mattered
+
+Both shipped descriptions predated 1.3 entirely. They named four capabilities — index, state,
+procedures, tools — where the README now names eleven. **Memory, decisions, impact, resume,
+milestones and workflows appeared in neither.** Someone browsing the marketplace saw the 1.1
+product, and the marketplace listing is what people read *before* the README, not after.
+
+### Changed
+
+- **`plugin.json.description`** and **`marketplace.json.plugins[0].description`** — replaced with
+  one shared text, byte-identical in both files, because they already agreed and letting them
+  diverge would be a maintenance trap. 254/272 → **453 chars**.
+- **`marketplace.json.description`** — the top-level blurb, kept short as instructed: *"preserves a
+  long-lived repository's engineering context, so an agent stops rediscovering the same work every
+  session."* 143 chars.
+- **`plugin.json.keywords`** — 6 → **11**, adding `continuity`, `repository-knowledge`, `memory`,
+  `impact-map`, `developer-workflow`.
+
+### Validated
+
+- **No forbidden wording** in any of the three: no *AI memory*, *model learning*, *learns*,
+  *trains*, *permanent memory*, *cloud memory*, *sandbox*, *guarantee*, *remembers everything*.
+- **Required vocabulary present**: repository-local context · preserved engineering knowledge ·
+  reduced repeated discovery.
+- **No overclaim** — every capability the description names was checked against a file that
+  implements it: impact map → `lib/impact.py`, session records → `lib/sessions.py`, decisions →
+  `lib/memory.py`, workflows → `lib/workflows.py`, architecture index → `lib/mapper.py`, work
+  state → `hooks/session_start.py`, procedures → `skills/capture/SKILL.md`, tools →
+  `bin/chamnan-promote`. All present.
+- **Aligned with the README** — the three load-bearing phrases (*know itself*, *remember how you
+  work with it*, *stops rediscovering*) appear in both the README headline and the description, so
+  the two tell one story.
+- Both files parse as valid JSON; `git diff --check` clean.
+
+One deliberate non-change: the short marketplace blurb does not contain the literal phrase
+"repository-local". It says *"a long-lived repository's engineering context"*, which scopes it the
+same way in a field the brief asked to keep short. Padding a 143-character blurb with a redundant
+word would cost more than it clarifies.
+
+Note: `plugin.json` still reads **version 1.2.0**. The bump is a separate step, deliberately.
+
+## Where 1.3.0 stands
+
+All feature tasks complete, staging reviewed, README rewritten, marketplace metadata aligned.
+Staged, not committed.
+
+Remaining before release:
+1. Bump `plugin.json` version 1.2.0 → 1.3.0, as its own commit.
+2. `claude plugin tag --push` → `chamnan--v1.3.0`, then the GitHub release.
+3. Optional, its own task: extend `docs/architecture.md`'s diagram to the four new stores — it
+   still shows only MAP/STATE/procedures/tools.
+
+---
+
+# Chamnan 1.2.0 Community & Trust Release — RELEASED
 
 Last updated: 2026-08-20
 

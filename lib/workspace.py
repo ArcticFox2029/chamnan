@@ -58,6 +58,22 @@ DEFAULT_CONFIG = {
     #   "concise"  drop preamble, restatement and closing offers; keep full sentences
     #   "terse"    the above, plus fragments and tables over prose wherever they fit
     "reply_style": "off",
+    # Session records — where the last stretch of work stopped. Distinct from STATE.md, which is
+    # one overwritten file about the present; these are many small files, one per session, and only
+    # the unfinished part of the newest one is ever injected. See lib/sessions.py.
+    "resume": True,
+    # These accumulate one per working session in a directory that gets committed, so they are
+    # bounded from the start rather than after somebody's repository fills up. Longer than the log
+    # window because a record from three weeks ago is still the answer to "what was I doing".
+    "session_retention_days": 30,
+    # Project memory — why the code is the way it is. Rules are injected every session; decisions
+    # and lessons contribute a title and are read on demand. Deliberately NOT age-pruned: a session
+    # record stops mattering, a decision does not. See lib/memory.py.
+    "memory": True,
+    # Project milestones — the handful of changes that reshaped the repository. Only the two most
+    # recent TITLES are injected, so the file's length costs nothing per session. Not project
+    # management: no status, no owner, no dates-as-deadlines. See lib/milestones.py.
+    "milestones": True,
 }
 VCS_MARKERS = (".git", ".hg", ".svn")
 
@@ -115,9 +131,18 @@ def prune_logs(root=None):
     return removed
 
 
+def prune_sessions(root=None):
+    """Apply session_retention_days to sessions/. Called alongside prune_logs from the same
+    bin/ commands; separate because the two windows differ and conflating them would mean one
+    number for two very different kinds of file."""
+    import sessions
+    return sessions.prune(root, load_config(root).get("session_retention_days", 30))
+
+
 def ensure(root=None):
     ws = workspace(root)
-    for sub in ("", "skills", "tools", "logs"):
+    for sub in ("", "skills", "tools", "logs", "sessions",
+                "memory", "memory/decisions", "memory/lessons", "memory/rules"):
         (ws / sub).mkdir(parents=True, exist_ok=True)
     # Merge rather than skip. A config written by an older version is missing every key added
     # since, and nothing says so — the user edits the key they remember, it does nothing, and the

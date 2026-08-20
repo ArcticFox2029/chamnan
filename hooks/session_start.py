@@ -18,7 +18,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import memory  # noqa: E402
+import milestones  # noqa: E402
+import redact  # noqa: E402
 import rollup  # noqa: E402
+import sessions  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -73,10 +77,44 @@ def main():
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")
 
+    if cfg.get("memory", True):
+        # Rules are standing constraints, so they go in front of the agent before it starts.
+        rules = redact.scrub(memory.rules_text(root))
+        if rules:
+            out.append(section("Rules this repository works under", rules))
+        # Decisions and lessons are looked up when the question comes round, so they contribute a
+        # title and nothing else — the same economy skills/ and tools/ use.
+        listing = memory.render_titles(memory.titles(root))
+        if listing:
+            out.append(section(
+                "Recorded decisions and lessons — read the one that matches before assuming",
+                listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
+                          "do not read them all._"))
+
+    if cfg.get("milestones", True):
+        # Titles only, newest first. "The last big thing here was the auth migration" orients a
+        # session in about twenty tokens; the bodies are a grep away when a title looks relevant.
+        recent = redact.scrub(milestones.recent_titles(root))
+        if recent:
+            out.append(section("Recent milestones", recent))
+
+    if cfg.get("resume", True):
+        # Only the newest record, and only the part of it that is unfinished. "Done" is history and
+        # the file list is recoverable from git; what the next session cannot work out for itself is
+        # what was left and what was in the way. Empty when the last session finished cleanly, which
+        # is the right outcome — nothing is injected to say "nothing outstanding".
+        carried = redact.scrub(sessions.carry_forward(root))
+        if carried:
+            out.append(section("Where the last session stopped", carried))
+
     if cfg.get("state", True):
         sp = wsdir / "STATE.md"
         if sp.is_file():
-            st = sp.read_text(encoding="utf-8", errors="replace")[:MAX_STATE_CHARS].strip()
+            # Scrubbed on the way in. STATE.md and the session records are free text written about
+            # the repository, which makes them the likeliest place for a hostname or a pasted
+            # connection string to end up; until now only MAP.md and peek output were filtered.
+            st = redact.scrub(
+                sp.read_text(encoding="utf-8", errors="replace")[:MAX_STATE_CHARS]).strip()
             if st:
                 out.append(section("Work in flight (from the last session)", st))
                 out.append(f"_Keep `{sp.relative_to(root)}` current as you go; it is what survives "

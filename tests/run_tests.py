@@ -30,7 +30,12 @@ import peek as peek_mod  # noqa: E402
 import redact  # noqa: E402
 import assets as assets_mod  # noqa: E402
 import deploy as deploy_mod  # noqa: E402
+import impact as impact_mod  # noqa: E402
+import workflows  # noqa: E402
+import memory as memory_mod  # noqa: E402
+import milestones  # noqa: E402
 import schema  # noqa: E402
+import sessions  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -807,6 +812,490 @@ _d, efuncs, _c, _k = mapper.extract_regex(
 enames = {f.split("(")[0] for f, _ in efuncs}
 check("an Elixir predicate keeps its question mark", "permanent?" in enames)
 check("an Elixir bang function keeps its bang", "verify_coverage!" in enames)
+
+# ---------------------------------------------------------------- session records
+# A session record answers "where did the last stretch of work stop". Only the unfinished part
+# reaches the next session: Done is history and Files is recoverable from git, so injecting them
+# would spend the budget on what the reader could already get.
+sess = Path(tempfile.mkdtemp(prefix="chamnan-sess-"))
+(sess / ".chamnan" / "sessions").mkdir(parents=True)
+sdir = sess / ".chamnan" / "sessions"
+
+(sdir / "2026-08-18-parser-work.md").write_text(
+    "# Kotlin extension functions\n\n"
+    "## Done\n- Added the kotlin rules block\n\n"
+    "## Remaining\n- extract_regex returns the wrong arg list for extension functions\n\n"
+    "## Files\n- `lib/mapper.py` \u2014 new rules\n\n"
+    "## Decisions\n- Kotlin gets its own entry rather than borrowing Java's\n\n"
+    "## Blockers\n- none yet\n", encoding="utf-8")
+(sdir / "2026-08-19-schema-work.md").write_text(
+    "# Materialized views\n\n"
+    "## Done\n- CREATE VIEW pattern added\n\n"
+    "## Remaining\n- MySQL swap-staging tables still appear as schema\n\n"
+    "## Blockers\n- waiting on a decision about partitions\n", encoding="utf-8")
+
+check("records are listed newest first",
+      sessions.records(sess)[0].name.startswith("2026-08-19"))
+check("latest picks the newest record", sessions.latest(sess).name.startswith("2026-08-19"))
+
+carried = sessions.carry_forward(sess)
+check("the carried text names the session", "Materialized views" in carried)
+check("the carried text dates it", "2026-08-19" in carried)
+check("REMAINING IS CARRIED FORWARD", "swap-staging tables" in carried)
+check("BLOCKERS ARE CARRIED FORWARD", "waiting on a decision" in carried)
+check("DONE IS NOT CARRIED FORWARD", "CREATE VIEW pattern" not in carried)
+check("an older record is not carried forward", "extension functions" not in carried)
+
+# A record with nothing outstanding must inject nothing at all, rather than a heading saying so.
+(sdir / "2026-08-20-finished.md").write_text(
+    "# All done\n\n## Done\n- everything\n\n## Remaining\n-\n\n## Blockers\n- none\n",
+    encoding="utf-8")
+check("A FINISHED SESSION CARRIES NOTHING", sessions.carry_forward(sess) == "")
+# People write "- none" instead of omitting the section, and mean the same thing.
+(sdir / "2026-08-20-finished.md").write_text(
+    "# All done\n\n## Remaining\n- nothing\n\n## Blockers\n- N/A.\n", encoding="utf-8")
+check("'- nothing' and '- N/A' are treated as empty", sessions.carry_forward(sess) == "")
+(sdir / "2026-08-20-finished.md").write_text(
+    "# Partly done\n\n## Remaining\n- none\n- but check the parser\n", encoding="utf-8")
+check("a real item beside a 'none' is still carried",
+      "check the parser" in sessions.carry_forward(sess))
+(sdir / "2026-08-20-finished.md").unlink()
+
+# Robustness: the hook must survive whatever is in that directory.
+(sdir / "2026-08-21-garbage.md").write_text("no headings at all, just prose\n", encoding="utf-8")
+check("a record with no headings carries nothing", sessions.carry_forward(sess) == "")
+(sdir / "2026-08-21-garbage.md").unlink()
+check("an empty directory carries nothing",
+      sessions.carry_forward(Path(tempfile.mkdtemp(prefix="chamnan-none-"))) == "")
+
+# Unbounded growth is the failure mode these files invite: one per session, in a committed dir.
+import os as _os, time as _time
+old_rec = sdir / "2020-01-01-ancient.md"
+old_rec.write_text("# Ancient\n\n## Remaining\n- something\n", encoding="utf-8")
+_os.utime(old_rec, (_time.time() - 400 * 86400,) * 2)
+check("retention deletes a record past the window", sessions.prune(sess, 30) == 1)
+check("retention keeps recent records", len(sessions.records(sess)) == 2)
+check("a zero window prunes nothing", sessions.prune(sess, 0) == 0)
+
+check("slug is filename-safe", sessions.slug("Kotlin: extension functions!") == "kotlin-extension-functions")
+check("slug survives having nothing usable", sessions.slug("!!!") == "session")
+check("filename puts the date first",
+      sessions.filename("2026-08-20", "Fix the parser") == "2026-08-20-fix-the-parser.md")
+
+# The record is committed and is free text about the repository, which makes it the likeliest
+# place for a pasted credential to land. The injection path must scrub it.
+(sdir / "2026-08-22-leaky.md").write_text(
+    "# Leaky\n\n## Blockers\n- prod db is postgres://admin:" + fake("Hunter2", "Pass")
+    + "@db.internal/main\n", encoding="utf-8")
+leaked = sessions.carry_forward(sess)
+check("carry_forward itself does not redact (the hook does)", "Hunter2" in leaked)
+check("SCRUBBING THE CARRIED TEXT REMOVES THE PASSWORD", "Hunter2" not in redact.scrub(leaked))
+check("but the host stays readable", "db.internal" in redact.scrub(leaked))
+
+shutil.rmtree(sess, ignore_errors=True)
+
+# ---------------------------------------------------------------- project memory
+# Three categories used three different ways: rules are injected every session, decisions and
+# lessons contribute a title and are read on demand. If that distinction stops holding, every
+# session in every repository pays for it.
+mem = Path(tempfile.mkdtemp(prefix="chamnan-mem-"))
+for c in memory_mod.CATEGORIES:
+    (mem / ".chamnan" / "memory" / c).mkdir(parents=True)
+mroot = mem / ".chamnan" / "memory"
+
+(mroot / "rules" / "no-cloud-embeddings.md").write_text(
+    "# Never add a Cloud fallback for embeddings\n\n"
+    "A different model means an incompatible vector space.\n", encoding="utf-8")
+(mroot / "decisions" / "postgres-over-sqlite.md").write_text(
+    "# Postgres over SQLite\n\nTwo processes write concurrently and SQLite's locking failed.\n",
+    encoding="utf-8")
+(mroot / "lessons" / "hot-reload-attributeerror.md").write_text(
+    "# Editing src/ while the app runs\n\nA hot-reload artifact, not a bug. Restart clears it.\n",
+    encoding="utf-8")
+
+check("categories are the three named ones",
+      memory_mod.CATEGORIES == ("decisions", "lessons", "rules"))
+check("entries are found per category", len(memory_mod.entries(mem, "rules")) == 1)
+check("counts cover every category", memory_mod.counts(mem) ==
+      {"decisions": 1, "lessons": 1, "rules": 1})
+
+rules = memory_mod.rules_text(mem)
+check("A RULE IS INJECTED IN FULL", "incompatible vector space" in rules)
+check("a decision body is NOT in the rules text", "SQLite's locking" not in rules)
+# The entry is a standalone file opening with "# Title"; the hook drops it inside a "###" section,
+# and an H1 nested under an H3 makes the injected block read as a new document.
+check("AN ENTRY'S OWN H1 IS DEMOTED BEFORE INJECTION", "\n# " not in "\n" + rules)
+check("the title survives the demotion", "**Never add a Cloud fallback for embeddings**" in rules)
+
+listing = memory_mod.render_titles(memory_mod.titles(mem))
+check("a decision contributes its title", "Postgres over SQLite" in listing)
+check("a lesson contributes its title", "Editing src/ while the app runs" in listing)
+check("A DECISION BODY IS NOT INJECTED", "two processes write" not in listing.lower())
+check("the listing names the file to read", "postgres-over-sqlite.md" in listing)
+check("a rule does not appear twice in the listing", "vector space" not in listing)
+
+check("an empty store injects no rules",
+      memory_mod.rules_text(Path(tempfile.mkdtemp(prefix="chamnan-empty-"))) == "")
+check("an empty store injects no listing", memory_mod.render_titles([]) == "")
+
+# Rules reach every session, so their size is capped; titles are capped by count.
+for i in range(40):
+    (mroot / "rules" / f"filler-{i:02d}.md").write_text(
+        "# Rule " + str(i) + "\n\n" + ("x" * 200) + "\n", encoding="utf-8")
+capped = memory_mod.rules_text(mem)
+check("RULES ARE CAPPED SO THEY CANNOT SWAMP A SESSION",
+      len(capped) <= memory_mod.MAX_RULES_CHARS + 200)
+check("the cap says how many were held back", "more rules in" in capped)
+for i in range(40):
+    (mroot / "rules" / f"filler-{i:02d}.md").unlink()
+
+for i in range(20):
+    (mroot / "decisions" / f"d-{i:02d}.md").write_text(f"# Decision {i}\n\nbody\n", encoding="utf-8")
+many = memory_mod.render_titles(memory_mod.titles(mem))
+check("TITLES ARE CAPPED BY COUNT",
+      len([l for l in many.splitlines() if l.startswith("- **")]) <= memory_mod.MAX_TITLES)
+check("the title cap says how many more there are", "and" in many and "more" in many)
+for i in range(20):
+    (mroot / "decisions" / f"d-{i:02d}.md").unlink()
+
+# Memory is free text about the repository, written by Claude — the likeliest place for a pasted
+# credential to land, and these files are committed.
+(mroot / "rules" / "leaky.md").write_text(
+    "# Connection\n\nprod is postgres://admin:" + fake("Hunter2", "Pass") + "@db.internal/main\n",
+    encoding="utf-8")
+leaky = memory_mod.rules_text(mem)
+check("rules_text itself does not redact (the hook does)", "Hunter2" in leaky)
+check("SCRUBBING A RULE REMOVES THE PASSWORD", "Hunter2" not in redact.scrub(leaky))
+check("but the host survives redaction", "db.internal" in redact.scrub(leaky))
+(mroot / "rules" / "leaky.md").unlink()
+
+check("a title falls back to the filename when there is no heading",
+      memory_mod.title_of(Path("/nonexistent/some-entry.md")) == "some entry")
+check("slug is filename-safe",
+      memory_mod.slug("Postgres over SQLite!") == "postgres-over-sqlite")
+check("filename adds the extension",
+      memory_mod.filename("Postgres over SQLite") == "postgres-over-sqlite.md")
+
+shutil.rmtree(mem, ignore_errors=True)
+
+# ---------------------------------------------------------------- impact
+# The Quick Index says what exists. This says what is connected — specifically the reverse edge,
+# because a file's own imports are already at the top of that file.
+check("python from-import is extracted",
+      "payment.model" in impact_mod.extract_imports("from payment.model import Payment", "py"))
+check("python plain import is extracted",
+      "os.path" in impact_mod.extract_imports("import os.path", "py"))
+check("js import is extracted",
+      "./util" in impact_mod.extract_imports("import x from './util'", "js"))
+check("js require is extracted",
+      "./util" in impact_mod.extract_imports("const x = require('./util')", "js"))
+check("java import is extracted",
+      "com.of.Fleet" in impact_mod.extract_imports("import com.of.Fleet;", "java"))
+check("c include is extracted",
+      "of/crc.h" in impact_mod.extract_imports('#include "of/crc.h"', "c"))
+check("an angle-bracket include is NOT extracted",
+      impact_mod.extract_imports("#include <stdio.h>", "c") == [])
+check("an unknown language yields nothing", impact_mod.extract_imports("import x", "zig") == [])
+
+ifiles = [{"path": "payment/model.py"}, {"path": "payment/service.py"},
+          {"path": "checkout/api.py"}, {"path": "tests/test_payment.py"},
+          {"path": "a/utils.py"}, {"path": "b/utils.py"}]
+noext, stem = impact_mod._index(ifiles)
+check("a dotted module resolves to its file",
+      impact_mod.resolve("payment.model", "checkout/api.py", noext, stem) == "payment/model.py")
+check("a relative path resolves against the importer",
+      impact_mod.resolve("./model", "payment/service.py", noext, stem) == "payment/model.py")
+check("a third-party name resolves to nothing",
+      impact_mod.resolve("requests", "checkout/api.py", noext, stem) is None)
+check("AN AMBIGUOUS STEM RESOLVES TO NOTHING, RATHER THAN GUESSING",
+      impact_mod.resolve("utils", "checkout/api.py", noext, stem) is None)
+check("an ambiguous DOTTED name is refused too",
+      impact_mod.resolve("pkg.utils", "checkout/api.py", noext, stem) is None)
+check("an unambiguous suffix still resolves",
+      impact_mod.resolve("payment.service", "checkout/api.py", noext, stem)
+      == "payment/service.py")
+
+check("a path under tests/ is a test", impact_mod.is_test("tests/test_payment.py"))
+check("a _test suffix is a test", impact_mod.is_test("payment/service_test.go"))
+check("a .spec file is a test", impact_mod.is_test("web/src/api.spec.ts"))
+check("ordinary source is not a test", not impact_mod.is_test("payment/service.py"))
+
+built = impact_mod.build([
+    {"path": "payment/model.py", "imports": []},
+    {"path": "payment/service.py", "imports": ["payment.model"]},
+    {"path": "checkout/api.py", "imports": ["payment.service"]},
+    {"path": "tests/test_payment.py", "imports": ["payment.service"]},
+    {"path": "orphan/alone.py", "imports": []},
+])
+check("REVERSE EDGES ARE BUILT", built["payment/service.py"]["used_by"] == ["checkout/api.py"])
+check("A TEST IS RECORDED SEPARATELY FROM A CALLER",
+      built["payment/service.py"]["tests"] == ["tests/test_payment.py"])
+check("a test importer is not counted as a caller",
+      "tests/test_payment.py" not in built["payment/service.py"]["used_by"])
+check("transitive edges are NOT followed (one hop only)",
+      "checkout/api.py" not in built["payment/model.py"]["used_by"])
+check("A FILE NOBODY REFERS TO IS OMITTED", "orphan/alone.py" not in built)
+check("a self-import is ignored",
+      "x.py" not in impact_mod.build([{"path": "x.py", "imports": ["x"]}]))
+
+wide = impact_mod.build(
+    [{"path": "core.py", "imports": []}] +
+    [{"path": f"c{i}.py", "imports": ["core"]} for i in range(20)])
+out = impact_mod.render(wide)
+check("callers are capped per file", out.count("`c") <= impact_mod.MAX_USED_BY + 2)
+check("the cap says how many were held back", "more_" in out)
+check("an empty impact renders nothing", impact_mod.render({}) == "")
+
+# The section is large — nearly 12,000 tokens on a 2,365-file corpus — and belongs below the
+# Full Detail marker. Above it, every session in the repository would pay for a per-file
+# relationship listing it was never going to use. This was written above the marker first.
+imp_repo = Path(tempfile.mkdtemp(prefix="chamnan-imp-"))
+(imp_repo / "pay").mkdir(); (imp_repo / "tests").mkdir()
+(imp_repo / "pay" / "model.py").write_text('"""Rows."""\nclass P: pass\n', encoding="utf-8")
+(imp_repo / "pay" / "service.py").write_text(
+    '"""Charges."""\nfrom pay.model import P\n', encoding="utf-8")
+(imp_repo / "tests" / "test_pay.py").write_text(
+    '"""Tests."""\nfrom pay.service import x\n', encoding="utf-8")
+rendered_map = mapper.render(mapper.scan(imp_repo), imp_repo)
+check("the map contains an Impact section", "## Impact" in rendered_map)
+check("IMPACT SITS BELOW THE FULL DETAIL MARKER, SO IT IS NEVER INJECTED",
+      rendered_map.index("## Impact") > rendered_map.index("## Full Detail"))
+check("the injected half does not mention Impact",
+      "## Impact" not in rendered_map[:rendered_map.index("## Full Detail")])
+check("impact names the caller", "pay/model.py" in rendered_map)
+shutil.rmtree(imp_repo, ignore_errors=True)
+
+# ---------------------------------------------------------------- repeated workflows
+# scratch_watch catches the same SCRIPT written a third time. This catches the thing that leaves
+# no file behind: the same commands, in the same order, weeks apart. Sequence detection is much
+# noisier than comparing two script bodies, so most of these checks are about staying quiet.
+check("a bare program is its own signature", workflows.signature("pytest -x tests/") == "pytest")
+check("a subcommand tool keeps its subcommand", workflows.signature("git status -sb") == "git status")
+check("arguments and paths are discarded",
+      workflows.signature("pytest tests/payment -x") == workflows.signature("pytest tests/fleet"))
+check("a boolean flag before the subcommand is skipped",
+      workflows.signature("docker --debug compose up") == "docker compose")
+# Known limitation, documented in lib/workflows.py: a global flag taking a VALUE cannot be told
+# from a boolean one without each tool's grammar. The result is a signature that matches nothing,
+# so the workflow goes undetected — quiet, rather than a wrong suggestion.
+check("a value-taking global flag is a known blind spot",
+      workflows.signature("docker --context prod compose up") == "docker prod")
+check("leading environment assignments are skipped",
+      workflows.signature("FOO=bar pytest tests/") == "pytest")
+check("an absolute path is reduced to the program",
+      workflows.signature("/usr/local/bin/pytest tests/") == "pytest")
+check("A COMMON SHELL COMMAND IS IGNORED", workflows.signature("ls -la") == "")
+check("grep is ignored too", workflows.signature("grep -rn foo .") == "")
+check("an empty command yields nothing", workflows.signature("   ") == "")
+
+check("a pipeline yields each step",
+      workflows.signatures("docker compose up && alembic upgrade head && pytest tests/")
+      == ["docker compose", "alembic", "pytest"])
+check("noise inside a chain is dropped",
+      workflows.signatures("cd /srv && ls && pytest tests/") == ["pytest"])
+check("consecutive duplicates collapse",
+      workflows.signatures("git add . && git add -A") == ["git add"])
+
+def _day(d, sigs):
+    return [{"at": f"2026-08-{d:02d}T10:00:00+07:00", "sig": s} for s in sigs]
+
+seq = ["docker compose", "alembic", "pytest"]
+check("two occurrences are NOT enough",
+      workflows.repeated(_day(1, seq) + _day(2, seq)) is None)
+found = workflows.repeated(_day(1, seq) + _day(2, seq) + _day(3, seq))
+check("THREE OCCURRENCES ON THREE DAYS QUALIFY", found is not None)
+check("the sequence is reported in order", found[0] == seq)
+check("the count is the number of days", found[1] == 3)
+
+check("A SEQUENCE REPEATED WITHIN ONE DAY IS NOT THREE OCCURRENCES",
+      workflows.repeated(_day(1, seq + seq + seq)) is None)
+check("a two-step sequence is below the minimum length",
+      workflows.repeated(_day(1, ["git status", "pytest"]) * 1
+                         + _day(2, ["git status", "pytest"])
+                         + _day(3, ["git status", "pytest"])) is None)
+check("three occurrences of the SAME command repeated do not qualify",
+      workflows.repeated(_day(1, ["pytest", "pytest", "pytest"])
+                         + _day(2, ["pytest", "pytest", "pytest"])
+                         + _day(3, ["pytest", "pytest", "pytest"])) is None)
+check("unrelated days do not stitch into a sequence",
+      workflows.repeated(_day(1, ["git status", "pytest", "docker compose"])
+                         + _day(2, ["terraform plan", "helm upgrade", "kubectl get"])
+                         + _day(3, ["npm run", "node", "cargo build"])) is None)
+
+longer = ["docker compose", "alembic", "pytest", "kubectl apply"]
+best = workflows.repeated(_day(1, longer) + _day(2, longer) + _day(3, longer))
+check("the LONGEST qualifying sequence is chosen", best[0] == longer)
+
+msg = workflows.describe(seq, 3)
+check("the notice names the sequence", "docker compose" in msg and "pytest" in msg)
+check("the notice points at the capture skill", "/chamnan:capture" in msg)
+check("the notice says how many times", "3 times" in msg)
+
+# The log is bounded: this is a hint generator, not an archive.
+wf = Path(tempfile.mkdtemp(prefix="chamnan-wf-")) / "commands.jsonl"
+hist = workflows.record(wf, ["pytest"] * (workflows.KEEP_ENTRIES + 50), "2026-08-01T10:00:00+07:00")
+check("the command log is bounded", len(hist) == workflows.KEEP_ENTRIES)
+check("a malformed line does not break reading",
+      len(workflows.record(wf, [], "2026-08-01T10:00:00+07:00")) == workflows.KEEP_ENTRIES)
+shutil.rmtree(wf.parent, ignore_errors=True)
+
+# ---------------------------------------------------------------- milestones
+# A git log says what changed; a milestone says why it was worth doing and which areas moved
+# together. Not project management: no status, no owner, no due date.
+ms = Path(tempfile.mkdtemp(prefix="chamnan-ms-"))
+(ms / ".chamnan").mkdir()
+
+check("an absent file yields no entries", milestones.entries(ms) == [])
+check("an absent file injects nothing", milestones.recent_titles(ms) == "")
+
+milestones.append(ms, milestones.render_entry(
+    "2026-06-01", "Split the monolith",
+    why="deploys blocked each other", affected="api, worker", decisions="kept one database"))
+milestones.append(ms, milestones.render_entry(
+    "2026-07-15", "Postgres migration", why="SQLite locking failed under two writers"))
+milestones.append(ms, milestones.render_entry(
+    "2026-08-20", "Authentication migration",
+    why="sessions dropped under load", affected="auth module, API layer"))
+
+found = milestones.entries(ms)
+check("every entry is parsed", len(found) == 3)
+check("ENTRIES ARE OLDEST FIRST, AS WRITTEN", found[0][1] == "Split the monolith")
+check("the newest is last", found[-1][1] == "Authentication migration")
+check("the date is captured", found[-1][0] == "2026-08-20")
+check("the body is captured", "sessions dropped under load" in found[-1][2])
+
+# Appending at the end keeps a diff to added lines; prepending would rewrite the whole file.
+text = milestones.path(ms).read_text(encoding="utf-8")
+check("the file keeps one header", text.count("# Project milestones") == 1)
+check("APPENDING PRESERVES EARLIER ENTRIES VERBATIM", "deploys blocked each other" in text)
+check("the newest entry is last in the file",
+      text.index("Authentication migration") > text.index("Split the monolith"))
+
+titles = milestones.recent_titles(ms)
+check("ONLY THE RECENT TITLES ARE INJECTED", titles.count("- **") == milestones.INJECT_RECENT)
+check("titles are newest first for a reader",
+      titles.index("Authentication migration") < titles.index("Postgres migration"))
+check("AN ENTRY BODY IS NEVER INJECTED", "sessions dropped under load" not in titles)
+check("the injection says how many are older", "1 earlier" in titles)
+
+check("an empty field is omitted rather than written blank",
+      "**Affected:**" not in milestones.render_entry("2026-01-01", "Something", why="because"))
+check("a supplied field is written", "**Why:** because"
+      in milestones.render_entry("2026-01-01", "Something", why="because"))
+
+# The file is committed and free text about the repository.
+milestones.append(ms, milestones.render_entry(
+    "2026-08-21", "Cache work", why="prod is redis://user:" + fake("Hunter2", "Pass") + "@cache.internal"))
+leaky = milestones.recent_titles(ms)
+check("a password in a body does not reach the titles", "Hunter2" not in leaky)
+check("SCRUBBING A MILESTONE BODY REMOVES THE PASSWORD",
+      "Hunter2" not in redact.scrub(milestones.path(ms).read_text(encoding="utf-8")))
+
+# Malformed content must not take the hook down.
+milestones.path(ms).write_text("# Project milestones\n\nprose with no entries\n", encoding="utf-8")
+check("a file with no parseable entries yields none", milestones.entries(ms) == [])
+check("and injects nothing", milestones.recent_titles(ms) == "")
+
+shutil.rmtree(ms, ignore_errors=True)
+
+# ---------------------------------------------------------------- language extraction quality
+# Prioritised by measurement, not by feeling: symbols per thousand lines across a 529-file
+# polyglot corpus put PHP at 20.0 and Rust at 21.8, well below comparable languages, and inspection
+# showed why. Shell sits lowest of all at 9.9 and was left alone — its scripts are straight-line
+# commands, not functions, so the low number is the language rather than a defect.
+
+# PHP: a method is the normal shape, and the bare `function` rule caught none of them.
+_d, pfuncs, pcls, _k = mapper.extract_regex(
+    "<?php\n"
+    "final class Importer implements Runnable {\n"
+    "    public function run(array $rows): void {}\n"
+    "    private function parse($line) {}\n"
+    "    protected static function make() {}\n"
+    "    abstract public function must();\n"
+    "}\n"
+    "function bare_helper($x) {}\n"
+    "trait Loggable {}\n"
+    "interface Runnable {}\n", "php")
+pnames = {f.split("(")[0] for f, _ in pfuncs}
+check("A PHP PUBLIC METHOD IS EXTRACTED", "run" in pnames)
+check("a php private method is extracted", "parse" in pnames)
+check("a php protected static method is extracted", "make" in pnames)
+check("a php abstract method is extracted", "must" in pnames)
+check("a bare php function still works", "bare_helper" in pnames)
+pclasses = {c for c, _, _ in pcls}
+check("a php final class is extracted", "Importer" in pclasses)
+check("a php trait is extracted", "Loggable" in pclasses)
+check("a php interface is extracted", "Runnable" in pclasses)
+
+# Rust: async and restricted visibility are ordinary and both slipped the pattern.
+_d, rfuncs, rcls, _k = mapper.extract_regex(
+    "pub fn plain(a: u32) -> u32 {}\n"
+    "async fn fetch(url: &str) {}\n"
+    "pub async fn stream(id: u64) {}\n"
+    "pub(crate) fn internal() {}\n"
+    "pub unsafe fn raw() {}\n"
+    "fn private_one() {}\n"
+    "pub struct Frame {}\n"
+    "pub trait Codec {}\n"
+    "enum Kind {}\n", "rs")
+rnames = {f.split("(")[0] for f, _ in rfuncs}
+check("A RUST ASYNC FN IS EXTRACTED", "fetch" in rnames)
+check("a rust pub async fn is extracted", "stream" in rnames)
+check("a rust pub(crate) fn is extracted", "internal" in rnames)
+check("a rust unsafe fn is extracted", "raw" in rnames)
+check("a plain rust fn still works", "plain" in rnames and "private_one" in rnames)
+check("a rust trait is extracted", "Codec" in {c for c, _, _ in rcls})
+
+# JS/TS: class methods are indented, so every rule anchored at ^ skipped them.
+_d, jfuncs, jcls, _k = mapper.extract_regex(
+    "export class Client {\n"
+    "  async send(req: Request): Promise<Response> {\n"
+    "    if (req.id) {\n    }\n"
+    "    for (const x of items) {\n    }\n"
+    "    while (n > 0) {\n    }\n"
+    "  }\n"
+    "  close(): void {\n  }\n"
+    "  constructor(base: string) {\n  }\n"
+    "}\n"
+    "export function helper(a, b) {}\n", "js")
+jnames = {f.split("(")[0] for f, _ in jfuncs}
+check("A TS CLASS METHOD IS EXTRACTED", "send" in jnames)
+check("a method with a return type is extracted", "close" in jnames)
+check("a top-level function still works", "helper" in jnames)
+check("AN IF IS NOT EXTRACTED AS A METHOD", "if" not in jnames)
+check("a for is not extracted as a method", "for" not in jnames)
+check("a while is not extracted as a method", "while" not in jnames)
+check("a constructor is not listed as a method", "constructor" not in jnames)
+check("an exported class is extracted", "Client" in {c for c, _, _ in jcls})
+
+# "A language partially understood is better than falsely claiming full support" — as an
+# assertion rather than a slogan. Each fixture is ordinary code in that language; a rule that
+# stops matching it will fail here rather than quietly halving an index.
+MIN_YIELD = {
+    # 2, not 3: extract_python records a method inside its class tuple
+    # rather than as a top-level function, so `alpha` + `Beta` is the
+    # honest count for this fixture. gamma is captured, just nested.
+    "py": ('def alpha():\n    pass\n\n\nclass Beta:\n    def gamma(self):\n        pass\n', 2),
+    "go": ('func Alpha() {}\nfunc (r *R) Beta() {}\ntype Gamma struct {}\n', 3),
+    "rb": ('class Alpha\n  def beta\n  end\nend\ndef gamma\nend\n', 3),
+    "java": ('public class Alpha {\n  public void beta() {}\n  private int gamma() {}\n}\n', 3),
+    "kotlin": ('class Alpha {\n  fun beta() {}\n  suspend fun gamma() {}\n}\n', 3),
+    "swift": ('class Alpha {\n  func beta() {}\n  private func gamma() {}\n}\n', 3),
+    "rs": ('pub fn alpha() {}\nasync fn beta() {}\npub struct Gamma {}\n', 3),
+    "php": ('<?php\nclass Alpha {\n  public function beta() {}\n  private function gamma() {}\n}\n', 3),
+    "js": ('export function alpha() {}\nexport class Beta {\n  gamma() {}\n}\n', 3),
+    "cs": ('public class Alpha {\n  public void Beta() {}\n  private int Gamma() { return 0; }\n}\n', 3),
+    "dart": ('class Alpha {\n  void beta() {}\n  int gamma() { return 0; }\n}\n', 3),
+    "ex": ('defmodule Alpha do\n  def beta do\n  end\n  def gamma do\n  end\nend\n', 2),
+}
+for lang, (fixture, minimum) in sorted(MIN_YIELD.items()):
+    if lang == "py":
+        got = len(mapper.extract_python(fixture, Path("x.py"))[1]) + \
+              len(mapper.extract_python(fixture, Path("x.py"))[2])
+    else:
+        _dd, ff, cc, _kk = mapper.extract_regex(fixture, lang)
+        got = len(ff) + len(cc)
+    check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

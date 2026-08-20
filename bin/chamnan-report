@@ -93,6 +93,7 @@ def main(argv):
         print("  (nothing to measure until this repo has been worked on in Claude Code)")
         return 1
     ws.prune_logs(root)
+    ws.prune_sessions(root)
     entries = collect(project_dir)
     if not entries:
         print("chamnan: transcripts found but no usage records yet", file=sys.stderr)
