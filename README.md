@@ -1,5 +1,11 @@
 # chamnan
 
+<img src="docs/assets/chamnan.png" alt="chamnan — an index the agent reads instead of scanning files. On a 529-file test corpus, 1,464,978 tokens of source against roughly 3,000 injected per session." width="100%">
+
+<sub>The figures above are a summary. Every one of them, and how it was measured, is in
+[Evidence](#evidence) and [The chaos test](#the-chaos-test) below — read those rather than the
+picture if a number matters to you.</sub>
+
 **ชำนาญ** *(cham-nan)* — Thai for the fluency that only comes from doing something again.
 
 A Claude Code plugin that makes a repository know itself **and preserve the engineering context
