@@ -467,6 +467,52 @@ check("the saving is measured against the real text, not the byte count",
 
 shutil.rmtree(att, ignore_errors=True)
 
+# ---------------------------------------------------------------- peek must not leak
+# chamnan-peek is the one command that opens an arbitrary path on request, and it was the one
+# with no deny-list and no scrubber: pointed at a credentials file it printed AWS, Stripe, Slack
+# and GitHub credentials straight into the session. The corpus it was first tried against hid
+# this, because its files opened with long comment headers and peek only shows the first lines.
+# Real credential files put the secret on line two.
+leak = Path(tempfile.mkdtemp(prefix="chamnan-leak-"))
+
+(leak / "credentials.ini").write_text(
+    "[default]\n"
+    f"aws_access_key_id = {fake('AKIA', 'J7Q2MMPL', 'R4XN8DZQ', '1')}\n"
+    f"stripe_key = {fake('sk_', 'live_', '51Nq8HbK2mPzR', '7YvXcW4tL9dQ')}\n", encoding="utf-8")
+ini = peek_mod.peek(leak / "credentials.ini")
+check("A CREDENTIALS FILE IS REFUSED, NOT SUMMARISED", "Refused" in ini)
+check("the refusal names no key", "AKIA" not in ini)
+
+(leak / "server.key").write_text(
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow" + "A" * 400 + "\n-----END RSA PRIVATE KEY-----\n",
+    encoding="utf-8")
+check("A PRIVATE KEY IS REFUSED", "Refused" in peek_mod.peek(leak / "server.key"))
+
+# .env is the opposite case: which variables exist is exactly what an index should say, so it is
+# opened -- with the values gone and the names kept.
+(leak / "prod.env").write_text(
+    f"SLACK_BOT_TOKEN={fake('xoxb-', '2841003', '-4471902', '-9Lm2QpVt')}\n"
+    f"GITHUB_TOKEN={fake('ghp_', 'K2mPzR7YvXcW', '4tL9dQnH6sJ', '8bF3g')}\n"
+    "DATABASE_PASSWORD=tr0ub4dor&3-horse\n", encoding="utf-8")
+env = peek_mod.peek(leak / "prod.env")
+check("PEEK NEVER PRINTS A SLACK TOKEN", "xoxb-" not in env)
+check("PEEK NEVER PRINTS A GITHUB TOKEN", fake("ghp", "_") not in env)
+check("PEEK NEVER PRINTS AN UNQUOTED PASSWORD", "tr0ub4dor" not in env)
+check("but the variable names survive, which is the useful half", "SLACK_BOT_TOKEN" in env)
+
+# Unquoted assignment is how every .env and .ini is written; requiring quotes let them through.
+check("scrub redacts an unquoted assignment",
+      "hunter2secret" not in redact.scrub("DB_PASSWORD=hunter2secret"))
+check("scrub still redacts a quoted one",
+      "hunter2secret" not in redact.scrub('db_password = "hunter2secret"'))
+check("scrub leaves a short non-secret alone", "3600" in redact.scrub("token_ttl = 3600"))
+check("scrub does not eat prose", "vault" in redact.scrub("# password: ask the vault team"))
+check("credentials.ini is blocked by stem, not just by exact name",
+      redact.is_blocked(Path("credentials.ini")))
+check("an ordinary config file is not blocked", not redact.is_blocked(Path("settings.ini")))
+
+shutil.rmtree(leak, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

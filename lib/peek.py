@@ -28,6 +28,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+import redact
 import tokens
 DEFAULT_BUDGET = 400           # tokens of output; the whole point is to stay small
 SAMPLE_ROWS = 3
@@ -361,6 +362,14 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     if not path.is_file():
         return f"chamnan-peek: not a file: {path}"
     size = path.stat().st_size
+    if redact.is_never_opened(path):
+        # A key file's shape IS its content. Naming it and refusing is the whole useful answer;
+        # peek is the one command that opens an arbitrary path on request, which makes it the
+        # one that most needs a deny-list, and it did not have one.
+        return (f"# {path.name}\n{_human(size)} · {path.suffix.lower() or 'no extension'}\n\n"
+                f"Refused: chamnan does not open this kind of file. Its contents are credentials "
+                f"or a key, and there is no summary of them that is safe to put in a session.\n\n"
+                f"_[nothing read]_")
     ext = path.suffix.lower()
     header = [f"# {path.name}", f"{_human(size)} · {ext or 'no extension'}"]
 
@@ -395,6 +404,10 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     cut = tokens.cut_at(out, budget)
     if cut < len(out):
         out = out[:cut] + f"\n\n_[truncated at {budget} tokens — narrow it with --find]_"
+    # One choke point, matching how the map is scrubbed. peek reads .env, .ini, .yaml and source
+    # on demand, and printed AWS, Stripe, Slack and GitHub credentials verbatim into the session
+    # until this line existed.
+    out = redact.scrub(out)
     return out + "\n\n" + _cost_note(path, ext, size, out)
 
 

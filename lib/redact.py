@@ -41,6 +41,13 @@ CREDENTIALED_URL = re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+):([^\s@/]
 ASSIGNED_SECRET = re.compile(
     r"((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
     r"auth|credential)[\w-]*\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
+# The same assignment without quotes, which is how every .env and .ini file on earth is written.
+# Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
+# single unbroken run of characters so a prose comment ("password: ask the platform team") is not
+# eaten, and to six characters so token_ttl=3600 is not either.
+ASSIGNED_SECRET_BARE = re.compile(
+    r"((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
+    r"auth|credential)[\w-]*\s*[:=]\s*)([^\s'\"#;,)\]}]{6,})", re.I)
 
 # Never opened by the scanner at all, whatever else matches. .gitignore is not relied on: it is
 # often absent, often wrong, and the cost of being wrong here is somebody's private key.
@@ -51,12 +58,33 @@ BLOCKED_SUFFIXES = (
 BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc",
                  "credentials", "secrets.yml", "secrets.yaml")
 
+# The scanner's list above and this one answer different questions. The scanner should not open a
+# database at all -- it indexes source, and a .sqlite is not source. peek is asked for one file by
+# name, and a database's table and column names are exactly the useful answer, with no row ever
+# printed. Refusing those too cost peek one of its better features for no gain. What stays refused
+# is the set whose contents ARE the secret: keys, certificates, and credential files.
+NEVER_OPENED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der",
+                         ".jks", ".keystore", ".asc", ".gpg")
+
 
 def is_blocked(path):
     name = path.name.lower()
     if name.startswith("id_rsa") or name.startswith("id_ed25519"):
         return True
-    return name.endswith(BLOCKED_SUFFIXES) or name in BLOCKED_NAMES
+    # Compare the stem too: the deny-list carries "credentials", and the file everyone actually
+    # has is credentials.ini, which an exact match on the full name lets straight through.
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    return name.endswith(BLOCKED_SUFFIXES) or name in BLOCKED_NAMES or stem in BLOCKED_NAMES
+
+
+def is_never_opened(path):
+    """Files peek refuses outright, because a summary of them is a summary of a secret."""
+    name = path.name.lower()
+    if name.startswith(("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")):
+        return True
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    return (name.endswith(NEVER_OPENED_SUFFIXES) or name in BLOCKED_NAMES
+            or stem in BLOCKED_NAMES)
 
 
 def scrub(text):
@@ -67,4 +95,5 @@ def scrub(text):
         text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
     text = ASSIGNED_SECRET.sub(rf"\1\2{PLACEHOLDER}\2", text)
+    text = ASSIGNED_SECRET_BARE.sub(rf"\1{PLACEHOLDER}", text)
     return text
