@@ -132,6 +132,13 @@ BLOCK_CLOSE = "*/"
 # That is worse than an empty summary, because it counts as described, inflates the coverage
 # figure, and spends tokens in every session to say nothing. When the first comment is one of
 # these, the reader steps over it and looks for the next.
+# Pragmas and editor directives that open a file above its real description. Removed from the
+# front of the comment before the boilerplate test rather than treated as boilerplate themselves.
+MAGIC_COMMENT = re.compile(
+    r"^(?:frozen_string_literal\s*:\s*\w+|encoding\s*[:=]\s*[\w-]+|-\*-.*?-\*-|"
+    r"coding[:=]\s*[\w.-]+|warn_indent\s*:\s*\w+|shareable_constant_value\s*:\s*\w+|"
+    r"@ts-\w+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
+    r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
 BOILERPLATE = re.compile(
     r"(?:copyright|\(c\)|©|licen[cs]ed?\b|all rights reserved|spdx|permission is hereby|"
     r"this (?:file|program|software|source) (?:is|may)|redistribution|frozen_string_literal|"
@@ -180,6 +187,12 @@ def leading_comment(source, lang=None):
         first_word = text.split(" ", 1)[0] if text else ""
         if FILENAME_LINE.match(first_word):
             text = text[len(first_word):].strip()
+        # A pragma is not a licence and it is not a description either -- it is a switch that
+        # happens to be spelled as a comment, and it sits on the FIRST line, above the real one.
+        # `# frozen_string_literal: true` opens virtually every modern Ruby file, and matching it
+        # as boilerplate threw away the whole comment block behind it: 26 of 28 Ruby files in a
+        # polyglot corpus lost the summary that was sitting two lines further down.
+        text = MAGIC_COMMENT.sub("", text, count=1).strip()
         # Searched over the opening of the text rather than anchored at its start: a Swift or
         # Objective-C header opens with the file name and the project name before it ever reaches
         # "Copyright", so an anchored match never fired and every file in the project shared the
@@ -298,6 +311,18 @@ REGEX_RULES = {
            ("class", r"^(?:pub\s+)?(?:struct|enum|trait)\s+(\w+)")],
     "java": [("func", r"^\s*(?:public|private|protected).*?\s(\w+)\s*\(([^)]*)\)\s*\{"),
              ("class", r"^\s*(?:public\s+)?(?:class|interface|enum)\s+(\w+)")],
+    # Kotlin borrowed Java's rules and it cost almost everything: a visibility modifier is
+    # OPTIONAL in Kotlin (public is the default and `fun` usually carries none), so 31 files
+    # yielded 34 symbols where 34 Java files yielded 218 -- and what it did find included
+    # `HttpClient(engine)`, a constructor call rather than a declaration. `fun` is the anchor.
+    "kotlin": [
+        ("func", r"^\s*(?:(?:public|private|protected|internal|override|open|abstract|final|"
+                 r"inline|suspend|operator|infix|tailrec|external|expect|actual)\s+)*"
+                 r"fun\s+(?:<[^>]*>\s*)?(?:[\w.]+\.)?(\w+)\s*\(([^)]*)\)"),
+        ("class", r"^\s*(?:(?:public|private|internal|open|abstract|sealed|data|value|inner|"
+                  r"annotation|enum|expect|actual)\s+)*(?:class|object|interface)\s+(\w+)"),
+        ("const", r"^\s*(?:(?:private|internal|const)\s+)*val\s+([A-Z][A-Z0-9_]{2,})\s*[:=]"),
+    ],
     "tf": [("class", r'^resource\s+"([^"]+)"\s+"([^"]+)"'),
            ("func", r'^(?:module|data)\s+"([^"]+)"')],
     "php": [("func", r"^\s*function\s+(\w+)\s*\(([^)]*)\)"), ("class", r"^\s*class\s+(\w+)")],
@@ -306,6 +331,11 @@ REGEX_RULES = {
     # the exotic ones, which is the accepted trade for an index — a miss costs one grep.
     "c": [
         ("func", r"^[A-Za-z_][\w \t\*&:<>,]*?\b(\w+)\s*\(([^;)]*)\)\s*(?:const\s*)?\{"),
+        # A header holds prototypes, which end in ";" and never in "{". Matching only definitions
+        # meant 11 header files in a firmware tree contributed 2 symbols between them, while the
+        # whole point of a header is to declare what the module offers.
+        ("func", r"^(?!\s*(?:typedef|return|else|extern\s+\"C\")\b)"
+                 r"[A-Za-z_][\w \t\*&]*?\b(\w+)\s*\(([^;{)]*)\)\s*;"),
         ("class", r"^\s*(?:typedef\s+)?(?:struct|class|union|enum)\s+(\w+)"),
         ("const", r"^\s*#define\s+([A-Z][A-Z0-9_]{2,})"),
     ],
@@ -339,7 +369,8 @@ REGEX_RULES = {
 EXT_LANG = {
     ".py": "py", ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js", ".ts": "js", ".tsx": "js",
     ".go": "go", ".sh": "sh", ".bash": "sh", ".command": "sh", ".zsh": "sh",
-    ".rb": "rb", ".rs": "rs", ".java": "java", ".kt": "java", ".tf": "tf", ".php": "php",
+    ".rb": "rb", ".rs": "rs", ".java": "java", ".kt": "kotlin", ".kts": "kotlin",
+    ".tf": "tf", ".php": "php",
     # The C family was missing entirely until a run against real repositories: a C project reported
     # zero files and a C++ one six of 142. Headers are indexed too — in C and C++ the header is
     # usually where the interface a reader came looking for actually lives. .ino is Arduino, which
