@@ -26,14 +26,42 @@ import redact
 DETAIL_LIMIT = 40
 MAX_COLUMNS_SHOWN = 25
 
+# The trailing "(" is what keeps a partition out of the index, and that is worth stating rather
+# than leaving to luck: `CREATE TABLE readings_eu_west PARTITION OF readings ...` has no column
+# list, so it never matches. That is the outcome we want -- eight regional partitions of one table
+# are eight rows of noise and the parent already says everything -- but it was accidental, and an
+# innocent-looking relaxation of this pattern would silently undo it. SQL_PARTITION exists to
+# count them so the parent can say it is partitioned.
 SQL_TABLE = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?(\w+)[`\"\]]?\s*\(",
     re.I)
+SQL_PARTITION = re.compile(
+    r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?\w+[`\"\]]?"
+    r"\s+PARTITION\s+OF\s+[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?(\w+)", re.I)
 PRISMA_MODEL = re.compile(r"^model\s+(\w+)\s*\{", re.M)
 DJANGO_MODEL = re.compile(r"^class\s+(\w+)\s*\(\s*(?:models\.)?Model\s*\)\s*:", re.M)
 SQLALCHEMY_TABLE = re.compile(r"__tablename__\s*=\s*[\"'](\w+)[\"']")
 RAILS_TABLE = re.compile(r"create_table\s+[:\"'](\w+)", re.I)
 TYPEORM_ENTITY = re.compile(r"@Entity\([^)]*\)\s*(?:export\s+)?class\s+(\w+)", re.S)
+# A view is a queryable object, and an analytics materialized view is often the only place a
+# derived figure is defined. Neither was matched at all, so "where does lane performance come
+# from" had no answer in the index even though the repo declares it.
+SQL_VIEW = re.compile(
+    r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:MATERIALIZED\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?(\w+)[`\"\]]?", re.I)
+# Room (Android) and JPA (Java) both declare the real table name in the annotation, which beats
+# the class name -- ShipmentEntity is not what the table is called. The TypeORM pattern above
+# missed both: its [^)] stops at the first ")" and Room's annotation contains Index(...), and
+# Kotlin writes "data class" rather than "class".
+ROOM_JPA_TABLE = re.compile(
+    r"@(?:Entity|Table)\s*\([^{]*?(?:tableName|name)\s*=\s*[\"']([\w.]+)[\"']", re.S)
+# Bare @Entity with no name: the table is the class, which is what JPA defaults to.
+# Only when nothing between @Entity and the class declares a name -- otherwise the table would be
+# listed twice, once as `fleet_vehicles` and once as `Vehicle`, and one of those is not a table.
+ROOM_JPA_CLASS = re.compile(
+    r"@Entity\b(?:(?!tableName|(?<![\w])name\s*=)[^\n])*\n"
+    r"(?:[ \t]*@(?:(?!tableName|(?<![\w])name\s*=)[^\n])*\n)*"
+    r"[ \t]*(?:public\s+|open\s+|data\s+|final\s+|abstract\s+)*class\s+(\w+)")
 
 COMMENT_ABOVE = re.compile(r"(?:^|\n)((?:[ \t]*(?://|--|#)[^\n]*\n)+)[ \t]*$")
 SQL_COLUMN = re.compile(r"^\s*[`\"\[]?(\w+)[`\"\]]?\s+"
@@ -41,7 +69,12 @@ SQL_COLUMN = re.compile(r"^\s*[`\"\[]?(\w+)[`\"\]]?\s+"
                         r"double|real|bool|boolean|date|datetime|timestamp|time|json|jsonb|uuid|"
                         r"blob|bytea|serial|bigserial)", re.I | re.M)
 
-SCHEMA_HINTS = ("migration", "migrations", "schema", "models", "db", "database", "sql")
+SCHEMA_HINTS = ("migration", "migrations", "schema", "models", "db", "database", "sql",
+                # Where JPA, Room, Hibernate and Doctrine entities actually live. The corpus only
+                # found its Room entities because their path happened to contain db/ and entity/;
+                # the far more common src/main/java/.../domain/Vehicle.java was invisible.
+                "entity", "entities", "domain", "model", "persistence", "repository", "dao",
+                "store", "storage")
 
 
 def _summary_above(text, pos):
@@ -58,6 +91,15 @@ def _summary_above(text, pos):
 
 
 def _looks_relevant(path):
+    """Whether a file is worth opening for schema definitions, judged by where it sits.
+
+    Deliberately a path test and not a content test. Reading every source file in the repo to see
+    whether it happens to contain @Entity is the cost this whole plugin exists to avoid, so a
+    schema definition in a directory named after none of the conventions below is not found. That
+    is a real limitation and the honest trade: the hint list covers where these files actually
+    live in Django, Rails, JPA, Room, Hibernate, Prisma and Doctrine projects, and a table defined
+    outside all of them stays invisible until someone adds a hint or moves the file.
+    """
     parts = [p.lower() for p in path.parts]
     return path.suffix.lower() in (".sql", ".prisma") or any(h in parts for h in SCHEMA_HINTS) \
         or path.name.lower() in ("models.py", "schema.rb", "schema.prisma")
@@ -66,6 +108,7 @@ def _looks_relevant(path):
 def scan(root, files):
     """files: the list already produced by mapper.scan, reused so nothing is read twice."""
     tables = {}
+    partitions = {}
 
     def add(name, source, summary="", columns=None):
         key = name.lower()
@@ -95,6 +138,10 @@ def scan(root, files):
             body = text[m.end(): body_end if body_end > 0 else m.end() + 2000]
             cols = [c.group(1) for c in SQL_COLUMN.finditer(body)]
             add(m.group(1), rel, _summary_above(text, m.start()), cols[:MAX_COLUMNS_SHOWN])
+        for m in SQL_VIEW.finditer(text):
+            add(m.group(1), rel, _summary_above(text, m.start()))
+        for m in SQL_PARTITION.finditer(text):
+            partitions[m.group(1).lower()] = partitions.get(m.group(1).lower(), 0) + 1
 
     for f in files:
         path = root / f["path"]
@@ -104,10 +151,16 @@ def scan(root, files):
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for pattern in (PRISMA_MODEL, DJANGO_MODEL, SQLALCHEMY_TABLE, RAILS_TABLE, TYPEORM_ENTITY):
+        for pattern in (PRISMA_MODEL, DJANGO_MODEL, SQLALCHEMY_TABLE, RAILS_TABLE,
+                        TYPEORM_ENTITY, ROOM_JPA_TABLE, ROOM_JPA_CLASS):
             for m in pattern.finditer(text):
                 add(m.group(1), f["path"], _summary_above(text, m.start()))
 
+    for name, count in partitions.items():
+        if name in tables:
+            note = f"partitioned, {count} partitions"
+            existing = tables[name]["summary"]
+            tables[name]["summary"] = f"{existing} ({note})" if existing else note
     return sorted(tables.values(), key=lambda t: t["name"].lower())
 
 

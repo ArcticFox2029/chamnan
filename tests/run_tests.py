@@ -645,6 +645,66 @@ check("each route appears exactly once", len(quotes) == len(set(quotes)) == 3)
 
 shutil.rmtree(rt, ignore_errors=True)
 
+# ---------------------------------------------------------------- schema dialects
+sc = Path(tempfile.mkdtemp(prefix="chamnan-sc-"))
+(sc / "0016_telemetry.sql").write_text(
+    "-- One row per sensor sample. Partitioned by region so a region can be dropped whole.\n"
+    "CREATE TABLE telemetry.telemetry_readings (\n"
+    "    reading_id  TEXT NOT NULL,\n    region_code TEXT NOT NULL\n);\n"
+    "CREATE TABLE telemetry.telemetry_readings_eu_west\n"
+    "    PARTITION OF telemetry.telemetry_readings FOR VALUES IN ('eu-west');\n"
+    "CREATE TABLE telemetry.telemetry_readings_na_east\n"
+    "    PARTITION OF telemetry.telemetry_readings FOR VALUES IN ('na-east');\n"
+    "-- Weekly rollup the analytics dashboards read instead of the base table.\n"
+    "CREATE MATERIALIZED VIEW analytics.mv_lane_performance_daily AS SELECT 1;\n"
+    "CREATE OR REPLACE VIEW billing.open_invoices AS SELECT 1;\n", encoding="utf-8")
+
+# Room writes the real table name in the annotation, and its annotation contains Index(...) --
+# a nested ")" that the TypeORM pattern's [^)] stopped at. Kotlin also writes "data class".
+(sc / "data" / "db" / "entity").mkdir(parents=True)
+(sc / "data" / "db" / "entity" / "FreightEntities.kt").write_text(
+    '/** शिपमेंट की स्थानीय प्रति। */\n'
+    '@Entity(\n    tableName = "shipments",\n'
+    '    indices = [Index(value = ["status"]), Index(value = ["reference"])],\n)\n'
+    'data class ShipmentEntity(\n    val id: String,\n)\n', encoding="utf-8")
+(sc / "domain").mkdir()
+(sc / "domain" / "Vehicle.java").write_text(
+    '@Entity\n@Table(name = "fleet_vehicles")\n'
+    'public class Vehicle {\n    private String id;\n}\n', encoding="utf-8")
+(sc / "domain" / "Driver.java").write_text(
+    '@Entity\npublic class Driver {\n    private String id;\n}\n', encoding="utf-8")
+
+sfiles = [{"path": str(f.relative_to(sc)),
+           "lang": {"kt": "kotlin", "java": "java", "sql": "sql"}[f.suffix[1:]]}
+          for f in sorted(sc.rglob("*")) if f.is_file()]
+found = {x["name"].lower(): x for x in schema.scan(sc, sfiles)}
+
+check("a materialized view is indexed", "mv_lane_performance_daily" in found)
+check("an ordinary view is indexed", "open_invoices" in found)
+check("the parent partitioned table is indexed", "telemetry_readings" in found)
+check("A PARTITION IS NOT INDEXED AS ITS OWN TABLE",
+      "telemetry_readings_eu_west" not in found and "telemetry_readings_na_east" not in found)
+check("the parent says it is partitioned and how many",
+      "8 partitions" not in found["telemetry_readings"]["summary"]
+      and "2 partitions" in found["telemetry_readings"]["summary"])
+check("a SQL comment above the table becomes its summary",
+      "sensor sample" in found["telemetry_readings"]["summary"])
+
+check("A ROOM ENTITY IS INDEXED BY ITS TABLE NAME, NOT ITS CLASS",
+      "shipments" in found and "shipmententity" not in found)
+check("a JPA @Table name wins over the class name",
+      "fleet_vehicles" in found and "vehicle" not in found)
+check("a bare @Entity falls back to the class name", "driver" in found)
+# The relevance test is by path, on purpose: reading every file to look for @Entity is the cost
+# this plugin exists to avoid. An entity outside every known convention is genuinely not found.
+(sc / "Stray.java").write_text('@Entity\npublic class Stray {}\n', encoding="utf-8")
+stray = {x["name"].lower() for x in schema.scan(
+    sc, sfiles + [{"path": "Stray.java", "lang": "java"}])}
+check("an entity outside any schema-shaped directory is a known blind spot",
+      "stray" not in stray)
+
+shutil.rmtree(sc, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
