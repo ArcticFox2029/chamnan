@@ -1,6 +1,6 @@
 # chamnan
 
-<img src="docs/assets/chamnan.png" alt="chamnan — an index the agent reads instead of scanning files. On a 529-file test corpus, 1,464,978 tokens of source against roughly 3,000 injected per session." width="100%">
+<img src="docs/assets/chamnan.png" alt="chamnan — an index the agent reads instead of scanning files. On the polyglot test corpus, 11,560,484 tokens of source become a 51,937-token index, of which roughly 3,000 reach each session." width="100%">
 
 <sub>The figures above are a summary. Every one of them, and how it was measured, is in
 [Evidence](#evidence) and [The chaos test](#the-chaos-test) below — read those rather than the
