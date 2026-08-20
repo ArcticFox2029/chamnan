@@ -23,10 +23,24 @@ MAX_ENV_LISTED = 50
 SKIP_PARTS = (".git", "node_modules", "vendor", "__pycache__", ".venv", "dist", "build")
 
 # (framework, regex) — each must yield a path, and optionally a method in group 1.
+# A route decorator says the path RELATIVE to whatever the router was mounted at, and the mount is
+# declared somewhere else in the file. Reporting the relative half alone put `GET /{quote_id}` and
+# `GET /rates` in the index for endpoints that actually live at /v1/quotes/{quote_id} and
+# /v1/fx/rates -- a wrong path is worse than no path, because it is acted on and 404s.
+ROUTER_PREFIX = re.compile(
+    r"""(\w+)\s*=\s*(?:APIRouter|Blueprint)\s*\([^)]*?"""
+    r"""(?:url_)?prefix\s*=\s*["']([^"']*)["']""", re.S)
+# Spring puts the shared half on the class, and it is optional -- @RequestMapping(produces=...)
+# with no path at all is ordinary, so the path must be a positional string to count.
+SPRING_CLASS_PREFIX = re.compile(r"""@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']+)["']""")
+
 ROUTE_PATTERNS = [
-    (re.compile(r"@(?:app|router|api|bp|blueprint)\.(get|post|put|patch|delete|head|options)\s*\(\s*[\"']([^\"']+)", re.I), "decorator"),
+    (re.compile(r"@(\w+)\.(get|post|put|patch|delete|head|options)\s*\(\s*[\"']([^\"']*)", re.I), "decorator"),
     (re.compile(r"@(?:app|bp|blueprint)\.route\s*\(\s*[\"']([^\"']+)[\"'](?:[^)]*methods\s*=\s*\[([^\]]*)\])?", re.I), "flask"),
-    (re.compile(r"\b(?:app|router)\.(get|post|put|patch|delete|all)\s*\(\s*[\"'`]([^\"'`]+)", re.I), "express"),
+    # (?<!@) or this also matches the Python decorator above: \b happens after the @, so every
+    # FastAPI route was counted twice -- once with its router prefix and once without, and the
+    # index carried both the real path and a wrong one for the same endpoint.
+    (re.compile(r"(?<!@)\b(?:app|router)\.(get|post|put|patch|delete|all)\s*\(\s*[\"'`]([^\"'`]+)", re.I), "express"),
     (re.compile(r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*[\"']([^\"']+)", re.I), "spring"),
     (re.compile(r"^\s*path\s*\(\s*[\"']([^\"']*)[\"']", re.M), "django"),
 ]
@@ -59,10 +73,12 @@ def _readable(root, patterns):
 def scan_routes(root, files):
     routes = {}
 
-    def add(method, path_, source):
-        if not path_.startswith(("/", "{", ":")) and "/" not in path_:
+    def add(method, path_, source, prefix=""):
+        if prefix:
+            path_ = "/" + prefix.strip("/") + ("/" + path_.strip("/") if path_.strip("/") else "")
+        elif not path_.startswith(("/", "{", ":")) and "/" not in path_:
             return
-        routes[(method.upper(), path_)] = source
+        routes[(method.upper(), path_ or "/")] = source
 
     for f in files:
         if f["lang"] not in ("py", "js", "go", "rb", "java", "php"):
@@ -72,6 +88,11 @@ def scan_routes(root, files):
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # Mount points declared in this file, by the variable the decorator will name.
+        prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)}
+        spring = SPRING_CLASS_PREFIX.search(text)
+        class_prefix = spring.group(1) if spring else ""
+
         for pattern, kind in ROUTE_PATTERNS:
             for m in pattern.finditer(text):
                 g = [x for x in m.groups() if x is not None]
@@ -81,6 +102,14 @@ def scan_routes(root, files):
                         add(meth, g[0], f["path"])
                 elif kind == "django":
                     add("ANY", "/" + g[0].lstrip("/"), f["path"])
+                elif kind == "decorator" and len(g) >= 3:
+                    obj, meth, route = g[0], g[1], g[2]
+                    if obj.lower() not in ("app", "router", "api", "bp", "blueprint") \
+                            and obj not in prefixes:
+                        continue          # not a router; some other decorator that happens to fit
+                    add(meth, route, f["path"], prefixes.get(obj, ""))
+                elif kind == "spring" and len(g) >= 2:
+                    add(g[0], g[1], f["path"], class_prefix)
                 elif len(g) >= 2:
                     add(g[0], g[1], f["path"])
 

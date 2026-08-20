@@ -597,6 +597,54 @@ check("A PYTHON DECORATOR IS NOT A DOC TAG",
 check("a summary with no tags is untouched",
       mapper._clip("Plain summary of the module.") == "Plain summary of the module.")
 
+# ---------------------------------------------------------------- route prefixes
+# A decorator gives the path relative to where the router is mounted, and the mount is declared
+# elsewhere in the file. Reporting only the relative half put `GET /{quote_id}` in the index for an
+# endpoint that lives at /v1/quotes/{quote_id}. A wrong path is worse than no path: it gets called.
+rt = Path(tempfile.mkdtemp(prefix="chamnan-rt-"))
+(rt / "routes_quotes.py").write_text(
+    'from fastapi import APIRouter\n'
+    'router = APIRouter(prefix="/v1/quotes", tags=["quotes"])\n'
+    '@router.get("/{quote_id}")\ndef one(quote_id): ...\n'
+    '@router.get("")\ndef many(): ...\n'
+    '@router.post("/{quote_id}/accept")\ndef accept(quote_id): ...\n', encoding="utf-8")
+(rt / "views.py").write_text(
+    'from flask import Blueprint\n'
+    'bp = Blueprint("billing", __name__, url_prefix="/v1/billing")\n'
+    '@bp.get("/invoices")\ndef invoices(): ...\n', encoding="utf-8")
+(rt / "main.py").write_text(
+    'from fastapi import FastAPI\napp = FastAPI()\n'
+    '@app.get("/healthz")\ndef health(): ...\n', encoding="utf-8")
+(rt / "FleetController.java").write_text(
+    '@RestController\n@RequestMapping("/v1/fleet")\npublic class FleetController {\n'
+    '  @GetMapping("/vehicles/{id}")\n  public Object one(String id) { return null; }\n}\n',
+    encoding="utf-8")
+(rt / "QueryController.java").write_text(
+    '@RestController\n@RequestMapping(produces = MediaType.APPLICATION_JSON_VALUE)\n'
+    'public class QueryController {\n'
+    '  @GetMapping("/v1/assignments")\n  public Object all() { return null; }\n}\n',
+    encoding="utf-8")
+
+rfiles = [{"path": f.name, "lang": {"py": "py", "java": "java"}[f.suffix[1:]]}
+          for f in sorted(rt.iterdir())]
+found = {key for key, _source in catalogs.scan_routes(rt, rfiles)}
+
+check("A FASTAPI ROUTE CARRIES ITS ROUTER PREFIX", ("GET", "/v1/quotes/{quote_id}") in found)
+check("an empty path becomes the prefix itself", ("GET", "/v1/quotes") in found)
+check("a nested path keeps both halves", ("POST", "/v1/quotes/{quote_id}/accept") in found)
+check("THE UNPREFIXED PATH IS NOT ALSO LISTED", ("GET", "/{quote_id}") not in found)
+check("a flask blueprint prefix is applied", ("GET", "/v1/billing/invoices") in found)
+check("an app-level route keeps its own path", ("GET", "/healthz") in found)
+check("a spring class mapping is applied", ("GET", "/v1/fleet/vehicles/{id}") in found)
+check("@RequestMapping without a path invents no prefix", ("GET", "/v1/assignments") in found)
+
+# Both a decorator and an express-style call matched `@router.get(`, so every FastAPI route was
+# recorded twice -- once right and once wrong.
+quotes = [path for _meth, path in found if "quote" in path]
+check("each route appears exactly once", len(quotes) == len(set(quotes)) == 3)
+
+shutil.rmtree(rt, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
