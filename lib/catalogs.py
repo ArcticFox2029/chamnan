@@ -53,6 +53,68 @@ ENV_IN_CODE = re.compile(
 ENV_FILE_KEY = re.compile(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=", re.M)
 
 
+# A repository that keeps its specs together names them after the service, not after the format:
+# contracts/openapi/routing-service.yaml is the normal layout and the exact-filename search found
+# none of five such documents. Directories are matched first so this never reads every YAML in a
+# repo full of Kubernetes manifests, then the head of the file confirms it really is a spec.
+SPEC_DIRS = {"openapi", "swagger", "contracts", "contract", "spec", "specs", "apispec",
+             "api-spec", "schemas", "api"}
+SPEC_HEAD = re.compile(r"^\s*[\"']?(?:openapi|swagger)[\"']?\s*:", re.M)
+# proto: `service FleetService {` then `rpc AssignVehicle(Request) returns (Response)`. Reported as
+# routes because that is what they are -- an agent asking "what can I call on fleet" gets nothing
+# from a REST-only list when half the surface is gRPC.
+PROTO_SERVICE = re.compile(r"^\s*service\s+(\w+)\s*\{", re.M)
+PROTO_RPC = re.compile(r"^\s*rpc\s+(\w+)\s*\(", re.M)
+
+
+def _grpc(root):
+    """(service, method) for every rpc declared in a .proto file."""
+    for path in sorted(root.rglob("*.proto")):
+        if any(q in SKIP_PARTS for q in path.parts):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in PROTO_SERVICE.finditer(text):
+            end = text.find("\n}", m.end())
+            body = text[m.end(): end if end > 0 else len(text)]
+            for r in PROTO_RPC.finditer(body):
+                yield m.group(1), r.group(1)
+
+
+def _grpc_source(root, service):
+    for path in sorted(root.rglob("*.proto")):
+        try:
+            if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
+                         path.read_text(encoding="utf-8", errors="replace"), re.M):
+                return str(path.relative_to(root))
+        except OSError:
+            continue
+    return ""
+
+
+def _spec_files(root):
+    """OpenAPI and Swagger documents, found by shape rather than by filename."""
+    seen = set()
+    for path in sorted(list(root.rglob("*.yaml")) + list(root.rglob("*.yml"))
+                       + list(root.rglob("*.json"))):
+        if path in seen or any(q in SKIP_PARTS for q in path.parts):
+            continue
+        named = path.stem.lower() in ("openapi", "swagger")
+        in_spec_dir = any(q.lower() in SPEC_DIRS for q in path.parts[:-1])
+        if not (named or in_spec_dir):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if not SPEC_HEAD.search(text[:4000]):
+            continue
+        seen.add(path)
+        yield path, text
+
+
 def _readable(root, patterns):
     # Deduplicated across patterns: ".env" matches the ".env", ".env.*" and "*.env" globs all three
     # times, which listed the same file repeatedly in the gitignore warning.
@@ -113,8 +175,10 @@ def scan_routes(root, files):
                 elif len(g) >= 2:
                     add(g[0], g[1], f["path"])
 
-    for path, text in _readable(root, ("openapi.json", "openapi.yaml", "openapi.yml",
-                                       "swagger.json", "swagger.yaml", "swagger.yml")):
+    for svc, method in _grpc(root):
+        routes[("gRPC", f"{svc}/{method}")] = _grpc_source(root, svc)
+
+    for path, text in _spec_files(root):
         rel = str(path.relative_to(root))
         if path.suffix == ".json":
             try:
@@ -142,14 +206,31 @@ def scan_routes(root, files):
 
 
 def render_routes(routes):
+    """Rendered per protocol, and truncated per protocol.
+
+    A flat alphabetical list cut at a fixed length loses whichever protocol sorts last -- and it
+    did: twelve gRPC methods fell off the end behind sixty REST paths beginning with "/", so the
+    index described a system with two API surfaces as though it had one. Dropping detail is fine;
+    dropping a whole protocol without saying so is not.
+    """
     if not routes:
         return ""
-    out = ["## API surface", "", f"{len(routes)} route(s)."]
-    if len(routes) > MAX_ROUTES_LISTED:
-        out.append(f"Showing {MAX_ROUTES_LISTED}; grep the source files for the rest.")
-    out.append("")
-    for (method, path_), source in routes[:MAX_ROUTES_LISTED]:
-        out.append(f"- `{method:<6} {path_}`  _({source})_")
+    grpc = [r for r in routes if r[0][0] == "gRPC"]
+    http = [r for r in routes if r[0][0] != "gRPC"]
+    out = ["## API surface", "", f"{len(routes)} route(s)."
+           + (f" {len(http)} HTTP, {len(grpc)} gRPC." if grpc and http else "")]
+
+    for label, group, cap in (("", http, MAX_ROUTES_LISTED),
+                              ("gRPC", grpc, MAX_ROUTES_LISTED)):
+        if not group:
+            continue
+        if label:
+            out += ["", f"**{label}**"]
+        if len(group) > cap:
+            out.append(f"Showing {cap} of {len(group)}; grep the source files for the rest.")
+        out.append("")
+        for (method, path_), source in group[:cap]:
+            out.append(f"- `{method:<6} {path_}`  _({source})_")
     out.append("")
     return "\n".join(out)
 

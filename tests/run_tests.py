@@ -705,6 +705,48 @@ check("an entity outside any schema-shaped directory is a known blind spot",
 
 shutil.rmtree(sc, ignore_errors=True)
 
+# ---------------------------------------------------------------- contracts
+ct = Path(tempfile.mkdtemp(prefix="chamnan-ct-"))
+(ct / "contracts" / "proto" / "fleet" / "v1").mkdir(parents=True)
+(ct / "contracts" / "proto" / "fleet" / "v1" / "fleet.proto").write_text(
+    'syntax = "proto3";\npackage of.fleet.v1;\n\n'
+    'service FleetService {\n'
+    '  rpc Assign(AssignRequest) returns (AssignResponse);\n'
+    '  rpc Release(ReleaseRequest) returns (ReleaseResponse);\n}\n\n'
+    'message AssignRequest {\n  string shipment_id = 1;\n}\n', encoding="utf-8")
+
+# Repositories that keep specs together name them after the SERVICE, not the format. Searching for
+# a file literally called openapi.yaml found none of five real documents.
+(ct / "contracts" / "openapi").mkdir(parents=True)
+(ct / "contracts" / "openapi" / "routing-service.yaml").write_text(
+    "# Superficie REST di routing-service.\nopenapi: 3.1.0\ninfo:\n  title: routing-service\n"
+    "paths:\n  /v1/routes:\n    get:\n      summary: list\n"
+    "  /v1/routes/{route_id}:\n    get:\n      summary: one\n", encoding="utf-8")
+# A Kubernetes manifest sitting in the same tree is not a spec, and must not be read as one.
+(ct / "contracts" / "openapi" / "kustomization.yaml").write_text(
+    "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"
+    "paths:\n  /not-a-route:\n", encoding="utf-8")
+
+cfound = {k for k, _ in catalogs.scan_routes(ct, [])}
+check("A gRPC METHOD IS PART OF THE API SURFACE", ("gRPC", "FleetService/Assign") in cfound)
+check("every rpc in the service is listed", ("gRPC", "FleetService/Release") in cfound)
+check("a message is not mistaken for an rpc",
+      not any("AssignRequest" in p for _m, p in cfound))
+check("an OpenAPI document named after its service is found",
+      ("ANY", "/v1/routes") in cfound)
+check("its parameterised path is found too", ("ANY", "/v1/routes/{route_id}") in cfound)
+check("A K8S MANIFEST IN THE SAME DIRECTORY IS NOT READ AS A SPEC",
+      ("ANY", "/not-a-route") not in cfound)
+
+# Truncating one flat alphabetical list dropped every gRPC method behind sixty REST paths.
+many = [(("GET", f"/v1/thing{i:03d}"), "app.py") for i in range(200)]
+many += [(("gRPC", "FleetService/Assign"), "fleet.proto")]
+rendered = catalogs.render_routes(many)
+check("gRPC SURVIVES TRUNCATION OF A LONG HTTP LIST", "FleetService/Assign" in rendered)
+check("the count says how many of each", "gRPC" in rendered.splitlines()[2])
+
+shutil.rmtree(ct, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
