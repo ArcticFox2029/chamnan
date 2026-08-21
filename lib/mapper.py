@@ -49,6 +49,37 @@ SKIP_DIRS = {
 }
 MAX_FILE_BYTES = 2_000_000
 
+def _nested_repo_dirs(root):
+    """Directories under `root` that are repositories in their own right.
+
+    A checkout inside a checkout is somebody else's code. It is not this repository's source, its
+    files should not appear in this repository's index, and its size should not be reported as this
+    repository's size.
+
+    Found by running chamnan on the repository it was written in: five sibling projects were checked
+    out under Work-Mode/, and all 1,086 of their files were being indexed as the host's own -- a
+    Kubernetes manifest from a test corpus sitting in the architecture map of a Streamlit app. Every
+    one of them was already listed in .gitignore, which chamnan deliberately does not read (it is
+    often absent, often wrong, and never covers a nested checkout's own build output). Presence of
+    `.git` is the signal that does not depend on anyone having written a rule.
+
+    The scan root itself is never excluded, or scanning a repository would find nothing at all.
+    """
+    found = set()
+    try:
+        entries = list(root.rglob(".git"))
+    except OSError:
+        return found
+    for git in entries:
+        owner = git.parent
+        if owner.resolve() == root.resolve():
+            continue
+        if any(part in SKIP_DIRS for part in owner.relative_to(root).parts):
+            continue
+        found.add(owner.resolve())
+    return found
+
+
 # Filled by extract_python: (path, count, first message). Reported as a total by bin/chamnan-map.
 PARSE_WARNINGS = []
 
@@ -465,9 +496,12 @@ def _extract_one(source, path, lang):
 
 def scan(root):
     files = []
+    nested = _nested_repo_dirs(root)
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
+        if nested and any(parent.resolve() in nested for parent in path.parents):
+            continue          # a checkout inside this checkout is not this repository's source
         # Only the parts BELOW the scan root. Checking path.parts would test the absolute path, so
         # a repository that happens to live under /tmp, ~/build, or any directory named env/out/
         # target would have every one of its files skipped and report "no source files" — silently,

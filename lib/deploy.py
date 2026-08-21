@@ -43,9 +43,17 @@ NEVER_EXPAND = {"Secret", "SealedSecret"}
 
 
 def _read(root):
+    # Nested checkouts are excluded here for the same reason as in mapper and catalogs: a checkout
+    # inside a checkout is somebody else's code. This module is the one that made the consequence
+    # visible -- a Streamlit app's architecture map listed a Namespace, an Ingress and 31 container
+    # images belonging to a logistics test corpus that happened to be checked out under it.
+    from mapper import _nested_repo_dirs
+    nested = _nested_repo_dirs(root)
     for pattern in MANIFEST_GLOBS:
         for path in sorted(root.rglob(pattern)):
             if any(p in SKIP for p in path.parts):
+                continue
+            if nested and any(parent.resolve() in nested for parent in path.parents):
                 continue
             try:
                 yield path, path.read_text(encoding="utf-8", errors="replace")

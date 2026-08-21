@@ -179,6 +179,37 @@ nested.mkdir(parents=True)
 (nested / "app.py").write_text("# The app.\ndef main(): ...\n")
 check("repo under a dir named build/ is still scanned", len(mapper.scan(nested)) == 1)
 
+# ---------------------------------------------------------------- nested checkouts
+# A checkout inside a checkout is somebody else's code. Found by running chamnan on the repository
+# it was written in: five sibling projects were checked out under Work-Mode/ and all 1,086 of their
+# files were being indexed as the host's own — a Kubernetes manifest from a test corpus sitting in
+# the architecture map of a Streamlit app.
+host = Path(tempfile.mkdtemp(prefix="chamnan-nest-")).resolve()
+(host / ".git").mkdir(parents=True)
+(host / "mine.py").write_text("# Mine.\ndef mine(): ...\n")
+(host / "vendored" / ".git").mkdir(parents=True)
+(host / "vendored" / "theirs.py").write_text("# Theirs.\ndef theirs(): ...\n")
+(host / "plain").mkdir()
+(host / "plain" / "also_mine.py").write_text("# Also mine.\ndef also(): ...\n")
+
+scanned = {f["path"] for f in mapper.scan(host)}
+check("nested checkout: the host's own file is scanned", "mine.py" in scanned)
+check("nested checkout: an ordinary subdirectory is still scanned", "plain/also_mine.py" in scanned)
+check("nested checkout: the nested repo's file is not", "vendored/theirs.py" not in scanned)
+check("nested checkout: nothing from it leaks in at all",
+      not any(s.startswith("vendored/") for s in scanned))
+
+# The root's own .git must never exclude the root, or scanning any repository finds nothing.
+check("nested checkout: the scan root is never excluded by its own .git", len(scanned) == 2)
+
+# A nested repo inside a skipped directory is already gone; it must not be double-counted or crash.
+(host / "node_modules" / "pkg" / ".git").mkdir(parents=True)
+(host / "node_modules" / "pkg" / "index.py").write_text("# Pkg.\ndef p(): ...\n")
+check("nested checkout: one inside node_modules does not upset the walk",
+      len(mapper.scan(host)) == 2)
+
+shutil.rmtree(host, ignore_errors=True)
+
 # ---------------------------------------------------------------- schema / routes / env
 tables = schema.scan(fixture, files)
 check("finds SQL table", any(t["name"] == "users" for t in tables))

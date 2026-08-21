@@ -22,6 +22,22 @@ MAX_ROUTES_LISTED = 60
 MAX_ENV_LISTED = 50
 SKIP_PARTS = (".git", "node_modules", "vendor", "__pycache__", ".venv", "dist", "build")
 
+def _nested(root):
+    """Nested checkouts, shared with mapper so both halves of the map agree on what this repo is.
+
+    Without this the file index excluded a vendored checkout while the catalogues still listed its
+    Kubernetes resources and Protobuf services — so the architecture map of a Streamlit app named a
+    Namespace belonging to a logistics test corpus, and the two halves of the same document
+    disagreed about what the repository contained.
+    """
+    from mapper import _nested_repo_dirs
+    return _nested_repo_dirs(root)
+
+
+def _outside(path, nested):
+    return not nested or not any(parent.resolve() in nested for parent in path.parents)
+
+
 # (framework, regex) — each must yield a path, and optionally a method in group 1.
 # A route decorator says the path RELATIVE to whatever the router was mounted at, and the mount is
 # declared somewhere else in the file. Reporting the relative half alone put `GET /{quote_id}` and
@@ -69,8 +85,9 @@ PROTO_RPC = re.compile(r"^\s*rpc\s+(\w+)\s*\(", re.M)
 
 def _grpc(root):
     """(service, method) for every rpc declared in a .proto file."""
+    _nest = _nested(root)
     for path in sorted(root.rglob("*.proto")):
-        if any(q in SKIP_PARTS for q in path.parts):
+        if any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -96,10 +113,11 @@ def _grpc_source(root, service):
 
 def _spec_files(root):
     """OpenAPI and Swagger documents, found by shape rather than by filename."""
+    _nest = _nested(root)
     seen = set()
     for path in sorted(list(root.rglob("*.yaml")) + list(root.rglob("*.yml"))
                        + list(root.rglob("*.json"))):
-        if path in seen or any(q in SKIP_PARTS for q in path.parts):
+        if path in seen or any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
             continue
         named = path.stem.lower() in ("openapi", "swagger")
         in_spec_dir = any(q.lower() in SPEC_DIRS for q in path.parts[:-1])
@@ -118,10 +136,11 @@ def _spec_files(root):
 def _readable(root, patterns):
     # Deduplicated across patterns: ".env" matches the ".env", ".env.*" and "*.env" globs all three
     # times, which listed the same file repeatedly in the gitignore warning.
+    _nest = _nested(root)
     seen = set()
     for pat in patterns:
         for path in sorted(root.rglob(pat)):
-            if path in seen or any(p in SKIP_PARTS for p in path.parts) \
+            if path in seen or any(p in SKIP_PARTS for p in path.parts) or not _outside(path, _nest) \
                     or not path.is_file() or redact.is_blocked(path):
                 continue
             seen.add(path)
