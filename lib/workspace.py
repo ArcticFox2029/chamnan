@@ -79,15 +79,25 @@ VCS_MARKERS = (".git", ".hg", ".svn")
 
 
 def find_root(start=None):
-    """Repo root: the nearest ancestor holding .chamnan/, else the nearest holding a VCS marker.
+    """Repo root: the nearest ancestor holding either a workspace or a VCS marker.
 
-    An existing workspace wins over the VCS marker so a workspace deliberately placed in a
-    subproject of a monorepo is not silently relocated to the outer repository root."""
+    One pass, not two. A workspace still wins a tie at the same level, so one deliberately placed in
+    a subproject of a monorepo is not relocated to the outer repository root -- that is what the
+    two-pass version was written for.
+
+    But two passes got the nested case exactly backwards. Searching every ancestor for `.chamnan/`
+    before looking at any `.git` meant a checkout inside another checkout, with no workspace of its
+    own yet, resolved to the OUTER repository -- so the first `chamnan-map` inside it silently
+    indexed and overwrote its host's map instead of building its own. Found by running it inside a
+    corpus checked out under the repository chamnan is developed in: it reported the host's 189
+    files and rewrote the host's MAP.md.
+
+    A `.git` is the stronger statement of "this is a repository". Nearest wins; workspace breaks the
+    tie."""
     here = Path(start or os.getcwd()).resolve()
     for candidate in (here, *here.parents):
         if (candidate / WORKSPACE_DIRNAME).is_dir():
             return candidate
-    for candidate in (here, *here.parents):
         if any((candidate / m).exists() for m in VCS_MARKERS):
             return candidate
     return here

@@ -490,6 +490,26 @@ It does not strip comments or blank lines from files on the way in — partly be
 and partly because comments are the highest-value tokens in a file for a reader trying to understand
 intent. This plugin's entire index is built out of them.
 
+### A checkout inside your checkout is not your code
+
+If another repository is checked out inside this one — a vendored dependency, a sample project, a
+sibling you keep side by side — chamnan leaves it alone. Its files are not indexed, its size is not
+reported as yours, and its Kubernetes resources and Protobuf services do not appear in your
+architecture map.
+
+The signal is the nested `.git`, not `.gitignore`. chamnan does not read `.gitignore` anywhere —
+it is often absent, often wrong, and never covers a nested checkout's own build output.
+
+Running chamnan from *inside* such a checkout builds that repository's index, not its host's. It
+also says which repository it measured whenever that is not the directory you ran it from:
+
+```
+chamnan: run from vendor/thing/ — scanning the repository above it, myapp/
+```
+
+Silence there was the dangerous default. A directory that is not itself a repository resolves to
+whatever repository contains it, and every number printed afterwards is about the wrong tree.
+
 ## Configuration
 
 Everything lives in `.chamnan/config.json`, written on the first index run with these defaults.

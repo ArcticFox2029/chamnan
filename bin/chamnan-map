@@ -138,8 +138,26 @@ def main(argv):
     else:
         names = ", ".join(str(x.relative_to(root)) for x in targets)
         scope = f"  (scanned {names})"
+    # Say which repository was measured whenever that is not the directory the command was run in.
+    # Silent is the dangerous default here: find_root walks up for a VCS marker, so running this
+    # inside a folder that is not itself a repository measures whatever repository contains it, and
+    # every number printed below is about the wrong tree. Hit for real -- a corpus was benchmarked
+    # in place, before it had a .git of its own, and quietly reported its host's figures.
+    here = Path.cwd().resolve()
+    if root.resolve() != here:
+        try:
+            where = here.relative_to(root)
+            print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
+        except ValueError:
+            print(f"chamnan: scanning {root}")
     print(f"chamnan map -> {out.relative_to(root)}{scope}")
-    print(f"  {total} source file(s), {src:,.0f} tokens of code")
+    # len(files), not `total`. `total` is the DESCRIBABLE subset -- the denominator of the coverage
+    # bar two lines down -- and printing it here labelled "source file(s)" put two different
+    # populations on one line: a file count that excluded the undescribable files beside a token
+    # count that included them. It also disagreed with the header chamnan writes into MAP.md, which
+    # has always used len(files), so the tool and its own artifact reported different sizes for the
+    # same scan. Caught by reading both at once on a real repository: 187 printed, 189 in the file.
+    print(f"  {len(files)} source file(s), {src:,.0f} tokens of code")
     print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({index_tokens/src*100:.1f}% of the source)")
     print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
