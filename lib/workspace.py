@@ -74,6 +74,19 @@ DEFAULT_CONFIG = {
     # recent TITLES are injected, so the file's length costs nothing per session. Not project
     # management: no status, no owner, no dates-as-deadlines. See lib/milestones.py.
     "milestones": True,
+    # The write-skills line and the ledger line (see lib/ledger.py). Found on the workspace this
+    # plugin is developed against: the hook-written logs held 700 records, every skill-written
+    # store held zero, and session_start.py never once told an agent that /chamnan:remember
+    # exists. These two lines are the fix, and they are on by default because a workspace that
+    # cannot see its own emptiness is the failure the rest of the memory system depends on not
+    # happening.
+    "ledger": True,
+    # Ceiling on STATE.md's injection, in TOKENS rather than characters -- a character cap
+    # mis-prices anything that is not mostly Latin script. 1700 is chosen to match what the old
+    # 4,000-character cap actually injected on an English-heavy file (roughly 4000 / 2.4), so this
+    # is a re-pricing, not a cut. A heading ending in the pin marker (see lib/state.py) is injected
+    # in full ahead of this budget and is never dropped by it.
+    "state_token_budget": 1700,
 }
 VCS_MARKERS = (".git", ".hg", ".svn")
 

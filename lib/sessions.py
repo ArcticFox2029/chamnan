@@ -31,7 +31,7 @@ HEADINGS = ("Done", "Remaining", "Files", "Decisions", "Blockers")
 CARRIED = ("Remaining", "Blockers")
 
 # A record is bounded so one enormous session cannot swamp the injection. Roughly the same order as
-# MAX_STATE_CHARS in the hook.
+# state_token_budget's char-equivalent in the hook (see lib/state.py).
 MAX_CARRY_CHARS = 1200
 
 _DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})")

@@ -18,19 +18,60 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
 import redact  # noqa: E402
 import rollup  # noqa: E402
 import sessions  # noqa: E402
+import state  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
-MAX_STATE_CHARS = 4000
 # Injected only when .chamnan/config.json asks for it. Off by default: changing how a session
 # answers is the user's call, not a side effect of installing an indexing tool.
 REPLY_STYLES = {'concise': 'Answer without preamble, without restating the question, and without a closing offer of further help. Lead with the result, then the reasoning only where it changes what the reader would do. Keep full sentences and normal courtesy — this is about removing filler, not about sounding curt.', 'terse': 'Lead with the result. Drop preamble, restatement and closing offers. Prefer a table or a list wherever one carries the content, and sentence fragments where a full sentence adds nothing. Never pad to seem thorough. Say uncertain things once, plainly, and move on.'}
 MAX_TOOLS = 12
+
+# The plugin's own write skills, in the order they should be named. `note` is the description
+# fragment used only when the skill is present -- kept here rather than read from each SKILL.md so
+# the sentence stays a single planned read, not five. Checked against skills/ at runtime (see
+# write_skills_line) so a skill that is removed silently stops being named, rather than the line
+# going stale.
+WRITE_SKILLS = (
+    ("resume", "session record"),
+    ("remember", "decision, lesson, or rule"),
+    ("milestone", None),
+    ("capture", "a procedure worth keeping"),
+)
+
+
+def write_skills_line(plugin_root):
+    """Name the plugin's own write skills. Nothing else in this hook has ever done this --
+    the "Recorded procedures" section below injects the WORKSPACE's own captured skills
+    (.chamnan/skills/), never the plugin's, so an agent working in a chamnan repository has had no
+    way to discover that /chamnan:remember exists short of reading the plugin's source.
+
+    This is the leading candidate for the finding that decided this whole release: hook-written
+    logs held 700 records on the workspace this was measured against, and every skill-written store
+    held zero. An agent that does not know it can write is the failure being fixed here, so this
+    line is gated on nothing except the skill actually shipping.
+    """
+    skills_dir = plugin_root / "skills"
+    if not skills_dir.is_dir():
+        return ""
+    parts = []
+    for name, note in WRITE_SKILLS:
+        if not (skills_dir / name / "SKILL.md").is_file():
+            continue
+        parts.append(f"`/chamnan:{name}`" + (f" ({note})" if note else ""))
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        named = parts[0]
+    else:
+        named = ", ".join(parts[:-1]) + f", or {parts[-1]}"
+    return f"_Write with {named}. Nothing writes here unless you ask._"
 
 
 def describe(path):
@@ -63,6 +104,14 @@ def main():
         return 0                      # not a chamnan repo; stay silent
     cfg = ws.load_config(root)
     out = []
+
+    if cfg.get("ledger", True):
+        # Always the first thing in the injection, and gated on nothing but the flag itself --
+        # the whole point is that this is visible whether or not there is anything to report.
+        skills_line = write_skills_line(HERE.parent)
+        if skills_line:
+            out.append(skills_line + "\n")
+        out.append(ledger.line(root) + "\n")
 
     if cfg.get("map", True):
         mp = wsdir / "MAP.md"
@@ -110,15 +159,19 @@ def main():
     if cfg.get("state", True):
         sp = wsdir / "STATE.md"
         if sp.is_file():
-            # Scrubbed on the way in. STATE.md and the session records are free text written about
-            # the repository, which makes them the likeliest place for a hostname or a pasted
-            # connection string to end up; until now only MAP.md and peek output were filtered.
-            st = redact.scrub(
-                sp.read_text(encoding="utf-8", errors="replace")[:MAX_STATE_CHARS]).strip()
+            # Scrubbed on the way in, BEFORE the token cut -- STATE.md and the session records are
+            # free text written about the repository, which makes them the likeliest place for a
+            # hostname or a pasted connection string to end up, and scrubbing after truncation
+            # would miss anything sensitive that fell inside a pinned section.
+            full = redact.scrub(sp.read_text(encoding="utf-8", errors="replace"))
+            budget = cfg.get("state_token_budget", 1700)
+            st, marker = state.render(full, budget, sp.relative_to(root))
             if st:
                 out.append(section("Work in flight (from the last session)", st))
                 out.append(f"_Keep `{sp.relative_to(root)}` current as you go; it is what survives "
                            f"compaction._\n")
+                if marker:
+                    out.append(marker + "\n")
 
     if cfg.get("promote", True):
         try:

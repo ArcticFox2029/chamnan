@@ -16,7 +16,7 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** Stage 0 complete. Stage 1 not started, awaiting the owner's go.
+**Status:** Stage 1 complete, verified against the live workspace. Awaiting the owner's go for Stage 2.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -231,7 +231,7 @@ account can happen at any stage boundary — this file is the state.
 | # | Stage | Status |
 |---|---|---|
 | 0 | Plan and handoff | ✅ done |
-| 1 | Two lines in, and stop losing what is written | ⬜ |
+| 1 | Two lines in, and stop losing what is written | ✅ done |
 | 2 | Evidence, and unblock the workflow detector | ⬜ |
 | 3 | Candidates, provenance, and the nudge | ⬜ |
 | 4 | Inventory, metadata, and the 1.4.0 defects | ⬜ |
@@ -246,7 +246,7 @@ account can happen at any stage boundary — this file is the state.
 
 ---
 
-#### Stage 1 — Two lines in, and stop losing what is already written ⬜
+#### Stage 1 — Two lines in, and stop losing what is already written ✅ COMPLETE
 Cheapest, highest expected value. The two new lines cost ~240 characters per session and are the
 entire always-on price of the release; the third change costs nothing and **gives back** what is
 being lost today.
@@ -287,7 +287,27 @@ marker · a file with no pins behaves exactly as 1.4.0 did.
 **Verify:** suite green; run the hook read-only against `/Users/wasuplao/Documents/Lumin-App` and
 confirm (a) both new lines appear, (b) the two lines cost ~240 characters and not more, and
 (c) **`### SETTLED — do not raise these again` and `### Not this project` both reach the output**,
-which they do not today. That third check is the point of the stage. **STOP.**
+which they do not today. That third check is the point of the stage.
+
+**Done. Result:**
+```
+Write-skills line: 206 chars
+Ledger line:        62 chars
+Total:             268 chars   (estimate was ~240; close enough, not tuned further)
+
+SETTLED found:            1  (was 0)
+Not this project found:   1  (was 0)
+```
+Both do-not-raise-again headings in the live `.chamnan/STATE.md` were pinned by hand (📌) as part
+of this stage — that edit IS the fix, not just the mechanism that makes a future pin possible.
+Suite: 441/441, up from 396 before this stage (45 new checks: 12 for `lib/ledger.py`, 19 for
+`lib/state.py`'s pin/budget/marker logic, 14 for the write-skills line and the hook's end-to-end
+injection). Deviation from the file list above: `lib/state.py` was added as a new module rather
+than folding STATE.md's pin/budget logic into `lib/ledger.py` — mixing "count the workspace's
+stores" with "parse and truncate one markdown file" in one file read worse than two small ones.
+`lib/workspace.py` also gained two `DEFAULT_CONFIG` keys (`ledger`, `state_token_budget`), needed
+so both new lines and the new budget are toggleable/discoverable the same way every other part of
+chamnan already is. **STOP.**
 
 ---
 

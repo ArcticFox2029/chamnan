@@ -12,6 +12,8 @@ redactor that replaces everything passes a "did it hide the secret" test perfect
 No dependencies, no pytest — a plain check(name, condition) counter, so this runs anywhere python3
 does, which is the same bar the plugin itself has to clear.
 """
+import datetime
+import importlib.util
 import json
 import os
 import re
@@ -32,10 +34,12 @@ import assets as assets_mod  # noqa: E402
 import deploy as deploy_mod  # noqa: E402
 import impact as impact_mod  # noqa: E402
 import workflows  # noqa: E402
+import ledger  # noqa: E402
 import memory as memory_mod  # noqa: E402
 import milestones  # noqa: E402
 import schema  # noqa: E402
 import sessions  # noqa: E402
+import state as state_mod  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -394,6 +398,15 @@ def run_hook(name, payload):
     return subprocess.run([str(ROOT / "hooks" / name)], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=fixture).stdout
 
+
+def import_hook_module(name):
+    """Load a hooks/*.py file as an importable module, for unit-testing a function inside it
+    directly rather than only through its subprocess/stdout behaviour."""
+    spec = importlib.util.spec_from_file_location(Path(name).stem, ROOT / "hooks" / name)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 script = ("import json\nfrom pathlib import Path\n"
           "records = json.loads(Path('usage.json').read_text())\n"
           "total_cost = sum(entry['cost'] for entry in records['days'])\n"
@@ -447,6 +460,173 @@ cfgp.write_text(json.dumps(ws.DEFAULT_CONFIG))
 start_out = run_hook("session_start.py", {})
 check("session start injects the index", "Architecture index" in start_out)
 check("SESSION START NEVER INJECTS A SECRET", "Hunter2Pass" not in start_out)
+
+# ---------------------------------------------------------------- ledger (lib/ledger.py)
+# The finding this whole release rests on: hook-written logs held 700 records on the workspace
+# this was measured against, and every skill-written store held zero. The ledger's job is to make
+# that fact visible every session instead of silently absent.
+empty_ws = Path(tempfile.mkdtemp(prefix="chamnan-ledger-")).resolve()
+(empty_ws / ".git").mkdir()
+ws.ensure(empty_ws)
+snap = ledger.snapshot(empty_ws, now=1_000_000_000)
+check("empty workspace counts zero records", snap["record_count"] == 0)
+check("empty workspace counts zero memory entries", snap["memory_count"] == 0)
+check("empty workspace has no last write", snap["last_write"] is None)
+check("candidates/ not yet created reads as absent, not zero", snap["candidate_count"] is None)
+check("empty workspace renders the nothing-written line",
+      ledger.render(snap) == "chamnan · 0 records · 0 memory entries · nothing written yet")
+
+# A workspace that was never ensure()'d at all -- sessions/ and memory/ do not exist as
+# directories -- must not crash the count.
+never_touched = Path(tempfile.mkdtemp(prefix="chamnan-ledger-bare-")).resolve()
+(never_touched / ".chamnan").mkdir()
+bare_snap = ledger.snapshot(never_touched, now=1_000_000_000)
+check("a missing store does not crash the ledger", bare_snap["record_count"] == 0)
+check("a missing store renders the nothing-written line",
+      ledger.render(bare_snap) == "chamnan · 0 records · 0 memory entries · nothing written yet")
+
+# One old session (outside the 7-day window) and one old memory entry: totals are non-zero, but
+# nothing arrived "this week" -- the delta must read exactly 0, never negative, never absent.
+NOW = 1_700_000_000  # arbitrary fixed instant, so the test does not depend on wall-clock time
+old_day = "2020-01-01"
+(empty_ws / ".chamnan" / "sessions" / f"{old_day}-old-work.md").write_text(
+    "# Old work\n\n## Remaining\nnone\n", encoding="utf-8")
+(empty_ws / ".chamnan" / "memory" / "decisions" / "old-choice.md").write_text(
+    "# An old choice\n\nBecause reasons.\n", encoding="utf-8")
+old_mtime = NOW - 30 * 86400
+os.utime(empty_ws / ".chamnan" / "memory" / "decisions" / "old-choice.md", (old_mtime, old_mtime))
+snap2 = ledger.snapshot(empty_ws, now=NOW)
+check("one old session counts as one record", snap2["record_count"] == 1)
+check("nothing recent gives a zero delta, not a missing one", snap2["record_recent"] == 0)
+check("the delta is never negative", snap2["record_recent"] >= 0)
+check("one old memory entry counts as one entry", snap2["memory_count"] == 1)
+rendered_line = ledger.render(snap2)
+check("the non-empty line still names the delta explicitly", "(+0 this week)" in rendered_line)
+check("the non-empty line reports last write", "last write" in rendered_line)
+
+# A session dated this week, by FILENAME rather than mtime -- this matters because mtime resets to
+# checkout time on a fresh clone, which would otherwise report every pre-existing session as
+# written today the moment the repository is cloned.
+recent_day = datetime.datetime.fromtimestamp(NOW - 86400, datetime.timezone.utc).strftime("%Y-%m-%d")
+recent_session = empty_ws / ".chamnan" / "sessions" / f"{recent_day}-fresh-work.md"
+recent_session.write_text("# Fresh work\n\n## Remaining\nnone\n", encoding="utf-8")
+os.utime(recent_session, (old_mtime, old_mtime))  # mtime says old; FILENAME says yesterday
+snap3 = ledger.snapshot(empty_ws, now=NOW)
+check("a session's own filename date wins over a stale mtime", snap3["record_recent"] == 1)
+
+for f in (empty_ws / ".chamnan" / "sessions").glob("*.md"):
+    f.unlink()
+for f in (empty_ws / ".chamnan" / "memory" / "decisions").glob("*.md"):
+    f.unlink()
+
+# ---------------------------------------------------------------- state.md (lib/state.py)
+# The other half of the same finding: STATE.md on the live workspace was 12,998 characters, the
+# hook injected only the first 4,000 with no marker, and every heading the owner wrote to say
+# "do not raise this again" was below the line.
+plain = "# Work in flight\n\nJust a short note about ordinary work, well inside any real budget.\n"
+inj, marker = state_mod.render(plain, 1000, "STATE.md")
+check("a file shorter than the budget is injected whole", inj.strip() == plain.strip())
+check("no marker when nothing was dropped", marker == "")
+
+big = "# Work in flight\n\n" + ("filler line about ordinary work.\n" * 4000)
+inj2, marker2 = state_mod.render(big, 50, "STATE.md")
+check("an over-budget file is actually cut", len(inj2) < len(big))
+check("the marker appears exactly when something was dropped", marker2 != "")
+check("the marker names the file", "STATE.md" in marker2)
+
+pinned_doc = ("# Work in flight\n\n"
+              + ("filler line about ordinary work.\n" * 2000)
+              + "\n### SETTLED — do not raise this again \U0001F4CC\n\n"
+              + "The one thing that must survive no matter where it falls in the file.\n"
+              # A same-or-higher-level heading after the pin, so the pin's OWN extent is bounded
+              # here and does not swallow everything to end-of-file -- exactly as a real STATE.md
+              # has further sections after any given one, except the very last.
+              + "\n### Unrelated later section\n\n"
+              + ("more filler after the pin.\n" * 2000))
+inj3, marker3 = state_mod.render(pinned_doc, 50, "STATE.md")
+check("A PINNED SECTION BELOW THE CUT IS STILL INJECTED",
+      "must survive no matter where it falls" in inj3)
+check("an unpinned section below the cut is not injected",
+      "more filler after the pin" not in inj3)
+check("a dropped unpinned tail still produces a marker even with a pin present", marker3 != "")
+
+pin_text, unpin_text = state_mod.split_pinned(pinned_doc)
+check("split_pinned extracts the pinned body", "must survive" in pin_text)
+check("split_pinned removes the pin from the unpinned pool", "must survive" not in unpin_text)
+check("split_pinned keeps the unpinned filler", "filler line about ordinary work" in unpin_text)
+
+no_pins = "# Just a normal file\n\nNothing here is marked.\n"
+inj4, marker4 = state_mod.render(no_pins, 1000, "STATE.md")
+check("a file with no pins behaves exactly as a plain head-cut", inj4.strip() == no_pins.strip())
+check("a file with no pins under budget has no marker", marker4 == "")
+
+nested_pin = ("### Outer \U0001F4CC\n\nouter body\n\n#### Inner\n\ninner body, still inside outer\n"
+              "\n### Sibling\n\nnot part of the pin\n")
+pin_text2, unpin_text2 = state_mod.split_pinned(nested_pin)
+check("a pin's own subsections are pulled whole", "inner body" in pin_text2)
+check("a pin does not swallow its unrelated sibling", "Sibling" not in pin_text2)
+check("a sibling after a pin stays in the unpinned pool", "Sibling" in unpin_text2)
+
+# ---------------------------------------------------------------- write-skills line + injection
+session_start_mod = import_hook_module("session_start.py")
+
+check("write_skills_line is empty when the plugin has no skills/ dir at all",
+      session_start_mod.write_skills_line(Path(tempfile.mkdtemp())) == "")
+
+partial_plugin = Path(tempfile.mkdtemp(prefix="chamnan-skills-"))
+(partial_plugin / "skills" / "resume").mkdir(parents=True)
+(partial_plugin / "skills" / "resume" / "SKILL.md").write_text("---\ndescription: x\n---\nbody\n")
+partial_line = session_start_mod.write_skills_line(partial_plugin)
+check("only a skill that actually exists is named", "resume" in partial_line)
+check("a skill that does not exist on disk is never named", "remember" not in partial_line)
+check("a skill that does not exist on disk is never named (milestone)",
+      "milestone" not in partial_line)
+
+full_line = session_start_mod.write_skills_line(ROOT)
+for skill_name, _note in session_start_mod.WRITE_SKILLS:
+    check(f"the real plugin names its own /{skill_name} skill", f"/chamnan:{skill_name}" in full_line)
+check("the write-skills line stays inside its budget", len(full_line) < 260)
+
+ws.ensure(fixture)
+start_with_ledger = run_hook("session_start.py", {})
+check("session start injects the ledger line", "chamnan ·" in start_with_ledger)
+check("session start injects the write-skills line", "/chamnan:resume" in start_with_ledger)
+ledger_lines = [ln for ln in start_with_ledger.splitlines() if ln.strip().startswith("_chamnan ·")]
+check("the ledger line is present exactly once", len(ledger_lines) == 1)
+if ledger_lines:
+    check("the ledger line stays near its ~110-character budget", len(ledger_lines[0]) < 200)
+
+(fixture / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}))
+check("the ledger flag actually turns the lines off",
+      "chamnan ·" not in run_hook("session_start.py", {}))
+(fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
+
+no_workspace = Path(tempfile.mkdtemp(prefix="chamnan-no-ws-"))
+(no_workspace / ".git").mkdir()
+no_ws_out = subprocess.run([str(ROOT / "hooks" / "session_start.py")], input="{}",
+                           capture_output=True, text=True, cwd=no_workspace).stdout
+check("neither new line is emitted where there is no chamnan workspace at all",
+      "chamnan ·" not in no_ws_out and no_ws_out.strip() == "")
+
+# ---------------------------------------------------------------- pin the live workspace's rules
+# The concrete instance of the bug this stage exists to fix: on the ACTUAL Lumin-App workspace,
+# "SETTLED -- do not raise these again" and "Not this project -- do not audit" both sat below the
+# old 4,000-character cut. Both headings were pinned by hand as part of doing this stage (see
+# .chamnan/STATE.md); this checks the mechanism actually rescues them there, not just in a fixture.
+live_root = Path("/Users/wasuplao/Documents/Lumin-App")
+live_state = live_root / ".chamnan" / "STATE.md"
+if live_state.is_file():
+    live_out = subprocess.run([str(ROOT / "hooks" / "session_start.py")], input="{}",
+                              capture_output=True, text=True, cwd=live_root).stdout
+    check("on the live workspace, SETTLED reaches the injected output", "SETTLED" in live_out)
+    check("on the live workspace, Not this project reaches the injected output",
+          "Not this project" in live_out)
+
+shutil.rmtree(no_workspace, ignore_errors=True)
+shutil.rmtree(empty_ws, ignore_errors=True)
+shutil.rmtree(never_touched, ignore_errors=True)
+shutil.rmtree(partial_plugin, ignore_errors=True)
+
 
 # ---------------------------------------------------------------- token estimation
 # A flat characters-per-token constant used to decide how much index reached the session, and it

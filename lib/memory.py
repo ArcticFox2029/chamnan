@@ -28,8 +28,9 @@ import re
 
 CATEGORIES = ("decisions", "lessons", "rules")
 
-# Rules reach every session, so they are capped. Roughly a third of MAX_STATE_CHARS: a repository
-# with more than this in standing constraints has a documentation problem, not a memory problem.
+# Rules reach every session, so they are capped. Roughly a third of state_token_budget's
+# char-equivalent (see lib/state.py): a repository with more than this in standing constraints has
+# a documentation problem, not a memory problem.
 MAX_RULES_CHARS = 1500
 
 # Titles only, for the two categories that are read on demand.
