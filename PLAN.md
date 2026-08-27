@@ -16,7 +16,7 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** **1.5.0 SHIPPED.** Stages 0–5 complete, all verified. Awaiting the owner's go for Stage 6 (1.5.1).
+**Status:** **1.5.1 SHIPPED.** Stages 0–9 complete, all verified. Awaiting the owner's go for Stage 10 (1.5.2).
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -582,7 +582,19 @@ same established bare-invocation convention as its siblings; there was nothing n
 
 | 6a | Incidents as a fourth `memory/` category | `CATEGORIES` is referenced in exactly two places in `lib/memory.py`, so a fourth inherits retention, redaction, readers and injection economics for almost nothing. Shape: symptom · root cause · fix · impact · what to avoid. **Gated hard:** `memory/lessons/` is empty today, and a fourth empty directory is worse than none. **STOP.** |
 | 8 | Promotion → Skill or Tool | ✅ done — `chamnan candidates promote <id> [tool\|skill]`. Refuses an unconfirmed candidate. No destination given -> suggests `tool` by default with a stated, honest caveat (no real signal exists to choose confidently from a signature list) and writes nothing. `tool` writes an executable SKELETON (each step a labelled placeholder that exits non-zero if run as-is) and registers it via the new `lib/tools_index.py`, shared with `chamnan-promote`; the candidate is then removed, its finding now living in the tool file. `skill` writes nothing at all — prints the sequence and points at `/chamnan:capture`, since a good skill needs prose this tool cannot honestly generate. Merges Miki's 1.5.2 · 1. **STOP.** |
-| 9 | Release 1.5.1 | Local commit only. **STOP.** |
+| 9 | Release 1.5.1 | ✅ done
+
+```
+plugin.json version: 1.5.0 -> 1.5.1
+suite: 582/582 (unchanged from Stage 8 — this stage touched no code)
+```
+
+README gained a "What's new in 1.5.1" section — `chamnan-candidates`'s review commands, and
+`promote`'s honest-default classifier with its own reasoning quoted verbatim, the fail-loudly
+skeleton, and the skill path that writes nothing. Commands table and the workspace-layout tree
+both updated to name `chamnan-candidates` and `candidates/`. Verified against the live workspace
+one more time after the bump: the two Stage 1 lines, `chamnan-candidates`, and `chamnan-report`'s
+inventory all still run correctly. Local commit only, same as every stage before it. **STOP.** |
 
 ---
 

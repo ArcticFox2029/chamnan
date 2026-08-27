@@ -265,6 +265,7 @@ Everything lives in one directory at the repository root, and nothing outside it
 │   └── rules/      standing constraints — injected every session
 ├── skills/         procedures you chose to keep     (starts empty)
 ├── tools/          scratch scripts you kept         (starts empty)
+├── candidates/     detected sequences, awaiting review (starts empty; `chamnan-candidates`)
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 
@@ -287,6 +288,57 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only, and nothing is written until you run
 `/chamnan:bootstrap` or `chamnan-map`.
+
+## What's new in 1.5.1
+
+1.5 made a detected sequence survive as a **candidate** instead of a notice that scrolls away.
+1.5.1 is what to do with one — a review CLI, and a promotion path honest about what it cannot know.
+
+### `chamnan-candidates` — the review CLI
+
+    $ chamnan-candidates
+    2 candidate(s) waiting
+
+    [1] docker compose · alembic · pytest
+        observed 4 time(s) · last seen 2026-08-26 · ai-inferred
+    [2] git add · git commit · git push
+        observed 3 time(s) · last seen 2026-08-27 · ai-inferred
+
+`confirm <id>`, `reject <id>`, `edit <id>` — `<id>` is either the number shown above (computed
+fresh each call, never cached) or the candidate's own slug. `confirm` only moves `Provenance` from
+`ai-inferred` to `ai-confirmed`; it never writes into `skills/` or `tools/` on its own.
+
+### `chamnan-candidates promote` — and the honest ceiling on it
+
+Refuses a candidate that has not been confirmed — the pipeline is *evidence → candidate → human
+confirm → memory*, and this enforces the order rather than assuming it.
+
+With no destination, it only suggests, and writes nothing:
+
+    Suggested: tool — this is a sequence of shell commands, which is what a tool is.
+    Choose skill instead if the real value is explaining WHY, or a judgement call at
+    one of the steps — chamnan cannot tell that from the sequence alone; you can.
+
+That is the whole classifier, stated as a default with its reasoning printed next to it, not a
+computed score. A candidate stores what ran — `git commit`, never the literal command with its
+real arguments, and never why the routine mattered. There is no signal in that to choose
+confidently from, and a project that has already retired a Health Score and a Confidence Score for
+being judgements no evidence backs was not going to invent a third one here.
+
+**`promote <id> tool <name>`** writes an executable *skeleton* — one labelled placeholder per step
+— and it fails loudly if you run it before filling those in, rather than silently doing nothing
+while looking like it worked:
+
+    echo "TODO step 1: docker compose" >&2; exit 1  # replace this line
+
+Registered through the same `tools/index.json` machinery `chamnan-promote` already uses — the two
+now share one implementation (`lib/tools_index.py`) rather than two that could drift apart. Once
+installed, the candidate is removed; its finding now lives in the tool file, not duplicated in both.
+
+**`promote <id> skill`** writes nothing at all. A skill's value is the prose explaining *why*,
+which cannot be honestly generated from a signature list — this prints the sequence as a starting
+point and names `/chamnan:capture`, and leaves the candidate exactly where it was, because nothing
+has actually been captured yet.
 
 ## What's new in 1.5
 
@@ -668,6 +720,9 @@ From a shell, in the repository:
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |
 | `chamnan-promote <file> <name> --desc "…"` | install a scratch script as a permanent tool in `.chamnan/tools/` |
 | `chamnan-promote --list` | what this repo already keeps |
+| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list` |
+| `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
+| `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
 | `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the inventory, then says so instead of inventing a trend |
 
 ### Reading an attachment without reading it
