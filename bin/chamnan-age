@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""chamnan age — which stored knowledge names a version no environment declares any more.
+
+  chamnan age            check every memory entry against environments.md
+
+**Never against a clock.** A note written two years ago about a version still in production is
+current; one written last month about a version replaced last week is already wrong. Age carries
+no information about either, so nothing here reads a date to decide whether knowledge is stale —
+it compares what an entry CLAIMS against what `environments.md` declares.
+
+**And it refuses rather than reassures.** The comparison is exactly as good as that file, so a
+declared environment nobody has confirmed in six months is not treated as an authority: if every
+environment has gone cold, this reports nothing and says so, because "your knowledge is current"
+on the strength of a file that has been drifting since January is worse than no check at all —
+it is the answer that stops somebody looking.
+
+Nothing is edited. A flagged entry might be perfectly correct history ("we chose this BECAUSE we
+were on 13"), and only a person can tell that from a line that has simply gone out of date.
+"""
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import aging  # noqa: E402
+import workspace as ws  # noqa: E402
+
+
+def main(argv):
+    if argv and argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+
+    root = ws.find_root()
+    if not ws.workspace(root).is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
+    if not ws.enabled("environments", root):
+        print("chamnan: environments is disabled in .chamnan/config.json — "
+              "aging has nothing to compare against")
+        return 0
+
+    findings, unverifiable, refusal = aging.check(root)
+
+    # The refusal is printed INSTEAD of a result, never alongside an empty one: "no findings" and
+    # "no check happened" are different answers and must not read the same.
+    if refusal:
+        print(f"chamnan: not checked — {refusal}")
+        return 0
+
+    if not findings and not unverifiable:
+        print("chamnan: no stored knowledge names a version that has moved on")
+        return 0
+
+    if findings:
+        one = len(findings) == 1
+        print(f"{len(findings)} entr{'y' if one else 'ies'} name{'s' if one else ''} a version "
+              f"no environment declares\n")
+        for category, name, subject, claimed, declared in findings:
+            where = ", ".join(f"{env} {ver}" for env, ver in declared) or "nothing"
+            print(f"  memory/{category}/{name}")
+            print(f"    says {subject} {claimed} · declared: {where}")
+        print("\n  Nothing is edited. An entry can name an old version correctly — "
+              "\"we chose this BECAUSE we were on 13\" is history, not a mistake.")
+        print("  Fix the entry, or `chamnan env set <name> --versions \"…\"` if the "
+              "declaration is what drifted.")
+
+    if unverifiable:
+        if findings:
+            print()
+        print(f"{len(unverifiable)} could not be checked — the only environment declaring that "
+              f"version has gone cold\n")
+        for category, name, subject, claimed, cold in unverifiable:
+            print(f"  memory/{category}/{name}")
+            print(f"    says {subject} {claimed} · only {cold} declares it, and {cold} is unconfirmed")
+        print("\n  `chamnan env check` says what to re-confirm; these are not findings, "
+              "they are unknowns.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

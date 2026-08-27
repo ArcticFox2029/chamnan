@@ -44,6 +44,7 @@ import sessions  # noqa: E402
 import state as state_mod  # noqa: E402
 import timeline  # noqa: E402
 import environments as envs  # noqa: E402
+import aging  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -1957,6 +1958,113 @@ check("the injected half does not mention Impact",
       "## Impact" not in rendered_map[:rendered_map.index("## Full Detail")])
 check("impact names the caller", "pay/model.py" in rendered_map)
 shutil.rmtree(imp_repo, ignore_errors=True)
+
+# ---------------------------------------------------------------- knowledge aging (Stage 14, 1.6.0)
+# Never against a clock: a note written two years ago about a version still in production is
+# current, and one written last month about a version replaced last week is already wrong. What
+# is pinned hardest here is the REFUSAL -- an unmaintained environments.md must produce "not
+# checked", never an empty finding list that reads like a pass.
+def _mem(root, category, name, body):
+    p = ws.workspace(root) / "memory" / category / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(body, encoding="utf-8")
+    return p
+
+def run_age(root):
+    return subprocess.run([str(ROOT / "bin" / "chamnan-age")],
+                          capture_output=True, text=True, cwd=root)
+
+ag_root = Path(tempfile.mkdtemp(prefix="chamnan-aging-")).resolve()
+(ag_root / ".git").mkdir()
+ws.ensure(ag_root)
+_mem(ag_root, "rules", "pg.md", "# A rule\n\nWe run postgres 13 so upserts need the old syntax.\n")
+
+findings, unver, refusal = aging.check(ag_root)
+check("WITH NO ENVIRONMENTS DECLARED, AGING REFUSES", refusal is not None)
+check("the refusal names what to do about it", "chamnan env set" in refusal)
+check("a refusal comes with no findings beside it", findings == [] and unver == [])
+out = run_age(ag_root)
+check("the CLI prints the refusal, not a clean bill of health",
+      "not checked" in out.stdout and "no stored knowledge" not in out.stdout)
+
+# An environment nobody has confirmed is evidence nobody looked. This is the gate the stage was
+# conditional on, implemented as code rather than as a judgement made once at build time.
+envs.upsert(ag_root, "production",
+            envs.render_entry("production", "K8s", "postgres 17", ["x"], "2020-01-01"))
+findings, unver, refusal = aging.check(ag_root)
+check("WITH EVERY ENVIRONMENT COLD, AGING STILL REFUSES", refusal is not None)
+check("the refusal says why an unconfirmed entry is not an authority",
+      "nobody looked" in refusal)
+check("and still returns no findings to be mistaken for a pass", findings == [])
+out = run_age(ag_root)
+check("the CLI refuses rather than reassuring", "not checked" in out.stdout)
+
+# Fresh oracle, and a claim it contradicts.
+envs.upsert(ag_root, "production",
+            envs.render_entry("production", "K8s", "postgres 17", ["x"], "2026-08-27"))
+findings, unver, refusal = aging.check(ag_root)
+check("a fresh environment lets the check actually run", refusal is None)
+check("a claim no fresh environment declares is flagged", len(findings) == 1)
+category, fname, subject, claimed, declared = findings[0]
+check("the finding names the entry", category == "rules" and fname == "pg.md")
+check("the finding names the claim", subject == "postgres" and claimed == "13")
+check("the finding names what IS declared", declared == [("production", "17")])
+
+# Matching a declared version is silent, and so is a name nobody declared.
+_mem(ag_root, "rules", "pg.md", "# A rule\n\nWe run postgres 17 now.\n")
+findings, unver, refusal = aging.check(ag_root)
+check("A CLAIM MATCHING A DECLARED VERSION IS SILENT", findings == [] and unver == [])
+_mem(ag_root, "lessons", "noise.md", "# Lesson\n\nSee issue 13, port 8080, and redis 4.\n")
+findings, unver, refusal = aging.check(ag_root)
+check("NOISE CONTROL: a name environments.md never declares is ignored entirely",
+      findings == [] and unver == [])
+check("even though the claim parser does see those pairs",
+      ("issue", "13") in aging.claims_in("See issue 13, port 8080, and redis 4"))
+
+# The third outcome, and the honest one: matched only by an environment that has gone cold.
+_mem(ag_root, "rules", "pg.md", "# A rule\n\npostgres 13 needs the old upsert syntax.\n")
+envs.upsert(ag_root, "uat", envs.render_entry("uat", "K8s", "postgres 13", ["x"], "2020-01-01"))
+findings, unver, refusal = aging.check(ag_root)
+check("A CLAIM MATCHED ONLY BY A COLD ENVIRONMENT IS NOT FLAGGED", findings == [])
+check("it is reported as unverifiable instead", len(unver) == 1)
+check("and names which cold environment declared it", unver[0][4] == "uat")
+out = run_age(ag_root)
+check("the CLI calls those unknowns rather than findings", "not findings" in out.stdout)
+
+# Two environments legitimately running different versions is usually why the file exists at all.
+envs.upsert(ag_root, "uat", envs.render_entry("uat", "K8s", "postgres 13", ["x"], "2026-08-27"))
+findings, unver, refusal = aging.check(ag_root)
+check("A CLAIM MATCHING EITHER OF TWO FRESH ENVIRONMENTS IS SILENT",
+      findings == [] and unver == [])
+out = run_age(ag_root)
+check("and the CLI says so plainly", "no stored knowledge" in out.stdout)
+
+# Every memory category is scanned, not just rules.
+_mem(ag_root, "decisions", "d.md", "# A decision\n\nChosen while on redis 2.8.\n")
+envs.upsert(ag_root, "production",
+            envs.render_entry("production", "K8s", "postgres 17, redis 7.2", ["x"], "2026-08-27"))
+findings, _u, _r = aging.check(ag_root)
+check("a decision is scanned too", any(f[0] == "decisions" for f in findings))
+_mem(ag_root, "lessons", "noise.md", "# Lesson\n\nSaw this on redis 2.8 as well.\n")
+findings, _u, _r = aging.check(ag_root)
+check("and a lesson", any(f[0] == "lessons" for f in findings))
+check("the same claim in two entries is two findings, not one",
+      len([f for f in findings if f[2] == "redis"]) == 2)
+
+# Equality only. 3.9 vs 3.11 is exactly the comparison a version ordering gets wrong, and this
+# module deliberately never attempts one.
+py_root = Path(tempfile.mkdtemp(prefix="chamnan-aging-py-")).resolve()
+(py_root / ".git").mkdir()
+ws.ensure(py_root)
+envs.upsert(py_root, "local", envs.render_entry("local", "macOS", "python 3.11", ["x"], "2026-08-27"))
+_mem(py_root, "rules", "py.md", "# Rule\n\nThe venv is python 3.9 and pinned there.\n")
+f2, _u2, _r2 = aging.check(py_root)
+check("3.9 IS FLAGGED AGAINST A DECLARED 3.11", len(f2) == 1 and f2[0][3] == "3.9")
+_mem(py_root, "rules", "py.md", "# Rule\n\nThe venv is python 3.11.\n")
+f3, _u3, _r3 = aging.check(py_root)
+check("and 3.11 against 3.11 is silent", f3 == [])
+shutil.rmtree(py_root, ignore_errors=True)
+shutil.rmtree(ag_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- asking impact a question (Stage 13b)
 # render() is the only writer of the Impact section and parse_section() is its exact inverse. The
