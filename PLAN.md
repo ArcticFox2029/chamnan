@@ -261,7 +261,7 @@ account can happen at any stage boundary — this file is the state.
 | 2 | Evidence, and unblock the workflow detector | ✅ done |
 | 3 | Candidates, provenance, and the nudge | ✅ done |
 | 4 | Inventory, metadata, and the 1.4.0 defects | ✅ done |
-| 5 | Release 1.5.0 | ⬜ |
+| 5 | Release 1.5.0 | ✅ done — shipped as commit `930d8ef` |
 
 ---
 
