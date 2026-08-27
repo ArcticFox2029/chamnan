@@ -289,6 +289,56 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only, and nothing is written until you run
 `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.5.2
+
+1.5.1 closed the loop from evidence to a kept tool. 1.5.2 asks what happens after — does a promoted
+tool actually keep working, and is any of this actually being used.
+
+### Tool health, without an exit code
+
+A Bash `tool_response` carries `stdout`, `stderr` and `interrupted` — never a numeric status, so a
+promoted tool exiting non-zero cannot be observed directly. What CAN be observed: whether the call
+was interrupted, and whether it wrote to stderr. Neither means "it failed" on its own — plenty of
+correct commands write warnings to stderr — so neither is ever reported as one. Three occurrences of
+either flags the tool once, quietly:
+
+    chamnan: `.chamnan/tools/deploy-check.sh` has been interrupted or written to stderr 3 times in
+    its last 11 run(s) — worth a look. `chamnan candidates demote deploy-check.sh` sends it back for
+    review if it no longer does what you expect.
+
+Silent before the third occurrence, silent after — the same restraint every other notice in this
+plugin already uses. `chamnan-candidates demote <tool-name>` undoes a promotion: removes it from
+`tools/index.json`, deletes the file, and writes a fresh candidate from its own description, so the
+routine goes back through review instead of just disappearing.
+
+**Skills are out of scope, on purpose.** A tool is a script a hook can watch run; a skill is a
+markdown file Claude reads on its own judgement, and nothing here can see that the read happened at
+all, let alone whether following it went well. There is no smaller version of skill feedback that
+stays honest about what a hook can actually see — so none is attempted.
+
+### Usage counts, never a savings figure
+
+`chamnan-report` now opens with a Usage section, right after the knowledge inventory:
+
+    Usage
+      chamnan-candidates     3 times
+      chamnan-map            14 times
+      chamnan-peek            0 times
+      chamnan-promote         2 times
+      chamnan-report           6 times
+      (from the calls currently logged, 2026-08-01 to 2026-08-27 — commands.jsonl holds the
+      most recent 400, not a calendar window)
+
+    Promoted tools
+      deploy-check.sh        12 runs
+
+Both halves were already being written before this had a reader: the command counts come from
+`commands.jsonl`, the same bounded log the workflow detector keeps; the tool counts come from the
+`runs` field `chamnan-candidates demote`'s neighbour above has been incrementing since 1.5.2's tool
+health tracking shipped. This reports **counts, never a savings figure** — a number of tokens or
+hours saved would be invented, and this project already retired an "Engineer Scoreboard" for
+measuring what is easy instead of what matters.
+
 ## What's new in 1.5.1
 
 1.5 made a detected sequence survive as a **candidate** instead of a notice that scrolls away.
@@ -723,7 +773,8 @@ From a shell, in the repository:
 | `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list` |
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
-| `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the inventory, then says so instead of inventing a trend |
+| `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
+| `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then Usage (chamnan's own commands and any promoted tool, counts only, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the first two sections, then says so instead of inventing a trend |
 
 ### Reading an attachment without reading it
 

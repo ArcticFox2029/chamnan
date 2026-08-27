@@ -16,8 +16,9 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** **1.5.1 SHIPPED.** Stages 0–9 complete, all verified. Stages 10–11 (1.5.2) done, 616/616
-tests. Owner said "ทำต่อ s 11 , 12" — proceeding into Stage 12 (release) next.
+**Status:** **1.5.2 SHIPPED.** Stages 0–12 complete, all verified, 616/616 tests. 1.6.0 is next
+(Stages 13–16, "The Intelligence") but is gated on 1.5.x producing a corpus and has not been
+requested — do not start it without the owner's explicit go-ahead.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -605,7 +606,7 @@ inventory all still run correctly. Local commit only, same as every stage before
 |---|---|---|
 | 10 | Tool failure feedback | ✅ done — there is no exit code in a Bash `tool_response` (only `stdout`/`stderr`/`interrupted`, confirmed against a third-party plugin's own comment, twice), so `lib/tools_index.py` tracks the two real signals instead: `interrupted` (a fact) and non-empty `stderr` (a weak one), each with its own counter. `scratch_watch.py`'s new `_track_tool_health()` matches a Bash call against `.chamnan/tools/<name>`, increments `runs` on every match, and prints one quiet notice the call that FIRST crosses `FLAG_AT=3` on either counter — silent before, silent after, never a fabricated "failure" verdict. `chamnan-candidates demote <tool-name>` undoes a promotion: removes the index entry, deletes the file, and writes a fresh candidate from the tool's own description so it goes through review again instead of vanishing. **Skills stayed out of scope, and the README says so explicitly** — a new Limitations bullet states nothing logs a skill being read and no hook can see whether following it went well, right beside a bullet spelling out exactly what the tool side does and does not track. |
 | 11 | Usage counts | ✅ done — two sources, both already being written before this stage gave them a reader. `chamnan`'s own commands: `workflows.usage_counts()` counts a `commands.jsonl` signature against a name list `chamnan-report` builds by listing its own `bin/` siblings (a new command needs nothing added here to be picked up), and returns the oldest/newest `at` alongside the counts so the report never implies a calendar month when the log is really a 400-entry ring buffer. Promoted tools: `tools_index.usage()` reads back the `runs` counter Stage 10 already increments — the field existed for a stage that had not been built yet, and this is that stage. `chamnan-report` gained a "Usage" section (counts, zeros included) right after the knowledge inventory, and a "Promoted tools" section that only appears once something has actually been promoted. **Counts only, never a savings figure**, matching the settled verdict. |
-| 12 | Release 1.5.2 | Local commit only. **STOP.** |
+| 12 | Release 1.5.2 | ✅ done — `plugin.json` 1.5.1 → 1.5.2. README gained a "What's new in 1.5.2" section (tool health without an exit code, the demote command, the Usage section) above "What's new in 1.5.1", in the same newest-first order every prior release used. Commands table gained `chamnan-candidates demote` and an updated `chamnan-report` row naming the Usage section. Suite unchanged at 616/616 (documentation and a version string only — no code touched). Verified against the live workspace one more time: `chamnan-candidates --help`, `chamnan-report`'s Usage section, and the bumped version all read correctly. Local commit only, same as every stage before it. **STOP.** |
 
 **Stage 11 verification.** Full suite 600 → 616/616 (added: `usage_counts()` counting/zeroing/ignoring
 behavior, span from the oldest/newest entry in the WHOLE log rather than only the counted names, a
