@@ -569,8 +569,17 @@ intelligent about.
 
 | # | Stage | What |
 |---|---|---|
-| 6 | Candidate dedup and counters | `observed: N`, `last_seen:`, exact-match on normalised signature sequences. Upsert, never a second file. **STOP.** |
-| 7 | The review CLI | `chamnan-candidates`: list, `confirm`, `reject`, `edit`. **Solve invocation as well as output** — `bin/` is not on PATH and a confirm step that takes more than a few seconds will not be used. **STOP.** |
+| 6 | Candidate dedup and counters | **Already complete — delivered as part of Stage 3.** `candidates.upsert()` already does exact-match keying on the sequence, `observed:`/`last_seen:` set fresh each call (never incremented), one file never two — Stage 3's own tests already pin all three properties. Building it again here would be redundant work, not new work; nothing to do. |
+| 7 | The review CLI | ✅ done — `bin/chamnan-candidates`: `list` (bare invocation too), `confirm <id>`, `reject <id>`, `edit <id>`, `<id>` as either a 1-based position or a slug. `confirm` moves `Provenance` to `ai-confirmed`; it never writes into `skills/` or `tools/` itself — that is Stage 8. **The invocation concern was re-examined and does not apply**, see below. **STOP.** |
+
+**Correction to the invocation concern above.** Written before checking: every sibling skill
+(`bootstrap`, `promote`, `remap`, `report`) already documents BARE invocation —
+`chamnan-map`, `chamnan-report`, `chamnan-promote <file> <name>` — consistently, with no path
+prefix. Lumin-App's own `CLAUDE.md` spelling out `Work-Mode/chamnan/bin/chamnan-map` in full is
+that one repository's workaround for running chamnan as a nested source checkout during its own
+development, not evidence the plugin has an invocation problem. `chamnan-candidates` follows the
+same established bare-invocation convention as its siblings; there was nothing new to solve.
+
 | 6a | Incidents as a fourth `memory/` category | `CATEGORIES` is referenced in exactly two places in `lib/memory.py`, so a fourth inherits retention, redaction, readers and injection economics for almost nothing. Shape: symptom · root cause · fix · impact · what to avoid. **Gated hard:** `memory/lessons/` is empty today, and a fourth empty directory is worse than none. **STOP.** |
 | 8 | Promotion → Skill or Tool | Confirm sends a candidate to `skills/` (a procedure) or `tools/` (a script), reusing `chamnan-promote`'s machinery. The classifier **suggests**; the owner decides. Merges Miki's 1.5.2 · 1. **STOP.** |
 | 9 | Release 1.5.1 | Local commit only. **STOP.** |

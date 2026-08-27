@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""chamnan candidates — review what the workflow detector has found, quickly.
+
+`notice_workflow()` already writes one file per repeated command sequence under
+`.chamnan/candidates/` (see lib/candidates.py) the moment it crosses the detection threshold. This
+is the other half: looking at what accumulated, and deciding what to do with each one.
+
+  chamnan candidates                     list what is waiting (same as `list`)
+  chamnan candidates confirm <id>        mark reviewed and worth keeping (Provenance -> ai-confirmed)
+  chamnan candidates reject <id>         delete it — not a routine worth keeping
+  chamnan candidates edit <id>           print the file's path, to open and adjust by hand
+
+<id> is either a candidate's position in the list above (1, 2, 3 — computed fresh each time, not
+cached from an earlier call) or its slug/filename, with or without `.md`.
+
+**`confirm` does not promote anything into `skills/` or `tools/`.** It only records that a human
+looked at the candidate and thinks the routine is real — moving Provenance from `ai-inferred` to
+`ai-confirmed`. Turning a confirmed candidate into something a session actually reads is a
+separate, deliberate step: `chamnan promote <file> <name>` for a script, or `/chamnan:capture` for
+a written-out procedure. This tool never writes anywhere except `.chamnan/candidates/` itself.
+"""
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import candidates  # noqa: E402
+import workspace as ws  # noqa: E402
+
+
+def _title(path):
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for line in text.splitlines():
+        if line.startswith("# "):
+            return line[2:].strip()
+    return path.stem
+
+
+def cmd_list(root):
+    found = candidates.entries(root)
+    if not found:
+        print("chamnan: no candidates waiting for review")
+        return 0
+    print(f"{len(found)} candidate(s) waiting\n")
+    for i, p in enumerate(found, 1):
+        f = candidates.fields_of(p)
+        print(f"[{i}] {_title(p)}")
+        print(f"    observed {f.get('observed', '?')} time(s) · last seen {f.get('last seen', '?')} "
+              f"· {f.get('provenance', '?')}")
+    print("\nconfirm/reject/edit by number or by name — see `chamnan candidates --help`")
+    return 0
+
+
+def _find_or_complain(root, ident):
+    p = candidates.resolve(root, ident)
+    if p is None:
+        print(f"chamnan: no candidate matches {ident!r} — run `chamnan candidates` to list them",
+              file=sys.stderr)
+    return p
+
+
+def cmd_confirm(root, ident):
+    p = _find_or_complain(root, ident)
+    if p is None:
+        return 1
+    candidates.set_provenance(p, "ai-confirmed")
+    print(f"chamnan: confirmed — {_title(p)}")
+    print(f"  Provenance -> ai-confirmed. To keep it, run:")
+    print(f"    chamnan promote <script-file> <name>   (a tool)")
+    print(f"    /chamnan:capture                        (a written-out procedure)")
+    return 0
+
+
+def cmd_reject(root, ident):
+    p = _find_or_complain(root, ident)
+    if p is None:
+        return 1
+    title = _title(p)
+    p.unlink()
+    print(f"chamnan: rejected and removed — {title}")
+    return 0
+
+
+def cmd_edit(root, ident):
+    p = _find_or_complain(root, ident)
+    if p is None:
+        return 1
+    print(p.relative_to(root))
+    return 0
+
+
+def main(argv):
+    root = ws.find_root()
+    wsdir = ws.workspace(root)
+    if not wsdir.is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
+    if not ws.enabled("promote", root):
+        print("chamnan: promote is disabled in .chamnan/config.json — candidates are part of it")
+        return 0
+
+    if not argv or argv[0] in ("list", "-l", "--list"):
+        return cmd_list(root)
+    if argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+
+    cmd, *rest = argv
+    if cmd not in ("confirm", "reject", "edit"):
+        print(f"chamnan: unknown command {cmd!r} — list, confirm <id>, reject <id>, edit <id>",
+              file=sys.stderr)
+        return 2
+    if not rest:
+        print(f"chamnan: {cmd} needs a candidate — number or name from `chamnan candidates`",
+              file=sys.stderr)
+        return 2
+
+    return {"confirm": cmd_confirm, "reject": cmd_reject, "edit": cmd_edit}[cmd](root, rest[0])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -490,6 +490,84 @@ check("the ledger line names the count, not the content",
 
 shutil.rmtree(cand_root, ignore_errors=True)
 
+# ---------------------------------------------------------------- chamnan-candidates (the review CLI)
+cli_root = Path(tempfile.mkdtemp(prefix="chamnan-cli-")).resolve()
+(cli_root / ".git").mkdir()
+ws.ensure(cli_root)
+
+
+def run_candidates(*args, cwd=None):
+    return subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), *args],
+                          capture_output=True, text=True, cwd=cwd or cli_root)
+
+
+empty_list = run_candidates("list")
+check("an empty store says so plainly, not an empty table",
+      "no candidates waiting" in empty_list.stdout)
+check("listing an empty store exits cleanly", empty_list.returncode == 0)
+
+candidates.upsert(cli_root, ["docker compose", "alembic", "pytest"], 4, "2026-08-26")
+candidates.upsert(cli_root, ["git add", "git commit", "git push"], 3, "2026-08-27")
+
+listed = run_candidates("list").stdout
+check("THE LIST NAMES BOTH CANDIDATES", "docker compose" in listed and "git add" in listed)
+check("the list shows how many times each was observed",
+      "observed 4" in listed and "observed 3" in listed)
+check("bare invocation with no arguments is the same as list",
+      run_candidates().stdout == listed)
+
+# entries() sorts by filename, so [1] is deterministically "docker compose ..." here.
+sorted_first = candidates.entries(cli_root)[0]
+check("list order matches candidates.entries(), so index 1 is predictable",
+      "docker" in sorted_first.name)
+
+confirm_out = run_candidates("confirm", "1")
+check("CONFIRM BY NUMBER MOVES PROVENANCE TO ai-confirmed",
+      candidates.fields_of(sorted_first).get("provenance") == "ai-confirmed")
+check("CONFIRM NEVER WRITES INTO skills/ OR tools/ ITSELF",
+      list((cli_root / ".chamnan" / "skills").glob("*.md")) == []
+      and list((cli_root / ".chamnan" / "tools").glob("*")) == [])
+check("confirm tells the human it did not promote anything itself",
+      "chamnan promote" in confirm_out.stdout and "/chamnan:capture" in confirm_out.stdout)
+
+second_slug = candidates.entries(cli_root)[1].stem
+edit_out = run_candidates("edit", second_slug)
+check("EDIT BY SLUG PRINTS THE FILE'S PATH, RELATIVE TO THE REPO ROOT",
+      edit_out.stdout.strip() == f".chamnan/candidates/{second_slug}.md")
+check("edit does not modify the file", edit_out.returncode == 0)
+
+reject_out = run_candidates("reject", second_slug)
+check("REJECT REMOVES THE FILE", len(candidates.entries(cli_root)) == 1)
+check("reject confirms what it removed", "rejected" in reject_out.stdout.lower())
+
+missing_out = run_candidates("confirm", "999")
+check("an out-of-range number fails cleanly, not with a traceback",
+      missing_out.returncode == 1 and "Traceback" not in missing_out.stderr)
+check("the error names the command to recover with", "chamnan candidates" in missing_out.stderr)
+
+unknown_out = run_candidates("frobnicate", "1")
+check("an unknown command is rejected with a usage message, not silently ignored",
+      unknown_out.returncode == 2 and "list" in unknown_out.stderr)
+
+no_arg_out = run_candidates("confirm")
+check("confirm with no id is a usage error, not an IndexError",
+      no_arg_out.returncode == 2 and "Traceback" not in no_arg_out.stderr)
+
+help_out = run_candidates("--help")
+check("--help prints the docstring and exits cleanly",
+      "chamnan candidates" in help_out.stdout and help_out.returncode == 0)
+check("--help documents that confirm does not itself promote",
+      "does not promote" in help_out.stdout.lower())
+
+(cli_root / ".chamnan" / "config.json").write_text(
+    json.dumps({**ws.DEFAULT_CONFIG, "promote": False}))
+disabled_out = run_candidates("list")
+check("the tool respects the same promote flag scratch_watch.py already gates candidates on",
+      "disabled" in disabled_out.stdout.lower())
+(cli_root / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
+
+shutil.rmtree(cli_root, ignore_errors=True)
+
 # ---------------------------------------------------------------- notice_workflow writes, not just speaks
 # The mechanism this whole stage exists for: a sequence that qualifies gets a candidate file, and
 # the file survives past the moment the notice printed and scrolled away.

@@ -115,6 +115,49 @@ def entries(root):
     return sorted(p for p in d.glob("*.md") if p.is_file())
 
 
+def fields_of(path):
+    """Trailer fields for a specific candidate FILE, when the caller already has the path rather
+    than the sequence `read()` needs. `{}` for a missing or unreadable file -- a review tool
+    listing candidates should show what it can, not crash on one bad file."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return {}
+    return _fields(text)
+
+
+def resolve(root, ident):
+    """A candidate's path from either its 1-based position in `entries()` (the same order `list`
+    prints, computed fresh -- not cached from an earlier call) or its slug/filename, with or
+    without `.md`. Supports whichever is faster to type: `confirm 2` and
+    `confirm git-add-git-commit-git-push` both work. Returns None rather than raising when nothing
+    matches, so a caller can print its own message instead of a traceback."""
+    found = entries(root)
+    if ident.isdigit():
+        i = int(ident) - 1
+        return found[i] if 0 <= i < len(found) else None
+    name = ident if ident.endswith(".md") else ident + ".md"
+    for p in found:
+        if p.name == name:
+            return p
+    return None
+
+
+def set_provenance(path, provenance):
+    """Rewrite ONLY the `**Provenance:**` line of an existing candidate file, in place, leaving
+    every other field untouched. Raises ValueError on an unknown provenance, same as `render()` --
+    a reviewer confirming or rejecting a candidate is still bound by the closed enum."""
+    if provenance not in PROVENANCE:
+        raise ValueError(f"unknown provenance: {provenance!r}")
+    text = path.read_text(encoding="utf-8", errors="replace")
+    new_line = f"**Provenance:** {provenance}"
+    if _FIELD.search(text) and "provenance" in _fields(text):
+        text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)
+    else:
+        text = text.rstrip("\n") + f"\n{new_line}\n"
+    path.write_text(text, encoding="utf-8")
+
+
 def count(root):
     """Number of candidates, or None when the directory does not exist at all -- distinct from
     existing and holding none, the same rule lib/ledger.py already applies to every other store."""
