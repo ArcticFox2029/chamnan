@@ -16,8 +16,8 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** **1.5.1 SHIPPED.** Stages 0–9 complete, all verified. Stage 10 (1.5.2) done, 600/600
-tests. Owner said "ทำต่อ s 11 , 12" — proceeding into Stage 11 next.
+**Status:** **1.5.1 SHIPPED.** Stages 0–9 complete, all verified. Stages 10–11 (1.5.2) done, 616/616
+tests. Owner said "ทำต่อ s 11 , 12" — proceeding into Stage 12 (release) next.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -604,8 +604,19 @@ inventory all still run correctly. Local commit only, same as every stage before
 | # | Stage | What |
 |---|---|---|
 | 10 | Tool failure feedback | ✅ done — there is no exit code in a Bash `tool_response` (only `stdout`/`stderr`/`interrupted`, confirmed against a third-party plugin's own comment, twice), so `lib/tools_index.py` tracks the two real signals instead: `interrupted` (a fact) and non-empty `stderr` (a weak one), each with its own counter. `scratch_watch.py`'s new `_track_tool_health()` matches a Bash call against `.chamnan/tools/<name>`, increments `runs` on every match, and prints one quiet notice the call that FIRST crosses `FLAG_AT=3` on either counter — silent before, silent after, never a fabricated "failure" verdict. `chamnan-candidates demote <tool-name>` undoes a promotion: removes the index entry, deletes the file, and writes a fresh candidate from the tool's own description so it goes through review again instead of vanishing. **Skills stayed out of scope, and the README says so explicitly** — a new Limitations bullet states nothing logs a skill being read and no hook can see whether following it went well, right beside a bullet spelling out exactly what the tool side does and does not track. |
-| 11 | Usage counts | *"`chamnan-map` ran 14 times this month"*, counted from `commands.jsonl`. **Counts, never a savings figure** — a tokens-saved number would be invented, and this project already retired an "Engineer Scoreboard" for measuring what is easy rather than what matters. **STOP.** |
+| 11 | Usage counts | ✅ done — two sources, both already being written before this stage gave them a reader. `chamnan`'s own commands: `workflows.usage_counts()` counts a `commands.jsonl` signature against a name list `chamnan-report` builds by listing its own `bin/` siblings (a new command needs nothing added here to be picked up), and returns the oldest/newest `at` alongside the counts so the report never implies a calendar month when the log is really a 400-entry ring buffer. Promoted tools: `tools_index.usage()` reads back the `runs` counter Stage 10 already increments — the field existed for a stage that had not been built yet, and this is that stage. `chamnan-report` gained a "Usage" section (counts, zeros included) right after the knowledge inventory, and a "Promoted tools" section that only appears once something has actually been promoted. **Counts only, never a savings figure**, matching the settled verdict. |
 | 12 | Release 1.5.2 | Local commit only. **STOP.** |
+
+**Stage 11 verification.** Full suite 600 → 616/616 (added: `usage_counts()` counting/zeroing/ignoring
+behavior, span from the oldest/newest entry in the WHOLE log rather than only the counted names, a
+missing log reading as all-zero rather than erroring, `tools_index.usage()` reading registration
+order and reflecting `record_call()` increments, and a `chamnan-report` end-to-end check that the
+Usage section prints zeros for an unused command and gains a Promoted tools section only once a
+tool exists). Live-workspace check against Lumin-App's own `.chamnan/`: the Usage section prints
+all-zero counts for every chamnan command (expected — the plugin actually installed on this machine
+is still v0.1.4, so nothing here has ever logged a bare `chamnan-map`-style call), and no Promoted
+tools section appears, since none exist yet. **STOP.**
+
 
 **Stage 10 verification.** Full suite 553 → 600/600 (added: `match_call()` behavior, clean-call vs.
 empty-stderr counting, silence below `FLAG_AT`, the flag firing at exactly the 3rd occurrence with

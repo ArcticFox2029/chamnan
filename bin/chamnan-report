@@ -25,6 +25,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import ledger  # noqa: E402
+import tools_index  # noqa: E402
+import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
 PROJECT_ROOT = Path.home() / ".claude" / "projects"
@@ -108,12 +110,50 @@ def print_inventory(root):
     print()
 
 
+def known_commands():
+    """Every `chamnan-*` script in `bin/` alongside this one, sorted. Read from the directory
+    rather than a hand-kept list, so a new CLI command is picked up here the day it is added,
+    with nothing else to update."""
+    return sorted(p.name for p in HERE.iterdir() if p.is_file() and p.name.startswith("chamnan-"))
+
+
+def print_usage(root):
+    """Counts, never a savings figure — a tokens-saved number would be invented, and this project
+    already retired an "Engineer Scoreboard" for measuring what is easy instead of what matters.
+    Two sources, both already being written before this function existed to read them: chamnan's
+    own commands come from `commands.jsonl`'s signatures (the same log the workflow detector
+    already keeps), and promoted tools come from `tools/index.json`'s `runs` counter (incremented
+    by every matched Bash call since Stage 10).
+    """
+    log = ws.workspace(root) / "logs" / "commands.jsonl"
+    counts, oldest, newest = workflows.usage_counts(log, known_commands())
+    print("Usage")
+    width = max(len(name) for name in counts)
+    for name in sorted(counts):
+        n = counts[name]
+        print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}")
+    if oldest and newest:
+        print(f"  (from the calls currently logged, {oldest[:10]} to {newest[:10]} — "
+              f"commands.jsonl holds the most recent {workflows.KEEP_ENTRIES}, not a calendar window)")
+    else:
+        print("  (nothing logged yet)")
+
+    tools = tools_index.usage(root)
+    if tools:
+        print("\nPromoted tools")
+        twidth = max(len(name) for name, _ in tools)
+        for name, runs in tools:
+            print(f"  {name:<{twidth}}   {runs:>3} run{'s' if runs != 1 else ''}")
+    print()
+
+
 def main(argv):
     root = ws.find_root()
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
     print_inventory(root)
+    print_usage(root)
     project_dir = encoded_dir(root)
     if not project_dir:
         print(f"chamnan: no Claude Code transcripts found for {root}", file=sys.stderr)

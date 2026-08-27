@@ -116,6 +116,21 @@ def signatures(command_text):
     return out
 
 
+def _read(log_path):
+    """Every entry currently on disk, in order, malformed lines skipped. Read-only — unlike
+    `record()`, which always rewrites the file even for an empty append, this never touches disk,
+    so a caller that only wants to look (`usage_counts()`, below) does not pay a write for it."""
+    if not log_path.is_file():
+        return []
+    out = []
+    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out
+
+
 def record(log_path, sigs, when, tool=None, interrupted=False):
     """Append signatures to the bounded log and return the full history.
 
@@ -129,13 +144,7 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
     shape this log ever holds. An entry already on disk with no `kind` at all reads as `"command"`
     by the readers below — this is not a migration, nothing here rewrites what already exists.
     """
-    prior = []
-    if log_path.is_file():
-        for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                prior.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+    prior = _read(log_path)
     for sig in sigs:
         entry = {"at": when, "kind": "command", "sig": sig}
         if tool:
@@ -219,3 +228,31 @@ def describe(sequence, count, candidate_path=None):
     return (f"chamnan: this sequence has come round {count} times now — {steps}.{where} "
             f"If it is a routine worth keeping, run /chamnan:capture and write it down as a "
             f"procedure; the next session reads it instead of rediscovering the order.")
+
+
+def usage_counts(log_path, names):
+    """How many times each name in `names` occurs as a `sig` in the log, plus the oldest and
+    newest `at` seen across every entry (not just the counted ones) — so a caller can say what
+    span the count actually covers.
+
+    `KEEP_ENTRIES` bounds this log by COUNT, not by calendar time: a quiet week and a busy week
+    hold the same 400 entries for very different numbers of days. Reporting a count without the
+    span it was measured over would let "14 calls" read as a rate it never claimed to be.
+
+    Returns (counts, oldest_at, newest_at). `counts` covers exactly `names`, zeros included, so a
+    command that was never run reads as 0 rather than being silently missing from the dict —
+    the same "print zero plainly" choice `lib/ledger.py` already makes for its own stores.
+    """
+    counts = {n: 0 for n in names}
+    oldest = newest = None
+    for entry in _read(log_path):
+        if entry.get("kind", "command") != "command":
+            continue
+        at = entry.get("at")
+        if at:
+            oldest = at if oldest is None else min(oldest, at)
+            newest = at if newest is None else max(newest, at)
+        sig = entry.get("sig", "")
+        if sig in counts:
+            counts[sig] += 1
+    return counts, oldest, newest

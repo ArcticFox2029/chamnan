@@ -10,9 +10,9 @@ once) does not apply here, since both callers are short-lived CLI invocations, n
 
 The schema is deliberately small: `name`, `desc`, `added` (ISO timestamp), `origin` (where the
 content came from — a file path for a promoted script, `"candidate:<slug>"` for one generated from
-a detected sequence), `runs` (a usage counter Stage 11 reports from — this module increments it,
-nothing surfaces it as a number yet, matching Stage 4's `as-of` reasoning: add the column, wire the
-reader later), `interrupted` and `stderr_seen` (Stage 10's two honest signals, below).
+a detected sequence), `runs` (a usage counter `record_call()` increments on every matched Bash
+call and `usage()` reads back for `chamnan-report`'s Usage section), `interrupted` and
+`stderr_seen` (Stage 10's two honest signals, below).
 
 **There is no exit code to track, and this module does not pretend otherwise.** Confirmed against
 another installed plugin's own comment stating the exact fact twice over: a Bash `tool_response`
@@ -101,6 +101,13 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
     now_flaggable = (entry.get("interrupted", 0) >= FLAG_AT or entry.get("stderr_seen", 0) >= FLAG_AT)
     _save(root, entries)
     return entry, (now_flaggable and not was_flaggable)
+
+
+def usage(root):
+    """(name, runs) for every registered tool, in registration order — the read side of the `runs`
+    counter `record_call()` writes on every matched Bash call. Stage 11's whole job here: this
+    field has been counting since Stage 10 shipped and nothing has printed it until now."""
+    return [(e["name"], e.get("runs", 0)) for e in load(root)]
 
 
 def remove(root, name):

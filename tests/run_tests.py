@@ -587,6 +587,12 @@ check("a second register() appends rather than overwriting", len(tools_index.loa
 check("a minimal entry (name only) still gets every field, defaulted",
       set(tools_index.load(ti_root)[1])
       == {"name", "desc", "added", "origin", "runs", "interrupted", "stderr_seen"})
+check("usage() reads back (name, runs) for every entry, registration order",
+      tools_index.usage(ti_root) == [("check.sh", 0), ("second.sh", 0)])
+tools_index.record_call(ti_root, "check.sh")
+tools_index.record_call(ti_root, "check.sh")
+check("usage() reflects runs incremented since registration",
+      tools_index.usage(ti_root) == [("check.sh", 2), ("second.sh", 0)])
 shutil.rmtree(ti_root, ignore_errors=True)
 
 # The refactor must not have changed chamnan-promote's own observable behaviour.
@@ -915,6 +921,29 @@ check("the inventory shows every store, including empty ones",
       and "memory/lessons/" in report_out and "candidates/" in report_out)
 check("the inventory counts the one decision written above", "1 entry" in report_out)
 check("the inventory flags the decision with no Rejected:", "no `Rejected:`" in report_out)
+check("chamnan-report prints the Usage heading", "Usage" in report_out)
+check("a command never logged reads as 0, not absent", "chamnan-map" in report_out and "0 times" in report_out)
+check("no promoted tools yet -> no Promoted tools section", "Promoted tools" not in report_out)
+
+# ---------------------------------------------------------------- chamnan-report's Usage section (Stage 11)
+report_log = report_root / ".chamnan" / "logs" / "commands.jsonl"
+report_log.parent.mkdir(parents=True, exist_ok=True)
+report_log.write_text(
+    "\n".join(json.dumps(e) for e in [
+        {"at": "2026-08-01T10:00:00+07:00", "kind": "command", "sig": "chamnan-map"},
+        {"at": "2026-08-20T10:00:00+07:00", "kind": "command", "sig": "chamnan-map"},
+        {"at": "2026-08-25T10:00:00+07:00", "kind": "command", "sig": "chamnan-candidates"},
+    ]) + "\n", encoding="utf-8")
+tools_index.register(report_root, {"name": "deploy-check.sh", "desc": "x",
+                                    "added": "2026-08-27T10:00:00+07:00", "origin": "y"})
+tools_index.record_call(report_root, "deploy-check.sh")
+usage_out = subprocess.run([str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
+                           cwd=report_root).stdout
+check("logged calls are counted per command", "chamnan-map" in usage_out and "2 times" in usage_out)
+check("the usage span names the oldest and newest date logged",
+      "2026-08-01" in usage_out and "2026-08-25" in usage_out)
+check("a registered tool with runs now shows a Promoted tools section",
+      "Promoted tools" in usage_out and "deploy-check.sh" in usage_out and "1 run" in usage_out)
 shutil.rmtree(report_root, ignore_errors=True)
 
 
@@ -2000,6 +2029,27 @@ check("the command log is bounded", len(hist) == workflows.KEEP_ENTRIES)
 check("a malformed line does not break reading",
       len(workflows.record(wf, [], "2026-08-01T10:00:00+07:00")) == workflows.KEEP_ENTRIES)
 shutil.rmtree(wf.parent, ignore_errors=True)
+
+# ---------------------------------------------------------------- usage_counts (Stage 11)
+uc_log = Path(tempfile.mkdtemp(prefix="chamnan-usage-")) / "commands.jsonl"
+workflows.record(uc_log, ["chamnan-map"], "2026-08-01T10:00:00+07:00")
+workflows.record(uc_log, ["chamnan-map"], "2026-08-05T10:00:00+07:00")
+workflows.record(uc_log, ["chamnan-report"], "2026-08-10T10:00:00+07:00")
+workflows.record(uc_log, ["git status"], "2026-08-15T10:00:00+07:00")
+counts, oldest, newest = workflows.usage_counts(uc_log, ["chamnan-map", "chamnan-report", "chamnan-promote"])
+check("usage_counts counts a repeated signature", counts["chamnan-map"] == 2)
+check("usage_counts counts a single occurrence", counts["chamnan-report"] == 1)
+check("usage_counts zeros a name never seen", counts["chamnan-promote"] == 0)
+check("usage_counts ignores a signature outside `names`", "git status" not in counts)
+check("usage_counts's span is the OLDEST entry in the log, not just the counted ones",
+      oldest == "2026-08-01T10:00:00+07:00")
+check("usage_counts's span is the NEWEST entry in the log, not just the counted ones",
+      newest == "2026-08-15T10:00:00+07:00")
+empty_counts, empty_oldest, empty_newest = workflows.usage_counts(
+    uc_log.parent / "does-not-exist.jsonl", ["chamnan-map"])
+check("usage_counts on a missing log is all zeros, not an error", empty_counts == {"chamnan-map": 0})
+check("usage_counts on a missing log has no span", empty_oldest is None and empty_newest is None)
+shutil.rmtree(uc_log.parent, ignore_errors=True)
 
 # ---------------------------------------------------------------- shell keywords are not programs
 # Measured on the live workspace this module was developed against: `do` had appeared 50 times in
