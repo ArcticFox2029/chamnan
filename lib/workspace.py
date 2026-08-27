@@ -78,6 +78,11 @@ DEFAULT_CONFIG = {
     # are injected, so a repository with fifty closed threads pays nothing for them. Threading is
     # a pick from a declared list, never a string match. See lib/timeline.py.
     "timeline": True,
+    # environments.md — platform facts and the constraints nobody writes down ("RWO storage only",
+    # "no TPM in UAT"). CONSTRAINTS are injected, versions are not: a constraint changes what an
+    # agent should write, a version is a fact it can look up. Nothing here contacts an
+    # environment; every line was typed by somebody who knew it. See lib/environments.py.
+    "environments": True,
     # The write-skills line and the ledger line (see lib/ledger.py). Found on the workspace this
     # plugin is developed against: the hook-written logs held 700 records, every skill-written
     # store held zero, and session_start.py never once told an agent that /chamnan:remember

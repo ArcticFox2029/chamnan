@@ -43,6 +43,7 @@ import schema  # noqa: E402
 import sessions  # noqa: E402
 import state as state_mod  # noqa: E402
 import timeline  # noqa: E402
+import environments as envs  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -1956,6 +1957,129 @@ check("the injected half does not mention Impact",
       "## Impact" not in rendered_map[:rendered_map.index("## Full Detail")])
 check("impact names the caller", "pay/model.py" in rendered_map)
 shutil.rmtree(imp_repo, ignore_errors=True)
+
+# ---------------------------------------------------------------- environments.md (Stage 13a, 1.6.0)
+# The facts nobody writes down: "RWO storage only", "no TPM in UAT". Nothing here contacts an
+# environment -- every line was typed by somebody who knew it, which is exactly why `Checked:` is
+# load-bearing rather than decorative: it is the only signal of how much to trust a line.
+ev_root = Path(tempfile.mkdtemp(prefix="chamnan-env-")).resolve()
+(ev_root / ".git").mkdir()
+ws.ensure(ev_root)
+
+check("an absent environments.md parses as no entries", envs.entries(ev_root) == [])
+check("nothing is injected when the file is absent", envs.render_constraints(ev_root) == "")
+check("no environments means nothing is stale", envs.stale_environments(ev_root) == [])
+
+prod = envs.render_entry("production", "Kubernetes 1.28 on RKE2",
+                         "postgres 16, redis 7.2, python 3.11",
+                         ["RWO storage only — no ReadWriteMany PVCs",
+                          "no outbound internet from worker nodes"], "2026-08-27")
+_p, replaced = envs.upsert(ev_root, "production", prod)
+check("the first upsert declares rather than replaces", not replaced)
+uat = envs.render_entry("uat", "Kubernetes 1.26", "postgres 13", ["no TPM in UAT"], "2026-01-05")
+envs.upsert(ev_root, "uat", uat)
+
+parsed = envs.entries(ev_root)
+check("both environments parse", [e["name"] for e in parsed] == ["production", "uat"])
+check("the platform line round-trips", parsed[0]["platform"] == "Kubernetes 1.28 on RKE2")
+check("versions parse into name -> version",
+      parsed[0]["versions"] == {"postgres": "16", "redis": "7.2", "python": "3.11"})
+check("constraints parse as a list of bullets", len(parsed[0]["constraints"]) == 2)
+check("a constraint's text round-trips whole",
+      parsed[0]["constraints"][0] == "RWO storage only — no ReadWriteMany PVCs")
+check("the checked date round-trips", parsed[0]["checked"] == "2026-08-27")
+
+# Two environments running different versions of the same thing is usually the entire reason
+# somebody wrote this file, so declared_versions keeps a list per name rather than one value.
+declared = envs.declared_versions(ev_root)
+check("DECLARED_VERSIONS KEEPS BOTH VALUES FOR ONE NAME",
+      sorted(declared["postgres"]) == [("production", "16"), ("uat", "13")])
+check("a version declared in only one environment has one entry",
+      declared["redis"] == [("production", "7.2")])
+
+# upsert REPLACES rather than appends: this file describes how things ARE, and two `## production`
+# headings would leave a reader no way to tell which is current.
+newer = envs.render_entry("production", "K8s 1.31", "postgres 17", ["RWO only"], "2026-08-27")
+_p2, replaced2 = envs.upsert(ev_root, "production", newer)
+after = envs.entries(ev_root)
+check("UPSERT REPLACES AN EXISTING ENVIRONMENT IN PLACE", replaced2 and len(after) == 2)
+check("the replacement's values win", after[0]["versions"] == {"postgres": "17"})
+check("replacing the first entry did not disturb the second",
+      after[1]["name"] == "uat" and after[1]["constraints"] == ["no TPM in UAT"])
+
+# Staleness. An entry nobody has confirmed is evidence nobody looked, NOT evidence nothing
+# changed -- which is why aging refuses to report against these rather than issuing an all-clear.
+import time as _time
+now = _time.time()
+fresh_only = envs.stale_environments(ev_root, now=now, window_days=100000)
+check("nothing is stale under a very wide window", fresh_only == [])
+stale = envs.stale_environments(ev_root, now=now)
+check("an old Checked: date goes stale", [s[0] for s in stale] == ["uat"])
+check("a stale entry reports how many days it has been", stale[0][1] > 180)
+
+no_date = envs.render_entry("dr", "different hardware", "", ["DR runs on other kit"], "")
+envs.upsert(ev_root, "dr", no_date)
+never = dict(envs.stale_environments(ev_root, now=now))
+check("AN ENTRY WITH NO CHECKED DATE COUNTS AS STALE, NOT AS FINE", "dr" in never)
+check("and reports None rather than a made-up day count", never["dr"] is None)
+
+# The injection is constraints only: a constraint rules out a design before it is written, a
+# version is a fact that can be looked up on the one occasion it matters.
+injected = envs.render_constraints(ev_root)
+check("the injected block names each environment", "production" in injected and "uat" in injected)
+check("the injected block carries the constraints", "RWO only" in injected)
+check("THE INJECTED BLOCK DOES NOT CARRY VERSION NUMBERS", "postgres 17" not in injected)
+check("an environment with no constraints is left out of the injection", "dr" in injected)
+bare_env = Path(tempfile.mkdtemp(prefix="chamnan-env-bare-")).resolve()
+(bare_env / ".git").mkdir()
+ws.ensure(bare_env)
+envs.upsert(bare_env, "empty", envs.render_entry("empty", "nothing declared", "", [], "2026-08-27"))
+check("an environment declaring no constraints injects nothing at all",
+      envs.render_constraints(bare_env) == "")
+shutil.rmtree(bare_env, ignore_errors=True)
+
+# Field boundaries: bullets under Constraints: must not swallow a field written after them.
+raw = envs.path(ev_root)
+raw.write_text("# Environments\n\n## prod\n**Constraints:**\n- first\n- second\n"
+               "**Checked:** 2026-08-27\n**Platform:** something\n", encoding="utf-8")
+bounded = envs.entries(ev_root)[0]
+check("constraint bullets stop at the next field", bounded["constraints"] == ["first", "second"])
+check("a field written after the bullets still parses", bounded["checked"] == "2026-08-27")
+check("and so does one after that", bounded["platform"] == "something")
+
+# The CLI.
+def run_env(root, *args):
+    return subprocess.run([str(ROOT / "bin" / "chamnan-env"), *args],
+                          capture_output=True, text=True, cwd=root)
+
+ev_cli = Path(tempfile.mkdtemp(prefix="chamnan-env-cli-")).resolve()
+(ev_cli / ".git").mkdir()
+ws.ensure(ev_cli)
+out = run_env(ev_cli, "check")
+check("env check on an empty workspace says there is nothing to check",
+      out.returncode == 0 and "nothing to check" in out.stdout)
+out = run_env(ev_cli, "set", "production", "--platform", "K8s 1.28",
+              "--constraint", "RWO storage only")
+check("env set declares an environment", out.returncode == 0 and "declared production" in out.stdout)
+out = run_env(ev_cli, "set", "bare")
+check("env set with no constraints still succeeds", out.returncode == 0)
+check("but says the constraints are the part worth writing", "no constraints recorded" in out.stdout)
+out = run_env(ev_cli, "check")
+check("a freshly declared environment is not cold", "confirmed within the last" in out.stdout)
+out = run_env(ev_cli, "set", "old", "--constraint", "x", "--checked", "2020-01-01")
+out = run_env(ev_cli, "check")
+check("env check names the cold environment", "old" in out.stdout and "gone cold" in out.stdout)
+check("env check says what to do about it", "--checked" in out.stdout)
+out = run_env(ev_cli, "show", "production")
+check("env show prints the canonical shape", "**Platform:** K8s 1.28" in out.stdout)
+out = run_env(ev_cli, "show", "nope")
+check("env show on an unknown name fails", out.returncode == 1)
+out = run_env(ev_cli, "set", "x", "--platform")
+check("an option with no value is refused", out.returncode == 2)
+out = run_env(ev_cli, "set", "x", "--nonsense", "y")
+check("an unknown option is refused", out.returncode == 2)
+shutil.rmtree(ev_cli, ignore_errors=True)
+shutil.rmtree(ev_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- timeline threads (Stage 13, 1.6.0)
 # The design being pinned here is that threading is a PICK FROM A DECLARED LIST, never a string

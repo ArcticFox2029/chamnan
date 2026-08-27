@@ -1,0 +1,220 @@
+"""`environments.md` — the constraints nobody writes down and everybody re-learns.
+
+    "RWO storage only, no ReadWriteMany"      "no TPM in UAT"      "DR runs different hardware"
+
+Every one of those is discovered the same way: somebody writes the obvious solution, it fails in
+one environment and not another, and an afternoon goes into working out why. The fact itself is
+one line long. It is not in the code — the code is what got written *because* of it — and it is
+not in the git history either, because the commit that worked around it explains the workaround
+and not the constraint. So it lives in whoever hit it, and the next person pays again.
+
+Four fields per environment, and the last two are what make this more than a README section:
+
+    ## production
+    **Platform:** Kubernetes 1.28 on RKE2
+    **Versions:** postgres 16, redis 7.2, python 3.11
+    **Constraints:**
+    - RWO storage only — no ReadWriteMany PVCs
+    - no outbound internet from worker nodes
+    **Checked:** 2026-08-27
+
+`Versions:` is a declared list of `name version` pairs, and it exists so that Stage 14's aging can
+compare a memory entry's claim against something real instead of against a clock. `Checked:` is
+the date somebody last confirmed the entry is still true, and it is what keeps this file from
+becoming an oracle nobody has verified: `stale_environments()` finds the entries nobody has
+touched in a long time, and the aging check REFUSES to report against an environment whose
+`Checked:` date has gone cold rather than issue a false all-clear from an unmaintained source.
+
+**Nothing here talks to an environment.** No cluster is contacted, no version is detected, nothing
+is inferred. Every fact in this file was typed by a person who knew it, which is exactly why it is
+worth keeping — and why a `Checked:` date is the only honest way to say how much to trust it.
+"""
+import re
+
+FILENAME = "environments.md"
+HEADER = "# Environments\n"
+
+# How long a `Checked:` date stays trustworthy. Deliberately long: this file describes platform
+# facts, which move on the order of quarters, not days -- a window short enough to fire constantly
+# would train people to ignore it, which is the failure mode this whole release exists to avoid.
+STALE_AFTER_DAYS = 180
+
+_ENV = re.compile(r"^##\s+(.+?)\s*$", re.M)
+_FIELD = re.compile(r"^\*\*(\w+):\*\*\s*(.*)$", re.M)
+_BULLET = re.compile(r"^\s*[-*]\s+(.+?)\s*$", re.M)
+# A declared version: a name followed by a dotted or plain number. "postgres 16", "python 3.11",
+# "Kubernetes 1.28". Anything that does not match this shape is simply not a version claim, and
+# is left alone rather than guessed at.
+_VERSION = re.compile(r"([A-Za-z][\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
+
+
+def path(root):
+    from workspace import workspace
+    return workspace(root) / FILENAME
+
+
+def _ymd_to_ts(text):
+    import calendar
+    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text.strip())
+    if not m:
+        return None
+    try:
+        return calendar.timegm((int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, 0, 0))
+    except (ValueError, TypeError):
+        return None
+
+
+def entries(root):
+    """[{name, platform, versions, constraints, checked, checked_ts}] in file order.
+
+    `versions` is {name: version} parsed from the `Versions:` line. `constraints` is the list of
+    bullets under `Constraints:`. `checked_ts` is None when the entry has no parseable `Checked:`
+    date — which `stale_environments()` treats as never checked, not as fine.
+    """
+    p = path(root)
+    if not p.is_file():
+        return []
+    try:
+        text = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    found = list(_ENV.finditer(text))
+    out = []
+    for i, m in enumerate(found):
+        end = found[i + 1].start() if i + 1 < len(found) else len(text)
+        body = text[m.end():end]
+        fields = {k.lower(): v.strip() for k, v in _FIELD.findall(body)}
+
+        versions = {}
+        for vname, vnum in _VERSION.findall(fields.get("versions", "")):
+            versions[vname.lower()] = vnum
+
+        constraints = []
+        cut = body.find("**Constraints:**")
+        if cut >= 0:
+            # Only the bullets that follow Constraints:, never bullets belonging to a later field.
+            after = body[cut:]
+            nxt = _FIELD.search(after[len("**Constraints:**"):])
+            region = after[:nxt.start() + len("**Constraints:**")] if nxt else after
+            constraints = [b.strip() for b in _BULLET.findall(region)]
+
+        checked = fields.get("checked", "")
+        out.append({
+            "name": m.group(1).strip(),
+            "platform": fields.get("platform", ""),
+            "versions": versions,
+            "constraints": constraints,
+            "checked": checked,
+            "checked_ts": _ymd_to_ts(checked),
+        })
+    return out
+
+
+def declared_versions(root):
+    """{name: [(env, version), ...]} across every environment.
+
+    A list per name rather than one value, because two environments legitimately run different
+    versions of the same thing — that is usually the entire reason somebody wrote this file. A
+    caller comparing a claim against this has to decide what a disagreement means; this only
+    reports what was declared where.
+    """
+    out = {}
+    for env in entries(root):
+        for name, version in env["versions"].items():
+            out.setdefault(name, []).append((env["name"], version))
+    return out
+
+
+def stale_environments(root, now=None, window_days=STALE_AFTER_DAYS):
+    """[(name, days_since_checked_or_None)] for entries whose `Checked:` date has gone cold, or
+    that never had one. Empty when every entry is fresh.
+
+    This is the honest half of the file's design. An environment nobody has confirmed in six
+    months is not evidence that the platform is unchanged; it is evidence that nobody looked. A
+    caller that treats an unmaintained entry as an authority produces a false all-clear, which is
+    worse than producing nothing — see `aging.py`, which refuses to report against these.
+    """
+    import time
+    now = time.time() if now is None else now
+    cutoff = now - window_days * 86400
+    stale = []
+    for env in entries(root):
+        ts = env["checked_ts"]
+        if ts is None:
+            stale.append((env["name"], None))
+        elif ts < cutoff:
+            stale.append((env["name"], int((now - ts) // 86400)))
+    return stale
+
+
+def render_entry(name, platform="", versions="", constraints=(), checked=""):
+    """One environment in the canonical shape. A field with nothing in it is left out rather than
+    written empty — the same rule milestones.render_entry() follows, and for the same reason: a
+    heading followed by nothing reads as an oversight rather than as "not applicable"."""
+    parts = [f"## {name.strip()}", ""]
+    if platform.strip():
+        parts.append(f"**Platform:** {platform.strip()}")
+    if versions.strip():
+        parts.append(f"**Versions:** {versions.strip()}")
+    bullets = [c.strip() for c in constraints if c and c.strip()]
+    if bullets:
+        parts.append("**Constraints:**")
+        parts.extend(f"- {b}" for b in bullets)
+    if checked.strip():
+        parts.append(f"**Checked:** {checked.strip()}")
+    parts.append("")
+    return "\n".join(parts)
+
+
+def upsert(root, name, entry_text):
+    """Write one environment, replacing an existing entry of the same name in place.
+
+    Replacing rather than appending: unlike a milestone, an environment is a description of how
+    something IS, and two `## production` headings in one file would leave a reader with no way to
+    tell which is current. Returns (path, replaced).
+    """
+    p = path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    if not text.strip():
+        text = HEADER + "\n"
+
+    found = list(_ENV.finditer(text))
+    for i, m in enumerate(found):
+        if m.group(1).strip().lower() != name.strip().lower():
+            continue
+        end = found[i + 1].start() if i + 1 < len(found) else len(text)
+        text = text[:m.start()] + entry_text.strip() + "\n\n" + text[end:]
+        p.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
+        return p, True
+
+    p.write_text(text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n", encoding="utf-8")
+    return p, False
+
+
+def render_constraints(root, max_envs=4, max_bullets=4):
+    """The injected block: each environment's constraints, capped. Empty when the file does not
+    exist or declares none, so the hook injects no heading rather than an empty one.
+
+    Constraints and not versions, because a constraint is the thing that changes what an agent
+    should WRITE ("RWO only" rules out a whole design), while a version number is a fact it can
+    look up when it turns out to matter. The injection budget goes to the half that prevents work
+    rather than the half that answers a question.
+    """
+    found = [e for e in entries(root) if e["constraints"]]
+    if not found:
+        return ""
+    lines = []
+    for env in found[:max_envs]:
+        head = f"- **{env['name']}**"
+        if env["platform"]:
+            head += f" ({env['platform']})"
+        lines.append(head)
+        for bullet in env["constraints"][:max_bullets]:
+            lines.append(f"  - {bullet}")
+        if len(env["constraints"]) > max_bullets:
+            lines.append(f"  - _…{len(env['constraints']) - max_bullets} more_")
+    if len(found) > max_envs:
+        lines.append(f"- _…and {len(found) - max_envs} more in `.chamnan/{FILENAME}`_")
+    return "\n".join(lines)

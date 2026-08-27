@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""chamnan env — the constraints nobody writes down and everybody re-learns.
+
+  chamnan env                              list declared environments and their constraints
+  chamnan env show <name>                  one environment in full
+  chamnan env set <name> [options]         declare or update one environment
+  chamnan env check                        which entries nobody has confirmed lately
+
+Options for `set`:
+
+  --platform "Kubernetes 1.28 on RKE2"     what it runs on
+  --versions "postgres 16, redis 7.2"      declared versions — what aging compares against
+  --constraint "RWO storage only"          repeatable; one line per constraint
+  --checked 2026-08-27                     defaults to today
+
+`set` REPLACES an environment of the same name rather than appending a second one — this file
+describes how things ARE, and two `## production` headings would leave a reader no way to tell
+which is current.
+
+**Nothing here contacts an environment.** No cluster is reached, no version is detected. Every
+fact in this file was typed by somebody who knew it, which is why `Checked:` matters: it is the
+only honest signal of how much to trust a line, and `chamnan env check` is what surfaces the
+entries that have gone cold. `chamnan-age` refuses to report against a stale environment rather
+than issue an all-clear from a source nobody has confirmed.
+"""
+import sys
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import environments as env  # noqa: E402
+import workspace as ws  # noqa: E402
+
+
+def cmd_list(root):
+    found = env.entries(root)
+    if not found:
+        print("chamnan: no environments declared — "
+              "`chamnan env set production --platform \"...\"` starts one")
+        return 0
+    print(f"{len(found)} environment(s)\n")
+    for e in found:
+        head = f"  {e['name']}"
+        if e["platform"]:
+            head += f" — {e['platform']}"
+        print(head)
+        if e["versions"]:
+            print("    versions: " + ", ".join(f"{k} {v}" for k, v in sorted(e["versions"].items())))
+        for c in e["constraints"]:
+            print(f"    · {c}")
+        print(f"    checked {e['checked'] or 'never'}")
+    return 0
+
+
+def cmd_show(root, name):
+    for e in env.entries(root):
+        if e["name"].lower() == name.lower():
+            print(env.render_entry(
+                e["name"], e["platform"],
+                ", ".join(f"{k} {v}" for k, v in sorted(e["versions"].items())),
+                e["constraints"], e["checked"]).rstrip())
+            return 0
+    print(f"chamnan: no environment named {name!r} — run `chamnan env` to list them",
+          file=sys.stderr)
+    return 1
+
+
+def cmd_set(root, name, platform, versions, constraints, checked):
+    entry = env.render_entry(name, platform, versions, constraints, checked)
+    path, replaced = env.upsert(root, name, entry)
+    verb = "updated" if replaced else "declared"
+    print(f"chamnan: {verb} {name} — {path.relative_to(root)}")
+    if not constraints:
+        print("  no constraints recorded. The constraints are the part nobody else can "
+              "reconstruct — `--constraint \"...\"` is worth the minute.")
+    return 0
+
+
+def cmd_check(root):
+    found = env.entries(root)
+    if not found:
+        print("chamnan: no environments declared — nothing to check")
+        return 0
+    stale = env.stale_environments(root)
+    if not stale:
+        print(f"chamnan: all {len(found)} environment(s) confirmed within the last "
+              f"{env.STALE_AFTER_DAYS} days")
+        return 0
+    print(f"{len(stale)} of {len(found)} environment(s) have gone cold\n")
+    for name, days in stale:
+        when = "never confirmed" if days is None else f"last confirmed {days} days ago"
+        print(f"  {name} — {when}")
+    print(f"\n  Re-confirm with `chamnan env set <name> --checked {_today()}` (and correct "
+          f"anything that changed).")
+    print("  Until then `chamnan-age` will not report against these — an unconfirmed entry is "
+          "evidence nobody looked, not evidence nothing changed.")
+    return 0
+
+
+def _today():
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def main(argv):
+    root = ws.find_root()
+    if not ws.workspace(root).is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
+    if not ws.enabled("environments", root):
+        print("chamnan: environments is disabled in .chamnan/config.json")
+        return 0
+
+    if not argv or argv[0] in ("list", "-l", "--list"):
+        return cmd_list(root)
+    if argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+
+    cmd, *rest = argv
+    if cmd == "check":
+        return cmd_check(root)
+    if cmd == "show":
+        if not rest:
+            print("chamnan: show needs an environment name", file=sys.stderr)
+            return 2
+        return cmd_show(root, rest[0])
+    if cmd != "set":
+        print(f"chamnan: unknown command {cmd!r} — list, show <name>, set <name>, check",
+              file=sys.stderr)
+        return 2
+    if not rest:
+        print("chamnan: set needs an environment name — chamnan env set production [options]",
+              file=sys.stderr)
+        return 2
+
+    name, *opts = rest
+    platform = versions = ""
+    checked = _today()
+    constraints = []
+    i = 0
+    while i < len(opts):
+        flag = opts[i]
+        value = opts[i + 1] if i + 1 < len(opts) else None
+        if value is None or value.startswith("--"):
+            print(f"chamnan: {flag} needs a value", file=sys.stderr)
+            return 2
+        if flag == "--platform":
+            platform = value
+        elif flag == "--versions":
+            versions = value
+        elif flag == "--constraint":
+            constraints.append(value)
+        elif flag == "--checked":
+            checked = value
+        else:
+            print(f"chamnan: unknown option {flag!r} — --platform, --versions, --constraint, "
+                  f"--checked", file=sys.stderr)
+            return 2
+        i += 2
+    return cmd_set(root, name, platform, versions, constraints, checked)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

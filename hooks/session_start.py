@@ -19,6 +19,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import environments  # noqa: E402
 import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
@@ -145,6 +146,22 @@ def main():
             out.append(section("Architecture index", index))
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")
+
+    if cfg.get("environments", True):
+        # Constraints, never versions. A constraint rules out a whole design before it is written
+        # ("RWO storage only" is the difference between a working manifest and an afternoon);
+        # a version number is a fact that can be looked up on the one occasion it matters. This
+        # is also where Stage 15 landed: the per-command guard it proposed needed a PreToolUse
+        # `permissionDecision` whose behaviour under `defaultMode: "auto"` is not documented, so
+        # the constraints are put in front of the agent BEFORE it writes the command instead of
+        # trying to intercept the command after it is written. See README's Limitations.
+        constraints = redact.scrub(environments.render_constraints(root))
+        if constraints:
+            out.append(section(
+                "Environment constraints — check these before proposing infrastructure work",
+                constraints + "\n\n_Declared in `.chamnan/environments.md`, and true only as far "
+                              "as its `Checked:` dates go — `chamnan-env check` says which have "
+                              "gone cold._"))
 
     if cfg.get("memory", True):
         # Rules are standing constraints, so they go in front of the agent before it starts.
