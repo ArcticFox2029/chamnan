@@ -10,7 +10,6 @@ than the cost: a regression check that is rewritten each run is not a regression
   chamnan promote <file> <name> [--desc "..."]   install a script as a permanent tool
   chamnan promote --list                          show what this repo already has
 """
-import json
 import shutil
 import stat
 import sys
@@ -19,22 +18,12 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
 
 
-def index_path(root):
-    return ws.workspace(root) / "tools" / "index.json"
-
-
-def load_index(root):
-    try:
-        return json.loads(index_path(root).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-
-
 def show(root):
-    entries = load_index(root)
+    entries = tools_index.load(root)
     if not entries:
         print("chamnan: no promoted tools yet.")
         print("  When a script proves worth keeping: chamnan promote <file> <name>")
@@ -77,20 +66,17 @@ def main(argv):
     shutil.copy2(src, dest)
     dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-    entries = load_index(root)
-    entries.append({
+    tools_index.register(root, {
         "name": dest.name, "desc": desc,
         "added": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "origin": str(src), "runs": 0,
+        "origin": str(src),
     })
-    index_path(root).write_text(json.dumps(entries, indent=1, ensure_ascii=False) + "\n",
-                                encoding="utf-8")
     rel = dest.relative_to(root)
     print(f"chamnan: promoted -> {rel}")
     print(f"  run it with:  {rel}")
     if not desc:
         print("  no description given — add one so a future session knows when to reach for it:")
-        print(f"    chamnan promote --list   (then edit {index_path(root).relative_to(root)})")
+        print(f"    chamnan promote --list   (then edit {tools_index.path(root).relative_to(root)})")
     return 0
 
 

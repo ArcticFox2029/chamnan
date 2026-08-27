@@ -36,6 +36,7 @@ import impact as impact_mod  # noqa: E402
 import workflows  # noqa: E402
 import candidates  # noqa: E402
 import ledger  # noqa: E402
+import tools_index  # noqa: E402
 import memory as memory_mod  # noqa: E402
 import milestones  # noqa: E402
 import schema  # noqa: E402
@@ -566,6 +567,110 @@ check("the tool respects the same promote flag scratch_watch.py already gates ca
       "disabled" in disabled_out.stdout.lower())
 (cli_root / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
 
+# ---------------------------------------------------------------- lib/tools_index.py (shared registry)
+# Extracted out of chamnan-promote's own inline logic so a second writer (chamnan-candidates
+# promote) reuses it exactly rather than a second, slightly different copy. chamnan-promote itself
+# had no test coverage before this refactor touched it, so this closes that gap too.
+ti_root = Path(tempfile.mkdtemp(prefix="chamnan-tools-index-")).resolve()
+(ti_root / ".git").mkdir()
+check("an empty/absent index loads as []", tools_index.load(ti_root) == [])
+tools_index.register(ti_root, {"name": "check.sh", "desc": "runs the checks",
+                                "added": "2026-08-27T10:00:00+07:00", "origin": "/tmp/check.sh"})
+loaded = tools_index.load(ti_root)
+check("register() writes an entry that load() reads back", len(loaded) == 1)
+check("every field round-trips",
+      loaded[0]["name"] == "check.sh" and loaded[0]["desc"] == "runs the checks"
+      and loaded[0]["origin"] == "/tmp/check.sh")
+check("runs defaults to 0 when not given", loaded[0]["runs"] == 0)
+tools_index.register(ti_root, {"name": "second.sh"})
+check("a second register() appends rather than overwriting", len(tools_index.load(ti_root)) == 2)
+check("a minimal entry (name only) still gets every field, defaulted",
+      set(tools_index.load(ti_root)[1]) == {"name", "desc", "added", "origin", "runs"})
+shutil.rmtree(ti_root, ignore_errors=True)
+
+# The refactor must not have changed chamnan-promote's own observable behaviour.
+promote_smoke = Path(tempfile.mkdtemp(prefix="chamnan-promote-smoke-")).resolve()
+(promote_smoke / ".git").mkdir()
+ws.ensure(promote_smoke)
+scratch_script = promote_smoke.parent / "scratch-check.sh"
+scratch_script.write_text("#!/bin/bash\necho hi\n")
+promote_out = subprocess.run(
+    [str(ROOT / "bin" / "chamnan-promote"), str(scratch_script), "greet", "--desc", "says hi"],
+    capture_output=True, text=True, cwd=promote_smoke)
+check("chamnan-promote STILL WORKS AFTER THE tools_index REFACTOR", promote_out.returncode == 0)
+check("the promoted file exists and is executable",
+      (promote_smoke / ".chamnan" / "tools" / "greet.sh").stat().st_mode & 0o111)
+list_out = subprocess.run([str(ROOT / "bin" / "chamnan-promote"), "--list"],
+                          capture_output=True, text=True, cwd=promote_smoke)
+check("chamnan-promote --list still shows what was promoted", "greet.sh" in list_out.stdout)
+shutil.rmtree(promote_smoke, ignore_errors=True)
+scratch_script.unlink(missing_ok=True)
+
+# ---------------------------------------------------------------- promote: skill or tool (Stage 8)
+promote_root = Path(tempfile.mkdtemp(prefix="chamnan-promote-cli-")).resolve()
+(promote_root / ".git").mkdir()
+ws.ensure(promote_root)
+
+
+def run_pcand(*args):
+    return subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), *args],
+                          capture_output=True, text=True, cwd=promote_root)
+
+
+candidates.upsert(promote_root, ["docker compose", "alembic", "pytest"], 4, "2026-08-26")
+
+before_out = run_pcand("promote", "1", "tool", "deploy-check")
+check("PROMOTE REFUSES AN UNCONFIRMED CANDIDATE", before_out.returncode == 1)
+check("the refusal names the confirm step", "confirm" in before_out.stderr)
+check("refusing to promote creates no tool file",
+      list((promote_root / ".chamnan" / "tools").glob("*")) == [])
+
+run_pcand("confirm", "1")
+suggestion_out = run_pcand("promote", "1")
+check("PROMOTE WITH NO DESTINATION ONLY SUGGESTS, WRITES NOTHING",
+      suggestion_out.returncode == 0
+      and list((promote_root / ".chamnan" / "tools").glob("*")) == []
+      and len(candidates.entries(promote_root)) == 1)
+check("the suggestion names both real destinations", "tool" in suggestion_out.stdout
+      and "skill" in suggestion_out.stdout)
+check("the suggestion is honest about having no real signal",
+      "cannot tell" in suggestion_out.stdout.lower())
+
+tool_out = run_pcand("promote", "1", "tool", "deploy-check")
+check("PROMOTE TO TOOL SUCCEEDS FOR A CONFIRMED CANDIDATE", tool_out.returncode == 0)
+skeleton = promote_root / ".chamnan" / "tools" / "deploy-check.sh"
+check("the skeleton file exists", skeleton.is_file())
+check("EVERY STEP OF THE SEQUENCE APPEARS AS ITS OWN PLACEHOLDER LINE",
+      all(step in skeleton.read_text() for step in ("docker compose", "alembic", "pytest")))
+check("the skeleton is executable",
+      bool(skeleton.stat().st_mode & 0o111))
+check("THE SKELETON FAILS LOUDLY IF RUN AS-IS, NEVER SILENTLY SUCCEEDS",
+      subprocess.run(["bash", str(skeleton)], capture_output=True, text=True).returncode != 0)
+check("promotion registers the tool in the shared index",
+      any(e["name"] == "deploy-check.sh" for e in tools_index.load(promote_root)))
+check("the index entry's origin traces back to the candidate",
+      any(e["origin"].startswith("candidate:") for e in tools_index.load(promote_root)))
+check("THE CANDIDATE IS REMOVED ONCE PROMOTED TO A TOOL — its finding now lives in the tool file",
+      candidates.entries(promote_root) == [])
+
+check("promoting the same name twice refuses rather than overwriting",
+      run_pcand("promote", "1", "tool", "deploy-check").returncode == 1)
+
+candidates.upsert(promote_root, ["kubectl get pods", "kubectl logs"], 3, "2026-08-25")
+run_pcand("confirm", "1")
+skill_out = run_pcand("promote", "1", "skill")
+check("PROMOTE TO SKILL WRITES NO FILE AT ALL", not
+      list((promote_root / ".chamnan" / "skills").glob("*.md")))
+check("promoting to skill leaves the candidate in place -- nothing has actually been captured yet",
+      len(candidates.entries(promote_root)) == 1)
+check("the skill path names /chamnan:capture", "/chamnan:capture" in skill_out.stdout)
+check("the skill path hands over the real sequence",
+      "kubectl get pods" in skill_out.stdout and "kubectl logs" in skill_out.stdout)
+
+bogus_out = run_pcand("promote", "1", "not-a-real-destination")
+check("an unrecognised destination is a usage error", bogus_out.returncode == 2)
+
+shutil.rmtree(promote_root, ignore_errors=True)
 shutil.rmtree(cli_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- notice_workflow writes, not just speaks

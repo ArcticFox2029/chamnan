@@ -5,27 +5,46 @@
 `.chamnan/candidates/` (see lib/candidates.py) the moment it crosses the detection threshold. This
 is the other half: looking at what accumulated, and deciding what to do with each one.
 
-  chamnan candidates                     list what is waiting (same as `list`)
-  chamnan candidates confirm <id>        mark reviewed and worth keeping (Provenance -> ai-confirmed)
-  chamnan candidates reject <id>         delete it — not a routine worth keeping
-  chamnan candidates edit <id>           print the file's path, to open and adjust by hand
+  chamnan candidates                       list what is waiting (same as `list`)
+  chamnan candidates confirm <id>          mark reviewed and worth keeping (Provenance -> ai-confirmed)
+  chamnan candidates reject <id>           delete it — not a routine worth keeping
+  chamnan candidates edit <id>             print the file's path, to open and adjust by hand
+  chamnan candidates promote <id>          suggest where a CONFIRMED candidate belongs, decide nothing
+  chamnan candidates promote <id> tool <name>   install a script SKELETON in .chamnan/tools/<name>
+  chamnan candidates promote <id> skill         print what to hand to /chamnan:capture
 
 <id> is either a candidate's position in the list above (1, 2, 3 — computed fresh each time, not
 cached from an earlier call) or its slug/filename, with or without `.md`.
 
 **`confirm` does not promote anything into `skills/` or `tools/`.** It only records that a human
 looked at the candidate and thinks the routine is real — moving Provenance from `ai-inferred` to
-`ai-confirmed`. Turning a confirmed candidate into something a session actually reads is a
-separate, deliberate step: `chamnan promote <file> <name>` for a script, or `/chamnan:capture` for
-a written-out procedure. This tool never writes anywhere except `.chamnan/candidates/` itself.
+`ai-confirmed`. `promote` requires that step to have already happened; it refuses an unconfirmed
+candidate rather than skip a link in evidence -> candidate -> human confirm -> memory.
+
+**Promoting to `tool` never writes real commands, because chamnan does not have them.** A
+candidate stores SIGNATURES (`git commit`, not the literal command that ran) — `promote ... tool`
+writes a skeleton with each step as a labelled placeholder and registers it in
+`.chamnan/tools/index.json` via the same machinery `chamnan promote` uses, but the file is not
+runnable until you fill in the real commands. **Promoting to `skill` writes nothing at all** — a
+good skill needs prose explaining WHY, which this tool cannot honestly generate from a signature
+list, so it prints the sequence as a starting point and tells you to run `/chamnan:capture`
+yourself.
 """
+import stat
 import sys
+from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
+import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
+
+# A candidate must have passed through `confirm` (or been written by a human in the first place)
+# before `promote` will touch it -- the pipeline is evidence -> candidate -> human confirm ->
+# memory, and skipping the confirm step here would skip a link in it, not just a formality.
+CONFIRMED_PROVENANCE = ("ai-confirmed", "user")
 
 
 def _title(path):
@@ -89,6 +108,82 @@ def cmd_edit(root, ident):
     return 0
 
 
+def _sequence_of(fields):
+    return [s.strip() for s in fields.get("sequence", "").split(",") if s.strip()]
+
+
+def cmd_promote(root, ident, destination=None, name=None):
+    p = _find_or_complain(root, ident)
+    if p is None:
+        return 1
+    fields = candidates.fields_of(p)
+    title = _title(p)
+    sequence = _sequence_of(fields)
+
+    if fields.get("provenance") not in CONFIRMED_PROVENANCE:
+        print(f"chamnan: {title!r} has not been confirmed yet — run "
+              f"`chamnan candidates confirm {ident}` first", file=sys.stderr)
+        return 1
+
+    if destination is None:
+        # No real signal exists to choose confidently from a signature list alone -- a candidate
+        # stores WHAT ran, never why, so this is a stated default with an honest caveat, never a
+        # score dressed up as a decision. See PLAN.md's standing rejection of invented Health/
+        # Confidence scores; the same objection applies here.
+        print(f"chamnan: {title}")
+        print("  Suggested: tool — this is a sequence of shell commands, which is what a tool is.")
+        print("  Choose skill instead if the real value is explaining WHY, or a judgement call at")
+        print("  one of the steps — chamnan cannot tell that from the sequence alone; you can.")
+        print(f"\n  chamnan candidates promote {ident} tool <name>")
+        print(f"  chamnan candidates promote {ident} skill")
+        return 0
+
+    if destination == "tool":
+        if not name:
+            print("chamnan: promote ... tool needs a name — chamnan candidates promote <id> tool <name>",
+                  file=sys.stderr)
+            return 2
+        tools = ws.ensure(root) / "tools"
+        dest = tools / (name if Path(name).suffix else name + ".sh")
+        if dest.exists():
+            print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
+                  file=sys.stderr)
+            return 1
+        lines = ["#!/bin/bash",
+                 f"# {dest.stem} — generated from a confirmed candidate, not a real script yet.",
+                 f"# Detected sequence (observed {fields.get('observed', '?')} time(s)): "
+                 f"{', '.join(sequence)}",
+                 "# Replace every placeholder below with the ACTUAL command you run at that step.",
+                 "set -euo pipefail", ""]
+        for i, step in enumerate(sequence, 1):
+            lines.append(f'echo "TODO step {i}: {step}" >&2; exit 1  # replace this line')
+        dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        tools_index.register(root, {
+            "name": dest.name,
+            "desc": f"from a confirmed candidate: {title} — placeholders, not filled in yet",
+            "added": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "origin": f"candidate:{p.stem}",
+        })
+        p.unlink()
+        rel = dest.relative_to(root)
+        print(f"chamnan: skeleton installed -> {rel}")
+        print(f"  it will exit non-zero until you replace the TODO lines with real commands")
+        print(f"  the candidate is removed — its finding now lives in {rel}")
+        return 0
+
+    if destination == "skill":
+        print(f"chamnan: {title} — hand this to /chamnan:capture:")
+        print(f"  Sequence: {', '.join(sequence)}")
+        print(f"  Observed {fields.get('observed', '?')} time(s), last seen "
+              f"{fields.get('last seen', '?')}")
+        print("  Nothing is written here — capture needs the reasoning only you have.")
+        return 0
+
+    print(f"chamnan: unknown destination {destination!r} — tool or skill", file=sys.stderr)
+    return 2
+
+
 def main(argv):
     root = ws.find_root()
     wsdir = ws.workspace(root)
@@ -106,14 +201,20 @@ def main(argv):
         return 0
 
     cmd, *rest = argv
-    if cmd not in ("confirm", "reject", "edit"):
-        print(f"chamnan: unknown command {cmd!r} — list, confirm <id>, reject <id>, edit <id>",
-              file=sys.stderr)
+    if cmd not in ("confirm", "reject", "edit", "promote"):
+        print(f"chamnan: unknown command {cmd!r} — list, confirm <id>, reject <id>, edit <id>, "
+              f"promote <id> [tool|skill]", file=sys.stderr)
         return 2
     if not rest:
         print(f"chamnan: {cmd} needs a candidate — number or name from `chamnan candidates`",
               file=sys.stderr)
         return 2
+
+    if cmd == "promote":
+        ident, *pdest = rest
+        destination = pdest[0] if pdest else None
+        name = pdest[1] if len(pdest) > 1 else None
+        return cmd_promote(root, ident, destination, name)
 
     return {"confirm": cmd_confirm, "reject": cmd_reject, "edit": cmd_edit}[cmd](root, rest[0])
 

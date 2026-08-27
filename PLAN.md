@@ -581,7 +581,7 @@ development, not evidence the plugin has an invocation problem. `chamnan-candida
 same established bare-invocation convention as its siblings; there was nothing new to solve.
 
 | 6a | Incidents as a fourth `memory/` category | `CATEGORIES` is referenced in exactly two places in `lib/memory.py`, so a fourth inherits retention, redaction, readers and injection economics for almost nothing. Shape: symptom · root cause · fix · impact · what to avoid. **Gated hard:** `memory/lessons/` is empty today, and a fourth empty directory is worse than none. **STOP.** |
-| 8 | Promotion → Skill or Tool | Confirm sends a candidate to `skills/` (a procedure) or `tools/` (a script), reusing `chamnan-promote`'s machinery. The classifier **suggests**; the owner decides. Merges Miki's 1.5.2 · 1. **STOP.** |
+| 8 | Promotion → Skill or Tool | ✅ done — `chamnan candidates promote <id> [tool\|skill]`. Refuses an unconfirmed candidate. No destination given -> suggests `tool` by default with a stated, honest caveat (no real signal exists to choose confidently from a signature list) and writes nothing. `tool` writes an executable SKELETON (each step a labelled placeholder that exits non-zero if run as-is) and registers it via the new `lib/tools_index.py`, shared with `chamnan-promote`; the candidate is then removed, its finding now living in the tool file. `skill` writes nothing at all — prints the sequence and points at `/chamnan:capture`, since a good skill needs prose this tool cannot honestly generate. Merges Miki's 1.5.2 · 1. **STOP.** |
 | 9 | Release 1.5.1 | Local commit only. **STOP.** |
 
 ---
