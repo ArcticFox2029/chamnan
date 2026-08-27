@@ -288,6 +288,101 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only, and nothing is written until you run
 `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.5
+
+Measured on a real workspace: `.chamnan/sessions/` and every `.chamnan/memory/` category held
+**zero entries** after five weeks of daily use, while the hook-written activity logs held **700**
+records. The stores 1.3 added were built correctly; nothing was making writing to them happen. 1.5
+is entirely about that gap — no new store, one new record type, and four small mechanisms that
+turn absence into something visible instead of something silent.
+
+### Two lines that name what already exists
+
+Every session now opens with two short lines, **~112 tokens together on an empty workspace, ~128
+once something has actually been written** — this plugin's entire always-on price for the release:
+
+    _Write with `/chamnan:resume` (session record), `/chamnan:remember` (decision, lesson, or
+    rule), `/chamnan:milestone`, or `/chamnan:capture` (a procedure worth keeping). Nothing writes
+    here unless you ask._
+    _chamnan · 0 records · 0 memory entries · nothing written yet_
+
+The first line exists because `session_start.py` had never once named the plugin's own write
+skills — it injected the *workspace's* recorded procedures and stopped there, so an agent had no
+way to discover `/chamnan:remember` short of reading the plugin's source. The second is the
+ledger: a count for every store, always printed, always showing **movement** rather than a static
+number — `3 records (+2 this week) · last write 2 days ago`, once there is something to compare
+against. A number that never changes is what gets tuned out; the word "zero" printed plainly is not.
+
+### `STATE.md` stops losing what you pinned
+
+The injection cap changed from a flat 4,000 characters with no notice when something was cut, to a
+**token budget** (`state_token_budget`, default `1700`) with a visible marker — `_…9.1k more —
+read .chamnan/STATE.md_` — so a truncated file says so instead of quietly dropping 69% of itself.
+
+A heading can also be **pinned**, by ending it with 📌. A pinned section is injected in full,
+first, regardless of where in the file it falls — so a standing instruction like `### SETTLED — do
+not raise these again 📌` cannot lose a race for the top of the file as the file grows.
+
+### The repeated-workflow detector actually detects something
+
+1.3's sequence detector (`git diff → git status → git commit`, recurring across separate days) had
+a bug that made it find nothing on a real, active workspace: shell keywords — `do`, `for`, `done`,
+`then`, `break` — were being recorded as if they were program names, because a chained command
+splits on `;` and the detector only ever looked at a fragment's first word. On one measured log,
+**26% of it was shell syntax**, not workflow steps. Keywords are now excluded as their own
+category, distinct from ordinary commands too common to mean anything.
+
+### A finding that survives past the moment it was noticed
+
+When a sequence crosses the threshold, it no longer just prints once and disappears — it is kept
+as a **candidate**, one file under `.chamnan/candidates/`, keyed on the sequence itself so the same
+routine detected again updates the one file instead of creating another:
+
+    # docker compose · alembic · pytest
+    **Sequence:** docker compose, alembic, pytest
+    **Observed:** 3
+    **Last seen:** 2026-08-27
+    **Provenance:** ai-inferred
+
+A candidate is evidence, never itself knowledge — nothing injects one into a session; only its
+**count** reaches the ledger (`4 awaiting review`), and only `/chamnan:capture`, run by you,
+promotes one into something a session actually reads. A companion **resume nudge** fires at most
+once per Claude Code session — tracked by `session_id`, not by calendar day, so two sessions on
+the same day each get their own chance — when real work has happened and nothing is recorded for
+today yet.
+
+### Knowledge inventory, and two questions nobody was asking
+
+`chamnan-report` now opens with what actually exists, store by store, zeros printed plainly:
+
+    Knowledge inventory
+      sessions/             0 entries    last write never
+      memory/decisions/     0 entries    last write never
+      ...
+      1 of 5 decisions have no `Rejected:` — a trade-off nobody wrote down
+
+Decisions gain a named `**Rejected:**` field — a heading you fill in rather than a sentence that
+was easy to skip while writing quickly — and every memory entry is automatically stamped with
+`**As-of:**` (today's date) and `**Provenance:**` (`ai-drafted` by default) the moment it is
+written, by a hook rather than by asking the `remember` skill to remember to include them. An
+existing `Provenance` is never overwritten, so a value you set by hand stays exactly what you set.
+
+### Three defects closed along the way
+
+- An en-dash (`–`, which editors autocorrect `--` into) in a milestone heading was silently
+  absorbed into the *previous* entry's body rather than becoming its own entry — the character
+  class only recognised em-dash and hyphen. Fixed, and covered for all three.
+- A decision or lesson title had no length limit on its way into the session-start listing —
+  capped at 120 characters, with a visible `…` rather than a silent cut.
+- A skill's registry line fell back to `no description — add one` whenever the file had no YAML
+  frontmatter, which was true of every skill on the workspace this was measured against. It now
+  falls back to the first real line of body text instead of staying empty.
+
+**The honest ceiling, unchanged by any of this:** writing still depends on choosing to write.
+Nothing here can see a session's conversation and decide something is worth keeping. What changed
+is that not writing anything is now a fact printed in front of you every session, instead of a
+silent absence nobody had reason to notice.
+
 ## What's new in 1.3
 
 Six additions, all repository-local markdown, all bounded at the injection rather than in the
@@ -532,6 +627,8 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `session_retention_days` | `30` | integer, days | Session records older than this are deleted on the next `chamnan-map` or `chamnan-report`. Longer than the log window, because a record from three weeks ago is still the answer to "what was I doing". |
 | `memory` | `true` | `true` / `false` | `.chamnan/memory/`. Rules are injected in full; decisions and lessons contribute a title and are read on demand. **Not pruned by age** — a session record stops mattering, a decision does not. |
 | `milestones` | `true` | `true` / `false` | `.chamnan/milestones.md`. Only the two most recent titles are injected, so the file's length costs nothing per session. |
+| `ledger` | `true` | `true` / `false` | The write-skills line and the ledger line at the top of every session — naming the plugin's write skills, and a count of what each store holds. ~112–128 tokens together. Also gates the once-per-session resume nudge. |
+| `state_token_budget` | `1700` | integer, tokens | Ceiling on `STATE.md`'s injection, in tokens rather than characters. A section whose heading ends in 📌 is injected in full first, regardless of this budget or where in the file it falls. |
 
 Each part is independent — switching one off does not affect the others.
 
@@ -571,7 +668,7 @@ From a shell, in the repository:
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |
 | `chamnan-promote <file> <name> --desc "…"` | install a scratch script as a permanent tool in `.chamnan/tools/` |
 | `chamnan-promote --list` | what this repo already keeps |
-| `chamnan-report` | weekly context-per-turn. On a repo with no Claude Code history it says so instead of inventing a trend |
+| `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the inventory, then says so instead of inventing a trend |
 
 ### Reading an attachment without reading it
 
@@ -997,6 +1094,11 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
   which is why these figures are lower, and truer, than the ones this README carried before.
 - Nothing here executes the code it reads.
 - `chamnan-report` needs history on both sides of installation before it can compare anything.
+- **Writing still depends on choosing to write.** A hook cannot see a session's conversation, so
+  nothing here decides on its own that something is worth keeping — that has not changed since 1.0
+  and cannot change within this plugin's model. What 1.5 adds is visibility: the ledger line and
+  the knowledge inventory turn "nothing has been written" into a fact printed in front of you every
+  session, instead of a silent absence with no reason for anyone to notice it.
 
 ## Tests
 

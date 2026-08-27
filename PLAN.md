@@ -16,7 +16,7 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** Stages 1–4 complete, all verified. Awaiting the owner's go for Stage 5.
+**Status:** **1.5.0 SHIPPED.** Stages 0–5 complete, all verified. Awaiting the owner's go for Stage 6 (1.5.1).
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -533,11 +533,31 @@ both the inventory table and the flag line appear in its actual stdout. **STOP.*
 
 ---
 
-#### Stage 5 — Release 1.5.0 ⬜
+#### Stage 5 — Release 1.5.0 ✅ COMPLETE
 Version bump · README covering the new lines, the candidate flow, and **the honest ceiling**
 (chamnan still depends on someone choosing to record; what changed is that not recording is now
 visible) · full suite green · **local commit only, GitHub waits for the owner's explicit word** ·
-no `Co-Authored-By` trailer. **STOP.**
+no `Co-Authored-By` trailer.
+
+**Done.**
+
+```
+plugin.json version: 1.4.0 -> 1.5.0
+suite: 533/533 (unchanged from Stage 4 -- this stage touched no code)
+```
+
+README gained a "What's new in 1.5" section in the same measured, subsection-per-feature shape as
+the existing 1.3 section — the two new lines and their real token cost (~112-128), pinned STATE.md
+sections, the keyword-noise fix with its real 26% figure, candidates and the resume nudge, the
+knowledge inventory and auto-stamped fields, and the three closed defects. The Configuration table
+gained `ledger` and `state_token_budget`; the Commands table's `chamnan-report` row now says it
+opens with the inventory; Limitations gained the honest-ceiling paragraph verbatim from this
+stage's own instructions — writing still depends on choosing to write, and that has not changed.
+
+Verified against the live workspace one more time after the version bump, not assumed: both hooks
+still run correctly, `chamnan-report` still prints the inventory. **Local commit only, as every
+stage in this plan has been — nothing has been pushed to GitHub and nothing will be without the
+owner's explicit word.** STOP.
 
 ---
 
