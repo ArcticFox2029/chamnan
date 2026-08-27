@@ -220,6 +220,27 @@ the owner's existing work before adding a place to put new work.**
 
 ---
 
+### Round three — Miki's five, evaluated against what is actually planned
+
+Two are genuinely new. Two are the same idea this plan already reached independently, which is
+worth treating as a confirmation rather than duplicate work. One is not a feature a single plugin
+can ship on its own.
+
+| Proposal | Verdict |
+|---|---|
+| **Evidence-Based Change Warning** (peek/check a file, surface real history against it) | **Already planned — Stage 13b.** "Ask `impact.py` a question... join it to the timeline so the answer carries 'last time this changed, a rollback was needed'" is the same mechanism. Recorded here so a future session does not re-propose it as new. |
+| **Portable Project DNA** (`chamnan pack` — one curated file to seed another project) | **Already decided — §3's "Team Knowledge Sync", deferred to 2.0.** Independent arrival at the same "curated export, not a mount point" framing is a second vote for that design, not a second idea. |
+| **Multi-Agent Artifact Standard** (a cross-tool markdown spec so Kiro/Cursor/Windsurf read the same files) | **Not something this plugin can ship alone.** `.chamnan/` is already plain markdown with a light trailer grammar — nothing here is proprietary, so the goal is already true by construction. Turning that into a named, versioned SPEC other vendors adopt is a cross-project coordination effort, not a feature; no code change follows from wanting it. |
+| **Contextual Pointer** — when a session touches `payment/service.py`, surface the 1-2 relevant decision/lesson titles instead of the full blanket list | **Accept — genuinely new.** `memory.titles()` today returns EVERY decision/lesson capped at 8 total, injected once at SessionStart regardless of what the session is about. A file-triggered PreToolUse/PostToolUse hook that matches the touched path against entry content would be far more targeted. **Design note for whoever builds it:** start by matching the file's basename against entry BODY TEXT (zero schema change, testable immediately) before reaching for a structured `anchor:`/`files:` field — a text match that is too noisy is a cheap thing to learn and cheap to abandon; a new required field on every existing entry is not. |
+| **Verification & Clean-up Loop** (`chamnan-report` flags `.chamnan/` files never actually read) | **Accept — genuinely new.** Nothing today logs which memory/skill files a session actually opened; `memory.titles()`/`render_titles()` inject only titles, and whether the agent then reads the file is invisible. Needs a small new log (same shape as `commands.jsonl`/`scratch.jsonl`: a PostToolUse hook on `Read` recording `.chamnan/`-relative paths) before `chamnan-report` has anything to cross-reference "exists but never opened" against. |
+
+**Both accepted ideas target 1.6.1+, after 1.6.0's Timeline/Aging/Environment ship and prove
+themselves** — this plan's own gate on 1.5.1 (§4, "do not start unless Stage 1–4 produced non-zero
+counters") applies here too: a targeted-memory feature and a clean-up report are both features
+that read FROM the stores 1.5.0-1.6.0 are trying to get written to in the first place.
+
+---
+
 ## 4. Stages
 
 **Protocol: `do → pause → wait for approval`.** Every stage ends with a verification block and a
