@@ -57,9 +57,6 @@ appears in the session listing beside the title, so it should be recognisable on
 # One line saying what this is about
 
 <Two or three sentences. What was decided or learned, and why.>
-
-<If something was ruled out, say what and why — that is usually the half
-that stops somebody re-treading it.>
 ```
 
 No frontmatter. The first `# ` line is the title; everything else is prose. Keep an entry short —
@@ -68,6 +65,34 @@ if it needs headings and subsections, it is documentation and belongs in `docs/`
 Write the reasoning, not just the conclusion. *"We use Postgres"* is worth nothing in six months;
 *"Postgres, because two processes write concurrently and SQLite's locking failed under load"* is
 worth the file.
+
+### Decisions: name what you rejected
+
+A decision entry gets one more line, as its own field rather than a sentence buried in the prose:
+
+```markdown
+# Postgres over SQLite
+
+Two processes write concurrently, and SQLite's locking failed under load.
+
+**Rejected:** SQLite — simpler to run, but the locking behaviour above ruled it out.
+```
+
+**`**Rejected:**` as a heading, not a sentence you might skip.** This is usually the more valuable
+half of the entry: six months from now, someone re-proposing the rejected option is the exact
+situation this file exists to prevent, and a sentence buried in prose is easy to skip past under
+deadline while writing quickly. Leave it out only when there genuinely was no real alternative
+being weighed — not when there was one and it felt obvious at the time; obvious-at-the-time is
+exactly what stops being obvious later. `chamnan-report` counts decisions with nothing here, so a
+gap is visible rather than silent.
+
+### `As-of:` and `Provenance:` are not yours to write
+
+A hook adds these automatically the first time a file under `.chamnan/memory/` is written or
+edited — `**As-of:** <today's date>` and `**Provenance:** ai-drafted`. Do not add them yourself;
+if they are already there, leave them alone. `Provenance` moves to `ai-confirmed` only when a
+human reviews and keeps the entry, which is a later, separate step — not something this skill
+does.
 
 ## What not to put in it
 

@@ -16,7 +16,7 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** Stages 1–3 complete, all verified. Awaiting the owner's go for Stage 4.
+**Status:** Stages 1–4 complete, all verified. Awaiting the owner's go for Stage 5.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -255,7 +255,7 @@ account can happen at any stage boundary — this file is the state.
 | 1 | Two lines in, and stop losing what is written | ✅ done |
 | 2 | Evidence, and unblock the workflow detector | ✅ done |
 | 3 | Candidates, provenance, and the nudge | ✅ done |
-| 4 | Inventory, metadata, and the 1.4.0 defects | ⬜ |
+| 4 | Inventory, metadata, and the 1.4.0 defects | ✅ done |
 | 5 | Release 1.5.0 | ⬜ |
 
 ---
@@ -469,7 +469,7 @@ Confirmed on the live workspace, read-only: `.chamnan/candidates/` correctly doe
 
 ---
 
-#### Stage 4 — Inventory, metadata, and the 1.4.0 defects ⬜
+#### Stage 4 — Inventory, metadata, and the 1.4.0 defects ✅ COMPLETE
 
 **Files:** `bin/chamnan-report`, `lib/memory.py`, `lib/milestones.py`, `hooks/session_start.py`,
 `lib/ledger.py`, `tests/run_tests.py`
@@ -491,7 +491,45 @@ Confirmed on the live workspace, read-only: `.chamnan/candidates/` correctly doe
 **Tests:** one per fix, both directions. The en-dash test must include em-dash and hyphen entries
 that still parse.
 
-**Verify:** suite green; run `chamnan-report` against the live workspace and read it. **STOP.**
+**Verify:** suite green; run `chamnan-report` against the live workspace and read it.
+
+**Done.**
+
+```
+suite: 533/533 (up from 494, +39 checks)
+```
+
+`chamnan-report` on the live Lumin-App workspace:
+```
+Knowledge inventory
+  sessions/             0 entries    last write never
+  memory/decisions/     0 entries    last write never
+  memory/lessons/       0 entries    last write never
+  memory/rules/         0 entries    last write never
+  milestones.md         0 entries    last write never
+  candidates/           0 entries    last write never
+```
+Every store still reads zero — expected and correct. Stage 4 adds the ability to SEE that plainly
+on demand; it does not itself write anything. Whether these numbers move is exactly what the
+ledger line (Stage 1) and the write-skills line already watch for every session, and what §12 is
+waiting on before 1.5.1 starts.
+
+A design choice worth recording because it is easy to get backwards: `As-of` and `Provenance` are
+stamped by a HOOK on Write/Edit into `.chamnan/memory/**/*.md`, not by instructing the `remember`
+skill to include them. The obvious-looking alternative — add two lines to the skill's documented
+format — was rejected on purpose: it is the exact mechanism whose failure this whole release
+exists to fix. `Provenance` defaults to `ai-drafted`, the mechanical truth of how a file arrives
+(through a tool call, not yet reviewed by a human); an existing `Provenance:` is never overwritten,
+so a human-set `user` stays `user` forever. `**Rejected:**`, by contrast, stays purely a SKILL.md
+instruction and a `chamnan-report` count — a hook can honestly know today's date, but never whether
+a real alternative was actually weighed, so it only asks and only counts, never fills one in.
+
+Verified end to end, not only at the unit level: a real Write payload through the actual hook
+stamped a fresh decision entry and left its prose untouched; a second identical call did not
+double-stamp; a rule pre-marked `**Provenance:** user` kept that value through an Edit call; a file
+outside `.chamnan/memory/` and a non-`.md` file inside it were both left alone. `chamnan-report`
+was run as a real subprocess against a fixture with one decision missing `Rejected:` and confirmed
+both the inventory table and the flag line appear in its actual stdout. **STOP.**
 
 ---
 

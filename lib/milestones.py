@@ -37,7 +37,13 @@ HEADER = "# Project milestones\n"
 # away in a file the agent can open when a title looks relevant.
 INJECT_RECENT = 2
 
-_ENTRY = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—-]\s*(.+?)\s*$", re.M)
+# 🐛 [2026-08-27] `[—-]` in a character class is em-dash (U+2014) or hyphen-minus (U+002D) only --
+# an entry written with an en-dash (U+2013), which many editors autocorrect "--" into, silently
+# failed to match at all. Because entries() only splits the file at headings this regex recognises,
+# an unmatched entry was not merely mis-parsed: it was absorbed whole into the PRECEDING entry's
+# body, with no error and no sign anything had gone wrong. All three dash characters are listed
+# explicitly now rather than as a range, since "—" to "-" is not an ascending codepoint range.
+_ENTRY = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+?)\s*$", re.M)
 FIELDS = ("Why", "Affected", "Decisions")
 
 

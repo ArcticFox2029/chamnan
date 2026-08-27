@@ -115,12 +115,24 @@ def titles(root):
     return found
 
 
+# 🐛 [2026-08-27] title_of() reads a `# ` heading with no length limit of its own, and this was the
+# one place in the whole injection pipeline that passed it straight through -- a genuinely unbounded
+# channel, unlike everything else here which is capped somewhere. A title this long is also almost
+# certainly the wrong thing to have written as a title in the first place, so truncating it doubles
+# as a visible nudge to shorten it, rather than a silent workaround.
+MAX_TITLE_CHARS = 120
+
+
 def render_titles(found):
     """One line per entry, with the path to read. Empty when there is nothing, so the hook injects
     no heading rather than an empty one."""
     if not found:
         return ""
-    lines = [f"- **{cat[:-1]}** · `{name}` — {title}"
+
+    def _cap(title):
+        return title if len(title) <= MAX_TITLE_CHARS else title[:MAX_TITLE_CHARS].rstrip() + "…"
+
+    lines = [f"- **{cat[:-1]}** · `{name}` — {_cap(title)}"
              for cat, title, name in found[:MAX_TITLES]]
     if len(found) > MAX_TITLES:
         lines.append(f"- _…and {len(found) - MAX_TITLES} more in `.chamnan/memory/`_")

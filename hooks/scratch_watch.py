@@ -121,6 +121,60 @@ def notice_workflow(payload, wsdir, root):
     return True
 
 
+_HAS_AS_OF = re.compile(r"^\*\*As-of:\*\*", re.M)
+_HAS_PROVENANCE = re.compile(r"^\*\*Provenance:\*\*", re.M)
+
+
+def _stamp_memory_entry(payload, root):
+    """If this Write/Edit just touched a file under `.chamnan/memory/`, add `As-of:` and
+    `Provenance:` trailers when the file does not already have them. Silent -- this never prints,
+    because it is a mechanical fixup, not a notice, and does not compete with the one-message-per-
+    turn budget the other checks in this file share.
+
+    This is the one place `As-of` actually gets written, and it is a hook for the same reason the
+    write-skills line and the ledger exist: `skills/remember/SKILL.md` could simply ASK Claude to
+    include the field, but this project's founding finding is that a memory system's skill-written
+    stores sat empty for five weeks precisely because things that depend on being remembered do not
+    reliably happen. `As-of` is objective (today's date) and `Provenance` defaults to `ai-drafted`
+    because that is the mechanical truth of how the file arrived -- through a tool call, not yet
+    confirmed by a human. Promoting it to `ai-confirmed` is a human decision (Stage 7, 1.5.1), not
+    something a hook can honestly do for itself.
+    """
+    if (payload.get("tool_name") or "") not in ("Write", "Edit"):
+        return
+    file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
+    if not file_path:
+        return
+    memory_dir = (root / ".chamnan" / "memory").resolve()
+    try:
+        resolved = Path(file_path).resolve()
+    except OSError:
+        return
+    if memory_dir not in resolved.parents or resolved.suffix != ".md":
+        return
+    try:
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    if not text.strip():
+        return
+
+    additions = []
+    if not _HAS_AS_OF.search(text):
+        today = datetime.now().astimezone().strftime("%Y-%m-%d")
+        additions.append(f"**As-of:** {today}")
+    if not _HAS_PROVENANCE.search(text):
+        additions.append("**Provenance:** ai-drafted")
+    if not additions:
+        return
+
+    stamped = text.rstrip("\n") + "\n\n" + "\n".join(additions) + "\n"
+    try:
+        resolved.write_text(stamped, encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _resume_nudge(payload, wsdir, root):
     """Once per session: if a fair bit of work has already happened here and nothing is recorded
     for today, say so. Silent otherwise -- gated on the same "ledger" flag as the write-skills line
@@ -181,6 +235,10 @@ def main():
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
         return 0
+
+    # Silent and independent of everything below: never prints, so it does not compete for the
+    # one-notice-per-turn budget the checks after it share.
+    _stamp_memory_entry(payload, root)
 
     # A plain Bash command carries no script body, so the path below ignores it entirely — and a
     # repeated SEQUENCE of them is the thing that leaves no file behind at all. Checked first, and

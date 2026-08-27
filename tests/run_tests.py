@@ -580,6 +580,75 @@ shutil.rmtree(nudge_root, ignore_errors=True)
 shutil.rmtree(silent_root, ignore_errors=True)
 shutil.rmtree(off_root, ignore_errors=True)
 
+# ---------------------------------------------------------------- automatic As-of / Provenance stamping
+# The one place As-of actually gets written -- not the remember skill's own instructions, because
+# this project's founding finding is that things gated on being remembered do not reliably happen.
+stamp_root = Path(tempfile.mkdtemp(prefix="chamnan-stamp-")).resolve()
+(stamp_root / ".git").mkdir()
+ws.ensure(stamp_root)
+
+decision_path = stamp_root / ".chamnan" / "memory" / "decisions" / "postgres.md"
+decision_path.parent.mkdir(parents=True, exist_ok=True)
+decision_path.write_text("# Postgres over SQLite\n\nTwo writers.\n", encoding="utf-8")
+
+write_evt = {"tool_name": "Write",
+            "tool_input": {"file_path": str(decision_path), "content": "..."}}
+stamp_out = run_scratch_watch(write_evt, stamp_root)
+check("stamping a memory entry never prints anything", stamp_out.strip() == "")
+stamped_text = decision_path.read_text(encoding="utf-8")
+check("AS-OF IS ADDED AUTOMATICALLY ON WRITE", "**As-of:**" in stamped_text)
+check("PROVENANCE DEFAULTS TO ai-drafted", "**Provenance:** ai-drafted" in stamped_text)
+check("the original body is untouched", "Two writers." in stamped_text)
+
+run_scratch_watch(write_evt, stamp_root)
+retext = decision_path.read_text(encoding="utf-8")
+check("a second write does not double-stamp As-of", retext.count("**As-of:**") == 1)
+check("a second write does not double-stamp Provenance", retext.count("**Provenance:**") == 1)
+
+already_confirmed = stamp_root / ".chamnan" / "memory" / "rules" / "confirmed.md"
+already_confirmed.parent.mkdir(parents=True, exist_ok=True)
+already_confirmed.write_text(
+    "# A rule\n\nSome constraint.\n\n**As-of:** 2026-01-01\n**Provenance:** user\n",
+    encoding="utf-8")
+run_scratch_watch({"tool_name": "Edit", "tool_input": {"file_path": str(already_confirmed)}},
+                  stamp_root)
+check("AN EXISTING Provenance IS NEVER OVERWRITTEN (user stays user, not ai-drafted)",
+      "**Provenance:** user" in already_confirmed.read_text(encoding="utf-8"))
+
+outside_memory = stamp_root / "src" / "app.py"
+outside_memory.parent.mkdir(parents=True, exist_ok=True)
+outside_memory.write_text("print('hi')\n", encoding="utf-8")
+run_scratch_watch({"tool_name": "Write",
+                   "tool_input": {"file_path": str(outside_memory), "content": "print('hi')\n"}},
+                  stamp_root)
+check("a file outside .chamnan/memory/ is never stamped",
+      outside_memory.read_text(encoding="utf-8") == "print('hi')\n")
+
+not_markdown = stamp_root / ".chamnan" / "memory" / "decisions" / "notes.txt"
+not_markdown.write_text("plain text, not a memory entry format\n", encoding="utf-8")
+run_scratch_watch({"tool_name": "Write",
+                   "tool_input": {"file_path": str(not_markdown), "content": "x"}}, stamp_root)
+check("a non-.md file under memory/ is left alone",
+      "As-of" not in not_markdown.read_text(encoding="utf-8"))
+
+shutil.rmtree(stamp_root, ignore_errors=True)
+
+# ---------------------------------------------------------------- chamnan-report's knowledge inventory
+report_root = Path(tempfile.mkdtemp(prefix="chamnan-report-inv-")).resolve()
+(report_root / ".git").mkdir()
+ws.ensure(report_root)
+(report_root / ".chamnan" / "memory" / "decisions" / "d.md").write_text(
+    "# A decision\n\nbody\n", encoding="utf-8")
+report_out = subprocess.run([str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
+                            cwd=report_root).stdout
+check("chamnan-report prints the knowledge inventory heading", "Knowledge inventory" in report_out)
+check("the inventory shows every store, including empty ones",
+      "sessions/" in report_out and "memory/decisions/" in report_out
+      and "memory/lessons/" in report_out and "candidates/" in report_out)
+check("the inventory counts the one decision written above", "1 entry" in report_out)
+check("the inventory flags the decision with no Rejected:", "no `Rejected:`" in report_out)
+shutil.rmtree(report_root, ignore_errors=True)
+
 
 big = fixture / "package-lock.json"
 big.write_text('{"lockfileVersion": 3}\n' + "x" * 1000)
@@ -747,6 +816,49 @@ full_line = session_start_mod.write_skills_line(ROOT)
 for skill_name, _note in session_start_mod.WRITE_SKILLS:
     check(f"the real plugin names its own /{skill_name} skill", f"/chamnan:{skill_name}" in full_line)
 check("the write-skills line stays inside its budget", len(full_line) < 260)
+
+# ---------------------------------------------------------------- describe()'s fallback
+# 🐛 [2026-08-27] Every skill in the live workspace this hook runs against predates the plugin's
+# own frontmatter convention -- all twelve registry lines read "no description — add one".
+describe_dir = Path(tempfile.mkdtemp(prefix="chamnan-describe-"))
+
+with_frontmatter = describe_dir / "with-frontmatter.md"
+with_frontmatter.write_text("---\ndescription: The real description.\n---\n\n# Title\n\nbody\n")
+check("frontmatter's description: still wins when present",
+      session_start_mod.describe(with_frontmatter) == "The real description.")
+
+no_frontmatter = describe_dir / "no-frontmatter.md"
+no_frontmatter.write_text(
+    "# Skill: Something\n\n**ขอบเขต**: what this covers, in the local convention.\n")
+check("A FILE WITH NO FRONTMATTER FALLS BACK TO THE FIRST BODY LINE, NOT EMPTY",
+      session_start_mod.describe(no_frontmatter) != "")
+check("the fallback strips leading bold/bullet markup",
+      not session_start_mod.describe(no_frontmatter).startswith("*"))
+check("the fallback keeps the actual words",
+      "what this covers" in session_start_mod.describe(no_frontmatter))
+
+blockquote_first = describe_dir / "blockquote.md"
+blockquote_first.write_text("# Title\n\n> Written 2026-08-25 after a rewrite.\n\nMore body.\n")
+check("a leading blockquote marker is stripped too",
+      session_start_mod.describe(blockquote_first) == "Written 2026-08-25 after a rewrite.")
+
+only_heading = describe_dir / "only-heading.md"
+only_heading.write_text("# Just a title\n")
+check("a file with nothing but a heading still returns empty, not a crash",
+      session_start_mod.describe(only_heading) == "")
+
+empty_file = describe_dir / "empty.md"
+empty_file.write_text("")
+check("an empty file returns empty", session_start_mod.describe(empty_file) == "")
+
+long_body = describe_dir / "long.md"
+long_body.write_text("# Title\n\n" + ("word " * 60) + "\n")
+check("the fallback is capped the same as the frontmatter path",
+      len(session_start_mod.describe(long_body)) <= 110)
+
+check("a missing file returns empty rather than raising",
+      session_start_mod.describe(describe_dir / "does-not-exist.md") == "")
+shutil.rmtree(describe_dir, ignore_errors=True)
 
 ws.ensure(fixture)
 start_with_ledger = run_hook("session_start.py", {})
@@ -1389,6 +1501,21 @@ check("the title cap says how many more there are", "and" in many and "more" in 
 for i in range(20):
     (mroot / "decisions" / f"d-{i:02d}.md").unlink()
 
+# 🐛 [2026-08-27] title_of() has no length limit of its own, and render_titles() used to pass it
+# straight through — a genuinely unbounded injection channel.
+(mroot / "decisions" / "long-title.md").write_text(
+    "# " + ("Why we chose this approach over the alternative " * 5) + "\n\nbody\n", encoding="utf-8")
+long_listing = memory_mod.render_titles(memory_mod.titles(mem))
+title_line = [l for l in long_listing.splitlines() if "long-title.md" in l][0]
+check("A TITLE LONGER THAN THE CAP IS ACTUALLY TRUNCATED",
+      len(title_line) < len("- **decision** · `long-title.md` — ") + 250)
+check("truncation is visible, not silent", "…" in title_line)
+short_listing = memory_mod.render_titles(memory_mod.titles(mem))
+check("a title under the cap is never truncated",
+      "Postgres over SQLite" in short_listing and "…" not in
+      [l for l in short_listing.splitlines() if "postgres-over-sqlite" in l][0])
+(mroot / "decisions" / "long-title.md").unlink()
+
 # Memory is free text about the repository, written by Claude — the likeliest place for a pasted
 # credential to land, and these files are committed.
 (mroot / "rules" / "leaky.md").write_text(
@@ -1406,6 +1533,42 @@ check("slug is filename-safe",
       memory_mod.slug("Postgres over SQLite!") == "postgres-over-sqlite")
 check("filename adds the extension",
       memory_mod.filename("Postgres over SQLite") == "postgres-over-sqlite.md")
+
+# ---------------------------------------------------------------- knowledge inventory (lib/ledger.py)
+# At this point `mem` holds exactly its original three entries: one rule, one decision with no
+# `Rejected:`, and one lesson with no backtick-quoted file reference at all.
+inv = ledger.inventory(mem)
+inv_by_label = {label: (count, ts) for label, count, ts in inv}
+check("inventory counts every store, in a fixed set of labels",
+      set(inv_by_label) == {"sessions/", "memory/decisions/", "memory/lessons/",
+                            "memory/rules/", "milestones.md", "candidates/"})
+check("inventory counts the one decision", inv_by_label["memory/decisions/"][0] == 1)
+check("inventory counts the one lesson", inv_by_label["memory/lessons/"][0] == 1)
+check("A STORE THAT DOES NOT EXIST YET SHOWS 0, NOT AN ERROR", inv_by_label["candidates/"] == (0, None))
+check("humanize_age renders None as never", ledger.humanize_age(None) == "never")
+decision_age = ledger.humanize_age(inv_by_label["memory/decisions/"][1])
+check("humanize_age renders a real timestamp as today or N days ago",
+      decision_age == "today" or "ago" in decision_age)
+
+none, total = ledger.entries_naming_no_file(mem, "lessons")
+check("THE LESSON WITH NO BACKTICK FILE REFERENCE COUNTS AS NAMING NONE", (none, total) == (1, 1))
+(mem / "docs").mkdir(exist_ok=True)
+(mem / "docs" / "notes.md").write_text("real file\n", encoding="utf-8")
+(mroot / "lessons" / "names-a-real-file.md").write_text(
+    "# Something concrete\n\nSee `docs/notes.md` for the full story.\n", encoding="utf-8")
+none2, total2 = ledger.entries_naming_no_file(mem, "lessons")
+check("an entry naming a file that genuinely exists is not counted",
+      none2 == 1 and total2 == 2)
+(mroot / "lessons" / "names-a-real-file.md").unlink()
+
+without, dtotal = ledger.decisions_without_rejected(mem)
+check("THE DECISION WITH NO REJECTED FIELD IS COUNTED", (without, dtotal) == (1, 1))
+(mroot / "decisions" / "with-rejected.md").write_text(
+    "# Chose A over B\n\nBecause reasons.\n\n**Rejected:** B, for other reasons.\n", encoding="utf-8")
+without2, dtotal2 = ledger.decisions_without_rejected(mem)
+check("a decision that DOES name a rejected alternative is not counted",
+      without2 == 1 and dtotal2 == 2)
+(mroot / "decisions" / "with-rejected.md").unlink()
 
 shutil.rmtree(mem, ignore_errors=True)
 
@@ -1733,6 +1896,33 @@ check("SCRUBBING A MILESTONE BODY REMOVES THE PASSWORD",
 milestones.path(ms).write_text("# Project milestones\n\nprose with no entries\n", encoding="utf-8")
 check("a file with no parseable entries yields none", milestones.entries(ms) == [])
 check("and injects nothing", milestones.recent_titles(ms) == "")
+
+# 🐛 [2026-08-27] `[—-]` in a character class is em-dash or hyphen only, never en-dash (U+2013),
+# which many editors autocorrect "--" into. An entry using it did not fail loudly -- it was
+# silently absorbed into the PRECEDING entry's body, since entries() only splits at headings the
+# regex recognises.
+milestones.path(ms).write_text(
+    "# Project milestones\n\n"
+    "## 2026-01-01 — First entry\n\n**Why:** the first one\n\n"
+    "## 2026-01-02 – Uses an en-dash\n\n**Why:** written with an editor that autocorrects\n",
+    encoding="utf-8")
+en_dash_entries = milestones.entries(ms)
+check("AN EN-DASH ENTRY IS RECOGNISED AS ITS OWN ENTRY, NOT ABSORBED",
+      len(en_dash_entries) == 2)
+check("the en-dash entry's title is captured correctly",
+      en_dash_entries[1][1] == "Uses an en-dash")
+check("the en-dash entry's body did not merge into the entry before it",
+      "written with an editor" not in en_dash_entries[0][2])
+em_and_hyphen = Path(tempfile.mkdtemp(prefix="chamnan-ms-dash-"))
+(em_and_hyphen / ".chamnan").mkdir()
+milestones.path(em_and_hyphen).write_text(
+    "# Project milestones\n\n"
+    "## 2026-01-01 — Em dash entry\n\n**Why:** x\n\n"
+    "## 2026-01-02 - Hyphen entry\n\n**Why:** y\n",
+    encoding="utf-8")
+check("em-dash and hyphen entries both still parse",
+      [t for _, t, _ in milestones.entries(em_and_hyphen)] == ["Em dash entry", "Hyphen entry"])
+shutil.rmtree(em_and_hyphen, ignore_errors=True)
 
 shutil.rmtree(ms, ignore_errors=True)
 

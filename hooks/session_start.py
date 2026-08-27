@@ -13,6 +13,7 @@ MAX_INDEX_CHARS and the shortfall is reported, so the fix is obvious (split the 
 partial index) rather than silent.
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -74,18 +75,36 @@ def write_skills_line(plugin_root):
     return f"_Write with {named}. Nothing writes here unless you ask._"
 
 
+_MD_MARKUP = re.compile(r"[*_`]")
+_LEADING_MARKUP = re.compile(r"^[>*\-\s]+")
+
+
 def describe(path):
-    """The `description:` line from a skill's frontmatter, which is what makes the registry usable."""
+    """The `description:` line from a skill's frontmatter, which is what makes the registry usable.
+
+    🐛 [2026-08-27] Every skill in the live workspace this hook runs against predates the plugin's
+    own frontmatter convention -- none of the twelve had one, so every registry line read "no
+    description — add one": 893 characters buying nothing. Falls back to the first real line of
+    body text past the title, lightly cleaned of markdown, rather than staying empty just because
+    the file was never migrated to `---\\ndescription: ...\\n---`.
+    """
     try:
-        head = path.read_text(encoding="utf-8", errors="replace")[:1200]
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-    if not head.startswith("---"):
-        return ""
-    end = head.find("\n---", 3)
-    for line in head[3:end if end > 0 else len(head)].splitlines():
-        if line.strip().lower().startswith("description:"):
-            return " ".join(line.split(":", 1)[1].split())[:110]
+    head = text[:1200]
+    if head.startswith("---"):
+        end = head.find("\n---", 3)
+        for line in head[3:end if end > 0 else len(head)].splitlines():
+            if line.strip().lower().startswith("description:"):
+                return " ".join(line.split(":", 1)[1].split())[:110]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        cleaned = _MD_MARKUP.sub("", _LEADING_MARKUP.sub("", stripped, count=1))
+        if cleaned:
+            return " ".join(cleaned.split())[:110]
     return ""
 
 

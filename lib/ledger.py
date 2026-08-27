@@ -136,6 +136,15 @@ def _age(seconds, now):
     return f"{days} days ago"
 
 
+def humanize_age(ts, now=None):
+    """Public wrapper for `_age()`, for callers outside this module (`chamnan-report`'s inventory)
+    that want the same wording without reaching into a private function. "never" for `None`, which
+    `inventory()` returns for a store with nothing written yet."""
+    if ts is None:
+        return "never"
+    return _age(ts, time.time() if now is None else now)
+
+
 def render(snap):
     """The ledger line's body (no leading `_chamnan · ` prefix decision made here beyond the
     literal text) -- callers wrap it as they see fit."""
@@ -158,3 +167,100 @@ def render(snap):
 def line(root, now=None):
     """The full injected line, ready to print."""
     return "_" + render(snapshot(root, now)) + "_"
+
+
+def inventory(root, now=None):
+    """(label, count, last_write_ts_or_None) for every store, in display order -- for
+    `chamnan-report`'s knowledge inventory, which is read on demand rather than injected.
+
+    Unlike the ledger LINE, which omits a store's clause entirely when it does not exist yet (to
+    keep the always-on injection honest about what nothing costs), the full inventory always shows
+    every store, `0` and all. A deliberate, on-demand report has room to say "0" plainly; the
+    budget-constrained line does not.
+    """
+    now = time.time() if now is None else now
+    from milestones import entries as milestone_entries
+
+    sessions = _files(root, "sessions") or []
+    decisions = _files(root, "memory", "decisions") or []
+    lessons = _files(root, "memory", "lessons") or []
+    rules = _files(root, "memory", "rules") or []
+    cand = _files(root, "candidates") or []
+    ms = milestone_entries(root)
+
+    def last(ts):
+        return max(ts) if ts else None
+
+    return [
+        ("sessions/", len(sessions), last(_session_timestamps(sessions))),
+        ("memory/decisions/", len(decisions), last(_mtimes(decisions))),
+        ("memory/lessons/", len(lessons), last(_mtimes(lessons))),
+        ("memory/rules/", len(rules), last(_mtimes(rules))),
+        ("milestones.md", len(ms), last(_milestone_timestamps(root))),
+        ("candidates/", len(cand), last(_mtimes(cand))),
+    ]
+
+
+_BACKTICK = re.compile(r"`([^`]+)`")
+
+
+def _looks_like_a_path(token):
+    """A backtick-quoted span worth checking against the filesystem: has a `/`, or ends in a short
+    dot-extension. Filters out the far more common case of a backtick around a function or constant
+    name (`_write_index`, `MAX_STATE_CHARS`) with neither. A glob or a span with a space is excluded
+    entirely rather than guessed at -- `src/*.py` cannot be resolved with `.exists()`, and a wrong
+    guess here would misreport an entry that is actually fine."""
+    if "*" in token or " " in token:
+        return False
+    return "/" in token or bool(re.search(r"\.\w{1,4}$", token))
+
+
+def entries_naming_no_file(root, category="lessons"):
+    """(naming_none, total) for a memory category: how many entries contain not one backtick-quoted
+    span that resolves to a real path in this repository.
+
+    A heuristic, not a fact — a renamed or deleted file, or a glob, both read as "names no file"
+    even when the entry is still exactly right. It exists to answer one question: how much of what
+    is written here is actually ABOUT this codebase's files, versus knowledge that would still be
+    true if this repository did not exist. That is the same question a personal, cross-repository
+    memory scope would need answered before it is worth building — see PLAN.md §12.
+    """
+    from workspace import find_root
+    from memory import entries as memory_entries
+    repo_root = find_root(root)
+    total = naming_none = 0
+    for path in memory_entries(root, category):
+        total += 1
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            naming_none += 1
+            continue
+        candidates = [t for t in _BACKTICK.findall(text) if _looks_like_a_path(t)]
+        if not candidates or not any((repo_root / c).exists() for c in candidates):
+            naming_none += 1
+    return naming_none, total
+
+
+_REJECTED = re.compile(r"^\*\*Rejected:\*\*", re.M)
+
+
+def decisions_without_rejected(root):
+    """(without, total) — how many decisions have no `**Rejected:**` trade-off slot filled in.
+
+    Never used to auto-fill one: whether there WAS a real alternative worth naming is a judgement
+    the writer makes, not something this function can honestly guess. It only counts, so
+    `chamnan-report` can say what is missing and leave the decision about each one to a person.
+    """
+    from memory import entries as memory_entries
+    total = without = 0
+    for path in memory_entries(root, "decisions"):
+        total += 1
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            without += 1
+            continue
+        if not _REJECTED.search(text):
+            without += 1
+    return without, total
