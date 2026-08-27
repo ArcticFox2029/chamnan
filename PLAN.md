@@ -16,9 +16,12 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** **1.5.2 SHIPPED.** Stages 0–12 complete, all verified, 616/616 tests. 1.6.0 is next
-(Stages 13–16, "The Intelligence") but is gated on 1.5.x producing a corpus and has not been
-requested — do not start it without the owner's explicit go-ahead.
+**Status:** **1.6.0 SHIPPED — this plan is complete.** All 17 stages done and verified,
+782/782 tests. Nothing in this file is outstanding. The one thing that still blocks real-world
+evidence is §6's first item: **the installed plugin is still v0.1.4, so none of 1.5.x or 1.6.0 has
+ever run on this machine.** Upgrade it, work normally for a week, then re-read the ledger — that
+is the measurement every gate in this plan was actually waiting for. Ideas parked for 1.6.1+ are
+in §3; they were deliberately not started.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -636,17 +639,33 @@ no-op rather than an error until a tool actually exists to track. **STOP.**
 
 ### 1.6.0 — The Intelligence · *context in time and place*
 
-Gated on 1.5.x producing a corpus. Design already argued and recorded in the concept document;
-re-read it before starting, and re-check its assumptions against what 1.5.x actually accumulated.
+**Gate resolved, 2026-08-27 — read this before judging the release.** The gate said "do not
+build unless 1.5.x produced a corpus", and the ledger does still read `0 records`. That is *not*
+evidence the write path failed: **the plugin installed on this machine is still v0.1.4**, so no
+1.5.x hook has ever executed here (§6 has said so since the plan was written). The gate could
+therefore never resolve on its own, in either direction. The owner asked for the remaining work
+explicitly, so 1.6.0 was built — with the gate's actual engineering intent honoured in code rather
+than in a decision: **every store added here injects `""` while empty**, so a workspace that never
+fills them pays nothing per session, and the ledger counts each new store so its emptiness stays
+visible rather than silent. The gate's real conclusion still stands and is now §6's first item:
+**upgrade the installed plugin, then re-read the ledger.**
 
 | # | Stage | What |
 |---|---|---|
-| 13 | Timeline | One file per thread. The canonical-vocabulary problem is solved by making threading a **pick from a declared list**, not a string match. **STOP.** |
-| 13a | `environments.md`, with **Known Constraints** | Platform, architecture, and the constraints nobody writes down and everybody re-learns — "RWO storage only", "no TPM in UAT", "DR runs different hardware". Prerequisite for stage 14. **STOP.** |
-| 13b | Ask `impact.py` a question | The analysis already exists and already feeds MAP.md; it has no query entry point. Add one, then join it to the timeline so the answer carries "last time this changed, a rollback was needed". **STOP.** |
-| 14 | Knowledge Aging | Compared against `environments.md`'s declared versions — never a clock. Ships only if that file is shown to be *maintained*; a false all-clear from an unmaintained oracle is worse than shipping nothing. **STOP.** |
-| 15 | Environment Awareness | Advisory by default. Verify `permissionDecision: "ask"` reaches the prompt under `defaultMode: "auto"` **before writing the guard** — and note that `Bash(python3 *)` is allowlisted on this machine, so the one command family that skips confirmation is the one the guard cannot parse. **STOP.** |
-| 16 | Release 1.6.0 | Local commit only. **STOP.** |
+| 13 | Timeline | ✅ done — `lib/timeline.py` + `bin/chamnan-timeline`. One file per thread under `.chamnan/threads/`, and the declared list IS the set of files, so there is no second vocabulary to keep in sync. `append()` REFUSES an undeclared thread and the CLI prints the declared list instead: guessing from an entry's text fails on the first synonym ("auth" / "login" / "the SSO work" is one thread written three ways). `Files:` is the join key Stage 13b reads — exact path or suffix, never a fuzzy stem match. Only OPEN threads inject, titles only. **One real bug found by the smoke test:** adding a store `ledger.render()` could not count made its "nothing written yet" line a false statement, so `thread_count` is now in both the empty check and the rendered line. Suite 616 → 662. |
+| 13a | `environments.md`, with **Known Constraints** | ✅ done — `lib/environments.py` + `bin/chamnan-env`. Four fields, and the last two carry the design: `Versions:` is a declared list of name/version pairs (a LIST per name, because two environments running different versions of the same thing is usually why the file exists), and `Checked:` is the date somebody last confirmed the entry. `stale_environments()` finds what has gone cold; an entry with **no** `Checked:` counts as stale rather than as fine. Injection is constraints only, never versions — a constraint rules out a design before it is written, a version is a fact to look up. `upsert()` replaces in place, since two `## production` headings leave no way to tell which is current. Nothing contacts an environment. Suite 662 → 701. |
+| 13b | Ask `impact.py` a question | ✅ done — `bin/chamnan-impact <path>`. **Measured first: a full rescan of this repository takes 64 seconds**, so the query reads `MAP.md` instead and prints the index's age with every answer rather than letting freshness be assumed. `impact.parse_section()` is the exact inverse of `render()`, and the round-trip test feeds `render()`'s own output back in, so a format change breaks that test rather than every query silently. No JSON sidecar — "markdown is the truth" is a standing constraint. Two honest refusals: the `_+N more_` elision counts are read back and reported (printing six of eleven dependents without saying so answers a different question), and a basename matching two rows resolves to **nothing** rather than a guess. The thread join runs even when the index half finds nothing. Suite 701 → 732. |
+| 14 | Knowledge Aging | ✅ done — `lib/aging.py` + `bin/chamnan-age`. **The "only if maintained" condition is now code, not a judgement made once at build time:** `check()` uses only environments whose `Checked:` date is fresh, and when none are it returns a *refusal string* and no findings, which the CLI prints instead of a clean bill of health — "no findings" and "no check happened" must not read the same. Three outcomes, not two: flagged (no fresh environment declares it), **unverifiable** (matched only by a cold environment — nobody knows, and saying so is the answer), and silent. A name `environments.md` never declares is ignored entirely, which is what keeps "issue 13" and "port 8080" out. **Equality only, never ordering** — `3.9` vs `3.11` is exactly what a version comparator gets wrong. Nothing is edited: a flagged entry may be correct history. Suite 732 → 759. |
+| 15 | Environment Awareness | ✅ done, **and the guard deliberately does not ship.** The required verification was done first and came back negative on two counts: there is **no `"ask"` value at all** (the documented enum is `allow`/`deny`/`escalate`), and whether `escalate` reaches a prompt under `defaultMode: "auto"` is documented **nowhere, in either direction** — as is plain-stdout routing from PreToolUse. A guard that might silently fail to fire is worse than none, because it is trusted. What ships is the advisory half on two mechanisms already proven here: session_start injects every environment's constraints before a command is written (13a), and `scratch_watch` names the **specific** environment once per session the moment one is demonstrably being worked against. `match_command()` reads only a targeting flag's value — a bare mention (`grep production deploy.log`) does **not** match. Tests pin the not-a-guard property directly: no `permissionDecision`, no `hookSpecificOutput`. The `Bash(python3 *)` concern dissolves with the guard. Suite 759 → 782. |
+| 16 | Release 1.6.0 | ✅ done — `plugin.json` 1.5.2 → 1.6.0. README gained "What's new in 1.6.0" (threads, `chamnan-impact` and its join, `environments.md`, aging's refusal), nine new rows in the Commands table, and two new Limitations entries recording what 1.6.0 deliberately does **not** do and why. Suite 782/782, unchanged — this stage touched no code. Local commit only. |
+
+**1.6.0 verification.** Suite 616 → **782/782** across stages 13–16, every stage verified against a
+real subprocess run rather than an assumption. Live-workspace checks against Lumin-App's own
+`.chamnan/` at each stage: `chamnan-timeline` lists no threads, `chamnan-env` declares none,
+`chamnan-age` correctly *refuses* rather than passing, `chamnan-report`'s inventory now shows
+`threads/`, and `chamnan-impact` answers correctly against the real 214-file index (verified on
+`memory_manager.py`: 6 dependents shown of 26, 3 tests of 26, with both elision counts reported).
+The 64-second rescan measurement that decided 13b's design was taken on that same repository.
 
 ---
 
@@ -666,9 +685,11 @@ re-read it before starting, and re-check its assumptions against what 1.5.x actu
 
 ## 6. Blocked on the owner
 
-- **The installed plugin is 0.1.4**, not 1.4.0. Its pre-fix two-pass `find_root` resolves a nested
-  checkout to the **outer** repository and overwrites its `MAP.md`. Everything in this plan is
-  written against the 1.4.0 source and is safe to build, but **the upgrade must land and be
-  verified before 1.5.0 is installed anywhere.**
+- **The installed plugin is 0.1.4** — and after 1.6.0 this is now the ONLY thing standing between
+  this plan and real evidence. Its pre-fix two-pass `find_root` resolves a nested checkout to the
+  **outer** repository and overwrites its `MAP.md`. Everything built here is written against the
+  1.4.0+ source and is safe, but **nothing in 1.5.0–1.6.0 has ever executed on this machine**, which
+  is why the ledger still reads `0 records` and why every "gated on a corpus" condition in this plan
+  was unresolvable rather than failed. Upgrade, work for a week, then read the ledger.
 - Whether `.chamnan/` is pushed to GitHub for customer projects — decides how much of §3 Stage 3's
   candidate content can be committed.

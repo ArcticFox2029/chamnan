@@ -289,6 +289,97 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only, and nothing is written until you run
 `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.6.0
+
+1.5.x made knowledge capture visible and reviewable. 1.6.0 is about context in **time** and
+**place**: what has already happened to this file, and what the environment it runs in will not let
+you do.
+
+### Threads — one line of work across the sessions it took
+
+    $ chamnan-timeline for src/auth.py
+    2 entries naming src/auth.py
+
+      2026-08-14 — second attempt held
+               on Auth migration
+      2026-08-01 — rolled back — sessions did not survive a node restart
+               on Auth migration
+
+"We have tried to fix this three times" is knowledge nobody can reconstruct from a git log: the
+three attempts are three unrelated commits weeks apart, and the thing tying them together was only
+ever in somebody's head.
+
+**Threading is a pick from a declared list, never a string match** — the one design decision this
+feature rests on. Guessing which thread an entry belongs to by matching its words fails on the
+first synonym: one session writes "auth", the next writes "login", the third writes "the SSO work",
+and a matcher scatters one thread across three. So `chamnan-timeline new` is the only thing that
+creates a thread, and `add` refuses a name that was never declared, printing the declared list
+instead of quietly starting a fourth.
+
+### `chamnan-impact` — and the join that makes it worth asking
+
+The dependency analysis already existed and already fed `MAP.md`; it simply had no way to be
+*asked*. Now it does, and the answer carries the thread history for the same file:
+
+    $ chamnan-impact src/auth.py
+
+      used by   src/api.py
+      tested by nothing the index can see — a change here is unguarded
+      (from `.chamnan/MAP.md`, built today)
+
+      2 thread entries name this file:
+        2026-08-01 — rolled back — sessions did not survive a node restart
+
+An import graph can say what breaks. It cannot say "last time this changed, it needed a rollback",
+and that is the half that changes what somebody does next.
+
+It reads `MAP.md` rather than rescanning — a full scan of the repository this plugin is developed
+against measured **64 seconds**, which is not a thing to do on an interactive question. The cost is
+that the answer is only as fresh as the last `chamnan-map`, so the index's age is printed with
+every answer instead of left to be assumed.
+
+### `environments.md` — the constraints nobody writes down
+
+    ## production
+    **Platform:** Kubernetes 1.28 on RKE2
+    **Versions:** postgres 16, redis 7.2
+    **Constraints:**
+    - RWO storage only — no ReadWriteMany PVCs
+    - no outbound internet from worker nodes
+    **Checked:** 2026-08-27
+
+"RWO storage only", "no TPM in UAT", "DR runs different hardware" — each one is discovered the same
+way: somebody writes the obvious solution, it fails in one environment and not another, and an
+afternoon goes into finding out why. The fact is one line long, and it is in neither the code (the
+code is what got written *because* of it) nor the git history (the commit explains the workaround,
+not the constraint).
+
+The constraints are injected at session start, and named again the moment a session is
+demonstrably working against that environment. **Nothing here contacts an environment** — every
+line was typed by somebody who knew it, which is exactly why `Checked:` matters.
+
+### Knowledge aging — never against a clock, and it refuses rather than reassures
+
+A note written two years ago about a version still in production is current. One written last month
+about a version replaced last week is already wrong. **Age carries no information about either**,
+so `chamnan-age` compares what an entry *claims* against what `environments.md` *declares*.
+
+That makes the check exactly as trustworthy as that file — which is the risk it is built around:
+
+    $ chamnan-age
+    chamnan: not checked — every declared environment has gone cold (uat, production) —
+    nothing here is checked, because an unconfirmed entry is evidence nobody looked, not
+    evidence nothing changed.
+
+An environment nobody has confirmed in six months is not an authority. Reporting "your knowledge is
+current" on the strength of it is a **false all-clear**, which is worse than no check at all,
+because it is the answer that stops somebody looking. So when every environment has gone cold this
+reports nothing and says why. There is a third outcome too — a claim matched only by a cold
+environment is reported as *unverifiable*, not as a finding, because nobody knows.
+
+Equality only, never ordering: `3.9` versus `3.11` is exactly the comparison a version comparator
+gets wrong, and it is the one Python repositories hit most.
+
 ## What's new in 1.5.2
 
 1.5.1 closed the loop from evidence to a kept tool. 1.5.2 asks what happens after — does a promoted
@@ -774,6 +865,15 @@ From a shell, in the repository:
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
 | `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
+| `chamnan-timeline` | list declared threads — a line of work followed across the sessions it took |
+| `chamnan-timeline new <title>` | DECLARE a thread; nothing else creates one, so a synonym cannot start a second thread for the same subject |
+| `chamnan-timeline add <id> <note> [--files a.py,b.py]` | append an entry to a declared thread, naming what it touched |
+| `chamnan-timeline for <path>` | every thread entry that named this file |
+| `chamnan-impact <path>` | who depends on it, what tests cover it, and what happened last time it changed |
+| `chamnan-env` | declared environments and the constraints nobody writes down |
+| `chamnan-env set <name> --platform … --constraint …` | declare or update one environment; replaces in place |
+| `chamnan-env check` | which environment entries nobody has confirmed lately |
+| `chamnan-age` | which stored knowledge names a version no environment declares any more |
 | `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then Usage (chamnan's own commands and any promoted tool, counts only, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the first two sections, then says so instead of inventing a trend |
 
 ### Reading an attachment without reading it
@@ -1210,6 +1310,19 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
   and nothing logs that the read happened at all, let alone whether following it went well or
   badly. There is no way to build skill feedback within a plugin hook's actual visibility, so it is
   not attempted — not a smaller version of it, not a heuristic standing in for it.
+- **There is no per-command environment guard, and that is a verified decision rather than an
+  omission.** Intercepting a command before it runs needs a PreToolUse `permissionDecision`. The
+  documented enum is `allow` / `deny` / `escalate` — there is no `ask` — and whether `escalate`
+  reaches a prompt under `defaultMode: "auto"` is documented nowhere, in either direction; the
+  routing of plain stdout from a PreToolUse hook is undocumented too. A guard that might silently
+  fail to fire is worse than no guard, because it is trusted. So the constraints are put in front
+  of the agent by two mechanisms that *are* proven — injected at session start, and named again
+  once per session when a command demonstrably targets that environment — and nothing here blocks,
+  prompts, or claims it will.
+- **Knowledge aging is only as good as `environments.md`, and says so out loud.** It compares
+  claims against declared versions, never against a clock, so it inherits that file's accuracy
+  completely. When every declared environment has gone cold it reports nothing and explains why
+  rather than returning an empty result that reads like a pass.
 - **Even tool health tracking has no exit code to work with.** A Bash `tool_response` carries
   `stdout`, `stderr` and `interrupted` — never a numeric status. What is tracked is exactly those
   two real signals, `interrupted` (a fact) and non-empty `stderr` (a weak one, since plenty of
