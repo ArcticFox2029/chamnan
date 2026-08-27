@@ -213,3 +213,71 @@ def render(impact):
     if len(ranked) > MAX_ENTRIES:
         lines.append(f"- _…and {len(ranked) - MAX_ENTRIES} more with incoming references_")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------- reading it back
+# `render()` above is the only writer of this section, and the two patterns below are its exact
+# inverse. They are a pair: a round-trip test feeds render()'s own output straight back into
+# parse_section(), so changing the format breaks that test rather than silently breaking every
+# query built on it.
+#
+# Why parse markdown at all, rather than keep a JSON sidecar: a full rescan of the repository this
+# plugin is developed against measured 64 seconds, which is not a thing to do on an interactive
+# question, and a second machine-readable artifact would be another file to regenerate, prune and
+# keep in sync. "Markdown is the truth" is a standing constraint here, and this honours it — the
+# rendered section IS the index, and this reads it.
+_ROW = re.compile(r"^- \*\*`([^`]+)`\*\*\s+—\s+(.+)$", re.M)
+_QUOTED = re.compile(r"`([^`]+)`")
+_MORE = re.compile(r"_\+(\d+) more_")
+
+
+def parse_section(text):
+    """{path: {"used_by", "tests", "used_by_more", "tests_more"}} read back out of MAP.md.
+
+    The two `_more` counts are how many were elided by MAX_USED_BY / MAX_TESTS when the section
+    was written. They are reported rather than dropped: a caller that printed six of eleven
+    dependents without saying so would be quietly answering a different question than the one
+    asked, and "what else breaks" is exactly the question where a silent truncation costs most.
+    """
+    cut = text.find("## Impact")
+    if cut < 0:
+        return {}
+    out = {}
+    for m in _ROW.finditer(text[cut:]):
+        path, body = m.group(1), m.group(2)
+        used_by, tests = [], []
+        used_more = tests_more = 0
+        # One row holds at most one of each clause, in this order, so splitting on the tests
+        # marker is enough to tell the two apart -- no clause can contain the other's marker.
+        head, sep, tail = body.partition("**tested by**")
+        if "used by" in head:
+            used_by = _QUOTED.findall(head)
+            um = _MORE.search(head)
+            used_more = int(um.group(1)) if um else 0
+        if sep:
+            tests = _QUOTED.findall(tail)
+            tm = _MORE.search(tail)
+            tests_more = int(tm.group(1)) if tm else 0
+        out[path] = {"used_by": used_by, "tests": tests,
+                     "used_by_more": used_more, "tests_more": tests_more}
+    return out
+
+
+def lookup(text, target):
+    """One file's row from a rendered section, matched exactly or as a path suffix.
+
+    Suffix so a question asked as `app.py` from inside `src/` still finds `src/app.py`, and
+    deliberately only when EXACTLY one row matches: two files sharing a basename cannot be told
+    apart from a bare name, and answering "what breaks if I change this" about the wrong one is
+    worse than saying it could not tell. Returns (path, edges) or (None, None).
+    """
+    parsed = parse_section(text)
+    target = str(target).strip().strip("`").lstrip("./")
+    if not target:
+        return None, None
+    if target in parsed:
+        return target, parsed[target]
+    matches = [p for p in parsed if p.endswith("/" + target)]
+    if len(matches) == 1:
+        return matches[0], parsed[matches[0]]
+    return None, None

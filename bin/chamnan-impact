@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""chamnan impact — what breaks if I change this file, and what happened last time it changed.
+
+  chamnan impact <path>          who depends on it, what tests cover it, what threads name it
+
+The dependency half already existed and already feeds MAP.md; it simply had no way to be ASKED.
+The other half is the join this exists for: a thread entry that named this file carries "last time
+this changed, it needed a rollback", which is the part no import graph can tell you and the part
+that actually changes what someone does next.
+
+**Read from `MAP.md`, not rescanned.** A full scan of the repository this plugin is developed
+against measured 64 seconds — not something to do on an interactive question. The cost of that
+choice is that the answer is only as fresh as the last `chamnan-map`, so the age of the index is
+printed with every answer rather than left for the reader to assume.
+"""
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import impact as impact_mod  # noqa: E402
+import timeline  # noqa: E402
+import workspace as ws  # noqa: E402
+
+
+def _index_age(map_path):
+    try:
+        ts = map_path.stat().st_mtime
+    except OSError:
+        return "unknown age"
+    days = int((datetime.now(timezone.utc).timestamp() - ts) // 86400)
+    if days <= 0:
+        return "built today"
+    return f"built {days} day{'s' if days != 1 else ''} ago"
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0 if argv else 2
+
+    root = ws.find_root()
+    wsdir = ws.workspace(root)
+    if not wsdir.is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
+
+    target = argv[0]
+    map_path = wsdir / "MAP.md"
+    edges = None
+    resolved = None
+    if map_path.is_file():
+        text = map_path.read_text(encoding="utf-8", errors="replace")
+        resolved, edges = impact_mod.lookup(text, target)
+    elif ws.enabled("map", root):
+        print(f"chamnan: no index yet — run `chamnan-map` first", file=sys.stderr)
+        return 1
+
+    # The thread join runs whether or not the index has anything, because the two halves answer
+    # different questions and a file with no dependents can still have been rolled back twice.
+    history = timeline.for_path(root, target) if ws.enabled("timeline", root) else []
+
+    if resolved is None and not history:
+        print(f"chamnan: nothing recorded for {target}")
+        if map_path.is_file():
+            print(f"  no incoming references in the index ({_index_age(map_path)}), and no thread "
+                  f"entry names it")
+            print(f"  a file nothing imports and nothing has happened to is the cheap case — "
+                  f"change it freely")
+        return 0
+
+    print(f"chamnan impact — {resolved or target}\n")
+
+    if edges:
+        if edges["used_by"]:
+            shown = ", ".join(edges["used_by"])
+            more = f" (+{edges['used_by_more']} more)" if edges["used_by_more"] else ""
+            print(f"  used by   {shown}{more}")
+        if edges["tests"]:
+            shown = ", ".join(edges["tests"])
+            more = f" (+{edges['tests_more']} more)" if edges["tests_more"] else ""
+            print(f"  tested by {shown}{more}")
+        elif edges["used_by"]:
+            print(f"  tested by nothing the index can see — a change here is unguarded")
+        print(f"  (from `{map_path.relative_to(root)}`, {_index_age(map_path)})")
+    elif map_path.is_file():
+        print(f"  nothing imports it, per `{map_path.relative_to(root)}` ({_index_age(map_path)})")
+
+    if history:
+        print(f"\n  {len(history)} thread entr{'y' if len(history) == 1 else 'ies'} name this file:")
+        for path, date, note in history:
+            print(f"    {date} — {note}")
+            print(f"               on {timeline.title_of(path)}")
+        print("\n  `chamnan-timeline show <name>` for the whole thread.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

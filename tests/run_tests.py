@@ -1958,6 +1958,114 @@ check("the injected half does not mention Impact",
 check("impact names the caller", "pay/model.py" in rendered_map)
 shutil.rmtree(imp_repo, ignore_errors=True)
 
+# ---------------------------------------------------------------- asking impact a question (Stage 13b)
+# render() is the only writer of the Impact section and parse_section() is its exact inverse. The
+# round-trip below is the whole guard: feeding render()'s own output back in means a format change
+# breaks THIS test rather than silently breaking every query built on it.
+built = {
+    "src/auth.py": {"used_by": ["src/api.py", "src/web.py"], "tests": ["tests/test_auth.py"]},
+    "src/big.py": {"used_by": [f"src/m{i}.py" for i in range(11)],
+                   "tests": [f"tests/t{i}.py" for i in range(5)]},
+    "src/lonely.py": {"used_by": [], "tests": ["tests/test_lonely.py"]},
+}
+rendered = impact_mod.render(built)
+back = impact_mod.parse_section(rendered)
+check("ROUND-TRIP: every rendered row parses back", set(back) == set(built))
+check("a row's dependents survive the round-trip",
+      back["src/auth.py"]["used_by"] == ["src/api.py", "src/web.py"])
+check("a row's tests survive the round-trip",
+      back["src/auth.py"]["tests"] == ["tests/test_auth.py"])
+check("a row with no dependents parses as none, not as an error",
+      back["src/lonely.py"]["used_by"] == [])
+check("a row with only tests still parses its tests",
+      back["src/lonely.py"]["tests"] == ["tests/test_lonely.py"])
+
+# The elision counts are the honest half: printing six of eleven dependents without saying so
+# answers a different question than the one asked.
+check("the used-by elision count is read back, not dropped",
+      back["src/big.py"]["used_by_more"] == 11 - impact_mod.MAX_USED_BY)
+check("the tests elision count is read back too",
+      back["src/big.py"]["tests_more"] == 5 - impact_mod.MAX_TESTS)
+check("only the shown dependents are listed",
+      len(back["src/big.py"]["used_by"]) == impact_mod.MAX_USED_BY)
+check("an un-elided row reports zero elided", back["src/auth.py"]["used_by_more"] == 0)
+
+check("text with no Impact section parses as nothing",
+      impact_mod.parse_section("# Architecture map\n\nno impact here") == {})
+check("an empty impact map renders nothing to parse", impact_mod.render({}) == "")
+
+# lookup(): exact, or a suffix, and ONLY when exactly one row matches -- answering "what breaks if
+# I change this" about the wrong file is worse than saying it could not tell.
+check("lookup matches an exact path", impact_mod.lookup(rendered, "src/auth.py")[0] == "src/auth.py")
+check("lookup matches a bare basename when only one row ends in it",
+      impact_mod.lookup(rendered, "auth.py")[0] == "src/auth.py")
+check("lookup returns the row's edges too",
+      impact_mod.lookup(rendered, "auth.py")[1]["tests"] == ["tests/test_auth.py"])
+check("lookup finds nothing for an unindexed path",
+      impact_mod.lookup(rendered, "src/never.py") == (None, None))
+check("lookup ignores a leading ./", impact_mod.lookup(rendered, "./src/auth.py")[0] == "src/auth.py")
+ambiguous = impact_mod.render({
+    "a/utils.py": {"used_by": ["a/main.py"], "tests": []},
+    "b/utils.py": {"used_by": ["b/main.py"], "tests": []},
+})
+check("AN AMBIGUOUS BASENAME RESOLVES TO NOTHING RATHER THAN A GUESS",
+      impact_mod.lookup(ambiguous, "utils.py") == (None, None))
+check("but the same name fully qualified still resolves",
+      impact_mod.lookup(ambiguous, "a/utils.py")[0] == "a/utils.py")
+
+# The CLI, including the join that is the point of the stage: an import graph cannot say "last
+# time this changed it was rolled back", and that is the half that changes what somebody does.
+def run_impact(root, *args):
+    return subprocess.run([str(ROOT / "bin" / "chamnan-impact"), *args],
+                          capture_output=True, text=True, cwd=root)
+
+im_root = Path(tempfile.mkdtemp(prefix="chamnan-impact-")).resolve()
+(im_root / ".git").mkdir()
+ws.ensure(im_root)
+(im_root / ".chamnan" / "MAP.md").write_text(impact_mod.render({
+    "src/auth.py": {"used_by": ["src/api.py"], "tests": ["tests/test_auth.py"]},
+    "src/untested.py": {"used_by": ["src/api.py"], "tests": []},
+}), encoding="utf-8")
+
+out = run_impact(im_root, "src/auth.py")
+check("chamnan-impact names the dependents", "src/api.py" in out.stdout)
+check("chamnan-impact names the covering tests", "tests/test_auth.py" in out.stdout)
+check("chamnan-impact says how old the index is", "built today" in out.stdout)
+out = run_impact(im_root, "src/untested.py")
+check("A FILE WITH DEPENDENTS BUT NO TESTS IS CALLED UNGUARDED", "unguarded" in out.stdout)
+out = run_impact(im_root, "src/nothing.py")
+check("a file with nothing recorded says so plainly",
+      out.returncode == 0 and "nothing recorded" in out.stdout)
+check("and says that is the cheap case rather than sounding like a failure",
+      "change it freely" in out.stdout)
+
+timeline.create(im_root, "Auth migration", "2026-08-01")
+timeline.append(im_root, "auth-migration", "2026-08-01", "rolled back — sessions did not survive",
+                ["src/auth.py"])
+timeline.append(im_root, "auth-migration", "2026-08-14", "second attempt held", ["src/auth.py"])
+out = run_impact(im_root, "src/auth.py")
+check("THE THREAD JOIN REACHES THE ANSWER", "rolled back" in out.stdout)
+check("the join names which thread it came from", "Auth migration" in out.stdout)
+check("the join counts the entries", "2 thread entries" in out.stdout)
+check("the dependency half is still there alongside it", "src/api.py" in out.stdout)
+
+# A file nothing imports can still have been rolled back twice, so the join must run even when
+# the index half finds nothing.
+timeline.append(im_root, "auth-migration", "2026-08-20", "config rewritten", ["deploy/values.yaml"])
+out = run_impact(im_root, "deploy/values.yaml")
+check("A FILE ABSENT FROM THE INDEX STILL GETS ITS HISTORY", "config rewritten" in out.stdout)
+
+nomap = Path(tempfile.mkdtemp(prefix="chamnan-impact-nomap-")).resolve()
+(nomap / ".git").mkdir()
+ws.ensure(nomap)
+out = run_impact(nomap, "src/anything.py")
+check("with no index at all, chamnan-impact says to build one",
+      out.returncode == 1 and "chamnan-map" in out.stderr)
+out = run_impact(nomap)
+check("chamnan-impact with no argument is refused", out.returncode == 2)
+shutil.rmtree(nomap, ignore_errors=True)
+shutil.rmtree(im_root, ignore_errors=True)
+
 # ---------------------------------------------------------------- environments.md (Stage 13a, 1.6.0)
 # The facts nobody writes down: "RWO storage only", "no TPM in UAT". Nothing here contacts an
 # environment -- every line was typed by somebody who knew it, which is exactly why `Checked:` is
