@@ -34,6 +34,7 @@ import assets as assets_mod  # noqa: E402
 import deploy as deploy_mod  # noqa: E402
 import impact as impact_mod  # noqa: E402
 import workflows  # noqa: E402
+import candidates  # noqa: E402
 import ledger  # noqa: E402
 import memory as memory_mod  # noqa: E402
 import milestones  # noqa: E402
@@ -419,6 +420,166 @@ check("scratch watch silent on 1st", not outs[0].strip())
 check("scratch watch silent on 2nd", not outs[1].strip())
 check("scratch watch speaks on 3rd", "promote" in outs[2])
 check("session end digests the repeats", "repeated this session" in run_hook("session_end.py", {}))
+
+# ---------------------------------------------------------------- candidates (lib/candidates.py)
+# evidence -> candidate -> human confirm -> memory. A candidate survives the session that noticed
+# it; it is never itself injected as knowledge, only its COUNT does (see the ledger check below).
+cand_root = Path(tempfile.mkdtemp(prefix="chamnan-candidates-")).resolve()
+(cand_root / ".git").mkdir()
+ws.ensure(cand_root)
+
+seq_a = ["git add", "git commit", "git push"]
+p1, is_new1 = candidates.upsert(cand_root, seq_a, 2, "2026-08-01", provenance="ai-inferred")
+check("a new candidate reports is_new", is_new1)
+check("the candidate file exists where path_for says", p1 == candidates.path_for(cand_root, seq_a))
+body = p1.read_text(encoding="utf-8")
+check("the candidate names its sequence", "git add" in body and "git push" in body)
+check("the candidate carries Observed", "**Observed:** 2" in body)
+check("the candidate carries Provenance", "**Provenance:** ai-inferred" in body)
+check("read() round-trips observed/last-seen/provenance",
+      candidates.read(cand_root, seq_a) == ("2", "2026-08-01", "ai-inferred"))
+
+# THE SAME sequence detected again upserts the SAME file -- never a second one -- and observed is
+# SET to whatever repeated() currently reports, not incremented by this module.
+p2, is_new2 = candidates.upsert(cand_root, seq_a, 3, "2026-08-03", provenance="ai-inferred")
+check("upserting the same sequence again reuses the same path", p2 == p1)
+check("the second upsert is not reported as new", not is_new2)
+check("THE SAME SEQUENCE TWICE PRODUCES ONE CANDIDATE FILE, NEVER TWO",
+      len(candidates.entries(cand_root)) == 1)
+check("observed reflects the latest count passed in, not an internal increment",
+      candidates.read(cand_root, seq_a)[0] == "3")
+check("last seen updates to the latest date", candidates.read(cand_root, seq_a)[1] == "2026-08-03")
+
+# A DIFFERENT sequence is a different file.
+candidates.upsert(cand_root, ["terraform plan", "terraform apply"], 3, "2026-08-05")
+check("a different sequence gets its own candidate", len(candidates.entries(cand_root)) == 2)
+
+# Unknown provenance is rejected AT WRITE TIME, before anything touches disk -- not silently
+# stored under a made-up status.
+before_files = set(candidates.entries(cand_root))
+try:
+    candidates.upsert(cand_root, ["a totally new sequence"], 3, "2026-08-06", provenance="bogus")
+    check("UNKNOWN PROVENANCE IS REJECTED, NOT SILENTLY STORED", False)
+except ValueError:
+    check("UNKNOWN PROVENANCE IS REJECTED, NOT SILENTLY STORED", True)
+check("a rejected write leaves no new file behind", set(candidates.entries(cand_root)) == before_files)
+try:
+    candidates.render(["x"], 1, "2026-08-06", "bogus")
+    check("render() rejects the same bad provenance directly", False)
+except ValueError:
+    check("render() rejects the same bad provenance directly", True)
+
+malformed = candidates.directory(cand_root) / "not-a-real-candidate.md"
+malformed.write_text("just some prose, no trailer fields at all\n", encoding="utf-8")
+check("a malformed candidate file is read as None, not an exception",
+      candidates.read(cand_root, ["not", "a", "real", "candidate"]) is None)
+malformed.unlink()
+
+# Candidates are counted by the ledger, and the count is the only thing that reaches it -- the
+# sequence text and provenance never do.
+snap_before = ledger.snapshot(Path(tempfile.mkdtemp(prefix="chamnan-cand-ledger-empty-")))
+check("candidate_count is absent (None), not zero, before candidates/ exists",
+      snap_before["candidate_count"] is None)
+cand_snap = ledger.snapshot(cand_root)
+check("CANDIDATES ARE COUNTED BY THE LEDGER ONCE THE DIRECTORY EXISTS", cand_snap["candidate_count"] == 2)
+rendered_ledger_line = ledger.render(cand_snap)
+check("the ledger line names the count, not the content",
+      "2 awaiting review" in rendered_ledger_line
+      and "git add" not in rendered_ledger_line
+      and "terraform" not in rendered_ledger_line)
+
+shutil.rmtree(cand_root, ignore_errors=True)
+
+# ---------------------------------------------------------------- notice_workflow writes, not just speaks
+# The mechanism this whole stage exists for: a sequence that qualifies gets a candidate file, and
+# the file survives past the moment the notice printed and scrolled away.
+e2e_root = Path(tempfile.mkdtemp(prefix="chamnan-e2e-candidate-")).resolve()
+(e2e_root / ".git").mkdir()
+ws.ensure(e2e_root)
+
+e2e_log = e2e_root / ".chamnan" / "logs" / "commands.jsonl"
+e2e_seq = ["docker compose", "alembic", "pytest"]
+workflows.record(e2e_log, e2e_seq, "2026-08-01T10:00:00+07:00", tool="Bash")
+workflows.record(e2e_log, e2e_seq, "2026-08-02T10:00:00+07:00", tool="Bash")
+
+
+def run_scratch_watch(payload, cwd):
+    return subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(payload),
+                          capture_output=True, text=True, cwd=cwd).stdout
+
+
+crossing_payload = {"session_id": "e2e-1", "tool_name": "Bash",
+                    "tool_input": {"command": "docker compose up -d && alembic upgrade head && pytest tests/"},
+                    "tool_response": {"stdout": "ok", "stderr": "", "interrupted": False}}
+notice = run_scratch_watch(crossing_payload, e2e_root)
+check("the crossing still speaks, exactly as before this stage", "come round" in notice)
+check("the notice now also points at the candidate file", "candidate" in notice)
+e2e_candidates = candidates.entries(e2e_root)
+check("A CANDIDATE FILE EXISTS AFTER THE CROSSING, NOT JUST A PRINTED LINE", len(e2e_candidates) == 1)
+check("the candidate on disk matches the sequence that crossed",
+      "docker compose" in e2e_candidates[0].read_text() and "pytest" in e2e_candidates[0].read_text())
+# A candidate is evidence, not knowledge -- session_start.py has no reader for candidates/ at all,
+# so nothing about one ever reaches an injected session regardless of what config is set.
+check("session_start.py never mentions the candidates store",
+      "candidate" not in run_hook("session_start.py", {}).lower())
+
+# Repeating the SAME still-qualifying sequence again must not create a SECOND candidate file, and
+# must not print a second notice in the same "crossing" sense (only a NEW crossing speaks).
+run_scratch_watch(crossing_payload, e2e_root)
+check("a repeat of the same qualifying sequence updates, never duplicates, the candidate",
+      len(candidates.entries(e2e_root)) == 1)
+
+shutil.rmtree(e2e_root, ignore_errors=True)
+
+# ---------------------------------------------------------------- the resume nudge
+scratch_watch_mod = import_hook_module("scratch_watch.py")
+
+nudge_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-")).resolve()
+(nudge_root / ".git").mkdir()
+ws.ensure(nudge_root)
+
+
+def touch(i, cwd, session="nudge-session"):
+    payload = {"session_id": session, "tool_name": "Write",
+              "tool_input": {"file_path": "/tmp/chamnan-test-scratch.txt", "content": f"call {i}"}}
+    return run_scratch_watch(payload, cwd)
+
+
+nudge_outs = [touch(i, nudge_root) for i in range(1, 16)]
+nudge_hits = [o for o in nudge_outs if "resume" in o]
+check("THE NUDGE FIRES", len(nudge_hits) >= 1)
+check("THE NUDGE FIRES AT MOST ONCE PER SESSION", len(nudge_hits) == 1)
+check("the nudge does not fire before its own call threshold",
+      not any("resume" in o for o in nudge_outs[:scratch_watch_mod.NUDGE_AT - 1]))
+check("the nudge points at /chamnan:resume", "/chamnan:resume" in nudge_hits[0])
+
+# A second, independent session_id gets its OWN chance to nudge -- this is "once per SESSION",
+# deliberately narrower than "once per day".
+second_session_outs = [touch(i, nudge_root, session="nudge-session-2") for i in range(1, 16)]
+check("a different session_id is nudged independently of the first",
+      any("resume" in o for o in second_session_outs))
+
+silent_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-silent-")).resolve()
+(silent_root / ".git").mkdir()
+ws.ensure(silent_root)
+today_str = datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
+(silent_root / ".chamnan" / "sessions" / f"{today_str}-already-recorded.md").write_text(
+    "# Already recorded\n\n## Remaining\nnone\n", encoding="utf-8")
+silent_outs = [touch(i, silent_root, session="silent-session") for i in range(1, 16)]
+check("NUDGE IS SILENT WHEN TODAY ALREADY HAS A SESSION RECORD",
+      not any("resume" in o for o in silent_outs))
+
+off_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-off-")).resolve()
+(off_root / ".git").mkdir()
+ws.ensure(off_root)
+(off_root / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}))
+off_outs = [touch(i, off_root, session="off-session") for i in range(1, 16)]
+check("NUDGE IS SILENT WHEN THE LEDGER FLAG IS OFF", not any("resume" in o for o in off_outs))
+
+shutil.rmtree(nudge_root, ignore_errors=True)
+shutil.rmtree(silent_root, ignore_errors=True)
+shutil.rmtree(off_root, ignore_errors=True)
+
 
 big = fixture / "package-lock.json"
 big.write_text('{"lockfileVersion": 3}\n' + "x" * 1000)

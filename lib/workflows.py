@@ -209,8 +209,13 @@ def repeated(history):
     return list(best), len(days)
 
 
-def describe(sequence, count):
+def describe(sequence, count, candidate_path=None):
+    """`candidate_path`, when given, is where this sequence's finding now lives on disk (see
+    lib/candidates.py) -- named so the notice points at something that outlives the session,
+    rather than only describing a moment that will otherwise be forgotten the instant it scrolls
+    past. Optional so this stays callable exactly as before wherever a candidate is not in play."""
     steps = " → ".join(f"`{s}`" for s in sequence)
-    return (f"chamnan: this sequence has come round {count} times now — {steps}. "
+    where = f" Recorded as a candidate at `{candidate_path}`." if candidate_path else ""
+    return (f"chamnan: this sequence has come round {count} times now — {steps}.{where} "
             f"If it is a routine worth keeping, run /chamnan:capture and write it down as a "
             f"procedure; the next session reads it instead of rediscovering the order.")

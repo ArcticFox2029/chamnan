@@ -56,6 +56,15 @@ def latest(root):
     return found[0] if found else None
 
 
+def written_today(root, today=None):
+    """True when a session record's own FILENAME date matches today -- not file mtime, which
+    resets on a checkout and would falsely say yes on a fresh clone. `today` is injectable
+    (YYYY-MM-DD) so a caller does not need real wall-clock time to test this."""
+    import datetime
+    today = today or datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
+    return any(p.name.startswith(today) for p in records(root))
+
+
 def _sections(text):
     """Split a record into {heading: body}. Unknown headings are kept, so a record written by a
     newer version is read rather than discarded."""

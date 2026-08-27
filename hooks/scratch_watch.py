@@ -20,6 +20,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import candidates  # noqa: E402
+import sessions  # noqa: E402
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -32,6 +34,11 @@ KEEP_ENTRIES = 300    # bounded log; this is a hint generator, not an archive
 # eight; 12 was tuned against long scripts and silently ignored exactly the short, repeated
 # one-off that this hook exists to catch. Found by the test suite, not in use.
 MIN_TOKENS = 8
+# How many PostToolUse calls (Bash, Write or Edit -- every tool this hook sees) a session has to
+# make before the resume nudge is even considered. Not the first thing a session sees before any
+# real work has happened; low enough to still fire well inside a normal working session.
+NUDGE_AT = 10
+NUDGE_KEEP_SESSIONS = 50  # bounded state file; old session_ids are evicted, not archived
 
 
 def body_of(payload):
@@ -70,11 +77,19 @@ def jaccard(a, b):
     return len(a & b) / len(a | b)
 
 
-def notice_workflow(payload, wsdir):
-    """Record this command's signatures and speak if a sequence has just reached the threshold.
+def notice_workflow(payload, wsdir, root):
+    """Record this command's signatures, keep the candidate for the qualifying sequence in sync,
+    and speak if it has just reached the threshold.
 
-    Returns True when it said something, so the caller does not also fire the script-repeat hint.
-    Two notices in one turn is how a useful nudge becomes noise.
+    The candidate is written every time the sequence still qualifies, not only on the crossing --
+    `candidates.upsert()` is idempotent when nothing changed (same day-count, same date) and
+    correct when something did (a new day, a longer sequence), so writing it unconditionally here
+    costs nothing extra and means the file never falls behind what repeated() currently knows.
+    Speaking stays gated to the crossing; a candidate updating silently in the background is not a
+    second notice.
+
+    Returns True when it spoke, so the caller does not also fire the script-repeat hint or the
+    resume nudge. Two notices in one turn is how a useful nudge becomes noise.
     """
     if (payload.get("tool_name") or "") != "Bash":
         return False
@@ -86,21 +101,74 @@ def notice_workflow(payload, wsdir):
     # this is the one honest piece of evidence about whether the call went cleanly.
     interrupted = bool((payload.get("tool_response") or {}).get("interrupted"))
 
+    now = datetime.now().astimezone().isoformat(timespec="seconds")
     log = wsdir / "logs" / "commands.jsonl"
-    before = workflows.repeated(workflows.record(
-        log, [], datetime.now().astimezone().isoformat(timespec="seconds")))
-    history = workflows.record(
-        log, sigs, datetime.now().astimezone().isoformat(timespec="seconds"),
-        tool="Bash", interrupted=interrupted)
+    before = workflows.repeated(workflows.record(log, [], now))
+    history = workflows.record(log, sigs, now, tool="Bash", interrupted=interrupted)
     found = workflows.repeated(history)
     if not found:
         return False
     sequence, count = found
+
+    candidate_path, _is_new = candidates.upsert(root, sequence, count, now[:10],
+                                                provenance="ai-inferred")
+
     # Only the crossing speaks. If this exact sequence already qualified before this command, the
     # threshold was passed earlier and saying so again is repetition.
     if before and before[0] == sequence:
         return False
-    print(workflows.describe(sequence, count))
+    print(workflows.describe(sequence, count, candidate_path.relative_to(root)))
+    return True
+
+
+def _resume_nudge(payload, wsdir, root):
+    """Once per session: if a fair bit of work has already happened here and nothing is recorded
+    for today, say so. Silent otherwise -- gated on the same "ledger" flag as the write-skills line
+    and the ledger line, since this is the same finding (an empty store nobody notices) applied at
+    the moment it can still be acted on, rather than only in the numbers session_start.py prints.
+
+    Tracked per `session_id`, which every PostToolUse payload carries (confirmed against another
+    installed plugin's own use of the same field). A CALENDAR-DAY marker would fire once per day
+    regardless of which session is running; "once per session" is a different, narrower promise --
+    a second session on the same day has not seen whatever the first one already said, so it gets
+    its own chance to nudge.
+    """
+    if not ws.enabled("ledger", root):
+        return False
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return False
+
+    state_path = wsdir / "logs" / "nudge_state.json"
+    state = {}
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            state = {}
+    entry = state.get(session_id) or {"calls": 0, "nudged": False}
+    entry["calls"] = entry.get("calls", 0) + 1
+    state[session_id] = entry
+
+    # Bounded: keep only the most recently active sessions, so a machine that runs chamnan for
+    # months does not grow this file forever. Least-active (by call count) are evicted first,
+    # which in practice means the oldest sessions, since an old session's count stops climbing the
+    # moment it ends.
+    if len(state) > NUDGE_KEEP_SESSIONS:
+        for old_id in sorted(state, key=lambda k: state[k].get("calls", 0))[:len(state) - NUDGE_KEEP_SESSIONS]:
+            del state[old_id]
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    if entry["nudged"] or entry["calls"] < NUDGE_AT or sessions.written_today(root):
+        return False
+
+    entry["nudged"] = True
+    state[session_id] = entry
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    print("chamnan: a fair bit has happened this session and nothing is recorded for today yet. "
+          "/chamnan:resume takes about 30 seconds and is what the next session reads first.")
     return True
 
 
@@ -117,7 +185,12 @@ def main():
     # A plain Bash command carries no script body, so the path below ignores it entirely — and a
     # repeated SEQUENCE of them is the thing that leaves no file behind at all. Checked first, and
     # only one of the two ever speaks in a single turn.
-    if notice_workflow(payload, wsdir):
+    if notice_workflow(payload, wsdir, root):
+        return 0
+
+    # Independent of the above: this counts every PostToolUse call regardless of tool, so it still
+    # runs even when notice_workflow's own checks return early for a non-Bash call.
+    if _resume_nudge(payload, wsdir, root):
         return 0
 
     text = body_of(payload)

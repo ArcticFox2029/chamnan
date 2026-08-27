@@ -16,7 +16,7 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** Stages 1–2 complete, both verified against the live workspace. Awaiting the owner's go for Stage 3.
+**Status:** Stages 1–3 complete, all verified. Awaiting the owner's go for Stage 4.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -233,7 +233,7 @@ account can happen at any stage boundary — this file is the state.
 | 0 | Plan and handoff | ✅ done |
 | 1 | Two lines in, and stop losing what is written | ✅ done |
 | 2 | Evidence, and unblock the workflow detector | ✅ done |
-| 3 | Candidates, provenance, and the nudge | ⬜ |
+| 3 | Candidates, provenance, and the nudge | ✅ done |
 | 4 | Inventory, metadata, and the 1.4.0 defects | ⬜ |
 | 5 | Release 1.5.0 | ⬜ |
 
@@ -377,7 +377,7 @@ file path is recorded as a string and never opened). **STOP.**
 
 ---
 
-#### Stage 3 — Candidates, provenance, and the nudge ⬜
+#### Stage 3 — Candidates, provenance, and the nudge ✅ COMPLETE
 `evidence → candidate → human confirm → memory`. Nothing reaches `memory/` unattended.
 
 **Files:** new `lib/candidates.py`, `hooks/scratch_watch.py`, skills, `tests/run_tests.py`
@@ -403,7 +403,48 @@ files · nudge fires at most once · nudge silent when today has a record · can
 ledger and never injected as knowledge.
 
 **Verify:** suite green, then work one real session and confirm the nudge appears once, early
-enough to act on. **STOP.**
+enough to act on.
+
+**Done.**
+
+```
+suite: 494/494 (up from 462, +32 checks)
+```
+
+A design decision made along the way, worth recording because a future session must not
+"simplify" it back: `observed`/`last_seen` on a candidate are SET to whatever `repeated()`
+currently reports each time `notice_workflow()` runs, not incremented by `candidates.upsert()`
+itself. The obvious-looking alternative — `observed += 1` on every call — is wrong, because a
+qualifying sequence can stay `found`-truthy across many Bash calls once it first crosses (nothing
+in the history invalidates it just because more commands were appended today), so an incrementing
+counter would inflate to "hundreds of times" from one afternoon's work instead of reporting the
+real number of distinct days. Verified directly: upserting the same sequence twice with the same
+count and date is a byte-identical no-op write, and with a higher count it updates in place —
+never a second file either way.
+
+Verified end to end with real subprocess calls to the hook, not only unit-level: seeded two days
+of a qualifying sequence into a fresh workspace's `commands.jsonl`, sent a third day's matching
+Bash payload through the actual `hooks/scratch_watch.py`, and confirmed a candidate file appeared
+on disk with the right sequence, and that the printed notice named it. Repeating the same payload
+updated the existing file rather than creating a second one. The resume nudge was driven the same
+way: fifteen real PostToolUse calls with a fixed `session_id`, firing exactly once, at the
+configured threshold, and confirmed silent both when a same-day session record already exists and
+when the `ledger` flag is off. A second, independent `session_id` was shown to get its own chance
+to nudge, proving the scope is genuinely "per session" and not "per day".
+
+**"Work one real session" was not run against the live Lumin-App workspace, on purpose.** Doing so
+would mean writing a fabricated `ai-inferred` candidate into `.chamnan/candidates/` from a
+synthetic Bash sequence that the owner never actually ran three days running — evidence that would
+be indistinguishable from something real the next time someone reads that directory. The mechanism
+is proven by the exhaustive subprocess-driven tests above instead. What genuinely can only be
+observed by real usage over real days — does a candidate actually accumulate from the owner's own
+work, does the nudge fire at a moment that is useful rather than annoying — is exactly what
+Stage 12's "what to learn" checklist (§12) already exists to watch for, and doing it artificially
+here would only produce a false positive standing in for that observation.
+
+Confirmed on the live workspace, read-only: `.chamnan/candidates/` correctly does not exist yet
+(nothing has crossed the threshold there), and the ledger line is unaffected --
+`0 records · 0 memory entries · nothing written yet`, exactly as before this stage. **STOP.**
 
 ---
 
