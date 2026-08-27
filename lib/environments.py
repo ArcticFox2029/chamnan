@@ -193,6 +193,61 @@ def upsert(root, name, entry_text):
     return p, False
 
 
+# Flags whose VALUE names an environment. Matching only these, and never a bare word anywhere in
+# the command, is the whole false-positive control: `grep production deploy.log` mentions the word
+# and targets nothing, and attaching production's constraints to it would train somebody to scroll
+# past the one time it mattered. Failing quiet is the right direction here, exactly as it is for
+# `docker --context prod` in lib/workflows.py -- a missed match costs one unshown notice, a wrong
+# one costs the notice's credibility.
+_TARGET_FLAGS = ("--context", "--namespace", "-n", "--profile", "--env", "--environment",
+                 "--stage", "--cluster", "--target")
+_ASSIGNED = re.compile(r"\b(?:ENV|ENVIRONMENT|STAGE|TARGET|CONTEXT)=([\w.-]+)", re.I)
+
+
+def match_command(root, command):
+    """The declared environment a shell command TARGETS, or None.
+
+    Only a recognised targeting flag's value, or an `ENV=`-style assignment, counts. A bare
+    mention of the word somewhere in the command does not — see `_TARGET_FLAGS` for why.
+    """
+    if not command:
+        return None
+    declared = {e["name"].lower(): e["name"] for e in entries(root)}
+    if not declared:
+        return None
+    parts = str(command).split()
+    for i, part in enumerate(parts):
+        value = None
+        if part in _TARGET_FLAGS and i + 1 < len(parts):
+            value = parts[i + 1]
+        elif "=" in part and part.split("=", 1)[0] in _TARGET_FLAGS:
+            value = part.split("=", 1)[1]
+        if value and value.strip("\"'").lower() in declared:
+            return declared[value.strip("\"'").lower()]
+    for m in _ASSIGNED.finditer(str(command)):
+        if m.group(1).lower() in declared:
+            return declared[m.group(1).lower()]
+    return None
+
+
+def constraints_notice(root, name):
+    """The one-shot notice naming an environment's constraints, or "" when it declares none.
+
+    Deliberately not a warning and not a block. It says what was declared and who declared it,
+    and leaves the judgement where the knowledge is. See README's Limitations for why there is no
+    per-command guard: the PreToolUse `permissionDecision` such a guard would need has no
+    documented behaviour under `defaultMode: "auto"`, and a guard that might silently not fire is
+    worse than an honest notice that always does.
+    """
+    env = next((e for e in entries(root) if e["name"] == name), None)
+    if env is None or not env["constraints"]:
+        return ""
+    bullets = "; ".join(env["constraints"])
+    checked = env["checked"] or "never confirmed"
+    return (f"chamnan: that command targets `{name}`, which declares — {bullets}. "
+            f"(from `.chamnan/{FILENAME}`, checked {checked})")
+
+
 def render_constraints(root, max_envs=4, max_bullets=4):
     """The injected block: each environment's constraints, capped. Empty when the file does not
     exist or declares none, so the hook injects no heading rather than an empty one.

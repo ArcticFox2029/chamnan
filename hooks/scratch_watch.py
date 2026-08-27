@@ -21,6 +21,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
+import environments  # noqa: E402
 import sessions  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -204,6 +205,58 @@ def _track_tool_health(payload, root):
     return True
 
 
+def _environment_notice(payload, wsdir, root):
+    """Once per environment per session: the constraints declared for the environment a Bash
+    command just targeted.
+
+    **This is PostToolUse, and it is deliberately not a guard.** Stage 15 proposed intercepting
+    the command beforehand, which needs a PreToolUse `permissionDecision` — and the documented
+    enum is `allow`/`deny`/`escalate` with no `ask` at all, while whether `escalate` reaches a
+    prompt under `defaultMode: "auto"` is not documented either way. A guard that might silently
+    fail to fire is worse than no guard, because it is trusted. So the constraints go in front of
+    the agent by two mechanisms that ARE proven here: session_start.py injects every environment's
+    constraints before any command is written, and this names the specific one the moment a
+    session is demonstrably working against it — so the NEXT command, which is usually the one
+    that matters, is written knowing.
+
+    Once per (session, environment), tracked in the same state file and by the same `session_id`
+    the resume nudge uses. A notice that fired on every `kubectl --context prod` call is one
+    people learn to scroll past.
+    """
+    if not ws.enabled("environments", root):
+        return False
+    if (payload.get("tool_name") or "") != "Bash":
+        return False
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    name = environments.match_command(root, command)
+    if not name:
+        return False
+    notice = environments.constraints_notice(root, name)
+    if not notice:
+        return False
+
+    session_id = str(payload.get("session_id") or "")
+    if not session_id:
+        return False
+    state_path = wsdir / "logs" / "nudge_state.json"
+    state = {}
+    if state_path.is_file():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            state = {}
+    entry = state.get(session_id) or {"calls": 0, "nudged": False}
+    told = entry.get("envs_told") or []
+    if name in told:
+        return False
+    entry["envs_told"] = told + [name]
+    state[session_id] = entry
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    print(notice)
+    return True
+
+
 def _resume_nudge(payload, wsdir, root):
     """Once per session: if a fair bit of work has already happened here and nothing is recorded
     for today, say so. Silent otherwise -- gated on the same "ledger" flag as the write-skills line
@@ -278,6 +331,11 @@ def main():
     # Runs (silently) on every Bash call regardless of what it invoked; only speaks on the call
     # that freshly crosses a flag threshold for a promoted tool.
     if _track_tool_health(payload, root):
+        return 0
+
+    # Before the resume nudge: a command that just touched a declared environment is the more
+    # specific, more time-sensitive thing to say, and only one notice speaks per turn.
+    if _environment_notice(payload, wsdir, root):
         return 0
 
     # Independent of the above: this counts every PostToolUse call regardless of tool, so it still

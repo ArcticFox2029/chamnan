@@ -1959,6 +1959,90 @@ check("the injected half does not mention Impact",
 check("impact names the caller", "pay/model.py" in rendered_map)
 shutil.rmtree(imp_repo, ignore_errors=True)
 
+# ---------------------------------------------------------------- environment awareness (Stage 15)
+# NOT a guard, and the tests pin that as a design property rather than an omission. Stage 15
+# proposed intercepting a command beforehand, which needs a PreToolUse `permissionDecision` --
+# the documented enum is allow/deny/escalate with no "ask" at all, and whether "escalate" reaches
+# a prompt under `defaultMode: "auto"` is documented nowhere. A guard that might silently fail to
+# fire is worse than none, because it is trusted. So this is PostToolUse advisory, on the same
+# print-once mechanism the rest of this hook already proves works.
+aw_root = Path(tempfile.mkdtemp(prefix="chamnan-aware-")).resolve()
+(aw_root / ".git").mkdir()
+ws.ensure(aw_root)
+envs.upsert(aw_root, "production", envs.render_entry(
+    "production", "K8s 1.28", "postgres 17",
+    ["RWO storage only — no ReadWriteMany PVCs", "no outbound internet from workers"],
+    "2026-08-27"))
+envs.upsert(aw_root, "uat", envs.render_entry("uat", "K8s 1.26", "", ["no TPM in UAT"], "2026-08-27"))
+
+check("a --context value naming a declared environment matches",
+      envs.match_command(aw_root, "kubectl --context production get pods") == "production")
+check("a --namespace value matches too",
+      envs.match_command(aw_root, "kubectl --namespace uat get pods") == "uat")
+check("the -n short form matches",
+      envs.match_command(aw_root, "kubectl -n production get pods") == "production")
+check("an --flag=value form matches",
+      envs.match_command(aw_root, "kubectl --context=production get pods") == "production")
+check("an ENV= assignment matches",
+      envs.match_command(aw_root, "ENV=production ./deploy.sh") == "production")
+check("a quoted value matches",
+      envs.match_command(aw_root, "kubectl --context 'production' get pods") == "production")
+# The false-positive control, and the reason there is one: a notice attached to a command that
+# targets nothing is how somebody learns to scroll past the one that mattered.
+check("A BARE MENTION WITH NO TARGETING FLAG DOES NOT MATCH",
+      envs.match_command(aw_root, "grep production deploy.log") is None)
+check("a filename containing the name does not match",
+      envs.match_command(aw_root, "cat config/production.yaml") is None)
+check("an environment that was never declared does not match",
+      envs.match_command(aw_root, "kubectl --context staging get pods") is None)
+check("an empty command matches nothing", envs.match_command(aw_root, "") is None)
+bare_aw = Path(tempfile.mkdtemp(prefix="chamnan-aware-bare-")).resolve()
+(bare_aw / ".git").mkdir()
+ws.ensure(bare_aw)
+check("with no environments declared at all, nothing ever matches",
+      envs.match_command(bare_aw, "kubectl --context production get pods") is None)
+shutil.rmtree(bare_aw, ignore_errors=True)
+
+notice = envs.constraints_notice(aw_root, "production")
+check("the notice names the environment", "`production`" in notice)
+check("the notice carries every declared constraint",
+      "RWO storage only" in notice and "no outbound internet" in notice)
+check("the notice says where it came from and how fresh it is",
+      "environments.md" in notice and "2026-08-27" in notice)
+envs.upsert(aw_root, "noconstraints",
+            envs.render_entry("noconstraints", "somewhere", "", [], "2026-08-27"))
+check("an environment declaring no constraints has no notice to give",
+      envs.constraints_notice(aw_root, "noconstraints") == "")
+check("an unknown environment has no notice either",
+      envs.constraints_notice(aw_root, "nope") == "")
+
+def _bash(command, session_id):
+    return {"session_id": session_id, "tool_name": "Bash",
+            "tool_input": {"command": command},
+            "tool_response": {"stdout": "", "stderr": "", "interrupted": False}}
+
+first = run_scratch_watch(_bash("kubectl --context production get pods", "aw1"), aw_root)
+check("THE HOOK SPEAKS ON THE COMMAND THAT TARGETS A DECLARED ENVIRONMENT",
+      "targets `production`" in first)
+again = run_scratch_watch(_bash("kubectl --context production delete pod x", "aw1"), aw_root)
+check("AND STAYS SILENT ON EVERY LATER COMMAND FOR THE SAME ENVIRONMENT IN THAT SESSION",
+      "targets `production`" not in again)
+other = run_scratch_watch(_bash("kubectl --namespace uat get pods", "aw1"), aw_root)
+check("a DIFFERENT environment in the same session still gets its own notice",
+      "targets `uat`" in other)
+fresh_session = run_scratch_watch(_bash("kubectl --context production get pods", "aw2"), aw_root)
+check("a new session hears it again — it has not seen what the last one said",
+      "targets `production`" in fresh_session)
+quiet = run_scratch_watch(_bash("grep production deploy.log", "aw3"), aw_root)
+check("a command that only mentions the word says nothing", "targets" not in quiet)
+
+# The hook must never emit a permission decision: what it prints is advice, and the tests say so
+# rather than leaving it to be assumed.
+check("THE HOOK EMITS NO PERMISSION DECISION OF ANY KIND",
+      "permissionDecision" not in first and "hookSpecificOutput" not in first)
+check("and does not block anything", "deny" not in first.lower())
+shutil.rmtree(aw_root, ignore_errors=True)
+
 # ---------------------------------------------------------------- knowledge aging (Stage 14, 1.6.0)
 # Never against a clock: a note written two years ago about a version still in production is
 # current, and one written last month about a version replaced last week is already wrong. What
