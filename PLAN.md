@@ -1,15 +1,28 @@
 # chamnan — build plan, 1.5.0 through 1.6.0
 
-> **Read this first if you are a new session, or a different account picking this up.**
-> Everything needed to continue is in this file. Nothing important lives only in a conversation.
-> Work through the stages in order. Each stage ends with a verification block and a STOP.
-> The owner approves each stage before the next one starts.
+> **New session, or a different account? Start here. Everything you need is in this file.**
+>
+> ```
+> cd /Users/wasuplao/Documents/Lumin-App/Work-Mode/chamnan
+> ```
+>
+> 1. Read §1 and §2 — what this release is and which decisions are already closed.
+> 2. Find the first stage in §4 marked ⬜ and do **only** that stage.
+> 3. Run its verification block. Report what it actually printed, not what it should have.
+> 4. Mark the stage ✅ in this file, commit locally, and **STOP** — the owner approves each stage
+>    before the next one starts. This is not a formality; it is how the owner keeps the work
+>    reversible when they are not watching.
+>
+> Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
+> docstrings stay in English, no exceptions.
 
-**Status:** Stage 0 complete. Awaiting the owner's go for Stage 1.
-**Stage protocol:** every stage is `do → pause → wait for approval`. Never start the next stage
-without the owner saying so, even when the work is obvious and the stage is small.
-**Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0.
-**Repository root:** `/Users/wasuplao/Documents/Lumin-App`
+**Status:** Stage 0 complete. Stage 1 not started, awaiting the owner's go.
+**Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
+**Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
+repository, separate from Lumin-App's — commit here, not at the repository root.
+**Live workspace under test:** `/Users/wasuplao/Documents/Lumin-App/.chamnan/`
+**Tests:** `python3 tests/run_tests.py` — a plain `check(name, condition)` counter, no pytest, no
+dependencies. A new test only has to follow that shape.
 
 ---
 
@@ -141,6 +154,70 @@ that unblocks a shipped feature, and it should be done early.**
 | **1.5.2 · 3** Value / savings report | **Accept counts. Reject "savings".** | Tool invocations are countable from `commands.jsonl` — the signature *is* the tool name. A number of tokens or hours saved would be invented, and this project already retired an "Engineer Scoreboard" for measuring what is easy instead of what matters. Report *"`chamnan-map` ran 14 times this month"*; never *"saved 40k tokens"*. |
 | **1.5.2** Health Score (from the earlier round) | **Still rejected** | `Knowledge: Growing` is a judgement the system cannot ground. |
 
+### Round two — Alpha's ten, and why they add one stage rather than ten
+
+A second round proposed ten features and a 2.0 repositioning. **Eight of the ten are new stores, in
+a system whose five existing stores are empty.** That is precisely the failure this plan was built
+to avoid: every one of them is a good idea *conditional on the write path working*, and adding them
+first produces eight more empty directories. So the rule for this round, and every round after it:
+**a proposal that adds a store is gated on the ledger reading non-zero. A proposal that adds a
+field to a store that already exists is not.**
+
+Four of the ten are already in this plan, and two more are already half-built:
+
+| Proposal | Status |
+|---|---|
+| **Runbook Generator** | Already planned — Stage 8. A runbook *is* a skill. |
+| **Environment Fingerprint** | Already planned — 1.6.0's `environments.md`. Adopt Alpha's **Known Constraints** into its shape ("RWO storage", "no TPM in UAT", "DR uses different hardware"): those are exactly the facts nobody writes down and everybody re-learns. |
+| **Team Knowledge Sync** | Already deferred to 2.0 — but Alpha's **"pack"** framing beats the mount-point design, because a curated export states what leaves; a mount states only where to look. |
+| **Change Impact** | **`lib/impact.py` already exists** and answers "who depends on this, and which tests cover it". It is called only from `lib/mapper.py`, so it feeds MAP.md and cannot be *asked*. The missing halves are a query entry point, and "last time this changed, a rollback was needed" — which needs the timeline. |
+| **Work Pattern Intelligence** | **Merge into Runbook.** The jump from a command sequence to an investigation *rationale* cannot be derived from evidence — a hook sees `kubectl get pods`, never "checking whether the pod is the cause". A human writes that, which makes it a runbook. |
+| **"Why button"** | **Nothing to build.** It emerges once incidents exist and their titles are injected; it is impossible before that. Free after, not a feature. |
+
+Genuinely new, and small:
+
+| Proposal | Verdict | Where it lands |
+|---|---|---|
+| **Decision trade-offs** — record what was *rejected* and why | **Accept, and rank it above Alpha's own first choice.** Not a store: `memory/decisions/` exists, and `skills/remember/SKILL.md` already asks for it in prose — *"If something was ruled out, say what and why"*. The change is making it a **named slot instead of an optional sentence**, and this whole plan rests on the finding that optional things do not get written. The proof it earns its place is in `.chamnan/STATE.md`: the owner hand-wrote `### SETTLED — do not raise these again` because the system had nowhere to put a rejected option. Near-zero code. | **Stage 4** |
+| **Incident memory** | **Accept as a fourth `memory/` category, never a new store.** `CATEGORIES` is referenced in exactly two places in `lib/memory.py`, so a fourth costs almost nothing and inherits retention, redaction, the readers and the injection economics unchanged. **Gated:** `memory/lessons/` is empty today; shipping `memory/incidents/` before the ledger moves adds a fourth empty directory. | **Stage 6a**, gated |
+| **Knowledge state** — Confirmed / Observed / Draft / Deprecated | **Accept the idea, reject the second field.** `Provenance: ai-drafted` and `State: Draft` overlap about 80%, and two fields for one concept is how a format rots. Extend the existing enum instead. **`deprecated` is the genuinely new value** and worth having: it retires knowledge without deleting it, which `memory.py` is right to refuse to do on a timer. | **Stage 3** |
+
+**On the 2.0 repositioning — "Organization knows how it works".** Not yet, and not because it is
+wrong. It is a large claim, and today's evidence is that one person's five stores are empty.
+Changing what the product *says it is* before the write path works is how a repository ends up with
+an ambitious README over a dead system. That sentence is a **consequence** of the corpus existing,
+not a cause of it — if 1.5.x produces one, the sentence becomes an accurate description without
+anyone having to declare it.
+
+### Fitted to this owner, not to the proposals
+
+Proposals from other reviewers are input, not requirements. The ordering below was re-derived by
+asking one question — *what would have helped this owner in the work they actually did this week?*
+— and the answer was not a new store.
+
+**`.chamnan/STATE.md` is 13,112 characters. The hook injects the first 4,000 with no marker. Every
+instruction the owner wrote telling sessions what NOT to do was below the line.**
+
+Measured 2026-08-27, before the pointer at the top of that file was trimmed:
+
+```
+✗ ### SETTLED — do not raise these again (owner, 2026-08-24)
+✗ ## Test coverage — three modules stay untested, on purpose (owner, 2026-08-25)
+✗ ### Not this project — do not audit, do not report as pending
+```
+
+The owner writes do-not-raise-again lists by hand — that is the behaviour the whole memory system
+wants to encourage — and the system silently discards them. An agent then re-proposes settled work,
+and the owner has to say no a second time. Trimming the pointer rescued the first two; nine
+headings are still lost, and winning a race for the top 4,000 characters is not a mechanism.
+
+**So Stage 1 carries three changes rather than two**, and the third is the one specific to this
+owner: STATE.md must stop swallowing their own instructions. It is also a real defect for anyone
+whose STATE.md outgrew the cap, which makes it good for the release as well as good for here.
+
+The general principle this sets, for every later round of proposals: **fix what is silently losing
+the owner's existing work before adding a place to put new work.**
+
 ---
 
 ## 4. Stages
@@ -154,7 +231,7 @@ account can happen at any stage boundary — this file is the state.
 | # | Stage | Status |
 |---|---|---|
 | 0 | Plan and handoff | ✅ done |
-| 1 | The two lines | ⬜ |
+| 1 | Two lines in, and stop losing what is written | ⬜ |
 | 2 | Evidence, and unblock the workflow detector | ⬜ |
 | 3 | Candidates, provenance, and the nudge | ⬜ |
 | 4 | Inventory, metadata, and the 1.4.0 defects | ⬜ |
@@ -169,9 +246,10 @@ account can happen at any stage boundary — this file is the state.
 
 ---
 
-#### Stage 1 — The two lines ⬜
-Cheapest, highest expected value. ~240 characters per session, and the entire always-on price of
-the release.
+#### Stage 1 — Two lines in, and stop losing what is already written ⬜
+Cheapest, highest expected value. The two new lines cost ~240 characters per session and are the
+entire always-on price of the release; the third change costs nothing and **gives back** what is
+being lost today.
 
 **Files:** `hooks/session_start.py`, new `lib/ledger.py`, `tests/run_tests.py`
 
@@ -187,13 +265,29 @@ the release.
    ```
    Counting lives in `lib/ledger.py` so Stage 4's inventory reuses it. `iterdir()` and one `stat()`
    per store; no file reads.
+3. **Stop STATE.md swallowing the owner's own instructions.** Three parts, all small:
+   - **A visible truncation marker.** `_…9.1k more — read .chamnan/STATE.md_`. The marker matters
+     more than the number; today 73% disappears and nothing says so.
+   - **Pinned sections.** A section whose heading carries a pin marker is injected **in full,
+     first**, before the head fills the remaining budget. Pick the least ceremonious convention
+     that works — a trailing `📌`, or a `pin:` list in `config.json` matching heading text. The
+     owner should not have to win a race for the top of the file to keep a standing instruction
+     visible.
+   - **`state_token_budget: 1700`** replacing `MAX_STATE_CHARS = 4000`. 1700 tokens preserves
+     today's slice; **never 1200**, which silently deletes 1,120 characters from the only store on
+     this machine that has anything in it.
 
 **Tests:** the skills line names every skill in `skills/` and none that is absent · ledger reports 0
 for an empty workspace and survives a missing store · "+N this week" is 0, never negative or
-missing · both lines inside budget · neither emitted when there is no workspace.
+missing · both lines inside budget · neither emitted when there is no workspace · a pinned section
+below the cut is injected · an unpinned section below the cut is not · the marker appears only when
+something was actually dropped · a STATE.md shorter than the budget is injected whole with no
+marker · a file with no pins behaves exactly as 1.4.0 did.
 
 **Verify:** suite green; run the hook read-only against `/Users/wasuplao/Documents/Lumin-App` and
-confirm both lines appear and the total grew by ~240 characters, not more. **STOP.**
+confirm (a) both new lines appear, (b) the two lines cost ~240 characters and not more, and
+(c) **`### SETTLED — do not raise these again` and `### Not this project` both reach the output**,
+which they do not today. That third check is the point of the stage. **STOP.**
 
 ---
 
@@ -230,7 +324,9 @@ not. **STOP.**
 
 1. **`.chamnan/candidates/`** — one markdown file per candidate, trailer grammar, every candidate
    carrying `**Provenance:**` from the closed enum `user · ai-drafted · ai-confirmed · ai-inferred
-   · imported`. A candidate is never injected as knowledge; only its **count** reaches the ledger.
+   · imported · deprecated`. **One field, not two** — a separate `State:` would overlap it about 80%,
+   and two fields for one concept is how a format rots. `deprecated` is the value that retires
+   knowledge without deleting it, which `memory.py` is right to refuse to do on a timer. A candidate is never injected as knowledge; only its **count** reaches the ledger.
 2. **`notice_workflow()` writes instead of only speaking.** When `repeated()` crosses the
    threshold, upsert a candidate keyed on the signature sequence, carrying `observed:` and
    `last_seen:`. Speak once as it does today; the difference is that the finding now survives.
@@ -261,10 +357,14 @@ enough to act on. **STOP.**
 2. **`as-of` stamped automatically** on every memory entry at write time. `memory/` carries no date
    anywhere today; this is the prerequisite for 1.6.0's aging and costs the owner nothing.
 3. **`Provenance:`** on memory entries, same enum as candidates.
-4. **`state_token_budget: 1700`** replacing `MAX_STATE_CHARS`, **with a visible truncation marker**.
-   The marker matters more than the number.
-5. **The four defects:** `milestones._ENTRY` en-dash · `render_titles()` 120-char cap ·
-   `describe()` first-sentence fallback · the truncation marker above.
+3b. **A named trade-off slot on decision entries.** `skills/remember/SKILL.md` already asks for the
+   rejected option in prose; make it a heading the writer fills in rather than a sentence they may
+   skip, and have `chamnan-report` note a decision that has none. The cheapest high-value change in
+   the whole plan — the proof it earns its place is that the owner hand-wrote
+   `### SETTLED — do not raise these again` into `STATE.md` because nothing else would hold it.
+4. **The three remaining defects:** `milestones._ENTRY` en-dash · `render_titles()` 120-char cap ·
+   `describe()` first-sentence fallback. (The STATE.md cap and marker moved to Stage 1 — it is the
+   change that helps this owner today.)
 
 **Tests:** one per fix, both directions. The en-dash test must include em-dash and hyphen entries
 that still parse.
@@ -291,6 +391,7 @@ intelligent about.
 |---|---|---|
 | 6 | Candidate dedup and counters | `observed: N`, `last_seen:`, exact-match on normalised signature sequences. Upsert, never a second file. **STOP.** |
 | 7 | The review CLI | `chamnan-candidates`: list, `confirm`, `reject`, `edit`. **Solve invocation as well as output** — `bin/` is not on PATH and a confirm step that takes more than a few seconds will not be used. **STOP.** |
+| 6a | Incidents as a fourth `memory/` category | `CATEGORIES` is referenced in exactly two places in `lib/memory.py`, so a fourth inherits retention, redaction, readers and injection economics for almost nothing. Shape: symptom · root cause · fix · impact · what to avoid. **Gated hard:** `memory/lessons/` is empty today, and a fourth empty directory is worse than none. **STOP.** |
 | 8 | Promotion → Skill or Tool | Confirm sends a candidate to `skills/` (a procedure) or `tools/` (a script), reusing `chamnan-promote`'s machinery. The classifier **suggests**; the owner decides. Merges Miki's 1.5.2 · 1. **STOP.** |
 | 9 | Release 1.5.1 | Local commit only. **STOP.** |
 
@@ -314,6 +415,8 @@ re-read it before starting, and re-check its assumptions against what 1.5.x actu
 | # | Stage | What |
 |---|---|---|
 | 13 | Timeline | One file per thread. The canonical-vocabulary problem is solved by making threading a **pick from a declared list**, not a string match. **STOP.** |
+| 13a | `environments.md`, with **Known Constraints** | Platform, architecture, and the constraints nobody writes down and everybody re-learns — "RWO storage only", "no TPM in UAT", "DR runs different hardware". Prerequisite for stage 14. **STOP.** |
+| 13b | Ask `impact.py` a question | The analysis already exists and already feeds MAP.md; it has no query entry point. Add one, then join it to the timeline so the answer carries "last time this changed, a rollback was needed". **STOP.** |
 | 14 | Knowledge Aging | Compared against `environments.md`'s declared versions — never a clock. Ships only if that file is shown to be *maintained*; a false all-clear from an unmaintained oracle is worse than shipping nothing. **STOP.** |
 | 15 | Environment Awareness | Advisory by default. Verify `permissionDecision: "ask"` reaches the prompt under `defaultMode: "auto"` **before writing the guard** — and note that `Bash(python3 *)` is allowlisted on this machine, so the one command family that skips confirmation is the one the guard cannot parse. **STOP.** |
 | 16 | Release 1.6.0 | Local commit only. **STOP.** |
