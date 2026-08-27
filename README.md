@@ -1154,6 +1154,17 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
   and cannot change within this plugin's model. What 1.5 adds is visibility: the ledger line and
   the knowledge inventory turn "nothing has been written" into a fact printed in front of you every
   session, instead of a silent absence with no reason for anyone to notice it.
+- **Tool health tracking (1.5.2) covers `tools/` only, never `skills/`.** A promoted tool is run as
+  a Bash call, which a hook can see; a skill is a markdown file Claude reads on its own judgement,
+  and nothing logs that the read happened at all, let alone whether following it went well or
+  badly. There is no way to build skill feedback within a plugin hook's actual visibility, so it is
+  not attempted — not a smaller version of it, not a heuristic standing in for it.
+- **Even tool health tracking has no exit code to work with.** A Bash `tool_response` carries
+  `stdout`, `stderr` and `interrupted` — never a numeric status. What is tracked is exactly those
+  two real signals, `interrupted` (a fact) and non-empty `stderr` (a weak one, since plenty of
+  correct commands write to it too), and neither is ever reported as "the tool failed". Three
+  occurrences of either flags the tool once, quietly, for you to look at — it does not decide
+  anything on its own.
 
 ## Tests
 

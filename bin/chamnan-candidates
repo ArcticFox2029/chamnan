@@ -12,9 +12,12 @@ is the other half: looking at what accumulated, and deciding what to do with eac
   chamnan candidates promote <id>          suggest where a CONFIRMED candidate belongs, decide nothing
   chamnan candidates promote <id> tool <name>   install a script SKELETON in .chamnan/tools/<name>
   chamnan candidates promote <id> skill         print what to hand to /chamnan:capture
+  chamnan candidates demote <tool-name>         undo a tool promotion — flagged too often, send it back
 
-<id> is either a candidate's position in the list above (1, 2, 3 — computed fresh each time, not
-cached from an earlier call) or its slug/filename, with or without `.md`.
+<id> (for confirm/reject/edit/promote) is either a candidate's position in the list above
+(1, 2, 3 — computed fresh each time, not cached from an earlier call) or its slug/filename, with or
+without `.md`. `demote` takes a TOOL's name instead — from `.chamnan/tools/`, or from the notice
+that suggested it (`chamnan candidates demote deploy-check.sh`).
 
 **`confirm` does not promote anything into `skills/` or `tools/`.** It only records that a human
 looked at the candidate and thinks the routine is real — moving Provenance from `ai-inferred` to
@@ -184,6 +187,28 @@ def cmd_promote(root, ident, destination=None, name=None):
     return 2
 
 
+def cmd_demote(root, tool_name):
+    """Undo a tool promotion: remove it from tools/index.json, delete the file, and write a new
+    candidate so the routine goes through review again rather than disappearing outright. The new
+    candidate's "sequence" is the tool's own description, not a reconstruction of the original
+    detected steps — precise replay is not recoverable from what the index stores, and a record
+    that reminds a reviewer what the tool was for is more honest than pretending otherwise."""
+    entry = tools_index.remove(root, tool_name)
+    if entry is None:
+        print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan promote --list`",
+              file=sys.stderr)
+        return 1
+    tool_path = ws.workspace(root) / "tools" / tool_name
+    if tool_path.is_file():
+        tool_path.unlink()
+    sequence = [entry.get("desc") or tool_name]
+    today = datetime.now().astimezone().strftime("%Y-%m-%d")
+    new_path, _is_new = candidates.upsert(root, sequence, 1, today, provenance="ai-inferred")
+    print(f"chamnan: demoted {tool_name} — removed as a tool, back for review at "
+          f"{new_path.relative_to(root)}")
+    return 0
+
+
 def main(argv):
     root = ws.find_root()
     wsdir = ws.workspace(root)
@@ -201,14 +226,21 @@ def main(argv):
         return 0
 
     cmd, *rest = argv
-    if cmd not in ("confirm", "reject", "edit", "promote"):
+    if cmd not in ("confirm", "reject", "edit", "promote", "demote"):
         print(f"chamnan: unknown command {cmd!r} — list, confirm <id>, reject <id>, edit <id>, "
-              f"promote <id> [tool|skill]", file=sys.stderr)
+              f"promote <id> [tool|skill], demote <tool-name>", file=sys.stderr)
         return 2
     if not rest:
-        print(f"chamnan: {cmd} needs a candidate — number or name from `chamnan candidates`",
-              file=sys.stderr)
+        if cmd == "demote":
+            print("chamnan: demote needs a tool name — see `chamnan promote --list`",
+                  file=sys.stderr)
+        else:
+            print(f"chamnan: {cmd} needs a candidate — number or name from `chamnan candidates`",
+                  file=sys.stderr)
         return 2
+
+    if cmd == "demote":
+        return cmd_demote(root, rest[0])
 
     if cmd == "promote":
         ident, *pdest = rest

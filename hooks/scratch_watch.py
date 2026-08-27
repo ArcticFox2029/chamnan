@@ -22,6 +22,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
 import sessions  # noqa: E402
+import tools_index  # noqa: E402
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -175,6 +176,34 @@ def _stamp_memory_entry(payload, root):
         pass
 
 
+def _track_tool_health(payload, root):
+    """Silent unless a flag threshold is FRESHLY crossed. See lib/tools_index.py for exactly what
+    is and is not tracked, and why -- there is no exit code in a Bash tool_response, so this counts
+    `interrupted` (a real fact) and non-empty `stderr` (a weak signal, shown as itself, never
+    reported as "the tool failed").
+
+    Also where `runs` gets incremented (Stage 11 reads it; nothing writes it before this).
+    """
+    if (payload.get("tool_name") or "") != "Bash":
+        return False
+    command = str((payload.get("tool_input") or {}).get("command") or "")
+    name = tools_index.match_call(root, command)
+    if name is None:
+        return False
+    response = payload.get("tool_response") or {}
+    interrupted = bool(response.get("interrupted"))
+    stderr_nonempty = bool((response.get("stderr") or "").strip())
+    entry, just_flagged = tools_index.record_call(root, name, interrupted, stderr_nonempty)
+    if not just_flagged or entry is None:
+        return False
+    signal = max(entry.get("interrupted", 0), entry.get("stderr_seen", 0))
+    print(f"chamnan: `.chamnan/tools/{name}` has been interrupted or written to stderr "
+          f"{signal} times in its last {entry.get('runs', '?')} run(s) — worth a look. "
+          f"`chamnan candidates demote {name}` sends it back for review if it no longer does "
+          f"what you expect.")
+    return True
+
+
 def _resume_nudge(payload, wsdir, root):
     """Once per session: if a fair bit of work has already happened here and nothing is recorded
     for today, say so. Silent otherwise -- gated on the same "ledger" flag as the write-skills line
@@ -244,6 +273,11 @@ def main():
     # repeated SEQUENCE of them is the thing that leaves no file behind at all. Checked first, and
     # only one of the two ever speaks in a single turn.
     if notice_workflow(payload, wsdir, root):
+        return 0
+
+    # Runs (silently) on every Bash call regardless of what it invoked; only speaks on the call
+    # that freshly crosses a flag threshold for a promoted tool.
+    if _track_tool_health(payload, root):
         return 0
 
     # Independent of the above: this counts every PostToolUse call regardless of tool, so it still

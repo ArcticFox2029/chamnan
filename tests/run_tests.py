@@ -585,7 +585,8 @@ check("runs defaults to 0 when not given", loaded[0]["runs"] == 0)
 tools_index.register(ti_root, {"name": "second.sh"})
 check("a second register() appends rather than overwriting", len(tools_index.load(ti_root)) == 2)
 check("a minimal entry (name only) still gets every field, defaulted",
-      set(tools_index.load(ti_root)[1]) == {"name", "desc", "added", "origin", "runs"})
+      set(tools_index.load(ti_root)[1])
+      == {"name", "desc", "added", "origin", "runs", "interrupted", "stderr_seen"})
 shutil.rmtree(ti_root, ignore_errors=True)
 
 # The refactor must not have changed chamnan-promote's own observable behaviour.
@@ -672,6 +673,90 @@ check("an unrecognised destination is a usage error", bogus_out.returncode == 2)
 
 shutil.rmtree(promote_root, ignore_errors=True)
 shutil.rmtree(cli_root, ignore_errors=True)
+
+# ---------------------------------------------------------------- tool health (Stage 10, 1.5.2)
+# There is no exit code in a Bash tool_response -- confirmed against another installed plugin's
+# own comment stating this twice over. Only `interrupted` (real) and non-empty `stderr` (a WEAK
+# signal, shown as itself) are tracked; neither is ever reported as "the tool failed".
+th_root = Path(tempfile.mkdtemp(prefix="chamnan-tool-health-")).resolve()
+(th_root / ".git").mkdir()
+ws.ensure(th_root)
+tools_index.register(th_root, {"name": "flaky.sh", "desc": "sometimes noisy"})
+
+check("match_call finds a tool whose path appears in the command",
+      tools_index.match_call(th_root, ".chamnan/tools/flaky.sh --now") == "flaky.sh")
+check("match_call finds nothing for an unrelated command",
+      tools_index.match_call(th_root, "ls -la") is None)
+check("match_call finds nothing when the index is empty",
+      tools_index.match_call(Path(tempfile.mkdtemp()), ".chamnan/tools/flaky.sh") is None)
+
+
+def call_flaky(stderr_text="", interrupted=False):
+    payload = {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/flaky.sh"},
+              "tool_response": {"stdout": "", "stderr": stderr_text, "interrupted": interrupted}}
+    return subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(payload),
+                          capture_output=True, text=True, cwd=th_root).stdout
+
+
+check("a clean call is silent and still counts as a run",
+      call_flaky().strip() == "" and tools_index.load(th_root)[0]["runs"] == 1)
+check("a run with empty stderr does not count as a stderr signal",
+      tools_index.load(th_root)[0]["stderr_seen"] == 0)
+
+out2 = call_flaky(stderr_text="warning one")
+out3 = call_flaky(stderr_text="warning two")
+check("stderr below the flag threshold stays silent",
+      out2.strip() == "" and out3.strip() == "")
+out4 = call_flaky(stderr_text="warning three")
+check("THE THIRD STDERR OCCURRENCE CROSSES THE THRESHOLD AND SPEAKS, ONCE",
+      "flaky.sh" in out4 and "3" in out4)
+check("the crossing names the demote command", "demote" in out4)
+out5 = call_flaky(stderr_text="warning four")
+check("A FOURTH OCCURRENCE STAYS SILENT — ONLY THE CROSSING SPOKE", out5.strip() == "")
+check("runs and stderr_seen both kept incrementing while silent",
+      tools_index.load(th_root)[0]["runs"] == 5
+      and tools_index.load(th_root)[0]["stderr_seen"] == 4)
+
+unrelated_out = subprocess.run(
+    [str(ROOT / "hooks" / "scratch_watch.py")],
+    input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"},
+                      "tool_response": {"stdout": "", "stderr": "", "interrupted": False}}),
+    capture_output=True, text=True, cwd=th_root)
+check("a command that does not invoke a promoted tool never touches the index",
+      tools_index.load(th_root)[0]["runs"] == 5)
+
+# interrupted is tracked as its own signal, independent of stderr.
+tools_index.register(th_root, {"name": "other.sh"})
+for _ in range(3):
+    subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(
+        {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/other.sh"},
+         "tool_response": {"stdout": "", "stderr": "", "interrupted": True}}),
+        capture_output=True, text=True, cwd=th_root)
+other_entry = next(e for e in tools_index.load(th_root) if e["name"] == "other.sh")
+check("INTERRUPTED IS TRACKED SEPARATELY FROM STDERR",
+      other_entry["interrupted"] == 3 and other_entry["stderr_seen"] == 0)
+
+demote_out = subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), "demote", "flaky.sh"],
+                            capture_output=True, text=True, cwd=th_root)
+check("DEMOTE REMOVES THE TOOL FROM THE INDEX",
+      not any(e["name"] == "flaky.sh" for e in tools_index.load(th_root)))
+check("demote deletes the tool file itself",
+      not (th_root / ".chamnan" / "tools" / "flaky.sh").exists())
+check("demote writes a fresh candidate carrying the tool's own description",
+      any("sometimes noisy" in p.read_text(encoding="utf-8") for p in candidates.entries(th_root)))
+check("demote reports success", demote_out.returncode == 0)
+
+missing_demote = subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), "demote", "nope.sh"],
+                                capture_output=True, text=True, cwd=th_root)
+check("demoting a tool that does not exist fails cleanly, not with a traceback",
+      missing_demote.returncode == 1 and "Traceback" not in missing_demote.stderr)
+
+no_arg_demote = subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), "demote"],
+                               capture_output=True, text=True, cwd=th_root)
+check("demote with no name is a usage error, not an IndexError",
+      no_arg_demote.returncode == 2 and "Traceback" not in no_arg_demote.stderr)
+
+shutil.rmtree(th_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- notice_workflow writes, not just speaks
 # The mechanism this whole stage exists for: a sequence that qualifies gets a candidate file, and

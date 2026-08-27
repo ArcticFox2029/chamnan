@@ -10,11 +10,25 @@ once) does not apply here, since both callers are short-lived CLI invocations, n
 
 The schema is deliberately small: `name`, `desc`, `added` (ISO timestamp), `origin` (where the
 content came from — a file path for a promoted script, `"candidate:<slug>"` for one generated from
-a detected sequence), `runs` (a usage counter nothing in 1.5.0 increments yet — reserved for 1.5.2's
-usage counts, so the field exists before anything writes it, matching Stage 4's `as-of` reasoning:
-add the column, wire the writer later).
+a detected sequence), `runs` (a usage counter Stage 11 reports from — this module increments it,
+nothing surfaces it as a number yet, matching Stage 4's `as-of` reasoning: add the column, wire the
+reader later), `interrupted` and `stderr_seen` (Stage 10's two honest signals, below).
+
+**There is no exit code to track, and this module does not pretend otherwise.** Confirmed against
+another installed plugin's own comment stating the exact fact twice over: a Bash `tool_response`
+carries only `stdout`, `stderr` and `interrupted` — never a numeric status. `record_call()` counts
+the two signals that ARE real: `interrupted` (the call was killed or timed out — an unambiguous
+fact) and `stderr_seen` (the call wrote to stderr at all — a WEAK signal, since plenty of correct
+commands write progress or warnings there too). Neither is reported as "the tool failed"; both are
+reported as exactly what they are, and a human reading a flag decides what it means. This is the
+same discipline Stage 8's promotion classifier already applies to itself: state the real signal and
+its limits, never invent a confidence number to paper over not having one.
 """
 import json
+
+# Three of the same signal in a row is worth a look; matches REPEAT_AT elsewhere in this plugin
+# (workflows.py, scratch_watch.py) rather than inventing a fourth threshold value to justify.
+FLAG_AT = 3
 
 
 def path(root):
@@ -29,6 +43,12 @@ def load(root):
         return []
 
 
+def _save(root, entries):
+    p = path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(entries, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def register(root, entry):
     """Append one entry and write the index back. `entry` must have `name`; every other field is
     optional and defaults sensibly. Returns the full, updated list."""
@@ -39,8 +59,57 @@ def register(root, entry):
         "added": entry.get("added", ""),
         "origin": entry.get("origin", ""),
         "runs": entry.get("runs", 0),
+        "interrupted": entry.get("interrupted", 0),
+        "stderr_seen": entry.get("stderr_seen", 0),
     })
-    p = path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(entries, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    _save(root, entries)
     return entries
+
+
+def match_call(root, command):
+    """The registered tool NAME a Bash command string invokes, or None. A plain substring check
+    against `.chamnan/tools/<name>` for every registered entry -- honest about being exactly that:
+    it will miss a tool invoked through an alias or a wrapper, and that is the right failure
+    direction. A false negative costs one unflagged failure; a false positive would blame the wrong
+    tool for something it never ran."""
+    entries = load(root)
+    if not entries or not command:
+        return None
+    for e in entries:
+        needle = f".chamnan/tools/{e['name']}"
+        if needle in command:
+            return e["name"]
+    return None
+
+
+def record_call(root, name, interrupted=False, stderr_nonempty=False):
+    """Increment `runs`, and `interrupted`/`stderr_seen` when the call showed that signal, for the
+    entry named `name`. Returns (entry, just_flagged) -- `just_flagged` is True exactly once, on
+    the call that FIRST reaches FLAG_AT on either counter, so a caller can print a notice on the
+    crossing and stay silent on every repeat after it, the same restraint every other notice in
+    this plugin already uses."""
+    entries = load(root)
+    entry = next((e for e in entries if e["name"] == name), None)
+    if entry is None:
+        return None, False
+    entry["runs"] = entry.get("runs", 0) + 1
+    was_flaggable = (entry.get("interrupted", 0) >= FLAG_AT or entry.get("stderr_seen", 0) >= FLAG_AT)
+    if interrupted:
+        entry["interrupted"] = entry.get("interrupted", 0) + 1
+    if stderr_nonempty:
+        entry["stderr_seen"] = entry.get("stderr_seen", 0) + 1
+    now_flaggable = (entry.get("interrupted", 0) >= FLAG_AT or entry.get("stderr_seen", 0) >= FLAG_AT)
+    _save(root, entries)
+    return entry, (now_flaggable and not was_flaggable)
+
+
+def remove(root, name):
+    """Delete one entry from the index (the tool FILE itself is a separate deletion the caller does
+    — this module only ever owns index.json). Returns the removed entry, or None if there was no
+    such name. Used by `chamnan candidates demote` to undo a promotion."""
+    entries = load(root)
+    entry = next((e for e in entries if e["name"] == name), None)
+    if entry is None:
+        return None
+    _save(root, [e for e in entries if e["name"] != name])
+    return entry

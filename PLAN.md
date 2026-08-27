@@ -16,7 +16,8 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** **1.5.1 SHIPPED.** Stages 0–9 complete, all verified. Awaiting the owner's go for Stage 10 (1.5.2).
+**Status:** **1.5.1 SHIPPED.** Stages 0–9 complete, all verified. Stage 10 (1.5.2) done, 600/600
+tests. Owner said "ทำต่อ s 11 , 12" — proceeding into Stage 11 next.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -602,9 +603,22 @@ inventory all still run correctly. Local commit only, same as every stage before
 
 | # | Stage | What |
 |---|---|---|
-| 10 | Tool failure feedback | A promoted **tool** exiting non-zero is recorded against it; repeated failure flags it quietly for review or demotion to candidate. **Skills are out of scope and the README must say so** — nothing logs that a skill was read, and no hook can see whether following it went badly. **STOP.** |
+| 10 | Tool failure feedback | ✅ done — there is no exit code in a Bash `tool_response` (only `stdout`/`stderr`/`interrupted`, confirmed against a third-party plugin's own comment, twice), so `lib/tools_index.py` tracks the two real signals instead: `interrupted` (a fact) and non-empty `stderr` (a weak one), each with its own counter. `scratch_watch.py`'s new `_track_tool_health()` matches a Bash call against `.chamnan/tools/<name>`, increments `runs` on every match, and prints one quiet notice the call that FIRST crosses `FLAG_AT=3` on either counter — silent before, silent after, never a fabricated "failure" verdict. `chamnan-candidates demote <tool-name>` undoes a promotion: removes the index entry, deletes the file, and writes a fresh candidate from the tool's own description so it goes through review again instead of vanishing. **Skills stayed out of scope, and the README says so explicitly** — a new Limitations bullet states nothing logs a skill being read and no hook can see whether following it went well, right beside a bullet spelling out exactly what the tool side does and does not track. |
 | 11 | Usage counts | *"`chamnan-map` ran 14 times this month"*, counted from `commands.jsonl`. **Counts, never a savings figure** — a tokens-saved number would be invented, and this project already retired an "Engineer Scoreboard" for measuring what is easy rather than what matters. **STOP.** |
 | 12 | Release 1.5.2 | Local commit only. **STOP.** |
+
+**Stage 10 verification.** Full suite 553 → 600/600 (added: `match_call()` behavior, clean-call vs.
+empty-stderr counting, silence below `FLAG_AT`, the flag firing at exactly the 3rd occurrence with
+correct wording, silence after flagging while counters keep incrementing, an unrelated command left
+untouched, `interrupted` tracked independently of `stderr_seen` on a second tool, and the full
+`demote` lifecycle — index removed, file deleted, candidate created from the tool's description,
+both error paths). One stale Stage 8 test fixed (`register()`'s minimal key-set assertion, now
+including `interrupted`/`stderr_seen`). Live-workspace check against `.chamnan/` (Lumin-App root,
+which has zero promoted tools today): `chamnan-candidates demote nonexistent-tool.sh` fails cleanly
+with the documented message and exit 1; a synthetic Bash `PostToolUse` payload run through
+`scratch_watch.py` with no tools registered produces empty stdout/stderr and exit 0, confirming
+`tools_index.load()`'s missing-file fallback (`[]`) makes the whole health-tracking path a true
+no-op rather than an error until a tool actually exists to track. **STOP.**
 
 ---
 
