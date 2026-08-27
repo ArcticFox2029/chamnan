@@ -97,6 +97,7 @@ def snapshot(root, now=None):
     lessons = _files(root, "memory", "lessons")
     rules = _files(root, "memory", "rules")
     candidates = _files(root, "candidates")  # None until 1.5.1 creates the directory
+    thread_files = _files(root, "threads")   # None until 1.6.0 creates the directory
 
     memory_files = (decisions or []) + (lessons or []) + (rules or [])
     # Memory entries carry no date of their own until Stage 4 adds `as-of`, so mtime is the only
@@ -112,7 +113,8 @@ def snapshot(root, now=None):
     record_recent = (sum(1 for t in session_ts if t >= cutoff)
                       + sum(1 for t in milestone_ts if t >= cutoff))
 
-    all_ts = session_ts + memory_mtimes + milestone_ts
+    thread_mtimes = _mtimes(thread_files or [])
+    all_ts = session_ts + memory_mtimes + milestone_ts + thread_mtimes
     last_write = max(all_ts) if all_ts else None
 
     return {
@@ -124,6 +126,10 @@ def snapshot(root, now=None):
         # None = the store does not exist yet; 0 = it exists and is empty. render() treats these
         # differently on purpose -- see the module docstring.
         "candidate_count": None if candidates is None else len(candidates),
+        # Counted separately from `record_count` and not folded into it: a thread is not a record
+        # of a session, and adding it to that number would silently change what the number has
+        # meant since 1.5.0. Same None-vs-0 rule as candidates above.
+        "thread_count": None if thread_files is None else len(thread_files),
     }
 
 
@@ -149,7 +155,11 @@ def render(snap):
     """The ledger line's body (no leading `_chamnan · ` prefix decision made here beyond the
     literal text) -- callers wrap it as they see fit."""
     rc, mc = snap["record_count"], snap["memory_count"]
-    if rc == 0 and mc == 0 and snap["candidate_count"] in (None, 0):
+    # Every store has to be in this condition, or the line claims "nothing written yet" over a
+    # store that holds something -- which is worse than a missing clause, because it is a
+    # statement of fact that is false. Adding a store means adding it here.
+    if (rc == 0 and mc == 0 and snap["candidate_count"] in (None, 0)
+            and snap.get("thread_count") in (None, 0)):
         return "chamnan · 0 records · 0 memory entries · nothing written yet"
 
     parts = [
@@ -161,6 +171,12 @@ def render(snap):
     if snap["candidate_count"] is not None:
         cc = snap["candidate_count"]
         parts.append(f"{cc} awaiting review" if cc else "0 awaiting review")
+    # Only when there ARE threads: an empty threads/ directory says nothing worth the characters,
+    # unlike candidates, where "0 awaiting review" is itself the useful answer to "is there a
+    # queue building up".
+    tc = snap.get("thread_count")
+    if tc:
+        parts.append(f"{tc} thread{'s' if tc != 1 else ''}")
     return "chamnan · " + " · ".join(parts)
 
 
@@ -186,6 +202,7 @@ def inventory(root, now=None):
     lessons = _files(root, "memory", "lessons") or []
     rules = _files(root, "memory", "rules") or []
     cand = _files(root, "candidates") or []
+    thr = _files(root, "threads") or []
     ms = milestone_entries(root)
 
     def last(ts):
@@ -198,6 +215,7 @@ def inventory(root, now=None):
         ("memory/rules/", len(rules), last(_mtimes(rules))),
         ("milestones.md", len(ms), last(_milestone_timestamps(root))),
         ("candidates/", len(cand), last(_mtimes(cand))),
+        ("threads/", len(thr), last(_mtimes(thr))),
     ]
 
 

@@ -74,6 +74,10 @@ DEFAULT_CONFIG = {
     # recent TITLES are injected, so the file's length costs nothing per session. Not project
     # management: no status, no owner, no dates-as-deadlines. See lib/milestones.py.
     "milestones": True,
+    # Threads — one line of work followed across the sessions it took. Only OPEN threads' titles
+    # are injected, so a repository with fifty closed threads pays nothing for them. Threading is
+    # a pick from a declared list, never a string match. See lib/timeline.py.
+    "timeline": True,
     # The write-skills line and the ledger line (see lib/ledger.py). Found on the workspace this
     # plugin is developed against: the hook-written logs held 700 records, every skill-written
     # store held zero, and session_start.py never once told an agent that /chamnan:remember
@@ -164,7 +168,7 @@ def prune_sessions(root=None):
 
 def ensure(root=None):
     ws = workspace(root)
-    for sub in ("", "skills", "tools", "logs", "sessions",
+    for sub in ("", "skills", "tools", "logs", "sessions", "threads",
                 "memory", "memory/decisions", "memory/lessons", "memory/rules"):
         (ws / sub).mkdir(parents=True, exist_ok=True)
     # Merge rather than skip. A config written by an older version is missing every key added

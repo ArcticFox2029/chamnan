@@ -26,6 +26,7 @@ import redact  # noqa: E402
 import rollup  # noqa: E402
 import sessions  # noqa: E402
 import state  # noqa: E402
+import timeline  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -165,6 +166,18 @@ def main():
         recent = redact.scrub(milestones.recent_titles(root))
         if recent:
             out.append(section("Recent milestones", recent))
+
+    if cfg.get("timeline", True):
+        # OPEN threads only, titles only. A closed thread is history -- still readable, still
+        # answering `chamnan-timeline for <path>`, but no longer something to hold in mind before
+        # starting. "We have tried to fix this three times" is the line nobody can reconstruct
+        # from a git log, and it costs about as much to say as a milestone title.
+        open_threads = redact.scrub(timeline.open_titles(root))
+        if open_threads:
+            out.append(section(
+                "Open threads — lines of work still in flight",
+                open_threads + "\n\n_`chamnan-timeline show <name>` for one thread's history; "
+                               "`chamnan-timeline for <path>` for what has happened to one file._"))
 
     if cfg.get("resume", True):
         # Only the newest record, and only the part of it that is unfinished. "Done" is history and

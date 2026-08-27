@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""chamnan timeline — one line of work followed across the sessions it actually took.
+
+  chamnan timeline                          list declared threads (same as `list`)
+  chamnan timeline show <id>                one thread, every entry in order
+  chamnan timeline new <title>              DECLARE a thread — nothing else creates one
+  chamnan timeline add <id> <note>          append an entry to a declared thread
+  chamnan timeline add <id> <note> --files a.py,b.py    …and name what it touched
+  chamnan timeline close <id>               stop injecting it; the entries stay readable
+  chamnan timeline reopen <id>              the reverse
+  chamnan timeline for <path>               every entry that named this file
+
+<id> is a thread's slug, its filename, or its position in the list above (1, 2, 3 — computed
+fresh each call, never cached from an earlier one).
+
+**`add` refuses a thread that was never declared, and that is the point.** Guessing which thread an
+entry belongs to by matching words in its text fails on the first synonym — "auth", "login" and
+"the SSO work" are one thread written three ways, and a string matcher makes them three. So the
+declared list is the vocabulary, `new` is the only way to extend it, and an unrecognised name
+prints the list rather than quietly starting a fourth thread for the same subject.
+"""
+import sys
+from datetime import datetime
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import timeline  # noqa: E402
+import workspace as ws  # noqa: E402
+
+
+def _today():
+    return datetime.now().astimezone().strftime("%Y-%m-%d")
+
+
+def _list_threads(root, stream=sys.stdout):
+    found = timeline.threads(root)
+    if not found:
+        print("chamnan: no threads declared — `chamnan timeline new \"<title>\"` starts one",
+              file=stream)
+        return found
+    print(f"{len(found)} thread(s)\n", file=stream)
+    for i, p in enumerate(found, 1):
+        entries = timeline.entries_of(p)
+        last = entries[-1][0] if entries else "no entries yet"
+        status = timeline.status_of(p)
+        mark = "" if status == timeline.OPEN else "  [closed]"
+        print(f"[{i}] {timeline.title_of(p)}{mark}", file=stream)
+        print(f"    {len(entries)} entr{'y' if len(entries) == 1 else 'ies'} · last {last} "
+              f"· {p.name}", file=stream)
+    return found
+
+
+def cmd_list(root):
+    _list_threads(root)
+    return 0
+
+
+def _resolve_or_complain(root, ident):
+    path = timeline.resolve(root, ident)
+    if path is None:
+        print(f"chamnan: no thread matches {ident!r} — declared threads are:\n", file=sys.stderr)
+        _list_threads(root, stream=sys.stderr)
+        print("\n  `chamnan timeline new \"<title>\"` declares a new one.", file=sys.stderr)
+    return path
+
+
+def cmd_show(root, ident):
+    path = _resolve_or_complain(root, ident)
+    if path is None:
+        return 1
+    print(path.read_text(encoding="utf-8", errors="replace").rstrip())
+    return 0
+
+
+def cmd_new(root, title):
+    path, is_new = timeline.create(root, title, _today())
+    rel = path.relative_to(root)
+    if not is_new:
+        print(f"chamnan: that thread already exists — {rel}")
+        print(f"  add to it with `chamnan timeline add {path.stem} \"<what happened>\"`")
+        return 0
+    print(f"chamnan: declared — {rel}")
+    print(f"  add to it with `chamnan timeline add {path.stem} \"<what happened>\"`")
+    return 0
+
+
+def cmd_add(root, ident, note, files):
+    path = timeline.append(root, ident, _today(), note, files)
+    if path is None:
+        _resolve_or_complain(root, ident)
+        return 1
+    named = f" ({len(files)} file(s) named)" if files else ""
+    print(f"chamnan: recorded on {timeline.title_of(path)}{named} — {path.relative_to(root)}")
+    return 0
+
+
+def cmd_status(root, ident, status):
+    path = timeline.set_status(root, ident, status)
+    if path is None:
+        _resolve_or_complain(root, ident)
+        return 1
+    verb = "closed" if status == timeline.CLOSED else "reopened"
+    tail = (" — its entries stay readable and still answer `for`"
+            if status == timeline.CLOSED else "")
+    print(f"chamnan: {verb} {timeline.title_of(path)}{tail}")
+    return 0
+
+
+def cmd_for(root, target):
+    hits = timeline.for_path(root, target)
+    if not hits:
+        print(f"chamnan: nothing recorded against {target}")
+        return 0
+    print(f"{len(hits)} entr{'y' if len(hits) == 1 else 'ies'} naming {target}\n")
+    for path, date, note in hits:
+        print(f"  {date} — {note}")
+        print(f"           on {timeline.title_of(path)}")
+    return 0
+
+
+def main(argv):
+    root = ws.find_root()
+    if not ws.workspace(root).is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
+    if not ws.enabled("timeline", root):
+        print("chamnan: timeline is disabled in .chamnan/config.json")
+        return 0
+
+    if not argv or argv[0] in ("list", "-l", "--list"):
+        return cmd_list(root)
+    if argv[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+
+    cmd, *rest = argv
+    known = ("show", "new", "add", "close", "reopen", "for")
+    if cmd not in known:
+        print(f"chamnan: unknown command {cmd!r} — list, show <id>, new <title>, "
+              f"add <id> <note>, close <id>, reopen <id>, for <path>", file=sys.stderr)
+        return 2
+    if not rest:
+        needs = {"new": "a title", "for": "a path"}.get(cmd, "a thread — number or name from "
+                                                              "`chamnan timeline`")
+        print(f"chamnan: {cmd} needs {needs}", file=sys.stderr)
+        return 2
+
+    if cmd == "new":
+        return cmd_new(root, " ".join(rest))
+    if cmd == "for":
+        return cmd_for(root, rest[0])
+    if cmd == "show":
+        return cmd_show(root, rest[0])
+    if cmd in ("close", "reopen"):
+        return cmd_status(root, rest[0], timeline.CLOSED if cmd == "close" else timeline.OPEN)
+
+    ident, *note_parts = rest
+    files = []
+    if "--files" in note_parts:
+        at = note_parts.index("--files")
+        files = [f for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
+        note_parts = note_parts[:at]
+    if not note_parts:
+        print("chamnan: add needs a note — chamnan timeline add <id> \"<what happened>\"",
+              file=sys.stderr)
+        return 2
+    return cmd_add(root, ident, " ".join(note_parts), files)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

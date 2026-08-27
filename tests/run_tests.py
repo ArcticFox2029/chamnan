@@ -42,6 +42,7 @@ import milestones  # noqa: E402
 import schema  # noqa: E402
 import sessions  # noqa: E402
 import state as state_mod  # noqa: E402
+import timeline  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -1838,7 +1839,7 @@ inv = ledger.inventory(mem)
 inv_by_label = {label: (count, ts) for label, count, ts in inv}
 check("inventory counts every store, in a fixed set of labels",
       set(inv_by_label) == {"sessions/", "memory/decisions/", "memory/lessons/",
-                            "memory/rules/", "milestones.md", "candidates/"})
+                            "memory/rules/", "milestones.md", "candidates/", "threads/"})
 check("inventory counts the one decision", inv_by_label["memory/decisions/"][0] == 1)
 check("inventory counts the one lesson", inv_by_label["memory/lessons/"][0] == 1)
 check("A STORE THAT DOES NOT EXIST YET SHOWS 0, NOT AN ERROR", inv_by_label["candidates/"] == (0, None))
@@ -1955,6 +1956,133 @@ check("the injected half does not mention Impact",
       "## Impact" not in rendered_map[:rendered_map.index("## Full Detail")])
 check("impact names the caller", "pay/model.py" in rendered_map)
 shutil.rmtree(imp_repo, ignore_errors=True)
+
+# ---------------------------------------------------------------- timeline threads (Stage 13, 1.6.0)
+# The design being pinned here is that threading is a PICK FROM A DECLARED LIST, never a string
+# match: "auth", "login" and "the SSO work" are one thread written three ways, and a matcher that
+# guessed would make them three. So `append()` refusing an undeclared thread is the load-bearing
+# behaviour, not an input-validation nicety.
+tl_root = Path(tempfile.mkdtemp(prefix="chamnan-timeline-")).resolve()
+(tl_root / ".git").mkdir()
+ws.ensure(tl_root)
+
+check("a workspace with no threads lists none", timeline.threads(tl_root) == [])
+check("open_titles is empty when there are no threads", timeline.open_titles(tl_root) == "")
+check("APPEND REFUSES A THREAD THAT WAS NEVER DECLARED",
+      timeline.append(tl_root, "auth", "2026-08-01", "something happened") is None)
+check("refusing to append also wrote nothing", timeline.threads(tl_root) == [])
+
+t_path, is_new = timeline.create(tl_root, "Auth migration", "2026-08-01")
+check("create() declares a thread", is_new and t_path.is_file())
+check("the declared thread carries its title", timeline.title_of(t_path) == "Auth migration")
+check("a new thread is open", timeline.status_of(t_path) == timeline.OPEN)
+again, is_new2 = timeline.create(tl_root, "Auth migration", "2026-08-02")
+check("declaring the same thread twice is not new", not is_new2 and again == t_path)
+
+timeline.append(tl_root, "auth-migration", "2026-08-01", "first attempt, rolled back",
+                ["src/auth.py", "src/api.py"])
+timeline.append(tl_root, "auth-migration", "2026-08-14", "second attempt held", ["src/auth.py"])
+entries = timeline.entries_of(t_path)
+check("entries are read back oldest first", [e[0] for e in entries] == ["2026-08-01", "2026-08-14"])
+check("an entry's note round-trips", entries[0][1] == "first attempt, rolled back")
+check("an entry's Files: line round-trips as a list", entries[0][2] == ["src/auth.py", "src/api.py"])
+check("declaring twice did not lose the entries appended in between", len(entries) == 2)
+
+# Position, slug and filename all resolve to the same thread. The number is computed fresh, which
+# is why a listing is safe to read numbers off — see lib/candidates.py for the same choice.
+check("a thread resolves by slug", timeline.resolve(tl_root, "auth-migration") == t_path)
+check("a thread resolves by filename", timeline.resolve(tl_root, "auth-migration.md") == t_path)
+check("a thread resolves by 1-based position", timeline.resolve(tl_root, "1") == t_path)
+check("an out-of-range position resolves to nothing", timeline.resolve(tl_root, "99") is None)
+check("an unknown name resolves to nothing", timeline.resolve(tl_root, "login") is None)
+
+# The join. `for_path` is what lets an impact question carry "last time this changed, it was
+# rolled back" -- exact path, or a suffix of one, never a fuzzy stem match.
+hits = timeline.for_path(tl_root, "src/auth.py")
+check("for_path finds every entry naming the file", len(hits) == 2)
+check("FOR_PATH RETURNS NEWEST FIRST", [h[1] for h in hits] == ["2026-08-14", "2026-08-01"])
+check("for_path finds a file named in only one entry",
+      len(timeline.for_path(tl_root, "src/api.py")) == 1)
+check("for_path on an unmentioned file finds nothing",
+      timeline.for_path(tl_root, "src/unrelated.py") == [])
+check("for_path does NOT fuzzy-match a bare stem onto a different path",
+      timeline.for_path(tl_root, "vendor/auth.py") == [])
+
+timeline.create(tl_root, "Payment retries", "2026-08-20")
+injected = timeline.open_titles(tl_root)
+check("open_titles names every open thread",
+      "Auth migration" in injected and "Payment retries" in injected)
+timeline.set_status(tl_root, "payment-retries", timeline.CLOSED)
+closed_out = timeline.open_titles(tl_root)
+check("A CLOSED THREAD LEAVES THE INJECTION", "Payment retries" not in closed_out)
+check("the open one is still injected", "Auth migration" in closed_out)
+check("a closed thread is still readable",
+      len(timeline.entries_of(timeline.resolve(tl_root, "payment-retries"))) == 0)
+timeline.set_status(tl_root, "payment-retries", timeline.OPEN)
+check("reopening puts it back", "Payment retries" in timeline.open_titles(tl_root))
+
+# A thread written by hand with no Status: line at all must behave like the common case rather
+# than vanish -- the field is additive, same rule every other new field in this plugin follows.
+handwritten = timeline.directory(tl_root) / "by-hand.md"
+handwritten.write_text("# Written by hand\n\n## 2026-08-01 — a note\n", encoding="utf-8")
+check("a thread with no Status line reads as open", timeline.status_of(handwritten) == timeline.OPEN)
+check("a hand-written thread is injected like any other",
+      "Written by hand" in timeline.open_titles(tl_root))
+timeline.set_status(tl_root, "by-hand", timeline.CLOSED)
+check("set_status adds a Status line to a file that had none",
+      timeline.status_of(handwritten) == timeline.CLOSED)
+check("adding the Status line did not eat the title", timeline.title_of(handwritten) == "Written by hand")
+check("adding the Status line did not eat the entry", len(timeline.entries_of(handwritten)) == 1)
+
+# The ledger has to count every store it can see, or its "nothing written yet" is a false
+# statement rather than a missing clause.
+led_root = Path(tempfile.mkdtemp(prefix="chamnan-ledger-threads-")).resolve()
+(led_root / ".git").mkdir()
+ws.ensure(led_root)
+check("an empty threads/ still reads as nothing written yet",
+      "nothing written yet" in ledger.line(led_root))
+timeline.create(led_root, "A thread", "2026-08-01")
+check("ONE THREAD STOPS THE LEDGER SAYING NOTHING IS WRITTEN",
+      "nothing written yet" not in ledger.line(led_root))
+check("the ledger names the thread count", "1 thread" in ledger.line(led_root))
+timeline.create(led_root, "Another", "2026-08-01")
+check("the ledger pluralises the thread count", "2 threads" in ledger.line(led_root))
+bare = Path(tempfile.mkdtemp(prefix="chamnan-ledger-bare-")).resolve()
+(bare / ".git").mkdir()
+(bare / ".chamnan").mkdir()
+check("a 1.4.0-shaped workspace with no threads/ is unaffected",
+      ledger.snapshot(bare)["thread_count"] is None)
+check("and still reads as nothing written yet", "nothing written yet" in ledger.line(bare))
+shutil.rmtree(bare, ignore_errors=True)
+shutil.rmtree(led_root, ignore_errors=True)
+
+# The CLI's refusal is the design decision made visible: an unknown name prints the declared list
+# rather than quietly starting a second thread for the same subject.
+def run_timeline(root, *args):
+    return subprocess.run([str(ROOT / "bin" / "chamnan-timeline"), *args],
+                          capture_output=True, text=True, cwd=root)
+
+cli_root = Path(tempfile.mkdtemp(prefix="chamnan-timeline-cli-")).resolve()
+(cli_root / ".git").mkdir()
+ws.ensure(cli_root)
+out = run_timeline(cli_root, "new", "Auth migration")
+check("chamnan-timeline new declares a thread", out.returncode == 0 and "declared" in out.stdout)
+out = run_timeline(cli_root, "add", "auth-migration", "rolled back", "--files", "src/auth.py")
+check("chamnan-timeline add records an entry", out.returncode == 0 and "recorded" in out.stdout)
+out = run_timeline(cli_root, "add", "login", "same work, different word")
+check("ADD ON AN UNDECLARED NAME FAILS", out.returncode == 1)
+check("and prints the declared list so the right one can be picked",
+      "Auth migration" in out.stderr)
+check("no second thread was created for the synonym", len(timeline.threads(cli_root)) == 1)
+out = run_timeline(cli_root, "for", "src/auth.py")
+check("chamnan-timeline for joins on the file", "rolled back" in out.stdout)
+out = run_timeline(cli_root, "for", "src/never-touched.py")
+check("chamnan-timeline for says so plainly when nothing matches",
+      out.returncode == 0 and "nothing recorded" in out.stdout)
+out = run_timeline(cli_root, "add", "auth-migration")
+check("add with no note is refused", out.returncode == 2)
+shutil.rmtree(cli_root, ignore_errors=True)
+shutil.rmtree(tl_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- repeated workflows
 # scratch_watch catches the same SCRIPT written a third time. This catches the thing that leaves
