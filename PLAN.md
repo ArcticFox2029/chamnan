@@ -16,7 +16,7 @@
 > Reply to the owner in **Thai** — the repository's `CLAUDE.md` says so. Code comments and
 > docstrings stay in English, no exceptions.
 
-**Status:** Stage 1 complete, verified against the live workspace. Awaiting the owner's go for Stage 2.
+**Status:** Stages 1–2 complete, both verified against the live workspace. Awaiting the owner's go for Stage 3.
 **Protocol:** every stage is `do → pause → wait for approval`. 17 stages, 1.5.0 → 1.6.0.
 **Source tree:** `Work-Mode/chamnan/` (this directory), currently v1.4.0. It is its own git
 repository, separate from Lumin-App's — commit here, not at the repository root.
@@ -232,7 +232,7 @@ account can happen at any stage boundary — this file is the state.
 |---|---|---|
 | 0 | Plan and handoff | ✅ done |
 | 1 | Two lines in, and stop losing what is written | ✅ done |
-| 2 | Evidence, and unblock the workflow detector | ⬜ |
+| 2 | Evidence, and unblock the workflow detector | ✅ done |
 | 3 | Candidates, provenance, and the nudge | ⬜ |
 | 4 | Inventory, metadata, and the 1.4.0 defects | ⬜ |
 | 5 | Release 1.5.0 | ⬜ |
@@ -311,7 +311,7 @@ chamnan already is. **STOP.**
 
 ---
 
-#### Stage 2 — Evidence, and unblock the workflow detector ⬜
+#### Stage 2 — Evidence, and unblock the workflow detector ✅ COMPLETE
 Do the `signature()` fix **first**: it repairs a feature that already ships.
 
 **Files:** `lib/workflows.py`, `hooks/scratch_watch.py`, `tests/run_tests.py`
@@ -333,7 +333,47 @@ record with no `kind` still reads · new fields are absent rather than `null` wh
 path in the hook opens a file outside the workspace.
 
 **Verify:** suite green; `repeated()` against the live log now returns something, or explain why
-not. **STOP.**
+not.
+
+**Done. Honest result: `repeated()` still returns `None` against the live log, and here is exactly
+why — neither reason is a defect in this stage's fix.**
+
+```
+records in the bounded window:              400
+distinct calendar days in that window:         1   (all from 2026-08-27)
+repeated() requires >= REPEAT_AT (3) distinct days before it looks at anything else
+```
+
+1. **The window is bounded at 400 entries and today was active enough to fill it alone.**
+   `repeated()`'s very first line is `if len(runs) < REPEAT_AT: return None` — a sequence has to
+   recur on **three separate calendar days**, and a single busy day, however repetitive, can never
+   satisfy that on its own. This is true with or without keyword noise; it was already true before
+   this stage and will stay true until real multi-day history accumulates in the window.
+2. **The ~103 keyword-junk entries (26% of the log) already on disk are not retroactively cleaned.**
+   `signature()`'s fix stops NEW junk from being written; it does not rewrite what is already
+   there, on purpose — the same "no migration that can fail" rule Stage 1 applied to `STATE.md`,
+   and for the same reason: a rewrite that touches 400 lines of a log is a rewrite that can go
+   wrong, and nothing here needs it to. The junk ages out of the 400-entry window on its own as
+   real activity continues.
+
+The fix is verified directly instead: every string in `KEYWORDS` now yields no signature, a real
+`for f in *.py; do echo "$f"; done` produces no keyword signatures, and — the actual measurement
+that matters — replaying the mechanism forward from here will accumulate clean signal starting
+today rather than replaying the same 26%-junk pattern into every future day's run. `repeated()`
+returning something requires clean data across three real days, which by definition cannot be
+manufactured or verified in one sitting; it is what Stage 12 (§12) is watching for.
+
+One real limitation found and documented, not fixed: `; do pytest; done` puts the real command
+right after the keyword `do` in the same semicolon fragment, and `signature()` only ever looks at
+a fragment's first word — so the fragment drops entirely rather than yielding `pytest`. Recovering
+it would mean knowing which keywords precede a COMMAND (`do`, `then`, `else`) versus an EXPRESSION
+(`for`, `while`, `if`), and a wrong guess there suggests the wrong routine — the same "fail quiet"
+trade-off `signature()` already makes for `docker --context prod compose up`. Out of scope for this
+stage; noted in the docstring for whoever revisits sequence detection.
+
+Suite: 462/462, up from 441 (21 new checks — keyword filtering, `kind` on both logs and its
+backward-compat default, `tool`/`interrupted`/`file` evidence fields, and a canary proving a named
+file path is recorded as a string and never opened). **STOP.**
 
 ---
 

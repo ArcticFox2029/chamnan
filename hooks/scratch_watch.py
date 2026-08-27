@@ -82,12 +82,16 @@ def notice_workflow(payload, wsdir):
     sigs = workflows.signatures(command)
     if not sigs:
         return False
+    # There is no exit code in a Bash tool_response -- only stdout, stderr and interrupted -- so
+    # this is the one honest piece of evidence about whether the call went cleanly.
+    interrupted = bool((payload.get("tool_response") or {}).get("interrupted"))
 
     log = wsdir / "logs" / "commands.jsonl"
     before = workflows.repeated(workflows.record(
         log, [], datetime.now().astimezone().isoformat(timespec="seconds")))
     history = workflows.record(
-        log, sigs, datetime.now().astimezone().isoformat(timespec="seconds"))
+        log, sigs, datetime.now().astimezone().isoformat(timespec="seconds"),
+        tool="Bash", interrupted=interrupted)
     found = workflows.repeated(history)
     if not found:
         return False
@@ -123,6 +127,9 @@ def main():
     if len(fp) < MIN_TOKENS:
         return 0
 
+    tool_name = payload.get("tool_name") or ""
+    file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
+
     log = wsdir / "logs" / "scratch.jsonl"
     log.parent.mkdir(parents=True, exist_ok=True)
     prior = []
@@ -133,12 +140,23 @@ def main():
             except json.JSONDecodeError:
                 continue
 
-    matches = [p for p in prior if jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
-    prior.append({
+    # A record with no `kind` predates this field and is a scratch fingerprint by construction --
+    # nothing else was ever written here before now -- so missing reads as "scratch". Anything
+    # tagged something else must not be treated as one, the same rule workflows._runs() applies to
+    # commands.jsonl: a future record shape sharing this log must not silently join a comparison it
+    # was not written for.
+    matches = [p for p in prior
+               if p.get("kind", "scratch") == "scratch" and jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
+    entry = {
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "kind": "scratch",
+        "tool": tool_name,
         "fp": sorted(fp)[:120],
         "head": headline(text),
-    })
+    }
+    if file_path:
+        entry["file"] = file_path
+    prior.append(entry)
     log.write_text("\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n",
                    encoding="utf-8")
 

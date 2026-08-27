@@ -40,6 +40,19 @@ NOISE = {
     "grep", "find", "sed", "awk", "less", "more", "man", "history", "env", "date",
 }
 
+# 🐛 [2026-08-27] Shell reserved words, not programs — a DIFFERENT reason for dropping a token than
+# NOISE, so kept as its own set rather than folded in. `_SPLIT` breaks a command on `;`, so
+# `for f in *; do echo "$f"; done` becomes three parts whose first words are `for`, `do` and `done`;
+# each parsed clean as a "program name" and was recorded as a signature. Measured on the live
+# workspace this module was developed against: `do` had appeared 50 times in commands.jsonl, `for`
+# 14, `done` 10, `break` 9, `then` 5 — about a fifth of the log was shell syntax, not steps of a
+# workflow, and it drowned the detector this module exists to run: `repeated()` found nothing at
+# all against that log until this set existed.
+KEYWORDS = {
+    "do", "done", "then", "fi", "else", "elif", "for", "while", "if", "case", "esac",
+    "select", "until", "in", "break", "continue", "return", "function", "time", "coproc",
+}
+
 MIN_LENGTH = 3        # distinct signatures before a run counts as a workflow
 REPEAT_AT = 3         # say something on the third occurrence, matching scratch_watch
 WINDOW = 12           # how far back a run is assembled from
@@ -64,7 +77,14 @@ def signature(command):
     if not parts:
         return ""
     prog = parts[0].rsplit("/", 1)[-1]
-    if not _WORD.match(prog) or prog in NOISE:
+    if not _WORD.match(prog) or prog in NOISE or prog in KEYWORDS:
+        # Known limitation, same shape as the flag one below: `; do pytest;` is one semicolon
+        # fragment whose FIRST word is the keyword "do", so a real command right after it is never
+        # reached -- the fragment drops instead of yielding "pytest". Recovering it would mean
+        # knowing which keywords syntactically precede a COMMAND (`do`, `then`, `else`) versus an
+        # EXPRESSION (`for`, `while`, `if` — where the next word is a variable or a condition, not
+        # a program), and guessing wrong there suggests the wrong routine. The loop's real command
+        # going undetected this one time is the smaller cost.
         return ""
     if prog in _SUBCOMMAND_TOOLS:
         # Known limitation: a global flag that takes a VALUE before the subcommand
@@ -96,8 +116,19 @@ def signatures(command_text):
     return out
 
 
-def record(log_path, sigs, when):
-    """Append signatures to the bounded log and return the full history."""
+def record(log_path, sigs, when, tool=None, interrupted=False):
+    """Append signatures to the bounded log and return the full history.
+
+    `tool` and `interrupted` are evidence about the ONE Bash call that produced every signature in
+    `sigs` — they are the same call, so the same evidence applies to each. `interrupted` is written
+    only when true: there is no exit code in a Bash tool_response (confirmed against another
+    installed plugin's own comment on this exact fact — only stdout, stderr and interrupted exist),
+    so recording `False` on every entry would be noise dressed as data, not evidence.
+
+    Every new entry carries `kind: "command"` so a reader can tell it apart from any other record
+    shape this log ever holds. An entry already on disk with no `kind` at all reads as `"command"`
+    by the readers below — this is not a migration, nothing here rewrites what already exists.
+    """
     prior = []
     if log_path.is_file():
         for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -106,7 +137,12 @@ def record(log_path, sigs, when):
             except json.JSONDecodeError:
                 continue
     for sig in sigs:
-        prior.append({"at": when, "sig": sig})
+        entry = {"at": when, "kind": "command", "sig": sig}
+        if tool:
+            entry["tool"] = tool
+        if interrupted:
+            entry["interrupted"] = True
+        prior.append(entry)
     prior = prior[-KEEP_ENTRIES:]
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("\n".join(json.dumps(p, ensure_ascii=False) for p in prior) + "\n",
@@ -122,6 +158,12 @@ def _runs(history):
     """
     runs, current, day = [], [], None
     for entry in history:
+        # A record with no `kind` predates this field and is a command signature by construction
+        # (nothing else was ever written to this log before now) -- so missing reads as "command",
+        # not as "unknown, skip it". Anything explicitly tagged something ELSE is a future record
+        # shape this function was not built to sequence and must not silently join a run.
+        if entry.get("kind", "command") != "command":
+            continue
         d = (entry.get("at") or "")[:10]
         if d != day:
             if current:

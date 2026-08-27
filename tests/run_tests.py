@@ -1409,6 +1409,113 @@ check("a malformed line does not break reading",
       len(workflows.record(wf, [], "2026-08-01T10:00:00+07:00")) == workflows.KEEP_ENTRIES)
 shutil.rmtree(wf.parent, ignore_errors=True)
 
+# ---------------------------------------------------------------- shell keywords are not programs
+# Measured on the live workspace this module was developed against: `do` had appeared 50 times in
+# commands.jsonl, `for` 14, `done` 10 -- about a fifth of the log was shell syntax, not workflow
+# steps, and repeated() found nothing at all against that log until KEYWORDS existed.
+check("A FOR-LOOP HEADER YIELDS NO SIGNATURE", workflows.signature("for f in *.py") == "")
+check("A do KEYWORD YIELDS NO SIGNATURE", workflows.signature("do echo \"$f\"") == "")
+check("A done KEYWORD YIELDS NO SIGNATURE", workflows.signature("done") == "")
+check("every listed shell keyword yields no signature",
+      all(workflows.signature(kw) == "" for kw in workflows.KEYWORDS))
+check("a real program whose name happens to start with a keyword still signs",
+      workflows.signature("forever start app.js") == "forever")
+
+loop_cmd = 'for f in *.py; do echo "$f"; done'
+loop_sigs = workflows.signatures(loop_cmd)
+check("A REAL FOR-LOOP PRODUCES NO KEYWORD SIGNATURES",
+      not any(s in workflows.KEYWORDS for s in loop_sigs))
+# Known limitation, matching the existing one documented for `docker --context prod compose up`:
+# `; do <command>;` is one semicolon-delimited fragment whose FIRST word is the keyword "do", so
+# the command after it is never reached -- the whole fragment drops rather than yielding "pytest".
+# This is the same "fail quiet" trade-off already made elsewhere in this function: recovering the
+# command after a keyword would need to know which keywords syntactically precede one (`do`,
+# `then`, `else`) versus an expression (`for`, `while`, `if`), and a wrong guess there suggests the
+# wrong routine, which is worse than the loop's real command going undetected this one time.
+check("a real command directly after a `do` keyword is NOT recovered -- known limitation",
+      workflows.signatures('for f in *; do pytest "$f"; done') == [])
+check("the same loop written WITHOUT a keyword prefix still signs normally",
+      workflows.signatures('pytest "$f"') == ["pytest"])
+
+# ---------------------------------------------------------------- kind, and evidence fields
+# Added so a future record shape sharing either log cannot be silently treated as this one --
+# see lib/workflows.py's record()/_runs() docstrings for the exact failure this prevents.
+kind_wf = Path(tempfile.mkdtemp(prefix="chamnan-kind-")) / "commands.jsonl"
+kind_hist = workflows.record(kind_wf, ["pytest"], "2026-08-01T10:00:00+07:00", tool="Bash")
+check("a new record carries kind=command", kind_hist[-1]["kind"] == "command")
+check("a new record carries the tool that produced it", kind_hist[-1]["tool"] == "Bash")
+check("interrupted is absent, not False, when the call was not interrupted",
+      "interrupted" not in kind_hist[-1])
+kind_hist2 = workflows.record(kind_wf, ["pytest"], "2026-08-01T10:05:00+07:00",
+                              tool="Bash", interrupted=True)
+check("interrupted is recorded true when the payload says so", kind_hist2[-1]["interrupted"] is True)
+
+# A 1.4.0 record on disk has no "kind" at all -- it must still read as a command signature, with
+# no rewrite of the file that holds it.
+legacy_command_log = [{"at": "2026-08-01T09:00:00+07:00", "sig": "pytest"}]
+check("a pre-Stage-2 record with no kind still counts as a command",
+      len(workflows._runs(legacy_command_log)[0]) == 1)
+
+# A record explicitly tagged as something else must never join a command sequence, even though
+# nothing writes a non-"command" kind into this log today -- this is the forward guard, not a
+# behaviour anything currently exercises in production.
+mixed_log = [{"at": "2026-08-01T09:00:00+07:00", "sig": "pytest", "kind": "command"},
+             {"at": "2026-08-01T09:01:00+07:00", "sig": "should-not-count", "kind": "something-else"}]
+check("an entry of a different kind is excluded from the run",
+      workflows._runs(mixed_log) == [["pytest"]])
+shutil.rmtree(kind_wf.parent, ignore_errors=True)
+
+# scratch.jsonl gains the same kind tag, plus which tool wrote the entry and (for Write/Edit) the
+# file path -- never fabricated, and file is simply absent for a Bash heredoc, which has none.
+scratch_fixture = Path(tempfile.mkdtemp(prefix="chamnan-scratch-kind-")).resolve()
+(scratch_fixture / ".git").mkdir()
+ws.ensure(scratch_fixture)
+# Real, varied content -- MIN_TOKENS requires at least 8 distinct identifiers of 4+ characters,
+# and a repeated filler character collapses to one token, which silently defeats the fixture.
+rich_script = ("import json\nfrom pathlib import Path\n"
+              "records = json.loads(Path('usage.json').read_text())\n"
+              "total_cost = sum(entry['cost'] for entry in records['rows'])\n"
+              "call_count = sum(entry['calls'] for entry in records['rows'])\n"
+              "print(f'cost={total_cost} calls={call_count}')\n")
+write_payload = {"tool_name": "Write",
+                 "tool_input": {"file_path": "/tmp/probe.py", "content": rich_script}}
+run1 = subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(write_payload),
+                      capture_output=True, text=True, cwd=scratch_fixture)
+scratch_log_path = scratch_fixture / ".chamnan" / "logs" / "scratch.jsonl"
+scratch_entries = [json.loads(l) for l in scratch_log_path.read_text(encoding="utf-8").splitlines()
+                   if l.strip()] if scratch_log_path.is_file() else []
+check("scratch_watch actually wrote an entry for a Write call", len(scratch_entries) == 1)
+if scratch_entries:
+    check("a scratch entry carries kind=scratch", scratch_entries[-1].get("kind") == "scratch")
+    check("a scratch entry names the tool that wrote it", scratch_entries[-1].get("tool") == "Write")
+    check("a scratch entry from Write records the file path",
+          scratch_entries[-1].get("file") == "/tmp/probe.py")
+
+bash_payload = {"tool_name": "Bash",
+               "tool_input": {"command": f"python3 - <<'PY'\n{rich_script}print(2)\nPY"}}
+subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(bash_payload),
+               capture_output=True, text=True, cwd=scratch_fixture)
+scratch_entries2 = [json.loads(l) for l in scratch_log_path.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+bash_entry = scratch_entries2[-1]
+check("a Bash heredoc scratch entry names Bash as the tool", bash_entry.get("tool") == "Bash")
+check("a Bash heredoc scratch entry has no file field -- there is no file to name",
+      "file" not in bash_entry)
+
+# The hook must never touch anything outside its own workspace, regardless of what evidence it now
+# gathers from the payload -- file paths in tool_input are read as STRINGS for the log, never opened.
+canary = Path(tempfile.mkdtemp(prefix="chamnan-canary-")) / "outside.txt"
+canary.write_text("must never be read or written by scratch_watch")
+canary_before = canary.read_bytes()
+outside_payload = {"tool_name": "Write",
+                   "tool_input": {"file_path": str(canary), "content": rich_script.replace("cost", "spend")}}
+subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(outside_payload),
+               capture_output=True, text=True, cwd=scratch_fixture)
+check("a file path named in evidence is recorded, never opened",
+      canary.read_bytes() == canary_before)
+shutil.rmtree(scratch_fixture, ignore_errors=True)
+shutil.rmtree(canary.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- milestones
 # A git log says what changed; a milestone says why it was worth doing and which areas moved
 # together. Not project management: no status, no owner, no due date.
