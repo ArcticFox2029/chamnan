@@ -148,6 +148,10 @@ HASH_IS_DIRECTIVE = {"c", "cs", "swift"}
 # and Objective-C projects. Without stripping it the boilerplate check never fires, because the
 # text starts with "AppDelegate.swift" rather than "Copyright".
 FILENAME_LINE = re.compile(r"^[\w.-]+\.[a-z]{1,5}\s*$", re.I)
+# The dash, colon or pipe that joined a restated filename to the sentence after it. Only ever
+# applied immediately after that filename was removed, so a summary that legitimately opens
+# with a dash is untouched.
+SELF_NAME_SEPARATOR = re.compile(r"^\s*[—–\-:|]+\s*")
 # Lines that open a file without saying anything about it — including the import block, which on a
 # Java or TypeScript file sits between the licence header and the class doc. Leaving imports out
 # meant the reader stopped there: 250 of 268 gson files and 401 of 455 type-fest files came back
@@ -226,6 +230,13 @@ def leading_comment(source, lang=None):
         first_word = text.split(" ", 1)[0] if text else ""
         if FILENAME_LINE.match(first_word):
             text = text[len(first_word):].strip()
+            # 🐛 [2026-08-28] ...and the separator it left behind. `# cve.sh — ตรวจ CVE ชุดนี้`
+            # became `— ตรวจ CVE ชุดนี้`, which the index then rendered as `path (137L, 2fn) — —
+            # ตรวจ…`: two dashes and no words between them. Found by rebuilding a real repository's
+            # map and reading the diff rather than the tests. The name is dropped because the row
+            # already shows it; the punctuation that joined it to the sentence has nothing left to
+            # join and must go with it.
+            text = SELF_NAME_SEPARATOR.sub("", text, count=1)
         # A pragma is not a licence and it is not a description either -- it is a switch that
         # happens to be spelled as a comment, and it sits on the FIRST line, above the real one.
         # `# frozen_string_literal: true` opens virtually every modern Ruby file, and matching it

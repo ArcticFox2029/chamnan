@@ -293,6 +293,14 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.7.3
+
+**A restated filename took its separator with it.** A header that opens `# cve.sh — checks the CVE
+list` has the filename dropped, because the index row already shows it — but the dash that joined it
+to the sentence was left behind, so the row rendered as `path (137L, 2fn) — — checks the CVE list`:
+two dashes with nothing between them. Found by rebuilding a real repository's map and reading the
+diff rather than by a test, which is why there is now a test.
+
 ## What's new in 1.7.2
 
 **An update is offered, never taken.** When a newer version is already sitting in the marketplace

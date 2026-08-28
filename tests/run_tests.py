@@ -2947,6 +2947,22 @@ for lang, (fixture, minimum) in sorted(MIN_YIELD.items()):
         got = len(ff) + len(cc)
     check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
 
+# ---------------------------------------------------------------- a restated filename's separator
+# Found by rebuilding a real repository's map and reading the diff, not by a test. A header that
+# opens `# cve.sh — ตรวจ CVE ชุดนี้` had the filename stripped (the row already shows it) and the
+# dash left behind, so the index rendered `path (137L, 2fn) — — ตรวจ…`: two dashes with nothing
+# between them.
+for opener, want in (
+    ("# cve.sh — checks the CVE list\n", "checks the CVE list"),
+    ("# cve.sh - checks the CVE list\n", "checks the CVE list"),
+    ("# cve.sh | checks the CVE list\n", "checks the CVE list"),
+    # A summary that legitimately opens with a dash, after no filename, is left alone.
+    ("# notafile — checks the CVE list\n", "notafile — checks the CVE list"),
+    ("# Checks the CVE list\n", "Checks the CVE list"),
+):
+    got = mapper.extract_regex(opener, "sh")[0]
+    check(f"{opener.strip()[:34]!r} -> {want[:28]!r}", got == want)
+
 # ---------------------------------------------------------------- explaining the injection
 # "Why is this in my context, and what is it costing?" had no answer at all, which made every
 # budget decision an argument instead of a measurement. The accounting is a side effect of building
