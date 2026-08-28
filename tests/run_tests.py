@@ -1174,12 +1174,18 @@ check("the ledger flag actually turns the lines off",
       "chamnan ·" not in run_hook("session_start.py", {}))
 (fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
 
+# 🎯 [changed 2026-08-28] This used to assert that a repository with no workspace produced NO
+# output at all. That was the behaviour a teammate hit: install the plugin, open a new project,
+# and chamnan is invisible and creates nothing, so the write skills have nowhere to write. A
+# repository now gets its scaffold on the first session. The silence that still matters — a
+# directory that is not a repository at all — is checked in the first-session section above.
 no_workspace = Path(tempfile.mkdtemp(prefix="chamnan-no-ws-"))
 (no_workspace / ".git").mkdir()
 no_ws_out = subprocess.run([str(ROOT / "hooks" / "session_start.py")], input="{}",
                            capture_output=True, text=True, cwd=no_workspace).stdout
-check("neither new line is emitted where there is no chamnan workspace at all",
-      "chamnan ·" not in no_ws_out and no_ws_out.strip() == "")
+check("a repository with no workspace is given one on its first session",
+      (no_workspace / ".chamnan" / "memory" / "decisions").is_dir())
+check("...and is told so rather than left to guess", "just been created" in no_ws_out)
 
 # ---------------------------------------------------------------- pin the live workspace's rules
 # The concrete instance of the bug this stage exists to fix: on the ACTUAL Lumin-App workspace,
@@ -2940,6 +2946,44 @@ for lang, (fixture, minimum) in sorted(MIN_YIELD.items()):
         _dd, ff, cc, _kk = mapper.extract_regex(fixture, lang)
         got = len(ff) + len(cc)
     check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
+
+# ---------------------------------------------------------------- first session in a new repo
+# A teammate installed the plugin, opened a new project in VS Code, and got nothing: the workspace
+# was only ever created by chamnan-map/promote/candidates, so the hook returned in silence and
+# every write skill had nowhere to write.
+HOOK = ROOT / "hooks" / "session_start.py"
+
+newrepo = Path(tempfile.mkdtemp()) / "proj"
+newrepo.mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=newrepo, capture_output=True)
+(newrepo / "app.py").write_text("print(1)\n", encoding="utf-8")
+
+first = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                       cwd=newrepo).stdout
+check("the first session creates the workspace", (newrepo / ".chamnan").is_dir())
+for sub in ("memory/decisions", "memory/lessons", "memory/rules", "sessions", "threads",
+            "skills", "tools", "logs"):
+    check(f"the scaffold includes {sub}/", (newrepo / ".chamnan" / sub).is_dir())
+check("the scaffold includes config.json", (newrepo / ".chamnan" / "config.json").is_file())
+check("the first session says the workspace was created", "just been created" in first)
+check("the first session points at bootstrap for the index", "/chamnan:bootstrap" in first)
+
+second = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                        cwd=newrepo).stdout
+check("the welcome is said once, not every session", "just been created" not in second)
+check("the ledger line still appears on later sessions", "chamnan ·" in second)
+
+# find_root falls back to the current directory when there is no VCS marker, so without this guard
+# the hook would leave a .chamnan/ in whatever directory a session happened to open.
+plain = Path(tempfile.mkdtemp()) / "notarepo"
+plain.mkdir(parents=True)
+(plain / "a.txt").write_text("x\n", encoding="utf-8")
+out = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                     cwd=plain)
+check("a directory that is not a repository is left alone", not (plain / ".chamnan").exists())
+check("...and nothing is printed there", out.stdout.strip() == "")
+shutil.rmtree(newrepo.parent, ignore_errors=True)
+shutil.rmtree(plain.parent, ignore_errors=True)
 
 # ---------------------------------------------------------------- the shared pruned walk
 # lib/tree.py replaced nine separate full-tree rglob passes per map. On a 224-file repository that

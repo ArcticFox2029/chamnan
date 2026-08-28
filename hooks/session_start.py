@@ -121,8 +121,26 @@ def main():
         pass
     root = ws.find_root()
     wsdir = ws.workspace(root)
-    if not wsdir.is_dir():
-        return 0                      # not a chamnan repo; stay silent
+    first_session = not wsdir.is_dir()
+    if first_session:
+        # 🐛 [2026-08-28, owner: a teammate installed the plugin, opened a new project in VS Code,
+        # and got nothing at all] The workspace used to be created only by chamnan-map,
+        # chamnan-promote and chamnan-candidates. So on a repository nobody had run a command in
+        # yet, this hook returned here in silence: no directories, no config.json, and no mention
+        # that the plugin existed. Every write skill then had nowhere to write, which is why
+        # `memory/` and the rest never appeared.
+        #
+        # The scaffold is created up front instead, so the places to write exist before anyone
+        # needs them, and the index and the content are filled in later by whoever gets there.
+        # Only inside a version-controlled repository: find_root falls back to the current
+        # directory when there is no VCS marker, and creating a folder in whatever directory a
+        # session happened to open would be litter, not a feature.
+        if not any((root / m).exists() for m in ws.VCS_MARKERS):
+            return 0
+        try:
+            wsdir = ws.ensure(root)
+        except OSError:
+            return 0                  # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
     out = []
 
@@ -258,6 +276,18 @@ def main():
         out.append(section("Reply style for this repo", REPLY_STYLES[style] +
                            "\n\n_Set by `reply_style` in .chamnan/config.json; remove it to "
                            "restore the default voice._"))
+
+    if first_session:
+        # Said once, on the session that created the workspace. An empty scaffold is still
+        # invisible: without this the teammate's experience is a folder appearing and nothing
+        # explaining it.
+        out.append(section(
+            "chamnan is set up in this repository",
+            "`.chamnan/` has just been created — `memory/`, `sessions/`, `threads/`, `skills/`, "
+            "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
+            "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
+            "index and record a baseline; the write skills listed above work from now on, whether "
+            "or not that has been run."))
 
     if not out:
         return 0
