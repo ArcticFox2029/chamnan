@@ -269,10 +269,14 @@ Everything lives in one directory at the repository root, and nothing outside it
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 
-`MAP.md`, `config.json` and every directory appear the moment the index is first built. The rest
-are written when you ask for them: `STATE.md` during bootstrap, the others by their skills. The
-session-start hook skips whatever is absent, so a repository that only ever builds an index stays
-exactly that simple.
+Every directory and `config.json` appear on the **first session** in the repository, before you
+run anything — so the places to write exist the moment a skill needs one, and the session that
+creates them says so. `MAP.md` arrives when the index is first built, `STATE.md` during bootstrap,
+the rest when their skills are asked for. The session-start hook skips whatever is absent, so a
+repository that only ever builds an index stays exactly that simple.
+
+Nothing is created outside a version-controlled repository: chamnan is for repositories you revisit,
+and a folder that is not one is left alone.
 
 Add `.chamnan/logs/` to `.gitignore` if you would rather not carry it. Everything else is worth
 committing — that is how the next person, and the next session, gets it.
@@ -286,8 +290,29 @@ git clone https://github.com/ArcticFox2029/chamnan
 claude --plugin-dir ./chamnan
 ```
 
-The plugin is active for that session only, and nothing is written until you run
-`/chamnan:bootstrap` or `chamnan-map`.
+The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
+nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
+
+## What's new in 1.7.0
+
+Three changes, all of them about the system being ready and honest rather than about new places to
+store things.
+
+**A new repository is set up on its first session.** The workspace used to be created only as a
+side effect of running `chamnan-map`, `chamnan-promote` or `chamnan-candidates` — so someone who
+installed the plugin and opened a project got no directories, no `config.json`, and no indication
+the plugin existed. Every write skill had nowhere to write. The scaffold is now laid down up front,
+in a version-controlled repository only, and the session that creates it says what was created.
+
+**`chamnan-map --explain` prices the injection.** Every section, what it cost, and the file or
+store it came from — so "why is this in my context?" has a number rather than an argument. The
+accounting is a side effect of building the text, so there is no second model of the context to
+drift out of step with the real one.
+
+**One tree walk instead of nine.** Building the map ran nine separate full-tree traversals, each
+filtering its skip list only *after* descending, so every one paid the full cost of `.venv`,
+`node_modules` and `.git` before discarding the results. On a 224-file repository that took
+`chamnan-map` from ~92 seconds to ~10.6, with `MAP.md` byte-for-byte identical.
 
 ## What's new in 1.6.0
 
@@ -855,6 +880,7 @@ From a shell, in the repository:
 |---|---|
 | `chamnan-map` | rebuild `.chamnan/MAP.md`, and report how it landed: source tokens, Quick Index size, Full Detail size, comment coverage, and whether the index is inside `index_token_budget` |
 | `chamnan-map --preview` | print **exactly** what a session in this repo receives at start-up, followed by its token count. Nothing is written |
+| `chamnan-map --explain` | what this session's context is made of: every section, what it cost in tokens, and the file or store it came from. Answers "why is this in my context?" with a number instead of an argument |
 | `chamnan-map --install-git-hook` | opt-in: refresh the index on commit. Appends to an existing `pre-commit` hook rather than replacing it |
 | `chamnan-peek <file>` | the shape of one file instead of the whole thing — columns, sheets, members, schema, pages |
 | `chamnan-peek <file> --find PATTERN` | only the parts that match, with their line numbers |
@@ -1196,7 +1222,8 @@ chamnan-map --preview
 | Symptom | What it means | What to do |
 |---|---|---|
 | `/chamnan:bootstrap` is not offered | The plugin is not loaded in this session | `claude plugin list` — if chamnan is absent, install it again; if it is present but disabled, enable it. A newly installed plugin is picked up by a **new** session, not the running one |
-| Nothing appears at session start | Either no index yet, or the hook is not running | Run `chamnan-map --preview`. If it prints `nothing to inject yet — run chamnan-map first`, build the index with `chamnan-map`. If it prints the index but sessions still get nothing, the plugin is not loaded — see the row above |
+| Nothing appears at session start | Either no index yet, or the hook is not running | The first session in a repository creates `.chamnan/` and says so. If even that did not appear, run `chamnan-map --preview`: if it prints nothing, the plugin is not loaded — see the row above. If it prints the ledger line but no index, build one with `chamnan-map` |
+| Sessions feel expensive and you cannot see why | Nothing reported what the injection was made of | `chamnan-map --explain` prices every section and names where it came from |
 | `python3: command not found` | The hooks are launched by their `#!/usr/bin/env python3` line | `python3 -V` — 3.8 or newer, on `PATH`. There are no packages to install |
 | Hooks never fire on macOS or Linux | The hook files need their executable bit and their shebang intact | `ls -l` the four files in `hooks/`; each should be executable and start with `#!/usr/bin/env python3` |
 | Hooks never fire on Windows | Not supported — the launch path relies on a shebang and an executable bit that Windows does not honour | Use WSL |
