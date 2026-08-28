@@ -29,9 +29,9 @@ from pathlib import Path
 
 # What the walk is allowed to prune: the INTERSECTION of what every scanner already skipped, not
 # the union. Pruning wider would silently change what those scanners see — measured: pruning with
-# mapper's 27-entry list dropped `miki-hybridge-ai` from 774 stored files to 762, because assets
-# never skipped `build/`, `out/` or `tmp/` and suddenly did. A performance change that quietly
-# rewrites the map is not a performance change.
+# mapper's 27-entry list dropped one directory's stored-material count from 774 files to 762,
+# because assets never skipped `build/`, `out/` or `tmp/` and suddenly did. A performance change
+# that quietly rewrites the map is not a performance change.
 #
 # So each module keeps its own filter, applied after the walk exactly as before, and this set holds
 # only the directories all five agreed on. That is enough: these are the ones that are enormous.
