@@ -110,8 +110,27 @@ def describe(path):
     return ""
 
 
-def section(title, body):
-    return f"\n### {title}\n{body.rstrip()}\n" if body.strip() else ""
+# What each section cost and where it came from, in the order it was built. Filled as a side effect
+# of section() so nothing has to be kept in step by hand, and read only by `chamnan-map --explain`.
+# The question it answers — "why is this in my context?" — had no answer at all before, which made
+# every budget decision an argument rather than a measurement.
+LEDGER = []
+
+
+def section(title, body, source=""):
+    if not body.strip():
+        return ""
+    text = f"\n### {title}\n{body.rstrip()}\n"
+    # Priced with the real estimator on the real text. Counting characters and pricing them as if
+    # they were ASCII is wrong on a repository whose STATE.md is half Thai, and the error would
+    # hide inside the remainder line where nobody would see it.
+    LEDGER.append({"title": title, "tokens": tokens.estimate(text), "source": source})
+    return text
+
+
+def skipped(title, reason):
+    """A section deliberately not injected. Recorded so --explain can say what was left out."""
+    LEDGER.append({"title": title, "tokens": 0, "source": "", "skipped": reason})
 
 
 def main():
@@ -161,7 +180,7 @@ def main():
             budget = cfg.get("index_token_budget", 3000)
             if not tokens.fits(index, budget):
                 index = rollup.collapse(index, mp.relative_to(root), budget)
-            out.append(section("Architecture index", index))
+            out.append(section("Architecture index", index, str(mp.relative_to(root))))
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")
 
@@ -179,13 +198,13 @@ def main():
                 "Environment constraints — check these before proposing infrastructure work",
                 constraints + "\n\n_Declared in `.chamnan/environments.md`, and true only as far "
                               "as its `Checked:` dates go — `chamnan-env check` says which have "
-                              "gone cold._"))
+                              "gone cold._", ".chamnan/environments.md"))
 
     if cfg.get("memory", True):
         # Rules are standing constraints, so they go in front of the agent before it starts.
         rules = redact.scrub(memory.rules_text(root))
         if rules:
-            out.append(section("Rules this repository works under", rules))
+            out.append(section("Rules this repository works under", rules, ".chamnan/memory/rules/"))
         # Decisions and lessons are looked up when the question comes round, so they contribute a
         # title and nothing else — the same economy skills/ and tools/ use.
         listing = memory.render_titles(memory.titles(root))
@@ -193,14 +212,14 @@ def main():
             out.append(section(
                 "Recorded decisions and lessons — read the one that matches before assuming",
                 listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
-                          "do not read them all._"))
+                          "do not read them all._", ".chamnan/memory/decisions|lessons/"))
 
     if cfg.get("milestones", True):
         # Titles only, newest first. "The last big thing here was the auth migration" orients a
         # session in about twenty tokens; the bodies are a grep away when a title looks relevant.
         recent = redact.scrub(milestones.recent_titles(root))
         if recent:
-            out.append(section("Recent milestones", recent))
+            out.append(section("Recent milestones", recent, ".chamnan/milestones.md"))
 
     if cfg.get("timeline", True):
         # OPEN threads only, titles only. A closed thread is history -- still readable, still
@@ -212,7 +231,7 @@ def main():
             out.append(section(
                 "Open threads — lines of work still in flight",
                 open_threads + "\n\n_`chamnan-timeline show <name>` for one thread's history; "
-                               "`chamnan-timeline for <path>` for what has happened to one file._"))
+                               "`chamnan-timeline for <path>` for what has happened to one file._", ".chamnan/threads/"))
 
     if cfg.get("resume", True):
         # Only the newest record, and only the part of it that is unfinished. "Done" is history and
@@ -221,7 +240,7 @@ def main():
         # is the right outcome — nothing is injected to say "nothing outstanding".
         carried = redact.scrub(sessions.carry_forward(root))
         if carried:
-            out.append(section("Where the last session stopped", carried))
+            out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
 
     if cfg.get("state", True):
         sp = wsdir / "STATE.md"
@@ -234,7 +253,7 @@ def main():
             budget = cfg.get("state_token_budget", 1700)
             st, marker = state.render(full, budget, sp.relative_to(root))
             if st:
-                out.append(section("Work in flight (from the last session)", st))
+                out.append(section("Work in flight (from the last session)", st, str(sp.relative_to(root))))
                 out.append(f"_Keep `{sp.relative_to(root)}` current as you go; it is what survives "
                            f"compaction._\n")
                 if marker:
@@ -252,7 +271,7 @@ def main():
                 lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
                              f"`{(wsdir/'tools').relative_to(root)}/`_")
             out.append(section("This repo's own tools — prefer these over writing a new script",
-                               "\n".join(lines)))
+                               "\n".join(lines), ".chamnan/tools/index.json"))
 
     if cfg.get("capture", True):
         skills = sorted((wsdir / "skills").glob("*.md")) if (wsdir / "skills").is_dir() else []
@@ -269,7 +288,7 @@ def main():
                 "Recorded procedures — read the one that matches before starting that kind of task",
                 "\n".join(lines) +
                 f"\n\nFull text in `{(wsdir/'skills').relative_to(root)}/`. Load one when it applies; "
-                f"do not read them all."))
+                f"do not read them all.", ".chamnan/skills/"))
 
     style = cfg.get("reply_style", "off")
     if style in REPLY_STYLES:
@@ -287,11 +306,61 @@ def main():
             "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
             "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
             "index and record a baseline; the write skills listed above work from now on, whether "
-            "or not that has been run."))
+            "or not that has been run.", "(generated)"))
 
     if not out:
+        if "--explain" in sys.argv:
+            print("chamnan injects nothing into this repository's sessions.")
         return 0
-    print("## chamnan\n" + "".join(out))
+    body = "## chamnan\n" + "".join(out)
+    if "--explain" in sys.argv:
+        return explain(body, cfg)
+    print(body)
+    return 0
+
+
+def explain(body, cfg):
+    """What this session was given, what it cost, and where each part came from.
+
+    Answers the one question the injection could not answer about itself. Every number here is
+    measured from the text that was actually built — there is no model of it to drift out of step,
+    and the remainder line exists so the parts that section() does not account for are visible as a
+    number rather than quietly missing.
+    """
+    total = tokens.estimate(body)
+    print(f"chamnan context — {total:,.0f} tokens injected at session start\n")
+    shown = [e for e in LEDGER if not e.get("skipped")]
+    if shown:
+        width = max(len(e["title"]) for e in shown)
+        width = min(max(width, 20), 52)
+        print(f"  {'section'.ljust(width)}  {'tokens':>7}   from")
+        for e in sorted(shown, key=lambda x: -x["tokens"]):
+            t = e["tokens"]
+            title = e["title"] if len(e["title"]) <= width else e["title"][: width - 1] + "…"
+            print(f"  {title.ljust(width)}  {t:>7,.0f}   {e['source'] or '—'}")
+        attributed = sum(e["tokens"] for e in shown)
+        rest = total - attributed
+        if rest > 0:
+            print(f"  {'(the ledger line, skills line and trailers)'.ljust(width)}  {rest:>7,.0f}   —")
+    off = sorted(k for k, v in ws.DEFAULT_CONFIG.items() if isinstance(v, bool) and not cfg.get(k, v))
+    if off:
+        print("\n  not injected, switched off in .chamnan/config.json:")
+        for k in off:
+            print(f"    {k}")
+    print("\n  Budgets: index_token_budget "
+          f"{cfg.get('index_token_budget', 3000):,}, state_token_budget "
+          f"{cfg.get('state_token_budget', 1700):,} — both in .chamnan/config.json.")
+    # Said only when it is actually happening, because otherwise the budget line above looks
+    # contradicted by the table. A pinned heading is exempt from the cut on purpose — that is the
+    # whole point of pinning — so the state section can legitimately exceed its budget, and the
+    # honest report is to name the reason rather than to print a number that appears wrong.
+    state_row = next((e for e in shown if e["source"].endswith("STATE.md")), None)
+    limit = cfg.get("state_token_budget", 1700)
+    if state_row and state_row["tokens"] > limit:
+        print(f"\n  STATE.md is over its budget by {state_row['tokens'] - limit:,.0f} tokens. "
+              "That is allowed: headings\n  pinned with 📌 are never cut, and only the unpinned "
+              "remainder is fitted to the budget.\n  Unpin a heading, or shorten one, to bring it "
+              "down.")
     return 0
 
 

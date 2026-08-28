@@ -42,15 +42,24 @@ fi
 """
 
 
-def preview(root):
-    """What the session-start hook would inject right now."""
+def preview(root, explain=False):
+    """What the session-start hook would inject right now, or what each part of it cost.
+
+    `--explain` answers the question the injection could not answer about itself: why is this in my
+    context, and what is it costing? Every budget decision was an argument before there was a
+    number to point at. The hook itself does the accounting, as a side effect of building the text,
+    so there is no second model of the injection that can drift out of step with the real one.
+    """
     hook = HERE.parent / "hooks" / "session_start.py"
     if not hook.is_file():
         print("chamnan: session_start.py not found beside this command", file=sys.stderr)
         return 1
     import subprocess
-    out = subprocess.run([sys.executable, str(hook)], input="{}",
-                         capture_output=True, text=True, cwd=root)
+    args = [sys.executable, str(hook)] + (["--explain"] if explain else [])
+    out = subprocess.run(args, input="{}", capture_output=True, text=True, cwd=root)
+    if explain:
+        print(out.stdout.rstrip() or "chamnan: nothing is injected in this repository yet")
+        return 0
     body = out.stdout.strip()
     if not body:
         print("chamnan: nothing to inject yet — run chamnan-map first")
@@ -90,6 +99,8 @@ def main(argv):
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
+    if "--explain" in argv:
+        return preview(root, explain=True)
     if "--preview" in argv:
         # Prints exactly what a session would be handed. The hook does this automatically at
         # session start, but a session that has just installed the plugin has not had one yet, and

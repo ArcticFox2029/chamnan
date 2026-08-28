@@ -2947,11 +2947,78 @@ for lang, (fixture, minimum) in sorted(MIN_YIELD.items()):
         got = len(ff) + len(cc)
     check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
 
+# ---------------------------------------------------------------- explaining the injection
+# "Why is this in my context, and what is it costing?" had no answer at all, which made every
+# budget decision an argument instead of a measurement. The accounting is a side effect of building
+# the text, so there is no second model of the injection that can drift out of step with the real
+# one -- these checks are mostly about that property.
+HOOK = ROOT / "hooks" / "session_start.py"
+exp_repo = Path(tempfile.mkdtemp()) / "proj"
+(exp_repo / ".git").mkdir(parents=True)
+(exp_repo / "src").mkdir()
+(exp_repo / "src" / "a.py").write_text('"""Does a thing."""\n', encoding="utf-8")
+ws.ensure(exp_repo)
+(exp_repo / ".chamnan" / "STATE.md").write_text("# Work in flight\n\nSomething unfinished.\n",
+                                                encoding="utf-8")
+(exp_repo / ".chamnan" / "memory" / "rules" / "one.md").write_text(
+    "# Never force-push\n\nIt loses other people's work.\n", encoding="utf-8")
+
+def run_explain(cwd):
+    return subprocess.run([sys.executable, str(HOOK), "--explain"], input="{}",
+                          capture_output=True, text=True, cwd=cwd)
+
+r = run_explain(exp_repo)
+check("--explain exits cleanly", r.returncode == 0)
+check("--explain reports a total", "tokens injected at session start" in r.stdout)
+check("--explain names STATE.md as a source", ".chamnan/STATE.md" in r.stdout)
+check("--explain names the rules directory as a source", ".chamnan/memory/rules/" in r.stdout)
+check("--explain prints the budgets it is measured against", "state_token_budget" in r.stdout)
+check("--explain does not print the injection itself",
+      "Something unfinished." not in r.stdout)
+
+# Priced with the real estimator, not by counting characters. Thai costs far more per character
+# than ASCII, so a fixture written in it separates the two: char-counting under-reported this
+# repository's procedures section by 218 tokens, and the error hid inside the remainder line where
+# an "it adds up" check would never see it.
+(exp_repo / ".chamnan" / "memory" / "rules" / "thai.md").write_text(
+    "# กฎการทำงานของที่นี่\n\n" + "ห้ามแก้ไขไฟล์นี้โดยไม่ได้รับอนุญาตจากเจ้าของงานก่อนเสมอ\n" * 6,
+    encoding="utf-8")
+plain_for_price = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True,
+                                 text=True, cwd=exp_repo).stdout
+priced = run_explain(exp_repo).stdout
+import tokens as _tok
+rules_chunk = ""
+for chunk in plain_for_price.split("\n### "):
+    if chunk.startswith("Rules this repository works under"):
+        rules_chunk = "\n### " + chunk.rstrip() + "\n"
+        break
+reported = re.search(r"Rules this repository works under\s+([\d,]+)", priced)
+if rules_chunk and reported:
+    want = round(_tok.estimate(rules_chunk))
+    got = int(reported.group(1).replace(",", ""))
+    check("a section is priced with the real estimator, not by character count",
+          abs(got - want) <= 1)
+    check("...and that estimator disagrees with character counting on this fixture",
+          abs(want - len(rules_chunk) // 3) > 5)
+
+# The report must add up: what it attributes to sections plus the remainder is the real total.
+nums = [int(x.replace(",", "")) for x in re.findall(r"^\s*\S.*?\s(\d[\d,]*)\s{3}", r.stdout, re.M)]
+total_m = re.search(r"— ([\d,]+) tokens injected", r.stdout)
+if total_m and nums:
+    check("the section costs and the remainder add up to the reported total",
+          sum(nums) == int(total_m.group(1).replace(",", "")))
+
+# Without --explain the hook must still emit the injection and nothing about accounting.
+plainrun = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True,
+                          text=True, cwd=exp_repo).stdout
+check("the normal injection is unchanged by the accounting",
+      "Something unfinished." in plainrun and "tokens injected at session start" not in plainrun)
+shutil.rmtree(exp_repo.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- first session in a new repo
 # A teammate installed the plugin, opened a new project in VS Code, and got nothing: the workspace
 # was only ever created by chamnan-map/promote/candidates, so the hook returned in silence and
 # every write skill had nowhere to write.
-HOOK = ROOT / "hooks" / "session_start.py"
 
 newrepo = Path(tempfile.mkdtemp()) / "proj"
 newrepo.mkdir(parents=True)
