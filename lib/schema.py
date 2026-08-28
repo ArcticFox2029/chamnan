@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 import redact
+import tree
 
 # Above this many tables, only names are injected and columns are left to be grepped.
 DETAIL_LIMIT = 40
@@ -127,8 +128,11 @@ def scan(root, files):
     # file is a declaration of shape, not code — so they are read directly here. Prisma was missed
     # entirely until a multi-service fixture showed a service whose whole store was invisible: its
     # models are in schema.prisma and nothing else in the repo mentions them.
-    for path in sorted(list(root.rglob("*.sql")) + list(root.rglob("*.prisma"))):
-        if any(p in (".git", "node_modules", "vendor", "__pycache__") for p in path.parts) \
+    for path in tree.by_suffix(root, ".sql", ".prisma"):
+        # .venv added 2026-08-28: it was the only skip list here missing it, which is the reason a
+        # shared pruned walk could not include virtualenvs. A .sql inside one is a dependency's
+        # schema, never this repository's.
+        if any(p in (".git", "node_modules", "vendor", "__pycache__", ".venv") for p in path.parts) \
                 or redact.is_blocked(path):
             continue
         try:

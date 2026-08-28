@@ -16,6 +16,7 @@ dependencies — for a marginal gain in precision.
 """
 import re
 from collections import defaultdict
+import tree
 
 K8S_KIND = re.compile(r"^kind:\s*([A-Za-z]+)\s*$", re.M)
 K8S_NAME = re.compile(r"^\s{0,4}name:\s*([\w.-]+)\s*$", re.M)
@@ -50,7 +51,7 @@ def _read(root):
     from mapper import _nested_repo_dirs
     nested = _nested_repo_dirs(root)
     for pattern in MANIFEST_GLOBS:
-        for path in sorted(root.rglob(pattern)):
+        for path in tree.matching(root, pattern):
             if any(p in SKIP for p in path.parts):
                 continue
             if nested and any(parent.resolve() in nested for parent in path.parents):
@@ -96,7 +97,7 @@ def scan(root):
     # sees them, and ansible.cfg is the file that says where the whole inventory lives.
     for name, group in (("Dockerfile", "ci"), ("Dockerfile.*", "ci"), ("Jenkinsfile", "ci"),
                         ("Makefile", "ci"), ("ansible.cfg", "ansible")):
-        for path in root.rglob(name):
+        for path in tree.matching(root, name):
             if not any(p in SKIP for p in path.parts):
                 rel = str(path.relative_to(root))
                 found[group].add(rel)

@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 
 import redact
+import tree
 
 MAX_ROUTES_LISTED = 60
 MAX_ENV_LISTED = 50
@@ -86,7 +87,7 @@ PROTO_RPC = re.compile(r"^\s*rpc\s+(\w+)\s*\(", re.M)
 def _grpc(root):
     """(service, method) for every rpc declared in a .proto file."""
     _nest = _nested(root)
-    for path in sorted(root.rglob("*.proto")):
+    for path in tree.by_suffix(root, ".proto"):
         if any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
             continue
         try:
@@ -101,7 +102,7 @@ def _grpc(root):
 
 
 def _grpc_source(root, service):
-    for path in sorted(root.rglob("*.proto")):
+    for path in tree.by_suffix(root, ".proto"):
         try:
             if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
                          path.read_text(encoding="utf-8", errors="replace"), re.M):
@@ -115,8 +116,7 @@ def _spec_files(root):
     """OpenAPI and Swagger documents, found by shape rather than by filename."""
     _nest = _nested(root)
     seen = set()
-    for path in sorted(list(root.rglob("*.yaml")) + list(root.rglob("*.yml"))
-                       + list(root.rglob("*.json"))):
+    for path in tree.by_suffix(root, ".yaml", ".yml", ".json"):
         if path in seen or any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
             continue
         named = path.stem.lower() in ("openapi", "swagger")
@@ -139,7 +139,7 @@ def _readable(root, patterns):
     _nest = _nested(root)
     seen = set()
     for pat in patterns:
-        for path in sorted(root.rglob(pat)):
+        for path in tree.matching(root, pat):
             if path in seen or any(p in SKIP_PARTS for p in path.parts) or not _outside(path, _nest) \
                     or not path.is_file() or redact.is_blocked(path):
                 continue

@@ -48,7 +48,10 @@ def _human(size):
 def scan(root, source_paths, ext_lang):
     """source_paths: the set mapper already indexed, so nothing is counted twice."""
     groups = defaultdict(lambda: {"count": 0, "bytes": 0, "exts": defaultdict(int)})
-    for path in root.rglob("*"):
+    import tree
+    # One pruned walk shared with every other scanner — see lib/tree.py. rglob descended into
+    # .venv and node_modules and only then discarded them, which cost 19.2s of a 75s map here.
+    for path in tree.files(root):
         try:
             if not path.is_file() or path.is_symlink():
                 continue

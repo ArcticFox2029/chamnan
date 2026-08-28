@@ -41,6 +41,8 @@ import schema as schema_mod
 import tokens
 
 # Directories that are never source: dependency trees, build output, VCS internals, caches.
+# Wider than tree.PRUNE_DIRS on purpose — see that constant. This list is mapper's own filter,
+# applied after the walk; pruning the walk with it would change what the OTHER scanners see.
 SKIP_DIRS = {
     ".git", ".svn", ".hg", "node_modules", "__pycache__", ".venv", "venv", "env",
     "dist", "build", "target", "out", ".next", ".nuxt", "vendor", ".terraform",
@@ -66,8 +68,10 @@ def _nested_repo_dirs(root):
     The scan root itself is never excluded, or scanning a repository would find nothing at all.
     """
     found = set()
+    # tree records .git while walking, before pruning it — one pass answers both questions.
+    import tree
     try:
-        entries = list(root.rglob(".git"))
+        entries = tree.git_dirs(root)
     except OSError:
         return found
     for git in entries:
@@ -495,9 +499,17 @@ def _extract_one(source, path, lang):
 
 
 def scan(root):
+    """One session, so the nested-repo probe and the file walk share a single traversal."""
+    import tree
+    with tree.session():
+        return _scan(root)
+
+
+def _scan(root):
     files = []
     nested = _nested_repo_dirs(root)
-    for path in sorted(root.rglob("*")):
+    import tree
+    for path in tree.files(root):
         if not path.is_file():
             continue
         if nested and any(parent.resolve() in nested for parent in path.parents):
@@ -547,6 +559,13 @@ def scan(root):
 
 
 def render(files, root):
+    """One session for the whole render — every scanner below shares one walk."""
+    import tree
+    with tree.session():
+        return _render(files, root)
+
+
+def _render(files, root):
     total_chars = sum(f["chars"] for f in files)
     lines = [
         f"# Architecture map — {root.name}",

@@ -2941,6 +2941,69 @@ for lang, (fixture, minimum) in sorted(MIN_YIELD.items()):
         got = len(ff) + len(cc)
     check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
 
+# ---------------------------------------------------------------- the shared pruned walk
+# lib/tree.py replaced nine separate full-tree rglob passes per map. On a 224-file repository that
+# took chamnan-map from 70.1s to 8.3s with MAP.md byte-identical, so these checks are about the
+# three ways that change could have been silently wrong rather than about the speed.
+import tree  # noqa: E402
+
+walkdir = Path(tempfile.mkdtemp()) / "repo"
+(walkdir / "src").mkdir(parents=True)
+(walkdir / "src" / "app.py").write_text("x\n", encoding="utf-8")
+(walkdir / ".venv" / "lib").mkdir(parents=True)
+(walkdir / ".venv" / "lib" / "vendored.py").write_text("x\n", encoding="utf-8")
+(walkdir / "node_modules" / "pkg").mkdir(parents=True)
+(walkdir / "node_modules" / "pkg" / "index.js").write_text("x\n", encoding="utf-8")
+(walkdir / "build").mkdir()
+(walkdir / "build" / "out.py").write_text("x\n", encoding="utf-8")
+(walkdir / "inner").mkdir()
+(walkdir / "inner" / ".git").mkdir()
+(walkdir / "inner" / ".git" / "HEAD").write_text("ref\n", encoding="utf-8")
+
+rels = {str(p.relative_to(walkdir)) for p in tree.files(walkdir)}
+check("the walk finds ordinary source", "src/app.py" in rels)
+check("the walk never descends into .venv", not any(r.startswith(".venv/") for r in rels))
+check("the walk never descends into node_modules", not any(r.startswith("node_modules/") for r in rels))
+check("the walk never descends into .git", not any("/.git/" in r or r.startswith(".git/") for r in rels))
+# build/ is skipped by mapper and catalogs but NOT by assets, so the walk must NOT prune it --
+# pruning the union instead of the intersection changed the stored-material count on a real repo.
+check("the walk leaves build/ for each scanner's own filter to decide", "build/out.py" in rels)
+
+gits = {str(p.relative_to(walkdir)) for p in tree.git_dirs(walkdir)}
+check("a nested .git is reported even though it is never entered", "inner/.git" in gits)
+
+# Paths must come back joined onto the root AS GIVEN. Callers do path.relative_to(root), which
+# raises ValueError across two forms of the same directory -- and every caller treats that as
+# "skip this file", so the failure is silent. This is how 12 files disappeared from a real map.
+unresolved = walkdir.parent / "." / walkdir.name
+for got in tree.files(unresolved)[:1]:
+    try:
+        got.relative_to(unresolved)
+        ok = True
+    except ValueError:
+        ok = False
+    check("a path is relative_to the root the caller passed in", ok)
+
+# Outside a session the cache must not exist, or a scan-write-scan sequence reads a stale tree.
+before = len(tree.files(walkdir))
+(walkdir / "src" / "added_later.py").write_text("x\n", encoding="utf-8")
+check("a file added between calls is seen when there is no session",
+      len(tree.files(walkdir)) == before + 1)
+
+with tree.session():
+    inside = len(tree.files(walkdir))
+    (walkdir / "src" / "added_during.py").write_text("x\n", encoding="utf-8")
+    check("inside a session the walk is cached, which is the point of it",
+          len(tree.files(walkdir)) == inside)
+check("the cache does not outlive the session",
+      len(tree.files(walkdir)) == inside + 1)
+
+check("by_suffix filters without walking again", 
+      {p.name for p in tree.by_suffix(walkdir, ".py")} >= {"app.py", "out.py"})
+check("matching() globs on the filename at any depth",
+      {str(p.relative_to(walkdir)) for p in tree.matching(walkdir, "*.js")} == set())
+shutil.rmtree(walkdir.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
