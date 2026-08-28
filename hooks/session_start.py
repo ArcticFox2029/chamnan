@@ -156,10 +156,21 @@ def main():
         # session happened to open would be litter, not a feature.
         if not any((root / m).exists() for m in ws.VCS_MARKERS):
             return 0
-        try:
-            wsdir = ws.ensure(root)
-        except OSError:
-            return 0                  # read-only checkout, or no permission — never fail a session
+    # Not only on the first session. 🐛 [found the same day, on the owner's two work repositories]
+    # Creating the scaffold only when `.chamnan/` was ABSENT left every workspace made by an older
+    # version exactly as it was: both of theirs still had no `memory/`, `sessions/` or `threads/`
+    # at all, and a config.json holding 10 of the 19 keys — so memory, session records, threads,
+    # timeline, environments, milestones and the ledger had never once worked there, silently,
+    # because the directories those features write to did not exist.
+    #
+    # ensure() is idempotent and was built for exactly this: mkdir(exist_ok=True) per directory,
+    # and a config merge that keeps the user's own values, drops options that no longer exist, and
+    # writes only when something actually changed. Running it every session is what makes an
+    # upgrade reach the repository rather than only the plugin.
+    try:
+        wsdir = ws.ensure(root)
+    except OSError:
+        return 0                      # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
     out = []
 

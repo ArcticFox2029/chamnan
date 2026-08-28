@@ -3001,6 +3001,29 @@ if rules_chunk and reported:
     check("...and that estimator disagrees with character counting on this fixture",
           abs(want - len(rules_chunk) // 3) > 5)
 
+# An OLD workspace must be brought up to date, not left as it was. Found on two repositories that
+# had been using chamnan for weeks: no memory/, sessions/ or threads/ at all, and a config.json
+# holding 10 of the 19 keys — so every feature that writes into those directories had silently
+# never worked there. Creating the scaffold only when .chamnan/ was absent would never repair them.
+oldws = Path(tempfile.mkdtemp()) / "legacy"
+(oldws / ".git").mkdir(parents=True)
+(oldws / ".chamnan" / "logs").mkdir(parents=True)
+(oldws / ".chamnan" / "config.json").write_text(
+    json.dumps({"map": True, "language": "en", "index_token_budget": 2500}), encoding="utf-8")
+subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True, cwd=oldws)
+for sub in ("memory/decisions", "memory/lessons", "memory/rules", "sessions", "threads", "tools",
+            "skills"):
+    check(f"an older workspace gains {sub}/", (oldws / ".chamnan" / sub).is_dir())
+merged = json.loads((oldws / ".chamnan" / "config.json").read_text(encoding="utf-8"))
+check("an older config gains the keys added since it was written",
+      set(merged) == set(ws.DEFAULT_CONFIG))
+check("...and keeps the values the user had chosen", merged["index_token_budget"] == 2500)
+check("an existing workspace is not greeted as though it were new",
+      "just been created" not in subprocess.run(
+          [sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+          cwd=oldws).stdout)
+shutil.rmtree(oldws.parent, ignore_errors=True)
+
 # The report must add up: what it attributes to sections plus the remainder is the real total.
 nums = [int(x.replace(",", "")) for x in re.findall(r"^\s*\S.*?\s(\d[\d,]*)\s{3}", r.stdout, re.M)]
 total_m = re.search(r"— ([\d,]+) tokens injected", r.stdout)

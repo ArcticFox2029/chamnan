@@ -293,6 +293,19 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.7.1
+
+**An upgrade now reaches the repository, not only the plugin.** 1.7.0 created the workspace when
+`.chamnan/` was absent, which left every workspace made by an older version exactly as it was. Two
+repositories that had been using chamnan for weeks still had no `memory/`, `sessions/` or
+`threads/` directory at all, and a `config.json` holding 10 of the 19 keys — so memory, session
+records, threads, timeline, environments, milestones and the ledger had never once worked there,
+silently, because the directories those features write into did not exist.
+
+The scaffold is now reconciled on every session: missing directories are created, and the config
+gains keys added since it was written while keeping the values you chose. Nothing is overwritten,
+and the "workspace created" line still appears only the first time.
+
 ## What's new in 1.7.0
 
 Three changes, all of them about the system being ready and honest rather than about new places to
