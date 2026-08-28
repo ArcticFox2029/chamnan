@@ -293,6 +293,24 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.8.0
+
+**Repository text is fenced.** chamnan's whole job is to take markdown the repository controls and
+put it in front of an agent — so a poisoned file in a repository you cloned is a path to
+instructing that agent, and until now content from disk sat inline with chamnan's own words with
+nothing to tell them apart.
+
+Every section built from a file is now wrapped in a boundary carrying a nonce generated fresh each
+session, with one line at the top saying what the boundary means. A fixed marker would simply be
+written into a file to close the block early and let what follows read as chamnan speaking; a
+per-session nonce cannot be written in advance, and a literal closing mark inside a body is escaped
+before the body is wrapped.
+
+It costs 178 tokens on this repository — 3.2% of the injection — and `chamnan-map --explain` prints
+that figure rather than leaving you to wonder. It is a mitigation, not a proof: it gives a reliable
+answer to *who said this*, which was unanswerable before. It does not make hostile text safe to act
+on, and nothing is censored — an attempt is delivered inside the fence where it can be seen.
+
 ## What's new in 1.7.3
 
 **A restated filename took its separator with it.** A header that opens `# cve.sh — checks the CVE
