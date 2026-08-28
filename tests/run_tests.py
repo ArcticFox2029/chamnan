@@ -2574,12 +2574,58 @@ check("the notice names the sequence", "docker compose" in msg and "pytest" in m
 check("the notice points at the capture skill", "/chamnan:capture" in msg)
 check("the notice says how many times", "3 times" in msg)
 
-# The log is bounded: this is a hint generator, not an archive.
+# The log is bounded by CALENDAR TIME with a per-day cap, not by a flat entry count. The flat cap
+# it replaced held one busy day, which meant repeated() -- which needs REPEAT_AT distinct days --
+# could never fire, and usage_counts() could never see far enough back to answer the question it
+# exists for. Every property below is one half of that fix.
 wf = Path(tempfile.mkdtemp(prefix="chamnan-wf-")) / "commands.jsonl"
-hist = workflows.record(wf, ["pytest"] * (workflows.KEEP_ENTRIES + 50), "2026-08-01T10:00:00+07:00")
-check("the command log is bounded", len(hist) == workflows.KEEP_ENTRIES)
+over = workflows.KEEP_PER_DAY + workflows.TRIM_SLACK + 10
+hist = workflows.record(wf, ["pytest"] * over, "2026-08-01T10:00:00+07:00")
+check("one day is capped at KEEP_PER_DAY ordinary commands",
+      len(hist) == workflows.KEEP_PER_DAY)
 check("a malformed line does not break reading",
-      len(workflows.record(wf, [], "2026-08-01T10:00:00+07:00")) == workflows.KEEP_ENTRIES)
+      len(workflows.read(wf)) == workflows.KEEP_PER_DAY)
+
+# The cap drops from the HEAD of a day. repeated() reads run[-WINDOW:], so the tail it sees must be
+# bit-for-bit what it would have seen had nothing been pruned.
+tail = Path(tempfile.mkdtemp(prefix="chamnan-tail-")) / "commands.jsonl"
+workflows.record(tail, ["noise"] * over, "2026-08-01T09:00:00+07:00")
+tail_hist = workflows.record(tail, ["git status", "pytest", "docker compose"],
+                             "2026-08-01T10:00:00+07:00")
+check("pruning never touches the tail repeated() reads",
+      [e["sig"] for e in tail_hist[-3:]] == ["git status", "pytest", "docker compose"])
+shutil.rmtree(tail.parent, ignore_errors=True)
+
+# The whole point of the change: enough days survive for repeated() to have something to detect.
+span = Path(tempfile.mkdtemp(prefix="chamnan-span-")) / "commands.jsonl"
+routine = ["git status", "pytest", "docker compose"]
+for day in (1, 2, 3):
+    workflows.record(span, ["noise"] * over, f"2026-08-0{day}T09:00:00+07:00")
+    span_hist = workflows.record(span, routine, f"2026-08-0{day}T10:00:00+07:00")
+check("a busy day no longer evicts the days before it",
+      len({e["at"][:10] for e in span_hist}) == 3)
+check("repeated() can still fire across days a flat entry cap would have erased",
+      workflows.repeated(span_hist) is not None)
+shutil.rmtree(span.parent, ignore_errors=True)
+
+# chamnan's own commands are the adoption signal: exempt from the per-day cap, so a count is exact.
+keep = Path(tempfile.mkdtemp(prefix="chamnan-keep-")) / "commands.jsonl"
+workflows.record(keep, ["chamnan-map"], "2026-08-01T08:00:00+07:00")
+workflows.record(keep, ["noise"] * over, "2026-08-01T09:00:00+07:00")
+keep_counts, _, _ = workflows.usage_counts(keep, ["chamnan-map"])
+check("chamnan's own command survives a day that overflows the cap", keep_counts["chamnan-map"] == 1)
+check("a signature merely CONTAINING the word is not exempt",
+      workflows._KEEP_ALWAYS.match("add-chamnan") is None)
+shutil.rmtree(keep.parent, ignore_errors=True)
+
+# Older than the window falls off; a record shape this module did not write is never rationed.
+old_day = [{"at": "2026-01-01T10:00:00+07:00", "kind": "command", "sig": "pytest"}]
+recent = [{"at": "2026-08-01T10:00:00+07:00", "kind": "command", "sig": "pytest"}]
+check("a day past KEEP_DAYS is dropped",
+      workflows.prune(old_day + recent, days=1) == recent)
+foreign = [{"at": "2026-08-01T09:00:00+07:00", "kind": "something-else", "sig": "x"}]
+check("a foreign record kind is exempt from the per-day cap that drops every command",
+      workflows.prune(foreign + recent, per_day=0) == foreign)
 shutil.rmtree(wf.parent, ignore_errors=True)
 
 # ---------------------------------------------------------------- usage_counts (Stage 11)

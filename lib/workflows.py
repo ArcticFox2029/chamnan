@@ -56,10 +56,29 @@ KEYWORDS = {
 MIN_LENGTH = 3        # distinct signatures before a run counts as a workflow
 REPEAT_AT = 3         # say something on the third occurrence, matching scratch_watch
 WINDOW = 12           # how far back a run is assembled from
-KEEP_ENTRIES = 400    # bounded log; a hint generator, not an archive
+
+# 🐛 [2026-08-28] Retention is a CALENDAR window with a per-day cap, not a flat entry count.
+# The `KEEP_ENTRIES = 400` this replaces was bounded, but it bounded the wrong axis: measured on
+# the workspace this plugin is developed against, one busy day wrote past 400 in about two hours,
+# so the log never held more than a single day. Two readers needed more than that and both were
+# silently dead. `repeated()` requires the same sequence on REPEAT_AT DISTINCT days before it says
+# anything -- with one day on disk it can never fire, which is exactly what that log showed (zero
+# detections, ever). And `usage_counts()` answers "is anyone actually running these commands",
+# a question about weeks; over a few hours the only honest answer it can give is "no data".
+#
+# The per-day cap is what keeps a calendar window bounded. It drops only from the HEAD of a day,
+# so the tail `repeated()` reads (`run[-WINDOW:]`) is never touched, and it never drops chamnan's
+# own commands: they are rare, they ARE the adoption signal, and evicting one to make room for the
+# three-hundredth `grep` would discard the measurement in order to keep the noise.
+KEEP_DAYS = 30        # calendar days retained
+KEEP_PER_DAY = 300    # ordinary commands kept per day; chamnan's own are never dropped
+TRIM_SLACK = 100      # amortise: rewrite once per ~100 surplus entries, not on every append
 
 _SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 _WORD = re.compile(r"^[A-Za-z_][\w.-]*$")
+# This plugin's own commands, which the per-day cap must never evict. Anchored, so a signature
+# that merely CONTAINS the word (`add-chamnan`, seen in the live log) is correctly not matched.
+_KEEP_ALWAYS = re.compile(r"^chamnan-")
 
 
 def signature(command):
@@ -116,10 +135,12 @@ def signatures(command_text):
     return out
 
 
-def _read(log_path):
-    """Every entry currently on disk, in order, malformed lines skipped. Read-only — unlike
-    `record()`, which always rewrites the file even for an empty append, this never touches disk,
-    so a caller that only wants to look (`usage_counts()`, below) does not pay a write for it."""
+def read(log_path):
+    """Every entry currently on disk, in order, malformed lines skipped. Read-only, and public
+    because the PostToolUse hook needs exactly this: the history as it stood BEFORE the command it
+    is about to record. It used to get that by calling `record()` with an empty list -- which, back
+    when `record()` rewrote the whole file unconditionally, cost two full rewrites of the log per
+    Bash call. Reading is now a read."""
     if not log_path.is_file():
         return []
     out = []
@@ -144,19 +165,75 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
     shape this log ever holds. An entry already on disk with no `kind` at all reads as `"command"`
     by the readers below — this is not a migration, nothing here rewrites what already exists.
     """
-    prior = _read(log_path)
+    fresh = []
     for sig in sigs:
         entry = {"at": when, "kind": "command", "sig": sig}
         if tool:
             entry["tool"] = tool
         if interrupted:
             entry["interrupted"] = True
-        prior.append(entry)
-    prior = prior[-KEEP_ENTRIES:]
+        fresh.append(entry)
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    log_path.write_text("\n".join(json.dumps(p, ensure_ascii=False) for p in prior) + "\n",
+    if fresh:
+        # Append, do not rewrite. This runs from a PostToolUse hook on every single Bash call, and
+        # a calendar window holds more than a flat 400 did, so rewriting the whole file every time
+        # would make the log's own cost grow in step with its usefulness.
+        with log_path.open("a", encoding="utf-8") as handle:
+            for entry in fresh:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    history = read(log_path)
+    kept = prune(history)
+    # Only rewrite once enough surplus has accumulated to be worth the write. The log is therefore
+    # allowed to sit up to TRIM_SLACK entries above target, which no reader cares about --
+    # `repeated()` reads a tail and `usage_counts()` a total, and neither is harmed by extra
+    # history.
+    if len(history) - len(kept) >= TRIM_SLACK:
+        _rewrite(log_path, kept)
+        history = kept
+    return history
+
+
+def _rewrite(log_path, entries):
+    """Replace the log with `entries`. Kept apart from `record()` so the append path above is the
+    one that runs on every call and this one only on a trim."""
+    log_path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
                         encoding="utf-8")
-    return prior
+
+
+def prune(history, days=KEEP_DAYS, per_day=KEEP_PER_DAY):
+    """`history` reduced to the last `days` calendar days, with at most `per_day` ordinary command
+    signatures kept within each day.
+
+    Two rules decide what survives a busy day, and both exist so that trimming the noise never
+    costs a reader the thing it came for:
+
+      * Entries are dropped from the HEAD of a day, never the tail. `repeated()` only ever looks at
+        `run[-WINDOW:]`, so the sequence it detects is bit-for-bit what it would have seen had
+        nothing been pruned at all.
+      * chamnan's own commands are exempt, as is any record whose `kind` is not `"command"` -- a
+        future record shape sharing this log is not this function's to ration. Both are rare by
+        construction; the day window is what bounds them.
+    """
+    by_day = {}
+    for entry in history:
+        by_day.setdefault(str(entry.get("at") or "")[:10], []).append(entry)
+
+    out = []
+    for day in sorted(by_day)[-days:]:
+        kept, ordinary = [], 0
+        for entry in reversed(by_day[day]):
+            exempt = (entry.get("kind", "command") != "command"
+                      or _KEEP_ALWAYS.match(str(entry.get("sig") or "")))
+            if exempt:
+                kept.append(entry)
+            elif ordinary < per_day:
+                kept.append(entry)
+                ordinary += 1
+        kept.reverse()
+        out.extend(kept)
+    return out
 
 
 def _runs(history):
@@ -235,9 +312,13 @@ def usage_counts(log_path, names):
     newest `at` seen across every entry (not just the counted ones) — so a caller can say what
     span the count actually covers.
 
-    `KEEP_ENTRIES` bounds this log by COUNT, not by calendar time: a quiet week and a busy week
-    hold the same 400 entries for very different numbers of days. Reporting a count without the
-    span it was measured over would let "14 calls" read as a rate it never claimed to be.
+    The log is bounded by CALENDAR time (`KEEP_DAYS`), so the span is usually the window itself --
+    but a repository younger than the window, or one worked on in bursts, still returns whatever it
+    has. Reporting a count without the span it was measured over would let "14 calls" read as a
+    rate it never claimed to be, so the span comes back with it either way.
+
+    Counts for chamnan's own commands are exact: `prune()` exempts them from the per-day cap, so
+    none is ever evicted to make room for ordinary shell noise.
 
     Returns (counts, oldest_at, newest_at). `counts` covers exactly `names`, zeros included, so a
     command that was never run reads as 0 rather than being silently missing from the dict —
@@ -245,7 +326,7 @@ def usage_counts(log_path, names):
     """
     counts = {n: 0 for n in names}
     oldest = newest = None
-    for entry in _read(log_path):
+    for entry in read(log_path):
         if entry.get("kind", "command") != "command":
             continue
         at = entry.get("at")

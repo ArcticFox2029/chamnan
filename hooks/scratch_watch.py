@@ -105,7 +105,7 @@ def notice_workflow(payload, wsdir, root):
 
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     log = wsdir / "logs" / "commands.jsonl"
-    before = workflows.repeated(workflows.record(log, [], now))
+    before = workflows.repeated(workflows.read(log))
     history = workflows.record(log, sigs, now, tool="Bash", interrupted=interrupted)
     found = workflows.repeated(history)
     if not found:
