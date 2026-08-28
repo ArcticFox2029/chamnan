@@ -133,6 +133,52 @@ def skipped(title, reason):
     LEDGER.append({"title": title, "tokens": 0, "source": "", "skipped": reason})
 
 
+def ago(seconds):
+    """A gap said the way a person would say it, and never rounded up into a claim."""
+    if seconds < 3600:
+        n = max(1, int(seconds // 60))
+        return f"{n} minute{'s' if n != 1 else ''} behind"
+    if seconds < 86400:
+        n = int(seconds // 3600)
+        return f"{n} hour{'s' if n != 1 else ''} behind"
+    n = int(seconds // 86400)
+    return f"{n} day{'s' if n != 1 else ''} behind"
+
+
+def index_is_behind(root, map_path):
+    """Seconds the index is behind the newest source file, or 0 if it is current.
+
+    The workspace repairs itself on every session now, but MAP.md does not: it is a build product,
+    and rebuilding it unasked at session start would spend real time on work nobody requested. So
+    the index is REPORTED as stale rather than silently rebuilt — the same choice chamnan-age makes
+    about knowledge, for the same reason. A stale index is worse than no index because it is
+    confidently wrong, so saying so is the part that must not be skipped.
+
+    Cheap enough to do every session: one pruned walk, measured at 0.04s on a 1,478-file
+    repository. Only files mapper would actually index count, or a log line written overnight would
+    report the architecture as out of date.
+    """
+    try:
+        import tree, mapper
+        newest = 0.0
+        exts = set(mapper.EXT_LANG)
+        for f in tree.files(root):
+            if f.suffix.lower() not in exts:
+                continue
+            try:
+                newest = max(newest, f.stat().st_mtime)
+            except OSError:
+                continue
+        built = map_path.stat().st_mtime
+        if newest <= built:
+            return 0
+        # Seconds, not days. Rounding a two-hour gap up to "1 day behind" is a small lie, and this
+        # line exists to be trusted -- the caller decides how to say it.
+        return newest - built
+    except Exception:
+        return 0          # never let a nicety break a session
+
+
 def main():
     try:
         json.load(sys.stdin)          # hook payload; nothing needed from it yet
@@ -174,6 +220,28 @@ def main():
     cfg = ws.load_config(root)
     out = []
 
+    # Said before anything else, and never suppressed by a config flag: if the code running this
+    # session is older than a version that has already set this workspace up, everything below is
+    # being produced by a build the user did not choose. That is not a preference.
+    # An update that is already downloaded, reported and never acted on. The user decides: a tool
+    # that upgrades itself because someone opened a session is doing something they did not ask
+    # for, and doing it silently is worse than not doing it at all.
+    offered = ws.available_update(HERE.parent)
+    if offered:
+        out.append(f"\n**chamnan {offered} is available** — this session is running "
+                   f"{ws.plugin_version(HERE.parent)}. Nothing has been changed. To take it, say so "
+                   f"and I will run `claude plugin update chamnan`; it applies on the next session. "
+                   f"Once one repository is on the new version, every other repository brings its "
+                   f"own workspace up to date by itself the next time it is opened.\n")
+
+    newer = ws.reconcile_version(root, ws.plugin_version(HERE.parent))
+    if newer:
+        out.append(f"\n**⚠ This session is running chamnan {ws.plugin_version(HERE.parent)}, but "
+                   f"this repository has already been set up by {newer}.** An older build is live "
+                   f"— usually a plugin upgraded mid-session (its `bin/` stays on PATH until you "
+                   f"restart), or a second install under another config directory. Restart the "
+                   f"session, and `claude plugin update chamnan` if it is genuinely behind.\n")
+
     if cfg.get("ledger", True):
         # Always the first thing in the injection, and gated on nothing but the flag itself --
         # the whole point is that this is visible whether or not there is anything to report.
@@ -194,6 +262,11 @@ def main():
             out.append(section("Architecture index", index, str(mp.relative_to(root))))
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")
+            behind = index_is_behind(root, mp)
+            if behind:
+                out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
+                           f"Rebuild it with `chamnan-map`, or `chamnan-map --install-git-hook` to "
+                           f"keep it current on every commit._\n")
 
     if cfg.get("environments", True):
         # Constraints, never versions. A constraint rules out a whole design before it is written

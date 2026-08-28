@@ -3001,6 +3001,100 @@ if rules_chunk and reported:
     check("...and that estimator disagrees with character counting on this fixture",
           abs(want - len(rules_chunk) // 3) > 5)
 
+# An update that is already on disk is reported and never taken. The user decides — a tool that
+# upgrades itself because somebody opened a session is doing something they did not ask for, and
+# doing it quietly is worse than not doing it. No network is involved: Claude Code keeps the
+# marketplace it installed from beside the installed copy, so "is there a newer one" is a local
+# question with a local answer.
+fakeplug = Path(tempfile.mkdtemp())
+installed = fakeplug / "plugins" / "cache" / "demo" / "demo" / "1.0.0"
+market = fakeplug / "plugins" / "marketplaces" / "demo"
+for d, ver in ((installed, "1.0.0"), (market, "1.2.0")):
+    (d / ".claude-plugin").mkdir(parents=True)
+    (d / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "demo", "version": ver}), encoding="utf-8")
+check("a newer marketplace copy is reported as available",
+      ws.available_update(installed) == "1.2.0")
+(market / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "demo", "version": "1.0.0"}), encoding="utf-8")
+check("nothing is reported when the installed copy is current",
+      ws.available_update(installed) == "")
+(market / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "demo", "version": "0.9.0"}), encoding="utf-8")
+check("an older marketplace copy is never offered as an update",
+      ws.available_update(installed) == "")
+(market / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "somethingelse", "version": "9.9.9"}), encoding="utf-8")
+check("a different plugin's marketplace entry is not mistaken for this one",
+      ws.available_update(installed) == "")
+check("a plugin outside any marketplace layout reports nothing",
+      ws.available_update(Path(tempfile.mkdtemp())) == "")
+shutil.rmtree(fakeplug, ignore_errors=True)
+
+# A workspace remembers the newest version that has set it up, so an OLD build running against it
+# is caught. There is no network here by design, so chamnan cannot ask whether a newer release
+# exists — but it can notice that a newer one has already been HERE, which is the case that bites:
+# a plugin's bin/ is pinned on PATH at session start, so upgrading mid-session leaves the old
+# executables live, and one machine can carry several installs, one per config directory.
+vrepo = Path(tempfile.mkdtemp()) / "v"
+(vrepo / ".git").mkdir(parents=True)
+subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True, cwd=vrepo)
+running = ws.plugin_version(ROOT)
+check("the plugin can read its own version", bool(running))
+check("the workspace records the version that set it up",
+      (vrepo / ".chamnan" / ".version").read_text(encoding="utf-8").strip() == running)
+again = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                       cwd=vrepo).stdout
+check("running the same version again says nothing", "already been set up by" not in again)
+
+(vrepo / ".chamnan" / ".version").write_text("99.0.0\n", encoding="utf-8")
+older = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                       cwd=vrepo).stdout
+check("an older build running here is reported", "already been set up by" in older)
+check("...and it names both versions", "99.0.0" in older and running in older)
+check("an older build never overwrites the newer record",
+      (vrepo / ".chamnan" / ".version").read_text(encoding="utf-8").strip() == "99.0.0")
+
+(vrepo / ".chamnan" / ".version").write_text("0.4.0\n", encoding="utf-8")
+upgraded = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                          cwd=vrepo).stdout
+check("an upgrade is silent", "already been set up by" not in upgraded)
+check("...and updates the record",
+      (vrepo / ".chamnan" / ".version").read_text(encoding="utf-8").strip() == running)
+check("version comparison is numeric, not lexical",
+      ws._as_tuple("1.10.0") > ws._as_tuple("1.9.0"))
+shutil.rmtree(vrepo.parent, ignore_errors=True)
+
+# A stale index is reported rather than silently rebuilt: rebuilding unasked at session start
+# spends real time on work nobody requested, and a stale index is worse than none because it is
+# confidently wrong. Same choice chamnan-age makes about knowledge.
+srepo = Path(tempfile.mkdtemp()) / "s"
+(srepo / ".git").mkdir(parents=True)
+(srepo / "app.py").write_text('"""Does a thing."""\n', encoding="utf-8")
+subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True, cwd=srepo)
+subprocess.run([str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True, cwd=srepo)
+fresh = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                       cwd=srepo).stdout
+check("a freshly built index is not called stale", "Source has changed since" not in fresh)
+import time as _time
+_time.sleep(1.1)
+(srepo / "app.py").write_text('"""Does a different thing."""\n', encoding="utf-8")
+stale = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                       cwd=srepo).stdout
+check("source changed after the index was built is reported", "Source has changed since" in stale)
+check("...and the notice names the command that fixes it", "chamnan-map" in stale)
+check("the gap is not rounded up into a day", "1 day behind" not in stale)
+# A log line written overnight must not make the ARCHITECTURE look out of date.
+(srepo / ".chamnan" / "logs" / "noise.log").write_text("x\n", encoding="utf-8")
+subprocess.run([str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True, cwd=srepo)
+_time.sleep(1.1)
+(srepo / ".chamnan" / "logs" / "noise.log").write_text("y\n", encoding="utf-8")
+quiet = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                       cwd=srepo).stdout
+check("a non-source file does not make the index look stale",
+      "Source has changed since" not in quiet)
+shutil.rmtree(srepo.parent, ignore_errors=True)
+
 # An OLD workspace must be brought up to date, not left as it was. Found on two repositories that
 # had been using chamnan for weeks: no memory/, sessions/ or threads/ at all, and a config.json
 # holding 10 of the 19 keys — so every feature that writes into those directories had silently

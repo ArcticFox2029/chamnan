@@ -194,3 +194,97 @@ def ensure(root=None):
     if merged != current:
         cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return ws
+
+
+VERSION_FILE = ".version"
+
+
+def plugin_version(plugin_root):
+    """The running plugin's own version, from the manifest beside it. "" if it cannot be read."""
+    try:
+        data = json.loads((Path(plugin_root) / ".claude-plugin" / "plugin.json")
+                          .read_text(encoding="utf-8"))
+        return str(data.get("version", ""))
+    except (OSError, ValueError, TypeError):
+        return ""
+
+
+def _as_tuple(version):
+    out = []
+    for part in str(version).split("."):
+        digits = "".join(c for c in part if c.isdigit())
+        out.append(int(digits) if digits else 0)
+    return tuple(out)
+
+
+def reconcile_version(root, running):
+    """Record the newest version that has touched this workspace; report a DOWNGRADE.
+
+    Returns the recorded version when the code running now is OLDER than one that has already
+    reconciled this workspace, and "" otherwise.
+
+    There is no network here and there will not be: repository-local with no calls out is the
+    product, so chamnan cannot ask GitHub whether a newer release exists. What it can do is notice
+    that a newer version has already been HERE — which catches the case that actually bites. A
+    plugin's bin/ is put on PATH pinned at session start, so upgrading mid-session leaves the old
+    executables live; and a machine can carry several installs at once, one per config directory.
+    Both were hit for real on the day this was written: `chamnan-map` resolved to a build three
+    minor versions old, which still carried the nested-checkout bug the upgrade existed to escape,
+    and nothing said so.
+
+    An upgrade is silent — it just updates the record. Only going backwards is worth interrupting
+    for, because that is the one direction the user did not intend.
+    """
+    if not running:
+        return ""
+    path = workspace(root) / VERSION_FILE
+    try:
+        seen = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        seen = ""
+    if seen and _as_tuple(running) < _as_tuple(seen):
+        return seen
+    if seen != running:
+        try:
+            path.write_text(running + "\n", encoding="utf-8")
+        except OSError:
+            pass
+    return ""
+
+
+def available_update(plugin_root):
+    """A newer version of this plugin already sitting in the marketplace on disk, or "".
+
+    No network, and there will not be one: repository-local with no calls out is what the product
+    is, and a session-start version ping to a server would contradict that for every user, not just
+    the one who wanted the notice. What is on disk is enough — Claude Code keeps the marketplace it
+    installed from beside the installed copy, so when that has moved ahead, an update is genuinely
+    waiting and can be reported without asking anyone anything.
+
+    It reports. It never installs. Upgrading someone's tooling because they opened a session is the
+    behaviour this is meant to prevent, not perform: the user is told, and decides.
+    """
+    try:
+        root = Path(plugin_root).resolve()
+        running = plugin_version(root)
+        if not running:
+            return ""
+        name = json.loads((root / ".claude-plugin" / "plugin.json")
+                          .read_text(encoding="utf-8")).get("name", "")
+        for ancestor in root.parents:
+            if ancestor.name != "plugins":
+                continue
+            for entry in sorted((ancestor / "marketplaces").iterdir()):
+                manifest = entry / ".claude-plugin" / "plugin.json"
+                if not manifest.is_file():
+                    continue
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                if name and data.get("name") != name:
+                    continue
+                offered = str(data.get("version", ""))
+                if offered and _as_tuple(offered) > _as_tuple(running):
+                    return offered
+            break
+    except (OSError, ValueError, TypeError):
+        pass
+    return ""

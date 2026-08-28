@@ -293,6 +293,30 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.7.2
+
+**An update is offered, never taken.** When a newer version is already sitting in the marketplace
+Claude Code installed from, the session says so and stops there — nothing is changed until you say
+yes. A tool that upgrades itself because you opened a session is doing something you did not ask
+for, and doing it quietly is worse than not doing it at all. Once one repository is on the new
+version, every other repository brings its own workspace up to date by itself the next time it is
+opened.
+
+No network is involved, and there will not be one: repository-local with no calls out is what this
+is. The marketplace copy is already on disk, so "is there a newer one" is a local question.
+`claude plugin marketplace update` is what refreshes that copy.
+
+**An older build running against a newer workspace is caught.** A plugin's `bin/` goes on `PATH`
+pinned at session start, so upgrading mid-session leaves the old executables live — and one machine
+can carry several installs, one per config directory. The workspace records the newest version that
+has set it up, and says so if something older turns up later. An upgrade is silent; only going
+backwards is worth interrupting for.
+
+**A stale index is reported.** If source has changed since `MAP.md` was built, the session says how
+far behind it is and names the command that fixes it. Reported rather than rebuilt: rebuilding
+unasked at session start spends real time on work nobody requested, and the gap is stated honestly
+in minutes or hours rather than rounded up to a day.
+
 ## What's new in 1.7.1
 
 **An upgrade now reaches the repository, not only the plugin.** 1.7.0 created the workspace when
