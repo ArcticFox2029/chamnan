@@ -12,8 +12,10 @@ credentials. A tool that indexes a codebase must not be the thing that copies a 
 the user then commits, so values are discarded at parse time rather than filtered later — there is
 no code path here that can carry one into the output.
 """
+import fnmatch
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import redact
@@ -254,6 +256,60 @@ def render_routes(routes):
     return "\n".join(out)
 
 
+# 🐛 [fixed 2026-08-29] This used to be `".env" in (root/".gitignore").read_text()`, which is wrong
+# in both directions and was caught by its own output: it warned that a repo's ai-dev/.env was
+# unprotected when a .gitignore inside ai-dev/ had been ignoring it all along.
+#
+#   false alarm    only the ROOT .gitignore was read, so every nested one was invisible
+#   false calm     a substring test says "ignored" for `.envrc`, for `# do not commit .env`,
+#                  and for `!.env` — which means the opposite. That direction is the dangerous
+#                  one: a genuinely exposed credentials file reported as safe.
+#
+# git already knows the answer, including nested files, negation, ~/.config/git/ignore and
+# .git/info/exclude. Ask it, and fall back to reading the files only when it cannot answer.
+def _is_ignored(root, path):
+    """Is `path` ignored by git? Authoritative when git can answer, best-effort when it cannot."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+        if r.returncode in (0, 1):
+            return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        pass
+    # No git, or not a repository. Walk the .gitignore files from the file's own directory upward,
+    # nearest first, and let the last matching rule win the way git does.
+    return _ignored_by_files(Path(root), Path(path))
+
+
+def _ignored_by_files(root, path):
+    verdict = False
+    chain = []
+    d = path.parent
+    while True:
+        chain.append(d)
+        if d == root or d.parent == d:
+            break
+        d = d.parent
+    for d in reversed(chain):                      # outermost first, so nearer rules override
+        gi = d / ".gitignore"
+        if not gi.is_file():
+            continue
+        try:
+            rel = path.relative_to(d).as_posix()
+        except ValueError:
+            continue
+        for line in gi.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            negated = line.startswith("!")
+            pat = line[1:] if negated else line
+            pat = pat.rstrip("/")
+            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(path.name, pat):
+                verdict = not negated
+    return verdict
+
+
 # --- configuration ----------------------------------------------------------------------------
 def scan_env(root, files):
     """Variable NAMES. Values are never captured — see this module's docstring."""
@@ -263,9 +319,7 @@ def scan_env(root, files):
         for m in ENV_FILE_KEY.finditer(text):
             names.setdefault(m.group(1), rel)
         if path.name == ".env":
-            gi = root / ".gitignore"
-            ignored = gi.is_file() and ".env" in gi.read_text(encoding="utf-8", errors="replace")
-            if not ignored:
+            if not _is_ignored(root, path):
                 unsafe.append(rel)
     for f in files:
         try:

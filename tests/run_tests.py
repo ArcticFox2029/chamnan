@@ -3303,6 +3303,57 @@ check("matching() globs on the filename at any depth",
       {str(p.relative_to(walkdir)) for p in tree.matching(walkdir, "*.js")} == set())
 shutil.rmtree(walkdir.parent, ignore_errors=True)
 
+# ------------------------------------------- .env exposure: is it really unignored?
+#
+# 🐛 [2026-08-29] The warning "`.env` is not matched by .gitignore" was raised against a repo whose
+# ai-dev/.gitignore had been ignoring that file all along: only the ROOT .gitignore was read, with a
+# substring test. Both halves were wrong, and the substring half was wrong in the dangerous
+# direction — `.envrc`, `# never commit .env` and even `!.env` all read as "protected".
+envdir = Path(tempfile.mkdtemp()) / "envcheck"
+(envdir / "sub").mkdir(parents=True)
+(envdir / ".env").write_text("K=v", encoding="utf-8")
+(envdir / "sub" / ".env").write_text("K=v", encoding="utf-8")
+
+check("no rule anywhere leaves .env unprotected",
+      catalogs._ignored_by_files(envdir, envdir / ".env") is False)
+
+(envdir / "sub" / ".gitignore").write_text(".env*\n", encoding="utf-8")
+check("a NESTED .gitignore protects the file beside it",
+      catalogs._ignored_by_files(envdir, envdir / "sub" / ".env") is True)
+check("and does not protect the one in the directory above",
+      catalogs._ignored_by_files(envdir, envdir / ".env") is False)
+
+(envdir / ".gitignore").write_text("# never commit .env\n.envrc\n", encoding="utf-8")
+check("a comment mentioning .env, and .envrc, are not protection",
+      catalogs._ignored_by_files(envdir, envdir / ".env") is False)
+
+(envdir / ".gitignore").write_text(".env\n!.env\n", encoding="utf-8")
+check("a following !.env un-ignores it again",
+      catalogs._ignored_by_files(envdir, envdir / ".env") is False)
+(envdir / ".gitignore").write_text("!.env\n.env\n", encoding="utf-8")
+check("the last matching rule wins, as git does it",
+      catalogs._ignored_by_files(envdir, envdir / ".env") is True)
+
+# git is authoritative wherever it can answer, and that is the path that runs in a real repo.
+gitrepo = Path(tempfile.mkdtemp()) / "envrepo"
+gitrepo.mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(gitrepo)], check=True)
+(gitrepo / ".env").write_text("K=v", encoding="utf-8")
+check("git says unignored when nothing ignores it",
+      catalogs._is_ignored(gitrepo, gitrepo / ".env") is False)
+(gitrepo / ".gitignore").write_text(".env\n", encoding="utf-8")
+check("git says ignored once a rule exists",
+      catalogs._is_ignored(gitrepo, gitrepo / ".env") is True)
+(gitrepo / "deep").mkdir()
+(gitrepo / "deep" / ".env").write_text("K=v", encoding="utf-8")
+(gitrepo / ".gitignore").write_text("nothing-here\n", encoding="utf-8")
+(gitrepo / "deep" / ".gitignore").write_text(".env\n", encoding="utf-8")
+check("git sees a nested .gitignore that the old root-only read could not",
+      catalogs._is_ignored(gitrepo, gitrepo / "deep" / ".env") is True)
+
+shutil.rmtree(envdir.parent, ignore_errors=True)
+shutil.rmtree(gitrepo.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
