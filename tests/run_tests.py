@@ -47,6 +47,8 @@ import environments as envs  # noqa: E402
 import aging  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
+import md  # noqa: E402
+import pointer as pointer_mod  # noqa: E402
 
 def fake(*parts):
     """Assemble a test credential at runtime so no literal one is ever stored in this file.
@@ -3552,6 +3554,73 @@ check("git sees a nested .gitignore that the old root-only read could not",
 
 shutil.rmtree(envdir.parent, ignore_errors=True)
 shutil.rmtree(gitrepo.parent, ignore_errors=True)
+
+# ---------------------------------------------------- fenced blocks are not structure
+# Found 2026-08-31 by executing the modules rather than reading them: a `#` line inside a fenced
+# code block was being counted as a heading. The cost was not cosmetic. `split_pinned` exists so
+# that a pinned section is NEVER dropped, and a shell comment inside a fence ended the pinned span
+# early -- putting the sentence the pin protected into the droppable pool and emitting half a
+# fence into the injected text. Both directions are pinned here: fences are skipped, and real
+# headings still parse.
+
+fence_doc = """# STATE.md
+
+## Do not repeat \U0001F4CC
+
+The rule that must never be dropped is below.
+
+```bash
+# rebuild the map after renaming files
+chamnan-map
+```
+
+NEVER add a Cloud fallback for embeddings. This sentence is the payload.
+
+## Ordinary section
+
+Filler that is allowed to be dropped.
+"""
+_payload = "NEVER add a Cloud fallback for embeddings."
+_pinned, _unpinned = state_mod.split_pinned(fence_doc)
+check("a pin survives a '#' comment inside a fenced block", _payload in _pinned)
+check("...and that payload is NOT left in the droppable pool", _payload not in _unpinned)
+check("the fenced block is not torn in half", _pinned.count("```") == 2)
+check("an ordinary unpinned section is still droppable", "Filler that is allowed" in _unpinned)
+
+check("a real heading after a fence still opens a section",
+      len(md.headings(state_mod._HEADING, fence_doc)) == 3)
+check("an unclosed fence swallows the rest of the document",
+      md.fenced_spans("intro\n```\n# x\n") == [(6, 14)])
+check("an inline-code run is not an opening fence",
+      md.fenced_spans("``` `x` ```\n") == [])
+check("tilde fences are fences too", md.fenced_spans("~~~\n# x\n~~~\n") == [(0, 11)])
+_long = "````\n# x\n```\n# y\n````\n"
+check("a shorter inner fence does not close a longer opener",
+      md.fenced_spans(_long) == [(0, _long.rindex("````") + 4)])
+check("a document with no fences costs nothing to scan", md.fenced_spans("# a\n\n# b\n") == [])
+
+# front matter is a delimited block at the top, or it is not front matter. `pointer` titled an
+# entry with a fragment of its own prose because it searched the whole document for `description:`.
+_prose = """---
+name: real-entry
+---
+
+# The actual title
+
+We rejected the plan because its
+description: was written by the vendor and could not be checked.
+"""
+check("a 'description:' line in the body does not become the title",
+      pointer_mod._title(_prose, "FB") == "The actual title")
+check("a genuine front-matter description still wins over a heading",
+      pointer_mod._title("---\nname: x\ndescription: A real one\n---\n\n# Heading\n", "FB")
+      == "A real one")
+check("a heading inside a fence does not become the title",
+      pointer_mod._title("```\n# not a heading\n```\n\n# real heading\n", "FB") == "real heading")
+check("front_matter() returns nothing when the document does not open with ---",
+      md.front_matter("# Title\n\n---\nname: late\n---\n") == "")
+check("_title still falls back when an entry carries no convention at all",
+      pointer_mod._title("just prose, no heading\n", "FB") == "FB")
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

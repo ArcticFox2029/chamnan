@@ -37,6 +37,8 @@ import re
 import time
 from pathlib import Path
 
+import md
+
 # Scanned in the order they are listed, which is the order they are printed: the reason first, then
 # the procedure, then the line of work. `label` is what the reader sees.
 SOURCES = (
@@ -53,19 +55,31 @@ MAX_BYTES = 60_000    # per entry; a knowledge file larger than this is not a kn
 SEEN_FILE = "logs/pointer_seen.json"
 EVENT_LOG = "logs/pointer.jsonl"
 
-_FRONT_NAME = re.compile(r"^description:\s*(.+?)\s*$", re.M)
+_FRONT_NAME = re.compile(r"^description:\s*(.+?)\s*$", re.M)  # applied to front matter ONLY
 _HEADING = re.compile(r"^#{1,3}[ \t]+(.+?)\s*$", re.M)
 # An HTML-comment description, which is how the skills in this workspace carry theirs.
 _COMMENT_DESC = re.compile(r"<!--\s*description:\s*(.+?)\s*-->", re.S)
 
 
 def _title(text, fallback):
-    """One short line naming what an entry is, from whichever convention it happens to use."""
-    for pat in (_FRONT_NAME, _COMMENT_DESC, _HEADING):
-        m = pat.search(text)
+    """One short line naming what an entry is, from whichever convention it happens to use.
+
+    Each convention is looked for only where it is actually valid. `description:` counts inside a
+    real front-matter block and nowhere else -- searching the whole document once had this titling
+    an entry with a fragment of its own prose that happened to start with the word. A heading is a
+    heading only outside a fenced code block, for the same reason.
+    """
+    front = md.front_matter(text)
+    if front:
+        m = _FRONT_NAME.search(front)
         if m:
-            one = " ".join(m.group(1).split())
-            return one[:96]
+            return " ".join(m.group(1).split())[:96]
+    m = _COMMENT_DESC.search(text)
+    if m:
+        return " ".join(m.group(1).split())[:96]
+    heads = md.headings(_HEADING, text)
+    if heads:
+        return " ".join(heads[0].group(1).split())[:96]
     return fallback
 
 

@@ -57,6 +57,8 @@ import json
 import re
 import time
 
+import md
+
 PIN_MARK = "📌"
 
 AGES_PATH = "logs/state-ages.json"
@@ -68,7 +70,7 @@ def _sections(text):
     """Every heading in `text`: its level, whether it is pinned, and the span from the heading line
     through the next heading of the SAME OR HIGHER level (i.e. its full section, subsections
     included)."""
-    heads = list(_HEADING.finditer(text))
+    heads = md.headings(_HEADING, text)
     out = []
     for i, m in enumerate(heads):
         level = len(m.group(1))
