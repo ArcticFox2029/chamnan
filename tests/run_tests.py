@@ -1154,6 +1154,68 @@ _pkg = subprocess.run([sys.executable, "-c",
 check("lib/ can be imported as a package, not only via sys.path surgery",
       _pkg.returncode == 0)
 
+# ---------------------------------------------------------------- the file pointer
+# Knowledge pushed when a file is opened, instead of waiting for someone to run chamnan-impact.
+# The failure that matters on a hook firing many times per session is a FALSE POSITIVE, so every
+# "does not fire" check below carries as much weight as the ones that say it does.
+import pointer as pointer_mod  # noqa: E402
+
+pt_ws = Path(tempfile.mkdtemp()) / ".chamnan"
+(pt_ws / "memory" / "decisions").mkdir(parents=True)
+(pt_ws / "memory" / "lessons").mkdir(parents=True)
+(pt_ws / "skills").mkdir(parents=True)
+(pt_ws / "memory" / "decisions" / "token-format.md").write_text(
+    "---\ndescription: why the token is not a JWT\n---\n\n"
+    "`src/auth/token.py` chose an opaque token. token.py stays opaque because token.py\n",
+    encoding="utf-8")
+(pt_ws / "skills" / "README.md").write_text(
+    "# Index\n\n- token.py — auth\n- other.py — other\n", encoding="utf-8")
+(pt_ws / "memory" / "lessons" / "unrelated.md").write_text(
+    "# A lesson about state and tokens in general\n\nno filename here at all\n", encoding="utf-8")
+
+hits = pointer_mod.related(pt_ws, "src/auth/token.py")
+names = [h[1] for h in hits]
+check("an entry naming the file is found", "memory/decisions/token-format.md" in names)
+check("the entry that names it MOST often ranks first",
+      names and names[0] == "memory/decisions/token-format.md")
+check("an entry that only talks about the topic in prose is not a hit",
+      "memory/lessons/unrelated.md" not in names)
+check("the title is read out of the entry rather than invented",
+      any("not a JWT" in h[2] for h in hits))
+
+check("a file nothing records about produces no hits",
+      pointer_mod.related(pt_ws, "src/unrelated/thing.py") == [])
+check("and renders as nothing at all, not as 'no results'",
+      pointer_mod.render("src/unrelated/thing.py", []) == "")
+
+# The extension is the guard: a bare stem would match the word in ordinary prose.
+check("the needles carry their extension", pointer_mod.needles("src/a/state.py") ==
+      ["src/a/state.py", "state.py"])
+check("a name too short to be distinctive is dropped", pointer_mod.needles("a.c") == [])
+
+body = pointer_mod.render("src/auth/token.py", hits,
+                          {"used_by": ["login.py"], "tests": ["test_token.py"],
+                           "used_by_more": 3, "tests_more": 0})
+check("impact edges are rendered with the pointer", "used by" in body and "login.py" in body)
+check("an elided count is stated, not dropped", "+3" in body)
+check("the block says it is a pointer, not a summary", "not a summary" in body)
+
+check("nothing is shown twice in one session",
+      (pointer_mod.mark_pointed(pt_ws, "s1", "src/auth/token.py") or
+       pointer_mod.already_pointed(pt_ws, "s1", "src/auth/token.py")))
+check("a new session starts clean",
+      not pointer_mod.already_pointed(pt_ws, "s2", "src/auth/token.py"))
+check("pointer has a default in the shipped config",
+      ws.DEFAULT_CONFIG.get("pointer") is True)
+
+_hooks_json = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_pre = _hooks_json["hooks"]["PreToolUse"]
+check("the pointer hook is registered on PreToolUse",
+      any("file_pointer.py" in h["command"] for e in _pre for h in e["hooks"]))
+check("it fires on writes as well as reads",
+      any("Edit" in (e.get("matcher") or "") for e in _pre
+          if any("file_pointer.py" in h["command"] for h in e["hooks"])))
+
 # ---------------------------------------------------------------- write-skills line + injection
 session_start_mod = import_hook_module("session_start.py")
 

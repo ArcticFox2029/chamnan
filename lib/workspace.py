@@ -45,6 +45,12 @@ DEFAULT_CONFIG = {
     # file. A notice, never a block — the one time someone genuinely needs to read package-lock.json
     # is the one time refusing would be most wrong.
     "warn_on_bulk_reads": True,
+    # When a file is opened, name what this repository already records about it — the decision, the
+    # lesson, the procedure, and who depends on it. The same knowledge `chamnan-impact` answers on
+    # demand, arriving without being asked, because the caller is a model and remembering to ask is
+    # the work this plugin exists to remove. Silent when nothing matches, once per file per session,
+    # and never about chamnan's own files. See lib/pointer.py.
+    "pointer": True,
     # How replies in this repo should be written. "off" is the default and changes nothing.
     #
     # This is the smallest lever in the plugin and it is worth saying so where the option lives:

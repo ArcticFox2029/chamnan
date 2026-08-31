@@ -40,6 +40,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/bulk_read_notice.py\""
           }
         ]
+      },
+      {
+        "matcher": "Read|Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/file_pointer.py\""
+          }
+        ]
       }
     ]
   }
