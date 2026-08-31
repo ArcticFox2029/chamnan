@@ -271,7 +271,8 @@ def _is_ignored(root, path):
     """Is `path` ignored by git? Authoritative when git can answer, best-effort when it cannot."""
     try:
         r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
-                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=10)
         if r.returncode in (0, 1):
             return r.returncode == 0
     except (OSError, subprocess.SubprocessError):

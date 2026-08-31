@@ -1492,6 +1492,10 @@ check("one commit of history is not enough to rank on",
 check("...so the roll-up still reads alphabetically",
       "`zz.py`" not in rollup.collapse(_roll_index, "MAP.md", None, _rollrepo))
 
+# _churn memoises per process, so a fixture that grows its own history has to say so. Nothing
+# shipped does: the hook and chamnan-map each read git once and exit.
+rollup.forget_churn()
+
 # Now give zz.py a history nothing else has, past the threshold.
 for _i in range(rollup.MIN_COMMITS_TO_RANK + 2):
     (_rollrepo / "pkg" / "zz.py").write_text(f"x{_i}", encoding="utf-8")
@@ -3683,6 +3687,48 @@ check("front_matter() returns nothing when the document does not open with ---",
 check("_title still falls back when an entry carries no convention at all",
       pointer_mod._title("just prose, no heading\n", "FB") == "FB")
 
+
+# ------------------------------- rollup: resolution is spendable before the section is
+# Over a hard byte ceiling, an index line with four names still orients a reader and one with none
+# still says the directory exists. Stepping the roll-up down is a smaller loss than dropping it.
+_many = "\n".join(f"- **`z/f{i}.py`** (1)" for i in range(12)) + "\n- **`q/one.py`** (1)\n"
+check("per_dir defaults to the eight the roll-up has always shown",
+      rollup.collapse(_many, "M.md").count("`f") == 8)
+check("per_dir=4 shows four and counts the rest",
+      "_+8 more_" in rollup.collapse(_many, "M.md", per_dir=4))
+_none = rollup.collapse(_many, "M.md", per_dir=0)
+check("per_dir=0 still names every directory and its size",
+      "- **z/** (12)" in _none and "- **q/** (1)" in _none)
+check("per_dir=0 carries no filenames at all", "`f" not in _none)
+check("per_dir=0 does not print '+N more' with nothing to be more than",
+      "more_" not in _none)
+check("stepping down actually gets smaller",
+      len(rollup.collapse(_many, "M.md", per_dir=0))
+      < len(rollup.collapse(_many, "M.md", per_dir=4))
+      < len(rollup.collapse(_many, "M.md", per_dir=8)))
+check("a directory with fewer files than per_dir is unchanged and unannotated",
+      "- **q/** (1) — `one.py`" in rollup.collapse(_many, "M.md", per_dir=8))
+
+# collapse() recognises rows by their `- **`path`**` shape, so its own output has none to group.
+# Re-folding a folded index is a real call path now that the index is re-rendered when over budget.
+_refold = rollup.collapse(_none, "M.md", per_dir=8)
+check("re-folding a folded index does not claim to have rolled up 0 files",
+      "_0 files" not in _refold)
+check("...it returns the index it was given, unchanged", _refold == _none)
+
+# One git log per process: collapse() is called several times per session start now.
+rollup._CHURN_CACHE.clear()
+_calls = []
+_real = rollup.subprocess.run
+def _counting(*a, **k):
+    _calls.append(a)
+    return _real(*a, **k)
+rollup.subprocess.run = _counting
+for _ in range(4):
+    rollup.collapse(_many, "M.md", root=ROOT)
+rollup.subprocess.run = _real
+check("four collapses shell out to git at most once", len(_calls) <= 1)
+rollup._CHURN_CACHE.clear()
 
 # ------------------------------------------------- fit: the host's stdout cap
 # The host truncates a SessionStart hook over ~10,000 bytes to its first 2,048 plus a file path.

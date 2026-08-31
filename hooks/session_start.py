@@ -147,8 +147,16 @@ def section(title, body, source=""):
     # Priced with the real estimator on the real text. Counting characters and pricing them as if
     # they were ASCII is wrong on a repository whose STATE.md is half Thai, and the error would
     # hide inside the remainder line where nobody would see it.
-    LEDGER.append({"title": title, "tokens": tokens.estimate(text), "source": source,
-                   "fenced": True})
+    row = {"title": title, "tokens": tokens.estimate(text), "source": source, "fenced": True}
+    # Replace rather than append. A section can legitimately be rendered more than once — the index
+    # is re-rendered at lower resolution when the block is over its byte ceiling — and a second row
+    # for the same title would count it twice in every number --explain prints.
+    for i, e in enumerate(LEDGER):
+        if e["title"] == title:
+            LEDGER[i] = row
+            break
+    else:
+        LEDGER.append(row)
     return text
 
 
@@ -243,6 +251,7 @@ def main():
         return 0                      # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
     out = []
+    index_slot = index_render = None
 
     # Said before anything else, and never suppressed by a config flag: if the code running this
     # session is older than a version that has already set this workspace up, everything below is
@@ -281,8 +290,12 @@ def main():
             cut = text.find("## Full Detail")
             index = text[:cut] if cut > 0 else text
             budget = cfg.get("index_token_budget", 3000)
+            # Held before folding. collapse() recognises rows by their `- **\`path\`**` shape, and a
+            # folded index no longer has any, so re-folding its own output finds nothing to group.
+            index_render = (index, mp.relative_to(root), budget, root)
             if not tokens.fits(index, budget):
                 index = rollup.collapse(index, mp.relative_to(root), budget, root)
+            index_slot = len(out)
             out.append(section("Architecture index", index, str(mp.relative_to(root))))
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")
@@ -425,6 +438,9 @@ def main():
 
     if any(OPEN_MARK in part for part in out):
         out.insert(0, FRAMING + "\n")
+        # Everything after position 0 has just moved. index_slot is an index into this list.
+        if index_slot is not None:
+            index_slot += 1
 
     if not out:
         if "--explain" in sys.argv:
@@ -436,6 +452,22 @@ def main():
     # lose here — whole sections, named, lowest value first — beats a positional cut that keeps a
     # directory listing and silently throws away the repository's own rules.
     ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
+
+    # Spend the index's resolution before spending the index. A directory line with four names
+    # still orients a reader and one with none still says the directory exists, so stepping the
+    # roll-up down is a smaller loss than dropping the section — and a much smaller loss than
+    # dropping whatever fit.shrink would have taken instead.
+    if index_slot is not None:
+        raw, map_rel, budget, groot = index_render
+        # Starts at 8, not 4. An index that fitted index_token_budget was never rolled up at all,
+        # so its first step down is the ordinary roll-up — and re-rolling one that was already
+        # folded at 8 returns the same text for one cached lookup.
+        for per_dir in (8, 4, 2, 0):
+            if len(("## chamnan\n" + "".join(out)).encode()) <= ceiling:
+                break
+            folded = rollup.collapse(raw, map_rel, budget, groot, per_dir)
+            out[index_slot] = section("Architecture index", folded, str(map_rel))
+
     sources = {e["title"]: e.get("source", "") for e in LEDGER}
     body, dropped = fit.shrink("## chamnan\n", out, ceiling, sources)
     if "--explain" in sys.argv:
@@ -493,6 +525,18 @@ def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
     print("\n  Budgets: index_token_budget "
           f"{cfg.get('index_token_budget', 3000):,}, state_token_budget "
           f"{cfg.get('state_token_budget', 1700):,} — both in .chamnan/config.json.")
+    # The two budgets are set in tokens and the host's cut is made in bytes, so they can both be
+    # satisfied by a block that is nevertheless too large to deliver. Converting at this block's own
+    # measured ratio is the only honest conversion available -- the ratio is a property of the text,
+    # not a constant, and it moves with the script the repository is written in.
+    asked = cfg.get("index_token_budget", 3000) + cfg.get("state_token_budget", 1700)
+    if total > 0 and ceiling > 0:
+        per_token = size / total
+        room = ceiling / per_token
+        print(f"  Those are tokens; the ceiling is bytes. At this block's measured "
+              f"{per_token:.2f} bytes/token, {ceiling:,} bytes is about {room:,.0f} tokens — and "
+              f"those two budgets alone ask for {asked:,}"
+              + (", which cannot fit." if asked > room else "."))
     # Said only when it is actually happening, because otherwise the budget line above looks
     # contradicted by the table. A pinned heading is exempt from the cut on purpose — that is the
     # whole point of pinning — so the state section can legitimately exceed its budget, and the

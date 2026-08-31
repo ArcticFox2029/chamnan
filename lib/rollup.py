@@ -19,6 +19,18 @@ MIN_COMMITS_TO_RANK = 50
 CHURN_WINDOW = 600
 
 
+# One `git log` per process. collapse() is now called several times in a session when the block is
+# over its byte ceiling and the index is being stepped down, and re-shelling for an answer that
+# cannot have changed between those calls is pure latency on every session start.
+_CHURN_CACHE = {}
+
+
+def forget_churn():
+    """Drop the memo. Needed only by a caller that changes the repository's history mid-process --
+    which the hook and chamnan-map never do, and a test that builds up a fixture repo does."""
+    _CHURN_CACHE.clear()
+
+
 def _churn(root, window=CHURN_WINDOW):
     """Commits touching each tracked path over the last `window` commits, or {} if git cannot say.
 
@@ -27,14 +39,19 @@ def _churn(root, window=CHURN_WINDOW):
     """
     if not root:
         return {}
+    key = (str(root), window)
+    if key in _CHURN_CACHE:
+        return _CHURN_CACHE[key]
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "log", "--name-only", "--pretty=format:", "-n", str(window)],
-            capture_output=True, text=True, timeout=10)
+            # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
+            # bytes the hook has not read yet, or block waiting on a prompt that will never come.
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return {}
+        return _CHURN_CACHE.setdefault(key, {})
     if out.returncode != 0:
-        return {}
+        return _CHURN_CACHE.setdefault(key, {})
     counts = {}
     seen_commits = 0
     for line in out.stdout.splitlines():
@@ -44,11 +61,11 @@ def _churn(root, window=CHURN_WINDOW):
             continue
         counts[line] = counts.get(line, 0) + 1
     if seen_commits < MIN_COMMITS_TO_RANK:
-        return {}
-    return counts
+        return _CHURN_CACHE.setdefault(key, {})
+    return _CHURN_CACHE.setdefault(key, counts)
 
 
-def collapse(index, map_rel, budget=None, root=None):
+def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     """Fold a too-large index down to one line per directory instead of cutting its tail off.
 
     Truncating at a byte offset drops whatever sorts last, so on a 196-file repo everything from
@@ -69,6 +86,12 @@ def collapse(index, map_rel, budget=None, root=None):
     a repo under MIN_COMMITS_TO_RANK commits all fall back to the alphabet, which is stable and
     diffs cleanly. Names are always emitted sorted regardless of how they were chosen, so the line
     reads the same way and a re-run does not reshuffle it.
+
+    `per_dir` is how many names each directory line carries. It exists so a caller that is over a
+    hard output limit can spend the index's resolution before spending the index: four names still
+    orient a reader, and `per_dir=0` still says the directory exists and how big it is. Losing
+    resolution is cheaper than losing the section, and much cheaper than losing whatever would have
+    been dropped in its place.
     """
     header, rows = [], []
     for line in index.splitlines():
@@ -78,6 +101,13 @@ def collapse(index, map_rel, budget=None, root=None):
         path = line.split("`")[1]
         top = path.split("/")[0] if "/" in path else "(root)"
         groups.setdefault(top, []).append((path, path.split("/")[-1]))
+    if not groups:
+        # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an
+        # older chamnan, or -- the case that actually happened -- an index that has already been
+        # folded once. Announcing "0 files, rolled up by directory" above content that plainly is
+        # not, and is not smaller either, is worse than doing nothing. _enforce still has the last
+        # word on the budget.
+        return _enforce(index, map_rel, budget) if budget else index
     folded = [f"_{len(rows)} files. Rolled up by directory to stay inside the session budget —"
               f" read `{map_rel}` for any one of them in full._", ""]
     churn = _churn(root)
@@ -88,10 +118,13 @@ def collapse(index, map_rel, budget=None, root=None):
             entries = sorted(entries, key=lambda e: (-churn.get(e[0], 0), e[1]))
         else:
             entries = sorted(entries, key=lambda e: e[1])
-        picked = sorted(n for _, n in entries[:8])
+        picked = sorted(n for _, n in entries[:per_dir])
         shown = ", ".join(f"`{n}`" for n in picked)
-        more = f" _+{len(names)-8} more_" if len(names) > 8 else ""
-        folded.append(f"- **{top}/** ({len(names)}) — {shown}{more}")
+        hidden = len(names) - len(picked)
+        # "+N more" is only meaningful next to names it is more THAN. With none shown the count
+        # already says how many there are, and repeating it as "(12) +12 more" reads as a bug.
+        more = f" _+{hidden} more_" if hidden and picked else ""
+        folded.append(f"- **{top}/** ({len(names)})" + (f" — {shown}{more}" if shown else ""))
     out = "\n".join(header + folded)
     return _enforce(out, map_rel, budget) if budget else out
 
