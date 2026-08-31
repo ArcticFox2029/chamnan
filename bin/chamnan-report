@@ -148,6 +148,73 @@ def print_usage(root):
     print()
 
 
+def print_pointer(root, project_dir):
+    """Did the session open what it was pointed at?
+
+    The measurement `hooks/file_pointer.py` was built to allow, and it is deliberately NOT "how
+    often did it match". A pointer that fires on 39 of 42 files and names the wrong entry scores
+    identically to one that names the right entry, so a match rate measures the pointer's
+    enthusiasm, not its usefulness. What can be checked is whether the thing it named was then
+    opened — and both halves of that are already written down: logs/pointer.jsonl records what was
+    named, and Claude Code's own transcripts record every file the session read.
+
+    Still an observation, not proof. A session may act on knowledge without opening the file, and a
+    file may be opened for an unrelated reason. Reported as a count, never as a score.
+    """
+    log = ws.workspace(root) / "logs" / "pointer.jsonl"
+    if not log.is_file():
+        return
+    fired, named = 0, {}
+    try:
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            fired += 1
+            for path in rec.get("named") or []:
+                named.setdefault(path, set()).add(rec.get("session"))
+    except OSError:
+        return
+    if not fired:
+        return
+
+    # Every path this repo's sessions have READ, from the transcripts rather than from a new log.
+    opened = set()
+    for f in project_dir.rglob("*.jsonl"):
+        try:
+            with f.open(encoding="utf-8", errors="replace") as fh:
+                for line in fh:
+                    if '"tool_use"' not in line or ".chamnan" not in line:
+                        continue          # cheap prefilter; these files run to hundreds of MB
+                    try:
+                        d = json.loads(line)
+                    except ValueError:
+                        continue
+                    content = (d.get("message") or {}).get("content")
+                    if not isinstance(content, list):
+                        continue
+                    for b in content:
+                        if isinstance(b, dict) and b.get("type") == "tool_use":
+                            fp = (b.get("input") or {}).get("file_path") or ""
+                            if ".chamnan" in fp:
+                                opened.add(fp.split(".chamnan/")[-1])
+        except OSError:
+            continue
+
+    followed = sorted(p for p in named if p in opened)
+    print("Pointer — knowledge named when a file was opened")
+    print(f"  fired                {fired:>4} time(s), naming {len(named)} distinct entr(ies)")
+    print(f"  later opened         {len(followed):>4} of those {len(named)}")
+    for path in followed[:6]:
+        print(f"      {path}")
+    if len(followed) > 6:
+        print(f"      …and {len(followed) - 6} more")
+    print("  (an observation, not a score: knowledge can be acted on without the file being")
+    print("   opened, and a file can be opened for a reason that has nothing to do with this)")
+    print()
+
+
 def main(argv):
     root = ws.find_root()
     if not ws.enabled("report", root):
@@ -156,6 +223,8 @@ def main(argv):
     print_inventory(root)
     print_usage(root)
     project_dir = encoded_dir(root)
+    if project_dir:
+        print_pointer(root, project_dir)
     if not project_dir:
         # 🐛 [2026-08-28] Returned 1. A repository nobody has worked on in Claude Code yet has no
         # transcripts, which is the ordinary state on the day the plugin is installed — not a
