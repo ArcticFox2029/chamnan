@@ -41,6 +41,13 @@ DEFAULT_CONFIG = {
     # replaces. 3,000 tokens is well under 1% of a 1M context window and still holds a few hundred
     # files. chamnan-map reports against it and says what to cut when it is exceeded.
     "index_token_budget": 3000,
+    # A hard ceiling in BYTES on everything the SessionStart hook prints, enforced after the token
+    # budgets above have already had their say. The two are not the same measurement and cannot
+    # substitute for each other: the host truncates a hook's stdout over 10,000 bytes to its first
+    # 2,048 plus a path on disk, and that cut is positional, so a block can be comfortably inside
+    # every token budget and still lose its whole second half. 9,000 leaves margin under a limit
+    # that is not ours to change. Set 0 to switch the ceiling off and take the host's cut instead.
+    "output_byte_ceiling": 9000,
     # Mention it when a read is about to pull in a lock file, a minified bundle or a very large
     # file. A notice, never a block — the one time someone genuinely needs to read package-lock.json
     # is the one time refusing would be most wrong.

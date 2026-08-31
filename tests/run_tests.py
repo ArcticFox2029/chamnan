@@ -3683,6 +3683,70 @@ check("front_matter() returns nothing when the document does not open with ---",
 check("_title still falls back when an entry carries no convention at all",
       pointer_mod._title("just prose, no heading\n", "FB") == "FB")
 
+
+# ------------------------------------------------- fit: the host's stdout cap
+# The host truncates a SessionStart hook over ~10,000 bytes to its first 2,048 plus a file path.
+# That cut is positional, so it keeps whatever was emitted first and discards the rest — measured
+# on one machine at 47 of 120 injections, losing 80-86% each time. These pin the deliberate
+# version of that loss: whole named sections, cheapest first, and said out loud.
+import fit  # noqa: E402
+
+def _sec(title, n):
+    return f"\n### {title}\n" + ("x" * n) + "\n"
+
+_big = [_sec("Architecture index", 4000),
+        _sec("Rules this repository works under", 400),
+        _sec("Work in flight (from the last session)", 400),
+        "a bare trailer line\n"]
+_body, _dropped = fit.shrink("## chamnan\n", _big, 2000,
+                             {"Architecture index": ".chamnan/MAP.md"})
+
+check("a block over the ceiling is brought under it",
+      len(_body.encode()) <= 2000)
+check("the index is what gets dropped, not the repository's rules",
+      [t for t, _ in _dropped] == ["Architecture index"])
+check("the rules survive", "### Rules this repository works under" in _body)
+check("so does the session handoff", "### Work in flight (from the last session)" in _body)
+check("a bare line that is not a section is never droppable",
+      "a bare trailer line" in _body)
+check("the drop is named out loud, with the file to read it in",
+      "Architecture index" in _body and ".chamnan/MAP.md" in _body)
+
+# The notice is emitted too, so a block sized without it lands over the limit anyway.
+_tight = [_sec("Architecture index", 300), _sec("Recent milestones", 300),
+          _sec("Rules this repository works under", 100)]
+_tbody, _tdropped = fit.shrink("## chamnan\n", _tight, 260)
+check("the notice's own length is inside the measurement",
+      len(_tbody.encode()) <= 260)
+
+check("a block already under the ceiling is left completely alone",
+      fit.shrink("## chamnan\n", _big, 100000) == ("## chamnan\n" + "".join(_big), []))
+check("ceiling 0 switches the whole mechanism off",
+      fit.shrink("## chamnan\n", _big, 0) == ("## chamnan\n" + "".join(_big), []))
+check("nothing dropped means no notice line at all", fit.notice([]) == "")
+
+# STATE.md carries its own `### ` headings inside the fence. Reading those as section titles would
+# let a payload rename the container that holds it.
+check("a heading inside a section body is not read as that section's title",
+      fit.title_of("\n### Work in flight (from the last session)\n### OPEN 1\nbody\n")
+      == "Work in flight (from the last session)")
+check("a part that does not open with a heading has no title",
+      fit.title_of("### not at the start\n") == "")
+
+# A section nobody has ranked yet is new, not worthless: it goes after the index and before
+# everything the drop order explicitly protects.
+_unknown = [_sec("Architecture index", 3000), _sec("Some future section", 3000),
+            _sec("Rules this repository works under", 200)]
+_ubody, _udropped = fit.shrink("## chamnan\n", _unknown, 1200)
+check("an unranked section drops after the index but before the rules",
+      [t for t, _ in _udropped] == ["Architecture index", "Some future section"])
+
+check("every name in the drop order is one the hook actually emits",
+      all(any(n in open(ROOT / "hooks" / "session_start.py").read() for n in [name])
+          for name in fit.DROP_ORDER))
+check("the default ceiling sits under the 10,000-byte cap that was measured",
+      fit.CEILING < 10000)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

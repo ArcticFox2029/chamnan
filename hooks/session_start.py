@@ -21,6 +21,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import environments  # noqa: E402
+import fit  # noqa: E402
 import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
@@ -429,14 +430,21 @@ def main():
         if "--explain" in sys.argv:
             print("chamnan injects nothing into this repository's sessions.")
         return 0
-    body = "## chamnan\n" + "".join(out)
+    # Last step, and deliberately after everything else has had its say. The host truncates a
+    # hook's stdout over ~10,000 bytes to its first 2,048 plus a file path, which drops whatever
+    # sits late in the block no matter how carefully it was budgeted or pinned. Choosing what to
+    # lose here — whole sections, named, lowest value first — beats a positional cut that keeps a
+    # directory listing and silently throws away the repository's own rules.
+    ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
+    sources = {e["title"]: e.get("source", "") for e in LEDGER}
+    body, dropped = fit.shrink("## chamnan\n", out, ceiling, sources)
     if "--explain" in sys.argv:
-        return explain(body, cfg)
+        return explain(body, cfg, dropped, ceiling)
     print(body)
     return 0
 
 
-def explain(body, cfg):
+def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
     """What this session was given, what it cost, and where each part came from.
 
     Answers the one question the injection could not answer about itself. Every number here is
@@ -445,7 +453,17 @@ def explain(body, cfg):
     number rather than quietly missing.
     """
     total = tokens.estimate(body)
+    size = len(body.encode())
     print(f"chamnan context — {total:,.0f} tokens injected at session start\n")
+    # Bytes, not tokens, because the host's cut is made on bytes. A block can be well inside its
+    # token budgets and still be truncated to 2,048 bytes on the way out.
+    print(f"  {size:,} bytes of the {ceiling:,}-byte hook limit "
+          f"({size / ceiling * 100:.0f}%).")
+    if dropped:
+        print("  Over the limit, so these were left out whole rather than cut mid-sentence:")
+        for title, src in dropped:
+            print(f"    {title}" + (f"   {src}" if src else ""))
+    print()
     shown = [e for e in LEDGER if not e.get("skipped")]
     if shown:
         width = max(len(e["title"]) for e in shown)
