@@ -78,6 +78,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     `dropped` is a list of (title, source) for what was removed, so the caller can say so out loud
     instead of leaving the reader to trust a block that is quietly missing its middle.
     """
+    order = list(parts)          # the untouched originals, to trim from after the drops
     parts = list(parts)
     dropped = []
     if ceiling <= 0:
@@ -99,7 +100,63 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
         dropped.append((t, (sources or {}).get(t, "")))
         parts[i] = ""
 
+    # Dropping whole sections can overshoot badly. A single section larger than the ceiling forces
+    # every cheaper one out and then goes itself, and the block lands at a third of the limit with
+    # its most valuable part missing -- observed exactly once, when STATE.md alone reached 11,000
+    # bytes. So if there is real room left, the best thing that was dropped comes back trimmed.
+    # Half a session handoff beats none of one, and the room was going to be wasted either way.
+    if dropped:
+        used = len((header + "".join(parts) + notice(dropped, ceiling)).encode())
+        room = ceiling - used
+        for rank, i in droppable:
+            if not parts[i] == "":
+                continue
+            title = _dropped_title(dropped, i, order)
+            if title is None:
+                continue
+            trimmed = _trim(order[i], room, sources)
+            if trimmed:
+                parts[i] = trimmed
+                dropped = [d for d in dropped if d[0] != title]
+                break
+
     return header + "".join(parts) + notice(dropped, ceiling), dropped
+
+
+def _trim(part, room, sources):
+    """A fenced section cut to `room` bytes, still closed, and saying it was cut. "" if pointless.
+
+    A section is `\n### Title\n<open>\n<body>\n<close>\n`, and cutting it at a byte offset would
+    leave the opening fence unterminated -- the reader could not then tell where repository text
+    stopped and chamnan's own words began, which is the one thing the fence exists to say. So the
+    frame is rebuilt around a shortened body instead.
+    """
+    lines = part.split("\n")
+    if len(lines) < 5 or not lines[1].startswith("### "):
+        return ""
+    title, open_mark, close_mark = lines[1][4:], lines[2], lines[-2]
+    src = (sources or {}).get(title, "")
+    note = f"_… cut to fit the hook limit; the rest is in `{src}`._" if src else "_… cut to fit._"
+    frame = len(f"\n{lines[1]}\n{open_mark}\n\n{note}\n{close_mark}\n".encode())
+    budget = room - frame
+    # Under a few hundred bytes the surviving fragment says nothing the notice does not.
+    if budget < 300:
+        return ""
+    body, total = [], 0
+    for line in lines[3:-2]:
+        n = len(line.encode()) + 1
+        if total + n > budget:
+            break
+        body.append(line)
+        total += n
+    if not body:
+        return ""
+    return f"\n{lines[1]}\n{open_mark}\n" + "\n".join(body) + f"\n{note}\n{close_mark}\n"
+
+
+def _dropped_title(dropped, i, order):
+    t = title_of(order[i])
+    return t if any(d[0] == t for d in dropped) else None
 
 
 def notice(dropped, ceiling=CEILING):

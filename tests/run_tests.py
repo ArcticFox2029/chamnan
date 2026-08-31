@@ -3911,6 +3911,42 @@ check("every name in the drop order is one the hook actually emits",
 check("the default ceiling sits under the 10,000-byte cap that was measured",
       fit.CEILING < 10000)
 
+# A section larger than the whole ceiling used to force every cheaper one out and then go itself,
+# leaving the block at a third of the limit with its most valuable part missing. Half a session
+# handoff beats none of one, and the room was going to be wasted either way.
+def _fenced(title, n):
+    return f"\n### {title}\n[repo:abc]\n" + "\n".join(f"line {i} of the handoff" for i in range(n)) + "\n[/repo:abc]\n"
+
+_huge = [_sec("Architecture index", 900),
+         _fenced("Work in flight (from the last session)", 400),
+         _sec("Rules this repository works under", 200)]
+_hbody, _hdropped = fit.shrink("## chamnan\n", _huge, 3000,
+                               {"Work in flight (from the last session)": ".chamnan/STATE.md"})
+check("a section bigger than the ceiling is trimmed, not dropped",
+      "### Work in flight (from the last session)" in _hbody)
+check("the trimmed section is no longer listed as dropped",
+      all(d[0] != "Work in flight (from the last session)" for d in _hdropped))
+check("its fence is still closed", _hbody.count("[repo:abc]") == 1
+      and _hbody.count("[/repo:abc]") == 1)
+check("it says it was cut, and where the rest is",
+      "cut to fit" in _hbody and ".chamnan/STATE.md" in _hbody)
+check("the trim actually respects the ceiling", len(_hbody.encode()) <= 3000)
+check("the room left over is genuinely used, not abandoned",
+      len(_hbody.encode()) > 3000 * 0.6)
+check("the cheaper section was still dropped to make that room",
+      "### Architecture index" not in _hbody)
+check("and the highest-priority section is untouched",
+      "### Rules this repository works under" in _hbody)
+
+# Too little room to say anything is not worth a torn fragment. At 700 bytes the rules and the
+# notice leave under the 300 the trim needs, so the section goes rather than coming back as a stub.
+_tiny, _tdropped = fit.shrink("## chamnan\n", _huge, 700)
+check("with almost no room the section is dropped rather than trimmed to nothing",
+      "### Work in flight" not in _tiny)
+check("...and it is reported as dropped, not silently missing",
+      any(d[0].startswith("Work in flight") for d in _tdropped))
+check("...and the block is still inside its ceiling", len(_tiny.encode()) <= 700)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
