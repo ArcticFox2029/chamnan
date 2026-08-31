@@ -66,6 +66,12 @@ DEFAULT_CONFIG = {
     # bounded from the start rather than after somebody's repository fills up. Longer than the log
     # window because a record from three weeks ago is still the answer to "what was I doing".
     "session_retention_days": 30,
+    # STATE.md sections that have not been EDITED in this many days stop being injected. Not
+    # deleted, not aged by the file's own date — per section, and the clock resets on any real
+    # change, so work actually in flight never ages. Pinned (📌) sections are exempt. This is the
+    # one place age is treated as evidence, and lib/state.py's docstring says why STATE is the
+    # exception to lib/aging.py's rule. 0 turns the pass off.
+    "state_stale_days": 14,
     # Project memory — why the code is the way it is. Rules are injected every session; decisions
     # and lessons contribute a title and are read on demand. Deliberately NOT age-pruned: a session
     # record stops mattering, a decision does not. See lib/memory.py.

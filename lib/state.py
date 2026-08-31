@@ -19,10 +19,36 @@ Two independent fixes, not one:
 
 Budgeted in tokens (see `tokens.py`), not characters: a flat character cap mis-prices any file that
 is not mostly Latin script, and the whole point of a cap is to price correctly.
+
+**And aged — which is not the contradiction it looks like.** `memory/` refuses age-based expiry on
+principle (see lib/aging.py: a note about a version still in production is current however old it
+is). STATE.md is the one file where the opposite holds, because of what it claims to be: *work in
+flight*. A heading that says "fixed and committed tonight (do not redo)" was true for one night and
+has been charged to every session since. Measured on the workspace this plugin is developed against,
+2026-08-30: STATE.md was 2,367 tokens, 37.8% of the whole injection and 667 over its own budget,
+and the largest single item in it was a list of one night's commits.
+
+The clock is per SECTION and it resets whenever that section's text changes, so anything actually
+being worked on never ages — being edited is the evidence. Three rules keep this from losing
+somebody's work:
+
+  * a pinned section (📌) is never aged out, whatever its date;
+  * the file itself is never modified — this only decides what gets injected;
+  * whatever is held back is named in one line that points at the file, so it is one read away
+    rather than gone.
+
+First-seen dates live in `.chamnan/.state-ages.json`, keyed by a hash of the section text. It is
+bookkeeping, not knowledge: delete it and every section simply reads as new, which errs toward
+injecting too much rather than too little. Every failure path here does the same.
 """
+import hashlib
+import json
 import re
+import time
 
 PIN_MARK = "📌"
+
+AGES_FILENAME = ".state-ages.json"
 
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*$", re.M)
 
@@ -104,3 +130,91 @@ def render(text, budget, path_for_marker):
         marker = f"_…{_human(dropped_chars)} more — read `{path_for_marker}`_"
 
     return injected, marker
+
+
+def _outermost(text):
+    """Top-level spans: every section not nested inside another one already claimed. Same walk
+    `split_pinned` does, so a heading is aged as the same unit it is pinned as."""
+    claimed = []
+    for sec in _sections(text):
+        if any(c["start"] <= sec["start"] < c["end"] for c in claimed):
+            continue
+        claimed.append(sec)
+    return claimed
+
+
+def _key(chunk):
+    """Identity of a section: its text with whitespace collapsed. Any real edit changes it, which
+    is what resets the clock; reflowing a paragraph does not, which is what stops a cosmetic change
+    from buying another two weeks."""
+    return hashlib.sha1(" ".join(chunk.split()).encode("utf-8")).hexdigest()[:16]
+
+
+def _load_ages(wsdir):
+    try:
+        return json.loads((wsdir / AGES_FILENAME).read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_ages(wsdir, ages):
+    """Best-effort and silent. A workspace on a read-only checkout must still start a session."""
+    try:
+        tmp = wsdir / (AGES_FILENAME + ".tmp")
+        tmp.write_text(json.dumps(ages, indent=1, sort_keys=True), encoding="utf-8")
+        tmp.replace(wsdir / AGES_FILENAME)
+    except Exception:
+        pass
+
+
+def age_out(text, wsdir, days, now=None):
+    """(kept_text, marker) — hold back sections whose text has not changed in `days` days.
+
+    Called on the RAW file, before redaction: scrubbing rewrites substrings, and a section whose
+    hash changed because a hostname in it was masked would look edited every single session and
+    never age at all.
+
+    `days <= 0` disables the whole pass. So does an unreadable or unwritable workspace, a file with
+    no headings, and any exception on the way — every one of those errs toward injecting.
+    """
+    if not days or days <= 0 or not text.strip():
+        return text, ""
+
+    now = int(now if now is not None else time.time())
+    cutoff = now - days * 86400
+
+    try:
+        sections = _outermost(text)
+    except Exception:
+        return text, ""
+    if not sections:
+        return text, ""
+
+    ages = _load_ages(wsdir)
+    fresh_ages, drop = {}, []
+    for sec in sections:
+        chunk = text[sec["start"]:sec["end"]]
+        k = _key(chunk)
+        first_seen = ages.get(k, now)
+        fresh_ages[k] = first_seen
+        # A pin outranks the clock. So does a section first seen this run, which is what an
+        # unreadable ages file makes every section look like.
+        if not sec["pinned"] and first_seen <= cutoff:
+            drop.append((sec["start"], sec["end"], now - first_seen))
+
+    _save_ages(wsdir, fresh_ages)
+
+    if not drop:
+        return text, ""
+
+    parts, cursor = [], 0
+    for a, b, _ in drop:
+        parts.append(text[cursor:a])
+        cursor = b
+    parts.append(text[cursor:])
+    kept = "".join(parts)
+
+    oldest = max(d for _, _, d in drop) // 86400
+    marker = (f"_{len(drop)} section(s) unchanged for {days}+ days (oldest {oldest}) held back — "
+              f"read the file, or mark a heading {PIN_MARK} to keep it._")
+    return kept, marker

@@ -1097,6 +1097,63 @@ check("a pin's own subsections are pulled whole", "inner body" in pin_text2)
 check("a pin does not swallow its unrelated sibling", "Sibling" not in pin_text2)
 check("a sibling after a pin stays in the unpinned pool", "Sibling" in unpin_text2)
 
+# ---------------------------------------------------------------- STATE.md aging
+# STATE.md is the one file where age IS evidence, because of what it claims to be: work in flight.
+# Both directions, as everywhere else here — that a stale section stops being injected, and that
+# nothing which is still being worked on, pinned, or simply unmeasurable ever gets held back.
+DAY = 86400
+T0 = 1_800_000_000
+aging_doc = ("## In flight\n\nstill doing this\n\n"
+             "## Committed tonight\n\n- commit a\n\n"
+             "## Standing rule 📌\n\nnever push without asking\n")
+age_ws = Path(tempfile.mkdtemp())
+
+first_pass, first_marker = state_mod.age_out(aging_doc, age_ws, 14, now=T0)
+check("nothing is aged out the first time a section is seen", first_pass == aging_doc)
+check("and nothing is claimed to have been", first_marker == "")
+
+later, later_marker = state_mod.age_out(aging_doc, age_ws, 14, now=T0 + 20 * DAY)
+check("a section unchanged past the window stops being injected", "commit a" not in later)
+check("a PINNED section is never aged out", "never push without asking" in later)
+check("what was held back is named, not dropped silently", "held back" in later_marker)
+check("the marker says how to keep a section", "📌" in later_marker)
+check("the file on disk is untouched — this only decides what is injected",
+      (age_ws / "STATE.md").exists() is False)
+
+edited = aging_doc.replace("still doing this", "still doing this, and one more thing")
+after_edit, _ = state_mod.age_out(edited, age_ws, 14, now=T0 + 20 * DAY)
+check("editing a section resets its clock", "and one more thing" in after_edit)
+check("editing one section does not rescue its stale neighbour", "commit a" not in after_edit)
+
+# A FRESH workspace on purpose: the ages file is pruned to what each run saw, so the edit above
+# has already retired the original section's key. Reusing age_ws here would measure that pruning,
+# not the whitespace rule.
+reflow_ws = Path(tempfile.mkdtemp())
+reflowed = aging_doc.replace("## In flight\n\nstill doing this",
+                             "## In flight\n\nstill   doing\nthis")
+state_mod.age_out(aging_doc, reflow_ws, 14, now=T0)
+after_reflow, _ = state_mod.age_out(reflowed, reflow_ws, 14, now=T0 + 20 * DAY)
+check("reflowing whitespace is not an edit and does not buy another window",
+      "still" not in after_reflow)
+
+check("state_stale_days 0 turns the pass off entirely",
+      state_mod.age_out(aging_doc, age_ws, 0, now=T0 + 999 * DAY)[0] == aging_doc)
+check("an unwritable workspace injects everything rather than nothing",
+      state_mod.age_out(aging_doc, Path("/nonexistent/chamnan"), 14,
+                        now=T0 + 999 * DAY)[0] == aging_doc)
+check("a file with no headings at all is left alone",
+      state_mod.age_out("just a paragraph, no headings\n", age_ws, 14,
+                        now=T0 + 999 * DAY)[0] == "just a paragraph, no headings\n")
+check("state_stale_days has a default in the shipped config",
+      ws.DEFAULT_CONFIG.get("state_stale_days", 0) > 0)
+
+# The repair that makes chamnan's own state readable from outside: lib/ as a package.
+_pkg = subprocess.run([sys.executable, "-c",
+                       "import sys; sys.path.insert(0, %r); import lib.ledger, lib.state, lib.mapper"
+                       % str(ROOT)], capture_output=True, text=True)
+check("lib/ can be imported as a package, not only via sys.path surgery",
+      _pkg.returncode == 0)
+
 # ---------------------------------------------------------------- write-skills line + injection
 session_start_mod = import_hook_module("session_start.py")
 

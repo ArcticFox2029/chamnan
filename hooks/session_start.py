@@ -356,7 +356,12 @@ def main():
             # free text written about the repository, which makes them the likeliest place for a
             # hostname or a pasted connection string to end up, and scrubbing after truncation
             # would miss anything sensitive that fell inside a pinned section.
-            full = redact.scrub(sp.read_text(encoding="utf-8", errors="replace"))
+            raw = sp.read_text(encoding="utf-8", errors="replace")
+            # Aged BEFORE scrubbing, on the raw text. Redaction rewrites substrings, so a section
+            # holding a hostname would hash differently every session, look freshly edited every
+            # time, and never age at all.
+            raw, aged = state.age_out(raw, wsdir, cfg.get("state_stale_days", 14))
+            full = redact.scrub(raw)
             budget = cfg.get("state_token_budget", 1700)
             st, marker = state.render(full, budget, sp.relative_to(root))
             if st:
@@ -365,6 +370,8 @@ def main():
                            f"compaction._\n")
                 if marker:
                     out.append(marker + "\n")
+            if aged:
+                out.append(aged + "\n")
 
     if cfg.get("promote", True):
         try:
