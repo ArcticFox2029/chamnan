@@ -1147,6 +1147,42 @@ check("a file with no headings at all is left alone",
 check("state_stale_days has a default in the shipped config",
       ws.DEFAULT_CONFIG.get("state_stale_days", 0) > 0)
 
+# Granularity, and the pin-containment bug it hid. Caught on a real STATE.md before release: the
+# first version claimed OUTERMOST sections the way split_pinned does, which made that file two
+# units because it has two `#` headings -- so any edit anywhere reset a third of it, and an unpinned
+# `#` block would have been dropped whole, taking the 📌 subsections inside it with it.
+grain = ("# Day one\n\npreamble under the title\n\n"
+         "## Kept by hand \U0001F4CC\n\nstanding instruction\n\n"
+         "### under the pin\n\ninherits the pin\n\n"
+         "## Ordinary\n\nordinary body\n\n"
+         "# Day two\n\nsecond title body\n")
+units = state_mod._age_units(grain)
+# Three, not five: the pinned heading and the subsection under it are exempt, so they are not
+# units at all. What is left is the title's own preamble, the ordinary sibling, and the second
+# title -- each aged on its own clock, where the first version of this made the whole file two.
+check("a heading is aged with its own prose, not with its subsections", len(units) == 3)
+check("a pinned section is not an aging unit at all",
+      not any("Kept by hand" in grain[u["start"]:u["end"]] for u in units))
+check("neither is anything nested inside a pinned section",
+      not any("inherits the pin" in grain[u["start"]:u["end"]] for u in units))
+check("an ordinary sibling of a pin is still aged",
+      any("ordinary body" in grain[u["start"]:u["end"]] for u in units))
+
+grain_ws = Path(tempfile.mkdtemp())
+state_mod.age_out(grain, grain_ws, 14, now=T0)
+aged_grain, _ = state_mod.age_out(grain, grain_ws, 14, now=T0 + 20 * DAY)
+check("an unpinned parent going stale does NOT take a pinned child with it",
+      "standing instruction" in aged_grain and "inherits the pin" in aged_grain)
+check("and the stale sibling around it is still held back",
+      "ordinary body" not in aged_grain)
+
+# Where the bookkeeping lives is part of the contract: logs/ is the one part of the workspace
+# chamnan already tells people not to commit, so this adds nothing to anyone's diff.
+check("first-seen dates are written under logs/, not into the committed workspace",
+      state_mod.AGES_PATH.startswith("logs/"))
+check("and the file is actually created there",
+      (grain_ws / state_mod.AGES_PATH).is_file())
+
 # The repair that makes chamnan's own state readable from outside: lib/ as a package.
 _pkg = subprocess.run([sys.executable, "-c",
                        "import sys; sys.path.insert(0, %r); import lib.ledger, lib.state, lib.mapper"

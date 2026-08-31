@@ -37,9 +37,20 @@ somebody's work:
   * whatever is held back is named in one line that points at the file, so it is one read away
     rather than gone.
 
-First-seen dates live in `.chamnan/.state-ages.json`, keyed by a hash of the section text. It is
-bookkeeping, not knowledge: delete it and every section simply reads as new, which errs toward
-injecting too much rather than too little. Every failure path here does the same.
+First-seen dates live in `.chamnan/logs/state-ages.json`, keyed by a hash of the section text. Two
+things follow from that location and both are deliberate:
+
+  * **It is not committed.** `logs/` is the one part of the workspace chamnan's README already tells
+    people to ignore, so this needs no new instruction and adds nothing to anyone's diff. A file
+    rewritten at every session start does not belong in a repository whose whole pitch is that its
+    contents are worth reading in a commit.
+  * **`prune_logs` can delete it, and that is a safe failure.** Its mtime is refreshed every session,
+    so it survives normal use; a repository nobody opens for longer than `log_retention_days` loses
+    it and every section reads as new again. That errs toward injecting, and after a week away it is
+    arguably the right answer anyway.
+
+It is bookkeeping, not knowledge. Every failure path here — missing file, unwritable workspace,
+malformed JSON, an exception mid-walk — injects everything rather than nothing.
 """
 import hashlib
 import json
@@ -48,7 +59,7 @@ import time
 
 PIN_MARK = "📌"
 
-AGES_FILENAME = ".state-ages.json"
+AGES_PATH = "logs/state-ages.json"
 
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*$", re.M)
 
@@ -132,15 +143,36 @@ def render(text, budget, path_for_marker):
     return injected, marker
 
 
-def _outermost(text):
-    """Top-level spans: every section not nested inside another one already claimed. Same walk
-    `split_pinned` does, so a heading is aged as the same unit it is pinned as."""
-    claimed = []
-    for sec in _sections(text):
-        if any(c["start"] <= sec["start"] < c["end"] for c in claimed):
+def _age_units(text):
+    """The spans aged independently: a heading together with its OWN prose, not with its
+    subsections.
+
+    Found before release, on a real STATE.md: claiming outermost sections the way `split_pinned`
+    does made this file two units, because it happens to have two `#` headings. Two consequences,
+    both bad and both silent. Any edit anywhere reset a third of the file, so nothing would ever
+    have aged; and a `#` block that is not itself pinned would have been dropped whole, **taking the
+    📌 subsections inside it with it** — discarding the owner's own do-not-raise-again lists, which
+    is the exact failure lib/state.py was written to fix in the first place.
+
+    So the unit is a heading plus the text before its first subheading, and anything at or inside a
+    pinned heading is not a unit at all: it is exempt, at any depth.
+    """
+    heads = list(_HEADING.finditer(text))
+    units, pinned_until = [], None
+    for i, m in enumerate(heads):
+        level = len(m.group(1))
+        if pinned_until is not None and m.start() < pinned_until:
+            continue                      # inside a pin — exempt, subsections included
+        if m.group(2).rstrip().endswith(PIN_MARK):
+            pinned_until = len(text)
+            for nxt in heads[i + 1:]:
+                if len(nxt.group(1)) <= level:
+                    pinned_until = nxt.start()
+                    break
             continue
-        claimed.append(sec)
-    return claimed
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        units.append({"start": m.start(), "end": end})
+    return units
 
 
 def _key(chunk):
@@ -152,7 +184,7 @@ def _key(chunk):
 
 def _load_ages(wsdir):
     try:
-        return json.loads((wsdir / AGES_FILENAME).read_text(encoding="utf-8"))
+        return json.loads((wsdir / AGES_PATH).read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -160,9 +192,11 @@ def _load_ages(wsdir):
 def _save_ages(wsdir, ages):
     """Best-effort and silent. A workspace on a read-only checkout must still start a session."""
     try:
-        tmp = wsdir / (AGES_FILENAME + ".tmp")
+        dest = wsdir / AGES_PATH
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dest.with_suffix(".tmp")
         tmp.write_text(json.dumps(ages, indent=1, sort_keys=True), encoding="utf-8")
-        tmp.replace(wsdir / AGES_FILENAME)
+        tmp.replace(dest)
     except Exception:
         pass
 
@@ -184,7 +218,7 @@ def age_out(text, wsdir, days, now=None):
     cutoff = now - days * 86400
 
     try:
-        sections = _outermost(text)
+        sections = _age_units(text)
     except Exception:
         return text, ""
     if not sections:
@@ -197,9 +231,10 @@ def age_out(text, wsdir, days, now=None):
         k = _key(chunk)
         first_seen = ages.get(k, now)
         fresh_ages[k] = first_seen
-        # A pin outranks the clock. So does a section first seen this run, which is what an
-        # unreadable ages file makes every section look like.
-        if not sec["pinned"] and first_seen <= cutoff:
+        # A section first seen this run is never stale — which is also what an unreadable ages
+        # file makes every section look like, and is why a lost ages file injects everything.
+        # Pinned sections never reach here at all; _age_units does not emit them.
+        if first_seen <= cutoff:
             drop.append((sec["start"], sec["end"], now - first_seen))
 
     _save_ages(wsdir, fresh_ages)

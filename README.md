@@ -293,6 +293,57 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.9.0
+
+**The knowledge arrives with the file, instead of waiting to be asked for.** Measured on the
+repository this plugin is developed against, over ten days: `chamnan-impact` — which answers *what
+breaks if I change this*, the question actually asked before an edit — was run **zero times**. So
+were `chamnan-age`, `chamnan-candidates`, `chamnan-env`, `chamnan-peek` and `chamnan-promote`.
+`chamnan-map` 3, `chamnan-report` 1, `chamnan-timeline` 1. By the person who wrote them, in the
+repository they were written for.
+
+The reading taken was not that the knowledge is unwanted, but that a CLI is the wrong surface for
+it. The caller is a model, and a model does not pause before an edit and think *"I should run
+chamnan-impact first"* — remembering to ask is the work this plugin exists to remove.
+
+So opening a file now says what the repository already records about it:
+
+```
+[chamnan] what this repository already records about command/start_recheckapp.command:
+  procedure skills/main_app_machine_migration.md — machine migration & environment repair
+  lesson    memory/lessons/statusline-lives-in-two-places.md — the statusline that runs is ~/.claude/
+  used by   status_bar_app.py, start_backup.py
+  tested by test_recheckapp_installs_what_runs.py
+```
+
+Matching is a filename **with its extension**, or a path, appearing in an entry's body — the cheap
+design chosen over a required `files:` front-matter field. The extension is the whole guard: a bare
+stem would fire on every sentence containing the word "state". Ranking is how often an entry names
+the file, which earned its place on the first live run — the skills index, naming a script once
+among fifty files, outranked the procedure literally titled after that script, which named it seven
+times.
+
+Four rules, because a hook that fires many times per session is judged by its worst moment: silent
+when it has nothing (never "no results found"), once per file per session, never about chamnan's own
+files, and bounded in time — measured at 12.7–21.5 ms of work per call. Turn it off with
+`"pointer": false`.
+
+**STATE.md sections age out.** `STATE.md` was trimmed by a token budget, which is a size rule, not a
+relevance one — so *"fixed and committed tonight (do not redo)"* was correct for one night and
+charged to every session after it. Measured here: 2,367 tokens, 37.8% of the whole injection, 667
+over its own budget.
+
+A section now stops being injected once its text has been unchanged for `state_stale_days` (14 by
+default, `0` turns it off). Per section, and the clock resets on any real edit — being worked on is
+the evidence, so nothing in flight ages. This is the one place chamnan treats age as evidence, and
+it is not a contradiction of [knowledge aging](#knowledge-aging--never-against-a-clock-and-it-refuses-rather-than-reassures):
+a decision does not rot with time, but *"work in flight"* is a claim about the present.
+
+Three rules keep it from losing anything: a pinned (📌) heading is exempt at any depth, the file
+itself is never modified, and what was held back is named in one line saying how to keep it. On
+upgrade, nothing is held back for the first 14 days — every section's clock starts the first time it
+is seen.
+
 ## What's new in 1.8.0
 
 **Repository text is fenced.** chamnan's whole job is to take markdown the repository controls and
