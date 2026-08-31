@@ -293,6 +293,65 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
+## What's new in 1.10.0
+
+**Everything chamnan injected was being cut in half, and nothing said so.** Claude Code truncates a
+`SessionStart` hook's stdout above **10,000 bytes**, replacing the block with its first 2,048 bytes
+and a path to a file — [#70460](https://github.com/anthropics/claude-code/issues/70460),
+[#44086](https://github.com/anthropics/claude-code/issues/44086), from v2.1.88 onward. The cut is
+positional. Measured across 120 recorded injections on the development repository, **47 were
+truncated and each lost 77–86%**.
+
+Because the architecture index is printed first, what survived was the tail of a directory listing.
+What went was everything behind it: the repository's rules, its recorded decisions, its open
+threads, the session handoff, and every pinned heading — including the ones that exist to stop a
+session redoing settled work. `split_pinned()` had protected all of them correctly. The host
+discarded them anyway, and the preview ends mid-sentence and reads like a whole block.
+
+**Token budgets could not have caught this**, because they are not measured in the unit the cut is
+made in. `index_token_budget` (3,000) and `state_token_budget` (1,700) come to **11,501 bytes** on
+real index text — the two defaults exceed the cap by 15% before a single other section is added.
+That has been true of every installation since the budgets were set.
+
+So there is a byte ceiling now, `output_byte_ceiling`, default 9,000, enforced where the block is
+printed. Over it, chamnan spends resolution before it spends sections — the roll-up steps down
+`8 → 4 → 2 → 0` names per directory — and only then drops whole sections, cheapest first, each named
+with the file to read it in. A section too large to fit at all is **trimmed with its fence rebuilt**
+rather than dropped, because half a session handoff beats none of one. `--explain` now prints the
+byte total, the ceiling, what was left out, and the token-to-byte arithmetic.
+
+**The roll-up stopped choosing its filenames alphabetically.** When the index is folded, each
+directory line shows eight names, and those eight were `sorted(names)[:8]` — the alphabet, which
+knows nothing about the repository. Measured against 12,332 re-read events across six working
+sessions: the alphabetical eight named **22.7%** of them, **git-churn-ranked eight named 35.6%**,
+and an oracle picking with hindsight reaches 57.0%. Same budget, one `git log`, a third of the
+available headroom. A repo with no git, a shallow clone, or under 50 commits falls back to the
+alphabet — commit history degrades localization on sparse histories, and names are always printed
+sorted so a re-run never reshuffles the line.
+
+**A fenced code block is not structure.** `split_pinned()` matched `#` headings inside fenced
+blocks, so a bash comment in a procedure ended the pinned span — the protected payload fell into the
+droppable pool and the fence was torn in half. A `description:` line anywhere in a document was read
+as front matter and became its title; one entry was titled *"was written by the vendor and could not
+be checked."* Both fixed in a new `lib/md.py` that knows what CommonMark actually considers a fence.
+
+**The redactor was replacing the label and leaving the token.** `Authorization: Bearer <token>`
+matched the bare-assignment rule, which captured the word `Bearer` as the value and replaced *that*
+— emitting a line that read as redacted with the credential intact beneath it. A miss is
+recoverable; a reviewer can still see the secret. A miss dressed as a hit is not. Also: a PGP secret
+key ends `PRIVATE KEY BLOCK-----`, and the pattern was anchored on `PRIVATE KEY-----`. Against a
+labelled corpus of 27 secret shapes and 17 ordinary strings that must survive, **66.7% recall /
+81.8% precision → 96.3% / 100%**. The README now carries that pair, the published head-to-head it
+should be read against, and the ceiling chamnan cannot reach.
+
+**CJK text is written with CJK punctuation, and it was priced as Latin.** The ideographic comma and
+full stop and the fullwidth comma were in none of the token estimator's CJK ranges, so each cost
+0.42 tokens where it costs about 1 — 18 of 306 characters in the Chinese calibration sample.
+Chinese **−7.7% → +0.4%**. The whole per-script error table is a test now, run offline against the
+measurements already on disk.
+
+---
+
 ## What's new in 1.9.0
 
 **The knowledge arrives with the file, instead of waiting to be asked for.** Measured on the

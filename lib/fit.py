@@ -1,9 +1,16 @@
 """Keep the injected block inside the host's per-hook stdout cap.
 
-Claude Code truncates a SessionStart hook's stdout above a cap measured at 10,000 bytes on this
-host (largest delivery that arrived whole: 9,690 bytes; smallest that did not: 10,293). Over it,
-the block is replaced by its first 2,048 bytes plus a pointer to a file on disk. Measured across
-120 recorded injections, 47 were truncated that way, each losing 80-86% of the payload.
+Claude Code truncates a SessionStart hook's stdout above 10,000 bytes, replacing the block with its
+first 2,048 bytes plus a pointer to a file on disk. Measured across 120 recorded injections here, 47
+were truncated that way, each losing 80-86% of the payload.
+
+The number was bracketed from evidence before it was looked up -- the largest delivery that arrived
+whole was 9,690 bytes, the smallest that did not was 10,293 -- and then confirmed against upstream:
+anthropics/claude-code #70460 ("SessionStart hook output silently truncated at 10KB -- model never
+sees the missing content") and #44086 ("truncated to 2000 characters when 10,000 character limit
+exceeded"). Reported from Claude Code v2.1.88; measured here on 2.1.251. Both issues note there is
+no workaround, which is true from inside a hook's own output, and is why the only move left is not
+to exceed the cap in the first place.
 
 The damage is not proportional to the loss, because the cut is positional and the architecture
 index is emitted first. In the worst case seen, the 2,048 bytes that survived were the tail of a
