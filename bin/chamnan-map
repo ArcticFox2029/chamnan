@@ -195,7 +195,7 @@ def main(argv):
     # warning the user had to act on.
     budget = ws.load_config(root).get("index_token_budget", 3000)
     if index_tokens > budget:
-        rolled = tokens.estimate(rollup.collapse(text[:index_chars], out.name, budget))
+        rolled = tokens.estimate(rollup.collapse(text[:index_chars], out.name, budget, root))
         print(f"\n  Over the {budget:,}-token session budget, so session start will roll this up by")
         print(f"  directory: ~{rolled:,.0f} tokens injected per session instead of {index_tokens:,.0f},")
         print(f"  with every directory still named and the full entry a grep away in MAP.md.")

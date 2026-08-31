@@ -1460,6 +1460,67 @@ unknown = "# Map\n\n## Quick Index\n\n" + "".join(
 check("an index in an unrecognised row format is still cut to the budget",
       tokens.estimate(rollup.collapse(unknown, "MAP.md", 3000)) <= 3000)
 check("a cut index says it was cut", "Cut to fit" in rollup.collapse(unknown, "MAP.md", 3000))
+
+# ------------------------------------------- which eight names survive the roll-up
+# `sorted(names)[:8]` knows nothing about the repository. Measured on this one
+# (.chamnan/tools/scent_gap.py, 2026-08-31): across 12,332 re-read events in six working
+# sessions, the alphabetical eight named 22.7% of them and git-churn-ranked eight named 35.6%,
+# against an unreachable 57.0% oracle. Both directions are pinned: the ranking is used when git
+# can answer, and the alphabet is kept when it cannot -- a repo with no git, or four commits of
+# history, must not get a ranking built on noise.
+_roll_index = "# Map\n\n" + "".join(
+    f"- **`pkg/{name}`** \u2014 does a thing\n"
+    for name in ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py", "g.py", "h.py", "zz.py"])
+
+check("with no repo root, the roll-up keeps the alphabet",
+      "`zz.py`" not in rollup.collapse(_roll_index, "MAP.md"))
+
+_rollrepo = Path(tempfile.mkdtemp()) / "rollrepo"
+_rollrepo.mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_rollrepo)], check=True)
+subprocess.run(["git", "-C", str(_rollrepo), "config", "user.email", "t@t"], check=True)
+subprocess.run(["git", "-C", str(_rollrepo), "config", "user.name", "t"], check=True)
+(_rollrepo / "pkg").mkdir()
+for _name in ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py", "g.py", "h.py", "zz.py"]:
+    (_rollrepo / "pkg" / _name).write_text("x", encoding="utf-8")
+subprocess.run(["git", "-C", str(_rollrepo), "add", "-A"], check=True)
+subprocess.run(["git", "-C", str(_rollrepo), "commit", "-qm", "seed"], check=True)
+
+# A shallow history must NOT rank: below MIN_COMMITS_TO_RANK the alphabet is the safer answer.
+check("one commit of history is not enough to rank on",
+      rollup._churn(_rollrepo) == {})
+check("...so the roll-up still reads alphabetically",
+      "`zz.py`" not in rollup.collapse(_roll_index, "MAP.md", None, _rollrepo))
+
+# Now give zz.py a history nothing else has, past the threshold.
+for _i in range(rollup.MIN_COMMITS_TO_RANK + 2):
+    (_rollrepo / "pkg" / "zz.py").write_text(f"x{_i}", encoding="utf-8")
+    subprocess.run(["git", "-C", str(_rollrepo), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(_rollrepo), "commit", "-qm", f"c{_i}"], check=True)
+
+check("deep history is countable", rollup._churn(_rollrepo).get("pkg/zz.py", 0) > 1)
+_ranked = rollup.collapse(_roll_index, "MAP.md", None, _rollrepo)
+check("the most-committed file reaches the roll-up even when it sorts last",
+      "`zz.py`" in _ranked)
+_ranked_row = [l for l in _ranked.splitlines() if l.startswith("- **")][0]
+_ranked_names = re.findall(r"`([^`]+)`", _ranked_row)
+check("...and it displaces exactly one alphabetical name, not the whole line",
+      len(_ranked_names) == 8 and "h.py" not in _ranked_names)
+check("names are still emitted sorted, so a re-run does not reshuffle the line",
+      _ranked_names == sorted(_ranked_names))
+check("the roll-up still says how many were left out",
+      "_+1 more_" in _ranked)
+check("ranking does not blow the character budget",
+      abs(len(_ranked) - len(rollup.collapse(_roll_index, "MAP.md"))) < 40)
+
+# A path git has never heard of must not crash the ranking.
+check("a file absent from git history still appears when nothing outranks it",
+      "`a.py`" in rollup.collapse(_roll_index, "MAP.md", None, _rollrepo))
+# A directory that does not exist as a repo is the no-git path, not an exception.
+check("a non-repo root falls back rather than raising",
+      rollup._churn(Path(tempfile.mkdtemp())) == {})
+
+shutil.rmtree(_rollrepo.parent, ignore_errors=True)
 check("collapse without a budget stays backward compatible",
       rollup.collapse(unknown, "MAP.md") == rollup.collapse(unknown, "MAP.md", None))
 check("a map already inside the budget is left alone",

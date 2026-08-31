@@ -281,7 +281,7 @@ def main():
             index = text[:cut] if cut > 0 else text
             budget = cfg.get("index_token_budget", 3000)
             if not tokens.fits(index, budget):
-                index = rollup.collapse(index, mp.relative_to(root), budget)
+                index = rollup.collapse(index, mp.relative_to(root), budget, root)
             out.append(section("Architecture index", index, str(mp.relative_to(root))))
             out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
                        f"never read it whole._\n")
