@@ -1111,13 +1111,37 @@ thing it controls: its own output. A plugin hook cannot rewrite what the `Read` 
 Claude reads from your disk. If you ask Claude to open `.env`, it opens `.env`, and chamnan is not
 in that path. Anything claiming otherwise is describing a capability Claude Code does not have.
 
+### The two numbers, and the ceiling above them
+
+No credential scanner wins both axes. The published head-to-head over 818 repositories and 15,084
+true secrets puts **Gitleaks at 46% precision / 88% recall**, **GitHub's own scanner at 75% / 6%**,
+and **git-secrets at 1% / 23%**. "Credentials are stripped" with no pair of numbers beside it is a
+claim nobody has measured, so here is the pair, from `tools/redactor_recall.py` against a labelled
+corpus of 27 secret shapes and 17 ordinary strings that must survive:
+
+| | |
+|---|---|
+| recall | **96.3%** — 26 of 27 secret shapes redacted |
+| precision | **100%** — 0 of 17 ordinary strings damaged |
+
+Read those honestly. 44 labelled cases is not 818 repositories, and 100% on a corpus this size means
+"no known false positive", not "no false positives". The one miss is the point of the next
+paragraph, and it is deliberate.
+
+**There is a ceiling chamnan can never reach, and it is worth naming.** The single largest gain in
+this entire literature is *verification by live API call* — TruffleHog moves from 6% to 90%
+precision by asking the provider whether the key still works. chamnan does not make network calls at
+runtime, by design, so that lever is permanently unavailable to it. Whatever precision this
+redactor reaches, it reaches by pattern alone.
+
 Two more limits worth stating plainly:
 
 - The patterns are **narrow by design**, and narrow means some things get through. A credential in a
   shape nobody has seen before, or a bare high-entropy string with no assignment around it, will not
-  match. Widening until nothing escapes would replace commit hashes, UUIDs and version strings too,
-  and an index full of `<REDACTED>` is not an index. That trade is chosen deliberately, not
-  overlooked.
+  match — a 40-character AWS secret access key is exactly that, and it is the one case the corpus
+  above still misses. Widening until nothing escapes would replace commit hashes, UUIDs and version
+  strings too, and an index full of `<REDACTED>` is not an index. That trade is chosen deliberately,
+  not overlooked.
 - **Review `MAP.md` before its first commit**, the same way you would review any generated file you
   are about to publish. On the polyglot corpus below, 92 planted credentials across 13 categories
   produced no values in the map — good evidence, and still not a proof about your repository.

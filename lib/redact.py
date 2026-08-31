@@ -28,11 +28,23 @@ PATTERNS = [
     re.compile(r"\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
     re.compile(r"\bglpat-[A-Za-z0-9_-]{16,}"),
     re.compile(r"\bnpm_[A-Za-z0-9]{30,}"),
+    re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bGOCSPX-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"\bhf_[A-Za-z0-9]{30,}"),
+    # An Authorization header names its scheme and then hands over the credential. Matching this
+    # explicitly is not a nicety: the bare-assignment rule below sees "Authorization:" as a secret
+    # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
+    # itself in plain sight under a line that looks redacted. A miss is recoverable; a miss dressed
+    # as a hit is not.
+    re.compile(r"\b(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{12,})"),
     # A JWT is three base64 segments; the header almost always starts eyJ.
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
     # Private key and certificate blocks.
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
+    # "BLOCK" is not decoration: a PGP secret key is delimited "PRIVATE KEY BLOCK-----", so a
+    # pattern anchored on "PRIVATE KEY-----" matched every other format and missed that one.
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----.*?"
+               r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----", re.S),
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"),
 ]
 # scheme://user:password@host — the password is replaced, the rest is left readable because
 # "this talks to postgres on db.internal" is exactly the kind of thing the index should say.
@@ -40,14 +52,15 @@ CREDENTIALED_URL = re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+):([^\s@/]
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 ASSIGNED_SECRET = re.compile(
     r"((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"auth|credential)[\w-]*\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
+    r"account[_-]?key|auth(?!ors?\b)|credential)[\w-]*\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
 # single unbroken run of characters so a prose comment ("password: ask the platform team") is not
 # eaten, and to six characters so token_ttl=3600 is not either.
 ASSIGNED_SECRET_BARE = re.compile(
     r"((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"auth|credential)[\w-]*\s*[:=]\s*)([^\s'\"#;,)\]}]{6,})", re.I)
+    r"account[_-]?key|auth(?!ors?\b)|credential)[\w-]*\s*[:=]\s*)"
+    r"(?!<REDACTED>)([^\s'\"#;,)\]}]{6,})", re.I)
 
 # Never opened by the scanner at all, whatever else matches. .gitignore is not relied on: it is
 # often absent, often wrong, and the cost of being wrong here is somebody's private key.
@@ -87,13 +100,45 @@ def is_never_opened(path):
             or stem in BLOCKED_NAMES)
 
 
+# A key can carry a secret word and still be naming a mechanism rather than holding a credential:
+# SECRET_TOKEN_HEADER_NAME is the name of a header, credential_provider is which provider to use,
+# password_hash_algorithm is bcrypt. Redacting those costs the index real information and protects
+# nothing. Kept short and each entry defensible -- this is the precision side of the trade in the
+# module docstring, and a long list here is how a scanner starts missing things.
+NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "url",
+                   "provider", "algorithm", "algo", "type", "method", "scheme",
+                   "header", "enabled", "required", "ttl", "expiry", "field")
+
+
+# The word after "Authorization:" is the scheme, never the credential — the credential is the token
+# after it, which the Bearer/Basic pattern above has already taken. Without this the bare rule
+# replaces the scheme too and an Authorization header reads "<REDACTED> <REDACTED>".
+SCHEME_WORDS = frozenset({"bearer", "basic", "digest", "negotiate", "ntlm", "token", "apikey"})
+
+
+def _names_a_mechanism(key):
+    """True when the key is describing HOW a credential is handled, not holding one."""
+    tail = key.rstrip(": =\t").lower().rsplit("_", 1)[-1].rsplit("-", 1)[-1]
+    return tail in NAMING_SUFFIXES
+
+
 def scrub(text):
     """Every string that leaves chamnan for a written file goes through this."""
     if not text:
         return text
     for pattern in PATTERNS:
-        text = pattern.sub(PLACEHOLDER, text)
+        # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
+        # as an Authorization header while the credential goes. Groupless patterns replace whole.
+        if pattern.groups == 1:
+            text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
+        else:
+            text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
-    text = ASSIGNED_SECRET.sub(rf"\1\2{PLACEHOLDER}\2", text)
-    text = ASSIGNED_SECRET_BARE.sub(rf"\1{PLACEHOLDER}", text)
+    text = ASSIGNED_SECRET.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+    text = ASSIGNED_SECRET_BARE.sub(
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or m.group(2).lower() in SCHEME_WORDS
+        else f"{m.group(1)}{PLACEHOLDER}", text)
     return text

@@ -3730,6 +3730,65 @@ rollup.subprocess.run = _real
 check("four collapses shell out to git at most once", len(_calls) <= 1)
 rollup._CHURN_CACHE.clear()
 
+# ------------------------------------------ redact: the two numbers, not the claim
+# Published head-to-head over 818 repos and 15,084 true secrets: Gitleaks 46% precision / 88%
+# recall, GitHub's own scanner 75%/6%, git-secrets 1%/23%. No scanner wins both axes, so this one
+# will not either, and "credentials are stripped" without a pair of numbers is an unmeasured claim.
+# Measured by .chamnan/tools/redactor_recall.py in the host repo; the cases that found real defects
+# are pinned here.
+_F = "0123456789abcdefghij"
+
+# Found by measurement: the bare-assignment rule read "Authorization:" as a secret assignment,
+# captured the word "Bearer" as its value, and replaced THAT — leaving the token in plain sight
+# under a line that looked redacted. A miss is recoverable; a miss dressed as a hit is not.
+_bearer = redact.scrub(f"Authorization: Bearer {_F}{_F}{_F}")
+check("an Authorization header loses its credential, not its scheme name",
+      _F not in _bearer and "Bearer" in _bearer)
+
+# "BLOCK" is not decoration: a PGP secret key ends "PRIVATE KEY BLOCK-----", and a pattern anchored
+# on "PRIVATE KEY-----" matched every other key format and missed that one.
+check("a PGP private key block is redacted like any other private key",
+      "lQOY" not in redact.scrub(
+          "-----BEGIN PGP PRIVATE KEY BLOCK-----\nlQOY\n-----END PGP PRIVATE KEY BLOCK-----"))
+check("an OpenSSH private key still is too",
+      "b3Bl" not in redact.scrub(
+          "-----BEGIN OPENSSH PRIVATE KEY-----\nb3Bl\n-----END OPENSSH PRIVATE KEY-----"))
+check("a PUBLIC key block is left alone — it is not a secret",
+      "MFkw" in redact.scrub("-----BEGIN PUBLIC KEY-----\nMFkw\n-----END PUBLIC KEY-----"))
+
+for _label, _text, _secret in [
+    ("sendgrid", f"SG.{_F}.{_F}{_F}", f"SG.{_F}"),
+    ("google oauth", f"GOCSPX-{_F}zzzz", f"GOCSPX-{_F}"),
+    ("hugging face", f"hf_{_F}{_F}", f"hf_{_F}"),
+    ("azure account key", f"AccountKey={_F}{_F}{_F}==", f"{_F}{_F}"),
+]:
+    check(f"a {_label} credential is redacted", _secret not in redact.scrub(_text))
+
+# The precision side. A key can carry a secret word and still be naming a mechanism.
+for _label, _text in [
+    ("a header's name", "SECRET_TOKEN_HEADER_NAME=X-Api-Key"),
+    ("which provider to use", "credential_provider: environment"),
+    ("which algorithm to use", "password_hash_algorithm = bcrypt"),
+    ("an AUTHORS list", "AUTHORS=alexander,brigitte"),
+    ("a prose instruction", "# password: ask the platform team for it"),
+    ("a numeric ttl", "token_ttl=3600"),
+    ("a commit hash", "See commit a954fba1c3d4e5f60718293a4b5c6d7e8f901234"),
+    ("a uuid", "run id 3f2504e0-4f89-11d3-9a0c-0305e82c3301"),
+]:
+    check(f"{_label} survives the redactor", redact.PLACEHOLDER not in redact.scrub(_text))
+
+# ...but the same word holding an actual value still goes.
+check("a real password assignment is still redacted",
+      "tr0ub4dor" not in redact.scrub("DATABASE_PASSWORD=tr0ub4dor&3-horse"))
+check("and a credentialed URL keeps its host while losing its password",
+      redact.scrub("postgres://admin:Hunter2Pass@db.internal/main")
+      == f"postgres://admin:{redact.PLACEHOLDER}@db.internal/main")
+
+# The recall wall, asserted so nobody "fixes" it with an entropy heuristic by accident. A 40-char
+# AWS secret has no prefix and no keyword; the only thing that finds it also finds commit hashes.
+check("a bare high-entropy string is NOT redacted, by design",
+      redact.PLACEHOLDER not in redact.scrub("wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYzz"))
+
 # ------------------------------ tokens: held to the counts bench/calibration.json recorded
 # The estimator's constants were measured once against Claude's own accounting and then lived on as
 # numbers in a source file with nothing checking they still matched. Two had drifted out of true --
