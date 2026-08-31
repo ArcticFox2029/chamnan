@@ -3730,6 +3730,65 @@ rollup.subprocess.run = _real
 check("four collapses shell out to git at most once", len(_calls) <= 1)
 rollup._CHURN_CACHE.clear()
 
+# ------------------------------ tokens: held to the counts bench/calibration.json recorded
+# The estimator's constants were measured once against Claude's own accounting and then lived on as
+# numbers in a source file with nothing checking they still matched. Two had drifted out of true --
+# Chinese and Japanese, because CJK punctuation was priced as Latin -- and the only reason it was
+# ever found was someone re-deriving the table by hand. So the table is a test now. It runs offline:
+# calibration.json is measured data on disk, and re-measuring it needs bench/calibrate_tokens.py and
+# a `claude` binary.
+#
+# The band is deliberately lopsided. Over-estimating spends budget that was there anyway;
+# under-estimating overruns a budget the caller believed it was inside. Only one is a bug.
+sys.path.insert(0, str(ROOT / "bench"))
+import calibrate_tokens as cal  # noqa: E402
+
+# How far under the truth each script is allowed to fall. Anything not named here gets UNDER_LIMIT.
+# German is the one entry above it, and is documented in lib/tokens.py as left deliberately: one
+# 1,266-character sample is not enough to move a constant every Latin-script repo depends on.
+UNDER_LIMIT = 2.0
+ALLOWED_UNDER = {"german": 9.0, "thai": 2.0}
+
+# Nobody is harmed by an over-estimate, but a wild one means a constant has stopped describing
+# anything. English prose sits at +36% by design -- the divisor is calibrated on code.
+OVER_LIMIT = 40.0
+
+data = json.loads((ROOT / "bench" / "calibration.json").read_text())
+base = data["_base"]
+
+check("the calibration file still has a baseline to subtract", base > 0)
+check("every sample in the bench is recorded",
+      all(name in data for name in cal.SAMPLES))
+
+for name, sample in cal.SAMPLES.items():
+    real = data[name] - base
+    est = tokens.estimate(sample)
+    err = (est - real) / real * 100
+    limit = ALLOWED_UNDER.get(name, UNDER_LIMIT)
+    check(f"{name}: {err:+.1f}% — not under the truth by more than {limit:.0f}%", err >= -limit)
+    check(f"{name}: not over the truth by more than {OVER_LIMIT:.0f}%", err <= OVER_LIMIT)
+
+# The specific defect this file was written after: CJK text is written with CJK punctuation, and
+# pricing it as Latin under-counted every Chinese and Japanese document.
+check("the ideographic full stop is priced as CJK, not as Latin",
+      tokens.weight("。") == tokens._CJK_WEIGHT)
+check("so is the fullwidth comma", tokens.weight("，") == tokens._CJK_WEIGHT)
+check("and the ideographic comma", tokens.weight("、") == tokens._CJK_WEIGHT)
+check("a Han character is still CJK", tokens.weight("调") == tokens._CJK_WEIGHT)
+check("Thai is still weighed as dense, not as CJK", tokens.weight("ก") == tokens._DENSE_WEIGHT)
+check("an ASCII letter is still Latin", tokens.weight("a") == 1.0 / tokens._LATIN_DIVISOR)
+
+# The safety direction the module claims for itself, stated as a property rather than a comment.
+check("CJK is never priced below one token per character", tokens._CJK_WEIGHT >= 1.0)
+# cut_at and estimate must agree, or a budget is enforced at one price and reported at another.
+for _s, _label in (("。", "CJK punctuation"), ("调", "Han"), ("ก", "Thai"), ("a", "ASCII")):
+    _keep = tokens.cut_at(_s * 400, 10)
+    check(f"cut_at stops at or under the budget on {_label}",
+          tokens.estimate(_s * _keep) <= 10)
+    check(f"...and one character further would exceed it on {_label}",
+          tokens.estimate(_s * (_keep + 1)) > 10)
+check("an empty string costs nothing", tokens.estimate("") == 0.0)
+
 # ------------------------------------------------- fit: the host's stdout cap
 # The host truncates a SessionStart hook over ~10,000 bytes to its first 2,048 plus a file path.
 # That cut is positional, so it keeps whatever was emitted first and discards the rest — measured
