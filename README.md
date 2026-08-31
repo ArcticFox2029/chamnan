@@ -396,6 +396,21 @@ that figure rather than leaving you to wonder. It is a mitigation, not a proof: 
 answer to *who said this*, which was unanswerable before. It does not make hostile text safe to act
 on, and nothing is censored — an attempt is delivered inside the fence where it can be seen.
 
+**How much a fence is worth, measured by people who measured it.** In the spotlighting taxonomy
+([arXiv:2403.14720](https://arxiv.org/abs/2403.14720)) this is *delimiting*, the weakest of three
+variants, and the paper puts its effect at roughly a **halving** of attack success rate. The two
+stronger variants reach far further — *datamarking* takes ASR from ~50% to **under 3%**, *encoding*
+to **≈0%** — and neither is available here: both work by making the untrusted text unreadable as
+prose, and this untrusted text is a code map whose entire purpose is to be read. And all three are
+beaten by an attacker who adapts: against static attacks spotlighting held ASR near 1%, while
+adaptive search-based attacks reached **>95%**
+([arXiv:2510.09023](https://arxiv.org/abs/2510.09023)).
+
+So the honest claim is narrow, and it is the one made above: the fence answers *who said this*. It
+is not a defence against a determined attacker, it was never going to be, and a plugin that told
+you otherwise would be selling you something. What it buys is that a poisoned comment arrives
+labelled as a poisoned comment.
+
 ## What's new in 1.7.3
 
 **A restated filename took its separator with it.** A header that opens `# cve.sh — checks the CVE

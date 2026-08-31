@@ -136,8 +136,11 @@ def _trim(part, room, sources):
         return ""
     title, open_mark, close_mark = lines[1][4:], lines[2], lines[-2]
     src = (sources or {}).get(title, "")
+    # OUTSIDE the closing marker, not inside it. The framing line tells the reader that everything
+    # between the markers is text read from a file in this repository; chamnan's own note about
+    # having cut it is not, and putting it inside quietly makes the fence's one claim untrue.
     note = f"_… cut to fit the hook limit; the rest is in `{src}`._" if src else "_… cut to fit._"
-    frame = len(f"\n{lines[1]}\n{open_mark}\n\n{note}\n{close_mark}\n".encode())
+    frame = len(f"\n{lines[1]}\n{open_mark}\n\n{close_mark}\n{note}\n".encode())
     budget = room - frame
     # Under a few hundred bytes the surviving fragment says nothing the notice does not.
     if budget < 300:
@@ -151,7 +154,7 @@ def _trim(part, room, sources):
         total += n
     if not body:
         return ""
-    return f"\n{lines[1]}\n{open_mark}\n" + "\n".join(body) + f"\n{note}\n{close_mark}\n"
+    return f"\n{lines[1]}\n{open_mark}\n" + "\n".join(body) + f"\n{close_mark}\n{note}\n"
 
 
 def _dropped_title(dropped, i, order):
