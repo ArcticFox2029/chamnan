@@ -328,6 +328,40 @@ when it has nothing (never "no results found"), once per file per session, never
 files, and bounded in time — measured at 12.7–21.5 ms of work per call. Turn it off with
 `"pointer": false`.
 
+**A big file hands over its shape, not just a warning.** The same measurement produced the same
+verdict twice: `chamnan-peek` — which reads a 40MB CSV's column list, row count and three sample
+rows for about two hundred tokens — was also run zero times. The bulk-read notice already fired
+before a large read and said *"this is 1.4M tokens, go and grep"*, which leaves the work exactly
+where it was. It now includes the shape:
+
+```
+chamnan: `orders.csv` is very large (~1,407,846 tokens), and every later turn in this session
+carries it. A grep or a line range costs a fraction of that.
+
+chamnan read its shape instead, so you can decide from this rather than from the size alone:
+
+# orders.csv
+4.8MB · .csv
+6 columns, 120,000 data rows
+columns: `order_id`, `customer`, `sku`, `qty`, `unit_price`, `shipped_at`
+first rows:
+  0 | cust0 | SKU-0 | 1 | 199.03 | 2026-08-01
+_[115 tokens instead of about 2,111,769 for the whole file — 18,297× smaller]_
+```
+
+Only for formats peek has a real handler for — CSV, JSON, spreadsheets, archives, SQLite, PDF,
+images. A 674KB JavaScript file falls through to the binary fallback, whose honest output is a crc32
+and five string fragments, measured at 135 tokens of nothing; there the size warning alone is still
+the better answer.
+
+Making this possible meant fixing peek itself. Its cost note read the **whole file** to print one
+comparison ratio: measured on a 4.8MB CSV, the actual work took 0.14s and the whole call took 7.5s,
+all of it tokenizing five megabytes for a decorative number. It is now measured on a 16KB sample and
+labelled "about" — **7.48s → 0.164s, a 46× speedup**, with the estimate 2.4% off on ASCII and 0.06%
+off on Thai. The Thai figure is why the sample converts bytes to characters rather than assuming
+they are the same: scaling a per-character token rate by a byte count would have reported every Thai
+file at three times its real cost.
+
 **STATE.md sections age out.** `STATE.md` was trimmed by a token budget, which is a size rule, not a
 relevance one — so *"fixed and committed tonight (do not redo)"* was correct for one night and
 charged to every session after it. Measured here: 2,367 tokens, 37.8% of the whole injection, 667

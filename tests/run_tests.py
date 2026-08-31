@@ -1183,6 +1183,50 @@ check("first-seen dates are written under logs/, not into the committed workspac
 check("and the file is actually created there",
       (grain_ws / state_mod.AGES_PATH).is_file())
 
+# ---------------------------------------------------------------- peek arrives with a big read
+# chamnan-peek has always produced this on request and was run zero times in ten days. The bulk-read
+# notice now hands the shape over instead of only naming the size -- but only where peek has a real
+# handler, and only after the cost note stopped reading whole files to print a ratio.
+check("a CSV has a shape worth showing unasked", peek_mod.has_structure(Path("x/data.csv")))
+check("so does a spreadsheet", peek_mod.has_structure(Path("x/book.xlsx")))
+check("so does a compound archive suffix", peek_mod.has_structure(Path("x/dump.tar.gz")))
+check("source code does NOT — its fallback is a crc32 and five string fragments",
+      not peek_mod.has_structure(Path("x/game.js")))
+check("neither does a python file", not peek_mod.has_structure(Path("x/app.py")))
+
+peek_dir = Path(tempfile.mkdtemp())
+wide = peek_dir / "orders.csv"
+with wide.open("w", encoding="utf-8") as fh:
+    fh.write("order_id,customer,sku,qty\n")
+    for i in range(40_000):
+        fh.write(f"{i},cust{i%90},SKU-{i%31},{i%7+1}\n")
+csv_size = wide.stat().st_size
+check("the fixture is past the sampling threshold", csv_size > peek_mod.SAMPLE_BYTES)
+
+_exact = tokens.estimate(wide.read_text(encoding="utf-8"))
+_est, _sampled = peek_mod._whole_file_tokens(wide, csv_size)
+check("a large file's whole-read cost is sampled, not read whole", _sampled)
+check("and the sampled figure is within 10% of the exact one",
+      abs(_est - _exact) / _exact < 0.10)
+
+# The byte-vs-character conversion, which is not optional in a corpus with Thai in it.
+thai = peek_dir / "thai.md"
+thai.write_text("บรรทัดภาษาไทยที่ยาวพอสมควรสำหรับการวัด\n" * 3000, encoding="utf-8")
+_t_exact = tokens.estimate(thai.read_text(encoding="utf-8"))
+_t_est, _ = peek_mod._whole_file_tokens(thai, thai.stat().st_size)
+check("a Thai file is not reported at three times its real cost (bytes vs characters)",
+      abs(_t_est - _t_exact) / _t_exact < 0.10)
+
+_small = peek_dir / "small.csv"
+_small.write_text("a,b\n1,2\n", encoding="utf-8")
+check("a small file is still counted exactly, not sampled",
+      peek_mod._whole_file_tokens(_small, _small.stat().st_size)[1] is False)
+
+_shape = peek_mod.peek(wide, budget=280)
+check("the shape names the columns", "order_id" in _shape and "customer" in _shape)
+check("the shape states the row count", "40,000 data rows" in _shape)
+check("a sampled comparison says it is approximate", "about" in _shape)
+
 # The repair that makes chamnan's own state readable from outside: lib/ as a package.
 _pkg = subprocess.run([sys.executable, "-c",
                        "import sys; sys.path.insert(0, %r); import lib.ledger, lib.state, lib.mapper"
