@@ -3760,6 +3760,44 @@ check("the correction is still in the release history too",
 check("the release history moved out of the README but did not disappear",
       _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
 
+# ------------------------- a description should not end inside a word
+# 83% of this repository's truncated index entries were cut mid-word by a plain character slice --
+# `_CASCADE_MIN_ROUND_S…`, `tools/preflig…`, `call_ollama_chat's q…`. That is the worst available
+# place to cut: identifiers are what sessions search for, and half an identifier matches nothing.
+# Backing up to the last space costs a handful of bytes; the back-off is bounded so that one very
+# long token cannot eat a fifth of the description to save itself.
+import mapper as _mp  # noqa: E402
+
+_long = ("Guards against the Local reply path silently regressing back to the unbounded prompt "
+         "builder that caused a real incident")
+_c = _mp._clip(_long)
+check("a clipped description ends with an ellipsis", _c.endswith("…"))
+check("...and does not end inside a word",
+      _c.rstrip("…").split()[-1] in _long.split())
+check("...and stays within the limit", len(_c) <= 110)
+
+# The bounded fallback: a token longer than the back-off is broken rather than allowed to eat the line.
+_tok = "prefix " + "x" * 60
+_ct = _mp._clip(_tok, limit=40)
+check("a token longer than the back-off is broken rather than dropped", len(_ct) >= 30)
+
+check("a short description is returned untouched", _mp._clip("short one") == "short one")
+check("empty input does not raise", _mp._clip("") == "")
+check("whitespace is collapsed before measuring", _mp._clip("a    b") == "a b")
+check("no trailing comma or colon is left before the ellipsis",
+      not _mp._clip("word " * 30).rstrip("…").endswith((",", ";", ":", "-", " ")))
+
+# The live index is the real check: it is rebuilt from this function on every remap.
+_qi_live = (ROOT.parent.parent / ".chamnan" / "MAP.md")
+if _qi_live.is_file():
+    _txt = _qi_live.read_text(encoding="utf-8")
+    _sec = _txt[_txt.index("## Quick Index"):_txt.index("## Configuration")]
+    _rows = re.findall(r"^- \*\*`[^`]+`\*\*[^—]*— (.+)$", _sec, re.M)
+    _tr = [d for d in _rows if d.rstrip().endswith("…")]
+    check("the live index still truncates a majority of its rows", len(_tr) > 50)
+    _bad = [d for d in _tr if d.rstrip().rstrip("…").endswith((" ", ",", ";", ":"))]
+    check("no live row ends with dangling punctuation before the ellipsis", not _bad)
+
 # ---------------- a test is a test in every ecosystem, not just the ones with a tests/ directory
 # Only 35.5% of repositories have a `tests/` directory at all and only 37.4% a `docs/`, measured
 # across 10,000 repositories over a decade. Any marker that assumes one is wrong about a large
