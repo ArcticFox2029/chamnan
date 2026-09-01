@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Apri una nuova sessione, poi esegui `/chamnan:bootstrap` una volta per repository.
 
+<!-- generated: build_sections.py -->
+
+## Tutte le funzionalità
+
+Quattro capacità. Tutto quello che segue funziona davvero nella versione attuale. Ogni parte si può spegnere separatamente in `.chamnan/config.json`, e nessuna dipende dalle altre.
+
+### Capire — che cosa esiste e che cosa è collegato a che cosa
+
+| | |
+|---|---|
+| **Indice** | `MAP.md` — una riga per file, generata dal codice stesso. L'agente legge l'indice e fa grep del dettaglio che gli serve, invece di percorrere l'albero. |
+| **Impatto** | Chi dipende da questo file e quali test lo coprono. I suoi import stanno già in cima al file; ciò che costa è l'arco inverso — fate grep del percorso prima di modificare. |
+| **Modello dei dati** | Nomi di tabelle e modelli con una riga di descrizione, estratti da DDL, migrazioni e modelli ORM — non un dump dell'intero schema. Compare solo se il repository ne definisce uno. |
+| **Superficie API** | Metodo, percorso e handler, dai decoratori di rotta, dai documenti OpenAPI e dalle definizioni di servizio `.proto` — non l'intera specifica. |
+| **Configurazione** | I nomi delle variabili d'ambiente che il repository legge. **Solo nomi, mai valori** — e avverte se `.env` non è in gitignore. |
+| **Distribuzione** | Ciò che gira davvero, letto dai manifest di Kubernetes, Ansible, Compose, Helm e CI: tipi e nomi, immagini, ruoli, pipeline. Di un Secret prende solo il nome, nulla di ciò che contiene. |
+| **Materiale non sorgente** | Documenti scansionati, esportazioni, archivi — solo conteggi, dimensioni ed estensioni prevalenti. Esiste perché l'agente non vada a guardare da sé, cosa che costa molto di più. **Mai aperto, mai letto.** |
+
+### Ricordare — che cosa si stava facendo, e perché
+
+| | |
+|---|---|
+| **Stato del lavoro** | `STATE.md` — ciò su cui si lavora proprio adesso; iniettato all'avvio della sessione, così la compattazione del contesto smette di cancellarlo. |
+| **Registro di sessione** | Uno per sessione sotto `.chamnan/sessions/`. Alla sessione successiva arriva **solo ciò che è rimasto incompiuto**; una sessione chiusa bene non inietta nulla. |
+| **Memoria** | `decisions/`, `lessons/`, `rules/`. Le regole sono vincoli permanenti, quindi stanno davanti all'agente a ogni sessione; decisioni e lezioni contribuiscono solo con un titolo e vengono lette quando il titolo appare pertinente. |
+| **Fili aperti** | Linee di lavoro non ancora chiuse, con la storia dei file che quel filo ha toccato — e continuano a seguirli anche dopo una rinomina. |
+
+### Riusare — ciò che è già stato risolto
+
+| | |
+|---|---|
+| **Procedure** | Competenze che l'agente scrive **da sé** quando incontra qualcosa di complesso o ripetuto. Non una libreria già pronta, ma un meccanismo. |
+| **Strumenti** | Nota che lo stesso script usa-e-getta è stato riscritto e propone di conservarlo — e lo ricorda prima che ne scriviate uno nuovo. |
+| **Flussi di lavoro** | Nota che gli stessi comandi sono girati nello stesso ordine in giorni distinti, e propone di mettere per iscritto quella sequenza. |
+
+### Accumulare — ciò che il repository ha imparato su di sé
+
+| | |
+|---|---|
+| **Pietre miliari** | I pochi cambiamenti che hanno rimodellato il repository: che cosa si è spostato, perché ne valeva la pena, quali aree ha toccato. |
+| **Candidati** | Le sequenze di comandi ripetute che vengono rilevate restano **sempre in attesa di conferma umana**. Nulla viene promosso in automatico. |
+| **Ambienti** | Dichiarate che cosa sia production o staging e che cosa vi sia vietato — e vi avviserà quando quella dichiarazione invecchia. |
+| **Rapporto** | Che cosa contiene lo spazio di lavoro, se è davvero raggiungibile, e come è cambiato il contesto per turno nel vostro repository. Il vostro numero, non il nostro. |
+
+Il lavoro ingegneristico ripetuto diventa conoscenza riusabile del repository — **non è addestrare un modello né automatizzare lo sviluppatore.** È un modo di conservare un lavoro che altrimenti esisterebbe solo nella testa di chi l'ha fatto.
+
+## Comandi
+
+Tutti richiamabili dalla shell, e l'agente li richiama anche da sé.
+
+| | |
+|---|---|
+| `chamnan-map` | costruisce e aggiorna l'indice |
+| `chamnan-report` | che cosa contiene lo spazio di lavoro e come è cambiato il contesto per turno |
+| `chamnan-impact` | chi dipende da questo file e quali test lo coprono |
+| `chamnan-timeline` | che cosa è già successo a questo file |
+| `chamnan-peek` | dice che cosa c'è dentro un file grande senza leggerlo nel contesto |
+| `chamnan-promote` | conserva uno script come strumento permanente del repository |
+| `chamnan-candidates` | vedere, confermare o respingere le ripetizioni rilevate |
+| `chamnan-env` | dichiarare un ambiente e i suoi divieti, e verificare che la dichiarazione sia ancora fresca |
+| `chamnan-age` | dove la conoscenza conservata ha cominciato a invecchiare |
+
+E le competenze richiamate dall'interno della sessione: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Che cosa scrive, e dove
+
+Tutto dentro `.chamnan/`, semplice markdown e JSON. Si legge, si modifica a mano e si cancella in qualsiasi momento senza rompere nulla.
+
+| | |
+|---|---|
+| `MAP.md` | che cosa esiste e che cosa dipende da che cosa |
+| `STATE.md` | su che cosa si lavora proprio adesso |
+| `sessions/` | dove si è fermato il lavoro precedente |
+| `memory/` | decisioni, lezioni e regole permanenti |
+| `threads/` | linee di lavoro ancora aperte |
+| `skills/` · `tools/` | procedure e script che vale la pena tenere |
+| `milestones.md` | i cambiamenti che hanno rimodellato il repository |
+| `config.json` | l'accensione di ogni parte e il tetto in byte del blocco iniettato nella sessione |
+
+**L'unica scrittura fuori da `.chamnan/`** è un hook Git pre-commit facoltativo che tiene l'indice al passo con l'albero — installato solo se acconsentite, e rimovibile.
+
+**L'agente non impara.** Nulla viene addestrato, nulla resta fuori da questa cartella, e la sessione successiva riparte comunque da zero — solo che riparte da zero *in un repository che sa spiegarsi da sé*. La continuità sta negli artefatti, non nel modello.
+
+## Sicurezza
+
+| | |
+|---|---|
+| **Nessuna chiamata di rete a runtime** | Nemmeno una. Non serve alcuna chiave API e nulla viene inviato da nessuna parte. |
+| **Non riscrive il vostro codice** | Riferisce, non modifica. L'indice copia i commenti che avete già scritto, non se li inventa; i file senza commento vengono elencati per nome perché li completiate voi. |
+| **Nessun demone, nessun lavoro in background** | Nessun processo residente, nessun database, nessun modello di embedding — solo la libreria standard di Python. |
+| **I segreti vengono filtrati per primi** | Tutto ciò che sta per essere scritto o iniettato nella sessione passa prima dal filtro dei segreti: restano i *nomi* delle variabili, non i valori. E il limite che quel filtro non raggiunge è scritto accanto al suo stesso numero nel README inglese. |
+| **Che cosa può farvi un plugin installato** | Spiegato per intero nel README inglese, compreso il punto in cui chamnan spezza la catena di esfiltrazione. |
+
+## Requisiti
+
+Claude Code · Python · Git · macOS, Linux o Windows
+
+Nient'altro, e nessuna dipendenza da installare. La versione minima di Python è in [README › Requirements](../../README.md#requirements) — questa pagina non porta numeri, perché sono i numeri a cambiare.
+
+## Spegnere o rimuovere
+
+Spegnete a pezzi in `.chamnan/config.json` · fermatelo in un solo repository · rimuovete il plugin dall'intera macchina · cancellate `.chamnan/` quando volete senza rompere nulla — i passaggi dettagliati in [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## Da leggere prima di installare
 
 **chamnan è pensato per quell'unica cartella principale a cui torni di continuo.** Tutto quello che fa si paga in anticipo e si incassa nelle sessioni successive: su un repository aperto una volta sola hai pagato tutto e non hai incassato nulla.

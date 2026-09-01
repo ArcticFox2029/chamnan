@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Nyiss egy új munkamenetet, majd futtasd a `/chamnan:bootstrap` parancsot tárolónként egyszer.
 
+<!-- generated: build_sections.py -->
+
+## Minden képesség
+
+Négy képesség. Minden, ami alább szerepel, valóban fut a jelenlegi kiadásban. Mindegyik rész külön kikapcsolható a `.chamnan/config.json` fájlban, és egyik sem függ a többitől.
+
+### Megérteni — mi van, és mi mivel függ össze
+
+| | |
+|---|---|
+| **Index** | `MAP.md` — fájlonként egy sor, magából a kódból előállítva. Az ügynök az indexet olvassa, majd grepel rá a szükséges részletre, ahelyett hogy bejárná a fát. |
+| **Hatás** | Ki függ ettől a fájltól, és mely tesztek fedik le. A saját importjai amúgy is a fájl tetején állnak; a drága az ellenkező irány — grepelje meg az útvonalat, mielőtt hozzányúl. |
+| **Adatmodell** | Tábla- és modellnevek egysoros leírással, DDL-ből, migrációkból és ORM-modellekből kiszedve — nem a teljes séma kiírása. Csak akkor jelenik meg, ha a tároló tényleg definiál ilyet. |
+| **API-felület** | Metódus, útvonal és kezelő, útvonal-dekorátorokból, OpenAPI-dokumentumokból és `.proto` szolgáltatásdefiníciókból — nem a teljes specifikáció. |
+| **Konfiguráció** | Azoknak a környezeti változóknak a neve, amelyeket a tároló olvas. **Csak nevek, értékek soha** — és figyelmeztet, ha a `.env` nincs a gitignore-ban. |
+| **Üzembe helyezés** | Ami valóban fut, Kubernetes-, Ansible-, Compose-, Helm- és CI-manifesztekből olvasva: típusok és nevek, image-ek, szerepek, futószalagok. Egy Secretből csak a nevét veszi, semmit abból, ami alatta van. |
+| **Nem forráskód jellegű anyag** | Beszkennelt papírok, exportok, archívumok — csak darabszám, méret és a leggyakoribb kiterjesztések. Azért van, hogy az ügynök ne menjen el megnézni magától, ami sokkal drágább. **Soha nem nyitja meg, soha nem olvassa el.** |
+
+### Emlékezni — mi volt folyamatban, és miért
+
+| | |
+|---|---|
+| **Munkaállapot** | `STATE.md` — amin éppen most folyik a munka; a munkamenet indulásakor bekerül, hogy a kontextus tömörítése ne törölje ki többé. |
+| **Munkamenet-feljegyzés** | Munkamenetenként egy a `.chamnan/sessions/` alatt. A következő munkamenetbe **csak a befejezetlen** jut el; egy tisztán lezárt munkamenet semmit sem küld tovább. |
+| **Emlékezet** | `decisions/`, `lessons/`, `rules/`. A szabályok állandó korlátok, ezért minden munkamenetben az ügynök előtt állnak; a döntések és tanulságok csak címet adnak, és akkor olvassa el őket, ha a cím ide illőnek látszik. |
+| **Nyitott szálak** | Még le nem zárt munkavonalak, azzal a történettel együtt, hogy az adott szál mely fájlokat érintette — és átnevezés után is követik őket. |
+
+### Újrahasználni — amit már egyszer megoldottunk
+
+| | |
+|---|---|
+| **Eljárások** | Készségek, amelyeket az ügynök **maga ír meg**, amikor valami bonyolultba vagy ismétlődőbe ütközik. Nem mellékelt kész könyvtár, hanem mechanizmus. |
+| **Eszközök** | Észreveszi, hogy ugyanazt az eldobható szkriptet megint megírták, és felajánlja, hogy megtartja — majd szól róla, mielőtt újat írna. |
+| **Munkafolyamatok** | Észreveszi, hogy ugyanazok a parancsok ugyanabban a sorrendben futottak külön napokon, és felajánlja, hogy leírja a sorozatot. |
+
+### Gyarapodni — amit a tároló megtanult önmagáról
+
+| | |
+|---|---|
+| **Mérföldkövek** | Az a néhány változás, amely átformálta a tárolót: mi költözött, miért érte meg, mely területeket érintette. |
+| **Jelöltek** | Az észlelt ismétlődő parancssorozatok **mindig emberi megerősítésre várnak**. Semmi sem lép elő automatikusan. |
+| **Környezetek** | Jelentse ki, mi a production vagy a staging, és mi tilos ott — és szól, amikor ez a kijelentés megöregszik. |
+| **Jelentés** | Mit tárol a munkatér, tényleg elérhető-e, és hogyan változott a fordulónkénti kontextus az ön tárolójában. Az ön száma, nem a miénk. |
+
+Az ismétlődő mérnöki munka újrahasználható tárolótudássá válik — **nem modelltanítás, és nem a fejlesztő automatizálása.** Olyan munka megőrzésének módja, amely különben csak annak a fejében létezne, aki elvégezte.
+
+## Parancsok
+
+Mind hívható a parancsértelmezőből, és az ügynök is hívja őket magától.
+
+| | |
+|---|---|
+| `chamnan-map` | felépíti és frissíti az indexet |
+| `chamnan-report` | mit tárol a munkatér, és hogyan változott a fordulónkénti kontextus |
+| `chamnan-impact` | ki függ ettől a fájltól, és mely tesztek fedik le |
+| `chamnan-timeline` | mi történt eddig ezzel a fájllal |
+| `chamnan-peek` | megmondja, mi van egy nagy fájlban anélkül, hogy beolvasná a kontextusba |
+| `chamnan-promote` | megőriz egy szkriptet a tároló állandó eszközeként |
+| `chamnan-candidates` | megnézni, megerősíteni vagy elutasítani az észlelt ismétlődéseket |
+| `chamnan-env` | kijelenteni egy környezetet és tilalmait, és ellenőrizni, hogy a kijelentés még friss-e |
+| `chamnan-age` | hol kezdett elavulni a tárolt tudás |
+
+És a munkameneten belülről hívható készségek: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Mit ír, és hová
+
+Minden a `.chamnan/` mappán belül, hétköznapi markdown és JSON. Olvasható, kézzel szerkeszthető, és bármikor törölhető anélkül, hogy bármi elromlana.
+
+| | |
+|---|---|
+| `MAP.md` | mi van, és mi mitől függ |
+| `STATE.md` | min folyik éppen most a munka |
+| `sessions/` | hol állt meg az előző munkaszakasz |
+| `memory/` | döntések, tanulságok és állandó szabályok |
+| `threads/` | még nyitott munkavonalak |
+| `skills/` · `tools/` | megőrzésre érdemes eljárások és szkriptek |
+| `milestones.md` | a változások, amelyek átformálták a tárolót |
+| `config.json` | az egyes részek be- és kikapcsolása, és a munkamenetbe kerülő blokk bájtkorlátja |
+
+**Az egyetlen írás a `.chamnan/` mappán kívül** egy választható Git pre-commit horog, amely az indexet a fához igazítva tartja — csak akkor kerül be, ha igent mond, és eltávolítható.
+
+**Az ügynök nem tanul.** Semmit sem tanítunk, semmi sem marad ezen a mappán kívül, és a következő munkamenet továbbra is nulláról indul — csak épp nulláról *egy önmagát elmagyarázó tárolóban*. A folytonosság az iratokban van, nem a modellben.
+
+## Biztonság
+
+| | |
+|---|---|
+| **Futás közben semmilyen hálózati hívás** | Egyetlen egy sem. Nem kell API-kulcs, és semmi nem megy sehová. |
+| **Nem írja át a forrását** | Jelent, nem szerkeszt. Az index a már megírt megjegyzéseit másolja, nem találja ki őket; a megjegyzés nélküli fájlokat néven nevezi, hogy ön pótolja. |
+| **Nincs démon, nincs háttérmunka** | Nincs bent maradó folyamat, nincs adatbázis, nincs beágyazó modell — csak a Python szabványos könyvtára. |
+| **A titkok szűrése az első** | Minden, ami leírásra vagy a munkamenetbe kerülne, előbb áthalad a titokszűrőn: a változók *neve* megmarad, az értékük nem. Azt a határt pedig, ameddig ez a szűrő nem ér el, az angol README-ben a saját száma mellé írtuk. |
+| **Mit tehet önnel egy telepített bővítmény** | Teljes egészében az angol README-ben, azzal együtt, hogy a chamnan hol vágja el a kiszivárgás láncát. |
+
+## Követelmények
+
+Claude Code · Python · Git · macOS, Linux vagy Windows
+
+Semmi más, és nincs telepítendő függőség. A Python legkisebb verziója a [README › Requirements](../../README.md#requirements) részben van — ezen az oldalon nincsenek számok, mert épp a számok változnak.
+
+## Kikapcsolás vagy eltávolítás
+
+Kapcsolja ki részenként a `.chamnan/config.json` fájlban · állítsa le egyetlen tárolóban · távolítsa el a bővítményt az egész gépről · törölje a `.chamnan/` mappát bármikor, semmi nem romlik el — a részletes lépések: [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## Telepítés előtt olvasd el
 
 **A chamnan arra az egy fő mappára való, ahová újra és újra visszatérsz.** Amit csinál, azt előre kifizeted, és a későbbi munkamenetekben szeded be — egy egyszer megnyitott tárolónál mindent kifizettél, és semmit nem szedtél be.

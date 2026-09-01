@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Deschide o sesiune nouă, apoi rulează `/chamnan:bootstrap` o dată pentru fiecare depozit.
 
+<!-- generated: build_sections.py -->
+
+## Toate funcțiile
+
+Patru capacități. Tot ce apare mai jos chiar rulează în versiunea curentă. Fiecare parte poate fi oprită separat în `.chamnan/config.json`, și niciuna nu depinde de celelalte.
+
+### A înțelege — ce există și ce este legat de ce
+
+| | |
+|---|---|
+| **Index** | `MAP.md` — o linie pe fișier, generată din codul însuși. Agentul citește indexul și face grep pe detaliul de care are nevoie, în loc să parcurgă tot arborele. |
+| **Impact** | Cine depinde de acest fișier și ce teste îl acoperă. Importurile proprii sunt oricum în capul fișierului; scump este sensul invers — faceți grep pe cale înainte de a modifica. |
+| **Model de date** | Nume de tabele și modele cu o linie de descriere, extrase din DDL, migrări și modele ORM — nu o descărcare a întregii scheme. Apare doar dacă depozitul chiar definește una. |
+| **Suprafața API** | Metodă, cale și handler, din decoratori de rute, documente OpenAPI și definiții de serviciu `.proto` — nu întreaga specificație. |
+| **Configurație** | Numele variabilelor de mediu pe care depozitul le citește. **Doar nume, niciodată valori** — și avertizează dacă `.env` nu este în gitignore. |
+| **Implementare** | Ce rulează cu adevărat, citit din manifeste Kubernetes, Ansible, Compose, Helm și CI: tipuri și nume, imagini, roluri, conducte. Dintr-un Secret ia doar numele, nimic din ce se află dedesubt. |
+| **Material care nu este cod** | Documente scanate, exporturi, arhive — doar numărători, dimensiuni și extensiile predominante. Există ca agentul să nu se ducă să se uite singur, ceea ce costă mult mai mult. **Niciodată deschis, niciodată citit.** |
+
+### A ține minte — ce se făcea și de ce
+
+| | |
+|---|---|
+| **Starea lucrului** | `STATE.md` — la ce se lucrează chiar acum; se introduce la începutul sesiunii, ca să nu-l mai șteargă compactarea contextului. |
+| **Însemnare de sesiune** | Una pe sesiune, sub `.chamnan/sessions/`. În sesiunea următoare ajunge **doar ce a rămas neterminat**; o sesiune închisă curat nu introduce nimic. |
+| **Memorie** | `decisions/`, `lessons/`, `rules/`. Regulile sunt constrângeri permanente, deci stau în fața agentului la fiecare sesiune; deciziile și lecțiile dau doar un titlu și sunt citite când titlul pare potrivit. |
+| **Fire deschise** | Linii de lucru încă neînchise, cu istoricul fișierelor pe care firul le-a atins — și le urmăresc și după o redenumire. |
+
+### A refolosi — ce a fost deja rezolvat o dată
+
+| | |
+|---|---|
+| **Proceduri** | Deprinderi pe care agentul le scrie **singur** când dă peste ceva complicat sau repetat. Nu o bibliotecă livrată, ci un mecanism. |
+| **Unelte** | Observă că același script de unică folosință a fost scris din nou și propune să-l păstreze — și îl amintește înainte să scrieți altul. |
+| **Fluxuri de lucru** | Observă că aceleași comenzi au rulat în aceeași ordine în zile distincte, și propune să scrie secvența. |
+
+### A se aduna — ce a învățat depozitul despre sine
+
+| | |
+|---|---|
+| **Repere** | Puținele schimbări care au remodelat depozitul: ce s-a mutat, de ce a meritat, ce zone a atins. |
+| **Candidați** | Secvențele repetate de comenzi detectate rămân **întotdeauna în așteptarea confirmării unui om**. Nimic nu este promovat automat. |
+| **Medii** | Declarați ce este production sau staging și ce este interzis acolo — iar el vă avertizează când declarația se învechește. |
+| **Raport** | Ce ține spațiul de lucru, dacă este într-adevăr accesibil, și cum s-a schimbat contextul pe tură în depozitul dumneavoastră. Cifra dumneavoastră, nu a noastră. |
+
+Munca de inginerie repetată devine cunoaștere reutilizabilă a depozitului — **nu antrenarea unui model și nici automatizarea dezvoltatorului.** Este un mod de a păstra o muncă ce altfel ar exista doar în capul celui care a făcut-o.
+
+## Comenzi
+
+Toate pot fi apelate din shell, iar agentul le apelează și singur.
+
+| | |
+|---|---|
+| `chamnan-map` | construiește și actualizează indexul |
+| `chamnan-report` | ce ține spațiul de lucru și cum s-a schimbat contextul pe tură |
+| `chamnan-impact` | cine depinde de acest fișier și ce teste îl acoperă |
+| `chamnan-timeline` | ce i s-a întâmplat până acum acestui fișier |
+| `chamnan-peek` | spune ce se află într-un fișier mare fără a-l citi în context |
+| `chamnan-promote` | păstrează un script ca unealtă permanentă a depozitului |
+| `chamnan-candidates` | a vedea, a confirma sau a respinge repetițiile detectate |
+| `chamnan-env` | a declara un mediu și interdicțiile lui, și a verifica dacă declarația este încă proaspătă |
+| `chamnan-age` | de unde a început să se învechească cunoașterea păstrată |
+
+Și deprinderile apelate din interiorul sesiunii: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Ce scrie și unde
+
+Totul în `.chamnan/`, markdown și JSON obișnuite. Se pot citi, edita de mână și șterge oricând fără să se strice nimic.
+
+| | |
+|---|---|
+| `MAP.md` | ce există și ce depinde de ce |
+| `STATE.md` | la ce se lucrează chiar acum |
+| `sessions/` | unde s-a oprit lucrul precedent |
+| `memory/` | decizii, lecții și reguli permanente |
+| `threads/` | linii de lucru încă deschise |
+| `skills/` · `tools/` | proceduri și scripturi care merită păstrate |
+| `milestones.md` | schimbările care au remodelat depozitul |
+| `config.json` | pornirea și oprirea fiecărei părți, și plafonul în octeți al blocului introdus în sesiune |
+
+**Singura scriere în afara `.chamnan/`** este un hook Git pre-commit opțional care ține indexul la pas cu arborele — se instalează doar dacă spuneți da, și poate fi scos.
+
+**Agentul nu învață.** Nimic nu este antrenat, nimic nu rămâne în afara acestui director, iar sesiunea următoare tot de la zero pornește — doar că de la zero *într-un depozit care se explică singur*. Continuitatea este în artefacte, nu în model.
+
+## Siguranță
+
+| | |
+|---|---|
+| **Niciun apel de rețea la execuție** | Niciunul. Nu e nevoie de cheie API și nimic nu pleacă nicăieri. |
+| **Nu vă rescrie codul** | Raportează, nu editează. Indexul copiază comentariile pe care le-ați scris deja, nu le inventează; fișierele fără comentariu sunt numite ca să le completați dumneavoastră. |
+| **Fără demon, fără muncă în fundal** | Niciun proces rezident, nicio bază de date, niciun model de embedding — doar biblioteca standard Python. |
+| **Secretele sunt filtrate mai întâi** | Tot ce urmează să fie scris sau introdus în sesiune trece mai întâi prin filtrul de secrete: rămân *numele* variabilelor, nu valorile. Iar limita la care acel filtru nu ajunge este scrisă lângă propria ei cifră în README-ul în engleză. |
+| **Ce vă poate face un plugin instalat** | Explicat în întregime în README-ul în engleză, inclusiv unde chamnan rupe lanțul de scurgere. |
+
+## Cerințe
+
+Claude Code · Python · Git · macOS, Linux sau Windows
+
+Nimic altceva și nicio dependență de instalat. Versiunea minimă de Python se află în [README › Requirements](../../README.md#requirements) — această pagină nu poartă cifre, fiindcă tocmai cifrele se schimbă.
+
+## Oprire sau eliminare
+
+Opriți pe părți în `.chamnan/config.json` · opriți-l într-un singur depozit · eliminați pluginul de pe toată mașina · ștergeți `.chamnan/` oricând, fără să se strice nimic — pașii detaliați în [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## De citit înainte de instalare
 
 **chamnan este pentru acel dosar principal la care revii mereu.** Tot ce face se plătește în avans și se recuperează în sesiunile următoare — într-un depozit deschis o singură dată, ai plătit tot și nu ai recuperat nimic.

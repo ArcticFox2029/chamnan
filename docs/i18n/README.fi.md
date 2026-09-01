@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Avaa uusi istunto ja aja `/chamnan:bootstrap` kerran kutakin repositoriota kohden.
 
+<!-- generated: build_sections.py -->
+
+## Kaikki ominaisuudet
+
+Neljä kykyä. Kaikki alla luetellut ovat oikeasti käytössä nykyisessä julkaisussa. Jokainen osa voidaan kytkeä pois erikseen tiedostossa `.chamnan/config.json`, eikä yksikään riipu toisesta.
+
+### Ymmärtää — mitä on olemassa ja mikä liittyy mihin
+
+| | |
+|---|---|
+| **Hakemisto** | `MAP.md` — rivi tiedostoa kohti, tuotettu itse koodista. Agentti lukee hakemiston ja grepittää tarvitsemansa yksityiskohdan sen sijaan, että kävisi koko puun läpi. |
+| **Vaikutus** | Kuka riippuu tästä tiedostosta ja mitkä testit kattavat sen. Tiedoston omat importit ovat joka tapauksessa sen yläosassa; kallista on käänteinen suunta — grepitä polku ennen muutosta. |
+| **Tietomalli** | Taulujen ja mallien nimet yhden rivin kuvauksella, poimittuna DDL:stä, migraatioista ja ORM-malleista — ei koko skeeman vedosta. Näkyy vain, jos repositorio todella määrittelee sellaisen. |
+| **API-pinta** | Metodi, polku ja käsittelijä reittikoristeista, OpenAPI-dokumenteista ja `.proto`-palvelumäärittelyistä — ei koko spesifikaatiota. |
+| **Asetukset** | Niiden ympäristömuuttujien nimet, joita repositorio lukee. **Vain nimet, arvoja ei koskaan kirjata** — ja se varoittaa, jos `.env` ei ole gitignoressa. |
+| **Käyttöönotto** | Mikä oikeasti pyörii, luettuna Kubernetesin, Ansiblen, Composen, Helmin ja CI:n manifesteista: tyypit ja nimet, imaget, roolit, putket. Secretistä otetaan vain nimi, ei mitään sen alta. |
+| **Muu kuin lähdekoodi** | Skannatut paperit, viennit, arkistot — vain lukumäärät, koot ja yleisimmät päätteet. Osio on olemassa, jotta agentti ei menisi katsomaan itse, mikä maksaa paljon enemmän. **Ei koskaan avata, ei koskaan lueta.** |
+
+### Muistaa — mitä oltiin tekemässä ja miksi
+
+| | |
+|---|---|
+| **Työn tila** | `STATE.md` — se, mitä juuri nyt tehdään; syötetään istunnon alussa, jotta kontekstin tiivistäminen lakkaa pyyhkimästä sitä. |
+| **Istuntomerkintä** | Yksi istuntoa kohti hakemistossa `.chamnan/sessions/`. Seuraavaan istuntoon pääsee **vain kesken jäänyt**; siististi päätetty istunto ei syötä mitään. |
+| **Muisti** | `decisions/`, `lessons/`, `rules/`. Säännöt ovat pysyviä rajoituksia, joten ne ovat agentin edessä joka istunnossa; päätökset ja opit antavat vain otsikon ja luetaan, kun otsikko vaikuttaa asiaankuuluvalta. |
+| **Avoimet langat** | Työlinjat, joita ei ole vielä suljettu, sekä historia siitä, mitä tiedostoja lanka on koskettanut — ja ne seuraavat tiedostoa myös uudelleennimeämisen jälkeen. |
+
+### Käyttää uudelleen — se, mikä on jo kerran ratkaistu
+
+| | |
+|---|---|
+| **Menettelyt** | Taitoja, jotka agentti kirjoittaa **itse** törmätessään johonkin monimutkaiseen tai toistuvaan. Ei mukana tuleva kirjasto vaan mekanismi. |
+| **Työkalut** | Huomaa, että sama kertakäyttöskripti on kirjoitettu taas, ja tarjoutuu säilyttämään sen — ja mainitsee sen ennen kuin kirjoitat uuden. |
+| **Työnkulut** | Huomaa, että samat komennot ajettiin samassa järjestyksessä eri päivinä, ja tarjoutuu kirjaamaan sen järjestyksen ylös. |
+
+### Karttua — mitä repositorio on oppinut itsestään
+
+| | |
+|---|---|
+| **Virstanpylväät** | Ne harvat muutokset, jotka muovasivat repositorion uusiksi: mikä siirtyi, miksi se kannatti, mihin alueisiin se kosketti. |
+| **Ehdokkaat** | Havaitut toistuvat komentosarjat jäävät **aina odottamaan ihmisen vahvistusta**. Mitään ei ylennetä automaattisesti. |
+| **Ympäristöt** | Ilmoita, mikä production tai staging on ja mikä siellä on kiellettyä — ja se huomauttaa, kun ilmoitus vanhenee. |
+| **Raportti** | Mitä työtila pitää sisällään, onko se todella saavutettavissa, ja miten konteksti vuoroa kohti on muuttunut sinun repositoriossasi. Sinun lukusi, ei meidän. |
+
+Toistuva insinöörityö muuttuu uudelleenkäytettäväksi repositoriotiedoksi — **ei mallin kouluttamista eikä kehittäjän automatisointia.** Se on tapa säilyttää työ, joka muuten olisi vain sen tekijän päässä.
+
+## Komennot
+
+Kaikki kutsuttavissa komentotulkista, ja agentti kutsuu niitä myös itse.
+
+| | |
+|---|---|
+| `chamnan-map` | rakentaa ja päivittää hakemiston |
+| `chamnan-report` | mitä työtila pitää sisällään ja miten konteksti vuoroa kohti on muuttunut |
+| `chamnan-impact` | kuka riippuu tästä tiedostosta ja mitkä testit kattavat sen |
+| `chamnan-timeline` | mitä tälle tiedostolle on tähän mennessä tapahtunut |
+| `chamnan-peek` | kertoo, mitä isossa tiedostossa on, lukematta sitä kontekstiin |
+| `chamnan-promote` | säilyttää skriptin repositorion pysyvänä työkaluna |
+| `chamnan-candidates` | katsoa, vahvistaa tai hylätä havaitut toistot |
+| `chamnan-env` | ilmoittaa ympäristö ja sen kiellot sekä tarkistaa, onko ilmoitus yhä tuore |
+| `chamnan-age` | mistä talletettu tieto on alkanut vanhentua |
+
+Ja istunnon sisältä kutsuttavat taidot: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Mitä se kirjoittaa ja minne
+
+Kaikki hakemistossa `.chamnan/`, tavallista markdownia ja JSONia. Luettavissa, käsin muokattavissa ja poistettavissa milloin tahansa ilman että mikään hajoaa.
+
+| | |
+|---|---|
+| `MAP.md` | mitä on olemassa ja mikä riippuu mistä |
+| `STATE.md` | mitä juuri nyt tehdään |
+| `sessions/` | mihin edellinen työrupeama pysähtyi |
+| `memory/` | päätökset, opit ja pysyvät säännöt |
+| `threads/` | työlinjat, jotka ovat yhä auki |
+| `skills/` · `tools/` | säilyttämisen arvoiset menettelyt ja skriptit |
+| `milestones.md` | muutokset, jotka muovasivat repositorion uusiksi |
+| `config.json` | kunkin osan päälle ja pois, sekä istuntoon syötettävän lohkon tavukatto |
+
+**Ainoa kirjoitus `.chamnan/`-hakemiston ulkopuolelle** on valinnainen Git-pre-commit-koukku, joka pitää hakemiston puun tahdissa — se asennetaan vain jos suostut, ja sen voi poistaa.
+
+**Agentti ei opi.** Mitään ei kouluteta, mitään ei jää tämän hakemiston ulkopuolelle, ja seuraava istunto alkaa yhä nollasta — vain nollasta *repositoriossa, joka selittää itsensä*. Jatkuvuus on tuotoksissa, ei mallissa.
+
+## Turvallisuus
+
+| | |
+|---|---|
+| **Ei verkkokutsuja ajon aikana** | Ei ainuttakaan. API-avainta ei tarvita, eikä mitään lähetetä minnekään. |
+| **Ei kirjoita koodiasi uusiksi** | Se raportoi, ei muokkaa. Hakemisto kopioi jo kirjoittamasi kommentit eikä keksi niitä; kommentittomat tiedostot mainitaan nimeltä, jotta täydennät ne itse. |
+| **Ei taustaprosessia eikä taustatyötä** | Ei pysyvää prosessia, ei tietokantaa, ei upotusmallia — vain Pythonin vakiokirjasto. |
+| **Salaisuudet suodatetaan ensin** | Kaikki kirjoitettava tai istuntoon syötettävä kulkee ensin salaisuussuodattimen läpi: muuttujien *nimet* jäävät, arvot eivät. Ja se raja, johon suodatin ei yllä, on kirjoitettu oman lukunsa viereen englanninkielisessä README-tiedostossa. |
+| **Mitä asennettu laajennus voi tehdä sinulle** | Selitetty kokonaan englanninkielisessä README-tiedostossa, mukaan lukien se, missä kohtaa chamnan katkaisee vuotoketjun. |
+
+## Vaatimukset
+
+Claude Code · Python · Git · macOS, Linux tai Windows
+
+Ei muuta, eikä asennettavia riippuvuuksia. Pythonin vähimmäisversio on tiedostossa [README › Requirements](../../README.md#requirements) — tällä sivulla ei ole lukuja, koska juuri luvut muuttuvat.
+
+## Kytkeä pois tai poistaa
+
+Kytke pois osa kerrallaan tiedostossa `.chamnan/config.json` · pysäytä se yhdessä repositoriossa · poista laajennus koko koneelta · poista `.chamnan/` milloin tahansa ilman että mikään hajoaa — vaiheet ovat kohdassa [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## Lue ennen asennusta
 
 **chamnan on sitä yhtä pääkansiota varten, johon palaat yhä uudelleen.** Kaikki mitä se tekee maksetaan etukäteen ja peritään takaisin myöhemmissä istunnoissa — kerran avatussa repositoriossa maksoit kaiken etkä perinyt mitään.

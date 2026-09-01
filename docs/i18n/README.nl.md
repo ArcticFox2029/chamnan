@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Open een nieuwe sessie en voer `/chamnan:bootstrap` eenmaal per repository uit.
 
+<!-- generated: build_sections.py -->
+
+## Alle functies
+
+Vier vermogens. Alles hieronder draait echt in de huidige uitgave. Elk onderdeel is apart uit te zetten in `.chamnan/config.json`, en geen enkel onderdeel hangt van een ander af.
+
+### Begrijpen — wat er is, en wat waarmee samenhangt
+
+| | |
+|---|---|
+| **Index** | `MAP.md` — één regel per bestand, gegenereerd uit de code zelf. De agent leest de index en grept het benodigde detail, in plaats van de boom af te lopen. |
+| **Impact** | Wie van dit bestand afhangt en welke tests het dekken. De eigen imports staan toch al bovenaan het bestand; duur is de omgekeerde richting — grep het pad voordat je iets wijzigt. |
+| **Datamodel** | Tabel- en modelnamen met één regel uitleg, gehaald uit DDL, migraties en ORM-modellen — geen dump van het hele schema. Verschijnt alleen als de repository er werkelijk een definieert. |
+| **API-oppervlak** | Methode, pad en handler, uit route-decorators, OpenAPI-documenten en `.proto`-servicedefinities — niet de hele specificatie. |
+| **Configuratie** | De namen van de omgevingsvariabelen die de repository leest. **Alleen namen, nooit waarden** — en het waarschuwt als `.env` niet in gitignore staat. |
+| **Uitrol** | Wat er werkelijk draait, gelezen uit manifesten van Kubernetes, Ansible, Compose, Helm en CI: soorten en namen, images, rollen, pipelines. Van een Secret komt alleen de naam, niets van wat eronder staat. |
+| **Niet-broncode-materiaal** | Gescande stukken, exports, archieven — alleen aantallen, groottes en overheersende extensies. Het bestaat opdat de agent niet zelf gaat kijken, wat veel duurder uitpakt. **Wordt nooit geopend, nooit gelezen.** |
+
+### Onthouden — waaraan werd gewerkt, en waarom
+
+| | |
+|---|---|
+| **Werkstand** | `STATE.md` — waaraan op dit moment wordt gewerkt; wordt bij het starten van de sessie ingevoegd zodat het samenvatten van de context het niet langer wist. |
+| **Sessieverslag** | Eén per sessie onder `.chamnan/sessions/`. Naar de volgende sessie gaat **alleen wat onaf bleef**; een netjes afgesloten sessie voegt helemaal niets in. |
+| **Geheugen** | `decisions/`, `lessons/`, `rules/`. Regels zijn blijvende beperkingen en staan dus elke sessie voor de agent; beslissingen en lessen leveren alleen een titel en worden gelezen wanneer die titel ter zake lijkt. |
+| **Open draden** | Werklijnen die nog niet zijn afgesloten, met de geschiedenis van welke bestanden die draad heeft geraakt — en ze blijven die volgen nadat een bestand is hernoemd. |
+
+### Hergebruiken — wat al eens is opgelost
+
+| | |
+|---|---|
+| **Procedures** | Vaardigheden die de agent **zelf schrijft** wanneer hij iets ingewikkelds of herhaalds tegenkomt. Geen meegeleverde bibliotheek, maar een mechanisme. |
+| **Gereedschap** | Merkt dat hetzelfde wegwerpscript opnieuw is geschreven en biedt aan het te bewaren — en noemt het voordat je een nieuw script schrijft. |
+| **Werkstromen** | Merkt dat dezelfde commando's in dezelfde volgorde liepen op losse dagen, en biedt aan die volgorde vast te leggen. |
+
+### Aangroeien — wat de repository over zichzelf heeft geleerd
+
+| | |
+|---|---|
+| **Mijlpalen** | De paar wijzigingen die de vorm van de repository hebben veranderd: wat verhuisde, waarom het de moeite waard was, welke gebieden het raakte. |
+| **Kandidaten** | Ontdekte herhaalde commandoreeksen wachten **altijd op bevestiging door een mens**. Niets wordt automatisch bevorderd. |
+| **Omgevingen** | Verklaar wat production of staging is en wat daar verboden is — en het waarschuwt wanneer die verklaring veroudert. |
+| **Rapport** | Wat de werkruimte bevat, of het werkelijk bereikbaar is, en hoe de context per beurt in jouw repository is veranderd. Jouw getal, niet het onze. |
+
+Herhaald ingenieurswerk wordt herbruikbare repositorykennis — **geen modeltraining, en geen automatisering van de ontwikkelaar.** Het is een manier om werk te bewaren dat anders alleen bestond in het hoofd van wie het deed.
+
+## Commando's
+
+Allemaal aan te roepen vanuit de shell, en de agent roept ze ook zelf aan.
+
+| | |
+|---|---|
+| `chamnan-map` | bouwt de index en houdt hem bij |
+| `chamnan-report` | wat de werkruimte bevat en hoe de context per beurt is veranderd |
+| `chamnan-impact` | wie van dit bestand afhangt en welke tests het dekken |
+| `chamnan-timeline` | wat er tot nu toe met dit bestand is gebeurd |
+| `chamnan-peek` | zegt wat er in een groot bestand zit zonder het in de context te lezen |
+| `chamnan-promote` | bewaart een script als vast gereedschap van de repository |
+| `chamnan-candidates` | ontdekte herhalingen bekijken, bevestigen of afwijzen |
+| `chamnan-env` | een omgeving en haar verboden verklaren, en nagaan of die verklaring nog vers is |
+| `chamnan-age` | waar de opgeslagen kennis is beginnen te verouderen |
+
+En vaardigheden die vanuit de sessie worden aangeroepen: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Wat het schrijft, en waar
+
+Alles binnen `.chamnan/`, gewone markdown en JSON. Leesbaar, met de hand aan te passen en op elk moment te verwijderen zonder dat er iets stukgaat.
+
+| | |
+|---|---|
+| `MAP.md` | wat er is, en wat waarvan afhangt |
+| `STATE.md` | waaraan op dit moment wordt gewerkt |
+| `sessions/` | waar het vorige werk is gestopt |
+| `memory/` | beslissingen, lessen en blijvende regels |
+| `threads/` | werklijnen die nog openstaan |
+| `skills/` · `tools/` | procedures en scripts die het bewaren waard zijn |
+| `milestones.md` | de wijzigingen die de vorm van de repository veranderden |
+| `config.json` | het aan- en uitzetten van elk onderdeel, en de bytegrens van het blok dat in de sessie wordt ingevoegd |
+
+**De enige schrijfactie buiten `.chamnan/`** is een optionele Git-pre-commit-hook die de index in de pas houdt met de boom — die wordt alleen geplaatst als je ja zegt, en is te verwijderen.
+
+**De agent leert niet.** Er wordt niets getraind, er blijft niets buiten deze map achter, en de volgende sessie begint nog steeds bij nul — alleen bij nul *in een repository die zichzelf uitlegt*. De continuïteit zit in de artefacten, niet in het model.
+
+## Veiligheid
+
+| | |
+|---|---|
+| **Geen netwerkaanroep tijdens het draaien** | Geen enkele. Er is geen API-sleutel nodig en er wordt niets ergens heen gestuurd. |
+| **Herschrijft je broncode niet** | Het rapporteert, het bewerkt niet. De index kopieert de commentaren die je al hebt geschreven en verzint ze niet; bestanden zonder commentaar worden bij naam genoemd zodat jij ze aanvult. |
+| **Geen daemon, geen achtergrondwerk** | Geen blijvend proces, geen database, geen embeddingmodel — alleen de standaardbibliotheek van Python. |
+| **Geheimen worden eerst gefilterd** | Alles wat wordt geschreven of in de sessie wordt ingevoegd, gaat eerst door het geheimenfilter: de *namen* van variabelen blijven, de waarden niet. En de grens die dat filter niet haalt, staat naast zijn eigen getal in de Engelse README. |
+| **Wat een geïnstalleerde plugin jou kan aandoen** | Volledig uitgelegd in de Engelse README, inclusief waar chamnan de keten van weglekken doorbreekt. |
+
+## Vereisten
+
+Claude Code · Python · Git · macOS, Linux of Windows
+
+Verder niets, en geen afhankelijkheden om te installeren. De minimale Python-versie staat in [README › Requirements](../../README.md#requirements) — deze pagina draagt geen getallen, want juist de getallen veranderen.
+
+## Uitzetten of verwijderen
+
+Zet het per onderdeel uit in `.chamnan/config.json` · stop het in één repository · verwijder de plugin van de hele machine · wis `.chamnan/` wanneer je wilt zonder dat er iets stukgaat — de stappen staan in [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## Lees dit vóór het installeren
 
 **chamnan is bedoeld voor die ene hoofdmap waar je telkens naar terugkeert.** Alles wat hij doet betaal je vooraf en int je in latere sessies — bij een repository die je één keer opent heb je alles betaald en niets geïnd.

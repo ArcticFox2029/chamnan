@@ -6161,6 +6161,36 @@ check("the page opens with a self-contained digest, because it is what a summari
 check("...and a contents list, so the shape is visible without reading 1,900 lines",
       "## Contents" in _readme)
 
+# ------------------------------ thirty-two pages nobody reads all of
+# The rule the English README advertises, enforced instead of stated. A page that acquires a number
+# needs an edit every release, and a translation that goes unedited while the source moves is worse
+# than no translation, because it still reads as current.
+_i18n = sorted((ROOT / "docs" / "i18n").glob("README.*.md"))
+check(f"every translated page is still there ({len(_i18n)})", len(_i18n) == 32)
+_digits = {p.name: [w for w in re.findall(r"\S*\d\S*", p.read_text(encoding="utf-8"))
+                    if "ArcticFox2029" not in w] for p in _i18n}
+_digits = {k: v for k, v in _digits.items() if v}
+check("NOT ONE TRANSLATED PAGE CARRIES A NUMBER: " + str(_digits), not _digits)
+
+sys.path.insert(0, str(ROOT / "docs" / "i18n"))
+import i18n_strings as _i18s  # noqa: E402
+import build_sections as _i18b  # noqa: E402
+
+_codes = {p.name[len("README."):-len(".md")] for p in _i18n}
+check("...and every one of them has a string table: " + str(sorted(_codes - set(_i18s.STRINGS))),
+      not (_codes - set(_i18s.STRINGS)))
+# The failure this guards against is a row that exists in some languages and not others -- which
+# nobody would ever notice, because nobody reads all thirty-two.
+_keys = set(_i18s.STRINGS["en"] if "en" in _i18s.STRINGS else _i18s.STRINGS["th"])
+_ragged = {c: sorted(_keys - set(t)) for c, t in _i18s.STRINGS.items() if _keys - set(t)}
+check("EVERY LANGUAGE CARRIES EVERY ROW: " + str(_ragged), not _ragged)
+_extra = {c: sorted(set(t) - _keys) for c, t in _i18s.STRINGS.items() if set(t) - _keys}
+check("...and none carries a row the others do not: " + str(_extra), not _extra)
+check("the feature sections are actually in the pages, not only in the table",
+      all("<!-- generated: build_sections.py -->" in p.read_text(encoding="utf-8") for p in _i18n))
+check("...and a page says enough to be worth translating at all",
+      min(len(p.read_text(encoding="utf-8").splitlines()) for p in _i18n) > 100)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
