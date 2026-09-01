@@ -115,8 +115,12 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     if dropped:
         used = len((header + "".join(parts) + notice(dropped, ceiling)).encode())
         room = ceiling - used
-        for rank, i in droppable:
-            if not parts[i] == "":
+        # Reversed: droppable is ordered cheapest-first for dropping, so the most valuable thing
+        # that was dropped is at the END of it. Walking it forwards brings back the least valuable
+        # section instead of the most — which is the opposite of the point, and is what this did
+        # until a live run showed STATE.md dropped with 55% of the ceiling unused.
+        for rank, i in reversed(droppable):
+            if parts[i] != "":
                 continue
             title = _dropped_title(dropped, i, order)
             if title is None:
