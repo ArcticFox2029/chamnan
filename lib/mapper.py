@@ -318,7 +318,7 @@ def leading_comment(source, lang=None):
     """
     prefix = COMMENT_PREFIX_NO_HASH if lang in HASH_IS_DIRECTIVE else COMMENT_PREFIX
     lines = source.splitlines()
-    doc = _elixir_moduledoc(lines)
+    doc = _elixir_moduledoc(lines) or _declared_desc(source, lang)
     if doc:
         return doc
 
@@ -383,6 +383,23 @@ def leading_comment(source, lang=None):
         if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]):
             return _clip(text)
     return ""
+
+
+# A Homebrew formula states its own one-line summary in `desc "..."`. That is not a comment, so the
+# comment reader never saw it and every formula in a row came out undescribed -- on files where the
+# description is the single most useful thing there is to say. Anchored on the Formula/Cask
+# declaration rather than on `desc` alone, because Rake writes `desc "run the tests"` before every
+# task and that describes the task, not the file.
+DECLARED_DESC_LANGS = ("rb",)
+_FORMULA = re.compile(r"^\s*(?:class\s+\w+\s*<\s*(?:Formula|Cask)\b|cask\s+['\"])", re.M)
+_DESC = re.compile(r"""^[ \t]*desc\s+(['"])(.+?)\1\s*$""", re.M)
+
+
+def _declared_desc(source, lang):
+    if lang not in DECLARED_DESC_LANGS or not _FORMULA.search(source):
+        return ""
+    m = _DESC.search(source)
+    return _clip(m.group(2).strip()) if m else ""
 
 
 def _elixir_moduledoc(lines):

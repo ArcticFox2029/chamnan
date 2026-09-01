@@ -67,6 +67,23 @@ def cmd_show(root, name):
 
 
 def cmd_set(root, name, platform, versions, constraints, checked):
+    """`set` replaces the whole entry, and a field not named on THIS invocation used to be replaced
+    with nothing. So `chamnan-env set production --checked 2026-09-01` -- the exact command
+    `chamnan-env check` tells you to run when an environment goes cold -- erased the platform, the
+    versions and every constraint, which are the parts nobody else can reconstruct. Anything not
+    given is carried forward from what is already recorded; `--platform ""` still clears it, so
+    there is a way to say "this really is empty now"."""
+    prior = next((e for e in env.entries(root)
+                  if e["name"].strip().lower() == name.strip().lower()), None)
+    if prior:
+        if platform is None:
+            platform = prior["platform"]
+        if versions is None:
+            versions = prior["versions_raw"]
+        if constraints is None:
+            constraints = prior["constraints"]
+    platform, versions = platform or "", versions or ""
+    constraints = constraints or []
     entry = env.render_entry(name, platform, versions, constraints, checked)
     path, replaced = env.upsert(root, name, entry)
     verb = "updated" if replaced else "declared"
@@ -135,9 +152,10 @@ def main(argv):
         return 2
 
     name, *opts = rest
-    platform = versions = ""
+    # None means "not named on this command line", which is distinct from "named as empty".
+    platform = versions = None
     checked = _today()
-    constraints = []
+    constraints = None
     i = 0
     while i < len(opts):
         flag = opts[i]
@@ -150,7 +168,7 @@ def main(argv):
         elif flag == "--versions":
             versions = value
         elif flag == "--constraint":
-            constraints.append(value)
+            constraints = (constraints or []) + [value]
         elif flag == "--checked":
             checked = value
         else:

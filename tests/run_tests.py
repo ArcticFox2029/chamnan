@@ -6012,6 +6012,97 @@ check("RETENTION RUNS FROM THE HOOK, NOT ONLY FROM THE TWO COMMANDS THAT HAPPEN 
 
 shutil.rmtree(_led.parent, ignore_errors=True)
 
+# ------------------------------ the commands, when you use them the way the docs tell you to
+import timeline as _tl  # noqa: E402
+import peek as _pk  # noqa: E402
+import catalogs as _cat  # noqa: E402
+
+# `chamnan-env check` prints "re-confirm with `chamnan-env set <name> --checked <date>`", and that
+# exact command erased the platform, the versions and every constraint -- the parts nobody else can
+# reconstruct.
+_envrepo = Path(tempfile.mkdtemp(prefix="chamnan-env-"))
+subprocess.run(["git", "-C", str(_envrepo), "init", "-q"], capture_output=True)
+(_envrepo / ".chamnan").mkdir()
+_envbin = [sys.executable, str(ROOT / "bin" / "chamnan-env")]
+subprocess.run(_envbin + ["set", "production", "--platform", "AWS eu-west-1",
+                          "--versions", "terraform v1.9.2", "--constraint", "never touch drk8s"],
+               cwd=_envrepo, capture_output=True, text=True)
+subprocess.run(_envbin + ["set", "production", "--checked", "2026-09-01"],
+               cwd=_envrepo, capture_output=True, text=True)
+_envtext = (_envrepo / ".chamnan" / "environments.md").read_text(encoding="utf-8")
+check("RE-CONFIRMING AN ENVIRONMENT DOES NOT ERASE THE FIELDS YOU DID NOT RETYPE",
+      "AW" + "S eu-west-1" in _envtext and "never touch drk8s" in _envtext
+      and "terraform" in _envtext and "1.9.2" in _envtext and "2026-09-01" in _envtext)
+subprocess.run(_envbin + ["set", "production", "--platform", ""], cwd=_envrepo,
+               capture_output=True, text=True)
+check("...while naming a field as empty still clears it",
+      "eu-west-1" not in (_envrepo / ".chamnan" / "environments.md").read_text(encoding="utf-8"))
+shutil.rmtree(_envrepo, ignore_errors=True)
+
+# `promote ... tool` writes a SKELETON with placeholders, so every tool worth having has
+# hand-written commands in it. `demote` deleted the file, and the candidate it writes in exchange
+# is one line of description that it says outright is not a reconstruction.
+_demote = (ROOT / "bin" / "chamnan-candidates").read_text(encoding="utf-8")
+_demote = _demote.split("def cmd_demote", 1)[1].split("\ndef ", 1)[0]
+check("DEMOTE ARCHIVES THE TOOL RATHER THAN DELETING WHAT SOMEBODY WROTE",
+      "tool_path.replace(dest)" in _demote and "tool_path.unlink()" not in _demote)
+
+# A Homebrew formula states its own summary in `desc "..."`, which is not a comment, so a whole tap
+# came out with nothing said about any of it.
+check("A HOMEBREW FORMULA IS DESCRIBED BY ITS OWN desc LINE",
+      mapper.leading_comment('class Wget < Formula\n  desc "Internet file retriever"\nend\n', "rb")
+      == "Internet file retriever")
+check("...and Rake's per-task desc is not mistaken for one",
+      mapper.leading_comment('desc "run the tests"\ntask :test do\nend\n', "rb") == "")
+
+# index.json is in registration order and the injected list took the first MAX_TOOLS of it, so a
+# thirteenth tool was never named in any session.
+_hooksrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("THE INJECTED TOOL LIST IS RANKED BY USE, NOT BY WHO REGISTERED FIRST",
+      'ranked.sort(key=lambda t: -(t.get("runs") or 0))' in _hooksrc
+      and "for t in ranked[:MAX_TOOLS]" in _hooksrc)
+
+# peek exists so a number here can be trusted instead of the file being read.
+_wide = Path(tempfile.mkdtemp(prefix="chamnan-peek-")) / "w.csv"
+_cols = [f"c{i}" for i in range(60)]
+_wide.write_text(",".join(_cols) + "\n" + ",".join("1" for _ in _cols) + "\n", encoding="utf-8")
+check("A TRUNCATED COLUMN LIST SAYS HOW MANY IT LEFT OUT",
+      "…+20 more" in "\n".join(_pk.peek_csv(_wide)))
+_realcap, _pk.ROW_CAP = _pk.ROW_CAP, 3
+_many = _wide.with_name("m.csv")
+_many.write_text("a\n" + "1\n" * 10, encoding="utf-8")
+check("AND A ROW COUNT STOPPED AT THE CAP IS REPORTED AS A FLOOR, NOT AS A FACT",
+      "more than" in _pk.peek_csv(_many)[0])
+_pk.ROW_CAP = _realcap
+check("...while a file under the cap still states its count plainly",
+      _pk.peek_csv(_many)[0] == "1 columns, 10 data rows")
+shutil.rmtree(_wide.parent, ignore_errors=True)
+
+# The Configuration list is capped and was cut alphabetically, so a repo with 200 variables showed
+# everything up to about `D` under a line that said only "Showing 50 of 200".
+check("A CAPPED CONFIGURATION LIST NAMES THE RANKING IT WAS CUT ON",
+      "referenced in the most places" in _cat.render_env(
+          [(f"V{i}", "a.py") for i in range(_cat.MAX_ENV_LISTED + 5)], []))
+
+# A thread entry written before a `git mv` names the old path; asking about the new one found
+# nothing, though git itself knows the two are one file.
+_rn = Path(tempfile.mkdtemp(prefix="chamnan-rn-"))
+(_rn / "src").mkdir(); (_rn / ".chamnan" / "threads").mkdir(parents=True)
+_git = lambda *a: subprocess.run(["git", "-C", str(_rn)] + list(a), capture_output=True, text=True)
+_git("init", "-q"); _git("config", "user.email", "t@t"); _git("config", "user.name", "t")
+(_rn / "src" / "old_name.py").write_text("x\n", encoding="utf-8")
+(_rn / ".chamnan" / "threads" / "t.md").write_text(
+    "# thread\n\n## 2026-08-01 — reworked the parser\n\n**Files:** `src/old_name.py`\n\n",
+    encoding="utf-8")
+_git("add", "-A"); _git("commit", "-qm", "one")
+_git("mv", "src/old_name.py", "src/new_name.py"); _git("commit", "-qm", "rename")
+_tl._NAMES_CACHE.clear()
+check("A FILE'S HISTORY FOLLOWS IT THROUGH A RENAME",
+      len(_tl.for_path(_rn, "src/new_name.py")) == 1)
+check("...and a file git has never heard of still matches nothing",
+      _tl.for_path(_rn, "src/unrelated.py") == [])
+shutil.rmtree(_rn, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

@@ -594,8 +594,18 @@ def main():
         except Exception:
             tools = []
         if tools:
+            # index.json is in registration order, and this used to take the first MAX_TOOLS of it.
+            # So the twelve oldest tools held the list for ever: promote a thirteenth and it was
+            # never named in any session, which is the one thing that would make anyone use it.
+            # Ranked by the `runs` counter that has been incrementing on every matched Bash call
+            # since Stage 10 — what is actually used, then the newest, then by name so the order is
+            # stable between sessions rather than reshuffling on every tie.
+            # Three stable sorts, least significant first: name, then newest, then most-run.
+            ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
+            ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
+            ranked.sort(key=lambda t: -(t.get("runs") or 0))
             lines = [f"- `{t['name']}` — {t.get('desc') or 'no description'}"
-                     for t in tools[:MAX_TOOLS]]
+                     for t in ranked[:MAX_TOOLS]]
             if len(tools) > MAX_TOOLS:
                 lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
                              f"`{(wsdir/'tools').relative_to(root)}/`_")

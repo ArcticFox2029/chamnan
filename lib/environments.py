@@ -68,7 +68,8 @@ def _ymd_to_ts(text):
 def entries(root):
     """[{name, platform, versions, constraints, checked, checked_ts}] in file order.
 
-    `versions` is {name: version} parsed from the `Versions:` line. `constraints` is the list of
+    `versions` is {name: version} parsed from the `Versions:` line, `versions_raw` that line
+    verbatim. `constraints` is the list of
     bullets under `Constraints:`. `checked_ts` is None when the entry has no parseable `Checked:`
     date — which `stale_environments()` treats as never checked, not as fine.
     """
@@ -105,6 +106,10 @@ def entries(root):
             "name": m.group(1).strip(),
             "platform": fields.get("platform", ""),
             "versions": versions,
+            # The `Versions:` line exactly as written. `versions` above is lossy -- it keeps only
+            # what _VERSION could parse -- and `chamnan-env set` has to be able to carry the line
+            # forward unchanged when the caller did not retype it.
+            "versions_raw": fields.get("versions", ""),
             "constraints": constraints,
             "checked": checked,
             "checked_ts": _ymd_to_ts(checked),

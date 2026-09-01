@@ -25,6 +25,8 @@ changed, it needed a rollback" instead of only naming what imports what. Free pr
 key — the same reason `Symptom:` was cut from the memory format.
 """
 import re
+import subprocess
+
 import mdblock
 
 DIRNAME = "threads"
@@ -217,12 +219,46 @@ def set_status(root, ident, status):
     return path
 
 
+_NAMES_CACHE = {}
+
+
+def historical_names(root, target):
+    """Every name `target` has been known by, from git's own rename detection.
+
+    A thread entry written before a `git mv` names the old path, so asking about the new one found
+    nothing at all -- the history existed, and the join could not see it. `--follow` takes exactly
+    one pathspec, which is what this is called with. Best-effort: no repository, no git, a bad exit
+    or a timeout all mean "no extra names", never an error, because a history lookup failing must
+    not take the caller down with it.
+    """
+    from workspace import find_root
+    repo = find_root(root)
+    key = (str(repo), target)
+    if key in _NAMES_CACHE:
+        return _NAMES_CACHE[key]
+    names = set()
+    try:
+        out = subprocess.run(
+            # core.quotePath=false for the same reason rollup._churn sets it: git C-quotes any
+            # non-ASCII path by default, and the quoted form matches nothing.
+            ["git", "-C", str(repo), "-c", "core.quotePath=false",
+             "log", "--follow", "--name-only", "--pretty=format:", "-n", "200", "--", target],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            errors="replace", timeout=10)
+        if out.returncode == 0:
+            names = {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+    except (OSError, subprocess.SubprocessError):
+        names = set()
+    return _NAMES_CACHE.setdefault(key, names)
+
+
 def for_path(root, target):
     """[(thread_path, date, note)] for every entry naming `target` in its `Files:` line, newest
     first. This is the join Stage 13b's impact query reads: given a file somebody is about to
     change, what has already happened to it.
 
-    Matches a declared path exactly, or as a suffix of one — an entry written as `src/app.py`
+    Matches a declared path exactly, or as a suffix of one, under any name the file has had —
+    an entry written as `src/app.py`
     should still answer a question asked about `src/app.py` from a subdirectory. Deliberately not
     a fuzzy match: `app.py` matching `src/vendor/app.py` would attach one file's history to
     another's, which is worse than finding nothing.
@@ -230,13 +266,21 @@ def for_path(root, target):
     target = str(target).strip().strip("`").lstrip("./")
     if not target:
         return []
+    # The name asked about, plus every name the file has had. Same matching rule for each: exact,
+    # or a suffix on a path boundary. Still deliberately not fuzzy.
+    wanted = {target} | {n.lstrip("./") for n in historical_names(root, target) if n}
     hits = []
     for path in threads(root):
         for date, note, files in entries_of(path):
+            matched = False
             for f in files:
                 f = f.lstrip("./")
-                if f == target or f.endswith("/" + target) or target.endswith("/" + f):
-                    hits.append((path, date, note))
+                for t in wanted:
+                    if f == t or f.endswith("/" + t) or t.endswith("/" + f):
+                        hits.append((path, date, note))
+                        matched = True
+                        break
+                if matched:
                     break
     return sorted(hits, key=lambda h: h[1], reverse=True)
 
