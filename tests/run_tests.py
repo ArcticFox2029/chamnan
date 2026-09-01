@@ -6476,6 +6476,57 @@ check("A NAMED QUERY IS NOT A TABLE, AND THE REAL ONE IS NOT LOST: " + str(_jpa)
       _jpa == ["Driver", "Trip", "fleet_vehicles", "payments"])
 shutil.rmtree(_sqd, ignore_errors=True)
 
+# ------------------------------ the API surface, where a wrong path is acted on and 404s
+# ROUTER_PREFIX's own comment states the standard these two failed: "a wrong path is worse than no
+# path, because it is acted on and 404s."
+_rtd = Path(tempfile.mkdtemp(prefix="chamnan-routes-"))
+(_rtd / "api").mkdir(parents=True)
+# A controller whose health check uses the method-level form -- ordinary in any Spring codebase
+# older than 4.3. That mapping was taken as the CLASS prefix and concatenated onto every other
+# route in the file, so every published path was fabricated and the real one was dropped.
+(_rtd / "api" / "OrderController.java").write_text(
+    "@RestController\npublic class OrderController {\n"
+    '    @RequestMapping(value = "/internal/health", method = RequestMethod.GET)\n'
+    "    public String health() { return \"ok\"; }\n\n"
+    '    @GetMapping("/v1/orders")\n    public List<Order> list() { return null; }\n\n'
+    '    @PostMapping("/v1/orders")\n    public Order create() { return null; }\n}\n',
+    encoding="utf-8")
+(_rtd / "api" / "AdminController.java").write_text(
+    '@RestController\n@RequestMapping("/admin")\npublic class AdminController {\n'
+    '    @GetMapping("/users")\n    public List<User> users() { return null; }\n}\n',
+    encoding="utf-8")
+# scan_routes returns [((method, path), source), …], not a mapping.
+_spring = {key for key, _src in _cat2.scan_routes(
+    _rtd, [{"path": f"api/{n}", "lang": "java"}
+           for n in ("OrderController.java", "AdminController.java")])}
+check("A METHOD-LEVEL @RequestMapping IS NOT THE CLASS PREFIX: " + str(sorted(_spring)),
+      ("GET", "/v1/orders") in _spring and ("POST", "/v1/orders") in _spring)
+check("...and it is a route in its own right rather than being dropped",
+      ("GET", "/internal/health") in _spring)
+check("...while a real class-level prefix still applies", ("GET", "/admin/users") in _spring)
+check("...and nothing fabricated survives",
+      not any("/internal/health/" in p for _m, p in _spring))
+
+# `include()` is the only way Django composes URLconfs, so this was every Django project: the mount
+# was published as a callable endpoint and the included module's paths were indexed at site root.
+(_rtd / "config").mkdir(); (_rtd / "orders").mkdir()
+(_rtd / "config" / "urls.py").write_text(
+    'from django.urls import path, include\nurlpatterns = [\n'
+    '    path("api/v2/orders/", include("orders.urls")),\n'
+    '    path("healthz/", views.health),\n]\n', encoding="utf-8")
+(_rtd / "orders" / "urls.py").write_text(
+    'from django.urls import path\nurlpatterns = [\n'
+    '    path("", views.list_orders),\n'
+    '    path("<int:pk>/refund/", views.refund),\n]\n', encoding="utf-8")
+_dj = {key[1] for key, _src in _cat2.scan_routes(
+    _rtd, [{"path": "config/urls.py", "lang": "py"},
+           {"path": "orders/urls.py", "lang": "py"}])}
+check("AN INCLUDED URLCONF'S PATHS CARRY THE PREFIX THEY ARE SERVED UNDER: " + str(sorted(_dj)),
+      any(p.startswith("/api/v2/orders") for p in _dj))
+check("...and the site root is not claimed as an endpoint", "/" not in _dj)
+check("...and a real leaf route in the root urlconf survives", "/healthz/" in _dj)
+shutil.rmtree(_rtd, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
