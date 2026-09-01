@@ -5470,6 +5470,56 @@ _expl = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--explain"], capture
                        text=True, cwd=fixture)
 check("...and so does --explain, which the README cites by name", _expl.returncode == 0)
 
+# ------------------------------ the roll-up has to survive into the block, and say something
+# Three separate defects, all in the one section chamnan exists to deliver, all found by reading a
+# real generated block rather than by any test here.
+import rollup as _rup  # noqa: E402
+
+# 1. Ordering. collapse() bucketed every non-row line into one "header" and appended the roll-up
+# after it — and _enforce cuts from the END, so on any index large enough to need collapsing the
+# roll-up was cut entirely. Measured on an 804-file corpus: the non-row lines are the Data model,
+# API surface and Configuration sections, 7,412 tokens against a 3,000-token budget, so the block
+# carried 3,000 tokens of those and ZERO file rows. `## Quick Index` rendered as a heading followed
+# by nothing, under a line telling the reader to read it in full.
+_big = "\n".join(
+    ["# Architecture map", "", "## Quick Index", ""]
+    + [f"- **`src/mod{i//40}/file{i}.py`** (10L, 2fn) — a file" for i in range(400)]
+    + ["", "---", "", "## Data model", ""]
+    + [f"- table_{i}: a column list that is long enough to matter" for i in range(200)])
+_folded = _rup.collapse(_big, "MAP.md", budget=3000, per_dir=4)
+check("THE ROLL-UP SURVIVES INTO THE DELIVERED INDEX",
+      any(ln.startswith("- **") and ln.rstrip().endswith(")") or "/**" in ln
+          for ln in _folded.splitlines()))
+check("...and it is placed where the rows were, before what followed them",
+      _folded.index("Rolled up by directory") < _folded.index("## Data model"))
+
+# 2. Scope. `- **`path`**` is not unique to the Quick Index: assets.py renders DIRECTORY rows in
+# the identical shape under "Stored material", so an unbounded scan folded a directory in with the
+# files — producing an entry whose basename was the empty string — and put the last row far past
+# the index, swallowing everything between the two sections.
+_mixed = "\n".join(
+    ["## Quick Index", ""]
+    + [f"- **`src/f{i}.py`** (10L) — a file" for i in range(60)]
+    + ["", "## Stored material (not source)", "", "- **`data/`** — 155 files, 912.5KB", ""])
+_sc = _rup.collapse(_mixed, "MAP.md", per_dir=8)
+check("an assets row is not folded in as though it were a source file", "``" not in _sc)
+check("...and the section after the index is still there", "Stored material" in _sc)
+
+# 3. Depth. Most repositories keep their source under one directory, and grouping by the first
+# segment then yields one line reading `src/ (528)` — a roll-up in shape only.
+_nested = "\n".join(["## Quick Index", ""] + [
+    f"- **`app/{area}/file{i}.py`** (10L) — a file"
+    for area in ("api", "web", "jobs", "core") for i in range(30)])
+_deep = _rup.collapse(_nested, "MAP.md", per_dir=0)
+check("A REPOSITORY NESTED UNDER ONE DIRECTORY IS STILL SEPARATED",
+      len([ln for ln in _deep.splitlines() if ln.startswith("- **app/")]) == 4)
+check("...and the directory name carries no doubled slash", "//**" not in _deep)
+_flat = "\n".join(["## Quick Index", ""] + [
+    f"- **`{d}/f{i}.py`** (10L) — a file" for d in ("bin", "lib", "hooks") for i in range(20)])
+check("...while a repository already flat at depth one is left alone",
+      len([ln for ln in _rup.collapse(_flat, "MAP.md", per_dir=0).splitlines()
+           if ln.startswith("- **")]) == 3)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

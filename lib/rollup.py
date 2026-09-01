@@ -107,6 +107,16 @@ def _disambiguate(path, name, top):
     return rel if "/" in rel else name
 
 
+# How deep the directory roll-up may go looking for a split that separates. Three is far enough to
+# get past src/main/java without turning a line into a path nobody can read.
+MAX_GROUP_DEPTH = 3
+# Below this, one line per top-level directory is already a fine summary and deepening is noise.
+MIN_FILES_TO_DEEPEN = 40
+# One directory holding this share of everything means the depth is too shallow to be telling
+# anyone anything.
+DOMINANT_SHARE = 0.6
+
+
 def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     """Fold a too-large index down to one line per directory instead of cutting its tail off.
 
@@ -135,14 +145,71 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     resolution is cheaper than losing the section, and much cheaper than losing whatever would have
     been dropped in its place.
     """
-    header, rows = [], []
-    for line in index.splitlines():
-        (rows if line.startswith("- **`") else header).append(line)
-    groups = {}
-    for line in rows:
-        path = line.split("`")[1]
-        top = path.split("/")[0] if "/" in path else "(root)"
-        groups.setdefault(top, []).append((path, path.split("/")[-1]))
+    # Split by POSITION, not by kind. Bucketing every non-row line into one "header" and appending
+    # the roll-up after it put the roll-up last -- and _enforce cuts from the end, so on any index
+    # large enough to need collapsing, the roll-up was cut in its entirety. Measured on an 804-file
+    # corpus: the non-row lines are the Data model, API surface and Configuration sections, 7,412
+    # tokens against a 3,000-token budget, so the delivered block carried 3,000 tokens of those
+    # sections and ZERO file rows. The Quick Index rendered as a heading followed by nothing, under
+    # a line telling the reader to read it in full.
+    #
+    # Keeping document order fixes it without a special case: the roll-up goes exactly where the
+    # rows it replaces were, and what follows them still follows them. _enforce then cuts the
+    # sections after the index first, which is the right thing to lose.
+    # Bounded to the Quick Index section. `- **`path`**` is not unique to it: the "Stored material
+    # (not source)" section that assets.py renders uses the identical shape for DIRECTORY rows, so
+    # an unbounded scan folded a directory in with the files and produced an entry whose basename
+    # was the empty string -- and, worse, put the last row far past the Quick Index, so everything
+    # between the two sections was swallowed into the replaced span.
+    lines = index.splitlines()
+    # Scoped only when the heading is actually there. A hand-written map, one from an older
+    # chamnan, or a caller passing a bare list of rows has no `## Quick Index` at all -- and for
+    # those the whole input IS the index, which is what this function has always assumed. Scoping
+    # unconditionally turned that case into "no rows found" and returned the input untouched.
+    has_heading = any(line.strip() == "## Quick Index" for line in lines)
+    in_index = not has_heading
+    row_at = []
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            in_index = line.strip() == "## Quick Index"
+            continue
+        if in_index and line.startswith("- **`"):
+            row_at.append(i)
+    rows = [lines[i] for i in row_at]
+    head = lines[:row_at[0]] if row_at else lines
+    tail = lines[row_at[-1] + 1:] if row_at else []
+    # Grouped at whatever depth actually separates this repository, not always at depth 1. Most
+    # repositories keep their source under one directory -- src/, app/, lib/ -- and grouping by the
+    # first segment then yields ONE line reading `src/ (528)`, which is a roll-up in shape only: it
+    # names nothing the reader did not already know. Measured on an 804-file corpus whose files all
+    # sit under `corpus/`, depth 1 gave 2 groups for 529 files.
+    #
+    # So: go deeper while the split is not telling anyone anything. The test is groups-per-file --
+    # one directory holding almost everything means the depth is too shallow. It stops as soon as
+    # the split is informative, so a repository that is already flat at depth 1 is untouched.
+    paths = [line.split("`")[1] for line in rows]
+
+    def at_depth(depth):
+        out = {}
+        for path in paths:
+            parts = path.split("/")
+            # No trailing slash: the renderer adds one. Carrying it here produced `corpus/apps//`.
+            key = "/".join(parts[:depth]) if len(parts) > depth else "(root)"
+            out.setdefault(key, []).append((path, parts[-1]))
+        return out
+
+    groups = at_depth(1)
+    depth = 1
+    while depth < MAX_GROUP_DEPTH and len(paths) > MIN_FILES_TO_DEEPEN:
+        biggest = max((len(v) for v in groups.values()), default=0)
+        if biggest <= len(paths) * DOMINANT_SHARE:
+            break
+        deeper = at_depth(depth + 1)
+        # Only if it actually separates. A directory of 500 files with one subdirectory splits into
+        # the same single group one level down, and taking it would spend a longer name for nothing.
+        if len(deeper) <= len(groups):
+            break
+        groups, depth = deeper, depth + 1
     if not groups:
         # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an
         # older chamnan, or -- the case that actually happened -- an index that has already been
@@ -177,7 +244,7 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         # already says how many there are, and repeating it as "(12) +12 more" reads as a bug.
         more = f" _+{hidden} more_" if hidden and picked else ""
         folded.append(f"- **{top}/** ({len(names)})" + (f" — {shown}{more}" if shown else ""))
-    out = "\n".join(header + folded)
+    out = "\n".join(head + folded + tail)
     return _enforce(out, map_rel, budget) if budget else out
 
 
