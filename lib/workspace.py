@@ -212,7 +212,46 @@ def ensure(root=None):
     merged.update({k: v for k, v in current.items() if k in DEFAULT_CONFIG})
     if merged != current:
         cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    _mark_generated(root or find_root())
     return ws
+
+
+GENERATED_ATTR = ".chamnan/MAP.md linguist-generated=true\n"
+GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap. This line collapses\n"
+                  "# it in pull-request diffs, so a rebuild does not bury the review in a file nobody\n"
+                  "# reads by hand. Delete it if you would rather see the diff.\n")
+
+
+def _mark_generated(root):
+    """Tell git that MAP.md is a generated file, so a rebuild does not drown a pull request.
+
+    chamnan recommends committing MAP.md, and on this repository that is 285KB. Committing a
+    generated artifact of that size is a real cost to whoever reviews the next pull request:
+    noisy, unfocused diffs slow review down by forcing a reviewer to untangle mixed concerns, and
+    a large regenerated file is the purest form of that. `linguist-generated=true` is the standard,
+    one-line answer -- GitHub collapses the file in the diff view while keeping it in the tree.
+
+    Determinism is what makes the collapse safe rather than negligent: a rebuild that reshuffled
+    its own output would make every prior review untrustworthy, and hiding it would be worse than
+    showing it. chamnan-map is byte-identical across consecutive runs on an unchanged tree, which
+    is asserted by the test suite, so a collapsed diff means "regenerated, nothing else changed".
+
+    Appended, never rewritten. A .gitattributes is the user's file and may carry rules that matter
+    far more than this one.
+    """
+    try:
+        if not root or not (Path(root) / ".git").exists():
+            return
+        ga = Path(root) / ".gitattributes"
+        existing = ga.read_text(encoding="utf-8", errors="replace") if ga.is_file() else ""
+        if "chamnan/MAP.md" in existing:
+            return
+        with ga.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(("\n" if existing else "") + GENERATED_NOTE + GENERATED_ATTR)
+    except OSError:
+        pass          # a nicety must never break workspace creation
 
 
 VERSION_FILE = ".version"

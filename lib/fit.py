@@ -76,6 +76,59 @@ def _rank(part):
     return 0.5
 
 
+# Constraints first, data in the middle, the thing to act on last. Position inside a prompt is not
+# cosmetic: mid-prompt rules are measured to lose 30-50% of their compliance, while content at the
+# beginning is used correctly in about 73% of positionally-sensitive cases, and the final span before
+# the user's turn is well attended. chamnan emitted the architecture index -- pure data -- in the
+# primacy slot and put the repository's own rules in the middle, which is the worst available
+# arrangement of the two.
+#
+# A second argument lands on the same order. If output_byte_ceiling is set to 0, the host's own cut
+# takes over, and that cut is positional: it keeps the first 2,048 bytes. Whatever is emitted first
+# is what survives the degraded case too.
+#
+# Reordering costs nothing. Anything not named here keeps its original position among the middle
+# blocks, so a new section does not have to be added to this list to behave sensibly.
+EMIT_ORDER = [
+    "Rules this repository works under",
+    "Reply style for this repo",
+]
+EMIT_LAST = [
+    "Where the last session stopped",
+    "Work in flight (from the last session)",
+]
+
+
+def reorder(parts):
+    """Constraints to the front, the session handoff to the back, everything else left alone.
+
+    Moves BLOCKS, not sections. A section is followed by bare lines that belong to it -- the index
+    is followed by "Full detail lives in MAP.md", and by the staleness warning when there is one --
+    and moving the heading away from its own footnotes would be worse than any ordering gain.
+    """
+    lead, blocks = [], []
+    for part in parts:
+        if title_of(part):
+            blocks.append([part])
+        elif blocks:
+            blocks[-1].append(part)
+        else:
+            lead.append(part)          # framing, ledger line, skills line: always first
+
+    def rank(block):
+        title = title_of(block[0])
+        for i, name in enumerate(EMIT_ORDER):
+            if title.startswith(name):
+                return (0, i)
+        for i, name in enumerate(EMIT_LAST):
+            if title.startswith(name):
+                return (2, i)
+        return (1, 0)
+
+    ordered = sorted(range(len(blocks)), key=lambda i: (rank(blocks[i]), i))
+    return lead + [part for i in ordered for part in blocks[i]]
+
+
 def shrink(header, parts, ceiling=CEILING, sources=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 

@@ -13,6 +13,31 @@ built while you work with it**, so an agent stops rediscovering both. It builds 
 reads instead of scanning files, keeps the work state and the decisions that would otherwise be
 lost between sessions, and accumulates the procedures and tools you keep re-deriving.
 
+### If you arrived here from a search, this is what it is
+
+*Written plainly on purpose. 44.2% of what an AI search engine quotes comes from the first 30% of a
+page, so the numbers that matter should be here rather than four screens down — and every one of
+them links to how it was measured.*
+
+**chamnan is a Claude Code plugin for the cost of *re-reading*, not the cost of writing.** It builds
+an index of the repository that a session is handed at startup, keeps the decisions and work state
+that would otherwise be lost between sessions, and does all of it in Python's standard library with
+**no network calls at runtime, no database, no daemon, and no embedding model**. Everything it writes
+is plain markdown committed beside the code.
+
+| what people actually ask | the short answer |
+|---|---|
+| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index**, of which about **3,000 reach each session**. |
+| *"my agent keeps re-reading the same files"* | Measured across 12,332 re-read events in six working sessions: the injected roll-up named **22.7%** of them by alphabet, **35.6%** once ranked by git churn. |
+| *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
+| *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
+| *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **96.3% recall / 100% precision** on a 27-secret, 17-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+
+**Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
+runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
+the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
+
 > **Using Kiro instead of Claude Code?** There is a Kiro Power, in its own repository:
 > **[→ chamnan for Kiro](https://github.com/ArcticFox2029/chamnan-kiro)**
 >
@@ -29,8 +54,24 @@ above are load-bearing, and they are load-bearing for different reasons:
 
 | | why it matters |
 |---|---|
-| **One main folder** | The index is built once and read at the start of every session in that repo. Across a hundred sessions it is close to free. On a repo you open once, you paid the whole cost and collected nothing. |
+| **One main folder** | The index is built once and read at the start of every session in that repo. On a repo you open once, you paid the whole cost and collected nothing. |
 | **Work that repeats** | The procedures and tools fill up from things you hit more than once. If nothing recurs, they stay empty and there is nothing to collect. |
+
+**How many sessions it takes to pay off is a fair question, and the honest answer is fewer than it
+sounds.** The index build is a local script - about 12 seconds on a 277-file repository - and costs
+no tokens at all, so there is very little there to amortise. The recurring cost is the injected
+block, and it is charged every session: roughly 3,600 tokens here, against the file reads it
+replaces. That trade settles per session, not across a hundred of them.
+
+Which matters, because a hundred sessions is not what repositories get. A study of 20,574 sessions
+across 1,639 repositories works out at about **12.6 sessions per repository**, and its own
+description of the distribution is *"a small number of long-running sessions, on one or two
+projects."* Measured on the machine this plugin is developed on, across 12 projects with
+transcripts: **a mean of 1.2 work sessions per project, a median of 1, and a single project at 8.**
+
+So the condition in the table above is the real one - one main folder, work that repeats - and it
+is doing more work than any session count would. If this is not that repository, the honest advice
+is in [Who this is not for](#who-this-is-not-for) rather than in a number.
 
 If that describes your day, this was built for you. **If it does not, it will cost you more than
 it returns, and you should not install it** — that is not modesty, it is arithmetic. There is no
@@ -1185,6 +1226,43 @@ which host* is exactly what an index should tell you.
 
 The redaction patterns are narrow on purpose. Redacting everything high-entropy would eat commit
 hashes, UUIDs and version strings, and a map full of `<REDACTED>` is not a map.
+
+### What a context file measurably does, including the part that argues against this one
+
+The evidence on repository context files is now specific enough to quote, and one of the findings
+points straight at chamnan's flagship feature. It belongs here rather than in a footnote.
+
+| | |
+|---|---|
+| human-written context files | **+4%** task success |
+| LLM-generated context files | **-2%** |
+| every kind of context file | **+20% cost** |
+| a 288-attempt study, July 2026 | **no measurable correctness gain** - but **-29% median runtime** and **-17% output tokens** at comparable completion |
+
+**So the honest claim is efficiency, not correctness**, which is what this README has said from the
+top: discovery cost and re-solving cost, with token reduction as the consequence. The measurements
+above are the outside evidence for that framing, and they say the same thing the local arithmetic
+does - the effect is in the search path, not the answer.
+
+**And the finding that argues against the architecture index**: architectural overviews were
+measured to *increase inference cost and encourage broader file traversal without improving task
+success*. Restating the README hurts. Longer context files hurt, because the agent follows some
+instructions and ignores others and the inconsistency is worse than no file at all. What measurably
+helps is narrower: **tool choices that diverge from the defaults, non-obvious test configuration,
+and constraints that are not apparent from reading the code.**
+
+Two things follow, and both are already how chamnan behaves.
+
+The index is **budgeted and rolled up rather than injected whole**, and it is the **first thing
+dropped** when `output_byte_ceiling` binds - while `memory/rules/`, the session handoff and the
+recorded procedures are the last. That order was chosen on a recoverability argument (the index is
+one grep from `MAP.md`; a standing constraint is not recoverable at all) and it turns out to match
+what the measurements recommend keeping. And `memory/rules/`, `skills/` and `memory/decisions/` are
+exactly the "constraints not apparent from reading the code" category, which is the one that helped.
+
+If your `MAP.md` is restating what a reader could get from the README, that is the case this
+research says to be suspicious of. `chamnan-map --explain` prints what it costs so the trade is
+visible rather than assumed.
 
 ### An index is the third layer, not the first
 

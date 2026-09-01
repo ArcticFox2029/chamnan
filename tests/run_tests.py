@@ -3752,6 +3752,65 @@ check("the README quotes the bound beside the zero", "0.259 per day" in _readme)
 check("...and says what the zero does not establish",
       "does not mean the rate is zero" in _readme)
 
+# ------------------- MAP.md is generated, and git should be told so
+# chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
+# regenerated file is the purest form of the noisy, unfocused diff that slows review down.
+# `linguist-generated=true` collapses it in pull-request diffs while keeping it in the tree — and
+# what makes collapsing it safe rather than negligent is that chamnan-map is byte-identical across
+# consecutive runs, so a collapsed diff means "regenerated, nothing else changed".
+import workspace as _ws  # noqa: E402
+
+_ga = Path(tempfile.mkdtemp()) / "repo"
+(_ga / ".git").mkdir(parents=True)
+_ws.ensure(_ga)
+_attrs = (_ga / ".gitattributes").read_text(encoding="utf-8")
+check("a fresh workspace marks MAP.md as generated",
+      ".chamnan/MAP.md linguist-generated=true" in _attrs)
+check("...and says why, so the line is not a mystery later", "chamnan:" in _attrs)
+_ws.ensure(_ga)
+check("running it again does not add the line twice",
+      _attrs.count("linguist-generated") == 1
+      and (_ga / ".gitattributes").read_text(encoding="utf-8").count("linguist-generated") == 1)
+
+# The file belongs to the user; it may carry rules that matter more than this one.
+_ga2 = Path(tempfile.mkdtemp()) / "repo2"
+(_ga2 / ".git").mkdir(parents=True)
+(_ga2 / ".gitattributes").write_text("*.png binary\n", encoding="utf-8")
+_ws.ensure(_ga2)
+_a2 = (_ga2 / ".gitattributes").read_text(encoding="utf-8")
+check("an existing .gitattributes is appended to, never rewritten", _a2.startswith("*.png binary"))
+check("...and the new rule is still there", "linguist-generated" in _a2)
+
+# A directory that is not a git repository has nothing to tell.
+_ga3 = Path(tempfile.mkdtemp()) / "plain"
+_ga3.mkdir(parents=True)
+_ws.ensure(_ga3)
+check("a non-git directory gets no .gitattributes", not (_ga3 / ".gitattributes").exists())
+for _d in (_ga, _ga2, _ga3):
+    shutil.rmtree(_d.parent, ignore_errors=True)
+
+# ---------------- the fix is offered to whoever needs it, and to nobody else
+# Code drift is caught within minutes by compilers, tests and CI; a generated document has no such
+# mechanism and drifts silently. `--install-git-hook` IS that mechanism for MAP.md — so it is worth
+# recommending, once, to a repository that lacks it, and worth never mentioning to one that has it.
+sys.path.insert(0, str(ROOT / "hooks"))
+import session_start as _ss2  # noqa: E402
+
+_gh = Path(tempfile.mkdtemp()) / "repo"
+(_gh / ".git" / "hooks").mkdir(parents=True)
+check("a repo with no pre-commit hook at all needs the offer",
+      _ss2.rebuild_hook_installed(_gh) is False)
+(_gh / ".git" / "hooks" / "pre-commit").write_text("#!/bin/sh\nmake lint\n", encoding="utf-8")
+check("somebody else's pre-commit hook is not chamnan's",
+      _ss2.rebuild_hook_installed(_gh) is False)
+(_gh / ".git" / "hooks" / "pre-commit").write_text(
+    "#!/bin/sh\nmake lint\n" + _ss2.HOOK_MARKER + "\nchamnan-map\n", encoding="utf-8")
+check("chamnan's marker inside a larger hook counts as installed",
+      _ss2.rebuild_hook_installed(_gh) is True)
+check("a directory that is not a git repo answers no rather than raising",
+      _ss2.rebuild_hook_installed(Path(tempfile.mkdtemp())) is False)
+shutil.rmtree(_gh.parent, ignore_errors=True)
+
 # ------------------- staleness is a count of what is missing, and it must not count a nested repo
 # Replaying the last 50 commits of the host repository against the index sessions were actually
 # handed: it named 74.6% of the source files those commits touched, and fully covered 18% of them.
@@ -3961,6 +4020,25 @@ for _name, (_src, _want, _label) in _cases.items():
           _scanned.get(_name) == _want)
 shutil.rmtree(_lcdir.parent, ignore_errors=True)
 
+# ------------------ the injected block must not vary between runs, or it stops being cacheable
+# Anthropic's prompt cache is strictly prefix-based: a change inside the prefix invalidates
+# everything after it and the prompt is reprocessed at full price. Moving dynamic content out of a
+# cacheable prefix has been measured taking a hit rate from 7% to 74%, and the most common way teams
+# break it is adding a timestamp for "freshness". This pins the property so that cannot happen here.
+import subprocess as _sp  # noqa: E402
+_runs = []
+for _ in range(2):
+    _r = _sp.run([sys.executable, str(ROOT / "hooks" / "session_start.py")],
+                 capture_output=True, text=True, timeout=180, cwd=str(ROOT.parent.parent))
+    _runs.append(_r.stdout)
+_norm = [re.sub(r"\[/?repo:[0-9a-f]+\]", "[F]", r) for r in _runs]
+check("two consecutive injections differ only in the fence nonce", _norm[0] == _norm[1])
+check("...and the nonce really does differ between them", _runs[0] != _runs[1])
+check("no live clock leaks into the block",
+      not re.search(r"\b\d{2}:\d{2}:\d{2}\b", _runs[0]))
+check("the framing describes the nonce accurately — per injection, not per session",
+      "every time this block is injected" in _runs[0])
+
 # ----------------------------- the repo fence, attacked rather than admired
 # chamnan's [repo:nonce] fence is "delimiting" in the spotlighting taxonomy, and the measured
 # ceiling for delimiting is modest: about a HALVING of attack success rate (arXiv:2403.14720), where
@@ -4119,6 +4197,46 @@ for _s, _label in (("。", "CJK punctuation"), ("调", "Han"), ("ก", "Thai"), 
     check(f"...and one character further would exceed it on {_label}",
           tokens.estimate(_s * (_keep + 1)) > 10)
 check("an empty string costs nothing", tokens.estimate("") == 0.0)
+
+# ---------------------- constraints first, data in the middle, the handoff last
+# Mid-prompt rules lose 30-50% of their compliance; content at the beginning is used correctly in
+# about 73% of positionally-sensitive cases. chamnan emitted the architecture index -- pure data --
+# in the primacy slot and the repository's own rules in the middle, which is the worst available
+# arrangement of those two. Reordering costs nothing.
+_order_in = [
+    "\n### Architecture index\nA\n",
+    "_Full detail lives in `MAP.md`._\n",
+    "\n### Recent milestones\nB\n",
+    "\n### Rules this repository works under\nC\n",
+    "\n### Work in flight (from the last session)\nD\n",
+    "_Keep STATE.md current._\n",
+    "\n### Reply style for this repo\nE\n",
+]
+_lead = ["_framing line_\n", "_ledger line_\n"]
+_out = fit.reorder(_lead + _order_in)
+_titles = [fit.title_of(x) for x in _out if fit.title_of(x)]
+
+check("rules come first", _titles[0] == "Rules this repository works under")
+check("reply style is the other front-loaded constraint",
+      _titles[1] == "Reply style for this repo")
+check("the session handoff goes last", _titles[-1] == "Work in flight (from the last session)")
+check("data sections keep their original relative order",
+      _titles.index("Architecture index") < _titles.index("Recent milestones"))
+check("lines before the first section stay at the very front",
+      _out[:2] == _lead)
+
+# The reason this moves BLOCKS and not sections: a section's footnotes belong to it.
+_joined = "".join(_out)
+check("the index keeps its own footnote directly after it",
+      _joined.index("Full detail") - _joined.index("### Architecture index") < 40)
+check("STATE.md keeps its own trailer directly after it",
+      _joined.index("Keep STATE.md current") - _joined.index("### Work in flight") < 60)
+
+check("reordering changes nothing but order",
+      sorted(_out) == sorted(_lead + _order_in))
+check("an unlisted section is left where it was, not pushed anywhere",
+      fit.title_of(fit.reorder(["\n### Some future section\nX\n"])[0]) == "Some future section")
+check("an empty list is handled", fit.reorder([]) == [])
 
 # ------------------------------------------------- fit: the host's stdout cap
 # The host truncates a SessionStart hook over ~10,000 bytes to its first 2,048 plus a file path.
