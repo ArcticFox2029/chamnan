@@ -130,6 +130,13 @@ def resolve(name, importer, by_noext, by_stem):
     as_path = dotted.replace(".", "/")
     if as_path in by_noext:
         return by_noext[as_path]
+    # `from pkg import foo` names the PACKAGE, whose file is pkg/__init__.py -- a key of
+    # "pkg/__init__", which neither the exact lookup nor the stem map can reach ("__init__" is not
+    # a distinguishing stem). So a consumer importing through a re-exporting __init__.py, which is
+    # the ordinary way a Python package is arranged, produced no edge at all: the dependency was
+    # real and the impact map said the file had no users.
+    if f"{as_path}/__init__" in by_noext:
+        return by_noext[f"{as_path}/__init__"]
     hit = _only_suffix_match(as_path, by_noext)
     if hit:
         return hit
@@ -147,6 +154,15 @@ def _only_suffix_match(key, by_noext):
     to make. A navigation aid that sends someone to the wrong file is worse than one that says
     nothing.
     """
+    # A single match is not enough on its own. `from reporting.utils import send`, where
+    # `reporting` is a third-party package the repository does not contain, suffix-matches
+    # `tests/fixtures/reporting/utils.py` -- an unrelated file that happens to share a path tail --
+    # and the map then asserted an edge between two files with nothing to do with each other. An
+    # invented edge is worse than a missing one, so the match has to be at least two segments deep
+    # before it is trusted; a bare one-segment tail is exactly the coincidence this cannot tell
+    # apart from a real relative import.
+    if "/" not in key:
+        return None
     matches = [f for f in by_noext if f.endswith("/" + key) or f == key]
     return by_noext[matches[0]] if len(matches) == 1 else None
 

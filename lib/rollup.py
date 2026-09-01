@@ -97,6 +97,16 @@ def _churn(root, window=CHURN_WINDOW):
     return _CHURN_CACHE.setdefault(key, counts)
 
 
+def _disambiguate(path, name, top):
+    """`api/handler.py` rather than `handler.py`, when the bare name would name two files at once.
+
+    The directory prefix is taken relative to the group's own top-level folder, since that is
+    already on the line -- repeating it would spend budget saying what the reader can see.
+    """
+    rel = path[len(top) + 1:] if path.startswith(top + "/") else path
+    return rel if "/" in rel else name
+
+
 def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     """Fold a too-large index down to one line per directory instead of cutting its tail off.
 
@@ -150,7 +160,17 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
             entries = sorted(entries, key=lambda e: (-churn.get(e[0], 0), e[1]))
         else:
             entries = sorted(entries, key=lambda e: e[1])
-        picked = sorted(n for _, n in entries[:per_dir])
+        # Disambiguated by the path, not the basename. Grouping kept only `path.split("/")[-1]`,
+        # so three genuinely different files -- src/api/handler.py, src/utils/handler.py,
+        # src/jobs/handler.py -- rendered as `handler.py`, `handler.py`, `handler.py`: three
+        # identical tokens naming three different files, none of them recoverable from the line.
+        # A repeated basename across subpackages is the normal shape of a large repo
+        # (__init__.py, index.js, types.ts), so this is common rather than exotic.
+        chosen = entries[:per_dir]
+        counts = {}
+        for _, n in chosen:
+            counts[n] = counts.get(n, 0) + 1
+        picked = sorted(_disambiguate(pth, n, top) if counts[n] > 1 else n for pth, n in chosen)
         shown = ", ".join(f"`{n}`" for n in picked)
         hidden = len(names) - len(picked)
         # "+N more" is only meaningful next to names it is more THAN. With none shown the count

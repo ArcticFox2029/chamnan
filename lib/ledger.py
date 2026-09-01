@@ -61,11 +61,20 @@ def _milestone_timestamps(root):
     """One timestamp per milestone entry, from the date in its own heading -- there is no per-entry
     file to stat, since every milestone lives inside one appended file."""
     from milestones import entries as milestone_entries
-    out = []
+    # A milestone with a calendar-invalid date -- 2026-13-40, a typed month -- still EXISTS: the
+    # entry parser requires the shape, not the calendar, so milestones.entries() returns it and
+    # this list used to silently drop it. The ledger then printed "2 records" for three real
+    # entries on disk, and a fat-fingered date could also make "last write N days ago" stale by
+    # excluding the most recent activity there is. Undercounting the store is the exact opposite of
+    # what a ledger is for.
+    out, undated = [], 0
     for date_str, _title, _body in milestone_entries(root):
         ts = _ymd_to_ts(*date_str.split("-")) if date_str.count("-") == 2 else None
         if ts is not None:
             out.append(ts)
+        else:
+            undated += 1
+    _milestone_timestamps.undated = undated
     return out
 
 
@@ -109,7 +118,10 @@ def snapshot(root, now=None):
     session_ts = _session_timestamps(sessions or [])
     milestone_ts = _milestone_timestamps(root)
 
-    record_count = len(sessions or []) + len(milestone_ts)
+    # Counted from what is on disk, not from what could be dated. A milestone whose date does not
+    # parse is still a milestone.
+    record_count = (len(sessions or []) + len(milestone_ts)
+                    + getattr(_milestone_timestamps, "undated", 0))
     record_recent = (sum(1 for t in session_ts if t >= cutoff)
                       + sum(1 for t in milestone_ts if t >= cutoff))
 
@@ -222,6 +234,16 @@ def inventory(root, now=None):
 _BACKTICK = re.compile(r"`([^`]+)`")
 
 
+# Real files that carry no extension. Deliberately a short closed list rather than "anything
+# capitalised": the point of the extension test is to reject `MAX_STATE_CHARS` and `_write_index`,
+# and a loose rule would let those back in.
+_EXTENSIONLESS_FILES = frozenset({
+    "Makefile", "makefile", "GNUmakefile", "Dockerfile", "Containerfile", "Jenkinsfile",
+    "Rakefile", "Gemfile", "Procfile", "Vagrantfile", "Brewfile", "Justfile", "justfile",
+    "LICENSE", "LICENCE", "NOTICE", "CODEOWNERS", "AUTHORS", "CHANGELOG", "README",
+})
+
+
 def _looks_like_a_path(token):
     """A backtick-quoted span worth checking against the filesystem: has a `/`, or ends in a short
     dot-extension. Filters out the far more common case of a backtick around a function or constant
@@ -230,7 +252,12 @@ def _looks_like_a_path(token):
     guess here would misreport an entry that is actually fine."""
     if "*" in token or " " in token:
         return False
-    return "/" in token or bool(re.search(r"\.\w{1,4}$", token))
+    # Extensionless filenames are real files and this said they were not, so an entry naming only
+    # `Makefile` and `Dockerfile` -- both present at the root of the repository it was judging --
+    # was reported as "naming no real file". A false claim about whether stored knowledge is about
+    # this codebase, which is the one thing this function is for.
+    return ("/" in token or bool(re.search(r"\.\w{1,4}$", token))
+            or token in _EXTENSIONLESS_FILES)
 
 
 def entries_naming_no_file(root, category="lessons"):

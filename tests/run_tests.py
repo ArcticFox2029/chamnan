@@ -5229,6 +5229,85 @@ if _named:
           "INJECTED" in _qi)
 shutil.rmtree(_hz.parent, ignore_errors=True)
 
+# ------------------------------ continuity: the half a session is HANDED, and acts on
+import timeline as _tl  # noqa: E402
+import state as _state  # noqa: E402
+import rollup as _ru  # noqa: E402
+import ledger as _led  # noqa: E402
+import impact as _imp  # noqa: E402
+
+_cn = Path(tempfile.mkdtemp()) / "cn"
+(_cn / ".chamnan" / "threads").mkdir(parents=True)
+
+# A thread quoting an example inside a fence. status_of scans the WHOLE file for the first match,
+# so a quoted `**Status:** closed` closed a thread that was open -- and open_titles() then dropped
+# it from the handoff. Unfinished work vanishing silently is the one thing this module prevents.
+_th = _cn / ".chamnan" / "threads" / "t.md"
+_th.write_text("# Thread\n\n## 2026-01-01 — real work\nThe agreed shape is:\n\n```\n"
+               "**Status:** closed\n## 2099-01-01 — FAKE entry\n**Files:** `evil/unrelated.py`\n"
+               "```\n\nstill going.\n", encoding="utf-8")
+check("A QUOTED STATUS LINE CANNOT CLOSE AN OPEN THREAD", _tl.status_of(_th) == _tl.OPEN)
+_te = _tl.entries_of(_th)
+check("...nor can a quoted heading fabricate an entry", len(_te) == 1)
+check("...nor attach a file the thread never touched", _te[0][2] == [])
+
+# Two different titles slugging to one filename appended an unrelated subject to an existing
+# thread, silently — the scattering this module exists to prevent, running backwards.
+check("two different titles do not become one thread file",
+      _tl.slug("Fix Auth!!!") != _tl.slug("Fix, Auth"))
+check("...while the same title still gives the same readable name",
+      _tl.slug("Fix Auth") == _tl.slug("fix auth") == "fix-auth")
+
+# A token budget is a character index; markdown structure is not. Landing inside a fence left it
+# open, and every later line of the injected block rendered as code.
+_body = "word " * 40 + "\n```bash\necho hi\necho there\n```\ntail\n"
+_inj, _mk = _state.render(_body, 14, "STATE.md")
+check("A BUDGET CUT DOES NOT LEAVE A FENCE OPEN", _inj.count("```") % 2 == 0)
+
+# Pins are never cut, so a pinned block over the whole budget is delivered in full — correct, and
+# the marker described only the unpinned overflow, so a 4,639-token injection under a 50-token
+# budget reported "…39 more". A deliberate overrun has to say so.
+_pin, _pmk = _state.render("## big \U0001F4CC\n" + "x " * 2000, 50, "STATE.md")
+check("an overrun caused by pins is reported, not hidden", "pinned sections alone" in _pmk)
+
+# Grouping kept only the basename, so three different files rendered as three identical tokens.
+_idx = "\n".join(f"- **`{q}`** (10L, 2fn) — a file" for q in
+                 ("src/api/handler.py", "src/utils/handler.py", "src/jobs/handler.py"))
+_fold = _ru.collapse(_idx, "MAP.md", per_dir=8)
+check("DISTINCT FILES SHARING A BASENAME STAY DISTINGUISHABLE",
+      _fold.count("handler.py") == 3 and "api/handler.py" in _fold)
+
+# The entry parser requires the date's SHAPE, not the calendar, so an entry with a typed month is
+# on disk and was silently missing from the count.
+(_cn / ".chamnan" / "milestones.md").write_text(
+    "# Milestones\n\n## 2026-01-01 — first\n**Why:** a\n\n"
+    "## 2026-13-40 — typo in the date\n**Why:** b\n\n"
+    "## 2026-02-01 — third\n**Why:** c\n", encoding="utf-8")
+check("a milestone with an unparseable date is still counted",
+      _led.snapshot(_cn)["record_count"] == len(milestones.entries(_cn)) == 3)
+
+# Extensionless files are real files, and saying otherwise is a false claim about whether stored
+# knowledge is about this codebase.
+check("`Makefile` is recognised as naming a file", _led._looks_like_a_path("Makefile"))
+check("`Dockerfile` too", _led._looks_like_a_path("Dockerfile"))
+check("...and a constant is still not a path", not _led._looks_like_a_path("MAX_STATE_CHARS"))
+
+# `from pkg import foo` names the package, whose file is pkg/__init__.py — a key the exact lookup
+# and the stem map both miss, so a consumer of a re-exporting package produced no edge at all.
+_files = [{"path": "pkg/__init__.py"}, {"path": "pkg/helpers.py"}, {"path": "consumer.py"}]
+_by_noext = {f["path"][:-3]: f["path"] for f in _files}
+_by_stem = {Path(f["path"]).stem: f["path"] for f in _files}
+check("an import of a package resolves to its __init__.py",
+      _imp.resolve("pkg", "consumer.py", _by_noext, _by_stem) == "pkg/__init__.py")
+# A single suffix match one segment deep is a coincidence, not a relative import: a third-party
+# `reporting.utils` matched tests/fixtures/reporting/utils.py and the map asserted an edge between
+# two unrelated files.
+check("A ONE-SEGMENT SUFFIX MATCH DOES NOT INVENT AN EDGE",
+      _imp._only_suffix_match("utils", {"a/utils": "a/utils.py"}) is None)
+check("...while a two-segment one is still trusted",
+      _imp._only_suffix_match("pkg/helpers", _by_noext) == "pkg/helpers.py")
+shutil.rmtree(_cn.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

@@ -55,6 +55,7 @@ malformed JSON, an exception mid-walk — injects everything rather than nothing
 import hashlib
 import json
 import re
+import mdblock
 import time
 
 import md
@@ -127,6 +128,26 @@ def _human(n):
     return f"{n / 1000:.1f}k"
 
 
+def _safe_cut(text, cut):
+    """Move `cut` back to the end of the last complete line that is not inside a fence.
+
+    A budget cut is a character index; markdown structure is not. Landing inside a ``` block left
+    it unclosed and every later line of the injected block rendered as code.
+    """
+    if cut >= len(text):
+        return len(text)
+    at, depth = 0, 0
+    safe = 0
+    for line, in_fence in mdblock.fenced_lines(text):
+        nxt = at + len(line) + 1
+        if nxt > cut:
+            break
+        at = nxt
+        if not in_fence:
+            safe = at
+    return safe if safe else cut
+
+
 def render(text, budget, path_for_marker):
     """(injected_text, marker) for STATE.md under a token budget.
 
@@ -143,6 +164,11 @@ def render(text, budget, path_for_marker):
     remaining = max(0, budget - pinned_cost)
 
     cut = tokens.cut_at(unpinned_text, remaining)
+    # Backed up to a line boundary outside any fence. cut_at counts characters, so the cut landed
+    # wherever the budget ran out -- mid-word, and worse, inside a ``` block, which left the fence
+    # open. Everything after it in the injected block then rendered as code, including the drop
+    # marker and any section that followed.
+    cut = _safe_cut(unpinned_text, cut)
     head = unpinned_text[:cut]
     dropped_chars = len(unpinned_text) - cut
 
@@ -152,6 +178,15 @@ def render(text, budget, path_for_marker):
     marker = ""
     if dropped_chars > 0:
         marker = f"_…{_human(dropped_chars)} more — read `{path_for_marker}`_"
+    # Pins are never cut, so a pinned block larger than the whole budget is delivered in full and
+    # the block is over budget by however much it exceeds it. That is the right behaviour -- the
+    # point of a pin is that it survives -- but the marker used to describe only the unpinned
+    # overflow, so a 4,639-token injection under a 50-token budget reported "…39 more". Saying so
+    # is the difference between a deliberate overrun and a silent one.
+    if pinned_cost > budget:
+        over = f"_pinned sections alone are {pinned_cost:,.0f} tokens against a {budget:,} budget; "
+        over += f"they are never cut — see `{path_for_marker}`_"
+        marker = f"{marker}\n{over}" if marker else over
 
     return injected, marker
 

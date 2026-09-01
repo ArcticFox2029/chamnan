@@ -25,6 +25,7 @@ changed, it needed a rollback" instead of only naming what imports what. Free pr
 key — the same reason `Symptom:` was cut from the memory format.
 """
 import re
+import mdblock
 
 DIRNAME = "threads"
 
@@ -49,8 +50,23 @@ def directory(root):
 
 
 def slug(title):
+    """A filename for a thread title.
+
+    Lossy on purpose -- punctuation and case go -- which means two DIFFERENT titles can land on the
+    same name: "Fix Auth!!!" and "Fix, Auth" both give `fix-auth`, and the second silently appended
+    an unrelated subject to the first thread's file. That is the scattering this module exists to
+    prevent, running in reverse, and it was undocumented in either direction.
+
+    A short hash of the original title is appended when the collapse actually loses something, so
+    a title that survives slugging intact keeps the readable filename it always had.
+    """
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return (s[:50].rstrip("-") or "thread")
+    s = s[:50].rstrip("-") or "thread"
+    canonical = " ".join(title.split()).lower()
+    if s.replace("-", " ") != canonical:
+        import hashlib
+        s = f"{s}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
+    return s
 
 
 def threads(root):
@@ -102,7 +118,12 @@ def status_of(path):
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return OPEN
-    m = _STATUS.search(text)
+    # Masked, because this searches the WHOLE file for the first match. A thread whose body quotes
+    # an example containing `**Status:** closed` inside a fence read as closed -- and open_titles()
+    # then dropped it from the "Open threads" the next session is handed. Unfinished work vanishing
+    # from the handoff is the one failure this module exists to prevent, and content was deciding
+    # it.
+    m = _STATUS.search(mdblock.masked(text))
     return CLOSED if (m and m.group(1).lower() == CLOSED) else OPEN
 
 
@@ -117,12 +138,17 @@ def entries_of(path):
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    found = list(_ENTRY.finditer(text))
+    # Scanned over a copy with fenced lines blanked; offsets are preserved, so every slice below
+    # still indexes the real text. A real entry that quoted a bad example -- `## 2099-01-01 — FAKE`
+    # with its own `**Files:**` line -- parsed as a second, indistinguishable entry, and for_path()
+    # then attached that thread's history to a file the thread had never touched.
+    masked = mdblock.masked(text)
+    found = list(_ENTRY.finditer(masked))
     out = []
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
         body = text[m.end():end].strip()
-        fm = _FILES.search(body)
+        fm = _FILES.search(mdblock.masked(body))
         files = [f.strip().strip("`") for f in fm.group(1).split(",")] if fm else []
         out.append((m.group(1), m.group(2), [f for f in files if f]))
     return out
