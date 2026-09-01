@@ -1189,6 +1189,39 @@ pattern was anchored on `PRIVATE KEY-----`.
 
 ---
 
+### 8b. What a wrong entry costs, and why the limits are stated up front
+
+chamnan's index inherits the correctness of the comments beneath it. That is stated plainly above;
+this is what the literature says such an error costs.
+
+| | |
+|---|---|
+| the **same** 50%-accuracy system, errors **visible and correctable** | accepted at **5.65 / 7** |
+| the same system, errors **silent** | **5.12 / 7**, p<0.001 |
+| trust recovered by an apology and a second chance | **44%** and **38%** — partial, with **autonomy** recovering least |
+| repair difficulty by violation severity | **−20.27** → **−24.16** → **−31.25**, p<.001 |
+| effect of how the apology is presented | **none, at any severity** |
+
+**A stale description is the silent kind.** It reports nothing wrong and is caught only once it has
+already misled — measured as the more expensive error type at an identical error rate.
+
+**Which is exactly the case where saying so in advance is measured to help.** Disclosing a known
+limitation before use raised acceptance only for the *silently* underperforming system (p<.05); for
+the one whose errors were visible it changed nothing (p=.16). That is why every claim on this page
+carries its limit beside it rather than in a footnote — not as a style, but because chamnan's failure
+mode is the one where the practice pays.
+
+**Two further cautions, both about this page rather than the tool.** A stated accuracy is a
+first-impression lever with a short half-life: its effect on trust shrinks **4–5×** after roughly
+**20 observed uses**, so what the suite does will be believed long after what the README says. And
+self-reported trust is not reliance — a cognitive-forcing interface cut overreliance on wrong output
+from **64% to 48%** while stated trust did not move at all. *"It feels useful"* is not evidence a
+wrong entry would be caught.
+
+Sources: [DOI 10.1145/3290605.3300641](https://doi.org/10.1145/3290605.3300641);
+Yin, Vaughan & Wallach CHI 2019; [arXiv:2102.09692](https://arxiv.org/abs/2102.09692);
+[arXiv:2512.13981](https://arxiv.org/abs/2512.13981); [arXiv:2211.10045](https://arxiv.org/abs/2211.10045).
+
 ### 9. What an installed plugin can do to you, and what this one cannot
 
 An extension runs arbitrary code on a developer's machine, with that developer's privileges and no
@@ -1257,6 +1290,46 @@ not a defence. A poisoned comment arrives labelled as a poisoned comment.
 Sources: [arXiv:2403.14720](https://arxiv.org/abs/2403.14720), [arXiv:2510.09023](https://arxiv.org/pdf/2510.09023).
 
 ---
+
+### 9c. The oldest argument against this whole idea
+
+chamnan exists to stop an agent rediscovering a repository. There is a literature on what removing
+that rediscovery costs, and it is older than any of the rest of this page.
+
+| | |
+|---|---|
+| adenoma detection on **non-AI** colonoscopies, before AI was introduced | **28.4%** (226/795) |
+| the same, after clinicians had been using AI | **22.4%** (145/648) — **−6.0pp**, p=0.0089, n=1,443 |
+| students with **unrestricted** GPT-4: practice | **+48%** |
+| the same students, exam with AI removed | **17% worse than students who never had it** |
+| students with a **Socratic tutor that withheld answers**: practice | **+127%**, and **no** post-removal harm |
+| lifetime GPS use against unaided spatial memory | worse, with reverse causation tested and rejected |
+
+**The colonoscopy result is not a lab task.** Habitual reliance on an assist tool measurably degraded
+unaided performance the moment the tool was absent — which is the state of any session whose `MAP.md`
+is stale, wrong, or simply not injected.
+
+**The disanalogy is real and belongs next to the number.** Deskilling is the erosion of a persistent
+skill over time. An LLM session has no persistence: it starts from the same weights with a fresh
+context every time, and there is no accumulated habit to erode. **Nobody has run a deskilling
+paradigm on a stateless agent**, so this is unmeasured rather than refuted.
+
+**And the second row is the sharper question.** The harm came from a tool that *handed over the
+answer*; a tutor that withheld it removed the harm entirely while more than doubling the benefit.
+`MAP.md` hands over **where things are** and not **what the code does** — a session still has to open
+the file to act. Whether that puts it on the safe side of this line is an argument, not a
+measurement, and it is the most important thing about chamnan that is currently unmeasured.
+
+One more, about delivery rather than content: **alarm desensitisation is driven by volume and poor
+positive predictive value**, across a review of 72 studies. A hook that speaks every session is that
+precondition. It is the reason the staleness warning, the drop notice and the rule check are all
+**silent while nothing is wrong** — and the reason anything that speaks unconditionally should have
+to justify itself.
+
+Sources: [DOI 10.1016/S2468-1253(25)00133-5](https://doi.org/10.1016/S2468-1253(25)00133-5);
+[DOI 10.1073/pnas.2422633122](https://doi.org/10.1073/pnas.2422633122);
+[DOI 10.1038/s41598-020-62877-0](https://doi.org/10.1038/s41598-020-62877-0);
+[DOI 10.2345/0899-8205-46.4.268](https://doi.org/10.2345/0899-8205-46.4.268).
 
 ### 10. Things measured and then deliberately **not** built
 

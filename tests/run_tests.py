@@ -4187,12 +4187,33 @@ shutil.rmtree(_lcdir.parent, ignore_errors=True)
 # everything after it and the prompt is reprocessed at full price. Moving dynamic content out of a
 # cacheable prefix has been measured taking a hit rate from 7% to 74%, and the most common way teams
 # break it is adding a timestamp for "freshness". This pins the property so that cannot happen here.
-import subprocess as _sp  # noqa: E402
+# In-process rather than two subprocesses. Spawning the hook twice was intermittently exceeding a
+# 180-second timeout whenever the machine was busy -- the hook shells out to `git log -n 600`, and
+# under load that contends with anything else holding the index. A test that fails for a reason
+# unrelated to what it checks is worse than no test: it trains whoever sees it to re-run rather than
+# read. Calling main() directly checks the same property and cannot contend with itself.
+import contextlib as _ctx  # noqa: E402
+import io as _io  # noqa: E402
 _runs = []
-for _ in range(2):
-    _r = _sp.run([sys.executable, str(ROOT / "hooks" / "session_start.py")],
-                 capture_output=True, text=True, timeout=180, cwd=str(ROOT.parent.parent))
-    _runs.append(_r.stdout)
+_cwd_before = os.getcwd()
+os.chdir(str(ROOT.parent.parent))
+try:
+    for _ in range(2):
+        _buf = _io.StringIO()
+        # stdin too: the hook reads the harness's JSON payload from it, and an in-process call with
+        # the real stdin attached blocks forever waiting for input that never comes. That is how the
+        # first attempt at this hung past ten minutes.
+        _stdin_before = sys.stdin
+        sys.stdin = _io.StringIO("{}")   # contextlib has no redirect_stdin; swap it by hand
+        try:
+            with _ctx.redirect_stdout(_buf):
+                importlib.reload(_ss2)   # a fresh nonce per run, which is the property under test
+                _ss2.main()
+        finally:
+            sys.stdin = _stdin_before
+        _runs.append(_buf.getvalue())
+finally:
+    os.chdir(_cwd_before)
 _norm = [re.sub(r"\[/?repo:[0-9a-f]+\]", "[F]", r) for r in _runs]
 check("two consecutive injections differ only in the fence nonce", _norm[0] == _norm[1])
 check("...and the nonce really does differ between them", _runs[0] != _runs[1])
