@@ -1,11 +1,100 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1110), and every one of these is on the
+[README](README.md#whats-new-in-1130), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.12.0
+
+**Eight defects, every one reproduced before it was fixed.** Three research rounds went looking for
+evidence about people and found a great deal of it; this release came from pointing the same method
+at the code instead — filesystem paths, markdown parsing, git states, concurrent writes, text
+decoding — and asking for documented failure modes with a reproduction rather than survey figures.
+
+### A symlink out of the repository was being read and committed
+
+`followlinks=False` stops recursion into symlinked **directories**. It does nothing about a symlink
+to a **file**: that is still yielded by the walk, `read_text()` follows it transparently, its leading
+comment is copied verbatim into `MAP.md` — and the pre-commit hook then `git add`s `MAP.md`.
+
+Reproduced: a link named `leaked.py` pointing at a file outside the root holding a database DSN was
+walked, read, and its docstring copied into the index. **The redactor does not catch this** — it
+gates on the link's own name and suffix, so an innocuous `.py` passes, and it strips
+`key = "value"` assignments rather than prose. Links that stay inside the repository are still
+indexed, because that is an ordinary way to arrange a tree; only escapes are dropped, and a broken
+link is dropped rather than raised.
+
+### The hook was being installed where git would never look
+
+`core.hooksPath` relocates hooks entirely, and **pre-commit, Husky and lefthook all set it**. A file
+written to `.git/hooks/pre-commit` in such a repository is a dead file: git runs the other directory,
+the commit succeeds, and nothing reports that the hook installed a moment ago will never fire. And in
+a **worktree**, `.git` is a file rather than a directory, so an `is_dir()` test called a perfectly
+good repository *"not a git repository"* and refused to install at all.
+
+`git rev-parse --git-path hooks` resolves both. Verified across four states: plain repository,
+`core.hooksPath` set, inside a worktree, and not a repository at all.
+
+### The fence bug came back in the function next door
+
+`state.py`'s `_age_units` called `_HEADING.finditer` directly instead of `md.headings` — the same
+fence-blindness fixed in 1.10.0, still live in the sibling function the fix was never ported to. A
+`#` comment inside a bash fence became a unit boundary, splitting a pinned section's ageing span so
+the half after the fence aged out on its own. **Found in the module whose entire docstring is about
+not letting that happen again.**
+
+### `## Pinned 📌 ##` was not pinned
+
+A closing ATX sequence is syntax, not content — CommonMark examples 71 and 73 — and every markdown
+viewer renders it away. chamnan captured it as heading text, so `endswith(PIN)` was `False`. The
+author sees a pin, the tool does not, and nothing says so.
+
+### The pointer's "once per file per session" rule kept nothing under concurrency
+
+`pointer_seen.json` was a single shared file holding `{"session": id, "paths": [...]}`, read, modified
+and written with no lock. Measured on the real function: **four concurrent writers recorded 48 of 160
+paths — 70% lost** — and two sessions alternating **wiped each other down to a single entry**, so
+`already_pointed` returned `False` for a file that had just been pointed at. Two sessions in one
+repository is normal, not exotic.
+
+That is the lost-update anomaly, and an atomic write does not prevent it — only a lock spanning the
+read *and* the write does, or not sharing the file at all. Each session now has its own store, named
+after it, swept when it is two days stale. No lock has to be reasoned about, which matters given that
+`flock` is not reentrant across two descriptors in one process and `fcntl` drops every lock a process
+holds the moment **any** descriptor to the file is closed.
+
+### Churn was splitting a renamed file's history in half
+
+`git log --name-only` without `-M` gives a renamed file two literal names: the old one collects the
+commits before the move, the new one only those after. Measured on a file with six touches across one
+`git mv` — **old: 4, new: 2, and the true six appears nowhere.** The file that actually exists was
+ranked on a third of its churn and dropped off roll-up lines it had earned a place on. Now
+`--name-status -M`, following a chain of renames to the name that survives.
+
+### Three quieter ones
+
+**A UTF-8 BOM is not whitespace**, so the comment regex missed the first line entirely and the file
+got no summary at all — silently lowering the coverage figure the whole index leans on. Now
+`utf-8-sig`.
+
+**Clipping by character count is not clipping by what a reader sees.** `"👍🏽 …"[:1]` is a thumbs-up
+with the skin tone silently removed; `"🇯🇵"[:1]` is a lone regional indicator most terminals draw as a
+boxed letter. The word-boundary back-off cannot help — from Python's side each half is already a
+valid string. Trailing combining marks, joiners, variation selectors, skin tones and odd regional
+indicators are now trimmed before the ellipsis.
+
+**And a comment that claimed more than it had shown.** The line-count fix said it was "verified
+against `wc -l` on 276 files." True, and narrower than it sounds: `splitlines()` breaks on eleven
+boundaries and `wc -l` on one. They agreed because none of those files contains a form feed, a lone
+carriage return or a Unicode line separator — not because they are equivalent. The comment now says
+so.
+
+---
 
 ---
 

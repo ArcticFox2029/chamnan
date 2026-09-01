@@ -346,92 +346,110 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
-## What's new in 1.12.0
+## What's new in 1.13.0
 
-**Eight defects, every one reproduced before it was fixed.** Three research rounds went looking for
-evidence about people and found a great deal of it; this release came from pointing the same method
-at the code instead — filesystem paths, markdown parsing, git states, concurrent writes, text
-decoding — and asking for documented failure modes with a reproduction rather than survey figures.
+**Two credential leaks, a rule that could read outside the repository, and one bug that was thirty
+bugs.** Five research rounds, every finding required to come with a reproduction before it was
+believed. Twenty-eight defects fixed; these are the ones worth your time.
 
-### A symlink out of the repository was being read and committed
+### A comment mentioning an END marker was enough to publish the key it sat above
 
-`followlinks=False` stops recursion into symlinked **directories**. It does nothing about a symlink
-to a **file**: that is still yielded by the walk, `read_text()` follows it transparently, its leading
-comment is copied verbatim into `MAP.md` — and the pre-commit hook then `git add`s `MAP.md`.
+The private-key pattern matched lazily, so it stopped at the *first* text shaped like an END line.
+A README snippet, or a comment reading "keys are terminated with `-----END RSA PRIVATE KEY-----`",
+supplies one — and everything between it and the real END went through untouched. The header and
+the decoy were replaced; the entire base64 body of a real key was published. It is greedy now:
+over-covering a decoy costs a line of prose.
 
-Reproduced: a link named `leaked.py` pointing at a file outside the root holding a database DSN was
-walked, read, and its docstring copied into the index. **The redactor does not catch this** — it
-gates on the link's own name and suffix, so an innocuous `.py` passes, and it strips
-`key = "value"` assignments rather than prose. Links that stay inside the repository are still
-indexed, because that is an ordinary way to arrange a tree; only escapes are dropped, and a broken
-link is dropped rather than raised.
+Three more in the same file. Only four compound spellings of "key" were listed by hand, so
+`ssh_key`, `signing_key`, `encryption_key`, `master_key` and `db_key` — the commonest form there
+is — were never trigger words at all; `AccountKey` and `apiKey` were missed for the separate reason
+that CamelCase has no separator to anchor on. A value that was a call had the callee captured *as*
+the secret: `AWS_SECRET = base64.b64decode("QUtJQ…")` redacted `base64.b64decode` and left the
+payload beside a line it had just broken. And `auth` was unanchored, so it fired inside
+`oauth_flow`, whose value is a grant type — the over-redaction side of the same trade.
 
-### The hook was being installed where git would never look
+### A rule shipped in a clone could read `/etc/hosts` and report the match count
 
-`core.hooksPath` relocates hooks entirely, and **pre-commit, Husky and lefthook all set it**. A file
-written to `.git/hooks/pre-commit` in such a repository is a dead file: git runs the other directory,
-the commit succeeds, and nothing reports that the hook installed a moment ago will never fire. And in
-a **worktree**, `.git` is a file rather than a directory, so an `is_dir()` test called a perfectly
-good repository *"not a git repository"* and refused to install at all.
+A `**Check:**` trailer is a path written in repository text, and `rulecheck` is the one place such a
+path becomes an `open()`. `root.glob()` follows `..`, so a rule reading ``present `localhost` in
+`../../../../../../etc/hosts` `` read the real file and reported its match count into the session —
+a working oracle for anything the process can open, arriving with a clone. It went around the
+never-open list too. Every resolved path must now sit under the repository root.
 
-`git rev-parse --git-path hooks` resolves both. Verified across four states: plain repository,
-`core.hooksPath` set, inside a worktree, and not a repository at all.
+The ReDoS guard beside it was blind to the other classic shape. It refused a quantified group that
+is itself quantified; ambiguous *alternation* has no inner quantifier at all, and `(a|a)*$` measured
+0.25s against 20 identical characters, 4.2s against 24, and had not finished at 28 — through a
+guard whose entire reason for existing is that hang, on a pattern that runs at every session start.
 
-### The fence bug came back in the function next door
+### One formula for every language produced the same bug once per language
 
-`state.py`'s `_age_units` called `_HEADING.finditer` directly instead of `md.headings` — the same
-fence-blindness fixed in 1.10.0, still live in the sibling function the fix was never ported to. A
-`#` comment inside a bash fence became a unit boundary, splitting a pinned section's ageing span so
-the half after the fence aged out on its own. **Found in the module whose entire docstring is about
-not letting that happen again.**
+`#` was read as a comment everywhere except three languages someone had noticed. So Rust's
+`#[cfg(not(windows))]` became a file's **description** in **149 of tokio's 555 files**, and the index
+said a networking module was "[cfg(not(windows))]". Fix Rust and Ruby brings it back; fix Ruby and
+TypeScript does. The defect was the shape, not the entries.
 
-### `## Pinned 📌 ##` was not pinned
+Each language now states its own facts and the universal rule is derived from them, so a language
+nobody has written facts for is visibly missing rather than silently wrong. Re-measured on tokio:
+**149 attribute-descriptions to 0**. Reported coverage falls from 67% to 41% — and that is the
+point, the 149 were being counted as described.
 
-A closing ATX sequence is syntax, not content — CommonMark examples 71 and 73 — and every markdown
-viewer renders it away. chamnan captured it as heading text, so `endswith(PIN)` was `False`. The
-author sees a pin, the tool does not, and nothing says so.
+Three languages the generic rule could not know. **Ruby**: a method name may end in `?`, `!` or `=`,
+so `def boot!` was recorded as `boot` and `def owner=` collided with its own getter; a method name
+may be an *operator* with no word character at all, so `def ==`, `def <=>` and `def []` were
+invisible; and `module` — Ruby's actual namespacing keyword — had no rule. **Terraform**: a `data`
+block carries two names and the second is its identity, so nine distinct `data "aws_iam_policy"`
+blocks in a real production module deduped into one row. **TypeScript**: a real 4,133-line `.d.ts`
+with 91 exported interfaces reported "100% described" and zero symbols.
 
-### The pointer's "once per file per session" rule kept nothing under concurrency
+### A quoted example could close an open thread and drop it from the next session's handoff
 
-`pointer_seen.json` was a single shared file holding `{"session": id, "paths": [...]}`, read, modified
-and written with no lock. Measured on the real function: **four concurrent writers recorded 48 of 160
-paths — 70% lost** — and two sessions alternating **wiped each other down to a single entry**, so
-`already_pointed` returned `False` for a file that had just been pointed at. Two sessions in one
-repository is normal, not exotic.
+Four modules found their structure by scanning for lines starting with `#`, and none could tell a
+heading from a line inside a fenced code block. A thread quoting `**Status:** closed` inside a fence
+read as closed, and the next session was never told that work was open. A session record quoting
+`## Remaining` split there, and the handoff delivered the fabricated section while dropping the real
+one after it. A milestone title carrying a newline wrote a second, well-formed milestone that won
+the most-recent slot.
 
-That is the lost-update anomaly, and an atomic write does not prevent it — only a lock spanning the
-read *and* the write does, or not sharing the file at all. Each session now has its own store, named
-after it, swept when it is two days stale. No lock has to be reasoned about, which matters given that
-`flock` is not reentrant across two descriptors in one process and `fcntl` drops every lock a process
-holds the moment **any** descriptor to the file is closed.
+### Thirty-two languages, and the rule that keeps them honest
 
-### Churn was splitting a renamed file's history in half
+The README now opens with a flag row. Each translated page is short — what this is, the problem it
+solves, how to install it, what to know first — and **none of them contains a number**.
 
-`git log --name-only` without `-M` gives a renamed file two literal names: the old one collects the
-commits before the move, the new one only those after. Measured on a file with six touches across one
-`git mv` — **old: 4, new: 2, and the true six appears nowhere.** The file that actually exists was
-ranked on a third of its churn and dropped off roll-up lines it had earned a place on. Now
-`--name-status -M`, following a chain of renames to the name that survives.
+That is not laziness. Measured across large open-source repositories: once a translation is merged,
+the English source takes a median of **8.5 more commits in six months while the translation takes a
+median of 0**, with a maximum observed gap of 166. chamnan releases often, and a wrong translation
+is worse than an absent one because it still reads as current. So the measurements stay in English
+and every translated page links to them. The ordinary release touches one document.
 
-### Three quieter ones
+### The strongest evidence against this tool is now on its front page
 
-**A UTF-8 BOM is not whitespace**, so the comment regex missed the first line entirely and the file
-got no summary at all — silently lowering the coverage figure the whole index leans on. Now
-`utf-8-sig`.
+A leak-audited causal ablation of an index *richer* than this one beat a grep-only agent by +5.1pp
+on resolve rate at **p = 0.087 — not significant**, with the gain concentrated in cross-file changes.
+Cursor's own before-and-after sits beside it: **+12.5%** on their internal benchmark, **+0.3%** in
+live production traffic. Both are in the README, at the top, not buried.
 
-**Clipping by character count is not clipping by what a reader sees.** `"👍🏽 …"[:1]` is a thumbs-up
-with the skin tone silently removed; `"🇯🇵"[:1]` is a lone regional indicator most terminals draw as a
-boxed letter. The word-boundary back-off cannot help — from Python's side each half is already a
-valid string. Trailing combining marks, joiners, variation selectors, skin tones and odd regional
-indicators are now trimmed before the ellipsis.
+One code change follows from reading them. `## Impact` — what is connected to what — has been built
+and committed all along, and the injected block never told a session it existed. Eighty bytes now
+name it.
 
-**And a comment that claimed more than it had shown.** The line-count fix said it was "verified
-against `wc -l` on 276 files." True, and narrower than it sounds: `splitlines()` breaks on eleven
-boundaries and `wc -l` on one. They agreed because none of those files contains a form feed, a lone
-carriage return or a Unicode line separator — not because they are equivalent. The comment now says
-so.
+### Quieter ones
 
----
+Five PostToolUse notices had used `print()` since 0.1.0, and PostToolUse is not one of the four
+events whose plain stdout reaches the model — every one of them was written to a channel nobody
+reads. The token estimator claimed for a year that it errs toward over-counting; measured against
+the API on chamnan's own `MAP.md` it came back **under** by 8.2%, and 18.1% on the symbol-dense
+section — wrong in the direction that overruns a budget, on the one file it exists to budget. A
+`.gitattributes` line was being appended to the repository root on first session, contradicting the
+README's promise that `pre-commit` is the only file written outside `.chamnan/`. A tool name that
+was a path escaped the workspace and left a registry entry pointing at a file nothing could find.
+`chamnan-map /etc` walked `/etc` before dying on it. A symlink loop raised `RuntimeError` past an
+`OSError` guard and killed the entire scan. `chamnan-peek` described source code — the most common
+file in every repository chamnan targets — as an unrecognised binary blob. Seventy printed
+suggestions named commands that do not exist.
+
+**Verified on an 804-file, 28-language corpus rather than on this repository**: 8.1 seconds, 29 MB,
+byte-identical across runs, and 2,329 claimed symbols with not one absent from its own source file.
+1,334 checks pass.
 
 ## Bootstrap does not rewrite your code
 
