@@ -204,7 +204,33 @@ COMMENT_PREFIX = re.compile(r"^\s*(?:/\*+!?|\*+/?|//+!?|#+|--+|<!--|;;+)\s?")
 # C file the summary "define _POSIX_C_SOURCE 200112L include <sys/types.h>", which is both wrong
 # and the opposite of useful — it describes the compiler's needs, not the file's job.
 COMMENT_PREFIX_NO_HASH = re.compile(r"^\s*(?:/\*+!?|\*+/?|//+!?|--+|<!--)\s?")
-HASH_IS_DIRECTIVE = {"c", "cs", "swift"}
+# Facts about each language, stated by the language, instead of one universal rule with a
+# deny-list of exceptions bolted to it.
+#
+# The deny-list was the shape this file had, and it produced the same bug once per language. `#`
+# was read as a comment everywhere except three languages that had been noticed — so Rust's
+# `#[cfg(not(windows))]` became a file's DESCRIPTION in 149 of tokio's 555 files, and the index
+# said a networking module was "[cfg(not(windows))]". Measured on the polyglot corpus, every one
+# of Rust's 79 leading-`#` lines is `#[`; not one is a comment. The next language to be added
+# would have arrived with the same defect, because the default was "assume `#` unless told".
+#
+# Inverting it is the whole point: a language gets `#` only by declaring it. What was a growing
+# list of exceptions is now a table of positive statements, and a language missing from it is
+# simply a language whose facts nobody has written down yet, which is visible rather than silently
+# wrong. The shape follows VS Code's `language-configuration.json`, which is the same split every
+# editor that supports many languages arrives at.
+LINE_COMMENT = {
+    "py": ("#",), "rb": ("#",), "sh": ("#",), "ex": ("#",), "nim": ("#",),
+    "tf": ("#", "//"), "graphql": ("#",), "php": ("//", "#"), "lua": ("--",),
+    "c": ("//",), "cs": ("//",), "swift": ("//",), "rs": ("//",), "go": ("//",),
+    "java": ("//",), "kotlin": ("//",), "scala": ("//",), "js": ("//",),
+    "dart": ("//",), "zig": ("//",), "proto": ("//",),
+}
+# Derived, not maintained by hand. A language that does not declare `#` as one of its line comment
+# markers treats a leading `#` as something else -- a preprocessor directive in C, an attribute in
+# Rust, a shebang in a language that has no other use for it -- and in every one of those cases it
+# describes the compiler's needs rather than the file's job.
+HASH_IS_DIRECTIVE = {lang for lang, marks in LINE_COMMENT.items() if "#" not in marks}
 # A header that opens by restating the filename, then the licence — the house style of most Swift
 # and Objective-C projects. Without stripping it the boilerplate check never fires, because the
 # text starts with "AppDelegate.swift" rather than "Copyright".
@@ -412,6 +438,13 @@ REGEX_RULES = {
                  r"(?:async\s+)?(?!if|for|while|switch|catch|return|constructor\b)"
                  r"(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\], |]+\s*)?\{"),
         ("class", r"^(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)"),
+        # `.ts` shares this rule set, and TypeScript's declarations are mostly neither functions
+        # nor classes. A real 4,133-line `.d.ts` declaring 91 exported interfaces and type aliases
+        # reported "100% described" -- it had a leading doc comment -- with zero symbols: a file
+        # that looks answered and is not, which is worse than one that looks empty.
+        ("class", r"^(?:export\s+)?(?:declare\s+)?interface\s+(\w+)"),
+        ("class", r"^(?:export\s+)?(?:declare\s+)?type\s+(\w+)\s*(?:<[^=]*>)?\s*="),
+        ("class", r"^(?:export\s+)?(?:declare\s+)?enum\s+(\w+)"),
         ("const", r"^(?:export\s+)?const\s+([A-Z][A-Z0-9_]{2,})\s*="),
     ],
     "go": [
@@ -420,7 +453,25 @@ REGEX_RULES = {
         ("const", r"^(?:const|var)\s+([A-Z][A-Za-z0-9_]{2,})\s*="),
     ],
     "sh": [("func", r"^(?:function\s+)?(\w+)\s*\(\)\s*\{")],
-    "rb": [("func", r"^\s*def\s+(?:self\.)?(\w+)"), ("class", r"^\s*class\s+(\w+)")],
+    # `\w+` is wrong for Ruby specifically, and in three separate ways that a generic rule cannot
+    # know. A method name may END in `?`, `!` or `=` -- `def boot!` came back as `boot`, and
+    # `def owner=(owner)` came back as `owner`, colliding with the getter of the same name. A
+    # method name may also be an OPERATOR, with no word character in it at all: `def ==(other)`,
+    # `def <=>(other)`, `def [](key)` matched nothing and were invisible. And a module is Ruby's
+    # actual namespacing keyword, with no rule at all -- every `module Portal` was unindexed.
+    "rb": [("func", r"^\s*def\s+(?:self\.)?([A-Za-z_]\w*[?!=]?)"),
+           ("func", r"^\s*def\s+(?:self\.)?(\[\]=?|<=>|===?|!=|[<>]=?|[+\-*/%]|<<|>>|\*\*|=~|!)\s*\("),
+           ("class", r"^\s*(?:class|module)\s+(\w+(?:::\w+)*)"),
+           # attr_accessor and friends define real callable methods with no `def` anywhere. A
+           # class can be almost entirely these -- one real file declares six on a single line and
+           # the index showed none of them, understating its whole public surface.
+           #
+           # Known limit, recorded rather than hidden: this captures the FIRST symbol of such a
+           # line, not all of them, because the shared extractor reads a rule's first group as the
+           # name and a repeated group cannot express a list. One of six beats none of six -- the
+           # class is at least shown to have an attribute surface -- and closing it properly means
+           # the extractor learning about list-valued rules, which is a change to every language.
+           ("func", r"^\s*attr_(?:accessor|reader|writer)\s+:(\w+)")],
     "rs": [("func", r"^\s*(?:pub(?:\([\w:]+\))?\s+)?(?:default\s+)?(?:const\s+)?"
                     r"(?:async\s+)?(?:unsafe\s+)?"
                     r"fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)"),
@@ -439,8 +490,15 @@ REGEX_RULES = {
                   r"annotation|enum|expect|actual)\s+)*(?:class|object|interface)\s+(\w+)"),
         ("const", r"^\s*(?:(?:private|internal|const)\s+)*val\s+([A-Z][A-Z0-9_]{2,})\s*[:=]"),
     ],
+    # A `data` block has TWO names and the second is its identity. Capturing only the first meant
+    # every data source of the same TYPE deduped into one entry: a real production module declaring
+    # nine distinct `data "aws_iam_policy" "..."` blocks showed a single row, `aws_iam_policy()`,
+    # and eight real objects were gone. universal-ctags' own shipped Terraform rule captures both
+    # groups and tags on the second for exactly this reason. Joined here rather than replaced,
+    # because type and name together are what a reader needs from an index.
     "tf": [("class", r'^resource\s+"([^"]+)"\s+"([^"]+)"'),
-           ("func", r'^(?:module|data)\s+"([^"]+)"')],
+           ("class", r'^data\s+"([^"]+)"\s+"([^"]+)"'),
+           ("func", r'^module\s+"([^"]+)"')],
     # A method is the normal shape in PHP, and the bare `function` rule caught none of them:
     # measured on a 22-file service, 66 of 139 declarations carried a visibility modifier and were
     # invisible, along with every `final class`.
@@ -544,7 +602,10 @@ def extract_regex(source, lang):
                 if sig not in [f for f, _ in funcs]:
                     funcs.append((sig, ""))
             elif kind == "class":
-                label = ".".join(groups) if lang == "tf" else name
+                # Two capture groups on a class rule mean the declaration carries two names, and
+                # both are part of its identity: Terraform's `data "aws_iam_policy" "eks_admin"`
+                # is one object, not nine of type `aws_iam_policy`.
+                label = ".".join(groups) if len(groups) > 1 else name
                 if label not in [c for c, _, _ in classes]:
                     classes.append((label, "", []))
             elif name not in consts:
