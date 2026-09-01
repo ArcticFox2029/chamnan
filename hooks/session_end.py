@@ -31,10 +31,12 @@ def jaccard(a, b):
 
 def main():
     try:
-        json.load(sys.stdin)
+        payload = json.load(sys.stdin)
     except Exception:
-        pass
-    root = ws.find_root()
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
         return 0
@@ -50,6 +52,13 @@ def main():
             when = datetime.fromisoformat(rec["at"])
         except Exception:
             continue
+        # Adopted, not discarded. A naive timestamp — from a hand edit, or a writer that
+        # predates the .astimezone() convention — parses fine and then raises TypeError on
+        # the comparison below, uncaught, killing the whole hook over one line. Assuming
+        # local time is what the record almost certainly meant; dropping it would silently
+        # lose real work from the digest, which is the thing this hook exists to produce.
+        if when.tzinfo is None:
+            when = when.astimezone()
         if when >= cutoff:
             recent.append((set(rec.get("fp", [])), rec.get("head", "")))
 

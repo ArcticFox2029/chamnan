@@ -7,6 +7,7 @@ code also means it can be committed, so a team shares one accumulated memory ins
 rebuilding their own — and a machine move carries it along with the clone.
 """
 import json
+import pathlib
 import os
 from pathlib import Path
 
@@ -149,12 +150,26 @@ def workspace(root=None):
 
 
 def load_config(root=None):
-    path = workspace(root) / "config.json"
+    """The config, with every value guaranteed to be the type its default is.
+
+    A key with the wrong type is dropped rather than trusted. `{"index_token_budget": "three
+    thousand"}` parses, passes a key-name filter, and then raises TypeError on the first `>`
+    comparison in `tokens.py` and again in `chamnan-map` -- two unrelated callers, neither of which
+    can reasonably be expected to re-validate what a config loader handed them. Booleans are checked
+    before numbers because `isinstance(True, int)` is True in Python and `"agents": 1` should not
+    quietly become a truthy switch.
+    """
     cfg = dict(DEFAULT_CONFIG)
-    try:
-        cfg.update(json.loads(path.read_text(encoding="utf-8")))
-    except (OSError, json.JSONDecodeError):
-        pass
+    for k, v in load_json(workspace(root) / "config.json", dict).items():
+        if k not in DEFAULT_CONFIG:
+            continue
+        want = type(DEFAULT_CONFIG[k])
+        if want is bool and not isinstance(v, bool):
+            continue
+        if want is not bool and isinstance(v, bool):
+            continue
+        if isinstance(v, want):
+            cfg[k] = v
     return cfg
 
 
@@ -190,26 +205,79 @@ def prune_sessions(root=None):
     return sessions.prune(root, load_config(root).get("session_retention_days", 30))
 
 
+def hook_root(payload=None):
+    """The repository root, for a hook, in the order the host actually guarantees.
+
+    Every hook resolved this with find_root(), which walks up from the SUBPROCESS's own cwd. The
+    documentation is explicit that `cwd` follows Claude's directory changes and "is NOT guaranteed
+    to be the project root", while `${CLAUDE_PROJECT_DIR}` stays at the original root. A shell's
+    directory persists across Bash calls in one session, so a single `cd` anywhere in a transcript
+    left every later hook resolving from the wrong place.
+
+    Measured before this existed: session_start.py invoked with its cwd outside the repository
+    printed **nothing at all** — no index, no rules, no handoff — and exited 0. file_pointer.py went
+    dark the same way even when the payload carried an absolute path inside the real repository.
+
+    Order: the environment variable the host promises, then the payload's own cwd, then the old
+    behaviour. Each is accepted only if it actually contains a workspace or a .git.
+    """
+    import os
+    candidates = [os.environ.get("CLAUDE_PROJECT_DIR")]
+    if isinstance(payload, dict):
+        candidates.append(payload.get("cwd"))
+    for c in candidates:
+        if not c:
+            continue
+        p = pathlib.Path(c)
+        if (p / WORKSPACE_DIRNAME).is_dir() or (p / ".git").exists():
+            return p
+    return find_root()
+
+
+def load_json(path, want=dict):
+    """A JSON store read back, or an empty one of the right type. Never raises, never wrong-typed.
+
+    Every JSON loader in this package guarded `json.JSONDecodeError` and stopped there, which
+    catches a file that is not JSON and misses a file that is *valid JSON of the wrong shape*. A
+    `config.json` holding `[]`, a `state-ages.json` holding a list, a `nudge_state.json` holding a
+    list, a tools index holding a dict instead of a list of dicts -- each parsed cleanly and then
+    raised AttributeError or TypeError one or two lines later, in four different files.
+
+    Those crashes are not equivalent to a missing file. A missing file degrades; an AttributeError
+    inside a SessionStart hook takes the whole injection with it.
+    """
+    try:
+        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, ValueError):
+        return want()
+    return data if isinstance(data, want) else want()
+
+
 def ensure(root=None):
     ws = workspace(root)
     for sub in ("", "skills", "tools", "logs", "sessions", "threads",
                 "memory", "memory/decisions", "memory/lessons", "memory/rules"):
-        (ws / sub).mkdir(parents=True, exist_ok=True)
+        try:
+            (ws / sub).mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # One collision must not take the rest of the scaffold with it. A plain file named
+            # `memory` made mkdir raise, the caller caught OSError and returned, and the hook then
+            # produced ZERO output -- no index, no rules, no handoff -- every session, with exit 0
+            # and no diagnostic, until somebody noticed the plugin had stopped doing anything.
+            continue
     # Merge rather than skip. A config written by an older version is missing every key added
     # since, and nothing says so — the user edits the key they remember, it does nothing, and the
     # setting appears broken. Found the first time this plugin was upgraded in place: the file
     # still held a key that had been deleted and none of the three that replaced it.
     cfg = ws / "config.json"
-    current = {}
-    if cfg.exists():
-        try:
-            current = json.loads(cfg.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            current = {}
+    current = load_json(cfg, dict)
     merged = dict(DEFAULT_CONFIG)
     # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale option
     # cannot sit in the file looking as though it still does something.
-    merged.update({k: v for k, v in current.items() if k in DEFAULT_CONFIG})
+    # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
+    # filter, and then raises TypeError on the first `>` comparison in a different module.
+    merged.update({k: v for k, v in current.items()
+                   if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))})
     if merged != current:
         cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     _mark_generated(root or find_root())

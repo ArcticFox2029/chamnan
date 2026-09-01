@@ -41,12 +41,15 @@ def main():
     started = time.time()
     try:
         payload = json.load(sys.stdin)
+        # A payload that parses but is not an object -- JSON `null`, or an array -- used to
+        # crash on .get() with an AttributeError, on every matching call, all session.
+        payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0
     if (payload.get("tool_name") or "") not in TOOLS:
         return 0
 
-    root = ws.find_root()
+    root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.load_config(root).get("pointer", True):
         return 0

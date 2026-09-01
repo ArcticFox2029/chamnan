@@ -3766,6 +3766,87 @@ check("...and the rest of the history is in the CHANGELOG, not gone",
       len(re.findall(r"^## What's new in ", _changelog, re.M)) >= 10)
 
 import unicodedata  # noqa: E402
+# ---------------- a hook must find the repository the host means, not the one it happens to be in
+# Every hook resolved the root by walking up from its own subprocess cwd. The host's documentation is
+# explicit that `cwd` follows Claude's directory changes and is NOT guaranteed to be the project
+# root, while ${CLAUDE_PROJECT_DIR} stays put. A shell's directory persists across Bash calls, so one
+# `cd` anywhere in a transcript left every later hook resolving from the wrong place — session_start
+# printed NOTHING and exited 0, and file_pointer went dark even with an absolute path in the payload.
+_hk = ROOT.parent.parent
+_hook = ROOT / "hooks" / "session_start.py"
+_env_clean = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
+
+def _run_hook(payload, cwd, env):
+    return subprocess.run([sys.executable, str(_hook)], input=payload, capture_output=True,
+                          text=True, timeout=200, cwd=str(cwd), env=env)
+
+_out = _run_hook(json.dumps({"cwd": str(_hk)}), "/", _env_clean)
+check("a hook run outside the repo finds it from the payload's cwd", len(_out.stdout) > 1000)
+_out2 = _run_hook("{}", "/", dict(_env_clean, CLAUDE_PROJECT_DIR=str(_hk)))
+check("...and from CLAUDE_PROJECT_DIR, which the host actually promises", len(_out2.stdout) > 1000)
+_out3 = _run_hook("null", str(_hk), _env_clean)
+check("a payload that is JSON null does not crash the hook",
+      _out3.returncode == 0 and len(_out3.stdout) > 1000)
+_out4 = _run_hook("not json at all", str(_hk), _env_clean)
+check("neither does a payload that is not JSON", _out4.returncode == 0)
+
+# ------------- the workspace, damaged the way a real user damages it
+# One root cause in four files: every JSON loader guarded json.JSONDecodeError and stopped there,
+# which catches a file that is not JSON and misses a file that is VALID JSON OF THE WRONG SHAPE.
+# A config holding [], an ages store holding a list, a nudge store holding a list, a tools index
+# holding a dict — each parsed cleanly and raised AttributeError a line or two later, inside a hook,
+# taking the whole injection with it. A missing file degrades; this crashed.
+import workspace as _wsm  # noqa: E402
+
+_dmg = Path(tempfile.mkdtemp())
+(_dmg / ".chamnan").mkdir()
+for _body, _why in [("[]", "an array"), ("42", "a scalar"), ("\"text\"", "a string"), ("{", "not JSON")]:
+    (_dmg / ".chamnan" / "config.json").write_text(_body, encoding="utf-8")
+    check(f"config.json holding {_why} falls back rather than crashing",
+          isinstance(_wsm.load_config(_dmg), dict) and len(_wsm.load_config(_dmg)) > 5)
+
+(_dmg / ".chamnan" / "config.json").write_text('{"index_token_budget": "three thousand"}', encoding="utf-8")
+check("a config value of the wrong type is dropped, not handed to a comparison",
+      isinstance(_wsm.load_config(_dmg)["index_token_budget"], int))
+(_dmg / ".chamnan" / "config.json").write_text('{"index_token_budget": true}', encoding="utf-8")
+check("...and a bool is not accepted where an int belongs, despite isinstance(True, int)",
+      _wsm.load_config(_dmg)["index_token_budget"] is not True)
+(_dmg / ".chamnan" / "config.json").write_text('{"index_token_budget": 5000}', encoding="utf-8")
+check("a correctly typed value is still honoured",
+      _wsm.load_config(_dmg)["index_token_budget"] == 5000)
+
+# A plain file where a directory belongs aborted the whole scaffold, and the caller's except OSError
+# then returned — so the hook produced ZERO output, every session, silently, with exit 0.
+_col = Path(tempfile.mkdtemp())
+(_col / ".chamnan").mkdir()
+(_col / ".chamnan" / "memory").write_text("a stray file", encoding="utf-8")
+_wsm.ensure(_col)
+check("one collided directory does not take the rest of the scaffold with it",
+      (_col / ".chamnan" / "skills").is_dir() and (_col / ".chamnan" / "logs").is_dir())
+shutil.rmtree(_dmg, ignore_errors=True)
+shutil.rmtree(_col, ignore_errors=True)
+
+# Retention read an mtime, which a fresh clone resets. ledger.py documents this trap and avoids it;
+# the fix was never ported to the function that actually deletes files.
+import sessions as _ss3  # noqa: E402
+_pr = Path(tempfile.mkdtemp())
+_sd = _pr / ".chamnan" / "sessions"
+_sd.mkdir(parents=True)
+(_sd / "2020-01-01-ancient.md").write_text("old", encoding="utf-8")     # old by name, fresh mtime
+(_sd / "2099-01-01-future.md").write_text("new", encoding="utf-8")
+(_sd / "2026-02-30-impossible.md").write_text("typo", encoding="utf-8")
+(_sd / "no-date.md").write_text("y", encoding="utf-8")
+os.utime(_sd / "no-date.md", (0, 0))
+_removed = _ss3.prune(_pr, 30)
+_left = {p.name for p in _sd.glob("*.md")}
+check("a record old by its own filename is pruned even with a fresh mtime",
+      "2020-01-01-ancient.md" not in _left)
+check("a record with no date in its name still falls back to mtime", "no-date.md" not in _left)
+check("an impossible date is a typo, not a deletion decision",
+      "2026-02-30-impossible.md" in _left)
+check("a recent record survives", "2099-01-01-future.md" in _left)
+shutil.rmtree(_pr, ignore_errors=True)
+
 # --------------- a rule's own pattern could hang every future session
 # rulecheck compiles a pattern written by hand in a **Check:** trailer and runs it against every
 # matching file at EVERY session start, with no timeout, because `re` has none and this package may

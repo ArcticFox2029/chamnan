@@ -63,11 +63,14 @@ def reason_for(path):
 def main():
     try:
         payload = json.load(sys.stdin)
+        # A payload that parses but is not an object -- JSON `null`, or an array -- used to
+        # crash on .get() with an AttributeError, on every matching call, all session.
+        payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0
     if (payload.get("tool_name") or "") != "Read":
         return 0
-    root = ws.find_root()
+    root = ws.hook_root(payload)
     if not ws.workspace(root).is_dir() or not ws.load_config(root).get("warn_on_bulk_reads", True):
         return 0
 

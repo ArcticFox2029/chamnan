@@ -79,7 +79,13 @@ def _walk(root):
             # arrange a tree. Only escapes are dropped.
             full = here / name
             try:
-                if full.is_symlink() and not str(full.resolve()).startswith(str(base.resolve())):
+                # isjunction as well as is_symlink: a Windows directory junction carries a
+                # different reparse tag and is_symlink() never reports it, which is why Python
+                # 3.12 added a separate os.path.isjunction(). Without this the escape guard is
+                # simply absent on the platform where the confusion is most likely.
+                _linked = full.is_symlink() or (
+                    hasattr(os.path, "isjunction") and os.path.isjunction(full))
+                if _linked and not str(full.resolve()).startswith(str(base.resolve())):
                     continue
             except OSError:
                 continue          # a broken or unresolvable link is not indexable either

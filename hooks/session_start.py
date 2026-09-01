@@ -16,6 +16,7 @@ import json
 import secrets
 import re
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -226,7 +227,12 @@ def index_is_behind(root, map_path):
         newest = 0.0
         for f in _indexable(root):
             try:
-                newest = max(newest, f.stat().st_mtime)
+                # Capped at now. One file with an mtime in the future — clock skew, a bad touch, a
+                # restored backup — made this warning true forever: rebuilding produces a MAP.md
+                # whose mtime is the real now, still less than the fake future one. Measured with a
+                # file five years ahead: "1824 days behind" on every session, and the remedy the
+                # tool itself suggests could not clear it until wall-clock time caught up.
+                newest = max(newest, min(f.stat().st_mtime, time.time()))
             except OSError:
                 continue
         built = map_path.stat().st_mtime
@@ -312,10 +318,14 @@ def unindexed(root, map_text):
 
 def main():
     try:
-        json.load(sys.stdin)          # hook payload; nothing needed from it yet
+        payload = json.load(sys.stdin)
     except Exception:
-        pass
-    root = ws.find_root()
+        payload = {}
+    # A payload that parses but is not an object — JSON `null`, or an array — used to crash the
+    # hooks that call .get() on it, on every matching call, for the rest of the session.
+    if not isinstance(payload, dict):
+        payload = {}
+    root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
     first_session = not wsdir.is_dir()
     if first_session:
@@ -592,7 +602,14 @@ def main():
     body, dropped = fit.shrink("## chamnan\n", out, ceiling, sources)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
-    print(body)
+    # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page
+    # when it is a pipe rather than a console, and a code point outside it raises UnicodeEncodeError
+    # -- which would kill the hook and cost that session its entire context, over one character in
+    # somebody's comment. The repository's own text is exactly where such a character comes from.
+    try:
+        sys.stdout.write(body + "\n")
+    except UnicodeEncodeError:
+        sys.stdout.buffer.write(body.encode("utf-8", "replace") + b"\n")
     return 0
 
 

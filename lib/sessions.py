@@ -19,6 +19,8 @@ has no access to what the session was about -- session_end.py can see which scri
 nothing else. So this module reads, selects, and prunes, and the format below is the contract
 between the skill that writes and the hook that reads.
 """
+import calendar
+import datetime
 import re
 import time
 
@@ -149,7 +151,32 @@ def prune(root, days):
     removed = 0
     for path in d.glob("*.md"):
         try:
-            if path.is_file() and path.stat().st_mtime < cutoff:
+            if not path.is_file():
+                continue
+            # The filename's own date first; mtime only when there isn't one. ledger.py documents
+            # this exact trap -- "mtime resets to checkout time on a fresh clone or machine move" --
+            # and avoids it for its own feature, but the fix was never ported here, to the function
+            # that actually DELETES files. Measured: a record filed 2020-01-01, 2,435 days old by
+            # its own name, with mtime reset by a clone, survived prune(days=30) untouched. This
+            # repository migrates machines routinely and the "bounded, never leaks disk" promise
+            # was quietly not being kept.
+            stamp = _DATE.match(path.name)
+            age = None
+            if stamp:
+                try:
+                    y, m, dd = (int(x) for x in stamp.group(1).split("-"))
+                    # date() first, because calendar.timegm does NOT validate the day: it takes
+                    # (2026, 2, 30) and silently returns March 2nd. An impossible date is a typo,
+                    # and a typo must not become a deletion decision that looks correct.
+                    datetime.date(y, m, dd)
+                    age = time.time() - calendar.timegm((y, m, dd, 12, 0, 0))
+                except (ValueError, OverflowError):
+                    age = None      # an impossible date is not a date; fall back to mtime
+            if age is not None:
+                if age > days * 86400:
+                    path.unlink()
+                    removed += 1
+            elif path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1
         except OSError:

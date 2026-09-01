@@ -664,7 +664,12 @@ def _scan(root):
             # it. It stays in the index (it exists, and the agent should know that) but sits out of
             # the denominator.
             "describable": describable,
-            "path": str(path.relative_to(root)), "lang": lang, "chars": len(source),
+            # Forward slashes always, on every platform. str(Path) renders with os.sep, so on Windows
+            # this field came out `lib\\mapper` while impact.py normalises its own lookup key to
+            # `lib/mapper` -- the two can never be equal, so every relative import resolved to
+            # nothing, silently. The same literal `/` is assumed by impact.is_test() and by
+            # rollup's path.split("/")[0] grouping, so one normalisation here fixes three things.
+            "path": path.relative_to(root).as_posix(), "lang": lang, "chars": len(source),
             "tokens": tokens.estimate(source),
             # Collected while the source is open rather than in a second pass: lib/impact.py then
             # only has to resolve and invert, which is arithmetic on what is already in memory.

@@ -243,6 +243,9 @@ def _environment_notice(payload, wsdir, root):
     if state_path.is_file():
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
+            # Valid JSON of the wrong shape is not a missing file: a list here raised
+            # AttributeError on every subsequent tool call in the session.
+            state = state if isinstance(state, dict) else {}
         except (OSError, json.JSONDecodeError):
             state = {}
     entry = state.get(session_id) or {"calls": 0, "nudged": False}
@@ -280,6 +283,9 @@ def _resume_nudge(payload, wsdir, root):
     if state_path.is_file():
         try:
             state = json.loads(state_path.read_text(encoding="utf-8"))
+            # Valid JSON of the wrong shape is not a missing file: a list here raised
+            # AttributeError on every subsequent tool call in the session.
+            state = state if isinstance(state, dict) else {}
         except (OSError, json.JSONDecodeError):
             state = {}
     entry = state.get(session_id) or {"calls": 0, "nudged": False}
@@ -311,9 +317,12 @@ def _resume_nudge(payload, wsdir, root):
 def main():
     try:
         payload = json.load(sys.stdin)
+        # A payload that parses but is not an object -- JSON `null`, or an array -- used to
+        # crash on .get() with an AttributeError, on every matching call, all session.
+        payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0
-    root = ws.find_root()
+    root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
     if not wsdir.is_dir() or not ws.enabled("promote", root):
         return 0
@@ -359,7 +368,11 @@ def main():
     if log.is_file():
         for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
-                prior.append(json.loads(line))
+                _rec = json.loads(line)
+                # A line that is valid JSON but not an object -- a stray number left by a
+                # half-written entry -- parsed fine and then raised AttributeError later.
+                if isinstance(_rec, dict):
+                    prior.append(_rec)
             except json.JSONDecodeError:
                 continue
 
