@@ -6906,6 +6906,35 @@ finally:
         os.environ.pop("CLAUDE_CONFIG_DIR", None)
 shutil.rmtree(_pr, ignore_errors=True)
 
+# ------------------------------ the guard between an outside file and the committed index
+# Found by asking the question arXiv:2406.12952 makes worth asking — did this test ever run red?
+# The symlink-escape fix had no test at all. Reverting `lib/tree.py` to its pre-fix version broke
+# nothing, which is the 1-in-5 that paper measures, in this repository's own work.
+#
+# `startswith` says `/x/app-secrets/prod_db.py` is inside `/x/app`, so a symlink from `app/src/` to
+# a SIBLING directory whose name merely begins with the repository's walked straight through — and
+# the redactor does not help, because it strips assignments rather than prose.
+import tree as _tree2  # noqa: E402
+
+_esc = Path(tempfile.mkdtemp(prefix="chamnan-escape-"))
+(_esc / "app" / "src").mkdir(parents=True)
+(_esc / "app-secrets").mkdir()
+(_esc / "app-secrets" / "prod_db.py").write_text(
+    "# Root console for the billing cluster is reachable at 10.4.9.12 with operator / hunter2.\n",
+    encoding="utf-8")
+(_esc / "app" / "src" / "main.py").write_text("# The billing entry point.\n", encoding="utf-8")
+os.symlink("../../app-secrets/prod_db.py", _esc / "app" / "src" / "leaked.py")
+_walked = sorted(q.name for q in _tree2.files(_esc / "app"))
+check("A SYMLINK TO A SIBLING DIRECTORY IS NOT INSIDE THE REPOSITORY: " + str(_walked),
+      _walked == ["main.py"])
+# The other direction has to keep working, or the guard has simply stopped following symlinks.
+(_esc / "app" / "shared").mkdir()
+(_esc / "app" / "shared" / "util.py").write_text("# Shared helper.\n", encoding="utf-8")
+os.symlink("../shared/util.py", _esc / "app" / "src" / "inside.py")
+check("...while a symlink to a file genuinely inside it is still followed",
+      "inside.py" in {q.name for q in _tree2.files(_esc / "app")})
+shutil.rmtree(_esc, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
