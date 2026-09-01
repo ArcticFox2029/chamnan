@@ -6,6 +6,16 @@
 [Evidence](#evidence) and [The chaos test](#the-chaos-test) below — read those rather than the
 picture if a number matters to you.</sub>
 
+<p align="center"><sub>[🇨🇳 中文](docs/i18n/README.zh-CN.md) · [🇹🇼 繁體中文](docs/i18n/README.zh-TW.md) · [🇯🇵 日本語](docs/i18n/README.ja.md) · [🇰🇷 한국어](docs/i18n/README.ko.md) · [🇹🇭 ไทย](docs/i18n/README.th.md) · [🇻🇳 Tiếng Việt](docs/i18n/README.vi.md) · [🇮🇩 Indonesia](docs/i18n/README.id.md) · [🇮🇳 हिन्दी](docs/i18n/README.hi.md) · [🇧🇩 বাংলা](docs/i18n/README.bn.md) · [🇵🇰 اردو](docs/i18n/README.ur.md) · [🇸🇦 العربية](docs/i18n/README.ar.md) · [🇮🇱 עברית](docs/i18n/README.he.md) · [🇹🇷 Türkçe](docs/i18n/README.tr.md) · [🇷🇺 Русский](docs/i18n/README.ru.md) · [🇺🇦 Українська](docs/i18n/README.uk.md) · [🇵🇱 Polski](docs/i18n/README.pl.md) · [🇨🇿 Čeština](docs/i18n/README.cs.md) · [🇩🇪 Deutsch](docs/i18n/README.de.md) · [🇳🇱 Nederlands](docs/i18n/README.nl.md) · [🇫🇷 Français](docs/i18n/README.fr.md) · [🇪🇸 Español](docs/i18n/README.es.md) · [🇵🇹 Português](docs/i18n/README.pt-PT.md) · [🇧🇷 Português (BR)](docs/i18n/README.pt-BR.md) · [🇮🇹 Italiano](docs/i18n/README.it.md) · [🇷🇴 Română](docs/i18n/README.ro.md) · [🇬🇷 Ελληνικά](docs/i18n/README.el.md) · [🇭🇺 Magyar](docs/i18n/README.hu.md) · [🇸🇪 Svenska](docs/i18n/README.sv.md) · [🇫🇮 Suomi](docs/i18n/README.fi.md) · [🇩🇰 Dansk](docs/i18n/README.da.md) · [🇳🇴 Norsk](docs/i18n/README.no.md) · [🇵🇭 Tagalog](docs/i18n/README.tl.md)</sub></p>
+
+<sub>Each is a short page — what this is, the problem it solves, how to install it, and what to
+know before you do. **They carry no numbers on purpose.** Measurements change every release and a
+translated page does not: across large open-source repositories, once a translation is merged the
+English source takes a median of 8.5 more commits in six months while the translation takes a
+median of 0 ([arXiv:2508.02497](https://arxiv.org/abs/2508.02497)). So the numbers live here, in
+English, in [Evidence](#evidence), and every translated page links to them rather than repeating
+them. A translated page that goes a year without an edit is still correct.</sub>
+
 **ชำนาญ** *(cham-nan)* — Thai for the fluency that only comes from doing something again.
 
 A Claude Code plugin that makes a repository know itself **and preserve the engineering context
@@ -32,9 +42,9 @@ is plain markdown committed beside the code.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **96.3% recall / 100% precision** on a 27-secret, 17-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.1% recall / 100% precision** on a 34-secret, 17-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
-**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built.
+**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
 runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
@@ -810,7 +820,7 @@ corpus of 27 secret shapes and 17 ordinary strings that must survive:
 
 | | |
 |---|---|
-| recall | **96.3%** — 26 of 27 secret shapes redacted |
+| recall | **97.1%** — 33 of 34 secret shapes redacted |
 | precision | **100%** — 0 of 17 ordinary strings damaged |
 
 Read those honestly. 44 labelled cases is not 818 repositories, and 100% on a corpus this size means
@@ -1010,6 +1020,62 @@ Sources: [arXiv:2601.23254](https://arxiv.org/html/2601.23254v2), [arXiv:2608.13
 
 ---
 
+### 5a. The strongest measurement against this tool, and where it lands
+
+A leak-audited causal ablation of a structural codebase index inside a coding agent, with per-cell
+cost controlled:
+
+| | with the index | grep-only agent | |
+|---|---|---|---|
+| issues resolved | **50.4%** | **45.3%** | **p = 0.087 — not significant** |
+| localization acc@5 | **84.5%** | **75.3%** | **p = 0.080 — not significant** |
+| turns to resolution | **28.3** | **36.2** | **p < 0.0001** |
+| dollar cost per cell | — | — | **null (p = 0.73)** |
+
+Read it straight: **an index richer than this one did not beat a competent grep agent on outcome at
+conventional significance.** What it did change, decisively, is how the budget is spent — a third
+fewer turns for the same money. And the paper's own breakdown puts the gain in **cross-file,
+call-graph-dependent** changes rather than single-file ones.
+
+That is a burden of proof, and it points somewhere specific. `MAP.md` is mostly a flat per-file
+line, which is the losing shape; its `## Impact` section is cross-file reachability, which is the
+winning one — and until this release the injected block never told a session that section existed.
+It does now, in eighty bytes. **What is still not claimed:** chamnan's impact map is an import
+graph, not a call graph, and it is grepped rather than injected, so the mechanism the paper
+measured is adjacent to chamnan's, not identical to it.
+
+**A vendor's own before-and-after, for calibration.** Cursor measured its semantic index at
+**+12.5%** accuracy on its internal benchmark and **+0.3%** code retention across live production
+traffic — **+2.6%** on repositories over 1,000 files. Their stated reason: not all requests need
+search at all. Every self-measured number in this README, including the ones above, should be read
+against that ratio.
+
+Sources: [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), [cursor.com/blog/semsearch](https://cursor.com/blog/semsearch).
+
+---
+
+### 5c-i. Wrong is worse than missing — but missing is not fine either
+
+chamnan's engineering rule is that an invented entry costs more than an absent one, because a
+reader acts on it. That is measured, and the second half of the measurement is the part worth
+printing:
+
+| condition | result |
+|---|---|
+| stale context in the prompt | reproduced the superseded signature in **15/17** samples (**+88.2pp** over current-only) |
+| no retrieval at all | **1/17** completions passed |
+
+So a stale index does actively bias the model toward wrong code — and an absent one is not a safe
+resting place, it simply fails differently. The honest form of the rule is **"wrong is worse than
+missing"**, not "missing is fine". Both are why `chamnan-map` is byte-identical across runs, why a
+stale index says so at the top of the block, and why nothing here tells you to stop reading the
+source.
+
+Source: [arXiv:2605.14478](https://arxiv.org/abs/2605.14478) (17-sample diagnostic study, 5 Python
+repositories, 2 models — small, and the only direct test of this found).
+
+---
+
 ### 5b. Why the index copies a comment instead of writing one
 
 | LLM summary correctness, by scope | |
@@ -1155,7 +1221,7 @@ Sources: [arXiv:2601.09832](https://arxiv.org/abs/2601.09832); [arXiv:1907.00376
 | | |
 |---|---|
 | chamnan's redactor, **before** | **66.7%** recall / **81.8%** precision |
-| chamnan's redactor, **after** | **96.3%** recall / **100%** precision |
+| chamnan's redactor, **after** | **97.1%** recall / **100%** precision |
 | corpus | 27 secret shapes, 17 ordinary strings that must survive |
 | **the ceiling it cannot reach** | verification by live API call: TruffleHog **6% → 90%** precision |
 
@@ -1238,7 +1304,7 @@ question is not whether it participates — it does — but whether the chain ca
 | link | chamnan |
 |---|---|
 | 1. repo content reaches the agent | **yes, by design** — mitigated only by the fence below, which is worth about a halving |
-| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **96.3% recall / 100% precision** |
+| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **97.1% recall / 100% precision** |
 | 3. it is written into something that configures or executes | **no**, and this is now pinned by tests |
 | 4. a capability turns that into network activity | **no** — pinned by the tests in §9 |
 
@@ -1466,7 +1532,7 @@ repositories have one of those too.
 and credentials are **observed** — they are what chamnan reported when run against the corpus, and
 they can be reproduced by anyone holding it. Token figures are **estimates**, produced by chamnan's
 own script-aware estimator rather than by an exact API count; the estimator is calibrated against
-measured API usage and errs toward over-counting, but a figure like 11,560,484 is an estimate of a
+measured API usage, but a figure like 11,560,484 is an estimate of a
 size, not a receipt. And all of it is a **synthetic-corpus result**: the corpus was built to be hard
 to index, on one machine, and is not part of this repository. It is evidence that the tool holds up
 under load, not a benchmark of your codebase. `chamnan-map` gives you that one.
@@ -1476,8 +1542,8 @@ under load, not a benchmark of your codebase. `chamnan-map` gives you that one.
 | | |
 |---|---|
 | **529 files indexed** across all 31 file types | Each parsed with its own idioms — `fun` and `suspend fun` in Kotlin, `data class`, extension functions, Elixir's `defmodule`, Rust's `impl`, C prototypes in headers, Terraform resources |
-| **3,266 symbols extracted** | Functions, classes, structs, traits, protocols, objects, constants |
-| **98% described** | 517 of 529 files carry a one-line summary in the index. The remaining 12 genuinely have no opening comment — chamnan lists them by name so you can add one |
+| **3,960 symbols extracted** | Functions, classes, structs, traits, protocols, objects, constants. Up from 3,266 once each language's own facts replaced one universal rule — Ruby methods ending `?`/`!`/`=` and its operator methods, `module`, TypeScript `interface` and `type`, and a Terraform `data` block's second name |
+| **97% described** | 514 of 529 files carry a one-line summary in the index. The remaining 15 genuinely have no opening comment — chamnan lists them by name so you can add one. This number went DOWN from 98% on purpose: a leading `#` is a comment in Python and Ruby and an attribute in Rust, and counting the attribute as a description inflated the figure |
 | **8 writing systems intact** | Summaries carried through from javadoc, kdoc, docstrings, rustdoc, godoc, doxygen, phpdoc, xmldoc and `@moduledoc` without mangling, and the token budget is counted per script because Thai runs ~1.2 characters per token where English code runs 2.5 |
 
 ### What it found in the system

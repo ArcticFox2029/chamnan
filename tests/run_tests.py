@@ -5308,6 +5308,44 @@ check("...while a two-segment one is still trusted",
       _imp._only_suffix_match("pkg/helpers", _by_noext) == "pkg/helpers.py")
 shutil.rmtree(_cn.parent, ignore_errors=True)
 
+# ------------------------------ the translated pages, and the one rule that keeps them true
+# Measured across large open-source repositories: once a documentation translation is merged, the
+# English source takes a median of 8.5 more commits in six months while the translation takes a
+# median of 0, with a maximum observed gap of 166 (arXiv:2508.02497). chamnan releases often, so a
+# translated page carrying a measurement would be wrong within one cycle -- and a wrong translation
+# is worse than an absent one, because it still reads as current.
+#
+# The rule that makes 32 pages maintainable is therefore: NO NUMBERS IN ANY OF THEM. It is checked
+# here rather than trusted, because it is exactly the kind of rule that decays quietly.
+_i18n = ROOT / "docs" / "i18n"
+_pages = sorted(_i18n.glob("README.*.md")) if _i18n.is_dir() else []
+check("the translated pages exist", len(_pages) > 20)
+
+_row = (ROOT / "README.md").read_text(encoding="utf-8")
+_linked = set(re.findall(r"docs/i18n/README\.([\w-]+)\.md", _row))
+_ondisk = {p.name[len("README."):-3] for p in _pages}
+check("every language in the flag row has a page", not (_linked - _ondisk))
+check("...and every page is reachable from the flag row", not (_ondisk - _linked))
+
+_stray = []
+for _pg in _pages:
+    _body = _pg.read_text(encoding="utf-8")
+    _body = re.sub(r"```.*?```", "", _body, flags=re.S)        # the install command
+    _body = re.sub(r"\[[^\]]*\]\([^)]*\)", "", _body)          # link text and targets
+    _body = re.sub(r"<sub>.*?</sub>", "", _body, flags=re.S)   # the navigation row
+    if re.search(r"(?<![\w./-])\d[\d,.]*%?", _body):
+        _stray.append(_pg.name)
+check("NO TRANSLATED PAGE CARRIES A NUMBER — that is what stops them going stale", not _stray)
+
+for _pg in _pages:
+    pass
+check("each page points at where the measurements, the tests and the changes live",
+      all(all(x in _pg.read_text(encoding="utf-8")
+              for x in ("README.md#evidence", "tests/run_tests.py", "CHANGELOG.md"))
+          for _pg in _pages))
+check("the rule itself is written down for whoever maintains them",
+      (_i18n / "MAINTAINING.md").is_file())
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

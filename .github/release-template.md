@@ -26,6 +26,15 @@ claude plugin update chamnan@chamnan
 
 Claude Code applies an update on restart, not in the running session.
 
+<!--
+  BEFORE PUBLISHING: the translated pages under docs/i18n/ carry no numbers, deliberately, so a
+  release does not make them stale (arXiv:2508.02497 — a merged translation gets a median of 0
+  follow-up commits while the English source gets 8.5). So the ordinary release touches README.md
+  and nothing else. Update docs/i18n/ ONLY when the install command changes, when what chamnan IS
+  changes, or when a reader needs to know a new limitation BEFORE installing. Thai first, then the
+  rest. See docs/i18n/MAINTAINING.md.
+-->
+
 ## What's new
 
 <!--

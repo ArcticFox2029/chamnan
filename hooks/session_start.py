@@ -411,8 +411,21 @@ def main():
                 index = rollup.collapse(index, mp.relative_to(root), budget, root)
             index_slot = len(out)
             out.append(section("Architecture index", index, str(mp.relative_to(root))))
-            out.append(f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
-                       f"never read it whole._\n")
+            tail = (f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
+                    f"never read it whole._")
+            # Named only when it is actually there. A causal ablation of a structural codebase
+            # index (arXiv:2606.22417) found its measurable gain concentrated in cross-file,
+            # reachability-dependent changes rather than single-file ones -- and that is the one
+            # section of MAP.md a session was never told existed. It has been built and committed
+            # all along; the block said "grep it for one heading" without naming the heading that
+            # answers "what breaks if I change this". Eighty bytes to make a section that is
+            # already paid for reachable, rather than moving it into the injection, which would
+            # cost a whole section and contradict the measured 51.1%-vs-3.2% split between what
+            # MAP.md answers and what the block does.
+            if "\n## Impact\n" in text:
+                tail += ("\n_`## Impact` in that file is what is connected to what — grep it "
+                         "before changing a file, not after._")
+            out.append(tail + "\n")
             behind = index_is_behind(root, mp)
             if behind:
                 n, examples = unindexed(root, text)
