@@ -1,12 +1,6 @@
 # chamnan
 
-<img src="docs/assets/chamnan.png" alt="chamnan — an index the agent reads instead of scanning files. On the polyglot test corpus, 11,560,484 tokens of source become a 51,937-token index, of which roughly 3,000 reach each session." width="100%">
-
-<sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
-its source. The published corpus omits them, so the ratio you will measure by following the
-instructions below is 26×.** Both are true of the same tool; the difference is what a repository
-keeps in it, not what chamnan does. Every figure here, and how it was measured, is in
-[Evidence](#evidence) and [The chaos test](#the-chaos-test).</sub>
+<img src="docs/assets/chamnan-promo.png" alt="chamnan — repository memory for Claude Code. It scans the repository and builds context files (MAP.md, STATE.md, sessions/, memory/, skills/ and tools/, milestones.md) that a session is handed at startup, so the agent stops rediscovering the same things. Runs on your machine; nothing is sent anywhere." width="100%">
 
 <p align="center"><sub><a href="docs/i18n/README.zh-CN.md">🇨🇳 中文</a> · <a href="docs/i18n/README.zh-TW.md">🇹🇼 繁體中文</a> · <a href="docs/i18n/README.ja.md">🇯🇵 日本語</a> · <a href="docs/i18n/README.ko.md">🇰🇷 한국어</a> · <a href="docs/i18n/README.th.md">🇹🇭 ไทย</a> · <a href="docs/i18n/README.vi.md">🇻🇳 Tiếng Việt</a> · <a href="docs/i18n/README.id.md">🇮🇩 Indonesia</a> · <a href="docs/i18n/README.hi.md">🇮🇳 हिन्दी</a> · <a href="docs/i18n/README.bn.md">🇧🇩 বাংলা</a> · <a href="docs/i18n/README.ur.md">🇵🇰 اردو</a> · <a href="docs/i18n/README.ar.md">🇸🇦 العربية</a> · <a href="docs/i18n/README.he.md">🇮🇱 עברית</a> · <a href="docs/i18n/README.tr.md">🇹🇷 Türkçe</a> · <a href="docs/i18n/README.ru.md">🇷🇺 Русский</a> · <a href="docs/i18n/README.uk.md">🇺🇦 Українська</a> · <a href="docs/i18n/README.pl.md">🇵🇱 Polski</a> · <a href="docs/i18n/README.cs.md">🇨🇿 Čeština</a> · <a href="docs/i18n/README.de.md">🇩🇪 Deutsch</a> · <a href="docs/i18n/README.nl.md">🇳🇱 Nederlands</a> · <a href="docs/i18n/README.fr.md">🇫🇷 Français</a> · <a href="docs/i18n/README.es.md">🇪🇸 Español</a> · <a href="docs/i18n/README.pt-PT.md">🇵🇹 Português</a> · <a href="docs/i18n/README.pt-BR.md">🇧🇷 Português (BR)</a> · <a href="docs/i18n/README.it.md">🇮🇹 Italiano</a> · <a href="docs/i18n/README.ro.md">🇷🇴 Română</a> · <a href="docs/i18n/README.el.md">🇬🇷 Ελληνικά</a> · <a href="docs/i18n/README.hu.md">🇭🇺 Magyar</a> · <a href="docs/i18n/README.sv.md">🇸🇪 Svenska</a> · <a href="docs/i18n/README.fi.md">🇫🇮 Suomi</a> · <a href="docs/i18n/README.da.md">🇩🇰 Dansk</a> · <a href="docs/i18n/README.no.md">🇳🇴 Norsk</a> · <a href="docs/i18n/README.tl.md">🇵🇭 Tagalog</a></sub></p>
 
@@ -1656,6 +1650,13 @@ something an agent would otherwise have to go and read:
 | 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** |
 | 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** |
 | …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **26×** |
+
+<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which roughly 3,000 reach each session." width="100%">
+
+<sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
+its source. The published corpus omits them, so the ratio you will measure by following the
+instructions below is 26×.** Both are true of the same tool; the difference is what a repository
+keeps in it, not what chamnan does. The row above this picture is the one you can reproduce.</sub>
 
 And for the files that should never be loaded at all, `chamnan-peek` reads their shape on demand:
 
