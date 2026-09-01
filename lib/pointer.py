@@ -94,7 +94,14 @@ def needles(rel_path):
     as the basename because two files can share a name, and an entry that spelled out the full path
     meant that one.
     """
-    rel = str(rel_path).replace("\\", "/").lstrip("./")
+    # 🐛 `lstrip("./")` strips a character SET, so `.github/workflows/ci.yml` became
+    # `github/workflows/ci.yml` and the tier-0 full-path pointer could never fire for any file in a
+    # dot-directory — nor at all for a root dotfile like `.env.example`, whose whole name is eaten.
+    # Only a leading `./` is a relative-path marker.
+    rel = str(rel_path).replace("\\", "/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    rel = rel.lstrip("/")
     base = rel.rsplit("/", 1)[-1]
     out = [rel]
     if base != rel and "." in base:

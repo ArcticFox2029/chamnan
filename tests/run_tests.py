@@ -6836,6 +6836,41 @@ check("...and the first registration still lands, though it creates the index it
       [e["name"] for e in _ti2.load(_tid)] == ["first-tool.sh"])
 shutil.rmtree(_tid, ignore_errors=True)
 
+# ------------------------------ the impact map, whose own comment sets the standard
+# "an invented edge is worse than a missing one" — impact.py. Three ways it produced both.
+import impact as _imp2  # noqa: E402
+import pointer as _pt2  # noqa: E402
+
+# `by_noext[noext] = p` overwrote, so two files sharing a path-minus-extension collided and the
+# last in scan order won. Which real file became invisible depended on directory listing order.
+_amb = [_imp2.build([a, b, {"path": "src/app.ts", "imports": ["./util"]}])
+        for a, b in (({"path": "src/util.js"}, {"path": "src/util.ts"}),
+                     ({"path": "src/util.ts"}, {"path": "src/util.js"}))]
+check("TWO FILES SHARING A STEM PRODUCE NO EDGE, NOT A COIN FLIP: " + str(_amb),
+      _amb[0] == {} and _amb[1] == {})
+check("...while one file with that stem still resolves normally",
+      "src/util.ts" in _imp2.build([{"path": "src/util.ts"},
+                                    {"path": "src/app.ts", "imports": ["./util"]}]))
+
+# `lstrip("./")` strips a character SET, so `../shared/util` became `shared/util` and resolved
+# DOWNWARD from the importer's own directory — an invented edge — or vanished entirely.
+_up = _imp2.build([{"path": "src/shared/util.js"}, {"path": "vendor/shared/util.js"},
+                   {"path": "src/a/b.js", "imports": ["../shared/util"]}])
+check("A `..` IMPORT RESOLVES UPWARD: " + str(list(_up)),
+      list(_up) == ["src/shared/util.js"])
+
+# The same mistake meant lookup could not find a row it had written itself.
+_dotsec = _imp2.render({".github/workflows/ci.yml": {"used_by": ["Makefile"], "tests": []}})
+check("A DOT-DIRECTORY PATH IS FOUND IN THE SECTION THAT NAMES IT",
+      _imp2.lookup(_dotsec, ".github/workflows/ci.yml")[0] == ".github/workflows/ci.yml")
+# ...and in the pointer, where it meant the tier-0 full-path match could never fire.
+check("the pointer keeps a dot-directory path whole",
+      ".github/workflows/ci.yml" in _pt2.needles(".github/workflows/ci.yml"))
+check("...and a root dotfile keeps its name at all",
+      ".env.example" in _pt2.needles(".env.example"))
+check("...while a genuine `./` prefix is still stripped",
+      "src/app.py" in _pt2.needles("./src/app.py"))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

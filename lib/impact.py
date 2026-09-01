@@ -18,6 +18,7 @@ not a comparison of every file against every other — linear in edges, not quad
 Measured on a 2,365-file polyglot corpus, the whole map including this section takes about the same
 time it did without it.
 """
+import os
 import re
 from pathlib import Path
 
@@ -92,14 +93,22 @@ def _index(files):
     from an import that says `utils`, and a navigation aid that sends someone to the wrong one is
     worse than one that stays quiet.
     """
-    by_noext, stem_count, by_stem = {}, {}, {}
+    # 🐛 `by_noext[noext] = p` overwrote, so `src/util.js` and `src/util.ts` collided and the last
+    # one in scan order won — an import of `./util` was credited to whichever the directory listing
+    # happened to yield second, and the other real file was invisible in the Impact section. The
+    # stem map immediately below refuses ambiguity with a count; this one did not, and the two sit
+    # four lines apart. `impact.py`'s own comment says "an invented edge is worse than a missing
+    # one", and a coin-flip between two real files is an invented one half the time.
+    by_noext, noext_count, stem_count, by_stem = {}, {}, {}, {}
     for f in files:
         p = f["path"]
         noext = p.rsplit(".", 1)[0]
+        noext_count[noext] = noext_count.get(noext, 0) + 1
         by_noext[noext] = p
         stem = Path(p).stem
         stem_count[stem] = stem_count.get(stem, 0) + 1
         by_stem[stem] = p
+    by_noext = {n: p for n, p in by_noext.items() if noext_count[n] == 1}
     unambiguous = {s: p for s, p in by_stem.items() if stem_count[s] == 1}
     return by_noext, unambiguous
 
@@ -115,9 +124,21 @@ def resolve(name, importer, by_noext, by_stem):
 
     # Relative paths, as JS, C, Ruby and Dart write them.
     if name.startswith((".", "/")) or "/" in name:
+        # 🐛 `lstrip("./")` strips a character SET, so `../shared/util` became `shared/util` and
+        # resolved DOWNWARD from the importer's own directory: `../shared/util` imported from
+        # `src/a/b.js` came back as `src/a/shared/util.js`. Where no coincidence rescued it the
+        # edge simply vanished — with `src/shared/util.js` and `vendor/shared/util.js` both
+        # present, `build()` returned nothing at all and the map said the file has no users. Both
+        # failure directions from one call, in a function whose comment says an invented edge is
+        # worse than a missing one.
         base = Path(importer).parent
-        cleaned = name.lstrip("./") if name.startswith(("./", "../")) else name.lstrip("/")
-        for candidate in (base / cleaned, Path(cleaned)):
+        if name.startswith(("./", "../")):
+            candidates = [Path(os.path.normpath(str(base / name))),
+                          Path(os.path.normpath(name.lstrip("./")))]
+        else:
+            cleaned = name.lstrip("/")
+            candidates = [base / cleaned, Path(cleaned)]
+        for candidate in candidates:
             key = str(candidate).replace("\\", "/")
             if key in by_noext:
                 return by_noext[key]
@@ -144,6 +165,15 @@ def resolve(name, importer, by_noext, by_stem):
     # Last resort: the final segment, and only when exactly one file in the repository has it.
     tail = dotted.rsplit(".", 1)[-1]
     return by_stem.get(tail)
+
+
+def _unprefix(path_):
+    """`path_` without a leading `./`, and without a leading `/`. A leading dot that is not part of
+    `./` belongs to the name -- `.github`, `.env.example` -- and stripping it as a character loses
+    the file."""
+    while path_.startswith("./"):
+        path_ = path_[2:]
+    return path_.lstrip("/")
 
 
 def _only_suffix_match(key, by_noext):
@@ -296,7 +326,11 @@ def lookup(text, target):
     worse than saying it could not tell. Returns (path, edges) or (None, None).
     """
     parsed = parse_section(text)
-    target = str(target).strip().strip("`").lstrip("./")
+    # 🐛 `lstrip("./")` again: `.github/workflows/ci.yml` became `github/workflows/ci.yml`, so this
+    # could not find a row it had written itself, and a root dotfile like `.env.example` lost its
+    # name entirely. Only a leading `./` is a relative-path marker; a leading `.` is part of the
+    # name.
+    target = _unprefix(str(target).strip().strip("`"))
     if not target:
         return None, None
     if target in parsed:
