@@ -16,6 +16,7 @@ Three details decide whether the figures are right, each learned the hard way (2
      nothing to do with this tool. Tokens carried per turn is what a workspace can actually change.
 """
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -30,6 +31,36 @@ import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
 PROJECT_ROOT = Path.home() / ".claude" / "projects"
+
+
+def _project_roots():
+    """Every directory Claude Code might be keeping this machine's transcripts in.
+
+    🐛 This was a single hardcoded `~/.claude/projects`. Two things break it, and both are live on
+    the developer's own machine:
+
+    `CLAUDE_CONFIG_DIR` moves the whole config tree, which is how anyone runs two accounts at once
+    — measured here: 299 transcripts under `~/.claude` and 33 under the configured directory, with
+    the second set invisible. Somebody had hand-made a symlink to paper over it, and a workaround
+    is evidence the bug is live.
+
+    `CLAUDE_CODE_PROJECT_DIR_NAME` (2.1.234) lets a host choose the per-project directory NAME, at
+    which point `encoded_dir`'s path-derived match cannot work at all — neither the exact form nor
+    the shared-tail fallback — and the fallback's tie rule then reports nothing without saying why.
+
+    Both are read, newest-first is left to the caller, and the ordinary single-account machine is
+    unchanged because the environment variable is simply absent there.
+    """
+    roots, seen = [], set()
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    # PROJECT_ROOT stays the default and the single seam a test can move; the environment variable
+    # adds the second tree rather than replacing it, because a machine running two accounts has
+    # work in both and the question "how much context did this repo cost" spans them.
+    for d in ([Path(cfg) / "projects"] if cfg else []) + [PROJECT_ROOT]:
+        if d.is_dir() and str(d) not in seen:
+            seen.add(str(d))
+            roots.append(d)
+    return roots
 SNAPSHOT = re.compile(r"-\d{8}$")
 
 
@@ -39,9 +70,10 @@ def encoded_dir(repo_root):
     The encoding is lossy — a directory whose own name contains a dash is indistinguishable from a
     separator — so an exact match is tried first and a suffix match is the fallback."""
     want = str(repo_root).replace("/", "-")
-    exact = PROJECT_ROOT / want
-    if exact.is_dir():
-        return exact
+    for root in _project_roots():
+        exact = root / want
+        if exact.is_dir():
+            return exact
     # The fallback used to accept any directory whose name ended with this repo's basename, and
     # return the first in sort order. `~/work/Lumin-App` and `~/Documents/Lumin-App` both end that
     # way, so a checkout of the same project elsewhere -- or an unrelated repo that happens to
@@ -49,7 +81,7 @@ def encoded_dir(repo_root):
     # saying which had been read. Rank by how much of the path actually agrees, and when two
     # candidates agree equally there is no honest answer: say nothing rather than guess.
     best, best_score, tied = None, 0, False
-    for cand in sorted(PROJECT_ROOT.glob("*")):
+    for cand in sorted(c for root in _project_roots() for c in root.glob("*")):
         if not cand.is_dir():
             continue
         score = _shared_tail(want, cand.name)

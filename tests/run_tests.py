@@ -6040,13 +6040,18 @@ check("a basename shared by two checkouts scores them equally -- which is the ti
       _rep._shared_tail(_want, _tie_a) == _rep._shared_tail(_want, _tie_b))
 _fakeproj = Path(tempfile.mkdtemp(prefix="chamnan-proj-"))
 (_fakeproj / _tie_a).mkdir(); (_fakeproj / _tie_b).mkdir()
+# CLAUDE_CONFIG_DIR is set on a machine running two accounts, and `_project_roots` reads it — so
+# it has to come out of the environment for this fixture to be the only tree searched.
 _realproj, _rep.PROJECT_ROOT = _rep.PROJECT_ROOT, _fakeproj
+_savedcfg = os.environ.pop("CLAUDE_CONFIG_DIR", None)
 check("AND A TIE IS ANSWERED WITH SILENCE, NOT WITH WHICHEVER SORTED FIRST",
       _rep.encoded_dir(Path("/Users/me/Documents/Lumin-App")) is None)
 shutil.rmtree(_fakeproj / _tie_b)
 check("...while a single candidate is still resolved by suffix",
       _rep.encoded_dir(Path("/Users/me/Documents/Lumin-App")) == _fakeproj / _tie_a)
 _rep.PROJECT_ROOT = _realproj
+if _savedcfg is not None:
+    os.environ["CLAUDE_CONFIG_DIR"] = _savedcfg
 shutil.rmtree(_fakeproj, ignore_errors=True)
 check("...while the longer agreement wins outright when there is one",
       _rep._shared_tail("-a-b-c-app", "-a-b-c-app") > _rep._shared_tail("-a-b-c-app", "-z-app"))
@@ -6766,8 +6771,11 @@ for _cred in ('api_key = "sk-abcdefghijklmnop"', 'access_token = "ya29.abcdefghi
               'AccountKey=abcdefghijklmnopqrstuvwxyz==', 'refresh_token=abcdefghijklmnop'):
     check("A REAL CREDENTIAL IS STILL REDACTED: " + _cred[:40],
           redact.PLACEHOLDER in redact.scrub(_cred))
-check("the README publishes the real-codebase number beside the corpus one",
-      "on 257 real files" in (ROOT / "README.md").read_text(encoding="utf-8"))
+_rmtext = (ROOT / "README.md").read_text(encoding="utf-8")
+check("the README publishes the real-codebase measurement beside the corpus one",
+      "257-file application" in _rmtext)
+check("...and says which denominator each number uses, which is the part that misleads",
+      "against what the tool *asserted*" in _rmtext)
 
 # Four config syntaxes with no `[:=]` for the assignment rules to anchor on. Maven settings.xml,
 # Laravel's config/database.php, Helm values.yaml, Dockerfile, .netrc and .pgpass between them
@@ -6870,6 +6878,33 @@ check("...and a root dotfile keeps its name at all",
       ".env.example" in _pt2.needles(".env.example"))
 check("...while a genuine `./` prefix is still stripped",
       "src/app.py" in _pt2.needles("./src/app.py"))
+
+# ------------------------------ two accounts on one machine is how anyone runs two accounts
+# `PROJECT_ROOT` was a hardcoded `~/.claude/projects`, and `CLAUDE_CONFIG_DIR` moves the whole tree.
+# Measured on the developer's own machine: 299 transcripts under one and 33 under the other, the
+# second set invisible — with a hand-made symlink papering over it, which is evidence the bug was
+# live rather than theoretical.
+_pr = Path(tempfile.mkdtemp(prefix="chamnan-cfg-"))
+(_pr / "alt" / "projects" / "-x-y-repo").mkdir(parents=True)
+(_pr / "home" / ".claude" / "projects").mkdir(parents=True)
+_realroot, _realenv = _rep.PROJECT_ROOT, os.environ.get("CLAUDE_CONFIG_DIR")
+try:
+    _rep.PROJECT_ROOT = _pr / "home" / ".claude" / "projects"
+    os.environ["CLAUDE_CONFIG_DIR"] = str(_pr / "alt")
+    check("A CONFIGURED CONFIG DIRECTORY IS SEARCHED FOR TRANSCRIPTS",
+          _rep.encoded_dir(Path("/x/y/repo")) == _pr / "alt" / "projects" / "-x-y-repo")
+    check("...and the default location is searched as well",
+          any("home" in str(r) for r in _rep._project_roots()))
+    del os.environ["CLAUDE_CONFIG_DIR"]
+    check("...while a machine with one account is unchanged",
+          [str(r) for r in _rep._project_roots()] == [str(_pr / "home" / ".claude" / "projects")])
+finally:
+    _rep.PROJECT_ROOT = _realroot
+    if _realenv is not None:
+        os.environ["CLAUDE_CONFIG_DIR"] = _realenv
+    else:
+        os.environ.pop("CLAUDE_CONFIG_DIR", None)
+shutil.rmtree(_pr, ignore_errors=True)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

@@ -912,30 +912,42 @@ corpus of 38 secret shapes and 22 ordinary strings that must survive:
 |---|---|
 | recall | **97.4%** — 37 of 38 secret shapes redacted |
 | precision, on the corpus | **100%** — 0 of 22 ordinary strings damaged |
-| precision, on 257 real files | **69 lines damaged**, down from 144 |
+| precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |
+| `scrub()` applied to whole source files | **69 lines damaged**, down from 144 |
 
-Read those honestly, and read the third row first, because it is the one that generalises.
+Read those honestly, and mind which is which — the third row is what a user experiences, the fourth
+is a property of one function measured on input it is never given.
 
-**100% on a 22-string decoy corpus is "no known false positive", not "no false positives".** Run
-the same redactor over a real 257-file application and it damages **69 lines**. Before this release
-it damaged **144**, including `key=lambda p: p.stat().st_mtime` — `key` is the commonest parameter
-name in Python — and `tokens = tokenizer.encode(prompt)`, which is the identical identifier family
+**100% on a 22-string decoy corpus is "no known false positive", not "no false positives"** — so
+here is the measurement on a real 257-file application, taken twice, because the two numbers answer
+different questions and the difference is the point.
+
+**Through the paths chamnan actually uses — the generated `MAP.md`, `chamnan-peek` output, and the
+session-start block — that codebase produces zero redactions, and therefore zero false positives.**
+What reaches the redactor there is a leading comment, a docstring, a section heading. It is not
+source code.
+
+**Call `scrub()` on whole source files and it damages 69 lines.** That is a property of the
+function rather than an experience anyone has, and it is worth publishing anyway, because it bounds
+what would happen the day some new caller hands it raw source. Before this release the same
+measurement was **144**, including `key=lambda p: p.stat().st_mtime` — `key` is the commonest
+parameter name in Python — and `tokens = tokenizer.encode(prompt)`, the identical identifier family
 the module's own docstring records as already fixed once. `key` and `token` now require a second
 name component, which every credential spelling has (`api_key`, `access_token`, `AccountKey`) and
-no bare parameter does; a name whose last component is `_RE`, `_PATTERN`, `_HEADER` or `_ORDER` is
-exempted outright.
+no bare parameter does; a name ending `_RE`, `_PATTERN`, `_HEADER` or `_ORDER` is exempted outright.
 
-The number went 144 → 54 on that change alone, then back to 69 when four new rules closed real
-leaks — XML element text, the Ruby/PHP hash rocket, YAML block scalars, and the space-separated
-forms in Dockerfile, `.netrc` and `.pgpass`. **That is the trade this whole module is, stated in
-one line: every shape it learns to catch costs it something on the other axis.** Recall did not
-move either way.
+That went 144 → 54, then back to 69 when four new rules closed real leaks — XML element text, the
+Ruby/PHP hash rocket, YAML block scalars, and the space-separated forms in Dockerfile, `.netrc` and
+`.pgpass`. **That is the trade this whole module is, in one line: every shape it learns to catch
+costs it something on the other axis.** Recall did not move either way.
 
-The 69 that remain are compound names that genuinely look like credentials — `CONFIG_KEY`,
-`current_key`, `INDEX_KEY`, `max_tokens`. **A keyword redactor cannot tell
-`CONFIG_KEY = "openai_api_key"` from `API_KEY = "sk-…"` without reading the value, and reading the
-value is the thing it refuses to do.** That is a ceiling, not a bug backlog, and it is why the
-corpus number alone would have been a misleading thing to publish on its own.
+**On the denominator.** Google's static-analysis platform admits an analyzer only if it produces
+[less than 10% effective false positives](https://abseil.io/resources/swe-book/html/ch20.html), and
+counts them against what the tool *asserted*, not against files scanned. Measured that way here,
+through the real paths, it is 0 of 0 — and the 69 figure would be 69 of 69, which is exactly why
+naming which denominator you used matters more than the percentage does. This project has made the
+opposite mistake before: the 223× hero ratio, corrected in an earlier release for choosing the
+flattering corpus.
 
 The single recall miss is the point of the next paragraph, and it is deliberate.
 
@@ -1165,6 +1177,46 @@ against that ratio.
 Sources: [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), [cursor.com/blog/semsearch](https://cursor.com/blog/semsearch).
 
 ---
+
+### 5d. The strongest argument against injecting anything at session start
+
+Facebook deployed Infer as a nightly batch over the whole Android codebase and hand-assigned the
+issues it found. In the author's own words: *"We had worked hard to get the false positive rate
+down to what we thought was less than 20%, and yet the fix rate — the proportion of reported issues
+that developers resolved — was near zero."* They moved the same analysis to code-review time and
+**"the fix rate rocketed to over 70%. The same program analysis, with same false positive rate, had
+much greater impact when deployed at diff time."**
+([O'Hearn, CACM 62(8), 2019](https://discovery.ucl.ac.uk/id/eprint/10084236/) — quoted from the
+author-accepted manuscript, because the CACM page refuses automated fetches.)
+
+**Read what that controls for.** Content quality held constant. False-positive rate held constant.
+Only the moment of delivery changed, and the outcome moved from ~0% to >70%. chamnan's
+session-start block is the batch arm of that experiment: a correct, bounded, well-written report,
+delivered before the reader has a problem, addressed to nobody in particular. This finding says
+that is the deployment shape measured at near-zero impact, and that no amount of improving the
+block's *content* would have fixed it at Facebook.
+
+It also says where the value should be, and chamnan already has those surfaces: the file pointer
+that fires when you open a file, the bulk-read notice that fires before a large read, the impact
+answer you ask for by name. Those are diff-time. **They should be measured separately from the
+session-start block rather than credited with its effect**, and this project has not done that yet.
+
+Two related measurements point the same way. Across 22,326 AI review comments in 178 repositories,
+the addressing rate was **0.9–19.2%** against **60%** for human comments
+([arXiv:2508.18771](https://arxiv.org/abs/2508.18771)) — and the mechanism the authors identify is
+targeting: humans aimed 79% of their comments at less-experienced contributors, while the tools
+reviewed indiscriminately. And across 54,791 agent review comments in 342 repositories, *"the
+presence of an inline code suggestion is the strongest predictor of comment resolution, while
+lengthy and complex comments are less likely to be acted upon"*
+([arXiv:2607.21997](https://arxiv.org/abs/2607.21997)).
+
+That second one is uncomfortable here, and it should be. **chamnan's constitution is "report, never
+rewrite", and its output is long argued prose — which is the format measured as least likely to be
+acted on.** The finding does not require breaking the no-rewrite rule; the measured predictor is
+whether there was something the reader could apply directly, which a precise one-line "check X
+before editing this" satisfies without the tool touching anything. But it does mean the longest and
+most carefully argued entries in a `.chamnan/` workspace are, on this evidence, its least useful
+ones.
 
 ### 5c-i. Wrong is worse than missing — but missing is not fine either
 
