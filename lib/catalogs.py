@@ -371,10 +371,17 @@ def _ignored_by_files(root, path):
 def scan_env(root, files):
     """Variable NAMES. Values are never captured — see this module's docstring."""
     names, sources, unsafe = {}, {}, []
+    # How many distinct places each name is referenced. The list is capped, and it used to be cut
+    # alphabetically -- so on a repo with 200 variables the reader saw everything up to about `D`
+    # and nothing after, under a line that said only "Showing 50 of 200". An arbitrary slice
+    # presented without saying it is arbitrary reads as a ranking, which is worse than a short
+    # list. This is a real measurement and it is what the cut is made on.
+    refs = {}
     for path, text in _readable(root, (".env", ".env.*", "*.env", "env.example")):
         rel = str(path.relative_to(root))
         for m in ENV_FILE_KEY.finditer(text):
             names.setdefault(m.group(1), rel)
+            refs.setdefault(m.group(1), set()).add(rel)
         if path.name == ".env":
             if not _is_ignored(root, path):
                 unsafe.append(rel)
@@ -387,7 +394,9 @@ def scan_env(root, files):
             name = next(g for g in m.groups() if g)
             names.setdefault(name, f["path"])
             sources.setdefault(name, f["path"])
-    return sorted(names.items()), unsafe
+            refs.setdefault(name, set()).add(f["path"])
+    # Most-referenced first, then alphabetical so the order is stable between runs.
+    return sorted(names.items(), key=lambda kv: (-len(refs.get(kv[0], ())), kv[0])), unsafe
 
 
 def render_env(pairs, unsafe):
@@ -397,7 +406,8 @@ def render_env(pairs, unsafe):
            f"{len(pairs)} environment variable(s) this repo reads. **Names only — no values are "
            f"ever recorded here.**"]
     if len(pairs) > MAX_ENV_LISTED:
-        out.append(f"Showing {MAX_ENV_LISTED} of {len(pairs)}.")
+        out.append(f"Showing the {MAX_ENV_LISTED} referenced in the most places, of {len(pairs)}. "
+                   f"Grep the repository for the rest.")
     out.append("")
     out.append(", ".join(f"`{n}`" for n, _ in pairs[:MAX_ENV_LISTED]))
     if unsafe:

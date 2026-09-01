@@ -42,11 +42,33 @@ def encoded_dir(repo_root):
     exact = PROJECT_ROOT / want
     if exact.is_dir():
         return exact
-    tail = repo_root.name
+    # The fallback used to accept any directory whose name ended with this repo's basename, and
+    # return the first in sort order. `~/work/Lumin-App` and `~/Documents/Lumin-App` both end that
+    # way, so a checkout of the same project elsewhere -- or an unrelated repo that happens to
+    # share a basename -- had its token spend reported as this one's, with nothing on screen
+    # saying which had been read. Rank by how much of the path actually agrees, and when two
+    # candidates agree equally there is no honest answer: say nothing rather than guess.
+    best, best_score, tied = None, 0, False
     for cand in sorted(PROJECT_ROOT.glob("*")):
-        if cand.is_dir() and cand.name.endswith(tail):
-            return cand
-    return None
+        if not cand.is_dir():
+            continue
+        score = _shared_tail(want, cand.name)
+        if score > best_score:
+            best, best_score, tied = cand, score, False
+        elif score and score == best_score:
+            tied = True
+    return None if tied else best
+
+
+def _shared_tail(want, have):
+    """How many trailing encoded components the two names agree on, anchored on the dash so `-app`
+    is not counted as a match for `-my-app`. Both sides are split the same lossy way, so the
+    comparison stays consistent even where a directory name contains its own dash."""
+    a, b = want.split("-"), have.split("-")
+    n = 0
+    while n < len(a) and n < len(b) and a[-1 - n] == b[-1 - n]:
+        n += 1
+    return n
 
 
 def collect(project_dir):
@@ -251,9 +273,13 @@ def main(argv):
     for when, model, inp, out, cread, cwrite in entries:
         key = when.isocalendar()[:2]
         w = weeks[key]
-        w["calls"] += 1; w["cread"] += cread; w["cwrite"] += cwrite; w["out"] += out
+        # `inp` is input the model read that was NOT served from cache -- the whole prompt on a
+        # cache miss, which is every session's first call and every call after the cache expires.
+        # It was unpacked here and then dropped, so those calls reported a context of zero and
+        # dragged the per-call average down by exactly the calls that cost the most.
+        w["calls"] += 1; w["cread"] += cread + inp; w["cwrite"] += cwrite; w["out"] += out
         pm = per_model[model]
-        pm["calls"] += 1; pm["cread"] += cread
+        pm["calls"] += 1; pm["cread"] += cread + inp
 
     print(f"chamnan-report — {root.name}   ({len(entries):,} calls across {len(weeks)} week(s))\n")
     print(f"  {'week':<10}{'calls':>8}{'context/call':>15}{'new-read/call':>16}{'out/call':>11}")

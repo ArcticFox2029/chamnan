@@ -406,6 +406,32 @@ def run_hook(name, payload):
                           capture_output=True, text=True, cwd=fixture).stdout
 
 
+def make_workspace(prefix):
+    """A throwaway repository with enough in its workspace that the hook has something to say.
+
+    Written because two blocks here used `ROOT.parent.parent` — two directories above the checkout —
+    and passed only because the author's clone sits inside another chamnan workspace. On any other
+    machine that path holds no workspace, the hook correctly says nothing, and the checks fail for a
+    reason that has nothing to do with the code. CI found both on its first run.
+    """
+    root = Path(tempfile.mkdtemp(prefix=prefix))
+    ws = root / ".chamnan"
+    (ws / "memory" / "rules").mkdir(parents=True)
+    (ws / "sessions").mkdir()
+    (ws / "MAP.md").write_text(
+        "# Architecture index\n\n## Quick Index\n\n"
+        + "".join(f"- **`src/mod{i}.py`** ({i}L, 2fn) — a module that does something\n"
+                 for i in range(60)),
+        encoding="utf-8")
+    (ws / "STATE.md").write_text(
+        "## → HANDOFF: work still in flight 📌\n\n" + "Something left unfinished. " * 40,
+        encoding="utf-8")
+    (ws / "memory" / "rules" / "a-standing-rule.md").write_text(
+        "# A standing rule this repository works under\n\n" + "It applies every session. " * 30,
+        encoding="utf-8")
+    return root
+
+
 def import_hook_module(name):
     """Load a hooks/*.py file as an importable module, for unit-testing a function inside it
     directly rather than only through its subprocess/stdout behaviour."""
@@ -3814,7 +3840,13 @@ import unicodedata  # noqa: E402
 # root, while ${CLAUDE_PROJECT_DIR} stays put. A shell's directory persists across Bash calls, so one
 # `cd` anywhere in a transcript left every later hook resolving from the wrong place — session_start
 # printed NOTHING and exited 0, and file_pointer went dark even with an absolute path in the payload.
-_hk = ROOT.parent.parent
+# 🐛 [found by CI on its first run] This used to be `ROOT.parent.parent` — two directories above
+# the checkout — and it passed only because the author's clone happens to sit inside another
+# chamnan workspace. On a runner, two levels above the checkout is an empty directory, the hook
+# correctly printed nothing, and five checks failed. The test asserted the developer's folder
+# layout, not the code. Build the workspace it needs instead.
+_hk = make_workspace("chamnan-hookroot-")
+import workspace as _wsroot  # noqa: E402
 _hook = ROOT / "hooks" / "chamnan_session_start.py"
 _env_clean = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
 
@@ -3831,6 +3863,23 @@ check("a payload that is JSON null does not crash the hook",
       _out3.returncode == 0 and len(_out3.stdout) > 1000)
 _out4 = _run_hook("not json at all", str(_hk), _env_clean)
 check("neither does a payload that is not JSON", _out4.returncode == 0)
+
+# The crash the fixture above exposed once it stopped pointing at the author's own machine. `/var`
+# and `/tmp` are symlinks on macOS and plenty of people keep a project behind one; find_root()
+# resolves and hook_root() did not, so `mp.relative_to(root)` raised ValueError, uncaught, and the
+# hook produced nothing at all.
+check("HOOK_ROOT AND FIND_ROOT AGREE ON A PATH THAT GOES THROUGH A SYMLINK",
+      _wsroot.hook_root({"cwd": str(_hk)}) == _wsroot.find_root(_hk))
+check("...so a project behind a symlink still gets its block, rather than a traceback",
+      _out.returncode == 0 and _out3.returncode == 0)
+# Belt as well as braces: a label is never worth an exception.
+_hookmodx = import_hook_module("chamnan_session_start.py")
+check("a display path that cannot be made relative degrades to the bare name",
+      _hookmodx.display(Path("/somewhere/else/MAP.md"), Path("/a/repo")) == "MAP.md")
+check("...and one that can is still written relative",
+      _hookmodx.display(Path("/a/repo/.chamnan/MAP.md"), Path("/a/repo")) == ".chamnan/MAP.md")
+
+shutil.rmtree(_hk, ignore_errors=True)
 
 # ------------- the workspace, damaged the way a real user damages it
 # One root cause in four files: every JSON loader guarded json.JSONDecodeError and stopped there,
@@ -4219,7 +4268,40 @@ import ast as _ast  # noqa: E402
 
 _NET = {"socket", "urllib", "http", "ftplib", "smtplib", "telnetlib", "poplib", "imaplib",
         "requests", "httpx", "urllib3", "aiohttp", "websockets", "xmlrpc", "asyncio"}
-_STDLIB = set(getattr(sys, "stdlib_module_names", ()))
+def _stdlib_names():
+    """The standard library of the interpreter running this, on any version chamnan claims.
+
+    `sys.stdlib_module_names` arrived in 3.10. The floor the README declares is 3.8, and the
+    `getattr(..., ())` this used to fall back to left the set EMPTY there -- so every `import re`
+    was reported as a third-party dependency and the check inverted into a false alarm. A
+    measurement that is wrong on the oldest supported version is worse than one that is absent,
+    because it is the version least likely to be the one you ran it on.
+    """
+    names = set(getattr(sys, "stdlib_module_names", ()))
+    if names:
+        return names
+    import sysconfig
+    names = set(sys.builtin_module_names)
+    stdlib = sysconfig.get_paths().get("stdlib")
+    if stdlib and Path(stdlib).is_dir():
+        for entry in Path(stdlib).iterdir():
+            if entry.suffix == ".py":
+                names.add(entry.stem)
+            elif entry.is_dir() and (entry / "__init__.py").is_file():
+                names.add(entry.name)
+            elif entry.suffix == ".so":            # lib-dynload lands here on some builds
+                names.add(entry.name.split(".")[0])
+        dynload = Path(stdlib) / "lib-dynload"
+        if dynload.is_dir():
+            for entry in dynload.iterdir():
+                names.add(entry.name.split(".")[0])
+    return names
+
+
+_STDLIB = _stdlib_names()
+# Fail loudly rather than pass vacuously: an empty set would make the two checks below trivially
+# true, which is exactly how this defect hid.
+check("the standard library of this interpreter can be enumerated at all", len(_STDLIB) > 100)
 _OWN = {f.stem for f in (ROOT / "lib").glob("*.py")}
 
 def _runtime_files():
@@ -4556,8 +4638,9 @@ shutil.rmtree(_lcdir.parent, ignore_errors=True)
 import contextlib as _ctx  # noqa: E402
 import io as _io  # noqa: E402
 _runs = []
+_noncerepo = make_workspace("chamnan-nonce-")
 _cwd_before = os.getcwd()
-os.chdir(str(ROOT.parent.parent))
+os.chdir(str(_noncerepo))
 try:
     for _ in range(2):
         _buf = _io.StringIO()
@@ -4582,6 +4665,9 @@ check("no live clock leaks into the block",
       not re.search(r"\b\d{2}:\d{2}:\d{2}\b", _runs[0]))
 check("the framing describes the nonce accurately — per injection, not per session",
       "every time this block is injected" in _runs[0])
+check("...and the run actually produced a block to check, rather than passing on emptiness",
+      len(_runs[0]) > 1000)
+shutil.rmtree(_noncerepo, ignore_errors=True)
 
 # ----------------------------- the repo fence, attacked rather than admired
 # chamnan's [repo:nonce] fence is "delimiting" in the spotlighting taxonomy, and the measured
@@ -5259,10 +5345,11 @@ check("...nor can a quoted heading fabricate an entry", len(_te) == 1)
 check("...nor attach a file the thread never touched", _te[0][2] == [])
 
 # Two different titles slugging to one filename appended an unrelated subject to an existing
-# thread, silently — the scattering this module exists to prevent, running backwards.
-check("two different titles do not become one thread file",
-      _tl.slug("Fix Auth!!!") != _tl.slug("Fix, Auth"))
-check("...while the same title still gives the same readable name",
+# thread, silently — the scattering this module exists to prevent, running backwards. The property
+# is asserted where it now lives, in create(): slug() is pure and cannot see a collision, and
+# making it guess produced a worse bug (every hyphenated title got an unguessable hash). The
+# create()-level check is further down, beside the hyphen cases that showed why.
+check("slugging is stable and readable",
       _tl.slug("Fix Auth") == _tl.slug("fix auth") == "fix-auth")
 
 # A token budget is a character index; markdown structure is not. Landing inside a fence left it
@@ -5637,6 +5724,525 @@ _hrefs = re.findall(r'href="(docs/i18n/README\.[\w-]+\.md)"', _rd)
 check("the language row links out as HTML anchors instead", len(_hrefs) >= 20)
 check("...and every one of them names a file that exists",
       all((ROOT / h).is_file() for h in _hrefs))
+
+# ------------------------------ the budget layer, told to say what it actually did
+# Both of these are the same failure in different clothes: the block looks complete and is not.
+
+# `dropped` carried (title, source) and nothing else, so a restored section was removed from the
+# report by TITLE. Two sections may legitimately share one — two "Recorded decisions and lessons"
+# blocks, say — and removing by title took both entries out while restoring only one. The other
+# was then missing from the block, from `dropped`, and from the notice: gone, with no trace.
+_dupA = "\n### Recorded decisions and lessons\n" + "\n".join(
+    f"decision A line {i}" for i in range(60)) + "\n"
+_dupB = "\n### Recorded decisions and lessons\n" + "\n".join(
+    f"decision B line {i}" for i in range(60)) + "\n"
+_dupbody, _dupdropped = fit.shrink("## chamnan\n", [_dupA, _dupB], 1200)
+check("A SECTION THAT VANISHES IS STILL REPORTED AS DROPPED", len(_dupdropped) == 1)
+check("...and the notice names it", "Recorded decisions" in fit.notice(_dupdropped, 1200))
+check("...while the one that was restored is really there", "decision B" in _dupbody)
+
+# Undroppable content can exceed the ceiling on its own, and both loops then run out of moves and
+# return anyway — with `dropped` naming what it removed, which reads as "handled". The host's own
+# positional cut takes over at that point, which is the one failure this module exists to prevent.
+_overbody, _overdropped = fit.shrink("## chamnan\n" + "x" * 20000,
+                                     ["\n### Droppable\nbody\n"], 9000)
+check("AN OVERRUN IT CANNOT FIX IS SAID OUT LOUD", "over its 9,000-byte limit" in _overbody)
+check("...with the real overshoot, not a vague warning",
+      f"{len(_overbody.encode()) - 9000:,} bytes over" in _overbody
+      or "11,102 bytes over" in _overbody)
+check("...and a block that fits says nothing of the kind",
+      "over its" not in fit.shrink("## chamnan\n", ["\n### Small\nbody\n"], 9000)[0])
+
+# A thread filename has to be guessable, because the user types it. The lossy-check compared a
+# slug's hyphens against the title's spaces, so every title with an internal hyphen looked lossy:
+# `bge-m3 migration` became `bge-m3-migration-12a9e3`, and `chamnan-timeline close
+# bge-m3-migration` — the obvious guess — matched nothing.
+for _t, _want in (("bge-m3 migration", "bge-m3-migration"),
+                  ("co-op save sync", "co-op-save-sync"),
+                  ("multi-tenant routing fix", "multi-tenant-routing-fix")):
+    check(f"a hyphenated title keeps a guessable name ({_want})", _tl.slug(_t) == _want)
+_thr = Path(tempfile.mkdtemp())
+_p1, _ = _tl.create(_thr, "Fix Auth!!!", "2026-09-01")
+_p2, _ = _tl.create(_thr, "Fix, Auth", "2026-09-01")
+_p3, _ = _tl.create(_thr, "Fix Auth!!!", "2026-09-01")
+check("TWO DIFFERENT TITLES STILL GET TWO DIFFERENT FILES", _p1 != _p2)
+check("...the same title gets the same file, so declaring twice is safe", _p1 == _p3)
+check("...and only the one that actually collided carries a hash",
+      _p1.name == "fix-auth.md" and _p2.name != "fix-auth.md")
+shutil.rmtree(_thr, ignore_errors=True)
+
+# ------------------------------ chamnan's own runtime logs stay out of git
+# Found on a real production infrastructure repository running 1.9.0: logs/scratch.jsonl held a
+# string matching a GitLab personal-access-token pattern. It had not reached git — because that
+# user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
+#
+# These logs are not summaries: scratch.jsonl keeps the opening line of each throwaway script and
+# commands.jsonl keeps command signatures, both verbatim, and neither passes through the redactor,
+# which guards a different path (MAP.md and the injected block).
+_ig = Path(tempfile.mkdtemp()) / "ig"
+(_ig / ".git").mkdir(parents=True)
+ws.ensure(_ig)
+_gi = _ig / ".chamnan" / ".gitignore"
+check("A FRESH WORKSPACE KEEPS ITS OWN RUNTIME LOGS OUT OF GIT", _gi.is_file())
+check("...covering the two that hold verbatim text", "logs/*.jsonl" in _gi.read_text(encoding="utf-8"))
+check("...and the per-session state beside them",
+      all(x in _gi.read_text(encoding="utf-8")
+          for x in ("logs/nudge/", "logs/pointer_seen*.json", "logs/*.lock")))
+check("...and it says WHY, so nobody deletes the rule to tidy up",
+      "verbatim" in _gi.read_text(encoding="utf-8"))
+check("NOTHING IS WRITTEN OUTSIDE THE WORKSPACE TO DO IT", not (_ig / ".gitignore").exists())
+ws.ensure(_ig)
+check("running it again does not append the rule twice",
+      _gi.read_text(encoding="utf-8").count("logs/*.jsonl") == 1)
+(_ig / ".chamnan" / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
+ws.ensure(_ig)
+check("...and a rule the user put there first is kept",
+      _gi.read_text(encoding="utf-8").startswith("*.tmp"))
+shutil.rmtree(_ig.parent, ignore_errors=True)
+
+# Every injected section, not most of them. Three separate rounds each found one more that had
+# reached the block raw, always because its source looked like chamnan's own data rather than
+# somewhere a person writes.
+_hooksrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("the skills listing is scrubbed like its siblings",
+      "the last of the injected sections to reach the block unscrubbed" in _hooksrc.lower()
+      and _hooksrc.count("redact.scrub") >= 10)
+check("...and so is the decisions and lessons listing",
+      "redact.scrub(memory.render_titles" in _hooksrc)
+
+# ------------------------------ two modules disagreeing about what a pin covers
+# state.split_pinned means a pinned span runs to the next heading at the same depth or shallower,
+# SUBSECTIONS INCLUDED — its own docstring says so. fit._fit_lines pinned only a block whose own
+# first line carried the marker. The two disagreed about the same text, silently, in one direction.
+_pin_src = ("# Settled — do not raise these again \U0001F4CC\n\n"
+            "## The bank is cancelled\n"
+            + "a reason line that is reasonably long so this bulks up\n" * 60
+            + "\n## Do not re-add the retry wrapper\n"
+              "Tried twice, both reverted. This is the one that must never be lost.\n")
+_pin_inj, _pin_marker = _state.render(_pin_src, 5000, "STATE.md")
+check("state.render reports nothing held back", _pin_marker == "")
+_pin_part = f"\n### Work in flight\n[repo:abc]\n{_pin_inj}\n[/repo:abc]\n"
+check("AND THE TRIM NO LONGER CUTS THE SUBSECTION THAT MARKER PROMISED",
+      all("retry wrapper" in (fit._trim(_pin_part, _r, {}) or "")
+          for _r in (600, 900, 1500, 2500)))
+
+# The other direction has to keep working, or the fix has simply pinned everything.
+_un = ("# Ordinary heading\n" + "a line long enough to bulk this out properly\n" * 60
+       + "\n## A subsection nobody pinned\nkeep me\n")
+check("...while an UNPINNED tail is still cut when there is no room",
+      all("keep me" not in (fit._trim(f"\n### X\n[repo:a]\n{_un}\n[/repo:a]\n", _r, {}) or "")
+          for _r in (600, 1200, 2000)))
+# And a pinned span must end where the next same-depth heading begins.
+_after = ("# Pinned \U0001F4CC\n" + "short\n" * 5
+          + "\n# Not pinned\n" + "a line long enough to bulk this out properly\n" * 60
+          + "\ntail of the unpinned one\n")
+check("...and a pin does not leak into the section after it",
+      "tail of the unpinned one" not in
+      (fit._trim(f"\n### X\n[repo:a]\n{_after}\n[/repo:a]\n", 700, {}) or ""))
+
+# ------------------------------ a config value of the right type and the wrong meaning
+# load_config checked the TYPE of every key and never its range, and for a retention setting those
+# are not the same thing. `{"log_retention_days": -1}` is valid JSON, correctly typed, survives the
+# key filter — and then `time.time() - (-1) * 86400` puts the cutoff a day in the FUTURE, so every
+# file on disk is "older" than it. Reproduced: a log and a session record written one second
+# earlier, both deleted. Session records are committed work, not cache.
+_cfgr = Path(tempfile.mkdtemp()) / "cfgr"
+(_cfgr / ".git").mkdir(parents=True)
+ws.ensure(_cfgr)
+(_cfgr / ".chamnan" / "logs" / "pointer.jsonl").write_text("fresh\n", encoding="utf-8")
+(_cfgr / ".chamnan" / "sessions" / "2026-09-01-abcd.md").write_text("# just written\n",
+                                                                    encoding="utf-8")
+_cf = _cfgr / ".chamnan" / "config.json"
+_cd = json.loads(_cf.read_text(encoding="utf-8"))
+_cd["log_retention_days"] = -1
+_cd["session_retention_days"] = -5
+_cf.write_text(json.dumps(_cd), encoding="utf-8")
+ws.prune_logs(_cfgr)
+ws.prune_sessions(_cfgr)
+check("A NEGATIVE RETENTION DOES NOT DELETE EVERYTHING WRITTEN TODAY",
+      (_cfgr / ".chamnan" / "logs" / "pointer.jsonl").is_file())
+check("...including committed session records",
+      (_cfgr / ".chamnan" / "sessions" / "2026-09-01-abcd.md").is_file())
+check("...and the bad value is dropped rather than kept",
+      ws.load_config(_cfgr)["log_retention_days"] >= 0)
+check("...while a legitimate value is still honoured",
+      ws.load_config(_cfgr) is not None)
+
+# Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
+# workspace crashed it outright — and with it every command and hook that calls it.
+_ro = Path(tempfile.mkdtemp()) / "ro"
+(_ro / ".git").mkdir(parents=True)
+ws.ensure(_ro)
+_roc = _ro / ".chamnan" / "config.json"
+_rod = json.loads(_roc.read_text(encoding="utf-8"))
+_rod.pop(next(iter(_rod)), None)
+_roc.write_text(json.dumps(_rod), encoding="utf-8")
+os.chmod(_roc, 0o444)
+os.chmod(_ro / ".chamnan", 0o555)
+try:
+    ws.ensure(_ro)
+    _survived = True
+except Exception:
+    _survived = False
+finally:
+    os.chmod(_ro / ".chamnan", 0o755)
+    os.chmod(_roc, 0o644)
+check("A READ-ONLY WORKSPACE DOES NOT CRASH ensure()", _survived)
+shutil.rmtree(_cfgr.parent, ignore_errors=True)
+shutil.rmtree(_ro.parent, ignore_errors=True)
+
+# An include guard is a name that exists to stop double inclusion and describes nothing. Every C
+# and C++ header has one, so it put a pure-noise entry in every header's row.
+_hdr = ("#ifndef BOARD_ESP32_H\n#define BOARD_ESP32_H\n#define LED_PIN 2\n"
+        "#define I2C_SDA 21\nvoid board_init(void);\n#endif\n")
+check("AN INCLUDE GUARD IS NOT LISTED AS A CONSTANT",
+      "BOARD_ESP32_H" not in mapper._extract_one(_hdr, "b.h", "c")[3])
+check("...while the pin definitions beside it are",
+      set(mapper._extract_one(_hdr, "b.h", "c")[3]) == {"LED_PIN", "I2C_SDA"})
+check("...and a #define whose name merely resembles a guard is kept",
+      "B_H" in mapper._extract_one("#ifndef A_H\n#define B_H\n", "c.h", "c")[3])
+
+# ------------------------------ six places a module contradicted another module
+import md as _md  # noqa: E402
+import aging as _ag  # noqa: E402
+
+# fnmatch's `*` crosses `/`; Path.glob's does not — and rulecheck, the module that actually RUNS
+# the check, uses Path.glob. So the pointer told a session that `src/deep/nested/leaky.py` was
+# covered by a rule written `in src/*.py`, while the checker had never looked at that file and
+# never would. Two modules, one glob, opposite answers, and the one talking to the model was wrong.
+for _g, _r, _want in (("src/*.py", "src/app.py", True),
+                      ("src/*.py", "src/deep/nested/leaky.py", False),
+                      ("src/**/*.py", "src/deep/nested/leaky.py", True),
+                      ("src/", "src/a/b.py", True),
+                      ("src/", "other/a.py", False),
+                      ("*.md", "README.md", True),
+                      ("*.md", "docs/a.md", False)):
+    check(f"a rule's glob means the same thing to both modules ({_g} vs {_r})",
+          pointer_mod._glob_covers(_g, _r) is _want)
+
+# A `---` horizontal rule at the top of a document is an ordinary markdown idiom, and any second
+# one further down closed a "front matter" block whose body was prose. A line of that prose
+# starting "description:" was then read as declared metadata and used as the entry's title.
+check("FRONT MATTER HAS TO LOOK LIKE FRONT MATTER",
+      _md.front_matter("---\n\n# Real Title\n\ndescription: this is body prose\n\n---\n") == "")
+check("...while real front matter still parses",
+      "description: real" in _md.front_matter("---\ndescription: real\n---\nbody"))
+
+# Equality alone is right about direction and wrong about precision: an environment declaring
+# `python 3.11` declares a series, and a lesson saying `3.11.2` names a member of it.
+check("a declared 3.11 covers a claimed 3.11.2", _ag._covers("3.11", "3.11.2"))
+check("...but not a claimed 3.12", not _ag._covers("3.11", "3.12"))
+check("...and a vaguer claim than the environment is still worth noticing",
+      not _ag._covers("3.11.2", "3.11"))
+
+# The two commonest ways an environment is actually selected are positional, not flags.
+_envr = Path(tempfile.mkdtemp())
+(_envr / ".chamnan").mkdir(parents=True)
+for _n in ("production", "staging"):
+    env_mod.upsert(_envr, _n, env_mod.render_entry(_n, platform="k8s"))
+for _cmd, _want in (("kubectl config use-context production", "production"),
+                    ("terraform workspace select staging", "staging"),
+                    ("kubectl --context production get pods", "production"),
+                    ("grep use-context deploy.log", None),
+                    ("echo select production", None)):
+    check(f"match_command({_cmd[:34]!r}…)", env_mod.match_command(_envr, _cmd) == _want)
+shutil.rmtree(_envr, ignore_errors=True)
+
+# The bulk-read notice priced a file with a flat divisor while the package's own estimator existed
+# and had been re-fitted precisely because a flat divisor undercounts CJK and path-dense text.
+_brn = import_hook_module("chamnan_bulk_read_notice.py")
+check("the bulk-read notice uses the package's own estimator",
+      "tokens.estimate" in (ROOT / "hooks" / "chamnan_bulk_read_notice.py").read_text(
+          encoding="utf-8"))
+# ...and its build/vendor check ran over the file's ABSOLUTE path, so a repo checked out beneath
+# any directory named `vendor` had every one of its own source files called generated.
+_vend = Path(tempfile.mkdtemp()) / "vendor" / "realproject"
+(_vend / "src").mkdir(parents=True)
+_vf = _vend / "src" / "app.py"
+_vf.write_text("x = 1\n", encoding="utf-8")
+check("A REPO BENEATH A DIRECTORY NAMED vendor IS NOT ALL GENERATED",
+      _brn.reason_for(_vf, _vend) == "")
+(_vend / "vendor").mkdir()
+_rv = _vend / "vendor" / "lib.py"
+_rv.write_text("y = 2\n", encoding="utf-8")
+check("...while a real vendor directory inside it is still flagged",
+      _brn.reason_for(_rv, _vend) != "")
+shutil.rmtree(_vend.parent.parent, ignore_errors=True)
+
+# ------------------------------ measured against real trees, not fixtures
+# All three found by running the current build over tokio and Homebrew and reading the result as a
+# stranger would. Two are regressions introduced earlier in this same release.
+
+# Once one dominant directory pushes the roll-up to depth 2, a file with only ONE directory
+# segment fell into "(root)" — so `src/blocking.rs` (production) and `tests/fs.rs` (integration
+# tests) landed in one bucket of 175, under a name true of neither.
+_deep = "\n".join(["## Quick Index", ""] + [
+    f"- **`{q}`** (10L) — x" for q in
+    ["src/blocking.rs", "tests/fs.rs", "tests/io.rs", "Cargo.toml"]
+    + [f"src/runtime/f{i}.rs" for i in range(40)]])
+_deep_out = _ru.collapse(_deep, "MAP.md", per_dir=0)
+check("A FILE SHALLOWER THAN THE CHOSEN DEPTH KEEPS ITS OWN PARENT",
+      "- **src/** (1)" in _deep_out and "- **tests/** (2)" in _deep_out)
+check("...and (root) means what it says: a file with no directory at all",
+      "- **(root)/** (1)" in _deep_out)
+
+# A directive can span lines and only its first line looked like one, so line two of Rust's
+# `#![allow(\n …\n)]` fell through to the comment reader, which returned "" and made the whole
+# function give up — on the file carrying the crate's architecture overview.
+_multi = ("#![allow(\n    clippy::cognitive_complexity,\n    clippy::needless_doctest_main,\n)]\n\n"
+          "//! A runtime for writing reliable network applications.\n")
+check("A MULTI-LINE ATTRIBUTE DOES NOT SWALLOW THE FILE'S OWN DOC",
+      "runtime for writing reliable" in (mapper.leading_comment(_multi, "rs") or ""))
+check("...and an unbalanced one is bounded rather than eating the file",
+      mapper.leading_comment("#![allow(\n" + "x,\n" * 100, "rs") == "")
+check("...while a C include block still steps aside for the real description",
+      "Real description" in (mapper.leading_comment(
+          "#include <stdio.h>\n#define X 1\n\n/* Real description here */\n", "c") or ""))
+
+# `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
+# first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
+_aside = ("// loom is an internal implementation detail. Do not show this label.\n"
+          "//! A runtime for writing reliable network applications.\n")
+check("the language's own file-doc marker wins over whatever comment comes first",
+      "runtime for writing reliable" in (mapper.leading_comment(_aside, "rs") or ""))
+
+# Full Detail is what the index tells a reader to grep for symbol-level truth, and it was calling
+# a union type alias a class.
+_tsrender = mapper.render([dict(path="t.ts", lang="js", lines=3, chars=40, doc="types",
+                                funcs=[], consts=[], imports=[],
+                                classes=[("AgentInput", "", [])])], ROOT)
+check("Full Detail names a TypeScript declaration a type, not a class",
+      "**type AgentInput**" in _tsrender and "**class AgentInput**" not in _tsrender)
+
+# ------------------------------ what the report says about YOUR repo, and only yours
+import fit as _fitx  # noqa: E402
+import ledger as _ledx  # noqa: E402
+
+_rspec = importlib.util.spec_from_loader(
+    "chamnan_report",
+    importlib.machinery.SourceFileLoader("chamnan_report", str(ROOT / "bin" / "chamnan-report")))
+_rep = importlib.util.module_from_spec(_rspec)
+_rspec.loader.exec_module(_rep)
+
+# `~/work/Lumin-App` and `~/Documents/Lumin-App` encode to two directories that both end in the
+# same basename. The fallback returned whichever sorted first, so a second checkout of the same
+# project -- or an unrelated repo sharing a basename -- had its token spend printed as this one's.
+# Two OTHER checkouts of the same project; the exact encoding of this one is absent, which is the
+# only situation the suffix fallback exists for.
+_tie_a, _tie_b = "-Users-me-work-Lumin-App", "-Volumes-ext-Lumin-App"
+_want = "-Users-me-Documents-Lumin-App"
+check("a basename shared by two checkouts scores them equally -- which is the tie condition",
+      _rep._shared_tail(_want, _tie_a) == _rep._shared_tail(_want, _tie_b))
+_fakeproj = Path(tempfile.mkdtemp(prefix="chamnan-proj-"))
+(_fakeproj / _tie_a).mkdir(); (_fakeproj / _tie_b).mkdir()
+_realproj, _rep.PROJECT_ROOT = _rep.PROJECT_ROOT, _fakeproj
+check("AND A TIE IS ANSWERED WITH SILENCE, NOT WITH WHICHEVER SORTED FIRST",
+      _rep.encoded_dir(Path("/Users/me/Documents/Lumin-App")) is None)
+shutil.rmtree(_fakeproj / _tie_b)
+check("...while a single candidate is still resolved by suffix",
+      _rep.encoded_dir(Path("/Users/me/Documents/Lumin-App")) == _fakeproj / _tie_a)
+_rep.PROJECT_ROOT = _realproj
+shutil.rmtree(_fakeproj, ignore_errors=True)
+check("...while the longer agreement wins outright when there is one",
+      _rep._shared_tail("-a-b-c-app", "-a-b-c-app") > _rep._shared_tail("-a-b-c-app", "-z-app"))
+check("...and a suffix is anchored on the dash, so -app is not a match for -my-app",
+      _rep._shared_tail("-x-my-app", "-y-app") == 1)
+
+# Memory entries carry `**As-of:**` and the ledger still read mtime, so every decision ever
+# recorded reported as written today the moment the repo was cloned.
+_led = Path(tempfile.mkdtemp(prefix="chamnan-ledger-")) / "repo"
+(_led / ".chamnan" / "memory" / "lessons").mkdir(parents=True)
+_lf = _led / ".chamnan" / "memory" / "lessons" / "x.md"
+_lf.write_text("# x\n\n**As-of:** 2020-03-04\n", encoding="utf-8")
+check("A MEMORY ENTRY IS DATED BY ITS OWN As-of, NOT BY WHEN THIS MACHINE TOUCHED IT",
+      abs(_ledx._dated([_lf])[0] - 1583323200) < 86400)
+_lf2 = _led / ".chamnan" / "memory" / "lessons" / "y.md"
+_lf2.write_text("# y\n\nno date here\n", encoding="utf-8")
+check("...and an entry that claims no date still counts, by mtime",
+      abs(_ledx._dated([_lf2])[0] - _lf2.stat().st_mtime) < 2)
+
+# chamnan's own guidance asks for `path:line` citations, and its own check counted every entry
+# that complied as naming no file in this repository.
+check("A path:line CITATION STILL NAMES A FILE", _ledx._strip_locator("src/fit.py:142") == "src/fit.py")
+check("...including a line range", _ledx._strip_locator("src/fit.py:142-158") == "src/fit.py")
+check("...and a path with no locator is untouched", _ledx._strip_locator("src/fit.py") == "src/fit.py")
+check("...and the shape test runs on the stripped span, so Makefile:12 survives it",
+      _ledx._looks_like_a_path(_ledx._strip_locator("Makefile:12")))
+
+# A footnote whose section was dropped points at a heading that is not in the block. The live
+# 9,000-byte block shipped "Full detail lives in .chamnan/MAP.md" while naming Architecture index
+# in its own list of what had been left out.
+_parts = ["\n### Architecture index\n" + "i" * 400 + "\n",
+          "_Full detail lives in `.chamnan/MAP.md`._\n",
+          "\n### Rules this repository works under\n" + "r" * 400 + "\n"]
+_body, _drop = _fitx.shrink("H\n", _parts, ceiling=700)
+check("A DROPPED SECTION TAKES ITS OWN FOOTNOTES WITH IT",
+      "i" * 400 not in _body and "Full detail lives in" not in _body)
+check("...and the section that was kept still has its content", "r" * 400 in _body)
+_body2, _drop2 = _fitx.shrink("H\n", _parts, ceiling=100000)
+check("...while nothing is removed when everything fits",
+      "Full detail lives in" in _body2 and not _drop2)
+
+# Emitted since 1.11.0 and never ranked, so it was dropped ahead of everything but the index.
+check("EVERY SECTION THE HOOK EMITS HAS A DROP RANK",
+      all(any(t.startswith(n) for n in _fitx.DROP_ORDER) for t in
+          ["Environment constraints — check these before proposing infrastructure work",
+           "Rules this repository works under", "Work in flight (from the last session)"]))
+check("...and it outranks what is merely useful to know",
+      _fitx.DROP_ORDER.index("Environment constraints") > _fitx.DROP_ORDER.index("Recent milestones"))
+
+# Retention was reachable from 2 of the 9 commands in bin/. The hook is the one thing that runs
+# whatever the session does.
+check("RETENTION RUNS FROM THE HOOK, NOT ONLY FROM THE TWO COMMANDS THAT HAPPEN TO CALL IT",
+      "ws.prune_logs(root)" in (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8"))
+
+shutil.rmtree(_led.parent, ignore_errors=True)
+
+# ------------------------------ the commands, when you use them the way the docs tell you to
+import timeline as _tl  # noqa: E402
+import peek as _pk  # noqa: E402
+import catalogs as _cat  # noqa: E402
+
+# `chamnan-env check` prints "re-confirm with `chamnan-env set <name> --checked <date>`", and that
+# exact command erased the platform, the versions and every constraint -- the parts nobody else can
+# reconstruct.
+_envrepo = Path(tempfile.mkdtemp(prefix="chamnan-env-"))
+subprocess.run(["git", "-C", str(_envrepo), "init", "-q"], capture_output=True)
+(_envrepo / ".chamnan").mkdir()
+_envbin = [sys.executable, str(ROOT / "bin" / "chamnan-env")]
+subprocess.run(_envbin + ["set", "production", "--platform", "AWS eu-west-1",
+                          "--versions", "terraform v1.9.2", "--constraint", "never touch drk8s"],
+               cwd=_envrepo, capture_output=True, text=True)
+subprocess.run(_envbin + ["set", "production", "--checked", "2026-09-01"],
+               cwd=_envrepo, capture_output=True, text=True)
+_envtext = (_envrepo / ".chamnan" / "environments.md").read_text(encoding="utf-8")
+check("RE-CONFIRMING AN ENVIRONMENT DOES NOT ERASE THE FIELDS YOU DID NOT RETYPE",
+      "AW" + "S eu-west-1" in _envtext and "never touch drk8s" in _envtext
+      and "terraform" in _envtext and "1.9.2" in _envtext and "2026-09-01" in _envtext)
+subprocess.run(_envbin + ["set", "production", "--platform", ""], cwd=_envrepo,
+               capture_output=True, text=True)
+check("...while naming a field as empty still clears it",
+      "eu-west-1" not in (_envrepo / ".chamnan" / "environments.md").read_text(encoding="utf-8"))
+shutil.rmtree(_envrepo, ignore_errors=True)
+
+# `promote ... tool` writes a SKELETON with placeholders, so every tool worth having has
+# hand-written commands in it. `demote` deleted the file, and the candidate it writes in exchange
+# is one line of description that it says outright is not a reconstruction.
+_demote = (ROOT / "bin" / "chamnan-candidates").read_text(encoding="utf-8")
+_demote = _demote.split("def cmd_demote", 1)[1].split("\ndef ", 1)[0]
+check("DEMOTE ARCHIVES THE TOOL RATHER THAN DELETING WHAT SOMEBODY WROTE",
+      "tool_path.replace(dest)" in _demote and "tool_path.unlink()" not in _demote)
+
+# A Homebrew formula states its own summary in `desc "..."`, which is not a comment, so a whole tap
+# came out with nothing said about any of it.
+check("A HOMEBREW FORMULA IS DESCRIBED BY ITS OWN desc LINE",
+      mapper.leading_comment('class Wget < Formula\n  desc "Internet file retriever"\nend\n', "rb")
+      == "Internet file retriever")
+check("...and Rake's per-task desc is not mistaken for one",
+      mapper.leading_comment('desc "run the tests"\ntask :test do\nend\n', "rb") == "")
+
+# index.json is in registration order and the injected list took the first MAX_TOOLS of it, so a
+# thirteenth tool was never named in any session.
+_hooksrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("THE INJECTED TOOL LIST IS RANKED BY USE, NOT BY WHO REGISTERED FIRST",
+      'ranked.sort(key=lambda t: -(t.get("runs") or 0))' in _hooksrc
+      and "for t in ranked[:MAX_TOOLS]" in _hooksrc)
+
+# peek exists so a number here can be trusted instead of the file being read.
+_wide = Path(tempfile.mkdtemp(prefix="chamnan-peek-")) / "w.csv"
+_cols = [f"c{i}" for i in range(60)]
+_wide.write_text(",".join(_cols) + "\n" + ",".join("1" for _ in _cols) + "\n", encoding="utf-8")
+check("A TRUNCATED COLUMN LIST SAYS HOW MANY IT LEFT OUT",
+      "…+20 more" in "\n".join(_pk.peek_csv(_wide)))
+_realcap, _pk.ROW_CAP = _pk.ROW_CAP, 3
+_many = _wide.with_name("m.csv")
+_many.write_text("a\n" + "1\n" * 10, encoding="utf-8")
+check("AND A ROW COUNT STOPPED AT THE CAP IS REPORTED AS A FLOOR, NOT AS A FACT",
+      "more than" in _pk.peek_csv(_many)[0])
+_pk.ROW_CAP = _realcap
+check("...while a file under the cap still states its count plainly",
+      _pk.peek_csv(_many)[0] == "1 columns, 10 data rows")
+shutil.rmtree(_wide.parent, ignore_errors=True)
+
+# The Configuration list is capped and was cut alphabetically, so a repo with 200 variables showed
+# everything up to about `D` under a line that said only "Showing 50 of 200".
+check("A CAPPED CONFIGURATION LIST NAMES THE RANKING IT WAS CUT ON",
+      "referenced in the most places" in _cat.render_env(
+          [(f"V{i}", "a.py") for i in range(_cat.MAX_ENV_LISTED + 5)], []))
+
+# A thread entry written before a `git mv` names the old path; asking about the new one found
+# nothing, though git itself knows the two are one file.
+_rn = Path(tempfile.mkdtemp(prefix="chamnan-rn-"))
+(_rn / "src").mkdir(); (_rn / ".chamnan" / "threads").mkdir(parents=True)
+_git = lambda *a: subprocess.run(["git", "-C", str(_rn)] + list(a), capture_output=True, text=True)
+_git("init", "-q"); _git("config", "user.email", "t@t"); _git("config", "user.name", "t")
+(_rn / "src" / "old_name.py").write_text("x\n", encoding="utf-8")
+(_rn / ".chamnan" / "threads" / "t.md").write_text(
+    "# thread\n\n## 2026-08-01 — reworked the parser\n\n**Files:** `src/old_name.py`\n\n",
+    encoding="utf-8")
+_git("add", "-A"); _git("commit", "-qm", "one")
+_git("mv", "src/old_name.py", "src/new_name.py"); _git("commit", "-qm", "rename")
+_tl._NAMES_CACHE.clear()
+check("A FILE'S HISTORY FOLLOWS IT THROUGH A RENAME",
+      len(_tl.for_path(_rn, "src/new_name.py")) == 1)
+check("...and a file git has never heard of still matches nothing",
+      _tl.for_path(_rn, "src/unrelated.py") == [])
+shutil.rmtree(_rn, ignore_errors=True)
+
+# ------------------------------ the front page, which is the only thing most readers see
+# A broken in-page link shipped once already, from raw block-level HTML swallowing the markdown
+# inside it. These check the two ways the page can lie about itself: a jump that goes nowhere, and
+# a relative link to a file that is not there.
+_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def _slug(h):
+    h = re.sub(r"`", "", h)
+    h = re.sub(r"[^\w\s-]", "", h, flags=re.U)
+    return re.sub(r"\s+", "-", h.strip()).lower()
+
+
+_heads = {_slug(m.group(2)) for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", _readme, re.M)}
+_broken = sorted({a for a in re.findall(r"\]\(#([^)]+)\)", _readme) if a not in _heads})
+check("EVERY IN-PAGE LINK IN THE README RESOLVES TO A HEADING: " + str(_broken), not _broken)
+_relpaths = [t for t in re.findall(r"\]\((?!https?:|#)([^)\s]+)\)", _readme)]
+_missing = sorted({t for t in _relpaths if not (ROOT / t.split("#")[0]).exists()})
+check("...and every relative link names a file that exists: " + str(_missing), not _missing)
+check("the page opens with a self-contained digest, because it is what a summariser reads",
+      "## In one screen" in _readme
+      and _readme.index("## In one screen") < _readme.index("## Evidence"))
+check("...and a contents list, so the shape is visible without reading 1,900 lines",
+      "## Contents" in _readme)
+
+# ------------------------------ thirty-two pages nobody reads all of
+# The rule the English README advertises, enforced instead of stated. A page that acquires a number
+# needs an edit every release, and a translation that goes unedited while the source moves is worse
+# than no translation, because it still reads as current.
+_i18n = sorted((ROOT / "docs" / "i18n").glob("README.*.md"))
+check(f"every translated page is still there ({len(_i18n)})", len(_i18n) == 32)
+_digits = {p.name: [w for w in re.findall(r"\S*\d\S*", p.read_text(encoding="utf-8"))
+                    if "ArcticFox2029" not in w] for p in _i18n}
+_digits = {k: v for k, v in _digits.items() if v}
+check("NOT ONE TRANSLATED PAGE CARRIES A NUMBER: " + str(_digits), not _digits)
+
+sys.path.insert(0, str(ROOT / "docs" / "i18n"))
+import i18n_strings as _i18s  # noqa: E402
+import build_sections as _i18b  # noqa: E402
+
+_codes = {p.name[len("README."):-len(".md")] for p in _i18n}
+check("...and every one of them has a string table: " + str(sorted(_codes - set(_i18s.STRINGS))),
+      not (_codes - set(_i18s.STRINGS)))
+# The failure this guards against is a row that exists in some languages and not others -- which
+# nobody would ever notice, because nobody reads all thirty-two.
+_keys = set(_i18s.STRINGS["en"] if "en" in _i18s.STRINGS else _i18s.STRINGS["th"])
+_ragged = {c: sorted(_keys - set(t)) for c, t in _i18s.STRINGS.items() if _keys - set(t)}
+check("EVERY LANGUAGE CARRIES EVERY ROW: " + str(_ragged), not _ragged)
+_extra = {c: sorted(set(t) - _keys) for c, t in _i18s.STRINGS.items() if set(t) - _keys}
+check("...and none carries a row the others do not: " + str(_extra), not _extra)
+check("the feature sections are actually in the pages, not only in the table",
+      all("<!-- generated: build_sections.py -->" in p.read_text(encoding="utf-8") for p in _i18n))
+check("...and a page says enough to be worth translating at all",
+      min(len(p.read_text(encoding="utf-8").splitlines()) for p in _i18n) > 100)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

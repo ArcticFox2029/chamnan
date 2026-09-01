@@ -25,6 +25,8 @@ changed, it needed a rollback" instead of only naming what imports what. Free pr
 key — the same reason `Symptom:` was cut from the memory format.
 """
 import re
+import subprocess
+
 import mdblock
 
 DIRNAME = "threads"
@@ -50,23 +52,33 @@ def directory(root):
 
 
 def slug(title):
-    """A filename for a thread title.
+    """A readable filename for a thread title.
 
-    Lossy on purpose -- punctuation and case go -- which means two DIFFERENT titles can land on the
-    same name: "Fix Auth!!!" and "Fix, Auth" both give `fix-auth`, and the second silently appended
-    an unrelated subject to the first thread's file. That is the scattering this module exists to
-    prevent, running in reverse, and it was undocumented in either direction.
+    Lossy on purpose -- punctuation and case go -- so two DIFFERENT titles can land on the same
+    name: "Fix Auth!!!" and "Fix, Auth" both give `fix-auth`, and the second silently appended an
+    unrelated subject to the first thread's file. That is the scattering this module exists to
+    prevent, running in reverse.
 
-    A short hash of the original title is appended when the collapse actually loses something, so
-    a title that survives slugging intact keeps the readable filename it always had.
+    The collision is handled in create(), not here, and that placement is the fix for a fix. This
+    function once appended a hash whenever slugging "changed" the title -- but slugging changes
+    every title with an internal hyphen, so `bge-m3 migration` became `bge-m3-migration-12a9e3`
+    and `chamnan-timeline close bge-m3-migration`, the obvious guess, matched nothing. A pure
+    function cannot know whether a name collides; only the directory can. So this stays readable
+    and guessable, and create() disambiguates when it actually has to.
     """
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    s = s[:50].rstrip("-") or "thread"
+    return s[:50].rstrip("-") or "thread"
+
+
+def _distinct_slug(directory_, title):
+    """`slug(title)`, or that plus a short hash when the name is taken by a DIFFERENT title."""
+    base = slug(title)
+    path = directory_ / f"{base}.md"
+    if not path.is_file() or title_of(path).strip().lower() == title.strip().lower():
+        return base
+    import hashlib
     canonical = " ".join(title.split()).lower()
-    if s.replace("-", " ") != canonical:
-        import hashlib
-        s = f"{s}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
-    return s
+    return f"{base}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
 
 
 def threads(root):
@@ -159,7 +171,7 @@ def create(root, title, today):
     than overwritten, so running this twice is safe and never loses entries."""
     d = directory(root)
     d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{slug(title)}.md"
+    path = d / f"{_distinct_slug(d, title)}.md"
     if path.is_file():
         return path, False
     path.write_text(f"# {title.strip()}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
@@ -207,12 +219,46 @@ def set_status(root, ident, status):
     return path
 
 
+_NAMES_CACHE = {}
+
+
+def historical_names(root, target):
+    """Every name `target` has been known by, from git's own rename detection.
+
+    A thread entry written before a `git mv` names the old path, so asking about the new one found
+    nothing at all -- the history existed, and the join could not see it. `--follow` takes exactly
+    one pathspec, which is what this is called with. Best-effort: no repository, no git, a bad exit
+    or a timeout all mean "no extra names", never an error, because a history lookup failing must
+    not take the caller down with it.
+    """
+    from workspace import find_root
+    repo = find_root(root)
+    key = (str(repo), target)
+    if key in _NAMES_CACHE:
+        return _NAMES_CACHE[key]
+    names = set()
+    try:
+        out = subprocess.run(
+            # core.quotePath=false for the same reason rollup._churn sets it: git C-quotes any
+            # non-ASCII path by default, and the quoted form matches nothing.
+            ["git", "-C", str(repo), "-c", "core.quotePath=false",
+             "log", "--follow", "--name-only", "--pretty=format:", "-n", "200", "--", target],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            errors="replace", timeout=10)
+        if out.returncode == 0:
+            names = {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
+    except (OSError, subprocess.SubprocessError):
+        names = set()
+    return _NAMES_CACHE.setdefault(key, names)
+
+
 def for_path(root, target):
     """[(thread_path, date, note)] for every entry naming `target` in its `Files:` line, newest
     first. This is the join Stage 13b's impact query reads: given a file somebody is about to
     change, what has already happened to it.
 
-    Matches a declared path exactly, or as a suffix of one — an entry written as `src/app.py`
+    Matches a declared path exactly, or as a suffix of one, under any name the file has had —
+    an entry written as `src/app.py`
     should still answer a question asked about `src/app.py` from a subdirectory. Deliberately not
     a fuzzy match: `app.py` matching `src/vendor/app.py` would attach one file's history to
     another's, which is worse than finding nothing.
@@ -220,13 +266,21 @@ def for_path(root, target):
     target = str(target).strip().strip("`").lstrip("./")
     if not target:
         return []
+    # The name asked about, plus every name the file has had. Same matching rule for each: exact,
+    # or a suffix on a path boundary. Still deliberately not fuzzy.
+    wanted = {target} | {n.lstrip("./") for n in historical_names(root, target) if n}
     hits = []
     for path in threads(root):
         for date, note, files in entries_of(path):
+            matched = False
             for f in files:
                 f = f.lstrip("./")
-                if f == target or f.endswith("/" + target) or target.endswith("/" + f):
-                    hits.append((path, date, note))
+                for t in wanted:
+                    if f == t or f.endswith("/" + t) or t.endswith("/" + f):
+                        hits.append((path, date, note))
+                        matched = True
+                        break
+                if matched:
                     break
     return sorted(hits, key=lambda h: h[1], reverse=True)
 

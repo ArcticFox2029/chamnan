@@ -52,6 +52,22 @@ def claims_in(text):
     return [(n.lower(), v) for n, v in _CLAIM.findall(text or "")]
 
 
+def _covers(declared, claimed):
+    """True when a claim is an instance of what the environment declares.
+
+    Equality alone is right about the direction and wrong about precision. An environment declaring
+    `python 3.11` is declaring a series, and a lesson saying `python 3.11.2` is talking about a
+    member of it -- flagging that as a contradiction is a false positive on exactly the kind of
+    entry the check exists to protect. Prefix on the dotted components, and only in that direction:
+    a claim of `3.11` against a declared `3.11.2` is NOT covered, because the entry is then vaguer
+    than the environment and the vagueness is the thing worth noticing.
+    """
+    if declared == claimed:
+        return True
+    d, c = declared.split("."), claimed.split(".")
+    return len(c) > len(d) and c[:len(d)] == d
+
+
 def check(root, now=None):
     """(findings, unverifiable, refusal) — the whole result, and `refusal` decides how to read it.
 
@@ -107,9 +123,10 @@ def check(root, now=None):
                 if name not in declared_names or (name, claimed) in seen:
                     continue
                 seen.add((name, claimed))
-                if any(v == claimed for _e, v in fresh_versions.get(name, [])):
+                if any(_covers(v, claimed) for _e, v in fresh_versions.get(name, [])):
                     continue
-                cold_match = next((e for e, v in cold_versions.get(name, []) if v == claimed), None)
+                cold_match = next((e for e, v in cold_versions.get(name, [])
+                                   if _covers(v, claimed)), None)
                 if cold_match:
                     unverifiable.append((category, path.name, name, claimed, cold_match))
                 else:

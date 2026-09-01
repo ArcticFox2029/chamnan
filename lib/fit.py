@@ -47,6 +47,10 @@ DROP_ORDER = [
     "Where the last session stopped",
     "Open threads",
     "Reply style for this repo",
+    # Emitted since 1.11.0 and never ranked, so it fell to the unlisted-section default and was
+    # dropped ahead of everything but the index. It is the section that stops a wrong action being
+    # proposed at all, which puts it above what is merely useful to know.
+    "Environment constraints",
     "Work in flight (from the last session)",
     "Rules this repository works under",
 ]
@@ -129,6 +133,19 @@ def reorder(parts):
     return lead + [part for i in ordered for part in blocks[i]]
 
 
+def _followers(order, i):
+    """The bare lines after a section that belong to it -- the index's "Full detail lives in
+    MAP.md" pointer, the staleness warning, the "more rules in ..." tail. `reorder` already treats
+    these as one block with their heading; dropping did not, so a live block shipped
+    "Full detail lives in .chamnan/MAP.md" while naming Architecture index in the same breath as a
+    section it had left out. A pointer to a heading that is not there is worse than silence."""
+    j, out = i + 1, []
+    while j < len(order) and not title_of(order[j]):
+        out.append(j)
+        j += 1
+    return out
+
+
 def shrink(header, parts, ceiling=CEILING, sources=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
@@ -153,12 +170,22 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
         ((_rank(p), i) for i, p in enumerate(parts) if _rank(p) is not None),
         key=lambda r: (r[0], r[1]),
     )
+    # `dropped_at` shadows `dropped` position for position, so a restored section can be removed
+    # from the report by WHICH ONE it was rather than by its title. Two sections can legitimately
+    # share a title -- two `Recorded decisions and lessons` blocks, say -- and removing by title
+    # took both entries out of the report while restoring only one of them. The other section was
+    # then absent from the block, absent from `dropped`, and absent from the notice: gone with no
+    # trace anywhere, which is precisely the "looks complete and is not" this module exists to stop.
+    dropped_at = []
     for _, i in droppable:
         if size() <= ceiling:
             break
         t = title_of(parts[i])
         dropped.append((t, (sources or {}).get(t, "")))
+        dropped_at.append(i)
         parts[i] = ""
+        for j in _followers(order, i):
+            parts[j] = ""
 
     # Dropping whole sections can overshoot badly. A single section larger than the ceiling forces
     # every cheaper one out and then goes itself, and the block lands at a third of the limit with
@@ -175,16 +202,33 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
         for rank, i in reversed(droppable):
             if parts[i] != "":
                 continue
-            title = _dropped_title(dropped, i, order)
-            if title is None:
+            if i not in dropped_at:
                 continue
-            trimmed = _trim(order[i], room, sources)
+            # The followers come back with it, so they have to be paid for out of the same room.
+            foll = _followers(order, i)
+            trimmed = _trim(order[i], room - len("".join(order[j] for j in foll).encode()), sources)
             if trimmed:
                 parts[i] = trimmed
-                dropped = [d for d in dropped if d[0] != title]
+                for j in foll:
+                    parts[j] = order[j]
+                at = dropped_at.index(i)
+                dropped.pop(at)
+                dropped_at.pop(at)
                 break
 
-    return header + "".join(parts) + notice(dropped, ceiling), dropped
+    body = header + "".join(parts) + notice(dropped, ceiling)
+    # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
+    # the header itself -- can exceed the ceiling on its own, and both loops above then run out of
+    # moves and return anyway. `dropped` still names what it removed, which reads as "handled".
+    # Meanwhile the host's own cut takes over at 10,000 bytes, positional and blind, which is the
+    # single failure this module was written to prevent. A budget that fails open is not a budget.
+    over = len(body.encode()) - ceiling
+    if over > 0:
+        body += (f"\n_⚠ This block is {over:,} bytes over its {ceiling:,}-byte limit and could not "
+                 f"be reduced further — what follows may be cut by the host. Lower "
+                 f"`index_token_budget` in .chamnan/config.json, or raise `output_byte_ceiling` if "
+                 f"your host allows more._\n")
+    return body, dropped
 
 
 def _trim(part, room, sources):
@@ -244,10 +288,30 @@ def _fit_lines(lines, budget):
     # Reserve whole pinned blocks first, then fill the remainder LINE by line. Filling by block
     # would make a section with no headings at all -- a plain list, a paragraph -- one indivisible
     # atom that either fits or vanishes, which trades this bug for a worse one.
+    # A pin covers its SUBSECTIONS too, which is what state.split_pinned already means by it: a
+    # pinned span runs to the next heading at the same depth or shallower, subsections included.
+    # This function used to pin only a block whose own first line carried the marker, so the two
+    # modules disagreed about the same text -- and the disagreement was silent and one-directional.
+    # Reproduced: `# Settled — do not raise these again 📌` with two `##` subsections under it.
+    # state.render returned marker == "", meaning nothing was held back, and _trim then dropped the
+    # second subsection ("Do not re-add the retry wrapper — tried twice, both reverted") at every
+    # room below 3,500 bytes. A line the owner pinned so it could never be lost, lost, under a
+    # marker saying nothing had been.
+    def _depth(line):
+        return len(line) - len(line.lstrip("#"))
+
     n = 0
     pinned_lines, rest = set(), []
+    pin_depth = None
     for b in blocks:
-        is_pin = bool(b) and PIN in b[0]
+        head = b[0] if b else ""
+        if head.startswith("#"):
+            d = _depth(head)
+            if pin_depth is not None and d <= pin_depth:
+                pin_depth = None          # the pinned span ended here
+            if PIN in head:
+                pin_depth = d
+        is_pin = pin_depth is not None
         for line in b:
             (pinned_lines.add(n) if is_pin else rest.append(n))
             n += 1

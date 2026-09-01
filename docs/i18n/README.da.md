@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Åbn en ny session, og kør `/chamnan:bootstrap` én gang pr. repository.
 
+<!-- generated: build_sections.py -->
+
+## Alle funktioner
+
+Fire evner. Alt herunder kører rent faktisk i den nuværende udgave. Hver del kan slås fra hver for sig i `.chamnan/config.json`, og ingen afhænger af de andre.
+
+### Forstå — hvad der findes, og hvad der hænger sammen med hvad
+
+| | |
+|---|---|
+| **Indeks** | `MAP.md` — én linje pr. fil, dannet ud fra koden selv. Agenten læser indekset og greper den detalje, den skal bruge, i stedet for at gå hele træet igennem. |
+| **Påvirkning** | Hvem der afhænger af denne fil, og hvilke tests der dækker den. Filens egne imports står alligevel øverst i den; det dyre er den modsatte retning — grep stien, før du retter. |
+| **Datamodel** | Tabel- og modelnavne med én linjes beskrivelse, hentet fra DDL, migreringer og ORM-modeller — ikke et dump af hele skemaet. Vises kun, hvis arkivet faktisk definerer et. |
+| **API-flade** | Metode, sti og handler, fra rutedekoratorer, OpenAPI-dokumenter og `.proto`-servicedefinitioner — ikke hele specifikationen. |
+| **Konfiguration** | Navnene på de miljøvariabler, arkivet læser. **Kun navne, aldrig værdier** — og den advarer, hvis `.env` ikke er i gitignore. |
+| **Udrulning** | Hvad der faktisk kører, læst fra manifester til Kubernetes, Ansible, Compose, Helm og CI: typer og navne, images, roller, pipelines. Fra en Secret tages kun navnet, intet af det nedenunder. |
+| **Ikke-kildemateriale** | Skannede papirer, eksporter, arkiver — kun antal, størrelser og de hyppigste filendelser. Afsnittet findes, for at agenten ikke selv går ind og kigger, hvilket koster langt mere. **Åbnes aldrig, læses aldrig.** |
+
+### Huske — hvad der var i gang, og hvorfor
+
+| | |
+|---|---|
+| **Arbejdstilstand** | `STATE.md` — det, der arbejdes på lige nu; sættes ind ved sessionens start, så komprimeringen af konteksten holder op med at slette det. |
+| **Sessionsnotat** | Ét pr. session under `.chamnan/sessions/`. Til næste session når **kun det ufærdige**; en session, der er lukket pænt, sætter slet intet ind. |
+| **Hukommelse** | `decisions/`, `lessons/`, `rules/`. Regler er blivende begrænsninger og står derfor foran agenten hver session; beslutninger og lærdomme bidrager kun med en titel og læses, når titlen ser relevant ud. |
+| **Åbne tråde** | Arbejdslinjer, der endnu ikke er lukket, med historikken over hvilke filer tråden har rørt — og de følger filen også efter en omdøbning. |
+
+### Genbruge — det, der allerede er løst én gang
+
+| | |
+|---|---|
+| **Fremgangsmåder** | Færdigheder, som agenten skriver **selv**, når den støder på noget indviklet eller gentaget. Ikke et medfølgende bibliotek, men en mekanisme. |
+| **Værktøjer** | Bemærker, at det samme engangsskript er skrevet igen, og tilbyder at gemme det — og nævner det, før du skriver et nyt. |
+| **Arbejdsgange** | Bemærker, at de samme kommandoer er kørt i samme rækkefølge på adskilte dage, og tilbyder at skrive den rækkefølge ned. |
+
+### Vokse — hvad arkivet har lært om sig selv
+
+| | |
+|---|---|
+| **Milepæle** | De få ændringer, der omformede arkivet: hvad der flyttede sig, hvorfor det var det værd, hvilke områder det rørte. |
+| **Kandidater** | Opdagede gentagne kommandorækker holdes **altid tilbage og venter på et menneskes bekræftelse**. Intet forfremmes automatisk. |
+| **Miljøer** | Erklær, hvad production eller staging er, og hvad der er forbudt der — og den siger til, når den erklæring bliver gammel. |
+| **Rapport** | Hvad arbejdsrummet indeholder, om det faktisk kan nås, og hvordan konteksten pr. tur har ændret sig i dit arkiv. Dit tal, ikke vores. |
+
+Gentaget ingeniørarbejde bliver til genbrugelig arkivviden — **ikke træning af en model, og ikke automatisering af udvikleren.** Det er en måde at bevare arbejde, der ellers kun fandtes i hovedet på den, der udførte det.
+
+## Kommandoer
+
+Alle kan kaldes fra skallen, og agenten kalder dem også selv.
+
+| | |
+|---|---|
+| `chamnan-map` | bygger og opdaterer indekset |
+| `chamnan-report` | hvad arbejdsrummet indeholder, og hvordan konteksten pr. tur har ændret sig |
+| `chamnan-impact` | hvem der afhænger af denne fil, og hvilke tests der dækker den |
+| `chamnan-timeline` | hvad der hidtil er sket med denne fil |
+| `chamnan-peek` | siger, hvad der er i en stor fil, uden at læse den ind i konteksten |
+| `chamnan-promote` | gemmer et skript som fast værktøj for arkivet |
+| `chamnan-candidates` | se, bekræfte eller afvise opdagede gentagelser |
+| `chamnan-env` | erklære et miljø og dets forbud, og kontrollere at erklæringen stadig er frisk |
+| `chamnan-age` | hvor den gemte viden er begyndt at blive gammel |
+
+Og færdigheder, der kaldes inde fra sessionen: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Hvad den skriver, og hvor
+
+Alt inde i `.chamnan/`, almindelig markdown og JSON. Kan læses, rettes i hånden og slettes når som helst, uden at noget går i stykker.
+
+| | |
+|---|---|
+| `MAP.md` | hvad der findes, og hvad der afhænger af hvad |
+| `STATE.md` | hvad der arbejdes på lige nu |
+| `sessions/` | hvor det forrige arbejde stoppede |
+| `memory/` | beslutninger, lærdomme og blivende regler |
+| `threads/` | arbejdslinjer, der stadig er åbne |
+| `skills/` · `tools/` | fremgangsmåder og skripter, der er værd at gemme |
+| `milestones.md` | de ændringer, der omformede arkivet |
+| `config.json` | til og fra for hver del, og byteloftet for den blok, der sættes ind i sessionen |
+
+**Den eneste skrivning uden for `.chamnan/`** er en valgfri Git-pre-commit-hook, der holder indekset i takt med træet — den lægges kun ind, hvis du siger ja, og kan fjernes.
+
+**Agenten lærer ikke.** Intet trænes, intet bliver tilbage uden for denne mappe, og næste session begynder stadig fra nul — bare fra nul *i et arkiv, der forklarer sig selv*. Sammenhængen ligger i artefakterne, ikke i modellen.
+
+## Sikkerhed
+
+| | |
+|---|---|
+| **Ingen netværkskald under kørsel** | Ikke ét. Der kræves ingen API-nøgle, og intet sendes nogen steder hen. |
+| **Skriver ikke din kode om** | Den rapporterer, den retter ikke. Indekset kopierer de kommentarer, du allerede har skrevet, og finder dem ikke på; filer uden kommentar nævnes ved navn, så du selv kan udfylde dem. |
+| **Ingen dæmon, intet baggrundsarbejde** | Ingen blivende proces, ingen database, ingen embedding-model — kun Pythons standardbibliotek. |
+| **Hemmeligheder filtreres først** | Alt, der skal skrives eller sættes ind i sessionen, går først gennem hemmelighedsfilteret: variablernes *navne* bliver, værdierne ikke. Og den grænse, filteret ikke når, står ved siden af sit eget tal i den engelske README. |
+| **Hvad et installeret plugin kan gøre ved dig** | Forklaret fuldt ud i den engelske README, herunder hvor chamnan bryder lækagekæden. |
+
+## Krav
+
+Claude Code · Python · Git · macOS, Linux eller Windows
+
+Ikke andet, og ingen afhængigheder at installere. Den laveste Python-version står i [README › Requirements](../../README.md#requirements) — denne side bærer ingen tal, for det er tallene, der ændrer sig.
+
+## Slå fra eller fjerne
+
+Slå fra del for del i `.chamnan/config.json` · stop det i ét enkelt arkiv · fjern plugin'et fra hele maskinen · slet `.chamnan/` når du vil, uden at noget går i stykker — trinene står i [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## Læs før du installerer
 
 **chamnan er til den ene hovedmappe, du vender tilbage til igen og igen.** Alt hvad det gør, betales forud og hentes hjem i de følgende sessioner — i et repository, du åbner én gang, har du betalt det hele og hentet intet hjem.

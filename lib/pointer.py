@@ -102,6 +102,39 @@ def needles(rel_path):
     return [n for n in out if len(n) >= 4]
 
 
+def _glob_covers(glob, rel):
+    """True when `rel` is one of the paths `Path.glob(glob)` would return, judged lexically.
+
+    Lexical rather than by touching the filesystem: this runs on every Read, and the question is
+    whether the rule's pattern NAMES this path, not whether the path happens to exist right now.
+    `**` crosses directories, a single `*` does not -- the same split Path.glob makes.
+    """
+    raw = glob.strip()
+    # A trailing slash means a DIRECTORY, and a rule written `in `src/`` means everything under it.
+    # Path.glob would return only the directory itself; the intent in a Check trailer is the tree,
+    # and the code this replaces honoured that with a `/*` fallback. Kept, made recursive.
+    if raw.endswith("/"):
+        prefix = raw.strip("/")
+        return bool(prefix) and rel.startswith(prefix + "/")
+    pattern = raw.strip("/")
+    if not pattern:
+        return False
+    parts = pattern.split("/")
+    rx = []
+    for part in parts:
+        if part == "**":
+            rx.append(r"(?:[^/]+/)*")
+            continue
+        piece = ""
+        for ch in part:
+            piece += "[^/]*" if ch == "*" else ("[^/]" if ch == "?" else re.escape(ch))
+        rx.append(piece + "/")
+    joined = "".join(rx).rstrip("/")
+    if joined.endswith("(?:[^/]+/)*"):
+        joined += ".*"
+    return re.fullmatch(joined, rel) is not None
+
+
 def _governs(text, rel_path):
     """Does a rule's Check trailer claim authority over this path?
 
@@ -115,7 +148,13 @@ def _governs(text, rel_path):
         return False
     rel = str(rel_path).replace("\\", "/")
     for _mode, _pattern, glob in rulecheck.parse(text):
-        if fnmatch.fnmatch(rel, glob) or fnmatch.fnmatch(rel, glob.rstrip("/") + "/*"):
+        # Matched the way rulecheck RESOLVES it, not the way fnmatch reads it. fnmatch's `*`
+        # crosses `/`; Path.glob's does not, and rulecheck -- the module that actually runs the
+        # check -- uses Path.glob. So `src/*.py` had the pointer telling a session that
+        # `src/deep/nested/leaky.py` was covered by a recorded rule, while the checker had never
+        # looked at that file and never would. Two modules, one glob, opposite answers, and the one
+        # that spoke to the model was the one that was wrong.
+        if _glob_covers(glob, rel):
             return True
     return False
 

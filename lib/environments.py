@@ -68,7 +68,8 @@ def _ymd_to_ts(text):
 def entries(root):
     """[{name, platform, versions, constraints, checked, checked_ts}] in file order.
 
-    `versions` is {name: version} parsed from the `Versions:` line. `constraints` is the list of
+    `versions` is {name: version} parsed from the `Versions:` line, `versions_raw` that line
+    verbatim. `constraints` is the list of
     bullets under `Constraints:`. `checked_ts` is None when the entry has no parseable `Checked:`
     date — which `stale_environments()` treats as never checked, not as fine.
     """
@@ -105,6 +106,10 @@ def entries(root):
             "name": m.group(1).strip(),
             "platform": fields.get("platform", ""),
             "versions": versions,
+            # The `Versions:` line exactly as written. `versions` above is lossy -- it keeps only
+            # what _VERSION could parse -- and `chamnan-env set` has to be able to carry the line
+            # forward unchanged when the caller did not retype it.
+            "versions_raw": fields.get("versions", ""),
             "constraints": constraints,
             "checked": checked,
             "checked_ts": _ymd_to_ts(checked),
@@ -205,6 +210,14 @@ def upsert(root, name, entry_text):
 # past the one time it mattered. Failing quiet is the right direction here, exactly as it is for
 # `docker --context prod` in lib/workflows.py -- a missed match costs one unshown notice, a wrong
 # one costs the notice's credibility.
+# A verb whose NEXT word names the environment. Matched as a word of the command, so
+# `grep use-context deploy.log` still targets nothing.
+_POSITIONAL_SELECTORS = ("use-context", "select", "use", "set-context")
+# The word BEFORE the selector has to make it a selection. Without this, `grep use-context
+# deploy.log` returned "deploy.log" -- and this module's whole false-positive control is that a
+# bare mention of a word targets nothing, because a notice attached to one is how somebody learns
+# to scroll past the notice that mattered.
+_SELECTOR_CONTEXT = ("config", "workspace", "context", "env", "environment", "kubectx", "profile")
 _TARGET_FLAGS = ("--context", "--namespace", "-n", "--profile", "--env", "--environment",
                  "--stage", "--cluster", "--target")
 _ASSIGNED = re.compile(r"\b(?:ENV|ENVIRONMENT|STAGE|TARGET|CONTEXT)=([\w.-]+)", re.I)
@@ -224,6 +237,15 @@ def match_command(root, command):
     parts = str(command).split()
     for i, part in enumerate(parts):
         value = None
+        # The two commonest ways an environment is actually selected are positional, not flags:
+        # `kubectl config use-context production` and `terraform workspace select production`.
+        # Neither matched, so the constraints notice never fired for either -- against a declared,
+        # freshly confirmed environment with real constraints on it.
+        if (part in _POSITIONAL_SELECTORS and i + 1 < len(parts)
+                and i > 0 and parts[i - 1] in _SELECTOR_CONTEXT):
+            candidate = parts[i + 1].strip("\"'")
+            if candidate and not candidate.startswith("-"):
+                return candidate
         if part in _TARGET_FLAGS and i + 1 < len(parts):
             value = parts[i + 1]
         elif "=" in part and part.split("=", 1)[0] in _TARGET_FLAGS:

@@ -70,6 +70,10 @@ def headings(pattern, text):
     return [m for m in pattern.finditer(text) if ok(m.start())]
 
 
+# A front-matter line: `key:` at the left margin, or a continuation indented under one.
+_FIELD_LINE = re.compile(r"^(?:[A-Za-z_][\w.-]*\s*:|[ \t]+\S|- )")
+
+
 def front_matter(text):
     """The YAML front-matter body, or "" when the document does not open with a `---` line.
 
@@ -78,4 +82,18 @@ def front_matter(text):
     front matter.
     """
     m = _FRONT.match(text)
-    return m.group(1) if m else ""
+    if not m:
+        return ""
+    body = m.group(1)
+    # A delimited block at the top is necessary and not sufficient. A document that opens with a
+    # plain `---` horizontal rule -- an ordinary markdown idiom -- and has another one further down
+    # gives a match whose "front matter" is the prose in between; a line of that prose beginning
+    # "description: ..." was then read as declared metadata and used as the entry's title, truncated
+    # mid-word. Front matter is a block of `key: value` lines, so that is what is required: at least
+    # one, and no line that is plainly not one.
+    lines = [ln for ln in body.splitlines() if ln.strip()]
+    if not lines:
+        return ""
+    if not all(_FIELD_LINE.match(ln) for ln in lines):
+        return ""
+    return body

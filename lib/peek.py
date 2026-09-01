@@ -35,6 +35,8 @@ DEFAULT_BUDGET = 400           # tokens of output; the whole point is to stay sm
 SAMPLE_ROWS = 3
 MAX_MEMBERS = 25
 MAX_KEYS = 40
+ROW_CAP = 2_000_000      # stop counting rows; the count is then reported as a floor, not a fact
+HIT_CAP = 8
 TEXT_LIKE = {".txt", ".log", ".md", ".rst", ".ini", ".cfg", ".conf", ".properties", ".env",
              ".sql", ".yaml", ".yml", ".toml", ".html", ".htm", ".xml", ".svg", ".eml"}
 ZIP_LIKE = {".zip", ".xlsx", ".docx", ".pptx", ".jar", ".apk", ".whl", ".ipa", ".odt", ".epub"}
@@ -91,7 +93,7 @@ def _identify(head):
 def peek_csv(path, find=None):
     delim = "\t" if path.suffix.lower() in (".tsv", ".tab") else ","
     rows, total, widths = [], 0, Counter()
-    hits = []
+    hits, capped = [], False
     with path.open("r", encoding="utf-8", errors="replace", newline="") as fh:
         reader = csv.reader(fh, delimiter=delim)
         try:
@@ -103,16 +105,26 @@ def peek_csv(path, find=None):
             widths[len(row)] += 1
             if len(rows) < SAMPLE_ROWS:
                 rows.append(row)
-            if find and len(hits) < 8 and any(find.lower() in c.lower() for c in row):
+            if find and len(hits) < HIT_CAP and any(find.lower() in c.lower() for c in row):
                 hits.append((i + 2, row))
-            if total > 2_000_000:
+            if total >= ROW_CAP:
+                capped = True
                 break
-    out = [f"{len(header)} columns, {total:,} data rows"]
-    out.append("columns: " + ", ".join(f"`{c.strip()}`" for c in header[:MAX_KEYS]))
+    # Both caps used to be silent, and this whole module exists so a number here can be trusted
+    # instead of the file being read. "2,000,000 data rows" for a file with three million of them
+    # is a stated fact that is wrong, and a 60-column CSV listed 40 columns and never said the
+    # other 20 existed. `_shape` below has always written `…+N`; say it here too.
+    out = [f"{len(header)} columns, "
+           + (f"more than {total:,} data rows (stopped counting at the {ROW_CAP:,} cap)"
+              if capped else f"{total:,} data rows")]
+    shown = header[:MAX_KEYS]
+    more = f", …+{len(header)-len(shown)} more" if len(header) > len(shown) else ""
+    out.append("columns: " + ", ".join(f"`{c.strip()}`" for c in shown) + more)
     if len(widths) > 1:
         out.append(f"ragged: {len(widths)} different row widths seen — {dict(widths.most_common(3))}")
     if find:
-        out.append(f"\nrows matching {find!r} ({len(hits)} shown):")
+        tail = "" if len(hits) < HIT_CAP else f" — the first {HIT_CAP}; there may be more"
+        out.append(f"\nrows matching {find!r} ({len(hits)} shown{tail}):")
         out += [f"  line {n}: " + " | ".join(c[:28] for c in r[:8]) for n, r in hits]
     else:
         out.append("\nfirst rows:")

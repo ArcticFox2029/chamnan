@@ -37,6 +37,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import peek as peek_mod  # noqa: E402
+import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
 LOCKFILES = {
@@ -49,13 +50,42 @@ BIG_BYTES = 200_000        # ~55k tokens; worth a word before it lands in the co
 HUGE_BYTES = 1_000_000
 
 
-def reason_for(path):
+SAMPLE_BYTES = 200_000
+
+
+def _sample(path, size):
+    """Enough of the file to price it, scaled back up. Reading a 200 MB CSV to estimate its cost
+    would be the very thing this hook exists to prevent."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(SAMPLE_BYTES)
+    except OSError:
+        return ""
+    if not head:
+        return ""
+    # Scale by bytes, not characters: a UTF-8 multibyte file has fewer characters than bytes.
+    factor = max(1.0, size / max(1, len(head.encode("utf-8", "replace"))))
+    return head * int(factor) if factor < 50 else head
+
+
+def reason_for(path, root=None):
+    """Why this file is bulk, or "" when it is not.
+
+    `root` matters: the directory check below used to run over the file's whole ABSOLUTE path, so a
+    repository checked out anywhere beneath a directory named `vendor`, `build`, `dist`, `target`
+    or `node_modules` had every one of its own hand-written source files reported as generated.
+    Nothing about the project or the file was; the machine's directory layout was.
+    """
     name = path.name.lower()
     if name in LOCKFILES:
         return "a dependency lock file — machine-written, and almost never read for meaning"
     if GENERATED.search(name):
         return "generated or minified output, not source"
-    if any(part in GENERATED_DIRS for part in path.parts):
+    try:
+        inside = path.relative_to(root).parts if root else path.parts
+    except ValueError:
+        inside = path.parts
+    if any(part in GENERATED_DIRS for part in inside):
         return "inside a build/vendor directory"
     return ""
 
@@ -83,7 +113,7 @@ def main():
     except OSError:
         return 0
 
-    why = reason_for(path)
+    why = reason_for(path, root)
     if not why and size < BIG_BYTES:
         return 0
     # A read that already has a line range is a targeted read; the point has been taken.
@@ -100,7 +130,12 @@ def main():
         except Exception:
             shape = ""                      # never the reason a read fails
 
-    est = size / 3.6
+    # The package's own estimator, not a flat divisor. tokens.py was re-fitted precisely because a
+    # single characters-per-token constant undercounts CJK and symbol- or path-dense text, and this
+    # hook was still carrying the old one: measured, it understated a signature-dense Python sample
+    # by 39% and a Chinese one by 21% -- the exact error class tokens.py's docstring records as
+    # fixed, reproduced in the one place that reads a file's size to decide whether to warn.
+    est = tokens.estimate(_sample(path, size))
     if why:
         note = (f"chamnan: `{path.name}` is {why} (~{est:,.0f} tokens). "
                 f"If you need one fact from it, grep instead of reading it whole. "

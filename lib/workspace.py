@@ -151,6 +151,22 @@ def workspace(root=None):
     return find_root(root) / WORKSPACE_DIRNAME
 
 
+# Type was checked and range was not, and for a retention setting the two are not the same thing.
+# `{"log_retention_days": -1}` is valid JSON, the right type, and survives the key filter -- and
+# then `time.time() - (-1) * 86400` puts the cutoff a day in the FUTURE, so every file is "older"
+# than it. Reproduced: a log and a session record written one second earlier, both deleted. Session
+# records are committed work, not cache. One mistyped minus sign.
+_NON_NEGATIVE = ("log_retention_days", "session_retention_days", "index_token_budget",
+                 "state_token_budget", "output_byte_ceiling")
+
+
+def _in_range(key, value):
+    """False for a value whose TYPE is right and whose meaning is not."""
+    if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):
+        return value >= 0
+    return True
+
+
 def load_config(root=None):
     """The config, with every value guaranteed to be the type its default is.
 
@@ -170,7 +186,13 @@ def load_config(root=None):
             continue
         if want is not bool and isinstance(v, bool):
             continue
-        if isinstance(v, want):
+        # Range as well as type, and this is the loader every caller actually uses -- ensure()'s
+        # own merge is a different function and patching only that one left the real path open.
+        # `{"log_retention_days": -1}` is valid JSON, the right type, and survives the key filter;
+        # `time.time() - (-1) * 86400` then puts the cutoff a day in the FUTURE, so every file on
+        # disk is older than it. Reproduced: a log and a session record written one second earlier,
+        # both deleted. Session records are committed work.
+        if isinstance(v, want) and _in_range(k, v):
             cfg[k] = v
     return cfg
 
@@ -230,7 +252,18 @@ def hook_root(payload=None):
     for c in candidates:
         if not c:
             continue
+        # 🐛 [found by CI on its first run] Resolved, because find_root() resolves and everything
+        # downstream mixes the two. The host hands over the path it was given -- on macOS `/tmp`
+        # and `/var` are symlinks, and plenty of people keep a project behind one -- so this
+        # returned `/var/x` while the workspace lookup returned `/private/var/x/.chamnan`, and the
+        # first `mp.relative_to(root)` raised ValueError, uncaught, killing the hook. Zero bytes of
+        # output, exit code 1, no message: the exact silent-nothing failure hook_root exists to
+        # prevent, reintroduced by disagreeing with find_root about one path.
         p = pathlib.Path(c)
+        try:
+            p = p.resolve()
+        except OSError:
+            pass
         if (p / WORKSPACE_DIRNAME).is_dir() or (p / ".git").exists():
             return p
     return find_root()
@@ -257,6 +290,7 @@ def load_json(path, want=dict):
 
 class NotAWorkspace(Exception):
     """`.chamnan` exists and is not a directory, so no workspace can be built at that path."""
+
 
 
 def ensure(root=None):
@@ -291,10 +325,20 @@ def ensure(root=None):
     # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
     # filter, and then raises TypeError on the first `>` comparison in a different module.
     merged.update({k: v for k, v in current.items()
-                   if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))})
+                   if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
+                   and _in_range(k, v)})
     if merged != current:
-        cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        try:
+            cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            # Every other failure in this function is caught deliberately -- a mkdir collision must
+            # not take the rest of the scaffold with it, and a plain-file `.chamnan` raises its own
+            # named error. This write had no guard, so a read-only workspace (a checkout mounted
+            # read-only, a config left at 444) crashed ensure() outright and with it every command
+            # and hook that calls it. Merging new defaults is a nicety; running is not.
+            pass
     _mark_generated(root or find_root())
+    _mark_ignored(root or find_root())
     return ws
 
 
@@ -450,6 +494,56 @@ def available_update(plugin_root):
     except (OSError, ValueError, TypeError):
         pass
     return ""
+
+
+# What chamnan writes that must not be committed, and why each one is on the list.
+#
+# Found in a real production infrastructure repository running 1.9.0: `logs/scratch.jsonl` held a
+# string matching a GitLab personal-access-token pattern. It had not reached git — because that
+# user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
+#
+# These logs are not summaries. `scratch.jsonl` keeps the opening line of each throwaway script and
+# `commands.jsonl` keeps command signatures, both verbatim, and neither passes through the
+# redactor: redaction guards what goes into MAP.md and the injected block, which is a different
+# path. A credential typed into a one-off script lands here intact.
+#
+# The README used to say "add .chamnan/logs/ to .gitignore if you would rather not carry it",
+# which reads as a preference about repository size. It is not one.
+#
+# Written INSIDE the workspace, for the same reason .gitattributes is: git reads a .gitignore in
+# any directory and applies it to that directory and below, so nothing outside `.chamnan/` is
+# touched. Appended, never rewritten.
+IGNORE_LINES = [
+    "# chamnan: runtime logs. NOT summaries — scratch.jsonl keeps the opening line of each",
+    "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither",
+    "# passes through the redactor (that guards MAP.md and the injected block, a different path).",
+    "# A credential typed into a one-off script lands in these files intact.",
+    "logs/*.jsonl",
+    "logs/nudge/",
+    "logs/nudge_state.json",
+    "logs/pointer_seen*.json",
+    "logs/*.lock",
+    "logs/repeat_digest.json",
+]
+
+
+def _mark_ignored(root):
+    """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation."""
+    try:
+        if not root or not (Path(root) / ".git").exists():
+            return
+        gi = Path(root) / WORKSPACE_DIRNAME / ".gitignore"
+        if not gi.parent.is_dir():
+            return
+        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
+        if "logs/*.jsonl" in existing:
+            return
+        with gi.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(("\n" if existing else "") + "\n".join(IGNORE_LINES) + "\n")
+    except OSError:
+        pass
 
 
 # A promoted tool is addressed by its bare name everywhere afterwards -- the registry stores

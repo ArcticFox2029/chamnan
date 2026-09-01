@@ -194,7 +194,18 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         for path in paths:
             parts = path.split("/")
             # No trailing slash: the renderer adds one. Carrying it here produced `corpus/apps//`.
-            key = "/".join(parts[:depth]) if len(parts) > depth else "(root)"
+            # A file shallower than the chosen depth keeps its own real parent instead of
+            # falling into "(root)". Once one dominant directory pushes the depth to 2,
+            # `src/blocking.rs` and `tests/fs.rs` both have only one directory segment — and both
+            # landed in the same "(root)" bucket, which then read as 175 loose files at the top of
+            # the repository. It merged production code with integration tests under a name that
+            # was true of neither. "(root)" now means what it says: a file with no directory.
+            if len(parts) > depth:
+                key = "/".join(parts[:depth])
+            elif len(parts) > 1:
+                key = "/".join(parts[:-1])
+            else:
+                key = "(root)"
             out.setdefault(key, []).append((path, parts[-1]))
         return out
 

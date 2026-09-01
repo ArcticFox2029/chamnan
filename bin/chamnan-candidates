@@ -209,14 +209,34 @@ def cmd_demote(root, tool_name):
         print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan-promote --list`",
               file=sys.stderr)
         return 1
+    # 🐛 Deleted the file. A promoted tool ships as a SKELETON with each step as a placeholder --
+    # the docs above say so -- so every tool that is actually useful has hand-written commands in
+    # it, and "undo a promotion" destroyed them with no copy anywhere. The candidate written below
+    # is explicitly not a reconstruction: it carries one line of description. Un-register it,
+    # archive the file, and say where it went.
     tool_path = ws.workspace(root) / "tools" / tool_name
+    archived = None
     if tool_path.is_file():
-        tool_path.unlink()
+        archive_dir = ws.workspace(root) / "tools" / "archived"
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            dest = archive_dir / tool_name
+            if dest.exists():
+                stamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+                dest = archive_dir / f"{tool_name}.{stamp}"
+            tool_path.replace(dest)
+            archived = dest
+        except OSError:
+            # Better to leave the file where it is than to lose it because the archive failed.
+            archived = tool_path
     sequence = [entry.get("desc") or tool_name]
     today = datetime.now().astimezone().strftime("%Y-%m-%d")
     new_path, _is_new = candidates.upsert(root, sequence, 1, today, provenance="ai-inferred")
     print(f"chamnan: demoted {tool_name} — removed as a tool, back for review at "
           f"{new_path.relative_to(root)}")
+    if archived:
+        print(f"  the file itself is kept at {archived.relative_to(root)} — the candidate above is "
+              f"one line of description, not the commands you wrote")
     return 0
 
 
