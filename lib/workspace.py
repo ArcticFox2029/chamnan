@@ -252,7 +252,18 @@ def hook_root(payload=None):
     for c in candidates:
         if not c:
             continue
+        # 🐛 [found by CI on its first run] Resolved, because find_root() resolves and everything
+        # downstream mixes the two. The host hands over the path it was given -- on macOS `/tmp`
+        # and `/var` are symlinks, and plenty of people keep a project behind one -- so this
+        # returned `/var/x` while the workspace lookup returned `/private/var/x/.chamnan`, and the
+        # first `mp.relative_to(root)` raised ValueError, uncaught, killing the hook. Zero bytes of
+        # output, exit code 1, no message: the exact silent-nothing failure hook_root exists to
+        # prevent, reintroduced by disagreeing with find_root about one path.
         p = pathlib.Path(c)
+        try:
+            p = p.resolve()
+        except OSError:
+            pass
         if (p / WORKSPACE_DIRNAME).is_dir() or (p / ".git").exists():
             return p
     return find_root()

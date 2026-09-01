@@ -3814,7 +3814,27 @@ import unicodedata  # noqa: E402
 # root, while ${CLAUDE_PROJECT_DIR} stays put. A shell's directory persists across Bash calls, so one
 # `cd` anywhere in a transcript left every later hook resolving from the wrong place — session_start
 # printed NOTHING and exited 0, and file_pointer went dark even with an absolute path in the payload.
-_hk = ROOT.parent.parent
+# 🐛 [found by CI on its first run] This used to be `ROOT.parent.parent` — two directories above
+# the checkout — and it passed only because the author's clone happens to sit inside another
+# chamnan workspace. On a runner, two levels above the checkout is an empty directory, the hook
+# correctly printed nothing, and five checks failed. The test asserted the developer's folder
+# layout, not the code. Build the workspace it needs instead.
+_hk = Path(tempfile.mkdtemp(prefix="chamnan-hookroot-"))
+_wsx = _hk / ".chamnan"
+(_wsx / "memory" / "rules").mkdir(parents=True)
+(_wsx / "sessions").mkdir()
+(_wsx / "MAP.md").write_text(
+    "# Architecture index\n\n## Quick Index\n\n"
+    + "".join(f"- **`src/mod{i}.py`** ({i}L, 2fn) — a module that does something\n"
+             for i in range(60)),
+    encoding="utf-8")
+(_wsx / "STATE.md").write_text(
+    "## → HANDOFF: work still in flight 📌\n\n" + "Something left unfinished. " * 40,
+    encoding="utf-8")
+(_wsx / "memory" / "rules" / "a-standing-rule.md").write_text(
+    "# A standing rule this repository works under\n\n" + "It applies every session. " * 30,
+    encoding="utf-8")
+import workspace as _wsroot  # noqa: E402
 _hook = ROOT / "hooks" / "chamnan_session_start.py"
 _env_clean = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
 
@@ -3831,6 +3851,23 @@ check("a payload that is JSON null does not crash the hook",
       _out3.returncode == 0 and len(_out3.stdout) > 1000)
 _out4 = _run_hook("not json at all", str(_hk), _env_clean)
 check("neither does a payload that is not JSON", _out4.returncode == 0)
+
+# The crash the fixture above exposed once it stopped pointing at the author's own machine. `/var`
+# and `/tmp` are symlinks on macOS and plenty of people keep a project behind one; find_root()
+# resolves and hook_root() did not, so `mp.relative_to(root)` raised ValueError, uncaught, and the
+# hook produced nothing at all.
+check("HOOK_ROOT AND FIND_ROOT AGREE ON A PATH THAT GOES THROUGH A SYMLINK",
+      _wsroot.hook_root({"cwd": str(_hk)}) == _wsroot.find_root(_hk))
+check("...so a project behind a symlink still gets its block, rather than a traceback",
+      _out.returncode == 0 and _out3.returncode == 0)
+# Belt as well as braces: a label is never worth an exception.
+_hookmodx = import_hook_module("chamnan_session_start.py")
+check("a display path that cannot be made relative degrades to the bare name",
+      _hookmodx.display(Path("/somewhere/else/MAP.md"), Path("/a/repo")) == "MAP.md")
+check("...and one that can is still written relative",
+      _hookmodx.display(Path("/a/repo/.chamnan/MAP.md"), Path("/a/repo")) == ".chamnan/MAP.md")
+
+shutil.rmtree(_hk, ignore_errors=True)
 
 # ------------- the workspace, damaged the way a real user damages it
 # One root cause in four files: every JSON loader guarded json.JSONDecodeError and stopped there,

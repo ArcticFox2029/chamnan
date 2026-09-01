@@ -199,6 +199,16 @@ def why_this_session(payload):
     return ""
 
 
+def display(path, root):
+    """`path` written relative to `root`, or its bare name when it cannot be. Only ever used to
+    print a path to the reader, and a label is never worth an exception: the one time this raised,
+    it took the whole injection with it and the session started with nothing at all."""
+    try:
+        return str(Path(path).relative_to(root))
+    except (ValueError, TypeError):
+        return Path(path).name
+
+
 def section(title, body, source=""):
     if not body.strip():
         return ""
@@ -341,7 +351,7 @@ def unindexed(root, map_text):
         missing = []
         for f in _indexable(root):
             try:
-                rel = str(f.relative_to(root))
+                rel = display(f, root)
             except ValueError:
                 continue
             if rel not in named:
@@ -462,12 +472,12 @@ def main():
             budget = cfg.get("index_token_budget", 3000)
             # Held before folding. collapse() recognises rows by their `- **\`path\`**` shape, and a
             # folded index no longer has any, so re-folding its own output finds nothing to group.
-            index_render = (index, mp.relative_to(root), budget, root)
+            index_render = (index, display(mp, root), budget, root)
             if not tokens.fits(index, budget):
-                index = rollup.collapse(index, mp.relative_to(root), budget, root)
+                index = rollup.collapse(index, display(mp, root), budget, root)
             index_slot = len(out)
-            out.append(section("Architecture index", index, str(mp.relative_to(root))))
-            tail = (f"_Full detail lives in `{mp.relative_to(root)}` — grep it for one heading, "
+            out.append(section("Architecture index", index, display(mp, root)))
+            tail = (f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
                     f"never read it whole._")
             # Named only when it is actually there. A causal ablation of a structural codebase
             # index (arXiv:2606.22417) found its measurable gain concentrated in cross-file,
@@ -578,10 +588,10 @@ def main():
             raw, aged = state.age_out(raw, wsdir, cfg.get("state_stale_days", 14))
             full = redact.scrub(raw)
             budget = cfg.get("state_token_budget", 1700)
-            st, marker = state.render(full, budget, sp.relative_to(root))
+            st, marker = state.render(full, budget, display(sp, root))
             if st:
-                out.append(section("Work in flight (from the last session)", st, str(sp.relative_to(root))))
-                out.append(f"_Keep `{sp.relative_to(root)}` current as you go; it is what survives "
+                out.append(section("Work in flight (from the last session)", st, display(sp, root)))
+                out.append(f"_Keep `{display(sp, root)}` current as you go; it is what survives "
                            f"compaction._\n")
                 if marker:
                     out.append(marker + "\n")
@@ -608,7 +618,7 @@ def main():
                      for t in ranked[:MAX_TOOLS]]
             if len(tools) > MAX_TOOLS:
                 lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
-                             f"`{(wsdir/'tools').relative_to(root)}/`_")
+                             f"`{display(wsdir/'tools', root)}/`_")
             # Scrubbed like every other section. A tool description is text a person wrote and
             # this file read off disk; it reached the injection raw only because index.json looked
             # like chamnan's own data rather than a place somebody could paste a token.
@@ -634,7 +644,7 @@ def main():
                 # the body than the description, so nothing leaked, but the section had no reason
                 # to be the one exception.
                 redact.scrub("\n".join(lines)) +
-                f"\n\nFull text in `{(wsdir/'skills').relative_to(root)}/`. Load one when it applies; "
+                f"\n\nFull text in `{display(wsdir/'skills', root)}/`. Load one when it applies; "
                 f"do not read them all.", ".chamnan/skills/"))
 
     if cfg.get("promote", True):
