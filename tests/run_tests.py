@@ -6527,6 +6527,27 @@ check("...and the site root is not claimed as an endpoint", "/" not in _dj)
 check("...and a real leaf route in the root urlconf survives", "/healthz/" in _dj)
 shutil.rmtree(_rtd, ignore_errors=True)
 
+# ------------------------------ the one number chamnan-report exists to produce
+# `st_ctime` on Unix is inode-change time, not creation time: it moves whenever an entry is created
+# directly under `.chamnan/`, and a clone or a machine move resets it to now. Measured on the two
+# workspaces this project is developed in, ctime was 13.0 and 4.2 days after their real birth, both
+# landing in the current week — so `any(week > marker_week)` was false and the before/after table
+# was permanently suppressed, with the user told to come back in a week or two, forever.
+_wsc = Path(tempfile.mkdtemp(prefix="chamnan-ctime-")) / ".chamnan"
+(_wsc / "sessions").mkdir(parents=True)
+(_wsc / "sessions" / "2026-01-15-first-session.md").write_text("# first\n", encoding="utf-8")
+(_wsc / "sessions" / "2026-06-02-later.md").write_text("# later\n", encoding="utf-8")
+# Touching the workspace now is what a `/chamnan:resume` does, and it is what moved ctime.
+(_wsc / "STATE.md").write_text("## → HANDOFF 📌\n\nwork\n", encoding="utf-8")
+_born = _rep._workspace_created(_wsc)
+check("THE WORKSPACE'S AGE SURVIVES A WRITE INTO IT: " + str(_born and _born.date()),
+      _born is not None and _born.year == 2026 and _born.month == 1)
+check("...and a workspace with no session records still resolves to something",
+      _rep._workspace_created(_wsc.parent) is not None or not (_wsc.parent).exists())
+check("...and a directory that does not exist is None, not a crash",
+      _rep._workspace_created(_wsc / "nope") is None)
+shutil.rmtree(_wsc.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
