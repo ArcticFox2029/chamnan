@@ -50,23 +50,33 @@ def directory(root):
 
 
 def slug(title):
-    """A filename for a thread title.
+    """A readable filename for a thread title.
 
-    Lossy on purpose -- punctuation and case go -- which means two DIFFERENT titles can land on the
-    same name: "Fix Auth!!!" and "Fix, Auth" both give `fix-auth`, and the second silently appended
-    an unrelated subject to the first thread's file. That is the scattering this module exists to
-    prevent, running in reverse, and it was undocumented in either direction.
+    Lossy on purpose -- punctuation and case go -- so two DIFFERENT titles can land on the same
+    name: "Fix Auth!!!" and "Fix, Auth" both give `fix-auth`, and the second silently appended an
+    unrelated subject to the first thread's file. That is the scattering this module exists to
+    prevent, running in reverse.
 
-    A short hash of the original title is appended when the collapse actually loses something, so
-    a title that survives slugging intact keeps the readable filename it always had.
+    The collision is handled in create(), not here, and that placement is the fix for a fix. This
+    function once appended a hash whenever slugging "changed" the title -- but slugging changes
+    every title with an internal hyphen, so `bge-m3 migration` became `bge-m3-migration-12a9e3`
+    and `chamnan-timeline close bge-m3-migration`, the obvious guess, matched nothing. A pure
+    function cannot know whether a name collides; only the directory can. So this stays readable
+    and guessable, and create() disambiguates when it actually has to.
     """
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    s = s[:50].rstrip("-") or "thread"
+    return s[:50].rstrip("-") or "thread"
+
+
+def _distinct_slug(directory_, title):
+    """`slug(title)`, or that plus a short hash when the name is taken by a DIFFERENT title."""
+    base = slug(title)
+    path = directory_ / f"{base}.md"
+    if not path.is_file() or title_of(path).strip().lower() == title.strip().lower():
+        return base
+    import hashlib
     canonical = " ".join(title.split()).lower()
-    if s.replace("-", " ") != canonical:
-        import hashlib
-        s = f"{s}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
-    return s
+    return f"{base}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
 
 
 def threads(root):
@@ -159,7 +169,7 @@ def create(root, title, today):
     than overwritten, so running this twice is safe and never loses entries."""
     d = directory(root)
     d.mkdir(parents=True, exist_ok=True)
-    path = d / f"{slug(title)}.md"
+    path = d / f"{_distinct_slug(d, title)}.md"
     if path.is_file():
         return path, False
     path.write_text(f"# {title.strip()}\n\n**Started:** {today}\n**Status:** {OPEN}\n",

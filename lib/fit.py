@@ -153,11 +153,19 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
         ((_rank(p), i) for i, p in enumerate(parts) if _rank(p) is not None),
         key=lambda r: (r[0], r[1]),
     )
+    # `dropped_at` shadows `dropped` position for position, so a restored section can be removed
+    # from the report by WHICH ONE it was rather than by its title. Two sections can legitimately
+    # share a title -- two `Recorded decisions and lessons` blocks, say -- and removing by title
+    # took both entries out of the report while restoring only one of them. The other section was
+    # then absent from the block, absent from `dropped`, and absent from the notice: gone with no
+    # trace anywhere, which is precisely the "looks complete and is not" this module exists to stop.
+    dropped_at = []
     for _, i in droppable:
         if size() <= ceiling:
             break
         t = title_of(parts[i])
         dropped.append((t, (sources or {}).get(t, "")))
+        dropped_at.append(i)
         parts[i] = ""
 
     # Dropping whole sections can overshoot badly. A single section larger than the ceiling forces
@@ -175,16 +183,29 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
         for rank, i in reversed(droppable):
             if parts[i] != "":
                 continue
-            title = _dropped_title(dropped, i, order)
-            if title is None:
+            if i not in dropped_at:
                 continue
             trimmed = _trim(order[i], room, sources)
             if trimmed:
                 parts[i] = trimmed
-                dropped = [d for d in dropped if d[0] != title]
+                at = dropped_at.index(i)
+                dropped.pop(at)
+                dropped_at.pop(at)
                 break
 
-    return header + "".join(parts) + notice(dropped, ceiling), dropped
+    body = header + "".join(parts) + notice(dropped, ceiling)
+    # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
+    # the header itself -- can exceed the ceiling on its own, and both loops above then run out of
+    # moves and return anyway. `dropped` still names what it removed, which reads as "handled".
+    # Meanwhile the host's own cut takes over at 10,000 bytes, positional and blind, which is the
+    # single failure this module was written to prevent. A budget that fails open is not a budget.
+    over = len(body.encode()) - ceiling
+    if over > 0:
+        body += (f"\n_⚠ This block is {over:,} bytes over its {ceiling:,}-byte limit and could not "
+                 f"be reduced further — what follows may be cut by the host. Lower "
+                 f"`index_token_budget` in .chamnan/config.json, or raise `output_byte_ceiling` if "
+                 f"your host allows more._\n")
+    return body, dropped
 
 
 def _trim(part, room, sources):

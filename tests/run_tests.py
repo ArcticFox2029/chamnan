@@ -5259,10 +5259,11 @@ check("...nor can a quoted heading fabricate an entry", len(_te) == 1)
 check("...nor attach a file the thread never touched", _te[0][2] == [])
 
 # Two different titles slugging to one filename appended an unrelated subject to an existing
-# thread, silently — the scattering this module exists to prevent, running backwards.
-check("two different titles do not become one thread file",
-      _tl.slug("Fix Auth!!!") != _tl.slug("Fix, Auth"))
-check("...while the same title still gives the same readable name",
+# thread, silently — the scattering this module exists to prevent, running backwards. The property
+# is asserted where it now lives, in create(): slug() is pure and cannot see a collision, and
+# making it guess produced a worse bug (every hyphenated title got an unguessable hash). The
+# create()-level check is further down, beside the hyphen cases that showed why.
+check("slugging is stable and readable",
       _tl.slug("Fix Auth") == _tl.slug("fix auth") == "fix-auth")
 
 # A token budget is a character index; markdown structure is not. Landing inside a fence left it
@@ -5637,6 +5638,52 @@ _hrefs = re.findall(r'href="(docs/i18n/README\.[\w-]+\.md)"', _rd)
 check("the language row links out as HTML anchors instead", len(_hrefs) >= 20)
 check("...and every one of them names a file that exists",
       all((ROOT / h).is_file() for h in _hrefs))
+
+# ------------------------------ the budget layer, told to say what it actually did
+# Both of these are the same failure in different clothes: the block looks complete and is not.
+
+# `dropped` carried (title, source) and nothing else, so a restored section was removed from the
+# report by TITLE. Two sections may legitimately share one — two "Recorded decisions and lessons"
+# blocks, say — and removing by title took both entries out while restoring only one. The other
+# was then missing from the block, from `dropped`, and from the notice: gone, with no trace.
+_dupA = "\n### Recorded decisions and lessons\n" + "\n".join(
+    f"decision A line {i}" for i in range(60)) + "\n"
+_dupB = "\n### Recorded decisions and lessons\n" + "\n".join(
+    f"decision B line {i}" for i in range(60)) + "\n"
+_dupbody, _dupdropped = fit.shrink("## chamnan\n", [_dupA, _dupB], 1200)
+check("A SECTION THAT VANISHES IS STILL REPORTED AS DROPPED", len(_dupdropped) == 1)
+check("...and the notice names it", "Recorded decisions" in fit.notice(_dupdropped, 1200))
+check("...while the one that was restored is really there", "decision B" in _dupbody)
+
+# Undroppable content can exceed the ceiling on its own, and both loops then run out of moves and
+# return anyway — with `dropped` naming what it removed, which reads as "handled". The host's own
+# positional cut takes over at that point, which is the one failure this module exists to prevent.
+_overbody, _overdropped = fit.shrink("## chamnan\n" + "x" * 20000,
+                                     ["\n### Droppable\nbody\n"], 9000)
+check("AN OVERRUN IT CANNOT FIX IS SAID OUT LOUD", "over its 9,000-byte limit" in _overbody)
+check("...with the real overshoot, not a vague warning",
+      f"{len(_overbody.encode()) - 9000:,} bytes over" in _overbody
+      or "11,102 bytes over" in _overbody)
+check("...and a block that fits says nothing of the kind",
+      "over its" not in fit.shrink("## chamnan\n", ["\n### Small\nbody\n"], 9000)[0])
+
+# A thread filename has to be guessable, because the user types it. The lossy-check compared a
+# slug's hyphens against the title's spaces, so every title with an internal hyphen looked lossy:
+# `bge-m3 migration` became `bge-m3-migration-12a9e3`, and `chamnan-timeline close
+# bge-m3-migration` — the obvious guess — matched nothing.
+for _t, _want in (("bge-m3 migration", "bge-m3-migration"),
+                  ("co-op save sync", "co-op-save-sync"),
+                  ("multi-tenant routing fix", "multi-tenant-routing-fix")):
+    check(f"a hyphenated title keeps a guessable name ({_want})", _tl.slug(_t) == _want)
+_thr = Path(tempfile.mkdtemp())
+_p1, _ = _tl.create(_thr, "Fix Auth!!!", "2026-09-01")
+_p2, _ = _tl.create(_thr, "Fix, Auth", "2026-09-01")
+_p3, _ = _tl.create(_thr, "Fix Auth!!!", "2026-09-01")
+check("TWO DIFFERENT TITLES STILL GET TWO DIFFERENT FILES", _p1 != _p2)
+check("...the same title gets the same file, so declaring twice is safe", _p1 == _p3)
+check("...and only the one that actually collided carries a hash",
+      _p1.name == "fix-auth.md" and _p2.name != "fix-auth.md")
+shutil.rmtree(_thr, ignore_errors=True)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
