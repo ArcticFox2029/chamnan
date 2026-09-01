@@ -26,6 +26,8 @@ its limits, never invent a confidence number to paper over not having one.
 """
 import json
 
+import workspace as ws
+
 # Three of the same signal in a row is worth a look; matches REPEAT_AT elsewhere in this plugin
 # (workflows.py, chamnan_scratch_watch.py) rather than inventing a fourth threshold value to justify.
 FLAG_AT = 3
@@ -88,18 +90,29 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
     the call that FIRST reaches FLAG_AT on either counter, so a caller can print a notice on the
     crossing and stay silent on every repeat after it, the same restraint every other notice in
     this plugin already uses."""
-    entries = load(root)
-    entry = next((e for e in entries if e["name"] == name), None)
-    if entry is None:
-        return None, False
-    entry["runs"] = entry.get("runs", 0) + 1
-    was_flaggable = (entry.get("interrupted", 0) >= FLAG_AT or entry.get("stderr_seen", 0) >= FLAG_AT)
-    if interrupted:
-        entry["interrupted"] = entry.get("interrupted", 0) + 1
-    if stderr_nonempty:
-        entry["stderr_seen"] = entry.get("stderr_seen", 0) + 1
-    now_flaggable = (entry.get("interrupted", 0) >= FLAG_AT or entry.get("stderr_seen", 0) >= FLAG_AT)
-    _save(root, entries)
+    # The whole read-modify-write under one lock, not just the write. An atomic write alone does
+    # not prevent a lost update -- both processes read the same `runs`, both add one, and one of
+    # the two increments is gone. Measured before this, 8 processes x 50 calls against one index:
+    # 187 of 400 recorded, 53% lost. Silent, and it stays wrong forever, because the number is a
+    # running total and nothing recomputes it.
+    #
+    # This is a SHARED registry, so pointer.py's answer to the same problem -- one file per session,
+    # no lock at all -- is not available: every session has to see the same list of tools.
+    with ws.exclusive(path(root)):
+        entries = load(root)
+        entry = next((e for e in entries if e["name"] == name), None)
+        if entry is None:
+            return None, False
+        entry["runs"] = entry.get("runs", 0) + 1
+        was_flaggable = (entry.get("interrupted", 0) >= FLAG_AT
+                         or entry.get("stderr_seen", 0) >= FLAG_AT)
+        if interrupted:
+            entry["interrupted"] = entry.get("interrupted", 0) + 1
+        if stderr_nonempty:
+            entry["stderr_seen"] = entry.get("stderr_seen", 0) + 1
+        now_flaggable = (entry.get("interrupted", 0) >= FLAG_AT
+                         or entry.get("stderr_seen", 0) >= FLAG_AT)
+        _save(root, entries)
     return entry, (now_flaggable and not was_flaggable)
 
 

@@ -2,9 +2,11 @@
 
 <img src="docs/assets/chamnan.png" alt="chamnan — an index the agent reads instead of scanning files. On the polyglot test corpus, 11,560,484 tokens of source become a 51,937-token index, of which roughly 3,000 reach each session." width="100%">
 
-<sub>The figures above are a summary. Every one of them, and how it was measured, is in
-[Evidence](#evidence) and [The chaos test](#the-chaos-test) below — read those rather than the
-picture if a number matters to you.</sub>
+<sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
+its source. The published corpus omits them, so the ratio you will measure by following the
+instructions below is 26×.** Both are true of the same tool; the difference is what a repository
+keeps in it, not what chamnan does. Every figure here, and how it was measured, is in
+[Evidence](#evidence) and [The chaos test](#the-chaos-test).</sub>
 
 <p align="center"><sub>[🇨🇳 中文](docs/i18n/README.zh-CN.md) · [🇹🇼 繁體中文](docs/i18n/README.zh-TW.md) · [🇯🇵 日本語](docs/i18n/README.ja.md) · [🇰🇷 한국어](docs/i18n/README.ko.md) · [🇹🇭 ไทย](docs/i18n/README.th.md) · [🇻🇳 Tiếng Việt](docs/i18n/README.vi.md) · [🇮🇩 Indonesia](docs/i18n/README.id.md) · [🇮🇳 हिन्दी](docs/i18n/README.hi.md) · [🇧🇩 বাংলা](docs/i18n/README.bn.md) · [🇵🇰 اردو](docs/i18n/README.ur.md) · [🇸🇦 العربية](docs/i18n/README.ar.md) · [🇮🇱 עברית](docs/i18n/README.he.md) · [🇹🇷 Türkçe](docs/i18n/README.tr.md) · [🇷🇺 Русский](docs/i18n/README.ru.md) · [🇺🇦 Українська](docs/i18n/README.uk.md) · [🇵🇱 Polski](docs/i18n/README.pl.md) · [🇨🇿 Čeština](docs/i18n/README.cs.md) · [🇩🇪 Deutsch](docs/i18n/README.de.md) · [🇳🇱 Nederlands](docs/i18n/README.nl.md) · [🇫🇷 Français](docs/i18n/README.fr.md) · [🇪🇸 Español](docs/i18n/README.es.md) · [🇵🇹 Português](docs/i18n/README.pt-PT.md) · [🇧🇷 Português (BR)](docs/i18n/README.pt-BR.md) · [🇮🇹 Italiano](docs/i18n/README.it.md) · [🇷🇴 Română](docs/i18n/README.ro.md) · [🇬🇷 Ελληνικά](docs/i18n/README.el.md) · [🇭🇺 Magyar](docs/i18n/README.hu.md) · [🇸🇪 Svenska](docs/i18n/README.sv.md) · [🇫🇮 Suomi](docs/i18n/README.fi.md) · [🇩🇰 Dansk](docs/i18n/README.da.md) · [🇳🇴 Norsk](docs/i18n/README.no.md) · [🇵🇭 Tagalog](docs/i18n/README.tl.md)</sub></p>
 
@@ -37,7 +39,7 @@ is plain markdown committed beside the code.
 
 | what people actually ask | the short answer |
 |---|---|
-| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index**, of which about **3,000 reach each session**. |
+| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 26× on the published corpus**, which omits 20 MB of binary attachments — of which about **3,000 reach each session**. |
 | *"my agent keeps re-reading the same files"* | Measured across 12,332 re-read events in six working sessions: the injected roll-up named **22.7%** of them by alphabet, **35.6%** once ranked by git churn. |
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
@@ -1598,6 +1600,7 @@ something an agent would otherwise have to go and read:
 | 27 env and config files | 67,994 | **616** | **110×** |
 | 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** |
 | 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** |
+| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **26×** |
 
 And for the files that should never be loaded at all, `chamnan-peek` reads their shape on demand:
 

@@ -7,6 +7,8 @@ code also means it can be committed, so a team shares one accumulated memory ins
 rebuilding their own — and a machine move carries it along with the clone.
 """
 import json
+import time
+import contextlib
 import pathlib
 import os
 from pathlib import Path
@@ -471,3 +473,53 @@ def safe_tool_name(name):
     if name.startswith("."):
         return None
     return name
+
+
+# A mutex built from os.open(O_CREAT|O_EXCL), which is atomic on POSIX and on Windows alike, so it
+# needs neither fcntl nor msvcrt and stays inside the standard library.
+#
+# lib/pointer.py faced the same lost-update problem and chose NOT to lock: it gave every session its
+# own file, and its comment sets out why — flock is not reentrant across two descriptors in one
+# process, and fcntl drops every lock a process holds the moment ANY descriptor to the file closes.
+# That answer is right there and wrong here. `tools/index.json` is a shared registry: every session
+# has to see the same list of tools, so per-session files are not available and a lock is the only
+# thing left.
+#
+# Held for a read-modify-write of a few hundred bytes, so the wait is bounded and short. A lock left
+# behind by a killed process is broken after LOCK_STALE seconds rather than waited on forever, and
+# failing to acquire is not an error: the caller writes anyway. Losing one increment to a busy lock
+# is a worse hint; refusing to record anything is a worse tool.
+LOCK_TIMEOUT = 2.0
+LOCK_STALE = 30.0
+
+
+@contextlib.contextmanager
+def exclusive(path):
+    """Hold a lock beside `path` for the duration of the block. Yields True when it was acquired."""
+    lock = Path(str(path) + ".lock")
+    fd, deadline = None, time.time() + LOCK_TIMEOUT
+    while True:
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - lock.stat().st_mtime > LOCK_STALE:
+                    lock.unlink()
+                    continue
+            except OSError:
+                pass
+            if time.time() > deadline:
+                break
+            time.sleep(0.01)
+        except OSError:
+            break
+    try:
+        yield fd is not None
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+                lock.unlink()
+            except OSError:
+                pass

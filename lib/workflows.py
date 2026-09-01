@@ -22,6 +22,8 @@ It speaks once, at the threshold, the same restraint scratch_watch uses. A hint 
 every repetition is a hint people learn to scroll past.
 """
 import json
+
+import workspace as ws
 import re
 
 # Reduced to "program" or "program subcommand". `git status`, `pytest`, `docker compose`,
@@ -190,7 +192,20 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
     # `repeated()` reads a tail and `usage_counts()` a total, and neither is harmed by extra
     # history.
     if len(history) - len(kept) >= TRIM_SLACK:
-        _rewrite(log_path, kept)
+        # The trim is a truncate-and-overwrite built from a snapshot that another process can have
+        # appended to since. The append path above is safe on its own -- O_APPEND writes of short
+        # lines do not interleave -- but a rewrite racing appends throws them away wholesale.
+        # Measured before this, 6 processes racing appends against rewrites: 131 of 240 freshly
+        # appended signatures, 55%, vanished from the log. A workflow's evidence deleted by an
+        # unrelated Bash call.
+        #
+        # Re-read INSIDE the lock rather than trusting the snapshot, so anything appended between
+        # the read above and the lock is trimmed rather than lost.
+        with ws.exclusive(log_path) as held:
+            if held:
+                history = read(log_path)
+                kept = prune(history)
+            _rewrite(log_path, kept)
         history = kept
     return history
 
