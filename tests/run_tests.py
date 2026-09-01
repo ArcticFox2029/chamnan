@@ -6735,6 +6735,40 @@ check("...and the backfilled one does not displace the genuinely second-newest",
       "2026-07-01" in _recent)
 shutil.rmtree(_memd.parent.parent, ignore_errors=True)
 
+# ------------------------------ the redactor, measured on code rather than on a decoy list
+# `is_blocked` carries an any-segment extension check and the comment inside it claims both
+# functions run "the same four checks". They did not, so peek OPENED the ordinary ways a key gets
+# copied aside — and prints only the first eight lines, so the END marker never reached the
+# scrubber and the header-only fallback replaced the BEGIN line alone. A real key body under a
+# `<REDACTED>` header is the "miss dressed as a hit" this module calls unrecoverable.
+for _copied in ("backup.pem.txt", "server.key.old", "deploy.key.bak", "prod.pem.bak"):
+    check(f"peek refuses {_copied}, as it already refused the bare file",
+          redact.is_never_opened(Path(_copied)))
+for _ordinary in ("notes.txt", "report.pdf", "keyboard.md", "monkey.py"):
+    check(f"...and still opens {_ordinary}", not redact.is_never_opened(Path(_ordinary)))
+check("the two refusal lists agree on every shape either one knows",
+      all(redact.is_blocked(Path(n)) for n in
+          ("backup.pem.txt", "server.key.old", "deploy.key.bak", "prod.pem.bak")))
+
+# 100% precision on a 22-string decoy corpus is "no known false positive". Measured on 257 real
+# files it damaged 144 lines, 70 of them from `key` alone — the commonest parameter name in Python.
+for _code in ('for f in sorted(d.glob("*"), key=lambda p: p.stat().st_mtime):',
+              'if st.button("save", key="save_sn_key"):',
+              'tokens = tokenizer.encode(prompt)',
+              'TOKEN_RE = re.compile(r"[a-z]+")',
+              'SECRET_PATTERN = re.compile(r"x")',
+              'sort_order = "asc"'):
+    check("ORDINARY CODE SURVIVES THE REDACTOR: " + _code[:44], redact.scrub(_code) == _code)
+
+# ...and none of that may cost anything on the secret side.
+for _cred in ('api_key = "sk-abcdefghijklmnop"', 'access_token = "ya29.abcdefghijklmno"',
+              'auth_token: "Tr0ub4dor2026x"', 'password = "Tr0ub4dor-2026"',
+              'AccountKey=abcdefghijklmnopqrstuvwxyz==', 'refresh_token=abcdefghijklmnop'):
+    check("A REAL CREDENTIAL IS STILL REDACTED: " + _cred[:40],
+          redact.PLACEHOLDER in redact.scrub(_cred))
+check("the README publishes the real-codebase number beside the corpus one",
+      "on 257 real files" in (ROOT / "README.md").read_text(encoding="utf-8"))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

@@ -80,7 +80,12 @@ SECRET_WORDS = (
     # came back as `self.tokenizer_config = <REDACTED>`, and so did `detokenize_output_text`,
     # `retokenized_batch`, `credentialing_deadline` and `secretariat_id`. Ordinary identifiers,
     # destroyed in the index the tool exists to write.
-    r"(?<![A-Za-z])(?:password|passwd|pwd|secret|token|credential)s?(?![A-Za-z])"
+    r"(?<![A-Za-z])(?:password|passwd|pwd|secret|credential)s?(?![A-Za-z])"
+    # `token` needs a component beside it, for the same reason `key` does: a bare `token` in source
+    # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
+    # the identifier family this module's own docstring says was already fixed once. The credential
+    # spellings — access_token, auth_token, api_token, refresh_token — all carry one.
+    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]tokens?(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
     r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Secret|Token|Credential)s?)(?![A-Za-z])"
@@ -89,7 +94,15 @@ SECRET_WORDS = (
     # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
     # without the left one `monkey_patch` matches, without the right one `keyboard_layout` does,
     # and destroying ordinary configuration is the other half of this module's trade.
-    r"|(?<![A-Za-z])(?:[A-Za-z0-9]+[_-])?keys?(?![A-Za-z])"
+    # 🐛 ...but the leading component is now REQUIRED, not optional. `key` is the commonest
+    # parameter name in Python, and measured against 257 real files it accounted for 70 of 129
+    # destroyed lines on its own: `key=lambda p: p.stat().st_mtime` became `key=<REDACTED> p: …`,
+    # `st.button("บันทึก", key="save_sn_key")` lost its widget id. `token`/`tokens` alone is the
+    # same story — `tokens = tokenizer.encode(prompt)`. The credential spellings all carry another
+    # component (api_key, ssh_key, AccountKey), so requiring one costs nothing on the secret side
+    # and stops the single largest source of damage on the other. `password`, `secret` and
+    # `credential` keep their bare form, because `password = "…"` really is one.
+    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]keys?(?![A-Za-z])"
     # ...and the same component written in CamelCase, where there is no separator to anchor on:
     # AccountKey, ApiKey, PrivateKey. `(?-i:...)` turns the surrounding re.I off for this branch
     # only, because the distinction IS the case -- a capital K after a lowercase letter is a word
@@ -99,6 +112,14 @@ SECRET_WORDS = (
     # fires inside `oauth_flow` and `authentication_flow`, whose values are OAuth grant types.
     r"|(?<![A-Za-z])auth(?!ors?\b|entication)"
 )
+
+# A compiled regular expression is not a credential, whatever it is called. `TOKEN_RE`,
+# `TOKEN_LEAK_RE` and `SECRET_PATTERN` are the names a scanner gives its own patterns — including
+# this module's — and they were being redacted out of the index of any repository that has one.
+_NOT_A_CREDENTIAL_NAME = re.compile(
+    r"(?:_|\b)(?:re|regex|rx|pattern|patterns|prefix|suffix|header|headers|field|fields|column|"
+    r"columns|param|params|arg|args|label|labels|id|ids|name|names|type|types|kind|order|sort|"
+    r"index|idx|map|maps|dict|list|set|count|len|size|fn|func|cls|class)$", re.I)
 
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
@@ -158,11 +179,25 @@ def is_blocked(path):
 
 
 def is_never_opened(path):
-    """Files peek refuses outright, because a summary of them is a summary of a secret."""
+    """Files peek refuses outright, because a summary of them is a summary of a secret.
+
+    🐛 `is_blocked` above carries an ANY-SEGMENT extension check and the comment inside it claims
+    both functions run "the same four checks". They did not: this one tested only the last segment,
+    so `backup.pem.txt`, `server.key.old` and `deploy.key.bak` — the ordinary ways a key gets copied
+    aside — were blocked from the indexer and opened by `chamnan-peek`. And peek prints only the
+    first eight lines, so the `-----END PRIVATE KEY-----` never reached the scrubber, the greedy
+    block pattern could not match, and the header-only fallback replaced the BEGIN line alone.
+    Measured on a real 2048-bit RSA key: line 1 `<REDACTED>`, lines 2 onward live key material,
+    under a header that tells a reviewer the file was handled. The lists drifted apart once before
+    and the comment written to stop it happening again was attached to the function that was
+    already right.
+    """
     name = path.name.lower()
     if name.startswith(("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")):
         return True
     stem = name.rsplit(".", 1)[0] if "." in name else name
+    if any(f".{seg}" in NEVER_OPENED_SUFFIXES for seg in name.split(".")[1:]):
+        return True
     return (name.endswith(NEVER_OPENED_SUFFIXES) or name in BLOCKED_NAMES
             or stem in BLOCKED_NAMES)
 
@@ -181,6 +216,17 @@ NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "ur
 # after it, which the Bearer/Basic pattern above has already taken. Without this the bare rule
 # replaces the scheme too and an Authorization header reads "<REDACTED> <REDACTED>".
 SCHEME_WORDS = frozenset({"bearer", "basic", "digest", "negotiate", "ntlm", "token", "apikey"})
+
+
+def _looks_like_a_credential_name(key):
+    """False when the name's own tail says it is something other than a credential.
+
+    Complements `_names_a_mechanism` below, which reads a curated suffix list. This one reads the
+    LAST component: a name ending `_RE`, `_PATTERN`, `_HEADER` or `_ORDER` describes a regex, a
+    header or an ordering, and no value it holds is a secret.
+    """
+    bare = re.sub(r"['\"\s:=]+$", "", (key or "").strip())
+    return not _NOT_A_CREDENTIAL_NAME.search(bare)
 
 
 def _names_a_mechanism(key):
@@ -202,14 +248,17 @@ def scrub(text):
             text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
     text = ASSIGNED_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
         else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
     text = ASSIGNED_SECRET_CALL.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
         else f"{m.group(1)}{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or m.group(2).lower() in SCHEME_WORDS
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        or m.group(2).lower() in SCHEME_WORDS
         else f"{m.group(1)}{PLACEHOLDER}", text)
     return text

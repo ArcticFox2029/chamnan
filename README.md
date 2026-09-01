@@ -911,11 +911,27 @@ corpus of 38 secret shapes and 22 ordinary strings that must survive:
 | | |
 |---|---|
 | recall | **97.4%** — 37 of 38 secret shapes redacted |
-| precision | **100%** — 0 of 17 ordinary strings damaged |
+| precision, on the corpus | **100%** — 0 of 22 ordinary strings damaged |
+| precision, on 257 real files | **54 lines damaged**, down from 144 |
 
-Read those honestly. 44 labelled cases is not 818 repositories, and 100% on a corpus this size means
-"no known false positive", not "no false positives". The one miss is the point of the next
-paragraph, and it is deliberate.
+Read those honestly, and read the third row first, because it is the one that generalises.
+
+**100% on a 22-string decoy corpus is "no known false positive", not "no false positives".** Run
+the same redactor over a real 257-file application and it damages **54 lines**. Before the fix
+below it damaged **144**, including `key=lambda p: p.stat().st_mtime` — `key` is the commonest
+parameter name in Python — and `tokens = tokenizer.encode(prompt)`, which is the identical
+identifier family this module's own docstring records as already fixed once. `key` and `token` now
+require a second name component, which every credential spelling has (`api_key`, `access_token`,
+`AccountKey`) and no bare parameter does; a name whose last component is `_RE`, `_PATTERN`,
+`_HEADER` or `_ORDER` is exempted outright. Recall did not move.
+
+The 54 that remain are compound names that genuinely look like credentials — `CONFIG_KEY`,
+`current_key`, `INDEX_KEY`. **A keyword redactor cannot tell `CONFIG_KEY = "openai_api_key"` from
+`API_KEY = "sk-…"` without reading the value, and reading the value is what it refuses to do.** That
+is a ceiling, not a bug backlog, and it is the reason the corpus number alone would have been a
+misleading thing to publish on its own.
+
+The single recall miss is the point of the next paragraph, and it is deliberate.
 
 **There is a ceiling chamnan can never reach, and it is worth naming.** The single largest gain in
 this entire literature is *verification by live API call* — TruffleHog moves from 6% to 90%
