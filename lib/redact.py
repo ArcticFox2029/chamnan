@@ -42,7 +42,13 @@ PATTERNS = [
     # Private key and certificate blocks.
     # "BLOCK" is not decoration: a PGP secret key is delimited "PRIVATE KEY BLOCK-----", so a
     # pattern anchored on "PRIVATE KEY-----" matched every other format and missed that one.
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----.*?"
+    # GREEDY, and that is the whole point. A lazy body stops at the FIRST text shaped like an END
+    # line -- and a README snippet, or a comment reading "keys end with -----END RSA PRIVATE
+    # KEY-----", supplies one between the real BEGIN and the real END. The header and the decoy
+    # were replaced while the entire base64 body of a real key went through untouched, on the
+    # highest-value pattern in this file. Greedy runs to the LAST END marker instead: over-covering
+    # a decoy costs a line of prose, under-covering one publishes a private key.
+    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----.*"
                r"-----END [A-Z ]*PRIVATE KEY(?: BLOCK)?-----", re.S),
     re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"),
 ]
@@ -57,22 +63,48 @@ LATE_PREFIXES = [
     re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{20,}"),
 ]
 
+# The names that mean "a credential lives here". Written once and shared by the assignment
+# patterns below, which had drifted -- one had gained spellings the other had not.
+SECRET_WORDS = (
+    r"password|passwd|pwd|secret|token|credential"
+    # `key` as a whole COMPONENT of the name, not the four compound spellings that were listed by
+    # hand. ssh_key, signing_key, encryption_key, master_key and db_key all passed through
+    # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
+    # without the left one `monkey_patch` matches, without the right one `keyboard_layout` does,
+    # and destroying ordinary configuration is the other half of this module's trade.
+    r"|(?<![A-Za-z])(?:[A-Za-z0-9]+[_-])?keys?(?![A-Za-z])"
+    # ...and the same component written in CamelCase, where there is no separator to anchor on:
+    # AccountKey, ApiKey, PrivateKey. `(?-i:...)` turns the surrounding re.I off for this branch
+    # only, because the distinction IS the case -- a capital K after a lowercase letter is a word
+    # boundary, a lowercase one is the middle of `monkey`.
+    r"|(?-i:(?<=[a-z0-9])Keys?)(?![A-Za-z])"
+    # Word-anchored on the left, and `authentication` excluded on the right. Unanchored, `auth`
+    # fires inside `oauth_flow` and `authentication_flow`, whose values are OAuth grant types.
+    r"|(?<![A-Za-z])auth(?!ors?\b|entication)"
+)
+
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
     # all, which is the normal form for both, and a one-or-more group never matched them.
     r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]*):([^\s@/]{3,})@")
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 ASSIGNED_SECRET = re.compile(
-    r"((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"account[_-]?key|auth(?!ors?\b)|credential)[\w-]*\s*['\"]?\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
 # single unbroken run of characters so a prose comment ("password: ask the platform team") is not
 # eaten, and to six characters so token_ttl=3600 is not either.
 ASSIGNED_SECRET_BARE = re.compile(
-    r"((?:password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"account[_-]?key|auth(?!ors?\b)|credential)[\w-]*\s*['\"]?\s*[:=]\s*)"
-    r"(?!<REDACTED>)([^\s'\"#;,)\]}]{6,})", re.I)
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
+    # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
+    # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
+    # a now-broken line -- a leak and a corruption from one missing character.
+    r"(?!<REDACTED>)([^\s'\"#;,()\[\]{}]{6,})", re.I)
+# A secret-named assignment whose value is a CALL. What is inside is not knowable from here and the
+# name says it is a credential, so the whole expression goes -- to the end of that line, no further.
+ASSIGNED_SECRET_CALL = re.compile(
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
+    r"(?!<REDACTED>)([A-Za-z_][\w.]*\s*\(.*)$", re.I | re.M)
 
 # Never opened by the scanner at all, whatever else matches. .gitignore is not relied on: it is
 # often absent, often wrong, and the cost of being wrong here is somebody's private key.
@@ -155,6 +187,10 @@ def scrub(text):
     text = ASSIGNED_SECRET.sub(
         lambda m: m.group(0) if _names_a_mechanism(m.group(1))
         else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+    # Before the bare rule, which would otherwise capture the callee and leave the argument.
+    text = ASSIGNED_SECRET_CALL.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or m.group(2).lower() in SCHEME_WORDS

@@ -5116,6 +5116,50 @@ check("...and the sections are still there, redacted rather than dropped",
       "deploy.sh" in _scout and "REDACTED" in _scout)
 shutil.rmtree(_sc.parent, ignore_errors=True)
 
+# ------------------------------ the redactor, on the shapes that got through it
+# Both directions, because this module's whole difficulty is that each direction's failure looks
+# like the other one's success. A miss writes a credential into a file the README says to commit;
+# an over-match writes <REDACTED> over the configuration the index exists to describe.
+_F = "Bogus0123456789abcdef"
+for _label, _text, _secret in [
+    # `key` as a component. Only four compound spellings were listed by hand, so the commonest
+    # form of all -- a bare `key` after a separator -- went through untouched.
+    ("ssh_key",        f'ssh_key = "{_F}{_F}"', _F),
+    ("signing_key",    f'signing_key: "{_F}{_F}"', _F),
+    ("db_key",         f'db_key={_F}{_F}', _F),
+    ("API_KEYS",       f'API_KEYS={_F}{_F}', _F),
+    # ...and in CamelCase, where there is no separator to anchor on.
+    ("AccountKey",     f'AccountKey={_F}{_F}==', _F),
+    ("secretKey",      f'secretKey = "{_F}{_F}"', _F),
+    # A value that is a call: the callee was captured AS the secret and replaced, leaving the real
+    # payload beside a broken line.
+    ("a call value",   'S = base64.b64decode("QUtJQUlPU0ZPRE5ON0VYQU1QTEU=")'.replace("S =", "AWS_SECRET ="),
+                       "QUtJQUlPU0ZPRE5ON0VYQU1QTEU="),
+]:
+    check(f"{_label}: the secret does not survive", _secret not in redact.scrub(_text))
+
+# The highest-value pattern in the file, and it was defeated by a sentence. A lazy body stops at
+# the FIRST text shaped like an END line, which a comment or a README snippet supplies.
+_decoy = ("-----BEGIN RSA PRIVATE KEY-----\n"
+          "# NOTE: keys are terminated with -----END RSA PRIVATE KEY-----\n"
+          "MIIBOgIBAAJBAKj34REALKEYDATA\nREALKEYDATA==\n"
+          "-----END RSA PRIVATE KEY-----")
+check("A DECOY END MARKER DOES NOT LEAVE THE REAL KEY BODY EXPOSED",
+      "REALKEYDATA" not in redact.scrub(_decoy))
+
+for _label, _text, _kept in [
+    ("monkey_patch",   'monkey_patch = "enabled_for_tests"', "enabled_for_tests"),
+    ("monkeyPatch",    'monkeyPatch = "enabled_for_tests"', "enabled_for_tests"),
+    ("keyboard_layout", 'keyboard_layout = "dvorak_intl"', "dvorak_intl"),
+    ("turnkey_mode",   'turnkey_mode = "preconfigured"', "preconfigured"),
+    # `auth` unanchored fires inside these two, whose values are OAuth grant types.
+    ("oauth_flow",     'oauth_flow = "authorization_code"', "authorization_code"),
+    ("authentication_flow", 'authentication_flow = "implicit"', "implicit"),
+    ("ssh_key_path",   'ssh_key_path = "/etc/ssh/id_ed25519"', "/etc/ssh/id_ed25519"),
+    ("signingKeyName", 'signingKeyName = "primary-2026"', "primary-2026"),
+]:
+    check(f"{_label}: ordinary configuration survives", _kept in redact.scrub(_text))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)
