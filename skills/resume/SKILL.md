@@ -60,6 +60,28 @@ work stopped partway. They are often both, and they are not the same file.
 
 Every heading is optional except the title. Leave out a section rather than filling it with a dash.
 
+## Write the identifiers out, every time
+
+The one rule worth following even when it feels pedantic. A session record's whole job is to survive
+a gap — a compaction, a night, a different machine — and what a compaction destroys is specifically
+the identifiers. Measured: an LLM summarization pass recovers about **63% of facts**, and the named
+failure is paraphrase — `src/middleware/auth.ts:52` comes back as "the auth middleware file", and
+`Error: ECONNREFUSED 127.0.0.1:5432` as "a database connection error". The sentence still reads
+correctly. The navigation is gone, and so is the ability to search for it.
+
+So write the thing itself, not a description of it:
+
+| write | not |
+|---|---|
+| `src/cascade.py:214`, in `run_cloud_pool_cascade` | "the cascade timeout code" |
+| `python3 .chamnan/tools/preflight.py` | "the pre-commit checker" |
+| commit `a29362d` | "the churn ranking change" |
+| `ECONNREFUSED 127.0.0.1:5432` | "a connection error" |
+| 8,878 bytes of a 9,000-byte ceiling | "close to the limit" |
+
+An exact string can be grepped by the next session. A paraphrase can only be guessed at, and it
+survives summarization looking like it is still useful, which is worse than being dropped.
+
 **Only `## Remaining` and `## Blockers` are injected into the next session**, along with the title
 and date. Everything else is there for a person reading the file. So put real content under those
 two headings and keep them specific: "finish the parser" is not something a cold session can act

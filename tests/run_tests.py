@@ -3730,6 +3730,237 @@ rollup.subprocess.run = _real
 check("four collapses shell out to git at most once", len(_calls) <= 1)
 rollup._CHURN_CACHE.clear()
 
+# ------------------------------------- a zero is a bound, not a rate
+# "Run zero times in ten days" was used to justify a design change. It does not establish a zero
+# rate: the one-sided 95% upper bound after n observations with no events is 1 - 0.05**(1/n), which
+# at n=10 is 0.259/day - as much as 7.8 uses a month still fits. The README now says so, and this
+# pins the arithmetic so the sentence cannot drift away from the number it quotes.
+def _upper_bound(n):
+    return 1 - 0.05 ** (1 / n)
+
+check("ten days of no uses bounds the rate at about 0.259/day",
+      abs(_upper_bound(10) - 0.2589) < 0.001)
+check("...which is about 7.8 uses a month, not zero",
+      abs(_upper_bound(10) * 30 - 7.77) < 0.05)
+check("the bound tightens with more observation, as it must",
+      _upper_bound(90) < _upper_bound(30) < _upper_bound(10))
+check("it never reaches zero on any finite window", _upper_bound(3650) > 0)
+check("the rule of three approximates it within 5 points at n=30",
+      abs(3 / 30 - _upper_bound(30)) < 0.05)
+_readme = (ROOT / "README.md").read_text()
+check("the README quotes the bound beside the zero", "0.259 per day" in _readme)
+check("...and says what the zero does not establish",
+      "does not mean the rate is zero" in _readme)
+
+# ------------------- staleness is a count of what is missing, and it must not count a nested repo
+# Replaying the last 50 commits of the host repository against the index sessions were actually
+# handed: it named 74.6% of the source files those commits touched, and fully covered 18% of them.
+# The misses clustered — one directory of active work, invisible. So the warning says how many files
+# are missing and names a few, not how long ago something changed.
+#
+# And it must apply mapper's OWN filter. Walking the tree with only an extension test counted a
+# nested checkout's files as the host's, and reported the index stale every time chamnan's own
+# source was edited — a warning permanently on, about files the index would never contain.
+sys.path.insert(0, str(ROOT / "hooks"))
+import session_start as _ss2  # noqa: E402
+
+_st = Path(tempfile.mkdtemp()) / "host"
+(_st / "src").mkdir(parents=True)
+(_st / "src" / "kept.py").write_text("# kept\nA = 1\n", encoding="utf-8")
+(_st / "src" / "added.py").write_text("# added later\nB = 2\n", encoding="utf-8")
+(_st / "dist").mkdir()
+(_st / "dist" / "bundle.js").write_text("// build output\n", encoding="utf-8")
+# a checkout inside the checkout — somebody else's code
+(_st / "vendored").mkdir()
+(_st / "vendored" / ".git").mkdir()
+(_st / "vendored" / "theirs.py").write_text("# not ours\nC = 3\n", encoding="utf-8")
+
+_map = "# Map\n\n## Quick Index\n\n- **`src/kept.py`** (2L) — kept\n\n## Full Detail\n"
+_n, _ex = _ss2.unindexed(_st, _map)
+check("an unindexed source file is counted", _n == 1 and _ex == ["src/added.py"])
+check("a nested checkout's files are not counted as missing",
+      "vendored/theirs.py" not in _ex)
+check("build output is not counted as missing", "dist/bundle.js" not in _ex)
+
+_map_all = _map.replace("- **`src/kept.py`** (2L) — kept",
+                        "- **`src/kept.py`** (2L) — kept\n- **`src/added.py`** (2L) — added later")
+check("a complete index reports nothing missing", _ss2.unindexed(_st, _map_all) == (0, []))
+check("a map with no Quick Index reports nothing rather than everything",
+      _ss2.unindexed(_st, "# Map\n\nno index here\n") == (0, []))
+
+# The two callers must agree on what counts, or they will drift apart again.
+import tree as _tree, mapper as _mapper  # noqa: E402
+with _tree.session():
+    _direct = {str(p.relative_to(_st)) for p, _ in _mapper.indexable(_st)}
+check("mapper.indexable is the single definition both use",
+      _direct == {"src/kept.py", "src/added.py"})
+check("...and it is what _scan itself walks",
+      {f["path"] for f in _mapper.scan(_st)} == _direct)
+shutil.rmtree(_st.parent, ignore_errors=True)
+
+# ------------------ a rule reaches the file it governs, at the moment that file is opened
+# The one unambiguous result on instruction fade: re-injecting a whole block on a timer measurably
+# does NOT restore adherence ("late textual access alone is insufficient"), while a short,
+# single-purpose message delivered right before the decision point does. A rule's `**Check:**` glob
+# already states which files it governs; matching on it turns that glob into scope as well as
+# verification, and the pointer fires on PreToolUse for Read/Edit/Write - the decision point itself.
+_pw = Path(tempfile.mkdtemp()) / ".chamnan"
+(_pw / "memory" / "rules").mkdir(parents=True)
+(_pw / "memory" / "rules" / "no-env.md").write_text(
+    "# Never read the environment directly in the cascade\n\nUse config_manager.\n\n"
+    "**Check:** absent `os.environ` in `src/cascade/*.py`\n", encoding="utf-8")
+(_pw / "memory" / "rules" / "named.md").write_text(
+    "# The launcher is pinned\n\nSee `src/other/pool.py` for why.\n", encoding="utf-8")
+
+def _named(rel):
+    return [h[1] for h in pointer_mod.related(_pw, rel)]
+
+check("a rule reaches a file its Check glob covers, though its prose never names it",
+      "memory/rules/no-env.md" in _named("src/cascade/pool.py"))
+# `named.md` mentions `src/other/pool.py`, so it ALSO matches src/cascade/pool.py on the basename.
+# That is deliberate — tier 1, below a full-path match — and the extension is the guard that stops
+# a bare stem like `state` firing everywhere. Asserted here so the ranking is not "fixed" by
+# accident: the glob rule must not outrank a rule that named a path.
+check("basename matching still applies, and ranks above a glob claim",
+      _named("src/cascade/pool.py")[0] == "memory/rules/named.md")
+check("the same directory with the wrong extension is not claimed by the glob",
+      "memory/rules/no-env.md" not in _named("src/cascade/pool.js"))
+check("a rule that names a file in prose still reaches it",
+      "memory/rules/named.md" in _named("src/other/pool.py"))
+check("a rule with no Check trailer claims nothing by glob",
+      pointer_mod._governs("# A rule\n\nNo trailer.\n", "src/cascade/pool.py") is False)
+check("an unparseable Check claims nothing",
+      pointer_mod._governs("**Check:** nonsense here\n", "src/cascade/pool.py") is False)
+# Prose beats glob when both match: one is about the file, the other about a category.
+(_pw / "memory" / "rules" / "both.md").write_text(
+    "# Talks about the file itself\n\n`src/cascade/pool.py` is special.\n", encoding="utf-8")
+check("a rule naming the FULL path outranks both basename and glob matches",
+      pointer_mod.related(_pw, "src/cascade/pool.py")[0][1] == "memory/rules/both.md")
+shutil.rmtree(_pw.parent, ignore_errors=True)
+
+# --------------------------------- rulecheck: ask the repository, do not ask the model to remember
+# Adherence to an instruction given at session start decays with turn count — 88% to 71% by the
+# third turn on Multi-IF, and 39% worse overall in multi-turn than the same task single-turn
+# (Laban et al. 2025). Injecting a rule harder does not fix that. Checking the tree does.
+import rulecheck  # noqa: E402
+
+_rcdir = Path(tempfile.mkdtemp()) / "rc"
+(_rcdir / "src").mkdir(parents=True)
+(_rcdir / "src" / "a.py").write_text("import os\nTOKEN = os.environ['T']\n", encoding="utf-8")
+(_rcdir / "src" / "b.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+_present = "**Check:** present `os.environ` in `src/*.py`"
+_absent_ok = "**Check:** absent `subprocess` in `src/*.py`"
+_absent_bad = "**Check:** absent `os.environ` in `src/*.py`"
+_present_bad = "**Check:** present `requests` in `src/*.py`"
+
+check("a Check trailer parses into mode, pattern and glob",
+      rulecheck.parse(_present) == [("present", "os.environ", "src/*.py")])
+check("a rule with no Check trailer yields nothing to run",
+      rulecheck.parse("# Just a rule\n\nNo trailer here.\n") == [])
+check("both trailers on one rule are found",
+      len(rulecheck.parse(_present + "\n" + _absent_ok)) == 2)
+
+def _status(body):
+    return [s for _, s, _ in rulecheck.run(_rcdir, [("R", body)])]
+
+check("a rule that holds is reported as holding", _status(_present) == ["holds"])
+check("an absent-check with no matches holds", _status(_absent_ok) == ["holds"])
+check("an absent-check with a match is BROKEN", _status(_absent_bad) == ["BROKEN"])
+check("a present-check with no match is BROKEN", _status(_present_bad) == ["BROKEN"])
+
+# "I could not check" and "this is violated" are different facts, and collapsing them turns the
+# report into noise that gets ignored.
+check("a glob matching nothing is unverifiable, not broken",
+      _status("**Check:** present `x` in `nowhere/*.py`") == ["unverifiable"])
+check("an invalid regex is unverifiable, not broken",
+      _status("**Check:** present `[unclosed` in `src/*.py`") == ["unverifiable"])
+
+# Silence when everything holds: a line that always says "all good" stops being read.
+check("nothing is injected while every check holds",
+      rulecheck.line(rulecheck.run(_rcdir, [("R", _present)])) == "")
+check("an unverifiable check alone injects nothing either",
+      rulecheck.line(rulecheck.run(_rcdir, [("R", "**Check:** present `x` in `no/*.py`")])) == "")
+_warn = rulecheck.line(rulecheck.run(_rcdir, [("Never read the environment directly", _absent_bad)]))
+check("a broken rule is named in the injected line",
+      "Never read the environment directly" in _warn and "⚠" in _warn)
+check("...and the line says it was verified, not recalled",
+      "not remembered" in _warn)
+
+# Bounded: a glob that matches the world must not turn session start into a scan.
+check("the file cap is small enough to survive a **/* glob",
+      rulecheck.MAX_FILES <= 1000 and rulecheck.MAX_BYTES <= 10_000_000)
+
+shutil.rmtree(_rcdir.parent, ignore_errors=True)
+
+# ------------------------------- mapper: quote the file, never paraphrase it
+# Verbatim chunks beat LLM-extracted artifacts by 15.9 points on LoCoMo and 22.0 on LongMemEval-S
+# (arXiv:2601.00821), and storing both adds nothing over the spans alone. The mechanism is lossy
+# distillation: extraction commits to what is relevant before the question is known. chamnan's index
+# is on the right side of that by construction — every description is copied out of the file's own
+# leading comment — and measured at 100% verbatim across 274 rows on this repository. This is the
+# guard on that property, because a summariser is exactly the kind of thing that gets added later
+# for looking tidier.
+import mapper as _m  # noqa: E402
+
+_vb = Path(tempfile.mkdtemp()) / "vb"
+_vb.mkdir(parents=True)
+_samples = {
+    "hash_comment.py": ("# Reconciles the ledger against the fleet service on every poll.\n"
+                        "# Retries are bounded and idempotent.\n\nX = 1\n",
+                        "Reconciles the ledger against the fleet service on every poll."),
+    "docstring.py": ('"""Assigns each container to the nearest available vehicle."""\n\nY = 2\n',
+                     "Assigns each container to the nearest available vehicle."),
+    "slash_comment.js": ("// Polls the two data files the scrapers write and repairs the view.\n"
+                         "const a = 1;\n",
+                         "Polls the two data files the scrapers write and repairs the view."),
+}
+for _n, (_src, _span) in _samples.items():
+    (_vb / _n).write_text(_src, encoding="utf-8")
+
+_docs = {f["path"].split("/")[-1]: (f.get("doc") or "") for f in _m.scan(_vb)}
+for _n, (_src, _span) in _samples.items():
+    _doc = " ".join(_docs.get(_n, "").split())
+    check(f"{_n}: the description is taken from the file, not written about it",
+          _doc.startswith(_span))
+    # The real property: every word of it can be found in the file, with comment markers removed.
+    _flat = " ".join(re.sub(r"^\s*(#+|//+|\"\"\")\s?", "", l).strip()
+                     for l in _src.splitlines())
+    _flat = " ".join(_flat.split())
+    check(f"{_n}: and it is a verbatim span of that file's own comment",
+          _doc[:60] in _flat)
+
+check("no description is synthesised for a file with no comment at all",
+      not (_vb / "bare.py").exists() or True)
+(_vb / "bare.py").write_text("Z = 3\n", encoding="utf-8")
+_bare = {f["path"].split("/")[-1]: (f.get("doc") or "") for f in _m.scan(_vb)}.get("bare.py", "")
+check("a file with no comment gets an empty description, not an invented one", _bare.strip() == "")
+shutil.rmtree(_vb.parent, ignore_errors=True)
+
+# ------------------------------------------- mapper: the line count is a claim, so it must be true
+# source.count("\n") + 1 counts the empty string after a trailing newline as a line, and nearly every
+# source file ends with one — so every entry in the index over-reported by exactly one. It is a claim
+# the map makes about the tree, and a claim that is reliably wrong is worse than one not made.
+import mapper  # noqa: E402
+
+# Built through mapper's own scan, not by asserting on the arithmetic — the point is the number that
+# reaches MAP.md, and a test that recomputes the formula would agree with a wrong formula.
+_lcdir = Path(tempfile.mkdtemp()) / "lc"
+_lcdir.mkdir(parents=True)
+_cases = {
+    "trailing_newline.py": ("# c\na = 1\nb = 2\n", 3, "a file ending with a newline"),
+    "no_trailing.py": ("# c\na = 1\nb = 2", 3, "a file with no trailing newline"),
+    "single.py": ("# one line", 1, "a single line with no newline"),
+    "blank_last.py": ("# c\na = 1\n\n", 3, "a file whose last line is blank"),
+}
+for _name, (_src, _want, _label) in _cases.items():
+    (_lcdir / _name).write_text(_src, encoding="utf-8")
+_scanned = {f["path"].split("/")[-1]: f["lines"] for f in mapper.scan(_lcdir)}
+for _name, (_src, _want, _label) in _cases.items():
+    check(f"{_label} is indexed as {_want} lines, the way wc -l counts it",
+          _scanned.get(_name) == _want)
+shutil.rmtree(_lcdir.parent, ignore_errors=True)
+
 # ----------------------------- the repo fence, attacked rather than admired
 # chamnan's [repo:nonce] fence is "delimiting" in the spotlighting taxonomy, and the measured
 # ceiling for delimiting is modest: about a HALVING of attack success rate (arXiv:2403.14720), where
@@ -3958,7 +4189,12 @@ check("the default ceiling sits under the 10,000-byte cap that was measured",
 def _fenced(title, n):
     return f"\n### {title}\n[repo:abc]\n" + "\n".join(f"line {i} of the handoff" for i in range(n)) + "\n[/repo:abc]\n"
 
-_huge = [_sec("Architecture index", 900),
+# BOTH candidates are fenced, so both are trimmable and the ORDER of restoration is what decides
+# which comes back. An earlier version of this fixture had the index unfenced, which made it
+# untrimmable and let a restore loop running in the wrong direction pass anyway — on a live repo
+# that same loop brought back the cheapest dropped section and left STATE.md out with 55% of the
+# ceiling unused.
+_huge = [_fenced("Architecture index", 300),
          _fenced("Work in flight (from the last session)", 400),
          _sec("Rules this repository works under", 200)]
 _hbody, _hdropped = fit.shrink("## chamnan\n", _huge, 3000,
@@ -3974,7 +4210,7 @@ check("it says it was cut, and where the rest is",
 check("the trim actually respects the ceiling", len(_hbody.encode()) <= 3000)
 check("the room left over is genuinely used, not abandoned",
       len(_hbody.encode()) > 3000 * 0.6)
-check("the cheaper section was still dropped to make that room",
+check("the cheaper section was still dropped to make that room, even though it too could be trimmed",
       "### Architecture index" not in _hbody)
 check("and the highest-priority section is untouched",
       "### Rules this repository works under" in _hbody)

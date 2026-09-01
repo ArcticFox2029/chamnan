@@ -114,3 +114,13 @@ with four.
 Entries are ordinary markdown. Edit them when they change; delete them when they stop being true.
 A memory nobody prunes by hand eventually contains something false, and a false entry is worse than
 a missing one. Set `"memory": false` in `.chamnan/config.json` to switch the whole thing off.
+
+## Name the thing, do not describe it
+
+A recorded decision is read months later, often by a session that has just been compacted. What a
+compaction destroys first is identifiers: summarization recovers roughly **63% of facts**, and the
+measured failure mode is paraphrase — `src/middleware/auth.ts:52` returning as "the auth middleware
+file". The sentence survives; the ability to find the file does not.
+
+Write the path, the symbol, the command, the commit, the number. `mapper.py:566` and
+`source.count("\n") + 1` are greppable a year from now. "the line-count bug" is not.

@@ -361,9 +361,18 @@ were `chamnan-age`, `chamnan-candidates`, `chamnan-env`, `chamnan-peek` and `cha
 `chamnan-map` 3, `chamnan-report` 1, `chamnan-timeline` 1. By the person who wrote them, in the
 repository they were written for.
 
-The reading taken was not that the knowledge is unwanted, but that a CLI is the wrong surface for
-it. The caller is a model, and a model does not pause before an edit and think *"I should run
-chamnan-impact first"* — remembering to ask is the work this plugin exists to remove.
+**What that zero does and does not establish.** Ten days of no uses does not mean the rate is zero.
+The one-sided 95% upper bound after `n` observations with no events is `1 - 0.05^(1/n)`, so ten days
+bounds the true rate at **0.259 per day - as much as 7.8 uses a month** still fits the data. A
+command consistent with weekly use can easily show ten quiet days. The honest statement is "not once
+in ten days, which rules out daily use and rules out nothing below it", and 80% of features in a
+615-subscription study are rarely used, so a long tail is the ordinary shape rather than a defect.
+
+The reading taken was therefore not that the knowledge is unwanted, and not that the zero proved
+anything on its own. It was that a CLI is the wrong surface for it. The caller is a model, and a
+model does not pause before an edit and think *"I should run chamnan-impact first"* - remembering to
+ask is the work this plugin exists to remove. That argument stands without the zero; the zero is
+consistent with it, not evidence for it.
 
 So opening a file now says what the repository already records about it:
 
@@ -1176,6 +1185,28 @@ which host* is exactly what an index should tell you.
 
 The redaction patterns are narrow on purpose. Redacting everything high-entropy would eat commit
 hashes, UUIDs and version strings, and a map full of `<REDACTED>` is not a map.
+
+### An index is the third layer, not the first
+
+Worth stating plainly, because it is the thing a tool like this is most tempted to overclaim.
+Measured comparisons of repository retrieval put **lexical search first**: ripgrep retrieves in
+**under 0.02s** average, against 3-7s for indexed baselines on a mid-size repository and **over 50s**
+on a 754k-line one, and it beats GraphCoder and RepoFuse while doing it
+([arXiv:2601.23254](https://arxiv.org/html/2601.23254)). The working recommendation from that
+literature is a three-layer order: **lexical (ripgrep) -> structural (ast-grep) -> a repo map, and
+the map only when the query is conceptual.**
+
+chamnan is that third layer and is not trying to be the first two. If you know the symbol, grep for
+it; grep is faster than anything this plugin could build and it is never out of date. The map
+answers a different question - *what is this repository shaped like, and where does this kind of
+thing live* - which is the question a session asks when it has just started, or has just been
+compacted, and which grep cannot answer without already knowing the answer.
+
+Two consequences follow, and both are already in the design. There is **no vector store, no index
+server and no embedding model** anywhere in chamnan: on a codebase that changes every commit, a
+frozen embedding is the thing that goes stale, and the measured latency argument runs the wrong way
+for it. And `MAP.md` tells you to **grep its detail rather than read it**, because the index is the
+entry point to the code, not a replacement for looking at the code.
 
 ### What this is not
 
