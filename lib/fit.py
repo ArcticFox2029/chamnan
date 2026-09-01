@@ -75,9 +75,15 @@ def _rank(part):
     for i, name in enumerate(DROP_ORDER):
         if t.startswith(name):
             return i
-    # An unlisted section is a new one nobody has ranked yet. Drop it before anything explicitly
-    # ranked as worth keeping, but after the index -- unknown value is not the same as no value.
-    return 0.5
+    # An unlisted section is a new one nobody has ranked yet. It used to be dropped SECOND, ahead
+    # of everything but the index, and two shipped sections have always been unranked — including
+    # "Repeated last session and never kept", whose source file the hook deletes as it emits it, so
+    # the drop notice named a path that no longer existed. fit.py's own docstring justifies whole
+    # section dropping precisely because "a section that is named and on disk is recoverable in one
+    # grep"; there it was neither. Unknown value is not the same as no value, and it is not the same
+    # as least value either: rank it in the middle, so it is dropped before what has been argued
+    # for and after what has not.
+    return len(DROP_ORDER) / 2.0
 
 
 # Constraints first, data in the middle, the thing to act on last. Position inside a prompt is not
@@ -276,9 +282,19 @@ def _fit_lines(lines, budget):
     the section runs over: a pin is the owner saying this must not be cut, and silently cutting it
     would make the marker a lie. The over-budget case is visible in `--explain` rather than hidden.
     """
+    # 🐛 Fence-blind. Any line starting with `#` began a new block and got a depth, so a
+    # `# rebuild the map` comment inside a ```bash block had depth 1, which is <= the pin's depth,
+    # and ENDED the pinned span — dropping the two `##` subsections beneath it and leaving the
+    # fence unclosed. The comment above says this function was written after exactly that shape of
+    # bug; the fix tracked pin depth and never made the scan fence-aware, which is the whole reason
+    # `lib/md.py` exists. `state.split_pinned` and this still disagreed about the same text.
+    in_fence = False
     blocks, cur = [], []
     for line in lines:
-        if line.startswith("#") and cur:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        elif line.startswith("#") and not in_fence and cur:
             blocks.append(cur)
             cur = []
         cur.append(line)
@@ -320,9 +336,23 @@ def _fit_lines(lines, budget):
 
     keep = set(pinned_lines)
     total = sum(size(i) for i in keep)
+    # 🐛 `break`, not `continue`. One pasted traceback in the middle of a handoff discarded
+    # everything after it — measured: `## Blockers` and its contents thrown away with 380 of 400
+    # bytes still unused, under a marker that said only "cut to fit". The stated reason ("so what
+    # is kept stays contiguous") did not hold anyway, because the pinned reservation above already
+    # makes `keep` non-contiguous. Skip what does not fit and keep filling.
     for i in rest:
         if total + size(i) > budget:
-            break               # stop at the first that does not fit, so what is kept stays contiguous
+            # A line that could not fit an EMPTY budget is an anomaly — a pasted traceback, a
+            # base64 blob — and skipping it costs nothing that was going to be kept anyway.
+            # A line that does not fit because the budget is now full is the ordinary end, and
+            # stopping there keeps what survives contiguous. `break` for both discarded everything
+            # after one long line: measured, `## Blockers` and its contents thrown away with 380 of
+            # 400 bytes unused. `continue` for both turns the fill into cherry-picking short lines
+            # from anywhere, which is a different kind of wrong and the suite already pinned it.
+            if size(i) > budget:
+                continue
+            break
         keep.add(i)
         total += size(i)
     return [flat[i] for i in sorted(keep)]

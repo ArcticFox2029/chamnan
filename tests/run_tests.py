@@ -6625,6 +6625,66 @@ check("...so the handoff carries the real work", "cascade fix" in _cf)
 check("...and not the template", "describe what is left" not in _cf)
 shutil.rmtree(_tl2, ignore_errors=True)
 
+# ------------------------------ what the trim keeps, and what the ledger claims
+# `_fit_lines` gave any line starting with `#` a heading depth, so a `# rebuild the map` comment
+# inside a ```bash block had depth 1 — <= the pin's depth — and ended the pinned span, dropping the
+# subsections under it and leaving the fence unclosed. `lib/md.py` exists for exactly this.
+_fence_body = ("# Settled — do not raise these again 📌\nStanding decisions.\n\n"
+               "```bash\n# rebuild the map before you start\nchamnan-map\n```\n\n"
+               "## Retry wrapper\nDo not re-add the retry wrapper — tried twice, both reverted.\n\n"
+               "## Embedding model\nbge-m3 only. No quantized build.\n")
+_fenced_kept = "\n".join(_fitx._fit_lines(_fence_body.split("\n"), 120))
+check("A `#` COMMENT INSIDE A CODE BLOCK DOES NOT END A PINNED SPAN",
+      "retry wrapper" in _fenced_kept and "No quantized build" in _fenced_kept)
+check("...and the fence it sits in is still closed",
+      _fenced_kept.count("```") % 2 == 0)
+
+# One pasted traceback discarded everything after it: `## Blockers` thrown away with 380 of 400
+# bytes unused, under a marker that said only "cut to fit".
+_long = ["## Open", "- finish the cascade fix", "  Traceback: " + "x" * 900,
+         "- re-run the harness", "- ask about the API key", "## Blockers", "- waiting on the key"]
+_longkept = _fitx._fit_lines(_long, 400)
+check("A LINE TOO BIG FOR AN EMPTY BUDGET IS SKIPPED, NOT A FULL STOP",
+      "## Blockers" in _longkept and "- waiting on the key" in _longkept)
+check("...and the oversized line itself is not kept",
+      not any(len(l) > 400 for l in _longkept))
+
+# `_rank`'s unranked default dropped a section second, ahead of everything but the index — and one
+# such section's source file is deleted by the hook as it emits it, so the notice named a path that
+# no longer existed. fit.py justifies whole-section dropping on "recoverable in one grep".
+check("AN UNRANKED SECTION IS NOT THE SECOND THING TO GO",
+      _fitx._rank("\n### Repeated last session and never kept\nbody\n")
+      > _fitx._rank("\n### Architecture index\nbody\n"))
+check("...and it still goes before what has been argued for",
+      _fitx._rank("\n### Repeated last session and never kept\nbody\n")
+      < _fitx._rank("\n### Rules this repository works under\nbody\n"))
+
+# `t.endswith("/" + f)` is the fuzzy basename match for_path's own docstring says it refuses: a bare
+# `app.py` entry answered three different files, so one file's rollback history attached to every
+# sibling in a repo with an `index.js` in several packages.
+_fz = Path(tempfile.mkdtemp(prefix="chamnan-fuzzy-"))
+(_fz / ".chamnan" / "threads").mkdir(parents=True)
+(_fz / ".chamnan" / "threads" / "bare.md").write_text(
+    "# Parser\n\n## 2026-08-01 — rolled back twice\n\n**Files:** `app.py`\n", encoding="utf-8")
+(_fz / ".chamnan" / "threads" / "full.md").write_text(
+    "# Cascade\n\n## 2026-08-02 — timeout work\n\n**Files:** `src/cascade.py`\n", encoding="utf-8")
+_tl._NAMES_CACHE.clear()
+check("A BARE BASENAME ENTRY DOES NOT ANSWER FOR EVERY FILE OF THAT NAME",
+      timeline.for_path(_fz, "src/vendor/app.py") == []
+      and timeline.for_path(_fz, "src/app.py") == [])
+check("...while it still answers for itself", len(timeline.for_path(_fz, "app.py")) == 1)
+check("...and a full-path entry still answers a query from a subdirectory",
+      len(timeline.for_path(_fz, "cascade.py")) == 1)
+shutil.rmtree(_fz, ignore_errors=True)
+
+# `calendar.timegm` does not validate the day, and a future date read as "today" while satisfying
+# `record_recent` — so the one line injected into every session manufactured movement.
+check("2026-02-30 IS NOT A DATE", _ledx._ymd_to_ts(2026, 2, 30) is None)
+check("...nor is a year somebody typed wrong", _ledx._ymd_to_ts(2099, 1, 1) is None)
+check("...while a real past date still resolves", _ledx._ymd_to_ts(2024, 1, 10) is not None)
+check("...and a day of slack is allowed for a machine in a timezone ahead of this one",
+      _ledx._ymd_to_ts(*time.strftime("%Y %m %d").split()) is not None)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

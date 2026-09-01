@@ -282,7 +282,16 @@ def for_path(root, target):
             for f in files:
                 f = f.lstrip("./")
                 for t in wanted:
-                    if f == t or f.endswith("/" + t) or t.endswith("/" + f):
+                    # 🐛 `t.endswith("/" + f)` is the fuzzy basename match this function's own
+                    # docstring says it refuses: an entry naming a bare `app.py` answered a query
+                    # about `src/app.py`, `src/vendor/app.py` and `totally/unrelated/app.py`
+                    # alike. In a repository with an `index.js` or an `__init__.py` in several
+                    # packages, one file's rollback history was attached to every sibling — and
+                    # this join is what carries "last time this changed it needed a rollback" into
+                    # an impact answer. The other direction is kept: an entry written with the full
+                    # path still answers a query made from a subdirectory, which is what the
+                    # docstring actually promises.
+                    if f == t or f.endswith("/" + t):
                         hits.append((path, date, note))
                         matched = True
                         break
