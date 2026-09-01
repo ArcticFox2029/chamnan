@@ -1,0 +1,66 @@
+# The regression suite, on the platforms and Python versions the README claims.
+#
+# It exists to settle two claims that were, until now, only asserted there: that Linux works
+# ("expected to work, not tested"), and that 3.8 is really the floor. chamnan's front page says
+# "verifiable claims, not adjectives"; a support matrix nobody runs is an adjective.
+#
+# No dependency step on purpose. chamnan is standard library only, and if this file ever needs a
+# `pip install`, that is the change to reject rather than the workflow to fix.
+#
+# Windows is deliberately absent: the README states it is not expected to work as-is, because the
+# hooks are invoked as bare paths relying on a shebang and an executable bit. Running it here to
+# watch it fail would report a defect where there is a documented limitation.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  suite:
+    name: ${{ matrix.os }} · python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        # The floor the README declares, and the newest. The versions between are the same code
+        # path; running all of them would buy repetition rather than coverage.
+        python: ["3.8", "3.13"]
+        exclude:
+          # macOS runners are arm64 and have no 3.8 build; the floor is checked on Linux.
+          - os: macos-latest
+            python: "3.8"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Identify to git
+        # Several tests build a real repository and commit into it. A runner has no global
+        # identity, and `git commit` fails outright without one.
+        run: |
+          git config --global user.email "tests@chamnan.invalid"
+          git config --global user.name "chamnan tests"
+          git config --global init.defaultBranch main
+
+      - name: Every file compiles
+        run: python -m compileall -q lib bin hooks tests
+
+      - name: Regression suite
+        run: python tests/run_tests.py
+
+      - name: Index this repository with the build under test
+        # The suite checks the parts; this checks that the whole thing runs end to end on a tree it
+        # did not construct itself, which is how the roll-up and mapper bugs of the last two
+        # releases were actually found.
+        run: |
+          python bin/chamnan-map
+          test -s .chamnan/MAP.md

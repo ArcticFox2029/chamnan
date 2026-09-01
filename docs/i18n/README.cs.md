@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Otevřete nové sezení a spusťte `/chamnan:bootstrap` jednou pro každý repozitář.
 
+<!-- generated: build_sections.py -->
+
+## Všechny funkce
+
+Čtyři schopnosti. Vše uvedené níže v aktuálním vydání skutečně běží. Každou část lze vypnout zvlášť v `.chamnan/config.json` a žádná nezávisí na ostatních.
+
+### Rozumět — co existuje a co s čím souvisí
+
+| | |
+|---|---|
+| **Rejstřík** | `MAP.md` — jeden řádek na soubor, vzniká ze samotného kódu. Agent čte rejstřík a grepne si potřebný detail, místo aby procházel celý strom. |
+| **Dopad** | Kdo na tomto souboru závisí a které testy jej pokrývají. Vlastní importy souboru jsou stejně nahoře v něm; drahá je opačná hrana — před změnou si cestu grepněte. |
+| **Datový model** | Názvy tabulek a modelů s jednořádkovým popisem, vytažené z DDL, migrací a ORM modelů — ne výpis celého schématu. Objeví se jen tehdy, když repozitář nějaké skutečně definuje. |
+| **Povrch API** | Metoda, cesta a handler — z dekorátorů tras, dokumentů OpenAPI a definic služeb `.proto`, ne celá specifikace. |
+| **Konfigurace** | Názvy proměnných prostředí, které repozitář čte. **Jen názvy, hodnoty se nikdy nezaznamenávají** — a upozorní, pokud `.env` není v gitignore. |
+| **Nasazení** | Co skutečně běží: druhy a názvy, obrazy, role, pipeline — načteno z manifestů Kubernetes, Ansible, Compose, Helm a CI. Ze Secretu se bere jen jeho název a nic z obsahu. |
+| **Nezdrojový materiál** | Naskenované papíry, exporty, archivy — jen počty, velikosti a převažující přípony. Existuje proto, aby se tam agent nešel podívat sám, což vyjde mnohem dráž. **Nikdy se neotevírá, nikdy nečte.** |
+
+### Pamatovat — co se dělalo a proč
+
+| | |
+|---|---|
+| **Stav práce** | `STATE.md` — na čem se pracuje právě teď; vkládá se na začátku sezení, aby to komprese kontextu přestala mazat. |
+| **Záznam sezení** | Jeden záznam na sezení v `.chamnan/sessions/`. Do dalšího sezení se dostane **jen to nedokončené**; sezení uzavřené načisto nevkládá nic. |
+| **Paměť** | `decisions/`, `lessons/`, `rules/`. Pravidla jsou trvalá omezení, takže stojí před agentem každé sezení; rozhodnutí a poučení přispívají jen názvem a čtou se, když název vypadá relevantně. |
+| **Otevřená vlákna** | Linie práce, které ještě nejsou uzavřené, spolu s historií souborů, jichž se ta linie dotkla — a sledují je i po přejmenování souboru. |
+
+### Použít znovu — co už bylo vyřešeno
+
+| | |
+|---|---|
+| **Postupy** | Dovednosti, které si agent **píše sám**, když narazí na něco složitého nebo opakovaného. Ne přibalená hotová knihovna, ale mechanismus. |
+| **Nástroje** | Všimne si, že tentýž provizorní skript byl napsán znovu, a nabídne jej uchovat — a připomene jej dřív, než napíšete nový. |
+| **Pracovní postupy** | Všimne si, že tytéž příkazy běžely ve stejném pořadí v oddělené dny, a nabídne tu posloupnost zapsat. |
+
+### Hromadit — co se repozitář dozvěděl sám o sobě
+
+| | |
+|---|---|
+| **Milníky** | Těch pár změn, které přetvarovaly repozitář: co se přesunulo, proč to stálo za to a jakých oblastí se to dotklo. |
+| **Kandidáti** | Zachycené opakující se posloupnosti příkazů **vždy čekají na potvrzení člověkem**. Nic se nepovyšuje automaticky. |
+| **Prostředí** | Deklarujte, co je production nebo staging a co je tam zakázáno — a upozorní, až ta deklarace zestárne. |
+| **Zpráva** | Co pracovní prostor drží, zda je to skutečně dosažitelné a jak se změnil kontext na tah ve vašem repozitáři. Vaše číslo, ne naše. |
+
+Opakovaná inženýrská práce se stává znovupoužitelnou znalostí repozitáře — **není to trénink modelu ani automatizace vývojáře.** Je to mechanismus, jak uchovat práci, která by jinak existovala jen v hlavě toho, kdo ji odvedl.
+
+## Příkazy
+
+Všechny lze volat ze shellu a agent je volá i sám.
+
+| | |
+|---|---|
+| `chamnan-map` | sestaví a aktualizuje rejstřík |
+| `chamnan-report` | co drží pracovní prostor a jak se změnil kontext na tah |
+| `chamnan-impact` | kdo na tomto souboru závisí a které testy jej pokrývají |
+| `chamnan-timeline` | co se s tímto souborem dosud dělo |
+| `chamnan-peek` | řekne, co je uvnitř velkého souboru, aniž by ho načetl do kontextu |
+| `chamnan-promote` | uchová skript jako stálý nástroj repozitáře |
+| `chamnan-candidates` | prohlédnout, potvrdit nebo zamítnout zachycená opakování |
+| `chamnan-env` | deklarovat prostředí a jeho zákazy a ověřit, že deklarace je stále čerstvá |
+| `chamnan-age` | kde nashromážděná znalost začala stárnout |
+
+A dovednosti volané zevnitř sezení: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Co zapisuje a kam
+
+Vše uvnitř `.chamnan/`, obyčejný markdown a JSON. Dá se to číst, ručně upravit a kdykoli smazat, aniž by se něco rozbilo.
+
+| | |
+|---|---|
+| `MAP.md` | co existuje a co na čem závisí |
+| `STATE.md` | co se dělá právě teď |
+| `sessions/` | kde se předchozí práce zastavila |
+| `memory/` | rozhodnutí, poučení a trvalá pravidla |
+| `threads/` | linie práce, které jsou ještě otevřené |
+| `skills/` · `tools/` | postupy a skripty, které stojí za uchování |
+| `milestones.md` | změny, které přetvarovaly repozitář |
+| `config.json` | zapínání a vypínání každé části a strop velikosti bloku vkládaného do sezení |
+
+**Jediný zápis mimo `.chamnan/`** je volitelný Git hook pre-commit, který drží rejstřík v souladu se stromem — nainstaluje se, jen když souhlasíte, a jde odstranit.
+
+**Agent se neučí.** Nic se netrénuje, nic nezůstává mimo tento adresář a další sezení stále začíná od nuly — jen začíná od nuly *v repozitáři, který se sám vysvětlí*. Spojitost je v artefaktech, ne v modelu.
+
+## Bezpečnost
+
+| | |
+|---|---|
+| **Za běhu žádné síťové volání** | Ani jedno. Klíč k API není potřeba, nikam se nic neposílá. |
+| **Nepřepisuje váš zdroj** | Hlásí, neupravuje. Rejstřík kopíruje komentáře, které jste už napsali, a nevymýšlí si je; soubory bez komentáře jsou vyjmenovány, abyste je doplnili sami. |
+| **Žádný démon, žádná práce na pozadí** | Žádný trvale běžící proces, žádná databáze, žádný embedding model — jen standardní knihovna Pythonu. |
+| **Tajemství se filtrují jako první** | Vše, co se má zapsat nebo vložit do sezení, projde nejdřív filtrem tajemství: *názvy* proměnných zůstávají, hodnoty ne. A hranice, kam tenhle filtr nedosáhne, je popsána vedle jeho vlastního čísla v anglickém README. |
+| **Co s vámi může udělat nainstalovaný plugin** | Celé je to vysvětleno v anglickém README, včetně toho, kde chamnan přetrhne řetěz úniku. |
+
+## Požadavky
+
+Claude Code · Python · Git · macOS, Linux nebo Windows
+
+Nic dalšího a žádné závislosti k instalaci. Minimální verze Pythonu je v [README › Requirements](../../README.md#requirements) — tahle stránka čísla nenese, protože právě čísla se mění.
+
+## Vypnout nebo odstranit
+
+Vypínejte po částech v `.chamnan/config.json` · zastavte v jednom repozitáři · odstraňte plugin z celého stroje · smažte `.chamnan/` kdykoli, nic se nerozbije — podrobné kroky v [README › Update, disable, uninstall](../../README.md#update-disable-uninstall)
+
+<!-- /generated -->
+
 ## Přečtěte si před instalací
 
 **chamnan je pro jednu hlavní složku, ke které se opakovaně vracíte.** Vše, co dělá, se platí předem a vybírá v dalších sezeních — u repozitáře, který otevřete jednou, jste zaplatili celé a nevybrali nic.

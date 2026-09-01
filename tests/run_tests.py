@@ -4219,7 +4219,40 @@ import ast as _ast  # noqa: E402
 
 _NET = {"socket", "urllib", "http", "ftplib", "smtplib", "telnetlib", "poplib", "imaplib",
         "requests", "httpx", "urllib3", "aiohttp", "websockets", "xmlrpc", "asyncio"}
-_STDLIB = set(getattr(sys, "stdlib_module_names", ()))
+def _stdlib_names():
+    """The standard library of the interpreter running this, on any version chamnan claims.
+
+    `sys.stdlib_module_names` arrived in 3.10. The floor the README declares is 3.8, and the
+    `getattr(..., ())` this used to fall back to left the set EMPTY there -- so every `import re`
+    was reported as a third-party dependency and the check inverted into a false alarm. A
+    measurement that is wrong on the oldest supported version is worse than one that is absent,
+    because it is the version least likely to be the one you ran it on.
+    """
+    names = set(getattr(sys, "stdlib_module_names", ()))
+    if names:
+        return names
+    import sysconfig
+    names = set(sys.builtin_module_names)
+    stdlib = sysconfig.get_paths().get("stdlib")
+    if stdlib and Path(stdlib).is_dir():
+        for entry in Path(stdlib).iterdir():
+            if entry.suffix == ".py":
+                names.add(entry.stem)
+            elif entry.is_dir() and (entry / "__init__.py").is_file():
+                names.add(entry.name)
+            elif entry.suffix == ".so":            # lib-dynload lands here on some builds
+                names.add(entry.name.split(".")[0])
+        dynload = Path(stdlib) / "lib-dynload"
+        if dynload.is_dir():
+            for entry in dynload.iterdir():
+                names.add(entry.name.split(".")[0])
+    return names
+
+
+_STDLIB = _stdlib_names()
+# Fail loudly rather than pass vacuously: an empty set would make the two checks below trivially
+# true, which is exactly how this defect hid.
+check("the standard library of this interpreter can be enumerated at all", len(_STDLIB) > 100)
 _OWN = {f.stem for f in (ROOT / "lib").glob("*.py")}
 
 def _runtime_files():
