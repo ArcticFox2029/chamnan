@@ -6369,6 +6369,65 @@ check("...and an ordinary name still is", _wsm.safe_tool_name("deploy-check.sh")
 check("...and the refusal says what it actually refuses",
       "leading dot or dash" in (ROOT / "bin" / "chamnan-promote").read_text(encoding="utf-8"))
 
+# ------------------------------ peek, whose whole claim is that its answer substitutes for the file
+import peek as _pkm  # noqa: E402  (the module; `_pk` is a subprocess result from an earlier block)
+_pkd = Path(tempfile.mkdtemp(prefix="chamnan-peek2-"))
+
+# A multi-byte character straddling the 4096-byte sniff boundary raised UnicodeDecodeError, which
+# the detector read as proof of binary content -- on two of every three byte alignments, for any
+# file over 4KB, which is the only size peek is for. The docstring named Thai as a case that passes.
+_thairow = "สมชาย,123 ถนนสุขุมวิท กรุงเทพมหานคร,1234.56\n"
+_alignments = []
+for _pad in range(4):
+    _tf = _pkd / f"thai{_pad}.csv"
+    _tf.write_text("ชื่อ,ที่อยู่,ยอด\n" + ("x" * _pad) + _thairow * 400, encoding="utf-8")
+    _alignments.append(_pkm._looks_binary(_tf))
+check("A THAI CSV IS TEXT AT EVERY BYTE ALIGNMENT OF THE SNIFF BOUNDARY: " + str(_alignments),
+      not any(_alignments))
+check("...and it is actually read as a table rather than described as bytes",
+      "3 columns" in _pkm.peek(_pkd / "thai1.csv"))
+_bin = _pkd / "real.bin"
+_bin.write_bytes(bytes(range(256)) * 40)
+check("...while a genuinely binary file is still caught", _pkm._looks_binary(_bin))
+_moji = _pkd / "moji.txt"
+_moji.write_bytes(b"\xff\xfe\xfd" * 900)
+check("...and so is mojibake, which is what the check is for", _pkm._looks_binary(_moji))
+
+# `.jsonl` reached no branch at all and fell to peek_binary: "unrecognised; 100% printable", a
+# crc32, five string fragments, and a claimed compression ratio, for a plain text file.
+_jl = _pkd / "events.jsonl"
+_jl.write_text("".join(json.dumps({"id": i, "user": {"name": "a"}, "ok": True}) + "\n"
+                       for i in range(5000)), encoding="utf-8")
+_jlout = _pkm.peek(_jl)
+check("JSON LINES IS READ AS RECORDS, NOT DESCRIBED AS BYTES",
+      "5,000 JSON Lines record" in _jlout and "unrecognised" not in _jlout)
+check("...and it reports the shape without any value", "{id: int, user: {name: str}, ok: bool}" in _jlout)
+
+# One bolded word in a header cell is one <si> holding two <t> runs, and collecting <t> flatly
+# shifted every shared-string index after it -- so no printed value was the value in that cell.
+_xl = _pkd / "prices.xlsx"
+_shared = ('<?xml version="1.0"?><sst count="5" uniqueCount="5">'
+           '<si><r><rPr><b/></rPr><t>Product</t></r><r><t> name</t></r></si>'
+           '<si><t>Region</t></si><si><t>Widget</t></si><si><t>EMEA</t></si>'
+           '<si><t>Gadget</t></si></sst>')
+_sheet = ('<?xml version="1.0"?><worksheet><sheetData>'
+          '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+          '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c></row>'
+          '<row r="3"><c r="A3" t="s"><v>4</v></c><c r="B3" t="s"><v>3</v></c></row>'
+          '</sheetData></worksheet>')
+with _zf.ZipFile(_xl, "w") as _z:
+    _z.writestr("xl/sharedStrings.xml", _shared)
+    _z.writestr("xl/worksheets/sheet1.xml", _sheet)
+    _z.writestr("xl/workbook.xml", '<?xml version="1.0"?><workbook><sheets>'
+                                   '<sheet name="Prices" sheetId="1"/></sheets></workbook>')
+_xlout = _pkm.peek(_xl)
+check("A RICH-TEXT HEADER CELL DOES NOT SHIFT EVERY OTHER VALUE",
+      "`Product name`" in _xlout and "` name`" not in _xlout)
+check("...and the rows below it are the rows that are in the file",
+      "Gadget" in _xlout and _xlout.count("Widget") == 1)
+
+shutil.rmtree(_pkd, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
