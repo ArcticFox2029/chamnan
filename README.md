@@ -1240,7 +1240,7 @@ Sources: [arXiv:2601.09832](https://arxiv.org/abs/2601.09832); [arXiv:1907.00376
 |---|---|
 | chamnan's redactor, **before** | **66.7%** recall / **81.8%** precision |
 | chamnan's redactor, **after** | **97.4%** recall / **100%** precision |
-| corpus | 27 secret shapes, 17 ordinary strings that must survive |
+| corpus | 38 secret shapes, 22 ordinary strings that must survive |
 | **the ceiling it cannot reach** | verification by live API call: TruffleHog **6% → 90%** precision |
 
 **The worst bug was not a miss.** `Authorization: Bearer <token>` matched the bare-assignment rule,
