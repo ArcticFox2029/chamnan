@@ -209,16 +209,59 @@ def _trim(part, room, sources):
     # Under a few hundred bytes the surviving fragment says nothing the notice does not.
     if budget < 300:
         return ""
-    body, total = [], 0
-    for line in lines[3:-2]:
-        n = len(line.encode()) + 1
-        if total + n > budget:
-            break
-        body.append(line)
-        total += n
+    body = _fit_lines(lines[3:-2], budget)
     if not body:
         return ""
     return f"\n{lines[1]}\n{open_mark}\n" + "\n".join(body) + f"\n{close_mark}\n{note}\n"
+
+
+PIN = "\U0001F4CC"
+
+
+def _fit_lines(lines, budget):
+    """Fit `lines` into `budget` bytes, keeping every 📌 block whatever its position.
+
+    Taking the head and dropping the tail is the cut this whole module exists to replace. Done here
+    it reproduces the original bug one level down: `state.split_pinned` deliberately protects the
+    headings someone marked 📌 -- "do not raise these again", "not this project" -- and a positional
+    trim throws away whichever of them happened to sit late in the file. That is exactly what the
+    host does at 10,000 bytes, and it is exactly as wrong at this scale.
+
+    So pinned blocks are reserved first and unpinned lines fill what is left, with the original
+    order restored at the end. If the pinned material alone exceeds the budget it is kept anyway and
+    the section runs over: a pin is the owner saying this must not be cut, and silently cutting it
+    would make the marker a lie. The over-budget case is visible in `--explain` rather than hidden.
+    """
+    blocks, cur = [], []
+    for line in lines:
+        if line.startswith("#") and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        blocks.append(cur)
+
+    # Reserve whole pinned blocks first, then fill the remainder LINE by line. Filling by block
+    # would make a section with no headings at all -- a plain list, a paragraph -- one indivisible
+    # atom that either fits or vanishes, which trades this bug for a worse one.
+    n = 0
+    pinned_lines, rest = set(), []
+    for b in blocks:
+        is_pin = bool(b) and PIN in b[0]
+        for line in b:
+            (pinned_lines.add(n) if is_pin else rest.append(n))
+            n += 1
+    flat = [line for b in blocks for line in b]
+    size = lambda i: len(flat[i].encode()) + 1
+
+    keep = set(pinned_lines)
+    total = sum(size(i) for i in keep)
+    for i in rest:
+        if total + size(i) > budget:
+            break               # stop at the first that does not fit, so what is kept stays contiguous
+        keep.add(i)
+        total += size(i)
+    return [flat[i] for i in sorted(keep)]
 
 
 def _dropped_title(dropped, i, order):

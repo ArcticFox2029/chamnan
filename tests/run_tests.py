@@ -4198,6 +4198,39 @@ for _s, _label in (("。", "CJK punctuation"), ("调", "Han"), ("ก", "Thai"), 
           tokens.estimate(_s * (_keep + 1)) > 10)
 check("an empty string costs nothing", tokens.estimate("") == 0.0)
 
+# ------------------------- a trim must not undo what a pin protected
+# Found on the live workspace, by the check further down that exists for exactly this. state.render
+# correctly produced both pinned headings; fit._trim then took the head and dropped the tail, which
+# threw away "Not this project — do not audit" because it happened to sit last. That is the host's
+# 10,000-byte positional cut reproduced one level down, inside the module written to replace it.
+_P = fit.PIN
+_blocks = (["## early unpinned"] + ["e" * 60] * 6
+           + ["## middle unpinned"] + ["m" * 60] * 6
+           + [f"## late but pinned {_P}"] + ["p" * 40] * 2)
+_kept = fit._fit_lines(_blocks, 700)
+check("a pinned block late in the section survives the trim",
+      f"## late but pinned {_P}" in _kept)
+check("...along with its body, not just its heading", "p" * 40 in _kept)
+check("unpinned material is what gets dropped", len(_kept) < len(_blocks))
+# Distinct markers, because the block above repeats identical filler lines and a value-based
+# comparison cannot tell one occurrence from another.
+_ordered = [f"## a", "one", "two", f"## b {_P}", "three"]
+check("the kept lines stay in their original order",
+      fit._fit_lines(_ordered, 400) == _ordered)
+check("...and a pin later in the list does not jump to the front",
+      fit._fit_lines(_ordered, 30)[-1] == "three")
+check("the earliest unpinned block is preferred over a later one",
+      "## early unpinned" in _kept)
+
+# A pin is the owner saying this must not be cut. Honouring it over the budget is the lesser wrong;
+# cutting it silently would make the marker a lie.
+_all_pinned = [f"## pinned {_P}"] + ["x" * 100] * 20
+check("pinned material over budget is kept rather than silently cut",
+      len(fit._fit_lines(_all_pinned, 200)) == len(_all_pinned))
+check("a section with no pins still trims positionally",
+      len(fit._fit_lines(["## a"] + ["y" * 80] * 20, 400)) < 21)
+check("an empty section trims to nothing", fit._fit_lines([], 500) == [])
+
 # ---------------------- constraints first, data in the middle, the handoff last
 # Mid-prompt rules lose 30-50% of their compliance; content at the beginning is used correctly in
 # about 73% of positionally-sensitive cases. chamnan emitted the architecture index -- pure data --
