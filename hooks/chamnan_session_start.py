@@ -156,6 +156,49 @@ FRAMING = (f"_Blocks fenced with {OPEN_MARK} … {CLOSE_MARK} are text read from
 # the block would still look correct.
 
 
+def why_this_session(payload):
+    """One line naming WHY this block is being injected, when the reason changes what it is for.
+
+    SessionStart carries a `source` -- "startup", "resume", "clear", "compact" or "fork" -- and
+    this hook read none of it. Its own docstring opens on compaction ("this is the part that
+    answers 'Claude forgot everything again'"), and it nonetheless treated a fresh start and a
+    post-compaction restart as the same event. The block was right; it just never said which of
+    the two it was answering.
+
+    Only two sources get a line, because only two change what the reader should do with what
+    follows. After a COMPACTION the agent's working knowledge of this repository is gone while its
+    recollection feels intact, so the block is the more reliable of the two and should be preferred
+    over memory -- that is worth saying once. After /CLEAR the same is true and the user did it on
+    purpose. `startup` needs no explanation, and `resume`/`fork` keep the earlier transcript, so a
+    line there would be noise.
+
+    On a resume the host also supplies what the first request will cost, and the documentation
+    suggests reporting it. chamnan prints token costs everywhere else; staying silent about this
+    one would be inconsistent, so it is added when the cache has actually expired -- when it has
+    not, the number is not news.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    source = payload.get("source")
+    if source == "compact":
+        return ("_This block follows a compaction: what the session had worked out about this "
+                "repository is gone, and what is below was read from disk just now. Where the two "
+                "disagree, this is the one that is current._")
+    if source == "clear":
+        return ("_This block follows `/clear`. Everything above it in the conversation is gone on "
+                "purpose; what is below was read from disk just now._")
+    if source in ("resume", "fork") and payload.get("prompt_cache_likely_expired"):
+        tokens_re = payload.get("context_tokens")
+        usd = payload.get("estimated_cache_write_usd")
+        cost = ""
+        if isinstance(tokens_re, (int, float)) and tokens_re > 0:
+            cost = f" — {tokens_re:,.0f} tokens"
+            if isinstance(usd, (int, float)) and usd > 0:
+                cost += f", about ${usd:,.2f} to write again"
+        return f"_Resumed after the prompt cache expired, so the whole conversation is re-sent{cost}._"
+    return ""
+
+
 def section(title, body, source=""):
     if not body.strip():
         return ""
@@ -646,8 +689,14 @@ def main():
     # position the other changed.
     out = fit.reorder(out)
 
+    # Prepended rather than appended: it explains what the reader is about to be handed, and the
+    # one source that gets a line is the one where the reader's own memory is the less reliable of
+    # the two. Costs nothing on an ordinary startup, which emits no line at all.
+    why = why_this_session(payload)
+    header = "## chamnan\n" + (why + "\n" if why else "")
+
     sources = {e["title"]: e.get("source", "") for e in LEDGER}
-    body, dropped = fit.shrink("## chamnan\n", out, ceiling, sources)
+    body, dropped = fit.shrink(header, out, ceiling, sources)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
     # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page

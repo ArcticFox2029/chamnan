@@ -151,7 +151,7 @@ def print_usage(root):
 def print_pointer(root, project_dir):
     """Did the session open what it was pointed at?
 
-    The measurement `hooks/file_pointer.py` was built to allow, and it is deliberately NOT "how
+    The measurement `hooks/chamnan_file_pointer.py` was built to allow, and it is deliberately NOT "how
     often did it match". A pointer that fires on 39 of 42 files and names the wrong entry scores
     identically to one that names the right entry, so a match rate measures the pointer's
     enthusiasm, not its usefulness. What can be checked is whether the thing it named was then

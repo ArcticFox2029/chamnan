@@ -3240,12 +3240,18 @@ MIN_YIELD = {
     "dart": ('class Alpha {\n  void beta() {}\n  int gamma() { return 0; }\n}\n', 3),
     "ex": ('defmodule Alpha do\n  def beta do\n  end\n  def gamma do\n  end\nend\n', 2),
 }
-for lang, (fixture, minimum) in sorted(MIN_YIELD.items()):
+# NOT named `fixture`: that is the module-level temp directory every hook subprocess runs in, and
+# shadowing it here left `fixture` holding a string of Swift source for the rest of the file. The
+# only thing that still touched it was the cleanup at the bottom — shutil.rmtree(fixture,
+# ignore_errors=True) — so the suite silently leaked its own temp directory on every run. Measured
+# when this was found: 343 stale chamnan-test-* directories, 22 MB. The flag that made it
+# survivable is the flag that made it invisible.
+for lang, (_src, minimum) in sorted(MIN_YIELD.items()):
     if lang == "py":
-        got = len(mapper.extract_python(fixture, Path("x.py"))[1]) + \
-              len(mapper.extract_python(fixture, Path("x.py"))[2])
+        got = len(mapper.extract_python(_src, Path("x.py"))[1]) + \
+              len(mapper.extract_python(_src, Path("x.py"))[2])
     else:
-        _dd, ff, cc, _kk = mapper.extract_regex(fixture, lang)
+        _dd, ff, cc, _kk = mapper.extract_regex(_src, lang)
         got = len(ff) + len(cc)
     check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
 
@@ -5412,9 +5418,64 @@ check("...and every registered command is a file that exists",
 check("no hook file is left under a name another plugin would choose",
       not [f for f in (ROOT / "hooks").glob("*.py") if not f.name.startswith("chamnan_")])
 
+# ------------------------------ the hook finally reads why the session started
+# SessionStart carries `source` — "startup", "resume", "clear", "compact" or "fork" — and this
+# hook read none of it, while its own docstring opens on compaction. A fresh start and a
+# post-compaction restart produced identical output, so the block never said which of the two it
+# was answering. Only the sources where the reader's own memory is the LESS reliable of the two
+# get a line; the rest emit nothing, so an ordinary startup pays nothing.
+_ws_src = import_hook_module("chamnan_session_start.py")
+check("a compaction is named, because the agent's own recollection is now the unreliable half",
+      "follows a compaction" in _ws_src.why_this_session({"source": "compact"}))
+check("...and /clear too, for the same reason",
+      "`/clear`" in _ws_src.why_this_session({"source": "clear"}))
+check("AN ORDINARY STARTUP PAYS NOTHING FOR THIS",
+      _ws_src.why_this_session({"source": "startup"}) == "")
+check("...and so does a resume whose cache is still warm",
+      _ws_src.why_this_session({"source": "resume"}) == "")
+_cost = _ws_src.why_this_session({"source": "resume", "prompt_cache_likely_expired": True,
+                                  "context_tokens": 126000, "estimated_cache_write_usd": 0.47})
+check("an expired cache on resume reports what the first request re-sends",
+      "126,000 tokens" in _cost and "$0.47" in _cost)
+check("...and says nothing when the host did not supply the numbers",
+      "tokens" not in _ws_src.why_this_session({"source": "resume",
+                                                "prompt_cache_likely_expired": True}))
+check("a payload of the wrong shape is survived, as everywhere else in this hook",
+      _ws_src.why_this_session(None) == "" and _ws_src.why_this_session({}) == "")
+_realcompact = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")],
+                              input=json.dumps({"source": "compact"}), capture_output=True,
+                              text=True, cwd=fixture).stdout
+check("...and the line reaches the real injected block, not only the function",
+      "follows a compaction" in _realcompact)
+
+# ------------------------------ every hook path a wrapper names has to exist
+# Renaming the hooks to stop another plugin colliding with them broke `chamnan-map --preview` and
+# `--explain`, which hardcoded the old filename — the exact command the README tells a reader to
+# run to reproduce its numbers. Found by an agent re-deriving those numbers, not by this suite,
+# because nothing here had ever asserted that a path written inside bin/ resolves.
+_named_hooks = set()
+for _b in sorted((ROOT / "bin").iterdir()):
+    if not _b.is_file():
+        continue
+    for _m in re.finditer(r'"hooks"\s*/\s*"([\w.]+\.py)"', _b.read_text(encoding="utf-8")):
+        _named_hooks.add((_b.name, _m.group(1)))
+check("a bin/ wrapper naming a hook file names one that exists",
+      all((ROOT / "hooks" / _h).is_file() for _w, _h in _named_hooks))
+check("...and there is at least one such reference, so this is not passing on an empty set",
+      len(_named_hooks) >= 1)
+_prev = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--preview"], capture_output=True,
+                       text=True, cwd=fixture)
+check("chamnan-map --preview actually runs", _prev.returncode == 0 and _prev.stdout.strip())
+_expl = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--explain"], capture_output=True,
+                       text=True, cwd=fixture)
+check("...and so does --explain, which the README cites by name", _expl.returncode == 0)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
-shutil.rmtree(fixture, ignore_errors=True)
+# Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
+# cleanup that cannot fail is a cleanup nobody notices has stopped working.
+check("the suite cleans up after itself", fixture.is_dir())
+shutil.rmtree(fixture)
 shutil.rmtree(nested.parent.parent, ignore_errors=True)
 
 total = PASSED + len(FAILED)

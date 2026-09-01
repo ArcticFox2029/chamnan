@@ -52,9 +52,9 @@ def preview(root, explain=False):
     number to point at. The hook itself does the accounting, as a side effect of building the text,
     so there is no second model of the injection that can drift out of step with the real one.
     """
-    hook = HERE.parent / "hooks" / "session_start.py"
+    hook = HERE.parent / "hooks" / "chamnan_session_start.py"
     if not hook.is_file():
-        print("chamnan: session_start.py not found beside this command", file=sys.stderr)
+        print("chamnan: chamnan_session_start.py not found beside this command", file=sys.stderr)
         return 1
     args = [sys.executable, str(hook)] + (["--explain"] if explain else [])
     # The only subprocess call in this package that had no timeout, no exception handling and no
