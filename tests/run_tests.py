@@ -406,6 +406,32 @@ def run_hook(name, payload):
                           capture_output=True, text=True, cwd=fixture).stdout
 
 
+def make_workspace(prefix):
+    """A throwaway repository with enough in its workspace that the hook has something to say.
+
+    Written because two blocks here used `ROOT.parent.parent` — two directories above the checkout —
+    and passed only because the author's clone sits inside another chamnan workspace. On any other
+    machine that path holds no workspace, the hook correctly says nothing, and the checks fail for a
+    reason that has nothing to do with the code. CI found both on its first run.
+    """
+    root = Path(tempfile.mkdtemp(prefix=prefix))
+    ws = root / ".chamnan"
+    (ws / "memory" / "rules").mkdir(parents=True)
+    (ws / "sessions").mkdir()
+    (ws / "MAP.md").write_text(
+        "# Architecture index\n\n## Quick Index\n\n"
+        + "".join(f"- **`src/mod{i}.py`** ({i}L, 2fn) — a module that does something\n"
+                 for i in range(60)),
+        encoding="utf-8")
+    (ws / "STATE.md").write_text(
+        "## → HANDOFF: work still in flight 📌\n\n" + "Something left unfinished. " * 40,
+        encoding="utf-8")
+    (ws / "memory" / "rules" / "a-standing-rule.md").write_text(
+        "# A standing rule this repository works under\n\n" + "It applies every session. " * 30,
+        encoding="utf-8")
+    return root
+
+
 def import_hook_module(name):
     """Load a hooks/*.py file as an importable module, for unit-testing a function inside it
     directly rather than only through its subprocess/stdout behaviour."""
@@ -3819,21 +3845,7 @@ import unicodedata  # noqa: E402
 # chamnan workspace. On a runner, two levels above the checkout is an empty directory, the hook
 # correctly printed nothing, and five checks failed. The test asserted the developer's folder
 # layout, not the code. Build the workspace it needs instead.
-_hk = Path(tempfile.mkdtemp(prefix="chamnan-hookroot-"))
-_wsx = _hk / ".chamnan"
-(_wsx / "memory" / "rules").mkdir(parents=True)
-(_wsx / "sessions").mkdir()
-(_wsx / "MAP.md").write_text(
-    "# Architecture index\n\n## Quick Index\n\n"
-    + "".join(f"- **`src/mod{i}.py`** ({i}L, 2fn) — a module that does something\n"
-             for i in range(60)),
-    encoding="utf-8")
-(_wsx / "STATE.md").write_text(
-    "## → HANDOFF: work still in flight 📌\n\n" + "Something left unfinished. " * 40,
-    encoding="utf-8")
-(_wsx / "memory" / "rules" / "a-standing-rule.md").write_text(
-    "# A standing rule this repository works under\n\n" + "It applies every session. " * 30,
-    encoding="utf-8")
+_hk = make_workspace("chamnan-hookroot-")
 import workspace as _wsroot  # noqa: E402
 _hook = ROOT / "hooks" / "chamnan_session_start.py"
 _env_clean = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
@@ -4626,8 +4638,9 @@ shutil.rmtree(_lcdir.parent, ignore_errors=True)
 import contextlib as _ctx  # noqa: E402
 import io as _io  # noqa: E402
 _runs = []
+_noncerepo = make_workspace("chamnan-nonce-")
 _cwd_before = os.getcwd()
-os.chdir(str(ROOT.parent.parent))
+os.chdir(str(_noncerepo))
 try:
     for _ in range(2):
         _buf = _io.StringIO()
@@ -4652,6 +4665,9 @@ check("no live clock leaks into the block",
       not re.search(r"\b\d{2}:\d{2}:\d{2}\b", _runs[0]))
 check("the framing describes the nonce accurately — per injection, not per session",
       "every time this block is injected" in _runs[0])
+check("...and the run actually produced a block to check, rather than passing on emptiness",
+      len(_runs[0]) > 1000)
+shutil.rmtree(_noncerepo, ignore_errors=True)
 
 # ----------------------------- the repo fence, attacked rather than admired
 # chamnan's [repo:nonce] fence is "delimiting" in the spotlighting taxonomy, and the measured
