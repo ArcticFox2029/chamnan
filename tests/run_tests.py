@@ -6214,6 +6214,21 @@ check("the page opens with a self-contained digest, because it is what a summari
 check("...and a contents list, so the shape is visible without reading 1,900 lines",
       "## Contents" in _readme)
 
+# The same two checks for every other document at the root. SECURITY.md is the one GitHub links
+# from the sidebar, so a dead anchor in it is seen by exactly the reader who is being careful.
+for _doc in ("SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md"):
+    _t = (ROOT / _doc).read_text(encoding="utf-8")
+    _cross = [a for a in re.findall(r"README\.md#([^)\s]+)", _t) if a not in _heads]
+    check(f"{_doc}'s links into the README all resolve: " + str(_cross), not _cross)
+    _rel = [t for t in re.findall(r"\]\((?!https?:|#)([^)\s]+)\)", _t)]
+    _gone = sorted({t for t in _rel if not (ROOT / t.split("#")[0]).exists()})
+    check(f"...and every file {_doc} points at exists: " + str(_gone), not _gone)
+
+check("THE REPOSITORY HAS A SECURITY POLICY WHERE GITHUB LOOKS FOR ONE",
+      (ROOT / "SECURITY.md").is_file())
+check("...and it names the reporting route rather than only asserting there is one",
+      "security/advisories/new" in (ROOT / "SECURITY.md").read_text(encoding="utf-8"))
+
 # ------------------------------ thirty-two pages nobody reads all of
 # The rule the English README advertises, enforced instead of stated. A page that acquires a number
 # needs an edit every release, and a translation that goes unedited while the source moves is worse
@@ -6243,6 +6258,42 @@ check("the feature sections are actually in the pages, not only in the table",
       all("<!-- generated: build_sections.py -->" in p.read_text(encoding="utf-8") for p in _i18n))
 check("...and a page says enough to be worth translating at all",
       min(len(p.read_text(encoding="utf-8").splitlines()) for p in _i18n) > 100)
+
+# ------------------------------ a repository whose comments are not in English
+# Non-English source comments went from 3.6% to 11.9% of files between 2015 and 2025
+# (arXiv:2602.19446), and they are the steepest-growing element chamnan depends on -- MAP.md is
+# built from leading comments, while identifiers, which it does not use, stayed English. This
+# repository's own CLAUDE.md requires English comments, so its corpus can never exercise the case
+# its users will hit. CJK costs about three bytes per character against a byte-denominated ceiling,
+# so the question is whether a Chinese repository silently gets a thinner block than an identical
+# English one. Measured here: it does not -- the roll-up bounds by file count, not by description
+# length, and the extra bytes stay well inside the ceiling.
+_zh = Path(tempfile.mkdtemp(prefix="chamnan-zh-"))
+(_zh / "src").mkdir(parents=True)
+subprocess.run(["git", "-C", str(_zh), "init", "-q"], capture_output=True)
+_zhdesc = "处理用户的支付流水，在失败时回滚整笔交易并写入审计记录，同时通知下游对账服务重新核对该笔款项。"
+for _i in range(22):
+    (_zh / "src" / f"mod{_i:02}.py").write_text(
+        f"# {_zhdesc}\n\n\ndef run{_i}():\n    return {_i}\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_zh), capture_output=True)
+_zhmap = (_zh / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("A CHINESE LEADING COMMENT REACHES THE INDEX INTACT",
+      _zhmap.count(_zhdesc) >= 20)
+check("...and is not cut mid-character on the way",
+      "\ufffd" not in _zhmap and _zhmap == _zhmap.encode().decode())
+(_zh / ".chamnan" / "memory" / "rules").mkdir(parents=True, exist_ok=True)
+(_zh / ".chamnan" / "memory" / "rules" / "r.md").write_text(
+    "# A standing rule\n\n" + "It applies every session. " * 30, encoding="utf-8")
+_zhblk = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input="{}", cwd=str(_zh), capture_output=True, text=True, timeout=200,
+                        env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_zh))).stdout
+check("EVERY FILE IS STILL NAMED IN THE BLOCK, THOUGH EACH COSTS THREE TIMES THE BYTES",
+      sum(1 for _i in range(22) if f"mod{_i:02}.py" in _zhblk) == 22)
+check("...and nothing had to be dropped to fit",
+      "left out to stay under" not in _zhblk)
+check("...and the block is still inside the ceiling it promises",
+      len(_zhblk.encode()) <= _wsm.load_config(_zh).get("output_byte_ceiling", 9000) + 400)
+shutil.rmtree(_zh, ignore_errors=True)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

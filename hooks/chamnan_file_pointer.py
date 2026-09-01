@@ -94,5 +94,22 @@ def main():
     return 0
 
 
+def _never_fail_the_session():
+    """`main()`, but a hook that hits something it cannot read exits 0 in silence rather than
+    exiting 1 with a traceback.
+
+    A hook's stderr never reaches the transcript, so a crash here is invisible: the session simply
+    starts without whatever this hook contributes, and nothing says why. Measured with a
+    `chmod 000` on `.chamnan/logs` — the ordinary result of a container or CI run touching the
+    workspace as root — four of the five hooks died this way. Silence is the correct failure for a
+    hook that only writes; `chamnan_session_start.py` does more than this, because it has something
+    partial worth emitting.
+    """
+    try:
+        return main()
+    except Exception:
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_never_fail_the_session())

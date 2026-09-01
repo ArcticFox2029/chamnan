@@ -431,311 +431,331 @@ def main():
         return 0                      # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
     out = []
-    index_slot = index_render = None
-
-    # Said before anything else, and never suppressed by a config flag: if the code running this
-    # session is older than a version that has already set this workspace up, everything below is
-    # being produced by a build the user did not choose. That is not a preference.
-    # An update that is already downloaded, reported and never acted on. The user decides: a tool
-    # that upgrades itself because someone opened a session is doing something they did not ask
-    # for, and doing it silently is worse than not doing it at all.
-    offered = ws.available_update(HERE.parent)
-    if offered:
-        out.append(f"\n**chamnan {offered} is available** — this session is running "
-                   f"{ws.plugin_version(HERE.parent)}. Nothing has been changed. To take it, say so "
-                   f"and I will run `claude plugin update chamnan`; it applies on the next session. "
-                   f"Once one repository is on the new version, every other repository brings its "
-                   f"own workspace up to date by itself the next time it is opened.\n")
-
-    newer = ws.reconcile_version(root, ws.plugin_version(HERE.parent))
-    if newer:
-        out.append(f"\n**⚠ This session is running chamnan {ws.plugin_version(HERE.parent)}, but "
-                   f"this repository has already been set up by {newer}.** An older build is live "
-                   f"— usually a plugin upgraded mid-session (its `bin/` stays on PATH until you "
-                   f"restart), or a second install under another config directory. Restart the "
-                   f"session, and `claude plugin update chamnan` if it is genuinely behind.\n")
-
-    if cfg.get("ledger", True):
-        # Always the first thing in the injection, and gated on nothing but the flag itself --
-        # the whole point is that this is visible whether or not there is anything to report.
-        skills_line = write_skills_line(HERE.parent)
-        if skills_line:
-            out.append(skills_line + "\n")
-        out.append(ledger.line(root) + "\n")
-
-    if cfg.get("map", True):
-        mp = wsdir / "MAP.md"
-        if mp.is_file():
-            text = mp.read_text(encoding="utf-8", errors="replace")
-            cut = text.find("## Full Detail")
-            index = text[:cut] if cut > 0 else text
-            budget = cfg.get("index_token_budget", 3000)
-            # Held before folding. collapse() recognises rows by their `- **\`path\`**` shape, and a
-            # folded index no longer has any, so re-folding its own output finds nothing to group.
-            index_render = (index, display(mp, root), budget, root)
-            if not tokens.fits(index, budget):
-                index = rollup.collapse(index, display(mp, root), budget, root)
-            index_slot = len(out)
-            out.append(section("Architecture index", index, display(mp, root)))
-            tail = (f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
-                    f"never read it whole._")
-            # Named only when it is actually there. A causal ablation of a structural codebase
-            # index (arXiv:2606.22417) found its measurable gain concentrated in cross-file,
-            # reachability-dependent changes rather than single-file ones -- and that is the one
-            # section of MAP.md a session was never told existed. It has been built and committed
-            # all along; the block said "grep it for one heading" without naming the heading that
-            # answers "what breaks if I change this". Eighty bytes to make a section that is
-            # already paid for reachable, rather than moving it into the injection, which would
-            # cost a whole section and contradict the measured 51.1%-vs-3.2% split between what
-            # MAP.md answers and what the block does.
-            if "\n## Impact\n" in text:
-                tail += ("\n_`## Impact` in that file is what is connected to what — grep it "
-                         "before changing a file, not after._")
-            out.append(tail + "\n")
-            behind = index_is_behind(root, mp)
-            if behind:
-                n, examples = unindexed(root, text)
-                # A count of what is missing, not an age. See unindexed() for why.
-                what = (f"**{n} file(s) are not in it** — {', '.join(f'`{e}`' for e in examples)}"
-                        + ("…" if n > len(examples) else "") + ". ") if n else ""
-                # The offer to install the hook goes only to a repo that has not installed it.
-                # Repeating it to someone who has is how a warning stops being read.
-                fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
-                       "`chamnan-map`, or `chamnan-map --install-git-hook` to keep it current on "
-                       "every commit")
-                out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
-                           f"{what}Rebuild it with {fix}._\n")
-
-    if cfg.get("environments", True):
-        # Constraints, never versions. A constraint rules out a whole design before it is written
-        # ("RWO storage only" is the difference between a working manifest and an afternoon);
-        # a version number is a fact that can be looked up on the one occasion it matters. This
-        # is also where Stage 15 landed: the per-command guard it proposed needed a PreToolUse
-        # `permissionDecision` whose behaviour under `defaultMode: "auto"` is not documented, so
-        # the constraints are put in front of the agent BEFORE it writes the command instead of
-        # trying to intercept the command after it is written. See README's Limitations.
-        constraints = redact.scrub(environments.render_constraints(root))
-        if constraints:
-            out.append(section(
-                "Environment constraints — check these before proposing infrastructure work",
-                constraints + "\n\n_Declared in `.chamnan/environments.md`, and true only as far "
-                              "as its `Checked:` dates go — `chamnan-env check` says which have "
-                              "gone cold._", ".chamnan/environments.md"))
-
-    if cfg.get("memory", True):
-        # Rules are standing constraints, so they go in front of the agent before it starts.
-        rules = redact.scrub(memory.rules_text(root))
-        if rules:
-            out.append(section("Rules this repository works under", rules, ".chamnan/memory/rules/"))
-            # A rule injected once at session start is exactly the instruction that adherence
-            # studies measure decaying — 88% to 71% by the third turn on Multi-IF. Where a rule
-            # carries a mechanical check, the repository is asked directly instead. Silent when
-            # everything holds: a line that always says "all good" stops being read before the day
-            # it says something else.
-            broken = rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root)))
-            if broken:
-                out.append(broken)
-        # Decisions and lessons are looked up when the question comes round, so they contribute a
-        # title and nothing else — the same economy skills/ and tools/ use.
-        # Scrubbed like every sibling section. A decision's TITLE is a line somebody typed, and a
-        # title is exactly where a hostname or a token gets written down in passing.
-        listing = redact.scrub(memory.render_titles(memory.titles(root)))
-        if listing:
-            out.append(section(
-                "Recorded decisions and lessons — read the one that matches before assuming",
-                listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
-                          "do not read them all._", ".chamnan/memory/decisions|lessons/"))
-
-    if cfg.get("milestones", True):
-        # Titles only, newest first. "The last big thing here was the auth migration" orients a
-        # session in about twenty tokens; the bodies are a grep away when a title looks relevant.
-        recent = redact.scrub(milestones.recent_titles(root))
-        if recent:
-            out.append(section("Recent milestones", recent, ".chamnan/milestones.md"))
-
-    if cfg.get("timeline", True):
-        # OPEN threads only, titles only. A closed thread is history -- still readable, still
-        # answering `chamnan-timeline for <path>`, but no longer something to hold in mind before
-        # starting. "We have tried to fix this three times" is the line nobody can reconstruct
-        # from a git log, and it costs about as much to say as a milestone title.
-        open_threads = redact.scrub(timeline.open_titles(root))
-        if open_threads:
-            out.append(section(
-                "Open threads — lines of work still in flight",
-                open_threads + "\n\n_`chamnan-timeline show <name>` for one thread's history; "
-                               "`chamnan-timeline for <path>` for what has happened to one file._", ".chamnan/threads/"))
-
-    if cfg.get("resume", True):
-        # Only the newest record, and only the part of it that is unfinished. "Done" is history and
-        # the file list is recoverable from git; what the next session cannot work out for itself is
-        # what was left and what was in the way. Empty when the last session finished cleanly, which
-        # is the right outcome — nothing is injected to say "nothing outstanding".
-        carried = redact.scrub(sessions.carry_forward(root))
-        if carried:
-            out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
-
-    if cfg.get("state", True):
-        sp = wsdir / "STATE.md"
-        if sp.is_file():
-            # Scrubbed on the way in, BEFORE the token cut -- STATE.md and the session records are
-            # free text written about the repository, which makes them the likeliest place for a
-            # hostname or a pasted connection string to end up, and scrubbing after truncation
-            # would miss anything sensitive that fell inside a pinned section.
-            raw = sp.read_text(encoding="utf-8", errors="replace")
-            # Aged BEFORE scrubbing, on the raw text. Redaction rewrites substrings, so a section
-            # holding a hostname would hash differently every session, look freshly edited every
-            # time, and never age at all.
-            raw, aged = state.age_out(raw, wsdir, cfg.get("state_stale_days", 14))
-            full = redact.scrub(raw)
-            budget = cfg.get("state_token_budget", 1700)
-            st, marker = state.render(full, budget, display(sp, root))
-            if st:
-                out.append(section("Work in flight (from the last session)", st, display(sp, root)))
-                out.append(f"_Keep `{display(sp, root)}` current as you go; it is what survives "
-                           f"compaction._\n")
-                if marker:
-                    out.append(marker + "\n")
-            if aged:
-                out.append(aged + "\n")
-
-    if cfg.get("promote", True):
-        try:
-            tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8"))
-        except Exception:
-            tools = []
-        if tools:
-            # index.json is in registration order, and this used to take the first MAX_TOOLS of it.
-            # So the twelve oldest tools held the list for ever: promote a thirteenth and it was
-            # never named in any session, which is the one thing that would make anyone use it.
-            # Ranked by the `runs` counter that has been incrementing on every matched Bash call
-            # since Stage 10 — what is actually used, then the newest, then by name so the order is
-            # stable between sessions rather than reshuffling on every tie.
-            # Three stable sorts, least significant first: name, then newest, then most-run.
-            ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
-            ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
-            ranked.sort(key=lambda t: -(t.get("runs") or 0))
-            lines = [f"- `{t['name']}` — {t.get('desc') or 'no description'}"
-                     for t in ranked[:MAX_TOOLS]]
-            if len(tools) > MAX_TOOLS:
-                lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
-                             f"`{display(wsdir/'tools', root)}/`_")
-            # Scrubbed like every other section. A tool description is text a person wrote and
-            # this file read off disk; it reached the injection raw only because index.json looked
-            # like chamnan's own data rather than a place somebody could paste a token.
-            out.append(section("This repo's own tools — prefer these over writing a new script",
-                               redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
-
-    if cfg.get("capture", True):
-        skills = sorted((wsdir / "skills").glob("*.md")) if (wsdir / "skills").is_dir() else []
-        if skills:
-            # Name plus description, never name alone. The point of keeping the bodies out of the
-            # session is that the agent loads one on demand — and it cannot decide which one to load
-            # from a filename. A registry of bare filenames spends the injection and buys nothing.
-            lines = []
-            for s in skills[:MAX_TOOLS]:
-                lines.append(f"- `{s.name}` — {describe(s) or 'no description — add one'}")
-            if len(skills) > MAX_TOOLS:
-                lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
-            out.append(section(
-                "Recorded procedures — read the one that matches before starting that kind of task",
-                # The last of the injected sections to reach the block unscrubbed. A skill's
-                # description is the first real line of a file somebody wrote, and on a real
-                # infrastructure repository two skills held text the redactor fires on -- deeper in
-                # the body than the description, so nothing leaked, but the section had no reason
-                # to be the one exception.
-                redact.scrub("\n".join(lines)) +
-                f"\n\nFull text in `{display(wsdir/'skills', root)}/`. Load one when it applies; "
-                f"do not read them all.", ".chamnan/skills/"))
-
-    if cfg.get("promote", True):
-        # Written by chamnan_session_end.py, which cannot speak for itself: SessionEnd is not one of the
-        # four events whose stdout reaches the model, and the session it would address is over by
-        # then. Shown once and deleted, so a digest never becomes a standing nag.
-        digest_path = wsdir / "logs" / "repeat_digest.json"
-        if digest_path.is_file():
-            lines = []
-            try:
-                data = json.loads(digest_path.read_text(encoding="utf-8"))
-                if isinstance(data, dict):
-                    lines = [str(x) for x in (data.get("lines") or [])][:6]
-            except (OSError, json.JSONDecodeError):
-                lines = []
-            try:
-                digest_path.unlink()
-            except OSError:
-                pass
-            if lines:
-                out.append(section(
-                    "Repeated last session and never kept",
-                    # The lines are headlines lifted from scripts the last session wrote, so this
-                    # is repository text like any other, not chamnan's own words.
-                    redact.scrub("\n".join(f"- {ln}" for ln in lines)) +
-                    "\n\nIf one of these is worth keeping: `chamnan-promote <file> <name> "
-                    "--desc \"what it checks\"` — then it is one command instead of writing it "
-                    "again.", ".chamnan/logs/repeat_digest.json"))
-
-    style = cfg.get("reply_style", "off")
-    if style in REPLY_STYLES:
-        out.append(section("Reply style for this repo", REPLY_STYLES[style] +
-                           "\n\n_Set by `reply_style` in .chamnan/config.json; remove it to "
-                           "restore the default voice._"))
-
-    if first_session:
-        # Said once, on the session that created the workspace. An empty scaffold is still
-        # invisible: without this the teammate's experience is a folder appearing and nothing
-        # explaining it.
-        out.append(section(
-            "chamnan is set up in this repository",
-            "`.chamnan/` has just been created — `memory/`, `sessions/`, `threads/`, `skills/`, "
-            "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
-            "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
-            "index and record a baseline; the write skills listed above work from now on, whether "
-            "or not that has been run.", "(generated)"))
-
-    if any(OPEN_MARK in part for part in out):
-        out.insert(0, FRAMING + "\n")
-        # Everything after position 0 has just moved. index_slot is an index into this list.
-        if index_slot is not None:
-            index_slot += 1
-
-    if not out:
-        if "--explain" in sys.argv:
-            print("chamnan injects nothing into this repository's sessions.")
-        return 0
-    # Last step, and deliberately after everything else has had its say. The host truncates a
-    # hook's stdout over ~10,000 bytes to its first 2,048 plus a file path, which drops whatever
-    # sits late in the block no matter how carefully it was budgeted or pinned. Choosing what to
-    # lose here — whole sections, named, lowest value first — beats a positional cut that keeps a
-    # directory listing and silently throws away the repository's own rules.
+    # Set before the guard below, not inside it: the emit step needs all three, and a failure part
+    # way through must still be able to print what was built rather than dying on a name.
+    header = "## chamnan\n"
     ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
+    sources = {}
+    # 🐛 One unreadable path under `.chamnan/` used to take the WHOLE injection with it. Four of
+    # the five hooks died with PermissionError — stdout empty, exit 1 — and a hook's stderr never
+    # reaches the transcript, so the session simply began with no index, no rules and no handoff,
+    # and nothing said why. A root-owned `.chamnan/logs` left by a container or CI run is the
+    # ordinary way this happens. The guard around ws.ensure() above already said 'never fail a
+    # session'; every read after it was unguarded.
+    #
+    # Catching Exception rather than OSError on purpose: what must not happen here is a session
+    # that starts with nothing, and the class of the exception does not change that. Whatever was
+    # built before the failure is still emitted, with a line saying the rest could not be read —
+    # a short block that says it is short beats a complete-looking absence.
+    try:
+        index_slot = index_render = None
 
-    # Spend the index's resolution before spending the index. A directory line with four names
-    # still orients a reader and one with none still says the directory exists, so stepping the
-    # roll-up down is a smaller loss than dropping the section — and a much smaller loss than
-    # dropping whatever fit.shrink would have taken instead.
-    if index_slot is not None:
-        raw, map_rel, budget, groot = index_render
-        # Starts at 8, not 4. An index that fitted index_token_budget was never rolled up at all,
-        # so its first step down is the ordinary roll-up — and re-rolling one that was already
-        # folded at 8 returns the same text for one cached lookup.
-        for per_dir in (8, 4, 2, 0):
-            if len(("## chamnan\n" + "".join(out)).encode()) <= ceiling:
-                break
-            folded = rollup.collapse(raw, map_rel, budget, groot, per_dir)
-            out[index_slot] = section("Architecture index", folded, str(map_rel))
+        # Said before anything else, and never suppressed by a config flag: if the code running this
+        # session is older than a version that has already set this workspace up, everything below is
+        # being produced by a build the user did not choose. That is not a preference.
+        # An update that is already downloaded, reported and never acted on. The user decides: a tool
+        # that upgrades itself because someone opened a session is doing something they did not ask
+        # for, and doing it silently is worse than not doing it at all.
+        offered = ws.available_update(HERE.parent)
+        if offered:
+            out.append(f"\n**chamnan {offered} is available** — this session is running "
+                       f"{ws.plugin_version(HERE.parent)}. Nothing has been changed. To take it, say so "
+                       f"and I will run `claude plugin update chamnan`; it applies on the next session. "
+                       f"Once one repository is on the new version, every other repository brings its "
+                       f"own workspace up to date by itself the next time it is opened.\n")
 
-    # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
-    # index has finished being resized and before anything is dropped, so neither step depends on a
-    # position the other changed.
-    out = fit.reorder(out)
+        newer = ws.reconcile_version(root, ws.plugin_version(HERE.parent))
+        if newer:
+            out.append(f"\n**⚠ This session is running chamnan {ws.plugin_version(HERE.parent)}, but "
+                       f"this repository has already been set up by {newer}.** An older build is live "
+                       f"— usually a plugin upgraded mid-session (its `bin/` stays on PATH until you "
+                       f"restart), or a second install under another config directory. Restart the "
+                       f"session, and `claude plugin update chamnan` if it is genuinely behind.\n")
 
-    # Prepended rather than appended: it explains what the reader is about to be handed, and the
-    # one source that gets a line is the one where the reader's own memory is the less reliable of
-    # the two. Costs nothing on an ordinary startup, which emits no line at all.
-    why = why_this_session(payload)
-    header = "## chamnan\n" + (why + "\n" if why else "")
+        if cfg.get("ledger", True):
+            # Always the first thing in the injection, and gated on nothing but the flag itself --
+            # the whole point is that this is visible whether or not there is anything to report.
+            skills_line = write_skills_line(HERE.parent)
+            if skills_line:
+                out.append(skills_line + "\n")
+            out.append(ledger.line(root) + "\n")
 
-    sources = {e["title"]: e.get("source", "") for e in LEDGER}
+        if cfg.get("map", True):
+            mp = wsdir / "MAP.md"
+            if mp.is_file():
+                text = mp.read_text(encoding="utf-8", errors="replace")
+                cut = text.find("## Full Detail")
+                index = text[:cut] if cut > 0 else text
+                budget = cfg.get("index_token_budget", 3000)
+                # Held before folding. collapse() recognises rows by their `- **\`path\`**` shape, and a
+                # folded index no longer has any, so re-folding its own output finds nothing to group.
+                index_render = (index, display(mp, root), budget, root)
+                if not tokens.fits(index, budget):
+                    index = rollup.collapse(index, display(mp, root), budget, root)
+                index_slot = len(out)
+                out.append(section("Architecture index", index, display(mp, root)))
+                tail = (f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
+                        f"never read it whole._")
+                # Named only when it is actually there. A causal ablation of a structural codebase
+                # index (arXiv:2606.22417) found its measurable gain concentrated in cross-file,
+                # reachability-dependent changes rather than single-file ones -- and that is the one
+                # section of MAP.md a session was never told existed. It has been built and committed
+                # all along; the block said "grep it for one heading" without naming the heading that
+                # answers "what breaks if I change this". Eighty bytes to make a section that is
+                # already paid for reachable, rather than moving it into the injection, which would
+                # cost a whole section and contradict the measured 51.1%-vs-3.2% split between what
+                # MAP.md answers and what the block does.
+                if "\n## Impact\n" in text:
+                    tail += ("\n_`## Impact` in that file is what is connected to what — grep it "
+                             "before changing a file, not after._")
+                out.append(tail + "\n")
+                behind = index_is_behind(root, mp)
+                if behind:
+                    n, examples = unindexed(root, text)
+                    # A count of what is missing, not an age. See unindexed() for why.
+                    what = (f"**{n} file(s) are not in it** — {', '.join(f'`{e}`' for e in examples)}"
+                            + ("…" if n > len(examples) else "") + ". ") if n else ""
+                    # The offer to install the hook goes only to a repo that has not installed it.
+                    # Repeating it to someone who has is how a warning stops being read.
+                    fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
+                           "`chamnan-map`, or `chamnan-map --install-git-hook` to keep it current on "
+                           "every commit")
+                    out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
+                               f"{what}Rebuild it with {fix}._\n")
+
+        if cfg.get("environments", True):
+            # Constraints, never versions. A constraint rules out a whole design before it is written
+            # ("RWO storage only" is the difference between a working manifest and an afternoon);
+            # a version number is a fact that can be looked up on the one occasion it matters. This
+            # is also where Stage 15 landed: the per-command guard it proposed needed a PreToolUse
+            # `permissionDecision` whose behaviour under `defaultMode: "auto"` is not documented, so
+            # the constraints are put in front of the agent BEFORE it writes the command instead of
+            # trying to intercept the command after it is written. See README's Limitations.
+            constraints = redact.scrub(environments.render_constraints(root))
+            if constraints:
+                out.append(section(
+                    "Environment constraints — check these before proposing infrastructure work",
+                    constraints + "\n\n_Declared in `.chamnan/environments.md`, and true only as far "
+                                  "as its `Checked:` dates go — `chamnan-env check` says which have "
+                                  "gone cold._", ".chamnan/environments.md"))
+
+        if cfg.get("memory", True):
+            # Rules are standing constraints, so they go in front of the agent before it starts.
+            rules = redact.scrub(memory.rules_text(root))
+            if rules:
+                out.append(section("Rules this repository works under", rules, ".chamnan/memory/rules/"))
+                # A rule injected once at session start is exactly the instruction that adherence
+                # studies measure decaying — 88% to 71% by the third turn on Multi-IF. Where a rule
+                # carries a mechanical check, the repository is asked directly instead. Silent when
+                # everything holds: a line that always says "all good" stops being read before the day
+                # it says something else.
+                broken = rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root)))
+                if broken:
+                    out.append(broken)
+            # Decisions and lessons are looked up when the question comes round, so they contribute a
+            # title and nothing else — the same economy skills/ and tools/ use.
+            # Scrubbed like every sibling section. A decision's TITLE is a line somebody typed, and a
+            # title is exactly where a hostname or a token gets written down in passing.
+            listing = redact.scrub(memory.render_titles(memory.titles(root)))
+            if listing:
+                out.append(section(
+                    "Recorded decisions and lessons — read the one that matches before assuming",
+                    listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
+                              "do not read them all._", ".chamnan/memory/decisions|lessons/"))
+
+        if cfg.get("milestones", True):
+            # Titles only, newest first. "The last big thing here was the auth migration" orients a
+            # session in about twenty tokens; the bodies are a grep away when a title looks relevant.
+            recent = redact.scrub(milestones.recent_titles(root))
+            if recent:
+                out.append(section("Recent milestones", recent, ".chamnan/milestones.md"))
+
+        if cfg.get("timeline", True):
+            # OPEN threads only, titles only. A closed thread is history -- still readable, still
+            # answering `chamnan-timeline for <path>`, but no longer something to hold in mind before
+            # starting. "We have tried to fix this three times" is the line nobody can reconstruct
+            # from a git log, and it costs about as much to say as a milestone title.
+            open_threads = redact.scrub(timeline.open_titles(root))
+            if open_threads:
+                out.append(section(
+                    "Open threads — lines of work still in flight",
+                    open_threads + "\n\n_`chamnan-timeline show <name>` for one thread's history; "
+                                   "`chamnan-timeline for <path>` for what has happened to one file._", ".chamnan/threads/"))
+
+        if cfg.get("resume", True):
+            # Only the newest record, and only the part of it that is unfinished. "Done" is history and
+            # the file list is recoverable from git; what the next session cannot work out for itself is
+            # what was left and what was in the way. Empty when the last session finished cleanly, which
+            # is the right outcome — nothing is injected to say "nothing outstanding".
+            carried = redact.scrub(sessions.carry_forward(root))
+            if carried:
+                out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
+
+        if cfg.get("state", True):
+            sp = wsdir / "STATE.md"
+            if sp.is_file():
+                # Scrubbed on the way in, BEFORE the token cut -- STATE.md and the session records are
+                # free text written about the repository, which makes them the likeliest place for a
+                # hostname or a pasted connection string to end up, and scrubbing after truncation
+                # would miss anything sensitive that fell inside a pinned section.
+                raw = sp.read_text(encoding="utf-8", errors="replace")
+                # Aged BEFORE scrubbing, on the raw text. Redaction rewrites substrings, so a section
+                # holding a hostname would hash differently every session, look freshly edited every
+                # time, and never age at all.
+                raw, aged = state.age_out(raw, wsdir, cfg.get("state_stale_days", 14))
+                full = redact.scrub(raw)
+                budget = cfg.get("state_token_budget", 1700)
+                st, marker = state.render(full, budget, display(sp, root))
+                if st:
+                    out.append(section("Work in flight (from the last session)", st, display(sp, root)))
+                    out.append(f"_Keep `{display(sp, root)}` current as you go; it is what survives "
+                               f"compaction._\n")
+                    if marker:
+                        out.append(marker + "\n")
+                if aged:
+                    out.append(aged + "\n")
+
+        if cfg.get("promote", True):
+            try:
+                tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8"))
+            except Exception:
+                tools = []
+            if tools:
+                # index.json is in registration order, and this used to take the first MAX_TOOLS of it.
+                # So the twelve oldest tools held the list for ever: promote a thirteenth and it was
+                # never named in any session, which is the one thing that would make anyone use it.
+                # Ranked by the `runs` counter that has been incrementing on every matched Bash call
+                # since Stage 10 — what is actually used, then the newest, then by name so the order is
+                # stable between sessions rather than reshuffling on every tie.
+                # Three stable sorts, least significant first: name, then newest, then most-run.
+                ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
+                ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
+                ranked.sort(key=lambda t: -(t.get("runs") or 0))
+                lines = [f"- `{t['name']}` — {t.get('desc') or 'no description'}"
+                         for t in ranked[:MAX_TOOLS]]
+                if len(tools) > MAX_TOOLS:
+                    lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
+                                 f"`{display(wsdir/'tools', root)}/`_")
+                # Scrubbed like every other section. A tool description is text a person wrote and
+                # this file read off disk; it reached the injection raw only because index.json looked
+                # like chamnan's own data rather than a place somebody could paste a token.
+                out.append(section("This repo's own tools — prefer these over writing a new script",
+                                   redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
+
+        if cfg.get("capture", True):
+            skills = sorted((wsdir / "skills").glob("*.md")) if (wsdir / "skills").is_dir() else []
+            if skills:
+                # Name plus description, never name alone. The point of keeping the bodies out of the
+                # session is that the agent loads one on demand — and it cannot decide which one to load
+                # from a filename. A registry of bare filenames spends the injection and buys nothing.
+                lines = []
+                for s in skills[:MAX_TOOLS]:
+                    lines.append(f"- `{s.name}` — {describe(s) or 'no description — add one'}")
+                if len(skills) > MAX_TOOLS:
+                    lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
+                out.append(section(
+                    "Recorded procedures — read the one that matches before starting that kind of task",
+                    # The last of the injected sections to reach the block unscrubbed. A skill's
+                    # description is the first real line of a file somebody wrote, and on a real
+                    # infrastructure repository two skills held text the redactor fires on -- deeper in
+                    # the body than the description, so nothing leaked, but the section had no reason
+                    # to be the one exception.
+                    redact.scrub("\n".join(lines)) +
+                    f"\n\nFull text in `{display(wsdir/'skills', root)}/`. Load one when it applies; "
+                    f"do not read them all.", ".chamnan/skills/"))
+
+        if cfg.get("promote", True):
+            # Written by chamnan_session_end.py, which cannot speak for itself: SessionEnd is not one of the
+            # four events whose stdout reaches the model, and the session it would address is over by
+            # then. Shown once and deleted, so a digest never becomes a standing nag.
+            digest_path = wsdir / "logs" / "repeat_digest.json"
+            if digest_path.is_file():
+                lines = []
+                try:
+                    data = json.loads(digest_path.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        lines = [str(x) for x in (data.get("lines") or [])][:6]
+                except (OSError, json.JSONDecodeError):
+                    lines = []
+                try:
+                    digest_path.unlink()
+                except OSError:
+                    pass
+                if lines:
+                    out.append(section(
+                        "Repeated last session and never kept",
+                        # The lines are headlines lifted from scripts the last session wrote, so this
+                        # is repository text like any other, not chamnan's own words.
+                        redact.scrub("\n".join(f"- {ln}" for ln in lines)) +
+                        "\n\nIf one of these is worth keeping: `chamnan-promote <file> <name> "
+                        "--desc \"what it checks\"` — then it is one command instead of writing it "
+                        "again.", ".chamnan/logs/repeat_digest.json"))
+
+        style = cfg.get("reply_style", "off")
+        if style in REPLY_STYLES:
+            out.append(section("Reply style for this repo", REPLY_STYLES[style] +
+                               "\n\n_Set by `reply_style` in .chamnan/config.json; remove it to "
+                               "restore the default voice._"))
+
+        if first_session:
+            # Said once, on the session that created the workspace. An empty scaffold is still
+            # invisible: without this the teammate's experience is a folder appearing and nothing
+            # explaining it.
+            out.append(section(
+                "chamnan is set up in this repository",
+                "`.chamnan/` has just been created — `memory/`, `sessions/`, `threads/`, `skills/`, "
+                "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
+                "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
+                "index and record a baseline; the write skills listed above work from now on, whether "
+                "or not that has been run.", "(generated)"))
+
+        if any(OPEN_MARK in part for part in out):
+            out.insert(0, FRAMING + "\n")
+            # Everything after position 0 has just moved. index_slot is an index into this list.
+            if index_slot is not None:
+                index_slot += 1
+
+        if not out:
+            if "--explain" in sys.argv:
+                print("chamnan injects nothing into this repository's sessions.")
+            return 0
+        # Last step, and deliberately after everything else has had its say. The host truncates a
+        # hook's stdout over ~10,000 bytes to its first 2,048 plus a file path, which drops whatever
+        # sits late in the block no matter how carefully it was budgeted or pinned. Choosing what to
+        # lose here — whole sections, named, lowest value first — beats a positional cut that keeps a
+        # directory listing and silently throws away the repository's own rules.
+        ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
+
+        # Spend the index's resolution before spending the index. A directory line with four names
+        # still orients a reader and one with none still says the directory exists, so stepping the
+        # roll-up down is a smaller loss than dropping the section — and a much smaller loss than
+        # dropping whatever fit.shrink would have taken instead.
+        if index_slot is not None:
+            raw, map_rel, budget, groot = index_render
+            # Starts at 8, not 4. An index that fitted index_token_budget was never rolled up at all,
+            # so its first step down is the ordinary roll-up — and re-rolling one that was already
+            # folded at 8 returns the same text for one cached lookup.
+            for per_dir in (8, 4, 2, 0):
+                if len(("## chamnan\n" + "".join(out)).encode()) <= ceiling:
+                    break
+                folded = rollup.collapse(raw, map_rel, budget, groot, per_dir)
+                out[index_slot] = section("Architecture index", folded, str(map_rel))
+
+        # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
+        # index has finished being resized and before anything is dropped, so neither step depends on a
+        # position the other changed.
+        out = fit.reorder(out)
+
+        # Prepended rather than appended: it explains what the reader is about to be handed, and the
+        # one source that gets a line is the one where the reader's own memory is the less reliable of
+        # the two. Costs nothing on an ordinary startup, which emits no line at all.
+        why = why_this_session(payload)
+        header = "## chamnan\n" + (why + "\n" if why else "")
+
+        sources = {e["title"]: e.get("source", "") for e in LEDGER}
+    except Exception as _exc:
+        out.append("\n_chamnan: this block stopped early — " + type(_exc).__name__
+                   + ". What is above is complete; what is missing could not be read._\n")
     body, dropped = fit.shrink(header, out, ceiling, sources)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)

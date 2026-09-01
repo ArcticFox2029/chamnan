@@ -201,9 +201,26 @@ def enabled(part, root=None):
     return bool(load_config(root).get(part, True))
 
 
+# Logs that hold their own retention, and must not be deleted whole by the file-level sweep.
+#
+# 🐛 `commands.jsonl` and `pointer.jsonl` are APPEND logs whose records are pruned individually --
+# `workflows.prune` keeps 30 calendar days and exempts chamnan's own commands from eviction
+# entirely. The file-level sweep here deletes by the file's mtime at 7 days, which overrode both:
+# take a week off, run `chamnan-map`, and the entire usage history is gone. `chamnan-report` then
+# printed "0 times" for every command under the sentence "these counts are exact for that window".
+# Data nobody can reconstruct, destroyed by an unrelated command, and a wrong number presented as
+# an exact one. A log that prunes its own records is not stale because nobody appended to it
+# lately; that is the retention working.
+SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl")
+
+
 def prune_logs(root=None):
     """Delete files under logs/ older than the retention window. Best-effort and silent: a
-    housekeeping failure must never be the reason a command the user asked for fails."""
+    housekeeping failure must never be the reason a command the user asked for fails.
+
+    Files in SELF_PRUNING_LOGS are skipped -- they bound themselves by record, on a longer window,
+    and deleting the file discards history the record-level rule was keeping on purpose.
+    """
     import time
     ws_dir = workspace(root)
     logs = ws_dir / "logs"
@@ -213,6 +230,8 @@ def prune_logs(root=None):
     removed = 0
     for path in logs.iterdir():
         try:
+            if path.name in SELF_PRUNING_LOGS:
+                continue
             if path.is_file() and path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1

@@ -53,19 +53,28 @@ HUGE_BYTES = 1_000_000
 SAMPLE_BYTES = 200_000
 
 
-def _sample(path, size):
-    """Enough of the file to price it, scaled back up. Reading a 200 MB CSV to estimate its cost
-    would be the very thing this hook exists to prevent."""
+def _estimate(path, size):
+    """Tokens in the whole file, priced from its head. Reading a 200 MB CSV to estimate its cost
+    would be the very thing this hook exists to prevent.
+
+    🐛 This used to return the SAMPLE TEXT repeated `int(factor)` times, with `else head` above a
+    factor of 50 -- so any file over about 10 MB was priced as if it were 200 KB. Measured: a
+    25 MB CSV was announced at 92,013 tokens against a true 10,522,560, understating it **128x**,
+    and `int()` truncation cost a further 1.8x in the range just above the sample size. A number
+    that small argues *for* the read this hook exists to prevent, which is worse than saying
+    nothing. Scale the estimate, not the text: no truncation, no cap, and no multi-megabyte string
+    built in memory to price a file nobody is going to read.
+    """
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
             head = fh.read(SAMPLE_BYTES)
     except OSError:
-        return ""
+        return 0.0
     if not head:
-        return ""
+        return 0.0
     # Scale by bytes, not characters: a UTF-8 multibyte file has fewer characters than bytes.
-    factor = max(1.0, size / max(1, len(head.encode("utf-8", "replace"))))
-    return head * int(factor) if factor < 50 else head
+    sampled = max(1, len(head.encode("utf-8", "replace")))
+    return tokens.estimate(head) * max(1.0, size / sampled)
 
 
 def reason_for(path, root=None):
@@ -135,7 +144,7 @@ def main():
     # hook was still carrying the old one: measured, it understated a signature-dense Python sample
     # by 39% and a Chinese one by 21% -- the exact error class tokens.py's docstring records as
     # fixed, reproduced in the one place that reads a file's size to decide whether to warn.
-    est = tokens.estimate(_sample(path, size))
+    est = _estimate(path, size)
     if why:
         note = (f"chamnan: `{path.name}` is {why} (~{est:,.0f} tokens). "
                 f"If you need one fact from it, grep instead of reading it whole. "
@@ -152,5 +161,22 @@ def main():
     return 0
 
 
+def _never_fail_the_session():
+    """`main()`, but a hook that hits something it cannot read exits 0 in silence rather than
+    exiting 1 with a traceback.
+
+    A hook's stderr never reaches the transcript, so a crash here is invisible: the session simply
+    starts without whatever this hook contributes, and nothing says why. Measured with a
+    `chmod 000` on `.chamnan/logs` — the ordinary result of a container or CI run touching the
+    workspace as root — four of the five hooks died this way. Silence is the correct failure for a
+    hook that only writes; `chamnan_session_start.py` does more than this, because it has something
+    partial worth emitting.
+    """
+    try:
+        return main()
+    except Exception:
+        return 0
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(_never_fail_the_session())
