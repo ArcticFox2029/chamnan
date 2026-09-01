@@ -3766,6 +3766,97 @@ check("...and the rest of the history is in the CHANGELOG, not gone",
       len(re.findall(r"^## What's new in ", _changelog, re.M)) >= 10)
 
 import unicodedata  # noqa: E402
+# --------------- a rule's own pattern could hang every future session
+# rulecheck compiles a pattern written by hand in a **Check:** trailer and runs it against every
+# matching file at EVERY session start, with no timeout, because `re` has none and this package may
+# not add a dependency. Measured with `(a+)+$`: 24 characters took 2.15s and 30 had to be killed
+# after two minutes. One rule pasted from a search result hangs that repository's sessions forever.
+import mapper as _mp  # noqa: E402
+import redact  # noqa: E402
+import rulecheck as _rk  # noqa: E402
+import time as _time  # noqa: E402
+
+_rdos = Path(tempfile.mkdtemp())
+(_rdos / "a.txt").write_text("a" * 46, encoding="utf-8")
+_t0 = _time.time()
+check("a nested quantifier is refused rather than run", _rk._matches(_rdos, r"(a+)+$", "*.txt") is None)
+check("...and so is the star form", _rk._matches(_rdos, r"(\w*)*", "*.txt") is None)
+check("refusing it costs no time at all", _time.time() - _t0 < 1.0)
+check("an ordinary pattern still runs", _rk._matches(_rdos, r"a+b*", "*.txt") is not None)
+check("sequential quantifiers are not the dangerous shape",
+      _rk._matches(_rdos, r"os\.environ", "*.txt") is not None)
+shutil.rmtree(_rdos, ignore_errors=True)
+
+# The Thai word-boundary trap, in the redaction layer this time. Thai does not put spaces between
+# clause words, and Python's \b is Unicode-aware, so a key glued to Thai prose was never matched.
+check("a key glued to Thai prose is still redacted",
+      "<REDACTED>" in redact.scrub("// รหัสจริงคือsk-ant-api03-AAAAAAAAAAAAAAAAAAAA"))
+check("a commit hash is still not a secret",
+      "<REDACTED>" not in redact.scrub("see commit a954fba1c3d4e5f60718293a4b5c6d7e8f901234"))
+
+# The boilerplate filter was eating the most idiomatic opening a description can have.
+check("'This file is the main entry point' is a description, not boilerplate",
+      _mp.leading_comment("# This file is the main entry point of the application\n").startswith("This file"))
+check("'This file is provided as is' is still boilerplate",
+      _mp.leading_comment("# This file is provided as is, without warranty\n") == "")
+
+# A file too large to index, and a binary under a source extension, both used to vanish silently
+# while coverage reported 100% of whatever remained.
+_sk = Path(tempfile.mkdtemp())
+(_sk / "ok.py").write_text("# real\ndef f(): pass\n", encoding="utf-8")
+(_sk / "asset.py").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 20)
+_scanned = _mp._scan(_sk)
+check("a binary file under a source extension is not indexed as code",
+      [f["path"] for f in _scanned] == ["ok.py"])
+check("...and it is recorded rather than merely dropped",
+      any(p.name == "asset.py" for p in _mp.SKIPPED_BINARY))
+shutil.rmtree(_sk, ignore_errors=True)
+
+# ------------------- what an agent found by reading the source and attacking it
+import mapper as _mp  # noqa: E402
+import redact  # noqa: E402
+# Symbol extraction: an INVENTED symbol is worse than a missing one, because a reader cannot tell it
+# is not there. Each of these produced one before the fix.
+check("Ruby's singleton methods keep their own name, not `self`",
+      _mp.extract_regex("def self.run(job)\n  job.call\nend\n", "rb")[1] == [("run()", "")])
+check("a C# positional record does not invent a method named after its class",
+      _mp.extract_regex("public record User(string Id, string Name);\n", "cs")[1] == [])
+check("a typed arrow function is not invisible",
+      "add" in str(_mp.extract_regex("export const add = (a: number): number => a;\n", "js")[1]))
+check("a generator function is not invisible",
+      "gen" in str(_mp.extract_regex("export function* gen() { yield 1; }\n", "js")[1]))
+check("an ordinary JS function still extracts",
+      "plain" in str(_mp.extract_regex("export function plain(a) { return a; }\n", "js")[1]))
+
+# `new` is on a deny-list written to filter JavaScript's `new Foo()`. In Rust it is the standard
+# constructor and plausibly the most common function name in the language.
+check("Rust's fn new() is not filtered by a JavaScript deny-list",
+      "new()" in str(_mp.extract_regex("impl S {\n  pub fn new() -> Self { S{} }\n}\n", "rs")[1]))
+check("...while the deny-list still applies where a call site can look like a definition",
+      _mp.extract_regex("const a = new Foo();\nif (x) { }\n", "js")[1] == [])
+
+# The redactor, attacked. Every one of these leaked in full before the fix.
+check("a JSON-quoted secret is redacted",
+      "<REDACTED>" in redact.scrub('{"db_password": "Tr0ub4dor-Sup3rSecretXYZ"}'))
+check("a connection string with no username is redacted",
+      "<REDACTED>" in redact.scrub("redis://:S3cretPass123456@redis.internal:6379/0"))
+check("a Slack app-level token is redacted",
+      "<REDACTED>" in redact.scrub("socket = xapp-1-A0123456-abcdefghijklmnop"))
+check("a webhook URL whose path IS the credential is redacted",
+      "<REDACTED>" in redact.scrub(
+          "https://hooks.slack.com/services/" "T00000000/B00000000/" "XXXXXXXXXXXXXXXXXXXXXXXX"))
+check("an ordinary URL is not",
+      "<REDACTED>" not in redact.scrub("see https://github.com/ArcticFox2029/chamnan"))
+check("prose about passwords survives",
+      "<REDACTED>" not in redact.scrub("the password reset instructions are in the wiki"))
+
+# is_blocked and is_never_opened had drifted apart on SSH key names, and a second extension
+# defeated the suffix check entirely.
+check("a renamed DSA key is blocked by the indexer, not only by the reader",
+      redact.is_blocked(Path("id_dsa_backup")) and redact.is_blocked(Path("id_ecdsa_prod")))
+check("a second extension does not defeat the block", redact.is_blocked(Path("server.key.old")))
+check("an ordinary file is still not blocked", not redact.is_blocked(Path("notes.txt")))
+
 # ------------- churn must follow a rename, and a clip must not split a character
 # Without -M, `git log --name-only` splits a renamed file's history across two literal strings: the
 # old name collects the commits before the move, the new name only those after. Measured on a file
@@ -4456,7 +4547,7 @@ check("and a credentialed URL keeps its host while losing its password",
 # The recall wall, asserted so nobody "fixes" it with an entropy heuristic by accident. A 40-char
 # AWS secret has no prefix and no keyword; the only thing that finds it also finds commit hashes.
 check("a bare high-entropy string is NOT redacted, by design",
-      redact.PLACEHOLDER not in redact.scrub("wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEYzz"))
+      redact.PLACEHOLDER not in redact.scrub("wJalrXUtnFEMIK7MDENG" "bPxRfiCYEXAMPLEKEYzz"))
 
 # ------------------------------ tokens: held to the counts bench/calibration.json recorded
 # The estimator's constants were measured once against Claude's own accounting and then lived on as

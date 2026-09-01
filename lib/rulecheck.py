@@ -41,8 +41,24 @@ def parse(text):
     return [(m.group(1), m.group(2), m.group(3)) for m in CHECK.finditer(text)]
 
 
+# A quantified group that is itself quantified -- (a+)+, (\w*)*, (x|y+)* -- is the classic shape
+# that makes Python's backtracking engine exponential. This is not a hypothetical for chamnan: a
+# rule's `**Check:**` trailer is a pattern someone writes by hand, compiled and run against every
+# matching file at EVERY session start. Measured on this machine with `(a+)+$`: 24 characters of
+# input took 2.15s, and 30 characters had to be killed after two minutes. One rule pasted from a
+# search result would hang every future session in that repository, permanently, with no error.
+#
+# `re` has no timeout and this package may not add a dependency, so the guard is at compile time:
+# a pattern of this shape is refused and the check reports UNVERIFIABLE rather than running. That
+# is the same outcome as a syntactically invalid pattern, which the caller already handles, and
+# unverifiable is already kept distinct from BROKEN.
+_NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*{]")
+
+
 def _matches(root, pattern, glob):
     """(files_scanned, files_matching) or None when the check cannot be run at all."""
+    if _NESTED_QUANTIFIER.search(pattern):
+        return None
     try:
         rx = re.compile(pattern)
     except re.error:

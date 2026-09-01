@@ -50,11 +50,20 @@ def _churn(root, window=CHURN_WINDOW):
             # touches across one `git mv`, plain --name-only reports old:4 new:2 and the true six
             # appears nowhere -- so the file that actually exists is ranked on a third of its real
             # churn, and drops off a roll-up line it had earned a place on.
-            ["git", "-C", str(root), "log", "--name-status", "-M",
+            # -c core.quotePath=false: git's default C-quotes any non-ASCII path, so
+            # `รายงาน.py` comes back as `"\340\270\243..."` and the lookup against the index's real
+            # path never matches -- every such file is credited zero churn, silently. That is the
+            # whole ranking, disabled, for any repository whose filenames are not ASCII.
+            ["git", "-C", str(root), "-c", "core.quotePath=false",
+             "log", "--name-status", "-M",
              "--pretty=format:", "-n", str(window)],
             # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
             # bytes the hook has not read yet, or block waiting on a prompt that will never come.
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+            # errors="replace": a raw invalid-UTF-8 byte in a filename raises
+            # UnicodeDecodeError, which is neither an OSError nor a SubprocessError,
+            # so the except below would not catch it and the whole hook would die.
+            errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return _CHURN_CACHE.setdefault(key, {})
     if out.returncode != 0:

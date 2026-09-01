@@ -55,9 +55,27 @@ def preview(root, explain=False):
     if not hook.is_file():
         print("chamnan: session_start.py not found beside this command", file=sys.stderr)
         return 1
-    import subprocess
     args = [sys.executable, str(hook)] + (["--explain"] if explain else [])
-    out = subprocess.run(args, input="{}", capture_output=True, text=True, cwd=root)
+    # The only subprocess call in this package that had no timeout, no exception handling and no
+    # returncode check. All three matter for the same reason: this command exists to tell someone
+    # what their session receives, so a hook that hangs, crashes or exits non-zero must be reported
+    # as that rather than as an empty index. Before this, a hook that crashed before printing
+    # produced "nothing to inject yet — run chamnan-map first", which is the wrong diagnosis and
+    # sends a debugging reader in the wrong direction.
+    try:
+        out = subprocess.run(args, input="{}", capture_output=True, text=True,
+                             errors="replace", cwd=root, timeout=120)
+    except subprocess.TimeoutExpired:
+        print("chamnan: the session-start hook did not finish within 120s", file=sys.stderr)
+        return 1
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"chamnan: could not run the session-start hook — {exc}", file=sys.stderr)
+        return 1
+    if out.returncode != 0:
+        print(f"chamnan: the session-start hook exited {out.returncode}", file=sys.stderr)
+        if out.stderr.strip():
+            print(out.stderr.rstrip(), file=sys.stderr)
+        return 1
     if explain:
         print(out.stdout.rstrip() or "chamnan: nothing is injected in this repository yet")
         return 0
