@@ -5347,6 +5347,52 @@ check("each page points at where the measurements, the tests and the changes liv
 check("the rule itself is written down for whoever maintains them",
       (_i18n / "MAINTAINING.md").is_file())
 
+# ------------------------------ SessionEnd is the one event with a tight budget
+# Documented: every SessionEnd hook INSTALLED shares 1.5 seconds, against 600s for an ordinary
+# hook. The clustering here is O(entries x families), and measured with every entry distinct -- so
+# each opens its own family -- it ran 0.46s at 300 entries, 7.62s at 1,200 and 30.50s at 2,400.
+# Over budget the hook is killed, the digest is never written, and the next session is simply never
+# told. Silent, and a failure of the only thing this file does.
+_se = import_hook_module("session_end.py")
+_adversarial = [({f"u{i}_{k}" for k in range(120)}, f"s{i}") for i in range(4000)]
+_t0 = time.time()
+_fams = []
+for _fp, _head in _adversarial[-_se.MAX_CLUSTERED:]:
+    for _fam in _fams:
+        if _se.jaccard(_fp, _fam["fp"]) >= _se.SIMILAR:
+            _fam["n"] += 1
+            break
+    else:
+        if len(_fams) < _se.MAX_FAMILIES:
+            _fams.append({"fp": _fp, "n": 1, "head": _head})
+_elapsed = time.time() - _t0
+check("THE WORST CASE STAYS INSIDE THE 1.5s SessionEnd BUDGET", _elapsed < 1.0)
+check("...and the work is bounded, not merely fast on this machine",
+      len(_fams) <= _se.MAX_FAMILIES and _se.MAX_CLUSTERED <= 500)
+
+# The bound must not cost the feature. A genuine repeat is still found, which is the whole job.
+_sedir = Path(tempfile.mkdtemp()) / "se"
+(_sedir / ".chamnan" / "logs").mkdir(parents=True)
+(_sedir / ".git").mkdir()
+_when = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+_shared = [f"tok{k}" for k in range(40)]
+_rows = [json.dumps({"at": _when, "kind": "scratch", "fp": _shared, "head": "the repeated one"})
+         for _ in range(4)]
+_rows += [json.dumps({"at": _when, "kind": "scratch",
+                      "fp": [f"other{i}_{k}" for k in range(40)], "head": f"one-off {i}"})
+          for i in range(20)]
+(_sedir / ".chamnan" / "logs" / "scratch.jsonl").write_text("\n".join(_rows) + "\n",
+                                                            encoding="utf-8")
+subprocess.run([str(ROOT / "hooks" / "session_end.py")], input="{}", capture_output=True,
+               text=True, cwd=_sedir,
+               env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_sedir)))
+_dg = _sedir / ".chamnan" / "logs" / "repeat_digest.json"
+check("a real repeat is still digested after the bound", _dg.is_file())
+check("...and it names the script that actually repeated",
+      _dg.is_file() and any("the repeated one" in ln
+                            for ln in json.loads(_dg.read_text(encoding="utf-8"))["lines"]))
+shutil.rmtree(_sedir.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 shutil.rmtree(fixture, ignore_errors=True)

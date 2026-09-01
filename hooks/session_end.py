@@ -24,6 +24,21 @@ SIMILAR = 0.55
 WINDOW_HOURS = 24
 MIN_REPEATS = 2
 MAX_LISTED = 4
+# Two bounds on the clustering below, because it is O(entries x families) and SessionEnd is the one
+# event with a tight budget: the documented allowance is 1.5 SECONDS SHARED BY EVERY SessionEnd
+# hook installed, against 600s for an ordinary hook. Measured on this machine, with every entry
+# distinct so each one opens its own family: 300 entries 0.46s, 1,200 entries 7.62s, 2,400 entries
+# 30.50s. Over budget the hook is killed, the digest is never written, and the next session is
+# simply never told -- a silent failure of the one thing this file does.
+#
+# scratch_watch caps its log at 300 entries, so the first number is today's realistic worst case
+# and it already spends a third of a budget chamnan does not own alone. These bounds hold the work
+# flat whatever the file turns out to contain.
+MAX_CLUSTERED = 400
+# Past this many DISTINCT scripts there is nothing to digest anyway -- the digest reports what
+# repeated, and a session with hundreds of one-off scripts has no repeats to report. Entries still
+# join a family they match; they just stop opening new ones to be compared against.
+MAX_FAMILIES = 120
 # Read, shown once and deleted by session_start.py on the next session in this repository.
 DIGEST_NAME = "repeat_digest.json"
 
@@ -64,6 +79,9 @@ def main():
             when = when.astimezone()
         if when >= cutoff:
             recent.append((set(rec.get("fp", [])), rec.get("head", "")))
+    # Newest first, then bounded: a digest of what repeated TODAY should keep the most recent work
+    # if it has to drop any.
+    recent = recent[-MAX_CLUSTERED:]
 
     # Single-pass clustering: each script joins the first family it is close enough to. Good enough
     # for a digest — the alternative is a clustering algorithm nobody will tune.
@@ -74,7 +92,9 @@ def main():
                 fam["n"] += 1
                 break
         else:
-            families.append({"fp": fp, "n": 1, "head": head})
+            # `else` on the FOR, not on the if -- it runs when no family matched.
+            if len(families) < MAX_FAMILIES:
+                families.append({"fp": fp, "n": 1, "head": head})
 
     repeated = sorted((f for f in families if f["n"] > MIN_REPEATS), key=lambda f: -f["n"])
     if not repeated:
