@@ -37,6 +37,8 @@ import re
 import time
 from pathlib import Path
 
+import fnmatch
+
 import md
 
 # Scanned in the order they are listed, which is the order they are printed: the reason first, then
@@ -98,6 +100,24 @@ def needles(rel_path):
     return [n for n in out if len(n) >= 4]
 
 
+def _governs(text, rel_path):
+    """Does a rule's Check trailer claim authority over this path?
+
+    Tier 2 on purpose — below both text-match tiers. A rule that names the file in prose is talking
+    about that file; a rule whose glob happens to cover it is talking about a category. The first is
+    the better pointer when both exist.
+    """
+    try:
+        import rulecheck
+    except ImportError:
+        return False
+    rel = str(rel_path).replace("\\", "/")
+    for _mode, _pattern, glob in rulecheck.parse(text):
+        if fnmatch.fnmatch(rel, glob) or fnmatch.fnmatch(rel, glob.rstrip("/") + "/*"):
+            return True
+    return False
+
+
 def related(wsdir, rel_path, max_hits=MAX_HITS):
     """[(label, path_in_workspace, title)] — entries whose text names this file.
 
@@ -132,6 +152,18 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
                 if seen:
                     found.append(((tier, -seen, rank, f.name), label, f, text))
                     break
+            else:
+                # A rule's `**Check:**` trailer names a GLOB, and a glob is a machine-readable
+                # statement of which files the rule governs. Text matching cannot see it — the rule
+                # says `src/*.py`, the file is `src/cascade.py`, and nothing in the body names it.
+                #
+                # This is the one place the research is unambiguous about: re-injecting a whole
+                # instruction block on a timer measurably does NOT restore adherence, while a short,
+                # single-purpose message delivered right before the decision point does. A rule that
+                # governs the file about to be edited, surfaced at the moment it is about to be
+                # edited, is exactly that message — and the glob is already written down.
+                if label == "rule" and _governs(text, rel_path):
+                    found.append(((2, 0, rank, f.name), label, f, text))
     found.sort(key=lambda x: x[0])
     return [(label, str(f.relative_to(wsdir)), _title(text, f.stem.replace("-", " ")))
             for _, label, f, text in found[:max_hits]]

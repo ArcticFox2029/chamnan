@@ -83,6 +83,20 @@ def rules_text(root):
     return joined
 
 
+def rules_with_titles(root):
+    """[(title, raw text)] for every rule. rules_text() flattens and caps for injection; a checker
+    needs the unflattened body (its Check trailer survives) and the title to name what broke."""
+    out = []
+    for path in entries(root, "rules"):
+        try:
+            body = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            continue
+        if body:
+            out.append((title_of(path, body), body))
+    return out
+
+
 def _flatten(body):
     """Demote an entry's own headings before it is injected.
 
