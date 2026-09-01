@@ -311,6 +311,19 @@ def _mark_generated(root):
     a large regenerated file is the purest form of that. `linguist-generated=true` is the standard,
     one-line answer -- GitHub collapses the file in the diff view while keeping it in the tree.
 
+    WHAT IT DOES NOT DO, said here because the line is easy to over-trust. It changes github.com's
+    own default diff view and nothing else: `git log -p`, an IDE's diff, `git blame`, and review
+    tools that are not github.com all show the file in full every time. Reviewable has an open
+    request just to honour the attribute at all (Reviewable/Reviewable#1144), and Go's older and
+    more established `DO NOT EDIT` convention has the same shape -- every linter and coverage tool
+    has to opt in separately, and several still have open issues about it. A marker is necessary
+    and not sufficient.
+
+    There is deliberately no `.git-blame-ignore-revs` counterpart. That file lists commits to skip,
+    and chamnan makes none: MAP.md rides along inside whatever commit the user was already making,
+    staged by the pre-commit hook. Ignoring those commits would ignore the user's own work with
+    them, which is worse than the noise it would remove.
+
     Determinism is what makes the collapse safe rather than negligent: a rebuild that reshuffled
     its own output would make every prior review untrustworthy, and hiding it would be worse than
     showing it. chamnan-map is byte-identical across consecutive runs on an unchanged tree, which
