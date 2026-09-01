@@ -6295,6 +6295,39 @@ check("...and the block is still inside the ceiling it promises",
       len(_zhblk.encode()) <= _wsm.load_config(_zh).get("output_byte_ceiling", 9000) + 400)
 shutil.rmtree(_zh, ignore_errors=True)
 
+# ------------------------------ what is above the checkout is none of the scan's business
+# Identical repositories under six different parents. `vendor/` is where a vendored Go or PHP
+# checkout lives, `build/` and `dist/` are where CI puts one, and `.venv/` is where a tool does --
+# so this is not an exotic layout. Testing the ABSOLUTE path's components meant one such directory
+# above the checkout silenced the data model, the API surface, the configuration list, the
+# deployment section AND the unignored-`.env` warning, each rendering as "" with no hedge.
+import schema as _schm  # noqa: E402
+import catalogs as _cat2  # noqa: E402
+import deploy as _dep  # noqa: E402
+import tree as _tr  # noqa: E402
+
+_anc = Path(tempfile.mkdtemp(prefix="chamnan-anc-"))
+_anc_seen = {}
+for _parent in ("plain", "vendor", "node_modules", ".venv", "build", "dist"):
+    _r = _anc / _parent / "repo"
+    (_r / "migrations").mkdir(parents=True)
+    (_r / "k8s").mkdir()
+    subprocess.run(["git", "-C", str(_r), "init", "-q"], capture_output=True)
+    (_r / "migrations" / "001.sql").write_text("CREATE TABLE orders (id int, total decimal);\n", encoding="utf-8")
+    (_r / "k8s" / "dep.yaml").write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: order-api\n", encoding="utf-8")
+    (_r / ".env").write_text("DB_URL=postgres://x\nAPI_KEY=y\n", encoding="utf-8")
+    (_r / "app.py").write_text("# The order service.\ndef main(): pass\n", encoding="utf-8")
+    _files = [{"path": str(q.relative_to(_r))} for q in _tr.files(_r)]
+    _envs, _unsafe = _cat2.scan_env(_r, _files)
+    _anc_seen[_parent] = (tuple(sorted(t["name"] for t in _schm.scan(_r, _files))),
+                          len(_envs), bool(_unsafe), bool(_dep.scan(_r)))
+check("A DIRECTORY ABOVE THE CHECKOUT DOES NOT BLANK THE CATALOGUE SECTIONS: " + str(_anc_seen),
+      len(set(_anc_seen.values())) == 1)
+check("...and the sections were non-empty to begin with, so this is not agreement on nothing",
+      _anc_seen["plain"] == (("orders",), 2, True, True))
+shutil.rmtree(_anc, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

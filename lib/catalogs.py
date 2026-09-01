@@ -14,6 +14,7 @@ no code path here that can carry one into the output.
 """
 import fnmatch
 import json
+import pathlib
 import re
 import subprocess
 from pathlib import Path
@@ -35,6 +36,21 @@ def _nested(root):
     """
     from mapper import _nested_repo_dirs
     return _nested_repo_dirs(root)
+
+
+# 🐛 A path's components are tested RELATIVE to the repository root, never absolute. Testing the
+# absolute path means one directory ABOVE the checkout named `vendor`, `node_modules`, `build`,
+# `dist` or `.venv` skips every file in the repository -- and each of these renderers returns "" on
+# an empty result, so whole sections simply vanish with no hedge. `assets.scan` already tested
+# `rel.parts`, which is what made the asymmetry findable. Two harms beyond the missing sections:
+# `mapper.scan` is unaffected, so the index and the catalogues then disagree about the same
+# repository; and the unignored-`.env` warning goes silent, which is the false-calm direction.
+def _rel_parts(path, root):
+    """`path`'s components below `root`, or its own components when it is not below root."""
+    try:
+        return pathlib.Path(path).relative_to(root).parts
+    except (ValueError, TypeError):
+        return pathlib.Path(path).parts
 
 
 def _outside(path, nested):
@@ -106,7 +122,7 @@ def _grpc(root):
     """(service, method) for every rpc declared in a .proto file."""
     _nest = _nested(root)
     for path in tree.by_suffix(root, ".proto"):
-        if any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
+        if any(q in SKIP_PARTS for q in _rel_parts(path, root)) or not _outside(path, _nest):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -159,7 +175,8 @@ def _spec_files(root):
     _nest = _nested(root)
     seen = set()
     for path in tree.by_suffix(root, ".yaml", ".yml", ".json"):
-        if path in seen or any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
+        if path in seen or any(q in SKIP_PARTS for q in _rel_parts(path, root)) \
+                or not _outside(path, _nest):
             continue
         named = path.stem.lower() in ("openapi", "swagger")
         in_spec_dir = any(q.lower() in SPEC_DIRS for q in path.parts[:-1])
@@ -182,7 +199,8 @@ def _readable(root, patterns):
     seen = set()
     for pat in patterns:
         for path in tree.matching(root, pat):
-            if path in seen or any(p in SKIP_PARTS for p in path.parts) or not _outside(path, _nest) \
+            if path in seen or any(p in SKIP_PARTS for p in _rel_parts(path, root)) \
+                    or not _outside(path, _nest) \
                     or not path.is_file() or redact.is_blocked(path):
                 continue
             seen.add(path)

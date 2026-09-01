@@ -17,6 +17,7 @@ approaches deliver that.
 
 Nothing here connects to a database. It reads the files that describe one.
 """
+import pathlib
 import re
 from pathlib import Path
 
@@ -107,6 +108,21 @@ SCHEMA_HINTS = ("migration", "migrations", "schema", "models", "db", "database",
                 "store", "storage")
 
 
+# 🐛 A path's components are tested RELATIVE to the repository root, never absolute. Testing the
+# absolute path means one directory ABOVE the checkout named `vendor`, `node_modules`, `build`,
+# `dist` or `.venv` skips every file in the repository -- and each of these renderers returns "" on
+# an empty result, so whole sections simply vanish with no hedge. `assets.scan` already tested
+# `rel.parts`, which is what made the asymmetry findable. Two harms beyond the missing sections:
+# `mapper.scan` is unaffected, so the index and the catalogues then disagree about the same
+# repository; and the unignored-`.env` warning goes silent, which is the false-calm direction.
+def _rel_parts(path, root):
+    """`path`'s components below `root`, or its own components when it is not below root."""
+    try:
+        return pathlib.Path(path).relative_to(root).parts
+    except (ValueError, TypeError):
+        return pathlib.Path(path).parts
+
+
 def _summary_above(text, pos):
     """A comment block immediately above a definition, used as its one-line summary."""
     m = COMMENT_ABOVE.search(text[:pos])
@@ -156,7 +172,8 @@ def scan(root, files):
         # .venv added 2026-08-28: it was the only skip list here missing it, which is the reason a
         # shared pruned walk could not include virtualenvs. A .sql inside one is a dependency's
         # schema, never this repository's.
-        if any(p in (".git", "node_modules", "vendor", "__pycache__", ".venv") for p in path.parts) \
+        if any(p in (".git", "node_modules", "vendor", "__pycache__", ".venv")
+               for p in _rel_parts(path, root)) \
                 or redact.is_blocked(path):
             continue
         try:
