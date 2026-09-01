@@ -5724,6 +5724,36 @@ check("the skills listing is scrubbed like its siblings",
 check("...and so is the decisions and lessons listing",
       "redact.scrub(memory.render_titles" in _hooksrc)
 
+# ------------------------------ two modules disagreeing about what a pin covers
+# state.split_pinned means a pinned span runs to the next heading at the same depth or shallower,
+# SUBSECTIONS INCLUDED — its own docstring says so. fit._fit_lines pinned only a block whose own
+# first line carried the marker. The two disagreed about the same text, silently, in one direction.
+_pin_src = ("# Settled — do not raise these again \U0001F4CC\n\n"
+            "## The bank is cancelled\n"
+            + "a reason line that is reasonably long so this bulks up\n" * 60
+            + "\n## Do not re-add the retry wrapper\n"
+              "Tried twice, both reverted. This is the one that must never be lost.\n")
+_pin_inj, _pin_marker = _state.render(_pin_src, 5000, "STATE.md")
+check("state.render reports nothing held back", _pin_marker == "")
+_pin_part = f"\n### Work in flight\n[repo:abc]\n{_pin_inj}\n[/repo:abc]\n"
+check("AND THE TRIM NO LONGER CUTS THE SUBSECTION THAT MARKER PROMISED",
+      all("retry wrapper" in (fit._trim(_pin_part, _r, {}) or "")
+          for _r in (600, 900, 1500, 2500)))
+
+# The other direction has to keep working, or the fix has simply pinned everything.
+_un = ("# Ordinary heading\n" + "a line long enough to bulk this out properly\n" * 60
+       + "\n## A subsection nobody pinned\nkeep me\n")
+check("...while an UNPINNED tail is still cut when there is no room",
+      all("keep me" not in (fit._trim(f"\n### X\n[repo:a]\n{_un}\n[/repo:a]\n", _r, {}) or "")
+          for _r in (600, 1200, 2000)))
+# And a pinned span must end where the next same-depth heading begins.
+_after = ("# Pinned \U0001F4CC\n" + "short\n" * 5
+          + "\n# Not pinned\n" + "a line long enough to bulk this out properly\n" * 60
+          + "\ntail of the unpinned one\n")
+check("...and a pin does not leak into the section after it",
+      "tail of the unpinned one" not in
+      (fit._trim(f"\n### X\n[repo:a]\n{_after}\n[/repo:a]\n", 700, {}) or ""))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

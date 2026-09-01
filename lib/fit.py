@@ -265,10 +265,30 @@ def _fit_lines(lines, budget):
     # Reserve whole pinned blocks first, then fill the remainder LINE by line. Filling by block
     # would make a section with no headings at all -- a plain list, a paragraph -- one indivisible
     # atom that either fits or vanishes, which trades this bug for a worse one.
+    # A pin covers its SUBSECTIONS too, which is what state.split_pinned already means by it: a
+    # pinned span runs to the next heading at the same depth or shallower, subsections included.
+    # This function used to pin only a block whose own first line carried the marker, so the two
+    # modules disagreed about the same text -- and the disagreement was silent and one-directional.
+    # Reproduced: `# Settled — do not raise these again 📌` with two `##` subsections under it.
+    # state.render returned marker == "", meaning nothing was held back, and _trim then dropped the
+    # second subsection ("Do not re-add the retry wrapper — tried twice, both reverted") at every
+    # room below 3,500 bytes. A line the owner pinned so it could never be lost, lost, under a
+    # marker saying nothing had been.
+    def _depth(line):
+        return len(line) - len(line.lstrip("#"))
+
     n = 0
     pinned_lines, rest = set(), []
+    pin_depth = None
     for b in blocks:
-        is_pin = bool(b) and PIN in b[0]
+        head = b[0] if b else ""
+        if head.startswith("#"):
+            d = _depth(head)
+            if pin_depth is not None and d <= pin_depth:
+                pin_depth = None          # the pinned span ended here
+            if PIN in head:
+                pin_depth = d
+        is_pin = pin_depth is not None
         for line in b:
             (pinned_lines.add(n) if is_pin else rest.append(n))
             n += 1
