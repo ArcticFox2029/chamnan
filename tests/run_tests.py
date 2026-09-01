@@ -3760,6 +3760,65 @@ check("the correction is still in the release history too",
 check("the release history moved out of the README but did not disappear",
       _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
 
+# ------------- the two claims that matter most for something you install
+# An installed plugin runs arbitrary code on a developer's machine with that developer's privileges
+# and no sandbox. The measured shape of the threat: 100+ VS Code extensions found carrying hard-coded
+# secrets, a campaign reaching 17,000 downloads on marketplace presence alone, extensions that fetch
+# and execute remote JavaScript every 20 minutes, and verified badges surviving malicious updates.
+#
+# chamnan's answer is structural rather than promised: it makes no network call at runtime and has no
+# third-party dependency, so there is nothing to fetch and nothing beneath it to compromise. Those
+# two sentences were true by discipline and untested, which is the state this project's own rule
+# warns about -- a rule that cannot be checked is a rule that quietly stops applying.
+import ast as _ast  # noqa: E402
+
+_NET = {"socket", "urllib", "http", "ftplib", "smtplib", "telnetlib", "poplib", "imaplib",
+        "requests", "httpx", "urllib3", "aiohttp", "websockets", "xmlrpc", "asyncio"}
+_STDLIB = set(getattr(sys, "stdlib_module_names", ()))
+_OWN = {f.stem for f in (ROOT / "lib").glob("*.py")}
+
+def _runtime_files():
+    for d in ("lib", "hooks", "bin"):
+        for f in sorted((ROOT / d).iterdir()):
+            if f.is_file() and (f.suffix == ".py" or (d == "bin" and f.suffix == "")):
+                yield f
+
+def _imports(path):
+    try:
+        tree = _ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        return set()
+    names = set()
+    for node in _ast.walk(tree):
+        if isinstance(node, _ast.Import):
+            names |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, _ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.split(".")[0])
+    return names
+
+_files = list(_runtime_files())
+_all = {}
+for f in _files:
+    _all[f.name] = _imports(f)
+
+check("there are runtime files to check at all", len(_files) > 20)
+_networked = {n: sorted(i & _NET) for n, i in _all.items() if i & _NET}
+if _networked:
+    print("    networked:", _networked)
+check("no runtime file imports a network module", not _networked)
+
+# Anything that is not stdlib and not one of chamnan's own lib modules is a third-party dependency.
+_foreign = {n: sorted(i - _STDLIB - _OWN) for n, i in _all.items() if i - _STDLIB - _OWN}
+if _foreign:
+    print("    foreign:", _foreign)
+check("no runtime file imports a third-party package", not _foreign)
+check("and there is no dependency manifest to install one from",
+      not any((ROOT / n).exists() for n in
+              ("requirements.txt", "pyproject.toml", "setup.py", "Pipfile", "poetry.lock")))
+check("subprocess is used, but only ever to run git",
+      all("git" in f.read_text(encoding="utf-8", errors="replace")
+          for f in _files if "subprocess" in _all.get(f.name, ())))
+
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
 # regenerated file is the purest form of the noisy, unfocused diff that slows review down.

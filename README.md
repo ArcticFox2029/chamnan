@@ -1046,6 +1046,22 @@ blind where the work is. The warning now gives a count and names files instead o
 | unvalidated LLM-written repository context | **−3%** success, **+20%** cost |
 | guidance validated by probing | **25.5% → 33.0%** resolve on SWE-bench Verified, p<0.001; evaluable patches **41.7% → 56.2%** |
 
+**Read that benchmark with a caveat, added 2026-09-01.** SWE-bench Verified has known validity
+problems: **32.67%** of successful patches involve direct solution leakage and **31.08%** pass on
+inadequate tests, and OpenAI's Frontier Evals team **stopped reporting it in early 2026** after an
+audit of 138 problematic tasks found more than 60% unsolvable as written and frontier models able to
+reproduce gold patches verbatim from the task ID alone. A *relative* improvement between two arms —
+which is what 25.5% → 33.0% is — survives contamination better than an absolute score, because both
+arms carry it. But the absolute numbers should not be read as capability, and nothing on this page
+depends on them being read that way.
+
+**One figure from the same literature cuts the other way and is worth more to this project than the
+benchmark is.** Models recall file paths from repositories in their training data **up to 76%** of
+the time, against **up to 53%** for files outside it. That is the same asymmetry as the 85.25%
+project-specific API hallucination above, measured from the other direction: a model knows its
+way around a repository it has seen and does not know its way around yours. Benchmark scores are
+collected on the first kind of repository. Your repository is the second kind.
+
 **Measured here:** `tools/map_claim_check.py` verifies the index's assertions against the tree —
 paths, line counts, functions, classes, symbols. **2,329 of 2,329 true.** Two defects were found by
 writing it: every line count was over by exactly one (`count("\n") + 1` counts the empty string after
@@ -1076,7 +1092,29 @@ pattern was anchored on `PRIVATE KEY-----`.
 
 ---
 
-### 9. Prompt injection
+### 9. What an installed plugin can do to you, and what this one cannot
+
+An extension runs arbitrary code on a developer's machine, with that developer's privileges and no
+sandbox. The measured shape of that threat: **100+ VS Code extensions** found carrying hard-coded
+secrets including marketplace publishing tokens; a campaign reaching **17,000 downloads** on
+marketplace presence alone; extensions fetching and executing **remote JavaScript every 20 minutes**;
+a **quadrupling** of malicious-extension detections; and verified badges that survived malicious
+updates.
+
+chamnan's answer is structural rather than promised, and as of 1.11.0 it is **enforced by the test
+suite** rather than asserted in a sentence:
+
+| | |
+|---|---|
+| network calls at runtime | **none** — no runtime file imports `socket`, `urllib`, `http`, `requests` or any sibling |
+| third-party dependencies | **none** — every import is Python's standard library or chamnan's own `lib/` |
+| a manifest to install one from | **none** — no `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile` or lockfile |
+| `subprocess` | present, and only ever to run `git` |
+
+There is nothing to fetch, so there is nothing to fetch *and execute*; and there is nothing beneath
+it to compromise. Those four rows are `check()`s that fail the build if they stop being true.
+
+### 9b. Prompt injection
 
 | variant | attack success rate |
 |---|---|
@@ -1157,6 +1195,7 @@ is said instead of a title being guessed at.
 | 11 | [arXiv:2605.15184](https://arxiv.org/html/2605.15184v1) — *Is Grep All You Need? How Agent Harnesses Reshape Agentic Search* | That grep-first dominates in shipped agent harnesses |
 | 12 | [arXiv:2608.13568](https://arxiv.org/html/2608.13568) — *Does a Language Server Save Tokens for Coding Agents?* | LSP at 1.00 precision vs grep's 0.76, but **more** expensive on localization |
 | 13 | [arXiv:2606.20512](https://arxiv.org/abs/2606.20512) — Probe-and-Refine | Repository guidance validated by probing: 25.5% → 33.0% resolve on SWE-bench Verified |
+| 19 | [arXiv:2505.20411](https://arxiv.org/pdf/2505.20411) — *SWE-rebench*; [arXiv:2507.11059](https://arxiv.org/html/2507.11059v3) — *SWE-MERA*; [OpenAI, why we no longer evaluate SWE-bench Verified](https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/) | The contamination caveat on every SWE-bench figure above, and the 76% / 53% path-recall asymmetry between repositories a model has seen and repositories it has not |
 | 14 | [arXiv:2603.22744](https://arxiv.org/pdf/2603.22744) — *LH-Bench: Skill-Grounded Evaluation of Long-Horizon Agents* | Long-horizon agent evaluation, alongside the context-file figures |
 | 15 | [arXiv:2605.23130](https://arxiv.org/pdf/2605.23130) — *From Preventive to Reactive: How AI Coding Assistants Transform Developers' Security Awareness* | Automation bias; developers writing less secure code while believing the opposite |
 | 16 | [anthropics/claude-code #70460](https://github.com/anthropics/claude-code/issues/70460) | *"SessionStart hook output silently truncated at 10KB — model never sees the missing content"* |
