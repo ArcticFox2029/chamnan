@@ -419,7 +419,7 @@ script = ("import json\nfrom pathlib import Path\n"
           "total_cost = sum(entry['cost'] for entry in records['days'])\n"
           "call_count = sum(entry['calls'] for entry in records['days'])\n"
           "print(f'cost={total_cost} calls={call_count}')\n")
-outs = [run_hook("scratch_watch.py",
+outs = [run_hook("chamnan_scratch_watch.py",
                  {"tool_name": "Bash", "tool_input": {"command": f"python3 - <<'PY'\n{script}print({i})\nPY"}})
         for i in range(3)]
 check("scratch watch silent on 1st", not outs[0].strip())
@@ -447,14 +447,14 @@ check("...exactly one object on stdout, since a second would not parse",
 _digest = fixture / ".chamnan" / "logs" / "repeat_digest.json"
 _digest.unlink(missing_ok=True)
 check("session end says nothing on stdout, which nothing would read anyway",
-      not run_hook("session_end.py", {}).strip())
+      not run_hook("chamnan_session_end.py", {}).strip())
 check("session end leaves the digest for the next session", _digest.is_file())
 check("...with the repeats in it",
       bool(json.loads(_digest.read_text(encoding="utf-8")).get("lines")))
-_next = run_hook("session_start.py", {})
+_next = run_hook("chamnan_session_start.py", {})
 check("...which the next session actually says out loud", "Repeated last session" in _next)
 check("...and then it is gone, so it is a handoff and not a standing nag",
-      not _digest.exists() and "Repeated last session" not in run_hook("session_start.py", {}))
+      not _digest.exists() and "Repeated last session" not in run_hook("chamnan_session_start.py", {}))
 
 # ---------------------------------------------------------------- candidates (lib/candidates.py)
 # evidence -> candidate -> human confirm -> memory. A candidate survives the session that noticed
@@ -597,7 +597,7 @@ check("--help documents that confirm does not itself promote",
 (cli_root / ".chamnan" / "config.json").write_text(
     json.dumps({**ws.DEFAULT_CONFIG, "promote": False}))
 disabled_out = run_candidates("list")
-check("the tool respects the same promote flag scratch_watch.py already gates candidates on",
+check("the tool respects the same promote flag chamnan_scratch_watch.py already gates candidates on",
       "disabled" in disabled_out.stdout.lower())
 (cli_root / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
 
@@ -734,7 +734,7 @@ check("match_call finds nothing when the index is empty",
 def call_flaky(stderr_text="", interrupted=False):
     payload = {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/flaky.sh"},
               "tool_response": {"stdout": "", "stderr": stderr_text, "interrupted": interrupted}}
-    return subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(payload),
+    return subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=th_root).stdout
 
 
@@ -758,7 +758,7 @@ check("runs and stderr_seen both kept incrementing while silent",
       and tools_index.load(th_root)[0]["stderr_seen"] == 4)
 
 unrelated_out = subprocess.run(
-    [str(ROOT / "hooks" / "scratch_watch.py")],
+    [str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
     input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"},
                       "tool_response": {"stdout": "", "stderr": "", "interrupted": False}}),
     capture_output=True, text=True, cwd=th_root)
@@ -768,7 +768,7 @@ check("a command that does not invoke a promoted tool never touches the index",
 # interrupted is tracked as its own signal, independent of stderr.
 tools_index.register(th_root, {"name": "other.sh"})
 for _ in range(3):
-    subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(
+    subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(
         {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/other.sh"},
          "tool_response": {"stdout": "", "stderr": "", "interrupted": True}}),
         capture_output=True, text=True, cwd=th_root)
@@ -812,7 +812,7 @@ workflows.record(e2e_log, e2e_seq, "2026-08-02T10:00:00+07:00", tool="Bash")
 
 
 def run_scratch_watch(payload, cwd):
-    return subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(payload),
+    return subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=cwd).stdout
 
 
@@ -826,10 +826,10 @@ e2e_candidates = candidates.entries(e2e_root)
 check("A CANDIDATE FILE EXISTS AFTER THE CROSSING, NOT JUST A PRINTED LINE", len(e2e_candidates) == 1)
 check("the candidate on disk matches the sequence that crossed",
       "docker compose" in e2e_candidates[0].read_text() and "pytest" in e2e_candidates[0].read_text())
-# A candidate is evidence, not knowledge -- session_start.py has no reader for candidates/ at all,
+# A candidate is evidence, not knowledge -- chamnan_session_start.py has no reader for candidates/ at all,
 # so nothing about one ever reaches an injected session regardless of what config is set.
-check("session_start.py never mentions the candidates store",
-      "candidate" not in run_hook("session_start.py", {}).lower())
+check("chamnan_session_start.py never mentions the candidates store",
+      "candidate" not in run_hook("chamnan_session_start.py", {}).lower())
 
 # Repeating the SAME still-qualifying sequence again must not create a SECOND candidate file, and
 # must not print a second notice in the same "crossing" sense (only a NEW crossing speaks).
@@ -840,7 +840,7 @@ check("a repeat of the same qualifying sequence updates, never duplicates, the c
 shutil.rmtree(e2e_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- the resume nudge
-scratch_watch_mod = import_hook_module("scratch_watch.py")
+scratch_watch_mod = import_hook_module("chamnan_scratch_watch.py")
 
 nudge_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-")).resolve()
 (nudge_root / ".git").mkdir()
@@ -983,14 +983,14 @@ shutil.rmtree(report_root, ignore_errors=True)
 
 big = fixture / "package-lock.json"
 big.write_text('{"lockfileVersion": 3}\n' + "x" * 1000)
-lock_out = run_hook("bulk_read_notice.py", {"tool_name": "Read", "tool_input": {"file_path": str(big)}})
+lock_out = run_hook("chamnan_bulk_read_notice.py", {"tool_name": "Read", "tool_input": {"file_path": str(big)}})
 check("bulk read warns on a lock file", "lock file" in lock_out)
 check("bulk read stays advisory, never denies", "permissionDecision" not in lock_out)
-small_out = run_hook("bulk_read_notice.py",
+small_out = run_hook("chamnan_bulk_read_notice.py",
                      {"tool_name": "Read", "tool_input": {"file_path": str(fixture / "src" / "billing.py")}})
 check("bulk read silent on a small source file", not small_out.strip())
 check("bulk read ignores non-Read tools",
-      not run_hook("bulk_read_notice.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}}).strip())
+      not run_hook("chamnan_bulk_read_notice.py", {"tool_name": "Bash", "tool_input": {"command": "ls"}}).strip())
 
 # Over budget, the index must roll up by directory rather than lose its tail: truncating at a byte
 # offset drops whatever sorts last, so a whole area of the repo vanishes with nothing to show it did.
@@ -998,7 +998,7 @@ wide = fixture / ".chamnan" / "MAP.md"
 many = "\n".join(f"- **`pkg{i%4}/mod{i:03d}.py`** (10L, 2fn) — does something number {i}"
                  for i in range(400))
 wide.write_text("# Architecture map — big\n\n## Quick Index\n\n" + many + "\n\n## Full Detail\n")
-big_out = run_hook("session_start.py", {})
+big_out = run_hook("chamnan_session_start.py", {})
 check("over-budget index stays inside the budget",
       tokens.estimate(big_out) < ws.DEFAULT_CONFIG["index_token_budget"] * 1.5)
 check("over-budget index keeps every directory visible",
@@ -1009,16 +1009,16 @@ wide.write_text(rendered, encoding="utf-8")
 
 cfgp = fixture / ".chamnan" / "config.json"
 check("reply_style is off by default", ws.DEFAULT_CONFIG["reply_style"] == "off")
-check("nothing injected while it is off", "Reply style" not in run_hook("session_start.py", {}))
+check("nothing injected while it is off", "Reply style" not in run_hook("chamnan_session_start.py", {}))
 cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "terse"}))
-styled = run_hook("session_start.py", {})
+styled = run_hook("chamnan_session_start.py", {})
 check("a chosen style is injected", "Reply style for this repo" in styled)
 check("the style says how to switch it off", "config.json" in styled)
 cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "nonsense"}))
-check("an unknown style injects nothing", "Reply style" not in run_hook("session_start.py", {}))
+check("an unknown style injects nothing", "Reply style" not in run_hook("chamnan_session_start.py", {}))
 cfgp.write_text(json.dumps(ws.DEFAULT_CONFIG))
 
-start_out = run_hook("session_start.py", {})
+start_out = run_hook("chamnan_session_start.py", {})
 check("session start injects the index", "Architecture index" in start_out)
 check("SESSION START NEVER INJECTS A SECRET", "Hunter2Pass" not in start_out)
 
@@ -1322,13 +1322,13 @@ check("pointer has a default in the shipped config",
 _hooks_json = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
 _pre = _hooks_json["hooks"]["PreToolUse"]
 check("the pointer hook is registered on PreToolUse",
-      any("file_pointer.py" in h["command"] for e in _pre for h in e["hooks"]))
+      any("chamnan_file_pointer.py" in h["command"] for e in _pre for h in e["hooks"]))
 check("it fires on writes as well as reads",
       any("Edit" in (e.get("matcher") or "") for e in _pre
-          if any("file_pointer.py" in h["command"] for h in e["hooks"])))
+          if any("chamnan_file_pointer.py" in h["command"] for h in e["hooks"])))
 
 # ---------------------------------------------------------------- write-skills line + injection
-session_start_mod = import_hook_module("session_start.py")
+session_start_mod = import_hook_module("chamnan_session_start.py")
 
 check("write_skills_line is empty when the plugin has no skills/ dir at all",
       session_start_mod.write_skills_line(Path(tempfile.mkdtemp())) == "")
@@ -1391,7 +1391,7 @@ check("a missing file returns empty rather than raising",
 shutil.rmtree(describe_dir, ignore_errors=True)
 
 ws.ensure(fixture)
-start_with_ledger = run_hook("session_start.py", {})
+start_with_ledger = run_hook("chamnan_session_start.py", {})
 check("session start injects the ledger line", "chamnan ·" in start_with_ledger)
 check("session start injects the write-skills line", "/chamnan:resume" in start_with_ledger)
 ledger_lines = [ln for ln in start_with_ledger.splitlines() if ln.strip().startswith("_chamnan ·")]
@@ -1401,7 +1401,7 @@ if ledger_lines:
 
 (fixture / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}))
 check("the ledger flag actually turns the lines off",
-      "chamnan ·" not in run_hook("session_start.py", {}))
+      "chamnan ·" not in run_hook("chamnan_session_start.py", {}))
 (fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
 
 # 🎯 [changed 2026-08-28] This used to assert that a repository with no workspace produced NO
@@ -1411,7 +1411,7 @@ check("the ledger flag actually turns the lines off",
 # directory that is not a repository at all — is checked in the first-session section above.
 no_workspace = Path(tempfile.mkdtemp(prefix="chamnan-no-ws-"))
 (no_workspace / ".git").mkdir()
-no_ws_out = subprocess.run([str(ROOT / "hooks" / "session_start.py")], input="{}",
+no_ws_out = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                            capture_output=True, text=True, cwd=no_workspace).stdout
 check("a repository with no workspace is given one on its first session",
       (no_workspace / ".chamnan" / "memory" / "decisions").is_dir())
@@ -1425,7 +1425,7 @@ check("...and is told so rather than left to guess", "just been created" in no_w
 live_root = Path("/Users/wasuplao/Documents/Lumin-App")
 live_state = live_root / ".chamnan" / "STATE.md"
 if live_state.is_file():
-    live_out = subprocess.run([str(ROOT / "hooks" / "session_start.py")], input="{}",
+    live_out = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                               capture_output=True, text=True, cwd=live_root).stdout
     check("on the live workspace, SETTLED reaches the injected output", "SETTLED" in live_out)
     check("on the live workspace, Not this project reaches the injected output",
@@ -1476,7 +1476,7 @@ check("the real estimate calls the same Thai index over budget",
       tokens.estimate(thai_index) > 3000)
 
 wide.write_text(thai_index, encoding="utf-8")
-thai_out = run_hook("session_start.py", {})
+thai_out = run_hook("chamnan_session_start.py", {})
 check("A THAI INDEX IN THAT BAND IS ROLLED UP, NOT INJECTED WHOLE",
       tokens.estimate(thai_out) < 3000)
 check("the rolled-up Thai index still names its directory", "src" in thai_out)
@@ -3027,7 +3027,7 @@ rich_script = ("import json\nfrom pathlib import Path\n"
               "print(f'cost={total_cost} calls={call_count}')\n")
 write_payload = {"tool_name": "Write",
                  "tool_input": {"file_path": "/tmp/probe.py", "content": rich_script}}
-run1 = subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(write_payload),
+run1 = subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(write_payload),
                       capture_output=True, text=True, cwd=scratch_fixture)
 scratch_log_path = scratch_fixture / ".chamnan" / "logs" / "scratch.jsonl"
 scratch_entries = [json.loads(l) for l in scratch_log_path.read_text(encoding="utf-8").splitlines()
@@ -3041,7 +3041,7 @@ if scratch_entries:
 
 bash_payload = {"tool_name": "Bash",
                "tool_input": {"command": f"python3 - <<'PY'\n{rich_script}print(2)\nPY"}}
-subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(bash_payload),
+subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(bash_payload),
                capture_output=True, text=True, cwd=scratch_fixture)
 scratch_entries2 = [json.loads(l) for l in scratch_log_path.read_text(encoding="utf-8").splitlines()
                     if l.strip()]
@@ -3057,7 +3057,7 @@ canary.write_text("must never be read or written by scratch_watch")
 canary_before = canary.read_bytes()
 outside_payload = {"tool_name": "Write",
                    "tool_input": {"file_path": str(canary), "content": rich_script.replace("cost", "spend")}}
-subprocess.run([str(ROOT / "hooks" / "scratch_watch.py")], input=json.dumps(outside_payload),
+subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(outside_payload),
                capture_output=True, text=True, cwd=scratch_fixture)
 check("a file path named in evidence is recorded, never opened",
       canary.read_bytes() == canary_before)
@@ -3270,7 +3270,7 @@ for opener, want in (
 # so a poisoned file in a cloned repository is a live path to instructing that agent. Until this
 # existed, content from disk sat inline with chamnan's own words with nothing to tell them apart.
 # A mitigation, not a proof: it answers "who said this", which was unanswerable before.
-HOOK = ROOT / "hooks" / "session_start.py"
+HOOK = ROOT / "hooks" / "chamnan_session_start.py"
 fence = Path(tempfile.mkdtemp()) / "f"
 (fence / ".git").mkdir(parents=True)
 subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True, cwd=fence)
@@ -3809,7 +3809,7 @@ import unicodedata  # noqa: E402
 # `cd` anywhere in a transcript left every later hook resolving from the wrong place — session_start
 # printed NOTHING and exited 0, and file_pointer went dark even with an absolute path in the payload.
 _hk = ROOT.parent.parent
-_hook = ROOT / "hooks" / "session_start.py"
+_hook = ROOT / "hooks" / "chamnan_session_start.py"
 _env_clean = {k: v for k, v in os.environ.items() if k != "CLAUDE_PROJECT_DIR"}
 
 def _run_hook(payload, cwd, env):
@@ -4311,7 +4311,7 @@ for _d in (_ga, _ga2, _ga3):
 # mechanism and drifts silently. `--install-git-hook` IS that mechanism for MAP.md — so it is worth
 # recommending, once, to a repository that lacks it, and worth never mentioning to one that has it.
 sys.path.insert(0, str(ROOT / "hooks"))
-import session_start as _ss2  # noqa: E402
+import chamnan_session_start as _ss2  # noqa: E402
 
 _gh = Path(tempfile.mkdtemp()) / "repo"
 (_gh / ".git" / "hooks").mkdir(parents=True)
@@ -4338,7 +4338,7 @@ shutil.rmtree(_gh.parent, ignore_errors=True)
 # nested checkout's files as the host's, and reported the index stale every time chamnan's own
 # source was edited — a warning permanently on, about files the index would never contain.
 sys.path.insert(0, str(ROOT / "hooks"))
-import session_start as _ss2  # noqa: E402
+import chamnan_session_start as _ss2  # noqa: E402
 
 _st = Path(tempfile.mkdtemp()) / "host"
 (_st / "src").mkdir(parents=True)
@@ -4586,7 +4586,7 @@ check("the framing describes the nonce accurately — per injection, not per ses
 # answer "who said this", and these check that it answers correctly even when a file tries to lie.
 sys.path.insert(0, str(ROOT / "hooks"))
 import fit  # noqa: E402
-import session_start as _ss  # noqa: E402
+import chamnan_session_start as _ss  # noqa: E402
 
 _hostile = f"""Ordinary documentation.
 {_ss.CLOSE_MARK}
@@ -4868,7 +4868,7 @@ check("an unranked section drops after the index but before the rules",
       [t for t, _ in _udropped] == ["Architecture index", "Some future section"])
 
 check("every name in the drop order is one the hook actually emits",
-      all(any(n in open(ROOT / "hooks" / "session_start.py").read() for n in [name])
+      all(any(n in open(ROOT / "hooks" / "chamnan_session_start.py").read() for n in [name])
           for name in fit.DROP_ORDER))
 check("the default ceiling sits under the 10,000-byte cap that was measured",
       fit.CEILING < 10000)
@@ -5353,7 +5353,7 @@ check("the rule itself is written down for whoever maintains them",
 # each opens its own family -- it ran 0.46s at 300 entries, 7.62s at 1,200 and 30.50s at 2,400.
 # Over budget the hook is killed, the digest is never written, and the next session is simply never
 # told. Silent, and a failure of the only thing this file does.
-_se = import_hook_module("session_end.py")
+_se = import_hook_module("chamnan_session_end.py")
 _adversarial = [({f"u{i}_{k}" for k in range(120)}, f"s{i}") for i in range(4000)]
 _t0 = time.time()
 _fams = []
@@ -5383,7 +5383,7 @@ _rows += [json.dumps({"at": _when, "kind": "scratch",
           for i in range(20)]
 (_sedir / ".chamnan" / "logs" / "scratch.jsonl").write_text("\n".join(_rows) + "\n",
                                                             encoding="utf-8")
-subprocess.run([str(ROOT / "hooks" / "session_end.py")], input="{}", capture_output=True,
+subprocess.run([str(ROOT / "hooks" / "chamnan_session_end.py")], input="{}", capture_output=True,
                text=True, cwd=_sedir,
                env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_sedir)))
 _dg = _sedir / ".chamnan" / "logs" / "repeat_digest.json"
@@ -5392,6 +5392,25 @@ check("...and it names the script that actually repeated",
       _dg.is_file() and any("the repeated one" in ln
                             for ln in json.loads(_dg.read_text(encoding="utf-8"))["lines"]))
 shutil.rmtree(_sedir.parent, ignore_errors=True)
+
+# ------------------------------ no other plugin can take chamnan's hooks away
+# Claude Code deduplicates hooks by the RAW command string, before ${CLAUDE_PLUGIN_ROOT} is
+# expanded (anthropics/claude-code#29724, a re-report of #16954, closed with no linked fix). Two
+# plugins both registering "${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py" therefore collide, and
+# one is dropped with no error — and session_start.py is the name any plugin author would pick.
+# The dropped hook, for chamnan, would be its entire delivery path.
+_hj = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_commands = [h["command"] for groups in _hj["hooks"].values()
+             for g in groups for h in g["hooks"]]
+check("every hook is registered under a name carrying the plugin's own",
+      _commands and all("/hooks/chamnan_" in c for c in _commands))
+check("...and no two of chamnan's own commands collide either",
+      len(set(_commands)) == len(_commands))
+check("...and every registered command is a file that exists",
+      all((ROOT / c.strip('"').split("${CLAUDE_PLUGIN_ROOT}/", 1)[1]).is_file()
+          for c in _commands))
+check("no hook file is left under a name another plugin would choose",
+      not [f for f in (ROOT / "hooks").glob("*.py") if not f.name.startswith("chamnan_")])
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

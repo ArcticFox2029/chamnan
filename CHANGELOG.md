@@ -689,7 +689,7 @@ once something has actually been written** — this plugin's entire always-on pr
     here unless you ask._
     _chamnan · 0 records · 0 memory entries · nothing written yet_
 
-The first line exists because `session_start.py` had never once named the plugin's own write
+The first line exists because `chamnan_session_start.py` had never once named the plugin's own write
 skills — it injected the *workspace's* recorded procedures and stopped there, so an agent had no
 way to discover `/chamnan:remember` short of reading the plugin's source. The second is the
 ledger: a count for every store, always printed, always showing **movement** rather than a static

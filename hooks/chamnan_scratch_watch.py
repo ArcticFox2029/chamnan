@@ -279,7 +279,7 @@ def _environment_notice(payload, wsdir, root):
     enum is `allow`/`deny`/`escalate` with no `ask` at all, while whether `escalate` reaches a
     prompt under `defaultMode: "auto"` is not documented either way. A guard that might silently
     fail to fire is worse than no guard, because it is trusted. So the constraints go in front of
-    the agent by two mechanisms that ARE proven here: session_start.py injects every environment's
+    the agent by two mechanisms that ARE proven here: chamnan_session_start.py injects every environment's
     constraints before any command is written, and this names the specific one the moment a
     session is demonstrably working against it — so the NEXT command, which is usually the one
     that matters, is written knowing.
@@ -317,7 +317,7 @@ def _resume_nudge(payload, wsdir, root):
     """Once per session: if a fair bit of work has already happened here and nothing is recorded
     for today, say so. Silent otherwise -- gated on the same "ledger" flag as the write-skills line
     and the ledger line, since this is the same finding (an empty store nobody notices) applied at
-    the moment it can still be acted on, rather than only in the numbers session_start.py prints.
+    the moment it can still be acted on, rather than only in the numbers chamnan_session_start.py prints.
 
     Tracked per `session_id`, which every PostToolUse payload carries (confirmed against another
     installed plugin's own use of the same field). A CALENDAR-DAY marker would fire once per day

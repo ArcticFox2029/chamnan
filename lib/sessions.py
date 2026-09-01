@@ -15,7 +15,7 @@ get written on branches. Many small files merge cleanly; a single append-only do
 every time two branches both worked a day.
 
 Nothing here writes: Claude writes the record, through skills/resume. A hook cannot, because a hook
-has no access to what the session was about -- session_end.py can see which scripts repeated and
+has no access to what the session was about -- chamnan_session_end.py can see which scripts repeated and
 nothing else. So this module reads, selects, and prunes, and the format below is the contract
 between the skill that writes and the hook that reads.
 """

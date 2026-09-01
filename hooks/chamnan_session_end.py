@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """SessionEnd hook — one quiet digest of what repeated today, left for the next session.
 
-The inline nudge in scratch_watch.py speaks once, at the moment the third copy of a script is
+The inline nudge in chamnan_scratch_watch.py speaks once, at the moment the third copy of a script is
 written, because that is when the file still exists and promoting it costs one command. This is the
 other half: at the end of the session, everything that repeated and was never kept gets summarised
 in one place, so a pattern that built up across the day is visible even if the moment was missed.
 
-Deliberately not a second chance to nag. It writes at most a handful of lines, session_start.py
+Deliberately not a second chance to nag. It writes at most a handful of lines, chamnan_session_start.py
 shows them exactly once and deletes the file, and nothing is written at all when there is nothing
 to say.
 """
@@ -39,7 +39,7 @@ MAX_CLUSTERED = 400
 # repeated, and a session with hundreds of one-off scripts has no repeats to report. Entries still
 # join a family they match; they just stop opening new ones to be compared against.
 MAX_FAMILIES = 120
-# Read, shown once and deleted by session_start.py on the next session in this repository.
+# Read, shown once and deleted by chamnan_session_start.py on the next session in this repository.
 DIGEST_NAME = "repeat_digest.json"
 
 

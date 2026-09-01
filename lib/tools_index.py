@@ -1,4 +1,4 @@
-"""`.chamnan/tools/index.json` — the registry `chamnan-promote` writes and session_start.py reads.
+"""`.chamnan/tools/index.json` — the registry `chamnan-promote` writes and chamnan_session_start.py reads.
 
 Extracted out of `bin/chamnan-promote` so a second writer (`chamnan-candidates promote`, which
 installs a tool skeleton from a confirmed candidate rather than copying an existing script) reuses
@@ -27,7 +27,7 @@ its limits, never invent a confidence number to paper over not having one.
 import json
 
 # Three of the same signal in a row is worth a look; matches REPEAT_AT elsewhere in this plugin
-# (workflows.py, scratch_watch.py) rather than inventing a fourth threshold value to justify.
+# (workflows.py, chamnan_scratch_watch.py) rather than inventing a fourth threshold value to justify.
 FLAG_AT = 3
 
 

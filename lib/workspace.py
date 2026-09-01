@@ -105,7 +105,7 @@ DEFAULT_CONFIG = {
     "environments": True,
     # The write-skills line and the ledger line (see lib/ledger.py). Found on the workspace this
     # plugin is developed against: the hook-written logs held 700 records, every skill-written
-    # store held zero, and session_start.py never once told an agent that /chamnan:remember
+    # store held zero, and chamnan_session_start.py never once told an agent that /chamnan:remember
     # exists. These two lines are the fix, and they are on by default because a workspace that
     # cannot see its own emptiness is the failure the rest of the memory system depends on not
     # happening.
@@ -214,8 +214,8 @@ def hook_root(payload=None):
     directory persists across Bash calls in one session, so a single `cd` anywhere in a transcript
     left every later hook resolving from the wrong place.
 
-    Measured before this existed: session_start.py invoked with its cwd outside the repository
-    printed **nothing at all** — no index, no rules, no handoff — and exited 0. file_pointer.py went
+    Measured before this existed: chamnan_session_start.py invoked with its cwd outside the repository
+    printed **nothing at all** — no index, no rules, no handoff — and exited 0. chamnan_file_pointer.py went
     dark the same way even when the payload carried an absolute path inside the real repository.
 
     Order: the environment variable the host promises, then the payload's own cwd, then the old

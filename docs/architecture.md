@@ -30,9 +30,9 @@ flowchart TD
         end
     end
 
-    HOOK["<b>session-start hook</b><br/><code>hooks/session_start.py</code>"]
+    HOOK["<b>session-start hook</b><br/><code>hooks/chamnan_session_start.py</code>"]
     CLAUDE["<b>Claude Code session</b>"]
-    WATCH["<b>repeat detection</b><br/><code>scratch_watch.py</code> · <code>workflows.py</code>"]
+    WATCH["<b>repeat detection</b><br/><code>chamnan_scratch_watch.py</code> · <code>workflows.py</code>"]
 
     REPO -- "read only" --> SCAN
     SCAN -- "writes" --> MAP
@@ -115,7 +115,7 @@ past it.
 
 ## What Claude consumes
 
-At the start of every session in that repository, `hooks/session_start.py` assembles one block and
+At the start of every session in that repository, `hooks/chamnan_session_start.py` assembles one block and
 hands it over:
 
 - the **Quick Index** from `MAP.md` — capped by `index_token_budget`, and folded down by directory

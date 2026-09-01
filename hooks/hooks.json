@@ -1,11 +1,19 @@
 {
+  "_comment": [
+    "Every command string is prefixed with the plugin name, and that is not decoration.",
+    "Claude Code deduplicates hooks by the RAW command string, before ${CLAUDE_PLUGIN_ROOT} is",
+    "expanded (anthropics/claude-code#29724, a re-report of #16954, closed without a linked fix).",
+    "So two plugins both registering \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\" collide and",
+    "one is silently dropped -- and session_start.py is the name any plugin author would choose.",
+    "For chamnan the dropped hook would be its entire delivery path, with no error anywhere."
+  ],
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_session_start.py\""
           }
         ]
       }
@@ -16,7 +24,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/scratch_watch.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_scratch_watch.py\""
           }
         ]
       }
@@ -26,7 +34,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/session_end.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_session_end.py\""
           }
         ]
       }
@@ -37,7 +45,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/bulk_read_notice.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_bulk_read_notice.py\""
           }
         ]
       },
@@ -46,7 +54,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/file_pointer.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_file_pointer.py\""
           }
         ]
       }

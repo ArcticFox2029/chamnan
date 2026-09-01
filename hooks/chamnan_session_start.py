@@ -565,7 +565,7 @@ def main():
                 f"do not read them all.", ".chamnan/skills/"))
 
     if cfg.get("promote", True):
-        # Written by session_end.py, which cannot speak for itself: SessionEnd is not one of the
+        # Written by chamnan_session_end.py, which cannot speak for itself: SessionEnd is not one of the
         # four events whose stdout reaches the model, and the session it would address is over by
         # then. Shown once and deleted, so a digest never becomes a standing nag.
         digest_path = wsdir / "logs" / "repeat_digest.json"

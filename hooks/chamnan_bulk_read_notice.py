@@ -17,7 +17,7 @@ worst moment. It states the size and suggests grep, and the decision stays where
 sample rows are about two hundred tokens and are the answer to almost every question asked of a
 CSV. That is what `chamnan-peek` has always produced on request — and it was run ZERO times in ten
 days, in the repository it was written for, which is the same measurement that produced
-hooks/file_pointer.py and the same conclusion: a CLI is the wrong surface for something a model
+hooks/chamnan_file_pointer.py and the same conclusion: a CLI is the wrong surface for something a model
 needs at the moment it is already doing something else.
 
 Only for formats peek has a real handler for (`peek.has_structure`). A 674KB JavaScript file falls
