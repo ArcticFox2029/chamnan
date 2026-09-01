@@ -5616,6 +5616,28 @@ check("A DOCS FOLDER IS NOT LABELLED PAYLOAD TO SKIP", "written to be read" in _
 check("...while a directory of CSV still is", "machine-readable" in _arender)
 shutil.rmtree(_ar.parent, ignore_errors=True)
 
+# ------------------------------ the flag row has to be a row of links, not of text
+# Markdown inside a BLOCK-level raw HTML element is not parsed — CommonMark says so, and GitHub
+# follows it. Wrapping the language row in `<p align="center">` to centre it therefore printed
+# thirty-two `[label](path)` pairs as literal text across the top of the front page. `<sub>` on its
+# own is inline and does not do this, which is why the paragraph below the row kept working and
+# hid the shape of the problem.
+_rd = (ROOT / "README.md").read_text(encoding="utf-8")
+# `<details>` is deliberately not in this list. GitHub does parse markdown inside one, provided a
+# blank line follows `</summary>` — all three in this file have it, and they render. `<p>`, `<div>`
+# and `<table>` have no such escape hatch, which is the trap that caught the language row.
+_blocks = re.findall(r"<(p|div|table|blockquote)\b[^>]*>(.*?)</\1>", _rd, re.S)
+_with_md = [tag for tag, inner in _blocks if re.search(r"\[[^\]]+\]\([^)]+\)", inner)]
+check("NO MARKDOWN LINK IS BURIED IN A BLOCK-LEVEL HTML ELEMENT", not _with_md)
+check("...and every <details> that holds one has the blank line markdown needs after </summary>",
+      all(re.search(r"</summary>\s*\n\s*\n", _d)
+          for _d in re.findall(r"<details>(.*?)</details>", _rd, re.S)
+          if re.search(r"\[[^\]]+\]\([^)]+\)", _d)))
+_hrefs = re.findall(r'href="(docs/i18n/README\.[\w-]+\.md)"', _rd)
+check("the language row links out as HTML anchors instead", len(_hrefs) >= 20)
+check("...and every one of them names a file that exists",
+      all((ROOT / h).is_file() for h in _hrefs))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
