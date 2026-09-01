@@ -3961,7 +3961,7 @@ check("a Slack app-level token is redacted",
       "<REDACTED>" in redact.scrub("socket = xapp-1-A0123456-abcdefghijklmnop"))
 check("a webhook URL whose path IS the credential is redacted",
       "<REDACTED>" in redact.scrub(
-          "https://hooks.slack.com/services/" "T00000000/B00000000/" "XXXXXXXXXXXXXXXXXXXXXXXX"))
+          fake("https://hooks.slack.com/services/", "T00000000/B00000000/", "X" * 24)))
 check("an ordinary URL is not",
       "<REDACTED>" not in redact.scrub("see https://github.com/ArcticFox2029/chamnan"))
 check("prose about passwords survives",
@@ -4675,7 +4675,8 @@ check("and a credentialed URL keeps its host while losing its password",
 # The recall wall, asserted so nobody "fixes" it with an entropy heuristic by accident. A 40-char
 # AWS secret has no prefix and no keyword; the only thing that finds it also finds commit hashes.
 check("a bare high-entropy string is NOT redacted, by design",
-      redact.PLACEHOLDER not in redact.scrub("wJalrXUtnFEMIK7MDENG" "bPxRfiCYEXAMPLEKEYzz"))
+      redact.PLACEHOLDER not in redact.scrub(
+          fake("wJalrXUtnFEMIK7MDENG", "bPxRfiCYEXAMPLEKEYzz")))
 
 # ------------------------------ tokens: held to the counts bench/calibration.json recorded
 # The estimator's constants were measured once against Claude's own accounting and then lived on as
