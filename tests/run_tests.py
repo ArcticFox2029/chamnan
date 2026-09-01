@@ -6769,6 +6769,28 @@ for _cred in ('api_key = "sk-abcdefghijklmnop"', 'access_token = "ya29.abcdefghi
 check("the README publishes the real-codebase number beside the corpus one",
       "on 257 real files" in (ROOT / "README.md").read_text(encoding="utf-8"))
 
+# Four config syntaxes with no `[:=]` for the assignment rules to anchor on. Maven settings.xml,
+# Laravel's config/database.php, Helm values.yaml, Dockerfile, .netrc and .pgpass between them
+# cover most of how a credential is actually written down.
+for _label, _leak in [
+    ("XML element text", "<password>Tr0ub4dorXML99</password>"),
+    ("the Ruby/PHP hash rocket", "'password' => 'Tr0ub4dorPHP99',"),
+    ("a YAML block scalar", "password: >-\n  Tr0ub4dorYAML99\n"),
+    ("Dockerfile's ENV K V", "ENV DB_PASSWORD Tr0ub4dorPass99"),
+    ("a .netrc line", "machine api.example.com login bob password Tr0ub4dorPass99"),
+    ("a .pgpass line", "db.internal:5432:maindb:admin:Tr0ub4dorPass99"),
+    ("a value containing a comma", "API_TOKEN=abcdef,Tr0ub4dorENV88"),
+    ("a value starting with #", "DB_PASSWORD=#Tr0ub4dorENV99"),
+]:
+    check(f"A CREDENTIAL IN {_label} DOES NOT SURVIVE", "Tr0ub4dor" not in redact.scrub(_leak))
+check("...and the half-redaction that named the line handled is gone too",
+      redact.scrub("PASSWORD=aaaaaa;bbbbbb") == "PASSWORD=" + redact.PLACEHOLDER)
+# The other half of the trade, which these rules must not cost.
+for _prose in ("# password: ask the platform team for it",
+               "the gate in front of it is what actually authenticates callers.",
+               "AUTHORS=alexander,brigitte", "token_ttl=3600"):
+    check("PROSE AND CONFIGURATION SURVIVE: " + _prose[:40], redact.scrub(_prose) == _prose)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

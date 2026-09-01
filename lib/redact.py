@@ -110,7 +110,10 @@ SECRET_WORDS = (
     r"|(?-i:(?<=[a-z0-9])Keys?)(?![A-Za-z])"
     # Word-anchored on the left, and `authentication` excluded on the right. Unanchored, `auth`
     # fires inside `oauth_flow` and `authentication_flow`, whose values are OAuth grant types.
-    r"|(?<![A-Za-z])auth(?!ors?\b|entication)"
+    # `entic` covers authentication, authenticate, authenticates, authenticated, authenticator and
+    # authenticity in one: only `authentication` was excluded, so a sentence saying what a gate
+    # "authenticates" lost its last word. Prose is the other half of this module's trade.
+    r"|(?<![A-Za-z])auth(?!ors?\b|entic|orit)"
 )
 
 # A compiled regular expression is not a credential, whatever it is called. `TOKEN_RE`,
@@ -137,9 +140,45 @@ ASSIGNED_SECRET_BARE = re.compile(
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
     # a now-broken line -- a leak and a corruption from one missing character.
-    r"(?!<REDACTED>)([^\s'\"#;,()\[\]{}]{6,})", re.I)
+    # 🐛 The value class stopped at the first excluded character and the REMAINDER was printed
+    # beside a `<REDACTED>` — `API_TOKEN=abcdef,Tr0ub4dorENV88` became
+    # `API_TOKEN=<REDACTED>,Tr0ub4dorENV88`, which is worse than a plain miss because the marker
+    # tells a reviewer the line was handled. And a value STARTING with an excluded character was
+    # missed entirely: `DB_PASSWORD=#Tr0ub4dorENV99` passed through whole. The run may now begin
+    # with any non-space and continue to the end of the line; `#` and `;` still terminate it only
+    # when they follow whitespace, which is where a real trailing comment lives.
+    # Still a single unbroken run — spanning spaces ate `password: ask the platform team for it`,
+    # and prose is the other half of this module's trade — but the run may now START with an
+    # excluded character and CONTAIN one. Before, the class stopped at the first `, # ; ( ) [ ] { }`
+    # and the remainder was printed beside a `<REDACTED>`: `API_TOKEN=abcdef,Tr0ub4dorENV88` came
+    # back as `API_TOKEN=<REDACTED>,Tr0ub4dorENV88`, which is worse than a plain miss because the
+    # marker says the line was handled. And a value beginning with one was missed outright:
+    # `DB_PASSWORD=#Tr0ub4dorENV99` passed through whole.
+    r"(?!<REDACTED>)(\S{6,})", re.I)
 # A secret-named assignment whose value is a CALL. What is inside is not knowable from here and the
 # name says it is a credential, so the whole expression goes -- to the end of that line, no further.
+# A credential written as XML/HTML element text. Maven `settings.xml`, Tomcat `server.xml`, .NET
+# `web.config`, Spring XML and JBoss datasources all put it here, and every assignment rule above
+# requires a literal `[:=]` that element syntax does not have. A whole ecosystem's config format,
+# passing through untouched.
+XML_SECRET = re.compile(
+    r"(<\s*(?:\w+:)?(?:" + SECRET_WORDS + r")[\w.-]*\s*(?:\s[^>]*)?>)([^<>]{4,})(</)", re.I)
+# The hash rocket. After `[:=]` matches the `=`, `\s*` cannot cross the `>` — so the quoted rule
+# found no quote and the bare rule captured `>` alone and failed its six-character floor. This is
+# how `config/database.php` is written in every Laravel app and every Rails `.rb` config.
+ROCKET_SECRET = re.compile(
+    r"((?:" + SECRET_WORDS + r")[\w-]*['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I)
+# A YAML block scalar puts `|` or `>-` where the value would be and the value on the next line, so
+# there was nothing on the key's own line to capture. Helm values.yaml is full of them.
+YAML_BLOCK_SECRET = re.compile(
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>][-+]?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I)
+# Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
+# `.pgpass`'s colon-delimited final field. `_netrc` — the Windows spelling — and `.pgpass` are in
+# neither refusal list, so peek opens both.
+SPACED_SECRET = re.compile(
+    r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})$", re.I | re.M)
+PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)$", re.M)
+
 ASSIGNED_SECRET_CALL = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
     r"(?!<REDACTED>)([A-Za-z_][\w.]*\s*\(.*)$", re.I | re.M)
@@ -247,6 +286,23 @@ def scrub(text):
         else:
             text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
+    # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
+    # and running them first means a value they take is not left for a looser rule to half-capture.
+    text = XML_SECRET.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
+    text = ROCKET_SECRET.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+    text = YAML_BLOCK_SECRET.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}  {PLACEHOLDER}\n", text)
+    text = SPACED_SECRET.sub(
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        or PLACEHOLDER in m.group(2)
+        else f"{m.group(1)}{PLACEHOLDER}", text)
+    text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
@@ -259,6 +315,10 @@ def scrub(text):
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        # An earlier, more specific rule already replaced this value. Re-matching it swallowed the
+        # `<REDACTED>` and everything after: `'password' => '<REDACTED>',` collapsed to
+        # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
+        or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
         else f"{m.group(1)}{PLACEHOLDER}", text)
     return text
