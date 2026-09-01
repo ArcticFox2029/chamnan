@@ -13,6 +13,7 @@ against measured 64 seconds — not something to do on an interactive question. 
 choice is that the answer is only as fresh as the last `chamnan-map`, so the age of the index is
 printed with every answer rather than left for the reader to assume.
 """
+import pathlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,7 +47,25 @@ def main(argv):
         print("chamnan: no .chamnan workspace here", file=sys.stderr)
         return 1
 
+    # 🐛 The argument went to `impact_mod.lookup()` raw, and lookup keys on repository-relative
+    # paths -- so an ABSOLUTE path, which is the canonical form in Claude Code (Read and Edit both
+    # require one), matched nothing. This command's entire job is "what breaks if I change this",
+    # and for the path form an agent is most likely to be holding it answered
+    # "nothing imports it ... change it freely". `chamnan_file_pointer.py` relativises before the
+    # same call; this did not.
     target = argv[0]
+    _t = pathlib.Path(target)
+    if _t.is_absolute():
+        try:
+            target = _t.resolve().relative_to(pathlib.Path(root).resolve()).as_posix()
+        except (OSError, ValueError):
+            print(f"chamnan: {argv[0]} is outside this repository", file=sys.stderr)
+            return 1
+    # Existence changes only the WORDING of the all-clear below, never whether the question is
+    # answered: a file that was deleted can still have a history worth reading, and the suite pins
+    # that. What it must not do is call a path nobody has ever seen "the cheap case".
+    on_disk = (pathlib.Path(root) / target).exists()
+
     map_path = wsdir / "MAP.md"
     edges = None
     resolved = None
@@ -66,8 +85,15 @@ def main(argv):
         if map_path.is_file():
             print(f"  no incoming references in the index ({_index_age(map_path)}), and no thread "
                   f"entry names it")
-            print(f"  a file nothing imports and nothing has happened to is the cheap case — "
-                  f"change it freely")
+            if on_disk:
+                print(f"  a file nothing imports and nothing has happened to is the cheap case — "
+                      f"change it freely")
+            else:
+                # 🐛 A one-character typo used to land here and be told to change it freely. Nothing
+                # is recorded about a path the repository does not contain, and that is a question
+                # that could not be answered rather than an answer of "no risk".
+                print(f"  and there is no such file in this repository, so this is not an "
+                      f"all-clear — check the path")
         return 0
 
     print(f"chamnan-impact — {resolved or target}\n")

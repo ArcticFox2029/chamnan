@@ -585,6 +585,12 @@ def safe_tool_name(name):
         return None
     if name.startswith("."):
         return None
+    # 🐛 A leading dash was accepted. `chamnan-promote script.sh --desc "checks the build"` -- the
+    # likeliest slip against the documented `<file> <name> [--desc …]`, with the name simply left
+    # out -- promoted the tool as `--desc.sh` and registered that in `tools/index.json`. A name
+    # that is really a flag is a mistake being recorded, not a choice being made.
+    if name.startswith("-"):
+        return None
     return name
 
 

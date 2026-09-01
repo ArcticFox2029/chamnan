@@ -60,7 +60,7 @@ def main(argv):
     safe = ws.safe_tool_name(name)
     if safe is None:
         print(f"chamnan: {name!r} is not a usable tool name — it has to be a plain filename,\n"
-              "  no directory separators and no leading dot. The registry stores the bare\n"
+              "  no directory separators, and no leading dot or dash. The registry stores the bare\n"
               "  name, so a path here would leave an entry pointing at a file nothing can find.",
               file=sys.stderr)
         return 2

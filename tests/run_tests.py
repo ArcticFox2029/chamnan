@@ -2559,6 +2559,11 @@ check("chamnan-impact names the covering tests", "tests/test_auth.py" in out.std
 check("chamnan-impact says how old the index is", "built today" in out.stdout)
 out = run_impact(im_root, "src/untested.py")
 check("A FILE WITH DEPENDENTS BUT NO TESTS IS CALLED UNGUARDED", "unguarded" in out.stdout)
+# The file has to exist for this to mean "the index knows nothing about a real file". Written
+# without it, this fixture was asserting the all-clear for a path the repository did not contain --
+# which is the case a one-character typo lands in, and it is not an all-clear.
+(im_root / "src").mkdir(parents=True, exist_ok=True)
+(im_root / "src" / "nothing.py").write_text("# Nothing depends on this.\n", encoding="utf-8")
 out = run_impact(im_root, "src/nothing.py")
 check("a file with nothing recorded says so plainly",
       out.returncode == 0 and "nothing recorded" in out.stdout)
@@ -6327,6 +6332,42 @@ check("A DIRECTORY ABOVE THE CHECKOUT DOES NOT BLANK THE CATALOGUE SECTIONS: " +
 check("...and the sections were non-empty to begin with, so this is not agreement on nothing",
       _anc_seen["plain"] == (("orders",), 2, True, True))
 shutil.rmtree(_anc, ignore_errors=True)
+
+# ------------------------------ three commands answering the wrong question confidently
+_impbin = [sys.executable, str(ROOT / "bin" / "chamnan-impact")]
+_imr = Path(tempfile.mkdtemp(prefix="chamnan-imp-"))
+(_imr / "src").mkdir(parents=True)
+subprocess.run(["git", "-C", str(_imr), "init", "-q"], capture_output=True)
+(_imr / "src" / "core.py").write_text("# The core.\n", encoding="utf-8")
+for _n in ("one", "two", "three"):
+    (_imr / "src" / f"{_n}.py").write_text("# Uses core.\nfrom core import x\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_imr), capture_output=True)
+_rel = subprocess.run(_impbin + ["src/core.py"], cwd=str(_imr), capture_output=True, text=True)
+_abso = subprocess.run(_impbin + [str(_imr / "src" / "core.py")], cwd=str(_imr),
+                       capture_output=True, text=True)
+# An absolute path is the canonical form in Claude Code -- Read and Edit both require one -- and
+# this command answered "nothing imports it ... change it freely" for exactly that form.
+check("AN ABSOLUTE PATH GETS THE SAME ANSWER AS A RELATIVE ONE",
+      "one.py" in _abso.stdout and _abso.stdout.count("used by") == _rel.stdout.count("used by"))
+check("...and it found real dependents, so this is not two identical blanks",
+      "used by" in _rel.stdout)
+_typo = subprocess.run(_impbin + ["src/cores.py"], cwd=str(_imr), capture_output=True, text=True)
+check("A FILE THAT DOES NOT EXIST IS NOT GIVEN AN ALL-CLEAR",
+      "change it freely" not in _typo.stdout and "no such file in this repository" in _typo.stdout)
+shutil.rmtree(_imr, ignore_errors=True)
+
+# An error on stdout with exit 0 reaches the model shaped like a result.
+_pk = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-peek"), "/no/such/file"],
+                     capture_output=True, text=True)
+check("PEEK REPORTS A MISSING PATH ON STDERR AND EXITS NON-ZERO",
+      _pk.returncode != 0 and not _pk.stdout.strip() and "not a file" in _pk.stderr)
+
+# `chamnan-promote script.sh --desc "..."` with the name left out registered the tool as `--desc`.
+check("A NAME THAT IS REALLY A FLAG IS NOT A USABLE TOOL NAME",
+      _wsm.safe_tool_name("--desc") is None and _wsm.safe_tool_name("-x") is None)
+check("...and an ordinary name still is", _wsm.safe_tool_name("deploy-check.sh") == "deploy-check.sh")
+check("...and the refusal says what it actually refuses",
+      "leading dot or dash" in (ROOT / "bin" / "chamnan-promote").read_text(encoding="utf-8"))
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
