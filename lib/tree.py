@@ -91,7 +91,14 @@ def _walk(root):
                 # simply absent on the platform where the confusion is most likely.
                 _linked = full.is_symlink() or (
                     hasattr(os.path, "isjunction") and os.path.isjunction(full))
-                if _linked and not str(full.resolve()).startswith(str(base.resolve())):
+                # Compared component by component, not as a string prefix. `startswith` says
+                # `/x/app-secrets/prod_db.py` is inside `/x/app`, so a symlink from `app/src/` to
+                # a SIBLING directory whose name merely begins with the repository's walked
+                # straight through this guard -- and a plain-prose credential in that file reached
+                # the Quick Index, which the pre-commit hook then commits. The guard was right
+                # about what to check and wrong about how to check it.
+                _resolved, _base = full.resolve(), base.resolve()
+                if _linked and _resolved.parts[:len(_base.parts)] != _base.parts:
                     continue
             except (OSError, RuntimeError):
                 # RuntimeError as well as OSError, and it is not defensive padding: a symlink loop

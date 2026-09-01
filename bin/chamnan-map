@@ -265,7 +265,13 @@ def main(argv):
     # has always used len(files), so the tool and its own artifact reported different sizes for the
     # same scan. Caught by reading both at once on a real repository: 187 printed, 189 in the file.
     print(f"  {len(files)} source file(s), {src:,.0f} tokens of code")
-    print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({index_tokens/src*100:.1f}% of the source)")
+    # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
+    # `__init__.py`, or any tree whose files are all empty. It crashed at this line, which is
+    # AFTER MAP.md has already been overwritten, so the user's index was replaced and the report
+    # that would have explained it never printed. `chamnan-map` is the first thing
+    # `/chamnan:bootstrap` runs.
+    share = f"{index_tokens / src * 100:.1f}% of the source" if src else "no code to compare against"
+    print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({share})")
     print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
     skipped = len(files) - total

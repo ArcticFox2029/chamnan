@@ -14,6 +14,7 @@ no code path here that can carry one into the output.
 """
 import fnmatch
 import json
+import pathlib
 import re
 import subprocess
 from pathlib import Path
@@ -35,6 +36,21 @@ def _nested(root):
     """
     from mapper import _nested_repo_dirs
     return _nested_repo_dirs(root)
+
+
+# 🐛 A path's components are tested RELATIVE to the repository root, never absolute. Testing the
+# absolute path means one directory ABOVE the checkout named `vendor`, `node_modules`, `build`,
+# `dist` or `.venv` skips every file in the repository -- and each of these renderers returns "" on
+# an empty result, so whole sections simply vanish with no hedge. `assets.scan` already tested
+# `rel.parts`, which is what made the asymmetry findable. Two harms beyond the missing sections:
+# `mapper.scan` is unaffected, so the index and the catalogues then disagree about the same
+# repository; and the unignored-`.env` warning goes silent, which is the false-calm direction.
+def _rel_parts(path, root):
+    """`path`'s components below `root`, or its own components when it is not below root."""
+    try:
+        return pathlib.Path(path).relative_to(root).parts
+    except (ValueError, TypeError):
+        return pathlib.Path(path).parts
 
 
 def _outside(path, nested):
@@ -63,7 +79,25 @@ ROUTER_PREFIX = re.compile(
 ROUTER_ANY = re.compile(r"""(\w+)\s*=\s*(?:APIRouter|Blueprint)\s*\(""")
 # Spring puts the shared half on the class, and it is optional -- @RequestMapping(produces=...)
 # with no path at all is ordinary, so the path must be a positional string to count.
-SPRING_CLASS_PREFIX = re.compile(r"""@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']+)["']""")
+# 🐛 This used to be a bare search for the first @RequestMapping anywhere in the file, and the
+# result was concatenated onto every @GetMapping in it. A controller whose health check uses the
+# method-level form -- ordinary in any Spring codebase older than 4.3 -- had `/internal/health`
+# taken as the class prefix, so `/v1/orders` was published as `/internal/health/v1/orders` and the
+# real `/internal/health` was dropped, because ROUTE_PATTERNS never matched bare @RequestMapping at
+# all. Every path in the section fabricated, and a real one missing. ROUTER_PREFIX's own comment
+# says it: "a wrong path is worse than no path, because it is acted on and 404s."
+#
+# Anchored on what follows: only an annotation that reaches a `class` declaration through nothing
+# but other annotations and whitespace is a class-level mapping.
+SPRING_CLASS_PREFIX = re.compile(
+    r"""@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']+)["'][^\n]*\n"""
+    r"""(?:[ \t]*(?:@[^\n]*|//[^\n]*)?\n)*"""
+    r"""[ \t]*(?:public\s+|final\s+|abstract\s+)*class\b""")
+# The method-level form, which is a route in its own right. `method = RequestMethod.GET` names the
+# verb; without one Spring accepts every verb, which is what ANY says.
+SPRING_METHOD_MAPPING = re.compile(
+    r"""@RequestMapping\s*\(\s*(?:value\s*=\s*|path\s*=\s*)?["']([^"']+)["']([^)]*)\)"""
+    r"""(?![^\n]*\n(?:[ \t]*(?:@[^\n]*|//[^\n]*)?\n)*[ \t]*(?:public\s+|final\s+|abstract\s+)*class\b)""")
 
 ROUTE_PATTERNS = [
     (re.compile(r"@(\w+)\.(get|post|put|patch|delete|head|options)\s*\(\s*[\"']([^\"']*)", re.I), "decorator"),
@@ -73,7 +107,13 @@ ROUTE_PATTERNS = [
     # index carried both the real path and a wrong one for the same endpoint.
     (re.compile(r"(?<!@)\b(?:app|router)\.(get|post|put|patch|delete|all)\s*\(\s*[\"'`]([^\"'`]+)", re.I), "express"),
     (re.compile(r"@(Get|Post|Put|Patch|Delete)Mapping\s*\(\s*[\"']([^\"']+)", re.I), "spring"),
-    (re.compile(r"^\s*path\s*\(\s*[\"']([^\"']*)[\"']", re.M), "django"),
+    (SPRING_METHOD_MAPPING, "spring_any"),
+    # Not `re.M`-anchored blindly: a `path(...)` whose second argument is `include(...)` is a MOUNT
+    # POINT, not an endpoint. Indexing it as a route published `/api/v2/orders/` as something you
+    # could call, and the included module's own paths were then indexed at the site root -- so of
+    # three routes listed, two did not exist and `/` was claimed as a real endpoint. `include()` is
+    # the only way Django composes URLconfs, so this was every Django project.
+    (re.compile(r"^\s*(?:re_)?path\s*\(\s*[\"']([^\"']*)[\"']\s*,(?!\s*include\s*\()", re.M), "django"),
 ]
 ENV_IN_CODE = re.compile(
     # The subscript form was missing while the call forms were matched, which is backwards: in
@@ -106,7 +146,7 @@ def _grpc(root):
     """(service, method) for every rpc declared in a .proto file."""
     _nest = _nested(root)
     for path in tree.by_suffix(root, ".proto"):
-        if any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
+        if any(q in SKIP_PARTS for q in _rel_parts(path, root)) or not _outside(path, _nest):
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -159,7 +199,8 @@ def _spec_files(root):
     _nest = _nested(root)
     seen = set()
     for path in tree.by_suffix(root, ".yaml", ".yml", ".json"):
-        if path in seen or any(q in SKIP_PARTS for q in path.parts) or not _outside(path, _nest):
+        if path in seen or any(q in SKIP_PARTS for q in _rel_parts(path, root)) \
+                or not _outside(path, _nest):
             continue
         named = path.stem.lower() in ("openapi", "swagger")
         in_spec_dir = any(q.lower() in SPEC_DIRS for q in path.parts[:-1])
@@ -182,7 +223,8 @@ def _readable(root, patterns):
     seen = set()
     for pat in patterns:
         for path in tree.matching(root, pat):
-            if path in seen or any(p in SKIP_PARTS for p in path.parts) or not _outside(path, _nest) \
+            if path in seen or any(p in SKIP_PARTS for p in _rel_parts(path, root)) \
+                    or not _outside(path, _nest) \
                     or not path.is_file() or redact.is_blocked(path):
                 continue
             seen.add(path)
@@ -193,8 +235,38 @@ def _readable(root, patterns):
 
 
 # --- routes -----------------------------------------------------------------------------------
+# `path("api/v2/orders/", include("orders.urls"))` -- the prefix, and the module it mounts. The
+# module is resolvable to a file: `orders.urls` is `orders/urls.py`, which is enough to give the
+# included file's own paths the prefix they are actually served under.
+DJANGO_INCLUDE = re.compile(
+    r"""(?:re_)?path\s*\(\s*["']([^"']*)["']\s*,\s*include\s*\(\s*["']([\w.]+)["']""")
+
+
+def _django_mounts(root, files):
+    """{file path: url prefix} for every module mounted with include()."""
+    by_module = {}
+    for f in files:
+        if f.get("lang") != "py":
+            continue
+        try:
+            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for m in DJANGO_INCLUDE.finditer(text):
+            by_module[m.group(2)] = m.group(1)
+    mounts = {}
+    known = {f["path"] for f in files}
+    for module, prefix in by_module.items():
+        candidate = module.replace(".", "/") + ".py"
+        for known_path in known:
+            if known_path == candidate or known_path.endswith("/" + candidate):
+                mounts[known_path] = prefix
+    return mounts
+
+
 def scan_routes(root, files):
     routes = {}
+    mounts = _django_mounts(root, files)
 
     def add(method, path_, source, prefix=""):
         if prefix:
@@ -231,7 +303,7 @@ def scan_routes(root, files):
                     for meth in methods or ["GET"]:
                         add(meth, route, f["path"], prefixes.get(obj, ""))
                 elif kind == "django":
-                    add("ANY", "/" + g[0].lstrip("/"), f["path"])
+                    add("ANY", "/" + g[0].lstrip("/"), f["path"], mounts.get(f["path"], ""))
                 elif kind == "decorator" and len(g) >= 3:
                     obj, meth, route = g[0], g[1], g[2]
                     if obj.lower() not in ("app", "router", "api", "bp", "blueprint") \
@@ -240,6 +312,10 @@ def scan_routes(root, files):
                     add(meth, route, f["path"], prefixes.get(obj, ""))
                 elif kind == "spring" and len(g) >= 2:
                     add(g[0], g[1], f["path"], class_prefix)
+                elif kind == "spring_any" and len(g) >= 1:
+                    _verbs = re.findall(r"RequestMethod\.(\w+)", g[1] if len(g) > 1 else "")
+                    for _v in (_verbs or ["ANY"]):
+                        add(_v, g[0], f["path"], class_prefix)
                 elif len(g) >= 2:
                     add(g[0], g[1], f["path"])
 

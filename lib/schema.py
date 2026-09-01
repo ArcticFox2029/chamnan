@@ -17,6 +17,7 @@ approaches deliver that.
 
 Nothing here connects to a database. It reads the files that describe one.
 """
+import pathlib
 import re
 from pathlib import Path
 
@@ -76,14 +77,27 @@ SQL_VIEW = re.compile(
 # the class name -- ShipmentEntity is not what the table is called. The TypeORM pattern above
 # missed both: its [^)] stops at the first ")" and Room's annotation contains Index(...), and
 # Kotlin writes "data class" rather than "class".
+# 🐛 `[^{]*?` ran past the closing `)` of `@Entity()` into whatever annotation came next, so an
+# ordinary `@NamedQuery(name = "Driver.findAllActive", …)` was read as the table name — and
+# ROOM_JPA_CLASS's negative lookahead then saw that same `name =` and refused to record the class,
+# so the real table went missing in the same pass. Fabricated and absent, from one file, and an
+# agent asked where drivers are stored was told to look for `Driver.findAllActive`.
+#
+# `[^)@]*?` keeps the match inside the annotation's own argument list: a `)` means the annotation
+# ended, and an `@` means the name belongs to a nested one — which is the right answer for
+# `@Table(uniqueConstraints = @UniqueConstraint(name = "uk_…"))`, where that name is the
+# constraint's and the table has none.
 ROOM_JPA_TABLE = re.compile(
-    r"@(?:Entity|Table)\s*\([^{]*?(?:tableName|name)\s*=\s*[\"']([\w.]+)[\"']", re.S)
+    r"@(?:Entity|Table)\s*\([^)@]*?(?:tableName|name)\s*=\s*[\"']([\w.]+)[\"']", re.S)
 # Bare @Entity with no name: the table is the class, which is what JPA defaults to.
 # Only when nothing between @Entity and the class declares a name -- otherwise the table would be
 # listed twice, once as `fleet_vehicles` and once as `Vehicle`, and one of those is not a table.
+# The lookahead only has to exclude a name that ROOM_JPA_TABLE would have taken -- one inside
+# @Entity's or @Table's own parentheses. A `name =` belonging to @NamedQuery or @UniqueConstraint
+# must not suppress the class, because in that case the class IS the table.
 ROOM_JPA_CLASS = re.compile(
-    r"@Entity\b(?:(?!tableName|(?<![\w])name\s*=)[^\n])*\n"
-    r"(?:[ \t]*@(?:(?!tableName|(?<![\w])name\s*=)[^\n])*\n)*"
+    r"@Entity\b(?![^)@\n]*(?:tableName|(?<![\w])name)\s*=)[^\n]*\n"
+    r"(?:[ \t]*@(?:Table\b(?![^)@\n]*(?:tableName|(?<![\w])name)\s*=)|(?!Table\b))[^\n]*\n)*"
     r"[ \t]*(?:public\s+|open\s+|data\s+|final\s+|abstract\s+)*class\s+(\w+)")
 
 COMMENT_ABOVE = re.compile(r"(?:^|\n)((?:[ \t]*(?://|--|#)[^\n]*\n)+)[ \t]*$")
@@ -105,6 +119,21 @@ SCHEMA_HINTS = ("migration", "migrations", "schema", "models", "db", "database",
                 # the far more common src/main/java/.../domain/Vehicle.java was invisible.
                 "entity", "entities", "domain", "model", "persistence", "repository", "dao",
                 "store", "storage")
+
+
+# 🐛 A path's components are tested RELATIVE to the repository root, never absolute. Testing the
+# absolute path means one directory ABOVE the checkout named `vendor`, `node_modules`, `build`,
+# `dist` or `.venv` skips every file in the repository -- and each of these renderers returns "" on
+# an empty result, so whole sections simply vanish with no hedge. `assets.scan` already tested
+# `rel.parts`, which is what made the asymmetry findable. Two harms beyond the missing sections:
+# `mapper.scan` is unaffected, so the index and the catalogues then disagree about the same
+# repository; and the unignored-`.env` warning goes silent, which is the false-calm direction.
+def _rel_parts(path, root):
+    """`path`'s components below `root`, or its own components when it is not below root."""
+    try:
+        return pathlib.Path(path).relative_to(root).parts
+    except (ValueError, TypeError):
+        return pathlib.Path(path).parts
 
 
 def _summary_above(text, pos):
@@ -135,6 +164,57 @@ def _looks_relevant(path):
         or path.name.lower() in ("models.py", "schema.rb", "schema.prisma")
 
 
+# 🐛 Commented-out DDL was indexed as real tables. `SQL_TABLE`, `SQL_VIEW` and `SQL_PARTITION` all
+# ran over the raw text, so `-- CREATE TABLE legacy_payments (…)` and a `/* … */` block noting that
+# a staging mirror had been dropped both produced index entries. Commenting out superseded DDL is
+# how migration files are maintained, so the false-positive rate scales with the age of the schema
+# — and this module's own docstring says it: "An invented table is the worse half of that: a reader
+# can go looking for it." The section sits above the Full Detail marker, so it is injected into
+# every session.
+#
+# Blanked rather than deleted, so every match offset still indexes the real text and the summary
+# lookup above a definition keeps working.
+_SQL_LINE_COMMENT = re.compile(r"--[^\n]*")
+_SQL_BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_SQL_STRING = re.compile(r"'(?:[^']|'')*'", re.S)
+
+
+def _mask_sql(text):
+    """`text` with comment bodies replaced by spaces, newlines kept so line numbers do not move.
+
+    String literals are masked FIRST and restored, because `'-- not a comment'` inside an INSERT is
+    ordinary and blanking from there would swallow the rest of the statement.
+    """
+    def blank(m):
+        return "".join("\n" if ch == "\n" else " " for ch in m.group(0))
+    # String literals are blanked FIRST and stay blank. Two reasons, and the second was found by
+    # running this: `'-- not a comment'` inside an INSERT must not start a comment, and a
+    # `CREATE TABLE` written inside a quoted string is not a table either -- restoring the literal
+    # put `not_a_table` straight back into the index.
+    masked = _SQL_STRING.sub(blank, text)
+    masked = _SQL_BLOCK_COMMENT.sub(blank, masked)
+    return _SQL_LINE_COMMENT.sub(blank, masked)
+
+
+def _split_top_level(body):
+    """`body` split on commas that are not inside brackets -- one column definition per piece.
+
+    `decimal(10, 2)` and `enum('a','b')` both carry commas that are not separators, so a plain
+    split would cut a definition in half and invent a column from its tail.
+    """
+    out, depth, start = [], 0, 0
+    for i, ch in enumerate(body):
+        if ch in "([":
+            depth += 1
+        elif ch in ")]":
+            depth -= 1
+        elif ch == "," and depth <= 0:
+            out.append(body[start:i])
+            start = i + 1
+    out.append(body[start:])
+    return out
+
+
 def scan(root, files):
     """files: the list already produced by mapper.scan, reused so nothing is read twice."""
     tables = {}
@@ -156,7 +236,8 @@ def scan(root, files):
         # .venv added 2026-08-28: it was the only skip list here missing it, which is the reason a
         # shared pruned walk could not include virtualenvs. A .sql inside one is a dependency's
         # schema, never this repository's.
-        if any(p in (".git", "node_modules", "vendor", "__pycache__", ".venv") for p in path.parts) \
+        if any(p in (".git", "node_modules", "vendor", "__pycache__", ".venv")
+               for p in _rel_parts(path, root)) \
                 or redact.is_blocked(path):
             continue
         try:
@@ -166,13 +247,29 @@ def scan(root, files):
         rel = str(path.relative_to(root))
         for m in PRISMA_MODEL.finditer(text):
             add(m.group(1), rel, _summary_above(text, m.start()))
+        # Matched against the masked text, but the SUMMARY is read from the original at the same
+        # offset -- masking blanks comment bodies in place rather than deleting them, precisely so
+        # every offset still indexes the real file. A `--` line above a table is that table's
+        # description; a `--` line in front of a CREATE TABLE is not a table. Both are true, and
+        # they are only compatible if the two lookups read different copies.
+        raw, text = text, _mask_sql(text)
         for m in SQL_TABLE.finditer(text):
             body_end = text.find(";", m.end())
             body = text[m.end(): body_end if body_end > 0 else m.end() + 2000]
+            # 🐛 SQL_COLUMN is anchored `^\s*` under re.M, so a CREATE TABLE written on ONE LINE
+            # -- which is how a generated migration and half of every hand-written one look --
+            # yielded exactly its first column. Measured: `id` alone, out of five, presented as
+            # the column list. The pattern's own comment says a dropped column "reads as *this
+            # table has no status column*". Split the body on top-level commas first, so every
+            # definition starts at the beginning of something and the anchor means what it says.
             cols = [c.group(1) for c in SQL_COLUMN.finditer(body)]
-            add(m.group(1), rel, _summary_above(text, m.start()), cols[:MAX_COLUMNS_SHOWN])
+            for _part in _split_top_level(body):
+                _m = SQL_COLUMN.match(_part.strip())
+                if _m and _m.group(1) not in cols:
+                    cols.append(_m.group(1))
+            add(m.group(1), rel, _summary_above(raw, m.start()), cols[:MAX_COLUMNS_SHOWN])
         for m in SQL_VIEW.finditer(text):
-            add(m.group(1), rel, _summary_above(text, m.start()))
+            add(m.group(1), rel, _summary_above(raw, m.start()))
         for m in SQL_PARTITION.finditer(text):
             partitions[m.group(1).lower()] = partitions.get(m.group(1).lower(), 0) + 1
 
@@ -187,7 +284,7 @@ def scan(root, files):
         for pattern in (PRISMA_MODEL, SQLALCHEMY_TABLE, RAILS_TABLE,
                         ROOM_JPA_TABLE, ROOM_JPA_CLASS):
             for m in pattern.finditer(text):
-                add(m.group(1), f["path"], _summary_above(text, m.start()))
+                add(m.group(1), f["path"], _summary_above(raw, m.start()))
 
         # Django, separately: a class is a table only if `models.Model` is among its bases AND the
         # class is not abstract. Abstract mixins are a table's worth of fields with no table.
@@ -198,23 +295,23 @@ def scan(root, files):
                 body = text[m.end():min(nxt.start(), m.end() + 800)]
             if DJANGO_ABSTRACT.search(body):
                 continue
-            add(m.group(1), f["path"], _summary_above(text, m.start()))
+            add(m.group(1), f["path"], _summary_above(raw, m.start()))
 
         # TypeORM, separately: the decorator's own name beats the class name where it is given,
         # and the class name is only the fallback for a bare @Entity().
         named = set()
         for m in TYPEORM_NAMED.finditer(text):
             named.add(m.start())
-            add(m.group(1) or m.group(2), f["path"], _summary_above(text, m.start()))
+            add(m.group(1) or m.group(2), f["path"], _summary_above(raw, m.start()))
         for m in TYPEORM_ENTITY.finditer(text):
             if m.start() not in named:
-                add(m.group(1), f["path"], _summary_above(text, m.start()))
+                add(m.group(1), f["path"], _summary_above(raw, m.start()))
 
         # A computed __tablename__ names no table in this file, but the classes are still tables.
         # Recorded under their class names, which is the only name present, rather than dropped.
         if SQLALCHEMY_DECLARED.search(text) and not SQLALCHEMY_TABLE.search(text):
             for m in SQLALCHEMY_CLASS.finditer(text):
-                add(m.group(1), f["path"], _summary_above(text, m.start()))
+                add(m.group(1), f["path"], _summary_above(raw, m.start()))
 
     for name, count in partitions.items():
         if name in tables:

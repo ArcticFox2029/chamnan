@@ -2559,6 +2559,11 @@ check("chamnan-impact names the covering tests", "tests/test_auth.py" in out.std
 check("chamnan-impact says how old the index is", "built today" in out.stdout)
 out = run_impact(im_root, "src/untested.py")
 check("A FILE WITH DEPENDENTS BUT NO TESTS IS CALLED UNGUARDED", "unguarded" in out.stdout)
+# The file has to exist for this to mean "the index knows nothing about a real file". Written
+# without it, this fixture was asserting the all-clear for a path the repository did not contain --
+# which is the case a one-character typo lands in, and it is not an all-clear.
+(im_root / "src").mkdir(parents=True, exist_ok=True)
+(im_root / "src" / "nothing.py").write_text("# Nothing depends on this.\n", encoding="utf-8")
 out = run_impact(im_root, "src/nothing.py")
 check("a file with nothing recorded says so plainly",
       out.returncode == 0 and "nothing recorded" in out.stdout)
@@ -6214,6 +6219,21 @@ check("the page opens with a self-contained digest, because it is what a summari
 check("...and a contents list, so the shape is visible without reading 1,900 lines",
       "## Contents" in _readme)
 
+# The same two checks for every other document at the root. SECURITY.md is the one GitHub links
+# from the sidebar, so a dead anchor in it is seen by exactly the reader who is being careful.
+for _doc in ("SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md"):
+    _t = (ROOT / _doc).read_text(encoding="utf-8")
+    _cross = [a for a in re.findall(r"README\.md#([^)\s]+)", _t) if a not in _heads]
+    check(f"{_doc}'s links into the README all resolve: " + str(_cross), not _cross)
+    _rel = [t for t in re.findall(r"\]\((?!https?:|#)([^)\s]+)\)", _t)]
+    _gone = sorted({t for t in _rel if not (ROOT / t.split("#")[0]).exists()})
+    check(f"...and every file {_doc} points at exists: " + str(_gone), not _gone)
+
+check("THE REPOSITORY HAS A SECURITY POLICY WHERE GITHUB LOOKS FOR ONE",
+      (ROOT / "SECURITY.md").is_file())
+check("...and it names the reporting route rather than only asserting there is one",
+      "security/advisories/new" in (ROOT / "SECURITY.md").read_text(encoding="utf-8"))
+
 # ------------------------------ thirty-two pages nobody reads all of
 # The rule the English README advertises, enforced instead of stated. A page that acquires a number
 # needs an edit every release, and a translation that goes unedited while the source moves is worse
@@ -6243,6 +6263,269 @@ check("the feature sections are actually in the pages, not only in the table",
       all("<!-- generated: build_sections.py -->" in p.read_text(encoding="utf-8") for p in _i18n))
 check("...and a page says enough to be worth translating at all",
       min(len(p.read_text(encoding="utf-8").splitlines()) for p in _i18n) > 100)
+
+# ------------------------------ a repository whose comments are not in English
+# Non-English source comments went from 3.6% to 11.9% of files between 2015 and 2025
+# (arXiv:2602.19446), and they are the steepest-growing element chamnan depends on -- MAP.md is
+# built from leading comments, while identifiers, which it does not use, stayed English. This
+# repository's own CLAUDE.md requires English comments, so its corpus can never exercise the case
+# its users will hit. CJK costs about three bytes per character against a byte-denominated ceiling,
+# so the question is whether a Chinese repository silently gets a thinner block than an identical
+# English one. Measured here: it does not -- the roll-up bounds by file count, not by description
+# length, and the extra bytes stay well inside the ceiling.
+_zh = Path(tempfile.mkdtemp(prefix="chamnan-zh-"))
+(_zh / "src").mkdir(parents=True)
+subprocess.run(["git", "-C", str(_zh), "init", "-q"], capture_output=True)
+_zhdesc = "处理用户的支付流水，在失败时回滚整笔交易并写入审计记录，同时通知下游对账服务重新核对该笔款项。"
+for _i in range(22):
+    (_zh / "src" / f"mod{_i:02}.py").write_text(
+        f"# {_zhdesc}\n\n\ndef run{_i}():\n    return {_i}\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_zh), capture_output=True)
+_zhmap = (_zh / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("A CHINESE LEADING COMMENT REACHES THE INDEX INTACT",
+      _zhmap.count(_zhdesc) >= 20)
+check("...and is not cut mid-character on the way",
+      "\ufffd" not in _zhmap and _zhmap == _zhmap.encode().decode())
+(_zh / ".chamnan" / "memory" / "rules").mkdir(parents=True, exist_ok=True)
+(_zh / ".chamnan" / "memory" / "rules" / "r.md").write_text(
+    "# A standing rule\n\n" + "It applies every session. " * 30, encoding="utf-8")
+_zhblk = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input="{}", cwd=str(_zh), capture_output=True, text=True, timeout=200,
+                        env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_zh))).stdout
+check("EVERY FILE IS STILL NAMED IN THE BLOCK, THOUGH EACH COSTS THREE TIMES THE BYTES",
+      sum(1 for _i in range(22) if f"mod{_i:02}.py" in _zhblk) == 22)
+check("...and nothing had to be dropped to fit",
+      "left out to stay under" not in _zhblk)
+check("...and the block is still inside the ceiling it promises",
+      len(_zhblk.encode()) <= _wsm.load_config(_zh).get("output_byte_ceiling", 9000) + 400)
+shutil.rmtree(_zh, ignore_errors=True)
+
+# ------------------------------ what is above the checkout is none of the scan's business
+# Identical repositories under six different parents. `vendor/` is where a vendored Go or PHP
+# checkout lives, `build/` and `dist/` are where CI puts one, and `.venv/` is where a tool does --
+# so this is not an exotic layout. Testing the ABSOLUTE path's components meant one such directory
+# above the checkout silenced the data model, the API surface, the configuration list, the
+# deployment section AND the unignored-`.env` warning, each rendering as "" with no hedge.
+import schema as _schm  # noqa: E402
+import catalogs as _cat2  # noqa: E402
+import deploy as _dep  # noqa: E402
+import tree as _tr  # noqa: E402
+
+_anc = Path(tempfile.mkdtemp(prefix="chamnan-anc-"))
+_anc_seen = {}
+for _parent in ("plain", "vendor", "node_modules", ".venv", "build", "dist"):
+    _r = _anc / _parent / "repo"
+    (_r / "migrations").mkdir(parents=True)
+    (_r / "k8s").mkdir()
+    subprocess.run(["git", "-C", str(_r), "init", "-q"], capture_output=True)
+    (_r / "migrations" / "001.sql").write_text("CREATE TABLE orders (id int, total decimal);\n", encoding="utf-8")
+    (_r / "k8s" / "dep.yaml").write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: order-api\n", encoding="utf-8")
+    (_r / ".env").write_text("DB_URL=postgres://x\nAPI_KEY=y\n", encoding="utf-8")
+    (_r / "app.py").write_text("# The order service.\ndef main(): pass\n", encoding="utf-8")
+    _files = [{"path": str(q.relative_to(_r))} for q in _tr.files(_r)]
+    _envs, _unsafe = _cat2.scan_env(_r, _files)
+    _anc_seen[_parent] = (tuple(sorted(t["name"] for t in _schm.scan(_r, _files))),
+                          len(_envs), bool(_unsafe), bool(_dep.scan(_r)))
+check("A DIRECTORY ABOVE THE CHECKOUT DOES NOT BLANK THE CATALOGUE SECTIONS: " + str(_anc_seen),
+      len(set(_anc_seen.values())) == 1)
+check("...and the sections were non-empty to begin with, so this is not agreement on nothing",
+      _anc_seen["plain"] == (("orders",), 2, True, True))
+shutil.rmtree(_anc, ignore_errors=True)
+
+# ------------------------------ three commands answering the wrong question confidently
+_impbin = [sys.executable, str(ROOT / "bin" / "chamnan-impact")]
+_imr = Path(tempfile.mkdtemp(prefix="chamnan-imp-"))
+(_imr / "src").mkdir(parents=True)
+subprocess.run(["git", "-C", str(_imr), "init", "-q"], capture_output=True)
+(_imr / "src" / "core.py").write_text("# The core.\n", encoding="utf-8")
+for _n in ("one", "two", "three"):
+    (_imr / "src" / f"{_n}.py").write_text("# Uses core.\nfrom core import x\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_imr), capture_output=True)
+_rel = subprocess.run(_impbin + ["src/core.py"], cwd=str(_imr), capture_output=True, text=True)
+_abso = subprocess.run(_impbin + [str(_imr / "src" / "core.py")], cwd=str(_imr),
+                       capture_output=True, text=True)
+# An absolute path is the canonical form in Claude Code -- Read and Edit both require one -- and
+# this command answered "nothing imports it ... change it freely" for exactly that form.
+check("AN ABSOLUTE PATH GETS THE SAME ANSWER AS A RELATIVE ONE",
+      "one.py" in _abso.stdout and _abso.stdout.count("used by") == _rel.stdout.count("used by"))
+check("...and it found real dependents, so this is not two identical blanks",
+      "used by" in _rel.stdout)
+_typo = subprocess.run(_impbin + ["src/cores.py"], cwd=str(_imr), capture_output=True, text=True)
+check("A FILE THAT DOES NOT EXIST IS NOT GIVEN AN ALL-CLEAR",
+      "change it freely" not in _typo.stdout and "no such file in this repository" in _typo.stdout)
+shutil.rmtree(_imr, ignore_errors=True)
+
+# An error on stdout with exit 0 reaches the model shaped like a result.
+_pk = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-peek"), "/no/such/file"],
+                     capture_output=True, text=True)
+check("PEEK REPORTS A MISSING PATH ON STDERR AND EXITS NON-ZERO",
+      _pk.returncode != 0 and not _pk.stdout.strip() and "not a file" in _pk.stderr)
+
+# `chamnan-promote script.sh --desc "..."` with the name left out registered the tool as `--desc`.
+check("A NAME THAT IS REALLY A FLAG IS NOT A USABLE TOOL NAME",
+      _wsm.safe_tool_name("--desc") is None and _wsm.safe_tool_name("-x") is None)
+check("...and an ordinary name still is", _wsm.safe_tool_name("deploy-check.sh") == "deploy-check.sh")
+check("...and the refusal says what it actually refuses",
+      "leading dot or dash" in (ROOT / "bin" / "chamnan-promote").read_text(encoding="utf-8"))
+
+# ------------------------------ peek, whose whole claim is that its answer substitutes for the file
+import peek as _pkm  # noqa: E402  (the module; `_pk` is a subprocess result from an earlier block)
+_pkd = Path(tempfile.mkdtemp(prefix="chamnan-peek2-"))
+
+# A multi-byte character straddling the 4096-byte sniff boundary raised UnicodeDecodeError, which
+# the detector read as proof of binary content -- on two of every three byte alignments, for any
+# file over 4KB, which is the only size peek is for. The docstring named Thai as a case that passes.
+_thairow = "สมชาย,123 ถนนสุขุมวิท กรุงเทพมหานคร,1234.56\n"
+_alignments = []
+for _pad in range(4):
+    _tf = _pkd / f"thai{_pad}.csv"
+    _tf.write_text("ชื่อ,ที่อยู่,ยอด\n" + ("x" * _pad) + _thairow * 400, encoding="utf-8")
+    _alignments.append(_pkm._looks_binary(_tf))
+check("A THAI CSV IS TEXT AT EVERY BYTE ALIGNMENT OF THE SNIFF BOUNDARY: " + str(_alignments),
+      not any(_alignments))
+check("...and it is actually read as a table rather than described as bytes",
+      "3 columns" in _pkm.peek(_pkd / "thai1.csv"))
+_bin = _pkd / "real.bin"
+_bin.write_bytes(bytes(range(256)) * 40)
+check("...while a genuinely binary file is still caught", _pkm._looks_binary(_bin))
+_moji = _pkd / "moji.txt"
+_moji.write_bytes(b"\xff\xfe\xfd" * 900)
+check("...and so is mojibake, which is what the check is for", _pkm._looks_binary(_moji))
+
+# `.jsonl` reached no branch at all and fell to peek_binary: "unrecognised; 100% printable", a
+# crc32, five string fragments, and a claimed compression ratio, for a plain text file.
+_jl = _pkd / "events.jsonl"
+_jl.write_text("".join(json.dumps({"id": i, "user": {"name": "a"}, "ok": True}) + "\n"
+                       for i in range(5000)), encoding="utf-8")
+_jlout = _pkm.peek(_jl)
+check("JSON LINES IS READ AS RECORDS, NOT DESCRIBED AS BYTES",
+      "5,000 JSON Lines record" in _jlout and "unrecognised" not in _jlout)
+check("...and it reports the shape without any value", "{id: int, user: {name: str}, ok: bool}" in _jlout)
+
+# One bolded word in a header cell is one <si> holding two <t> runs, and collecting <t> flatly
+# shifted every shared-string index after it -- so no printed value was the value in that cell.
+_xl = _pkd / "prices.xlsx"
+_shared = ('<?xml version="1.0"?><sst count="5" uniqueCount="5">'
+           '<si><r><rPr><b/></rPr><t>Product</t></r><r><t> name</t></r></si>'
+           '<si><t>Region</t></si><si><t>Widget</t></si><si><t>EMEA</t></si>'
+           '<si><t>Gadget</t></si></sst>')
+_sheet = ('<?xml version="1.0"?><worksheet><sheetData>'
+          '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+          '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2" t="s"><v>3</v></c></row>'
+          '<row r="3"><c r="A3" t="s"><v>4</v></c><c r="B3" t="s"><v>3</v></c></row>'
+          '</sheetData></worksheet>')
+with _zf.ZipFile(_xl, "w") as _z:
+    _z.writestr("xl/sharedStrings.xml", _shared)
+    _z.writestr("xl/worksheets/sheet1.xml", _sheet)
+    _z.writestr("xl/workbook.xml", '<?xml version="1.0"?><workbook><sheets>'
+                                   '<sheet name="Prices" sheetId="1"/></sheets></workbook>')
+_xlout = _pkm.peek(_xl)
+check("A RICH-TEXT HEADER CELL DOES NOT SHIFT EVERY OTHER VALUE",
+      "`Product name`" in _xlout and "` name`" not in _xlout)
+check("...and the rows below it are the rows that are in the file",
+      "Gadget" in _xlout and _xlout.count("Widget") == 1)
+
+shutil.rmtree(_pkd, ignore_errors=True)
+
+# ------------------------------ the data model, which is injected into every session
+# schema.py's own docstring: "An invented table is the worse half of that: a reader can go looking
+# for it." Commenting out superseded DDL is how migration files are maintained, so the
+# false-positive rate scaled with the age of the schema.
+_sqd = Path(tempfile.mkdtemp(prefix="chamnan-sql-"))
+(_sqd / "migrations").mkdir(parents=True)
+subprocess.run(["git", "-C", str(_sqd), "init", "-q"], capture_output=True)
+(_sqd / "migrations" / "001_init.sql").write_text(
+    "-- CREATE TABLE legacy_payments (id int, amount decimal);\n"
+    "/* The staging mirror below was dropped in 2026-03.\n"
+    "   CREATE TABLE payments_staging_old (id int); */\n"
+    "-- Every payment the platform has taken.\n"
+    "CREATE TABLE payments (id int, customer_id int, amount decimal(10, 2), "
+    "currency varchar(3), status varchar(20));\n"
+    "INSERT INTO audit (note) VALUES ('-- CREATE TABLE not_a_table (x int);');\n",
+    encoding="utf-8")
+_sqfiles = [{"path": str(q.relative_to(_sqd))} for q in _tr.files(_sqd)]
+_sqtables = {t["name"]: t for t in _schm.scan(_sqd, _sqfiles)}
+check("COMMENTED-OUT DDL IS NOT A TABLE: " + str(sorted(_sqtables)),
+      sorted(_sqtables) == ["payments"])
+check("...nor is a CREATE TABLE written inside a string literal", "not_a_table" not in _sqtables)
+# The two rules are only compatible because masking blanks in place: matches come from the masked
+# copy, the summary from the original at the same offset.
+check("...while a comment ABOVE a table is still its description",
+      "Every payment" in _sqtables["payments"]["summary"])
+# Anchored `^\s*` under re.M, so a one-line CREATE TABLE yielded exactly its first column --
+# which reads as "this table has no status column".
+check("A ONE-LINE CREATE TABLE STILL LISTS EVERY COLUMN: " + str(_sqtables["payments"]["columns"]),
+      _sqtables["payments"]["columns"] == ["id", "customer_id", "amount", "currency", "status"])
+
+# `[^{]*?` ran past the closing paren of `@Entity()` into the next annotation, so a NamedQuery's
+# name became the table AND the real table went missing in the same pass.
+(_sqd / "domain").mkdir()
+(_sqd / "domain" / "Driver.java").write_text(
+    '@Entity()\n@NamedQuery(name = "Driver.findAllActive", query = "select d from Driver d")\n'
+    'public class Driver { }\n', encoding="utf-8")
+(_sqd / "domain" / "Vehicle.java").write_text(
+    '@Entity\n@Table(name = "fleet_vehicles", uniqueConstraints = @UniqueConstraint(name = "uk_plate"))\n'
+    'public class Vehicle { }\n', encoding="utf-8")
+(_sqd / "domain" / "Trip.java").write_text(
+    '@Entity\n@Table(uniqueConstraints = @UniqueConstraint(name = "uk_leg"))\n'
+    'public class Trip { }\n', encoding="utf-8")
+_jpa = sorted(t["name"] for t in _schm.scan(_sqd, [{"path": str(q.relative_to(_sqd))}
+                                                   for q in _tr.files(_sqd)]))
+check("A NAMED QUERY IS NOT A TABLE, AND THE REAL ONE IS NOT LOST: " + str(_jpa),
+      _jpa == ["Driver", "Trip", "fleet_vehicles", "payments"])
+shutil.rmtree(_sqd, ignore_errors=True)
+
+# ------------------------------ the API surface, where a wrong path is acted on and 404s
+# ROUTER_PREFIX's own comment states the standard these two failed: "a wrong path is worse than no
+# path, because it is acted on and 404s."
+_rtd = Path(tempfile.mkdtemp(prefix="chamnan-routes-"))
+(_rtd / "api").mkdir(parents=True)
+# A controller whose health check uses the method-level form -- ordinary in any Spring codebase
+# older than 4.3. That mapping was taken as the CLASS prefix and concatenated onto every other
+# route in the file, so every published path was fabricated and the real one was dropped.
+(_rtd / "api" / "OrderController.java").write_text(
+    "@RestController\npublic class OrderController {\n"
+    '    @RequestMapping(value = "/internal/health", method = RequestMethod.GET)\n'
+    "    public String health() { return \"ok\"; }\n\n"
+    '    @GetMapping("/v1/orders")\n    public List<Order> list() { return null; }\n\n'
+    '    @PostMapping("/v1/orders")\n    public Order create() { return null; }\n}\n',
+    encoding="utf-8")
+(_rtd / "api" / "AdminController.java").write_text(
+    '@RestController\n@RequestMapping("/admin")\npublic class AdminController {\n'
+    '    @GetMapping("/users")\n    public List<User> users() { return null; }\n}\n',
+    encoding="utf-8")
+# scan_routes returns [((method, path), source), …], not a mapping.
+_spring = {key for key, _src in _cat2.scan_routes(
+    _rtd, [{"path": f"api/{n}", "lang": "java"}
+           for n in ("OrderController.java", "AdminController.java")])}
+check("A METHOD-LEVEL @RequestMapping IS NOT THE CLASS PREFIX: " + str(sorted(_spring)),
+      ("GET", "/v1/orders") in _spring and ("POST", "/v1/orders") in _spring)
+check("...and it is a route in its own right rather than being dropped",
+      ("GET", "/internal/health") in _spring)
+check("...while a real class-level prefix still applies", ("GET", "/admin/users") in _spring)
+check("...and nothing fabricated survives",
+      not any("/internal/health/" in p for _m, p in _spring))
+
+# `include()` is the only way Django composes URLconfs, so this was every Django project: the mount
+# was published as a callable endpoint and the included module's paths were indexed at site root.
+(_rtd / "config").mkdir(); (_rtd / "orders").mkdir()
+(_rtd / "config" / "urls.py").write_text(
+    'from django.urls import path, include\nurlpatterns = [\n'
+    '    path("api/v2/orders/", include("orders.urls")),\n'
+    '    path("healthz/", views.health),\n]\n', encoding="utf-8")
+(_rtd / "orders" / "urls.py").write_text(
+    'from django.urls import path\nurlpatterns = [\n'
+    '    path("", views.list_orders),\n'
+    '    path("<int:pk>/refund/", views.refund),\n]\n', encoding="utf-8")
+_dj = {key[1] for key, _src in _cat2.scan_routes(
+    _rtd, [{"path": "config/urls.py", "lang": "py"},
+           {"path": "orders/urls.py", "lang": "py"}])}
+check("AN INCLUDED URLCONF'S PATHS CARRY THE PREFIX THEY ARE SERVED UNDER: " + str(sorted(_dj)),
+      any(p.startswith("/api/v2/orders") for p in _dj))
+check("...and the site root is not claimed as an endpoint", "/" not in _dj)
+check("...and a real leaf route in the root urlconf survives", "/healthz/" in _dj)
+shutil.rmtree(_rtd, ignore_errors=True)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)

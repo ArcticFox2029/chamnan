@@ -14,6 +14,7 @@ YAML is matched with regexes rather than parsed. There is no YAML parser in the 
 and shipping one to read four fields would trade the plugin's only real deployment advantage — no
 dependencies — for a marginal gain in precision.
 """
+import pathlib
 import re
 from collections import defaultdict
 import tree
@@ -54,6 +55,21 @@ MAX_PER_GROUP = 14
 NEVER_EXPAND = {"Secret", "SealedSecret"}
 
 
+# 🐛 A path's components are tested RELATIVE to the repository root, never absolute. Testing the
+# absolute path means one directory ABOVE the checkout named `vendor`, `node_modules`, `build`,
+# `dist` or `.venv` skips every file in the repository -- and each of these renderers returns "" on
+# an empty result, so whole sections simply vanish with no hedge. `assets.scan` already tested
+# `rel.parts`, which is what made the asymmetry findable. Two harms beyond the missing sections:
+# `mapper.scan` is unaffected, so the index and the catalogues then disagree about the same
+# repository; and the unignored-`.env` warning goes silent, which is the false-calm direction.
+def _rel_parts(path, root):
+    """`path`'s components below `root`, or its own components when it is not below root."""
+    try:
+        return pathlib.Path(path).relative_to(root).parts
+    except (ValueError, TypeError):
+        return pathlib.Path(path).parts
+
+
 def _read(root):
     # Nested checkouts are excluded here for the same reason as in mapper and catalogs: a checkout
     # inside a checkout is somebody else's code. This module is the one that made the consequence
@@ -63,7 +79,7 @@ def _read(root):
     nested = _nested_repo_dirs(root)
     for pattern in MANIFEST_GLOBS:
         for path in tree.matching(root, pattern):
-            if any(p in SKIP for p in path.parts):
+            if any(p in SKIP for p in _rel_parts(path, root)):
                 continue
             if nested and any(parent.resolve() in nested for parent in path.parents):
                 continue
@@ -188,7 +204,7 @@ def scan(root):
     for name, group in (("Dockerfile", "ci"), ("Dockerfile.*", "ci"), ("Jenkinsfile", "ci"),
                         ("Makefile", "ci"), ("ansible.cfg", "ansible")):
         for path in tree.matching(root, name):
-            if not any(p in SKIP for p in path.parts):
+            if not any(p in SKIP for p in _rel_parts(path, root)):
                 rel = str(path.relative_to(root))
                 found[group].add(rel)
                 found["claimed"].add(rel)

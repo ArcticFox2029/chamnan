@@ -41,7 +41,15 @@ def main(argv):
         except (IndexError, ValueError):
             print("chamnan-peek: --budget needs a number", file=sys.stderr)
             return 2
-    print(peek_mod.peek(target, find=find, budget=budget))
+    out = peek_mod.peek(target, find=find, budget=budget)
+    # 🐛 A missing path or a directory printed `chamnan-peek: not a file: …` to STDOUT and exited 0.
+    # Every sibling command uses stderr and a non-zero code, so a caller could not tell this apart
+    # from a result -- and when the caller is the model, the error lands in its context shaped like
+    # a peek of the file it asked about.
+    if out.startswith("chamnan-peek: not a file:"):
+        print(out, file=sys.stderr)
+        return 1
+    print(out)
     return 0
 
 

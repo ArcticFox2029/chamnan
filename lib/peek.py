@@ -67,9 +67,23 @@ def _looks_binary(path):
         return False
     if b"\x00" in head:
         return True
-    try:
-        text = head.decode("utf-8")
-    except UnicodeDecodeError:
+    # 🐛 A 4096-byte read cuts wherever it lands, and a multi-byte character straddling that
+    # boundary raised UnicodeDecodeError — which this treated as proof of binary content. The
+    # docstring names the exact case it was failing: "real text — including Thai, Japanese and
+    # Cyrillic, whose UTF-8 bytes decode cleanly — passes." Measured on one Thai CSV at three byte
+    # offsets: two of the three were declared binary, on every file over 4KB, which is the only
+    # size peek exists for. The tool then asserted "of bin that a plain read cannot open" about a
+    # plain UTF-8 CSV and reported 0 tokens spent.
+    #
+    # Trimmed back to the last complete sequence rather than decoded with errors="ignore": ignoring
+    # would also swallow genuine mojibake, which is what this function is for.
+    for _cut in range(4):
+        try:
+            text = head[:len(head) - _cut].decode("utf-8")
+            break
+        except UnicodeDecodeError:
+            continue
+    else:
         return True
     odd = sum(1 for ch in text if ord(ch) < 32 and ch not in "\t\n\r")
     return odd > len(text) * 0.05
@@ -161,6 +175,52 @@ def peek_json(path, find=None):
     return out
 
 
+def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
+    """JSON Lines: how many records, and the shape of one.
+
+    🐛 `.jsonl` and `.ndjson` reached no branch at all and fell through to `peek_binary`, which
+    described a plain text file as "unrecognised; 100% printable", gave a crc32 and five string
+    fragments, and claimed a compression ratio — the worst answer this module can give, and the one
+    `peek_source`'s docstring was written to close for source files. `peek_json` already names JSON
+    Lines in its own fallback and `_cost_note` already whitelists `.jsonl` as comparable, so the
+    handler was intended and simply absent.
+    """
+    rows, total, bad = [], 0, 0
+    hits = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            for i, line in enumerate(fh):
+                line = line.strip()
+                if not line:
+                    continue
+                total += 1
+                if len(rows) < sample:
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        bad += 1
+                if find and len(hits) < HIT_CAP and find.lower() in line.lower():
+                    hits.append((i + 1, line))
+    except OSError as err:
+        return [f"could not be read ({type(err).__name__})"]
+    if not total:
+        return ["empty file"]
+    out = [f"{total:,} JSON Lines record(s)"]
+    if rows:
+        out.append("shape of the first record (keys and types only, no values):")
+        out.append("  " + _shape(rows[0]))
+        shapes = {tuple(sorted(r)) for r in rows if isinstance(r, dict)}
+        if len(shapes) > 1:
+            out.append(f"ragged: {len(shapes)} different key sets in the first {len(rows)} records")
+    if bad:
+        out.append(f"{bad} of the first {len(rows) + bad} record(s) did not parse as JSON")
+    if find:
+        tail = "" if len(hits) < HIT_CAP else f" — the first {HIT_CAP}; there may be more"
+        out.append(f"\nrecords matching {find!r} ({len(hits)} shown{tail}):")
+        out += [f"  line {n}: " + r[:110] for n, r in hits]
+    return out
+
+
 # ------------------------------------------------------------------ archives
 # ------------------------------------------------------------------ OOXML bodies
 # A .docx and a .xlsx are zips, and listing their members says nothing a reader wants: the
@@ -171,6 +231,13 @@ _CELL = re.compile(r"<c\b([^>]*)>(.*?)</c>|<c\b([^>]*)/>", re.S)
 _VAL = re.compile(r"<v>(.*?)</v>", re.S)
 _INLINE = re.compile(r"<t[^>]*>(.*?)</t>", re.S)
 _ROW = re.compile(r"<row\b[^>]*>(.*?)</row>", re.S)
+# One shared string is one <si>. A rich-text <si> — a header cell with one word bolded, the most
+# common formatting in a real spreadsheet — holds one <t> PER RUN, so collecting <t> elements
+# flatly produced more entries than the table has and shifted every index after it. Measured on a
+# three-row sheet with a partially bold header: not one printed value was the value in that cell,
+# `Gadget` never appeared at all, and `Widget` appeared twice in cells that never held it. The
+# whole claim of this module is that its two hundred tokens substitute for reading the file.
+_SI = re.compile(r"<si\b[^>]*>(.*?)</si>|<si\b[^>]*/>", re.S)
 _PARA = re.compile(r"<w:p\b[^>]*>(.*?)</w:p>", re.S)
 _RUN = re.compile(r"<w:t[^>]*>(.*?)</w:t>", re.S)
 
@@ -187,8 +254,10 @@ def _sheet_rows(zf, names, limit):
         return []
     shared = []
     if "xl/sharedStrings.xml" in names:
-        shared = [_unxml(s) for s in
-                  _INLINE.findall(zf.read("xl/sharedStrings.xml").decode("utf-8", "replace"))]
+        _sxml = zf.read("xl/sharedStrings.xml").decode("utf-8", "replace")
+        # Per <si>, joining that entry's runs — never per <t>.
+        shared = ["".join(_unxml(t) for t in _INLINE.findall(m.group(1) or ""))
+                  for m in _SI.finditer(_sxml)]
     xml = zf.read(sheet).decode("utf-8", "replace")
     rows = []
     for body in _ROW.findall(xml):
@@ -349,11 +418,29 @@ def peek_image(path):
         kinds = {0: "greyscale", 2: "RGB", 3: "palette", 4: "greyscale+alpha", 6: "RGBA"}
         return [f"PNG {w}×{h}, {depth}-bit {kinds.get(colour, colour)}"]
     if head.startswith(b"\xff\xd8"):
+        # 🐛 This used to scan the raw bytes for an SOF marker with a regex, and the FIRST one it
+        # found belonged to the EXIF THUMBNAIL — every phone photo carries one — so a 4032×3024
+        # photograph was reported as 160×120. Walking the segment chain skips APP1 by its declared
+        # length, which is how the thumbnail stops being reachable at all rather than being
+        # filtered out afterwards.
         raw = path.read_bytes()
-        for m in re.finditer(b"\xff[\xc0\xc1\xc2]", raw):
-            h, w = struct.unpack(">HH", raw[m.start() + 5:m.start() + 9])
-            return [f"JPEG {w}×{h}"]
-        return ["JPEG, dimensions not found in the first frame header"]
+        i, SOF = 2, set(range(0xC0, 0xD0)) - {0xC4, 0xC8, 0xCC}
+        while i + 3 < len(raw):
+            if raw[i] != 0xFF:
+                i += 1
+                continue
+            marker = raw[i + 1]
+            if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                i += 2
+                continue
+            if marker == 0xDA or marker == 0xD9:      # start of scan / end of image
+                break
+            seg = struct.unpack(">H", raw[i + 2:i + 4])[0]
+            if marker in SOF and i + 9 <= len(raw):
+                h, w = struct.unpack(">HH", raw[i + 5:i + 9])
+                return [f"JPEG {w}×{h}"]
+            i += 2 + max(seg, 2)
+        return ["JPEG, dimensions not found in the frame headers"]
     if head.startswith(b"GIF8"):
         w, h = struct.unpack("<HH", head[6:10])
         return [f"GIF {w}×{h}"]
@@ -398,7 +485,7 @@ def peek_binary(path):
 # before this existed — the .js output was 135 tokens of nothing.
 #
 # Derived from peek()'s own dispatch rather than listed twice, so a new handler joins both at once.
-STRUCTURED = set((".csv", ".tsv", ".tab", ".json", ".tar", ".tgz", ".pdf",
+STRUCTURED = set((".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson", ".tar", ".tgz", ".pdf",
                   ".db", ".sqlite", ".sqlite3")) | ZIP_LIKE | IMAGE_LIKE
 
 
@@ -477,7 +564,8 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     # column list of raw control characters going straight into the session. Sniff the bytes first
     # and let the binary handler describe it instead; that handler exists precisely to say "this is
     # not text" without pretending to read it.
-    if (ext in (".csv", ".tsv", ".tab", ".json") or ext in TEXT_LIKE) and _looks_binary(path):
+    if (ext in (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson")
+            or ext in TEXT_LIKE) and _looks_binary(path):
         return "\n".join(header + ["", *[str(x) for x in peek_binary(path)]]) + \
                "\n\n" + _cost_note(path, ".bin", size, "")
 
@@ -486,6 +574,8 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
             body = peek_csv(path, find)
         elif ext == ".json":
             body = peek_json(path, find)
+        elif ext in (".jsonl", ".ndjson"):
+            body = peek_jsonl(path, find)
         elif ext in ZIP_LIKE and zipfile.is_zipfile(path):
             body = peek_zip(path, find)
         elif ext in (".tar", ".tgz") or path.name.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
