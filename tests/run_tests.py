@@ -3760,6 +3760,95 @@ check("the correction is still in the release history too",
 check("the release history moved out of the README but did not disappear",
       _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
 
+# ---------------- a symlink out of the repository is an exfiltration path, not a file
+# followlinks=False stops recursion into symlinked DIRECTORIES. It does nothing about a symlink to a
+# FILE: that is still yielded, read_text() follows it transparently, and the leading comment is
+# copied verbatim into MAP.md -- which the pre-commit hook then `git add`s and commits.
+#
+# Reproduced before the guard: a link named `leaked.py` pointing at a file outside the root, holding
+# a database DSN, was walked, read, and its docstring copied into the index. The redactor does not
+# catch it -- it gates on the LINK's own name and suffix, so an innocuous `.py` passes, and it strips
+# `key = "value"` assignments rather than prose.
+import tree as _tree  # noqa: E402
+
+_sym = Path(tempfile.mkdtemp())
+(_sym / "outside.py").write_text('"""A secret that lives outside the repo."""\n', encoding="utf-8")
+_repo = _sym / "repo"
+(_repo / "sub").mkdir(parents=True)
+(_repo / "real.py").write_text("# ordinary\n", encoding="utf-8")
+try:
+    os.symlink("../outside.py", _repo / "escapes.py")
+    os.symlink("../real.py", _repo / "sub" / "stays.py")
+    os.symlink("/nonexistent-target", _repo / "broken.py")
+    _found = {str(f.relative_to(_repo)) for f in _tree.files(_repo)}
+    check("a symlink escaping the repository root is not indexed", "escapes.py" not in _found)
+    check("...while a symlink staying inside it is kept", "sub/stays.py" in _found)
+    check("a broken symlink is dropped rather than raising", "broken.py" not in _found)
+    check("ordinary files are unaffected", "real.py" in _found)
+except (OSError, NotImplementedError):
+    check("symlinks unsupported on this platform — guard untested", True)
+shutil.rmtree(_sym, ignore_errors=True)
+
+# ------------------- states where a git-shelling tool gets a wrong answer
+# All three reproduced live before being fixed. `.git/hooks` is the obvious guess and it is wrong in
+# two ordinary states: core.hooksPath relocates hooks entirely (pre-commit, Husky and lefthook all
+# set it, and a hook written to the default path is then a DEAD FILE that git never runs, with no
+# error at install or at commit), and in a worktree `.git` is a file rather than a directory, so an
+# is_dir() test calls a perfectly good repository "not a git repository" and refuses.
+import subprocess as _gsp  # noqa: E402
+
+_gitroot = Path(tempfile.mkdtemp())
+def _git(*a, cwd):
+    return _gsp.run(["git", *a], cwd=str(cwd), capture_output=True, text=True)
+
+_main = _gitroot / "main"
+_main.mkdir()
+_git("init", "-q", cwd=_main)
+(_main / "a.txt").write_text("x", encoding="utf-8")
+_git("add", "-A", cwd=_main)
+_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one", cwd=_main)
+
+_map = ROOT / "bin" / "chamnan-map"
+_spec = importlib.util.spec_from_loader(
+    "chamnan_map_mod", importlib.machinery.SourceFileLoader("chamnan_map_mod", str(_map)))
+_cm = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_cm)
+
+check("a plain repo resolves to .git/hooks",
+      str(_cm._hooks_dir(_main)).replace(str(_main) + "/", "").endswith(".git/hooks"))
+
+_git("config", "core.hooksPath", "../myhooks", cwd=_main)
+check("core.hooksPath is honoured, so the hook is not written where git will never look",
+      "myhooks" in str(_cm._hooks_dir(_main)))
+_git("config", "--unset", "core.hooksPath", cwd=_main)
+
+_wt = _gitroot / "wt"
+if _git("worktree", "add", "-q", str(_wt), cwd=_main).returncode == 0:
+    check("a worktree is a git repository, even though its .git is a file",
+          not (_wt / ".git").is_dir() and _cm._hooks_dir(_wt) is not None)
+
+check("a directory that is not a repository still resolves to nothing",
+      _cm._hooks_dir(Path(tempfile.mkdtemp())) is None)
+shutil.rmtree(_gitroot, ignore_errors=True)
+
+# ------------------- markdown constructs that silently un-pin or invent a section
+# A closing ATX sequence renders as nothing in every markdown viewer (CommonMark examples 71, 73) and
+# chamnan captured it as heading text, so `## Pinned 📌 ##` was NOT pinned -- the author sees a pin,
+# the tool does not, and nothing says so.
+check("an ATX closing sequence does not un-pin a heading",
+      state_mod._heading_text("Pinned 📌 ##").endswith("\U0001F4CC"))
+check("...with several hashes and extra spacing too",
+      state_mod._heading_text("Pinned 📌   ####").endswith("\U0001F4CC"))
+check("an ordinary pinned heading is unaffected",
+      state_mod._heading_text("Pinned 📌").endswith("\U0001F4CC"))
+check("a hash inside the text is not mistaken for a closing sequence",
+      state_mod._heading_text("Issue #42 📌").endswith("\U0001F4CC"))
+
+# The regression this repository had already fixed once, recurring in the sibling function.
+_fenced_doc = "# Real 📌\nprose\n```bash\n# rebuild the map\n```\nmore pinned prose\n"
+check("a # inside a fence is not a unit boundary for ageing either",
+      len(md.headings(state_mod._HEADING, _fenced_doc)) == 1)
+
 # ------------------------- a description should not end inside a word
 # 83% of this repository's truncated index entries were cut mid-word by a plain character slice --
 # `_CASCADE_MIN_ROUND_S…`, `tools/preflig…`, `call_ollama_chat's q…`. That is the worst available

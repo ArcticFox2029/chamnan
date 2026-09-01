@@ -583,7 +583,7 @@ def _scan(root):
     nested = _nested_repo_dirs(root)
     for path, lang in indexable(root, nested):
         try:
-            source = path.read_text(encoding="utf-8", errors="replace")
+            source = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         # One try around everything this file touches, not around each call. Two separate crashes

@@ -64,6 +64,25 @@ def _walk(root):
         # In place, and before descending: this is the whole point of the module.
         dirnames[:] = [d for d in dirnames if d not in PRUNE_DIRS]
         for name in filenames:
+            # A symlink to a FILE is not covered by followlinks=False, which only stops recursion
+            # into symlinked DIRECTORIES. The file link is still yielded, and read_text() follows it
+            # transparently -- so a link named `leaked.py` pointing at something outside the
+            # repository has its contents scanned, its leading comment copied verbatim into MAP.md,
+            # and MAP.md is then `git add`ed by the pre-commit hook and committed.
+            #
+            # Reproduced before this guard existed: a link to a file holding a database DSN outside
+            # the root was walked, read, and its docstring copied into the index. The redactor does
+            # not help -- it gates on the LINK's own name and extension, so an innocuous `.py` link
+            # passes, and it strips `key = "value"` lines rather than prose.
+            #
+            # A link that stays inside the repository is fine and is kept: that is an ordinary way to
+            # arrange a tree. Only escapes are dropped.
+            full = here / name
+            try:
+                if full.is_symlink() and not str(full.resolve()).startswith(str(base.resolve())):
+                    continue
+            except OSError:
+                continue          # a broken or unresolvable link is not indexable either
             files.append(rel_dir / name)
     files.sort()
     return files, gits

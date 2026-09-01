@@ -9,6 +9,7 @@ The coverage number printed at the end is not decoration. The index is built fro
 opening comment, so a repository that does not write them gets an index of filenames and function
 counts, which is worth far less. Reporting coverage tells the user which lever to pull.
 """
+import subprocess
 import sys
 from pathlib import Path
 
@@ -70,10 +71,38 @@ def preview(root, explain=False):
     return 0
 
 
+def _hooks_dir(root):
+    """Where git will ACTUALLY look for hooks, which is not always `.git/hooks`.
+
+    Two states break the obvious guess, and both are ordinary rather than exotic:
+
+    `core.hooksPath` relocates hooks entirely — pre-commit, Husky and lefthook all set it. A hook
+    written to `.git/hooks/pre-commit` in such a repository is a **dead file**: git runs the other
+    directory, the commit succeeds, and nothing reports that the hook installed a moment ago will
+    never fire.
+
+    And in a **worktree**, `.git` is a *file* containing `gitdir: …`, not a directory. Testing
+    `(root / ".git").is_dir()` calls a perfectly good repository "not a git repository" and refuses
+    to install at all.
+
+    `git rev-parse --git-path hooks` resolves both, and returns the shared hooks directory for a
+    worktree, which is where hooks actually live.
+    """
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
+                             capture_output=True, text=True, timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            p = Path(out.stdout.strip())
+            return p if p.is_absolute() else (root / p)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
-    hooks = root / ".git" / "hooks"
-    if not hooks.parent.is_dir():
+    hooks = _hooks_dir(root)
+    if hooks is None:
         print("chamnan: not a git repository — nothing to install into", file=sys.stderr)
         return 1
     hooks.mkdir(parents=True, exist_ok=True)

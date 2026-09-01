@@ -66,6 +66,17 @@ AGES_PATH = "logs/state-ages.json"
 _HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*$", re.M)
 
 
+def _heading_text(raw):
+    """Heading text with a CommonMark closing sequence removed.
+
+    `## Pinned 📌 ##` renders as "Pinned 📌" in every markdown viewer -- the trailing run of hashes
+    is a closing sequence, not content (CommonMark examples 71 and 73). chamnan captured it as text,
+    so `.endswith(PIN_MARK)` was False and the pin was silently ignored: the author sees a pin, the
+    tool does not, and nothing says so.
+    """
+    return re.sub(r"[ \t]+#+[ \t]*$", "", raw).rstrip()
+
+
 def _sections(text):
     """Every heading in `text`: its level, whether it is pinned, and the span from the heading line
     through the next heading of the SAME OR HIGHER level (i.e. its full section, subsections
@@ -74,7 +85,7 @@ def _sections(text):
     out = []
     for i, m in enumerate(heads):
         level = len(m.group(1))
-        pinned = m.group(2).rstrip().endswith(PIN_MARK)
+        pinned = _heading_text(m.group(2)).endswith(PIN_MARK)
         end = len(text)
         for nxt in heads[i + 1:]:
             if len(nxt.group(1)) <= level:
@@ -159,7 +170,11 @@ def _age_units(text):
     So the unit is a heading plus the text before its first subheading, and anything at or inside a
     pinned heading is not a unit at all: it is exempt, at any depth.
     """
-    heads = list(_HEADING.finditer(text))
+    # md.headings, not a raw finditer -- the same fence-blindness that tore a pinned block in half
+    # in 1.10.0, still live in this function because the fix was applied to _sections() and not
+    # ported to its sibling. A `#` comment inside a bash fence became a unit boundary here, which
+    # split a pinned section's aging span so the half after the fence aged out on its own.
+    heads = md.headings(_HEADING, text)
     units, pinned_until = [], None
     for i, m in enumerate(heads):
         level = len(m.group(1))
