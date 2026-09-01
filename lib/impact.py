@@ -48,7 +48,15 @@ TEST_MARKERS = (
     re.compile(r"(^|/)test_[^/]+$"), re.compile(r"_test\.[a-z]+$"),
     re.compile(r"\.test\.[a-z]+$"), re.compile(r"\.spec\.[a-z]+$"),
     re.compile(r"Tests?\.[a-z]+$"), re.compile(r"Test\.java$"),
+    # .NET puts the tests in a sibling PROJECT, not a subdirectory: MyApp/ beside MyApp.Tests/.
+    # Every other marker here looks for a directory literally called test(s) or a filename that
+    # announces itself, and both miss that shape entirely.
+    re.compile(r"(^|/)[^/]+\.[Tt]ests?/"),
 )
+
+# Deliberately NOT matched: Perl's `t/`. A bare single-letter directory is too weak a signal to
+# spend a false positive on, and the ecosystems that would benefit are a small share of what this
+# indexes. Recorded so the omission reads as a decision rather than an oversight.
 
 MAX_USED_BY = 6      # per file; beyond this the count is more useful than the list
 MAX_TESTS = 3

@@ -3760,6 +3760,32 @@ check("the correction is still in the release history too",
 check("the release history moved out of the README but did not disappear",
       _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
 
+# ---------------- a test is a test in every ecosystem, not just the ones with a tests/ directory
+# Only 35.5% of repositories have a `tests/` directory at all and only 37.4% a `docs/`, measured
+# across 10,000 repositories over a decade. Any marker that assumes one is wrong about a large
+# minority. These fire the real conventions at is_test() rather than trusting the pattern list to
+# look complete -- which is how the .NET shape was found missing: it puts tests in a sibling
+# PROJECT (MyApp/ beside MyApp.Tests/), not a subdirectory, so every directory-name and
+# filename-suffix marker missed it.
+import impact as _imp  # noqa: E402
+
+for _p, _want, _why in [
+    ("tests/test_x.py", True, "pytest"),
+    ("test/foo_test.go", True, "go"),
+    ("spec/foo_spec.rb", True, "rspec"),
+    ("src/__tests__/foo.js", True, "jest directory"),
+    ("src/foo.test.js", True, "jest filename"),
+    ("src/foo.spec.ts", True, "angular/jasmine"),
+    ("src/test/java/FooTest.java", True, "junit suffix"),
+    ("Foo.Tests/Bar.cs", True, ".NET sibling test project"),
+    ("MyApp.Test/X.cs", True, ".NET, singular"),
+    ("src/main.py", False, "ordinary source"),
+    ("src/latest_news.py", False, "contains 'test' but is not one"),
+    ("a/b.c/d.py", False, "a dotted directory that is not a test project"),
+    ("t/basic.t", False, "Perl — deliberately not matched, see impact.py"),
+]:
+    check(f"is_test: {_why}", _imp.is_test(_p) is _want)
+
 # ------------- nothing outside chamnan reaches a file that can execute
 # The published exfiltration chain has four links: repository content influences the agent, the agent
 # reads something sensitive, the agent writes it into a security-relevant configuration, and a later

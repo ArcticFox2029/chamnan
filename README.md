@@ -1056,6 +1056,38 @@ it.** A repository whose comments are wrong gets an index wrong in the same plac
 checked mechanically is checked — every identifier named in a description was verified still present
 in the file it describes, **105 of 105**.
 
+### 5c. A written handover is not a read handover
+
+The strongest counter-evidence to chamnan's session handoff comes from outside software, where the
+question is a century older.
+
+| | |
+|---|---|
+| FAA, 455 handover-linked operational errors — **"briefing incomplete"** | **38.5%** |
+| — **"briefed information not used"** | **35.9%** |
+| — **"checklist skipped entirely"** | **15.4%** |
+| ICU clinicians who reviewed the written record before handover | **39.7%** |
+| ISBAR structured format: completeness across a 26-item tool | **no significant change**; one item fell 40% → 16% |
+
+**Roughly three quarters of identified handover failures happened with a record present.** Structure
+changed the *shape* of what was handed over and not the *completeness* of it. And fewer than half of
+clinicians opened the record that was sitting in front of them, in a setting where missing something
+costs a patient.
+
+**A markdown file is not self-enforcing, and `STATE.md` is exactly a record that may or may not be
+read.** What does work is not the artefact: the I-PASS protocol cut medical errors **23%** and
+preventable adverse events **30%** across 10,740 admissions — but I-PASS is training plus verbal
+synthesis plus read-back. chamnan has the written half only, and should not borrow that number.
+
+Two things here are chamnan's to act on. Errors concentrate in the **first ten minutes after pickup**
+(15–18% of ATC errors in each of the first three ten-minute windows) — which is an argument for what
+sits at the *top* of the injected block, and why the ordering above is not cosmetic. And the failure
+mode to design against is **incomplete**, not absent: the byte ceiling drops whole named sections and
+says which, rather than letting a positional cut deliver something that looks complete.
+
+Sources: DOT/FAA/AM-08/16; [DOI 10.1056/NEJMsa1405556](https://doi.org/10.1056/NEJMsa1405556);
+[DOI 10.3390/nursrep14030154](https://doi.org/10.3390/nursrep14030154); *Critical Care* 2013;17(Suppl 2):P524.
+
 ### 6. What a compaction destroys, and what an index must not
 
 | | |
@@ -1110,6 +1142,33 @@ absent on the day it is true.
 Source: [arXiv:2606.20512](https://arxiv.org/abs/2606.20512) (Probe-and-Refine); ETH Zurich counterpoint.
 
 ---
+
+### 7b. A rule that is only written down does almost nothing
+
+| 1,036 Java repositories against the Google Java Style Guide | pass a 5%-violation threshold |
+|---|---|
+| repositories **explicitly declaring** adherence | **75%** |
+| repositories that merely **mention** code style | **65%** |
+| repositories with **no mention at all** | **66%** |
+
+**A vague rule is statistically indistinguishable from no rule.** Only a named, explicit standard
+moves anything, and it moves it about nine points.
+
+That is the argument for `**Check:**`. chamnan injects rules as prose every session, and prose alone
+should be expected to do very little on its own. Two further numbers shape how the feature is built:
+of SonarQube's **202 Java rules only 25 (~12%)** have real fault-predictive value and its "bug"-labelled
+rules perform **at chance (AUC 50.94%)** — so an assertion is worth attaching to a *particular* rule,
+never uniformly, which is why `**Check:**` is opt-in per rule. And in maintained repositories,
+conformance is **flat over a year** (+0.0068 normalised violations), so there is nothing to gain from
+re-verifying on a schedule — which is why the check runs on demand and stays silent while it holds.
+
+One design warning recorded before the mistake is available to make: across 46 Python projects,
+**50.8% of static-analysis suppressions suppress nothing**, rising to **60.7%** at block scope, and
+suppression counts **grow monotonically** because nobody prunes them. **If `**Check:**` ever grows an
+override syntax, half of those overrides will end up excusing nothing.**
+
+Sources: [arXiv:2601.09832](https://arxiv.org/abs/2601.09832); [arXiv:1907.00376](https://arxiv.org/abs/1907.00376);
+[DOI 10.1145/3715729](https://doi.org/10.1145/3715729).
 
 ### 8. Secrets
 
