@@ -5685,6 +5685,45 @@ check("...and only the one that actually collided carries a hash",
       _p1.name == "fix-auth.md" and _p2.name != "fix-auth.md")
 shutil.rmtree(_thr, ignore_errors=True)
 
+# ------------------------------ chamnan's own runtime logs stay out of git
+# Found on a real production infrastructure repository running 1.9.0: logs/scratch.jsonl held a
+# string matching a GitLab personal-access-token pattern. It had not reached git — because that
+# user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
+#
+# These logs are not summaries: scratch.jsonl keeps the opening line of each throwaway script and
+# commands.jsonl keeps command signatures, both verbatim, and neither passes through the redactor,
+# which guards a different path (MAP.md and the injected block).
+_ig = Path(tempfile.mkdtemp()) / "ig"
+(_ig / ".git").mkdir(parents=True)
+ws.ensure(_ig)
+_gi = _ig / ".chamnan" / ".gitignore"
+check("A FRESH WORKSPACE KEEPS ITS OWN RUNTIME LOGS OUT OF GIT", _gi.is_file())
+check("...covering the two that hold verbatim text", "logs/*.jsonl" in _gi.read_text(encoding="utf-8"))
+check("...and the per-session state beside them",
+      all(x in _gi.read_text(encoding="utf-8")
+          for x in ("logs/nudge/", "logs/pointer_seen*.json", "logs/*.lock")))
+check("...and it says WHY, so nobody deletes the rule to tidy up",
+      "verbatim" in _gi.read_text(encoding="utf-8"))
+check("NOTHING IS WRITTEN OUTSIDE THE WORKSPACE TO DO IT", not (_ig / ".gitignore").exists())
+ws.ensure(_ig)
+check("running it again does not append the rule twice",
+      _gi.read_text(encoding="utf-8").count("logs/*.jsonl") == 1)
+(_ig / ".chamnan" / ".gitignore").write_text("*.tmp\n", encoding="utf-8")
+ws.ensure(_ig)
+check("...and a rule the user put there first is kept",
+      _gi.read_text(encoding="utf-8").startswith("*.tmp"))
+shutil.rmtree(_ig.parent, ignore_errors=True)
+
+# Every injected section, not most of them. Three separate rounds each found one more that had
+# reached the block raw, always because its source looked like chamnan's own data rather than
+# somewhere a person writes.
+_hooksrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("the skills listing is scrubbed like its siblings",
+      "the last of the injected sections to reach the block unscrubbed" in _hooksrc.lower()
+      and _hooksrc.count("redact.scrub") >= 10)
+check("...and so is the decisions and lessons listing",
+      "redact.scrub(memory.render_titles" in _hooksrc)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

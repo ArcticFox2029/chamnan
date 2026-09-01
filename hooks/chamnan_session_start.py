@@ -514,7 +514,9 @@ def main():
                 out.append(broken)
         # Decisions and lessons are looked up when the question comes round, so they contribute a
         # title and nothing else — the same economy skills/ and tools/ use.
-        listing = memory.render_titles(memory.titles(root))
+        # Scrubbed like every sibling section. A decision's TITLE is a line somebody typed, and a
+        # title is exactly where a hostname or a token gets written down in passing.
+        listing = redact.scrub(memory.render_titles(memory.titles(root)))
         if listing:
             out.append(section(
                 "Recorded decisions and lessons — read the one that matches before assuming",
@@ -603,7 +605,12 @@ def main():
                 lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
             out.append(section(
                 "Recorded procedures — read the one that matches before starting that kind of task",
-                "\n".join(lines) +
+                # The last of the injected sections to reach the block unscrubbed. A skill's
+                # description is the first real line of a file somebody wrote, and on a real
+                # infrastructure repository two skills held text the redactor fires on -- deeper in
+                # the body than the description, so nothing leaked, but the section had no reason
+                # to be the one exception.
+                redact.scrub("\n".join(lines)) +
                 f"\n\nFull text in `{(wsdir/'skills').relative_to(root)}/`. Load one when it applies; "
                 f"do not read them all.", ".chamnan/skills/"))
 

@@ -295,6 +295,7 @@ def ensure(root=None):
     if merged != current:
         cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     _mark_generated(root or find_root())
+    _mark_ignored(root or find_root())
     return ws
 
 
@@ -450,6 +451,56 @@ def available_update(plugin_root):
     except (OSError, ValueError, TypeError):
         pass
     return ""
+
+
+# What chamnan writes that must not be committed, and why each one is on the list.
+#
+# Found in a real production infrastructure repository running 1.9.0: `logs/scratch.jsonl` held a
+# string matching a GitLab personal-access-token pattern. It had not reached git — because that
+# user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
+#
+# These logs are not summaries. `scratch.jsonl` keeps the opening line of each throwaway script and
+# `commands.jsonl` keeps command signatures, both verbatim, and neither passes through the
+# redactor: redaction guards what goes into MAP.md and the injected block, which is a different
+# path. A credential typed into a one-off script lands here intact.
+#
+# The README used to say "add .chamnan/logs/ to .gitignore if you would rather not carry it",
+# which reads as a preference about repository size. It is not one.
+#
+# Written INSIDE the workspace, for the same reason .gitattributes is: git reads a .gitignore in
+# any directory and applies it to that directory and below, so nothing outside `.chamnan/` is
+# touched. Appended, never rewritten.
+IGNORE_LINES = [
+    "# chamnan: runtime logs. NOT summaries — scratch.jsonl keeps the opening line of each",
+    "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither",
+    "# passes through the redactor (that guards MAP.md and the injected block, a different path).",
+    "# A credential typed into a one-off script lands in these files intact.",
+    "logs/*.jsonl",
+    "logs/nudge/",
+    "logs/nudge_state.json",
+    "logs/pointer_seen*.json",
+    "logs/*.lock",
+    "logs/repeat_digest.json",
+]
+
+
+def _mark_ignored(root):
+    """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation."""
+    try:
+        if not root or not (Path(root) / ".git").exists():
+            return
+        gi = Path(root) / WORKSPACE_DIRNAME / ".gitignore"
+        if not gi.parent.is_dir():
+            return
+        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
+        if "logs/*.jsonl" in existing:
+            return
+        with gi.open("a", encoding="utf-8") as fh:
+            if existing and not existing.endswith("\n"):
+                fh.write("\n")
+            fh.write(("\n" if existing else "") + "\n".join(IGNORE_LINES) + "\n")
+    except OSError:
+        pass
 
 
 # A promoted tool is addressed by its bare name everywhere afterwards -- the registry stores
