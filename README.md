@@ -34,6 +34,8 @@ is plain markdown committed beside the code.
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **96.3% recall / 100% precision** on a 27-secret, 17-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
+**Every number here is sourced in [docs/evidence.md](docs/evidence.md)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built.
+
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
 runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
@@ -1227,6 +1229,26 @@ which host* is exactly what an index should tell you.
 The redaction patterns are narrow on purpose. Redacting everything high-entropy would eat commit
 hashes, UUIDs and version strings, and a map full of `<REDACTED>` is not a map.
 
+### The one gap a better model does not close
+
+Every other argument here is about cost. This one is not.
+
+Across **576,000 generated samples from 16 models**, hallucinated *package* names ran at 5.2% for
+Python and 21.7% for JavaScript — but the rate for **project-specific APIs averages 85.25%**
+([arXiv:2505.05057](https://arxiv.org/pdf/2505.05057)). Third-party libraries fare far better for an
+obvious reason: they are all over the training data, and your repository's own names are not in it
+at all.
+
+A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
+having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
+identifiers this repository's own sessions searched for are answerable from it, and why the index's
+claims about the tree are checked at **2,329 of 2,329** rather than asserted.
+
+**Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
+not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
+before and after. What is claimed is which problem this addresses and how large that problem is
+measured to be.
+
 ### What a context file measurably does, including the part that argues against this one
 
 The evidence on repository context files is now specific enough to quote, and one of the findings
@@ -1745,6 +1767,7 @@ in 1.3 — which took the suite from 87 checks to 378.
 | [docs/architecture.md](docs/architecture.md) | How the parts fit together — what runs locally, what is generated, what a session receives |
 | [docs/data-flow.md](docs/data-flow.md) | Where your code goes when chamnan runs, and where it does not |
 | [docs/verification.md](docs/verification.md) | What to run before tagging a release, and what a good result looks like |
+| **[docs/evidence.md](docs/evidence.md)** | **Every number this project quotes, where it came from, and what it changed** — published results kept separate from what was measured here, the findings that argue *against* chamnan in the same tables as the ones for it, and the eight features that were measured and then deliberately not built |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup, adding language support, what a pull request is expected to include |
 
 
