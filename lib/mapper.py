@@ -269,6 +269,8 @@ MAGIC_COMMENT = re.compile(
     r"coding[:=]\s*[\w.-]+|warn_indent\s*:\s*\w+|shareable_constant_value\s*:\s*\w+|"
     r"@ts-\w+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
     r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
+# How far into the opening comment to look for a licence. See the use site.
+BOILERPLATE_WINDOW = 240
 BOILERPLATE = re.compile(
     r"(?:copyright|\(c\)|©|licen[cs]ed?\b|all rights reserved|spdx|permission is hereby|"
     r"this (?:file|program|software|source) (?:is|may)\s+(?:free|provided|distributed|licensed|be)|redistribution|frozen_string_literal|"
@@ -334,7 +336,14 @@ def leading_comment(source, lang=None):
         # Objective-C header opens with the file name and the project name before it ever reaches
         # "Copyright", so an anchored match never fired and every file in the project shared the
         # licence as its summary.
-        if text and not BOILERPLATE.search(text[:90]):
+        # 90 characters was enough for the licences that were failing at the time and not for the
+        # next one: an ISC notice puts `copyright` and `permission is hereby` past character 90
+        # ("Permission to use, copy, modify, and/or distribute this software for any purpose with
+        # or without fee is hereby granted, provided that the above copyright notice…"), so the
+        # whole licence became a file's description. The window is the first sentence-ish now,
+        # which is where a licence announces itself and where a real description has already said
+        # what the file is.
+        if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]):
             return _clip(text)
     return ""
 
@@ -621,10 +630,26 @@ def _is_empty_module(source, lang):
             return not ast.parse(source).body
         except (SyntaxError, ValueError, RecursionError, MemoryError):
             return False
+    # The comment markers come from LINE_COMMENT, not from one list for every language. A fixed
+    # list said `#` is a comment everywhere -- so `#![no_std]` and `#![allow(unused_imports)]`, a
+    # real Rust crate header, read as an empty file and the whole module was marked as having
+    # nothing to describe. The same list said `*` opens a comment, so two lines of C pointer
+    # dereference (`*p = 5;`) read as empty too. This file builds LINE_COMMENT two hundred lines
+    # above for exactly this reason and this function was not using it.
+    marks = tuple(LINE_COMMENT.get(lang, ("//", "#")))
     for line in source.splitlines():
-        s = line.strip()
-        if s and not s.startswith(("#", "//", "/*", "*", "--", "<!--")):
-            return False
+        stripped = line.strip()
+        if not stripped:
+            continue
+        # Block comment continuation is a shape, not a language fact: a leading `*` is a comment
+        # only INSIDE /* ... */, which a line-at-a-time reader cannot see. Treated as one only for
+        # languages whose block comment is the C family's, and never where `*` can start a
+        # statement -- which is every one of them, so it costs a file being called non-empty when
+        # it is empty. That direction is the safe one: an empty file described is a wasted line,
+        # a real file called empty is a file the index never mentions.
+        if stripped.startswith(marks) or stripped.startswith(("/*", "<!--")):
+            continue
+        return False
     return True
 
 
@@ -779,7 +804,12 @@ def _render(files, root):
         if f["funcs"]:
             counts.append(f"{len(f['funcs'])}fn")
         if f["classes"]:
-            counts.append(f"{len(f['classes'])}cls")
+            # `ty` where the language's declarations are mostly interfaces and type aliases, `cls`
+            # where they are classes. Not cosmetic: a `.d.ts` of three exported `type` aliases and
+            # no class at all rendered as `3cls`, a count of a thing the file does not contain. The
+            # extraction is right -- those ARE the file's declared types and a reader needs them --
+            # so the label is what had to change, not what is collected.
+            counts.append(f"{len(f['classes'])}{'ty' if f.get('lang') == 'js' else 'cls'}")
         summary = f["doc"] or "—"
         # `one_line` on the PATH, not only on the summary. A file name may legally contain a
         # newline, and an index row is a `- ` bullet -- so a file called

@@ -59,7 +59,13 @@ def _walk(root):
     for dirpath, dirnames, filenames in os.walk(base, topdown=True, followlinks=False):
         here = Path(dirpath)
         rel_dir = here.relative_to(base)
-        if ".git" in dirnames:
+        # A submodule and a `git worktree add` checkout both carry `.git` as a FILE holding
+        # `gitdir: ...`, not as a directory -- so os.walk never puts it in dirnames and neither
+        # was recognised as a nested checkout. Somebody else's code was then indexed as this
+        # repository's own, which is the exact failure the nested-checkout exclusion exists to
+        # prevent; it was closed for the directory case and left open for the two commonest ways
+        # a checkout is actually nested.
+        if ".git" in dirnames or ".git" in filenames:
             gits.append(rel_dir / ".git")
         # In place, and before descending: this is the whole point of the module.
         dirnames[:] = [d for d in dirnames if d not in PRUNE_DIRS]

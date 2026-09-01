@@ -5553,6 +5553,69 @@ check("...and the host is left readable, because that is what the index should s
 check("...while `sig` in prose is not a credential",
       redact.PLACEHOLDER not in redact.scrub("the sig= parameter is documented upstream"))
 
+# ------------------------------ five claims MAP.md was making that were not true
+import assets as _as  # noqa: E402
+import tree as _tr  # noqa: E402
+
+# A fixed list of comment markers said `#` opens a comment in every language — while this same
+# file builds LINE_COMMENT two hundred lines above precisely because it does not. A real Rust
+# crate header and two lines of C pointer dereference both read as empty files.
+check("A RUST CRATE HEADER IS NOT AN EMPTY FILE",
+      not mapper._is_empty_module("#![no_std]\n#![allow(unused_imports)]\n", "rs"))
+check("...nor are two lines of C pointer dereference",
+      not mapper._is_empty_module("*p = 5;\n*q = *p + 1;\n", "c"))
+for _lang, _src in (("py", "# nothing\n"), ("js", "// nothing\n"), ("lua", "-- nothing\n")):
+    check(f"...while a {_lang} file of only comments still is",
+          mapper._is_empty_module(_src, _lang))
+
+# The Quick Index renders len(classes) as a count. Three exported `type` aliases and no class at
+# all read as `3cls` — a count of a thing the file does not contain.
+_ts = ("export type Money = { cents: number }\nexport type Invoice = { id: string }\n"
+       "export interface Refund { id: string }\n")
+_rendered = mapper.render([dict(path="t.ts", lang="js", lines=3, chars=len(_ts), doc="types",
+                                funcs=[], consts=[], imports=[],
+                                classes=mapper.extract_regex(_ts, "js")[2])], ROOT)
+check("TYPE DECLARATIONS ARE NOT COUNTED AS CLASSES", "3cls" not in _rendered)
+check("...but they are still counted, because a reader needs them", "3ty" in _rendered)
+
+# A submodule and a `git worktree add` checkout both carry `.git` as a FILE, which os.walk never
+# puts in dirnames — so neither was recognised and somebody else's code was indexed as this
+# repository's own.
+_sub = Path(tempfile.mkdtemp()) / "sub"
+(_sub / "external" / "some-lib").mkdir(parents=True)
+(_sub / ".git").mkdir()
+(_sub / "host.py").write_text("def mine(): pass\n", encoding="utf-8")
+(_sub / "external" / "some-lib" / ".git").write_text(
+    "gitdir: ../../.git/modules/some-lib\n", encoding="utf-8")
+(_sub / "external" / "some-lib" / "index.js").write_text(
+    "export function theirs(){}\n", encoding="utf-8")
+check("A SUBMODULE IS RECOGNISED AS A NESTED CHECKOUT, NOT AS THIS REPO'S CODE",
+      [f["path"] for f in mapper.scan(_sub)] == ["host.py"])
+check("...and it is reported as one", mapper._nested_repo_dirs(_sub))
+shutil.rmtree(_sub.parent, ignore_errors=True)
+
+# A licence that announces itself past character 90 became a file's description. The window was
+# sized to the licences that were failing at the time.
+_isc = ("/*\n * Permission to use, copy, modify, and/or distribute this software for any purpose\n"
+        " * with or without fee is hereby granted, provided that the above copyright notice and\n"
+        " * this permission notice appear in all copies.\n */\n\nfunction real(){}\n")
+check("AN ISC NOTICE IS NOT USED AS A FILE'S DESCRIPTION",
+      "Permission to use" not in (mapper.leading_comment(_isc, "js") or ""))
+
+# The stored-material section is headed "do not read these to understand the system", and a docs
+# folder of hand-written runbooks was being sent past under that instruction.
+_ar = Path(tempfile.mkdtemp()) / "ar"
+(_ar / "docs").mkdir(parents=True)
+(_ar / "data").mkdir()
+for _i in range(15):
+    (_ar / "docs" / f"rb{_i}.md").write_text(f"# Runbook {_i}\n", encoding="utf-8")
+for _i in range(12):
+    (_ar / "data" / f"d{_i}.csv").write_text("a,b,c\n", encoding="utf-8")
+_arender = _as.render(_as.scan(_ar, [{"path": "main.py"}], mapper.EXT_LANG))
+check("A DOCS FOLDER IS NOT LABELLED PAYLOAD TO SKIP", "written to be read" in _arender)
+check("...while a directory of CSV still is", "machine-readable" in _arender)
+shutil.rmtree(_ar.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

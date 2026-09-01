@@ -23,7 +23,14 @@ MAX_EXTS_SHOWN = 6
 # Extensions that carry meaning a reader might want even though chamnan does not parse them. They
 # are counted like any other asset but named first, because "this tree is 900 CSVs" is a different
 # fact from "this tree is 900 PNGs".
-NOTABLE = {".csv", ".json", ".xml", ".parquet", ".avro", ".sql", ".log", ".md"}
+# Formats worth naming when a directory is otherwise just bulk. `.md` is NOT here: this section
+# is headed "Payload, not code — do not read these to understand the system", and a docs/ folder of
+# hand-written runbooks is the one place a reader most needs to go. Fifteen incident-response
+# documents were being labelled as payload to skip. `.sql` is not here either: a migrations
+# directory is how a database-backed system is actually defined.
+NOTABLE = {".csv", ".json", ".xml", ".parquet", ".avro", ".log"}
+# Named separately and never called payload — prose and schema a reader is meant to open.
+READABLE = {".md", ".rst", ".adoc", ".txt", ".sql"}
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "vendor", ".terraform", "dist"}
 # Build and project manifests are not payload. They declare dependencies and project layout, which
 # is exactly what someone joining the repo needs, and this section's headline tells the reader not
@@ -89,8 +96,15 @@ def render(groups):
     for name, g in ranked[:MAX_DIRS_LISTED]:
         exts = sorted(g["exts"].items(), key=lambda kv: -kv[1])[:MAX_EXTS_SHOWN]
         notable = [e for e, _ in exts if e in NOTABLE]
+        readable = [e for e, _ in exts if e in READABLE]
         shown = ", ".join(f"{e} ×{n:,}" for e, n in exts)
         tail = "  _(machine-readable: " + ", ".join(notable) + ")_" if notable else ""
+        # Said out loud, because the section's own heading tells the reader not to open any of
+        # this. A directory of hand-written runbooks or of schema migrations was being sent past
+        # under that instruction — the exact places a reader needs to go, labelled as places to
+        # skip.
+        if readable:
+            tail += ("  _(**written to be read**: " + ", ".join(readable) + ")_")
         out.append(f"- **`{name}/`** — {g['count']:,} files, {_human(g['bytes'])} — {shown}{tail}")
     if len(ranked) > MAX_DIRS_LISTED:
         out.append(f"- _…and {len(ranked)-MAX_DIRS_LISTED} more directories_")
