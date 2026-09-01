@@ -280,6 +280,26 @@ BOILERPLATE = re.compile(
 # Elixir puts the file's summary in @moduledoc, which is a module attribute holding a heredoc, not
 # a comment — so a comment reader finds nothing. Phoenix scored 16 of 206 until this was handled.
 MODULEDOC = re.compile(r'^\s*@(?:module)?doc\s+"""\s*$', re.M)
+# A file-level doc marker: the language's own way of saying "this comment is about the FILE", as
+# opposed to about the declaration under it. Rust and Zig write `//!`; without preferring it, the
+# first ordinary `//` comment wins — and on tokio's crate root that produced "loom is an internal
+# implementation detail. Do not show…", an aside about a build flag, in place of 431 lines of `//!`
+# describing what the crate is. The one file a newcomer opens first.
+FILE_DOC_MARKER = {"rs": "//!", "zig": "//!"}
+FILE_DOC = re.compile(r"^[ \t]*//!(.*)$", re.M)
+
+
+def _skip_continuation(lines, i):
+    """Index just past the directive at `lines[i]`, following it across lines if it is unclosed."""
+    depth = lines[i].count("(") - lines[i].count(")") + lines[i].count("[") - lines[i].count("]")
+    i += 1
+    # Bounded: a file whose brackets never balance must not consume the whole file looking.
+    limit = min(len(lines), i + 40)
+    while depth > 0 and i < limit:
+        depth += (lines[i].count("(") - lines[i].count(")")
+                  + lines[i].count("[") - lines[i].count("]"))
+        i += 1
+    return i
 
 
 def leading_comment(source, lang=None):
@@ -302,11 +322,28 @@ def leading_comment(source, lang=None):
     if doc:
         return doc
 
+    # Preferred over whatever comment happens to come first, because the language itself says this
+    # one is about the file. Same reason @moduledoc is read for Elixir above.
+    if FILE_DOC_MARKER.get(lang):
+        doc_lines = [m.group(1).strip() for m in FILE_DOC.finditer(source)]
+        joined = " ".join(x for x in doc_lines if x).strip()
+        if joined:
+            return _clip(MAGIC_COMMENT.sub("", joined, count=1).strip())
+
     i = 0
     for _ in range(6):          # at most six boilerplate blocks before giving up on the file
-        while i < len(lines) and (not lines[i].strip() or SKIP_OPENERS.match(lines[i])
-                              or (lang in HASH_IS_DIRECTIVE and lines[i].lstrip().startswith('#'))):
-            i += 1
+        while i < len(lines):
+            line = lines[i]
+            if not line.strip() or SKIP_OPENERS.match(line) or (
+                    lang in HASH_IS_DIRECTIVE and line.lstrip().startswith("#")):
+                # A directive or attribute can span lines, and only its FIRST line looked like one.
+                # Rust's crate root opens `#![allow(\n    clippy::…,\n)]`, so line two fell through
+                # to the comment reader, which returned "" and made the whole function give up --
+                # on the one file in a crate that carries the architecture overview a newcomer
+                # reads first. tokio's `src/lib.rs` has 431 lines of `//!` and described nothing.
+                i = _skip_continuation(lines, i)
+                continue
+            break
         if i >= len(lines):
             return ""
         text, i = _one_comment(lines, i, prefix)
@@ -875,7 +912,11 @@ def _render(files, root):
         if f["consts"]:
             lines.append(f"**Constants:** {', '.join(f['consts'][:40])}")
         for name, doc, methods in f["classes"]:
-            lines.append(f"- **class {name}**{' — ' + doc if doc else ''}")
+            # `type` where the language's declarations are interfaces and aliases, matching the
+            # Quick Index's own `ty` counter. Full Detail is what the index tells a reader to grep
+            # for symbol-level truth, and it was calling a union type alias a class.
+            kind = "type" if f.get("lang") == "js" else "class"
+            lines.append(f"- **{kind} {name}**{' — ' + doc if doc else ''}")
             if methods:
                 lines.append(f"  - methods: {', '.join(methods[:30])}")
         for sig, doc in f["funcs"]:

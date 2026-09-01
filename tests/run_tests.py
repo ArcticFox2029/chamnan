@@ -5816,6 +5816,118 @@ check("...while the pin definitions beside it are",
 check("...and a #define whose name merely resembles a guard is kept",
       "B_H" in mapper._extract_one("#ifndef A_H\n#define B_H\n", "c.h", "c")[3])
 
+# ------------------------------ six places a module contradicted another module
+import md as _md  # noqa: E402
+import aging as _ag  # noqa: E402
+
+# fnmatch's `*` crosses `/`; Path.glob's does not — and rulecheck, the module that actually RUNS
+# the check, uses Path.glob. So the pointer told a session that `src/deep/nested/leaky.py` was
+# covered by a rule written `in src/*.py`, while the checker had never looked at that file and
+# never would. Two modules, one glob, opposite answers, and the one talking to the model was wrong.
+for _g, _r, _want in (("src/*.py", "src/app.py", True),
+                      ("src/*.py", "src/deep/nested/leaky.py", False),
+                      ("src/**/*.py", "src/deep/nested/leaky.py", True),
+                      ("src/", "src/a/b.py", True),
+                      ("src/", "other/a.py", False),
+                      ("*.md", "README.md", True),
+                      ("*.md", "docs/a.md", False)):
+    check(f"a rule's glob means the same thing to both modules ({_g} vs {_r})",
+          pointer_mod._glob_covers(_g, _r) is _want)
+
+# A `---` horizontal rule at the top of a document is an ordinary markdown idiom, and any second
+# one further down closed a "front matter" block whose body was prose. A line of that prose
+# starting "description:" was then read as declared metadata and used as the entry's title.
+check("FRONT MATTER HAS TO LOOK LIKE FRONT MATTER",
+      _md.front_matter("---\n\n# Real Title\n\ndescription: this is body prose\n\n---\n") == "")
+check("...while real front matter still parses",
+      "description: real" in _md.front_matter("---\ndescription: real\n---\nbody"))
+
+# Equality alone is right about direction and wrong about precision: an environment declaring
+# `python 3.11` declares a series, and a lesson saying `3.11.2` names a member of it.
+check("a declared 3.11 covers a claimed 3.11.2", _ag._covers("3.11", "3.11.2"))
+check("...but not a claimed 3.12", not _ag._covers("3.11", "3.12"))
+check("...and a vaguer claim than the environment is still worth noticing",
+      not _ag._covers("3.11.2", "3.11"))
+
+# The two commonest ways an environment is actually selected are positional, not flags.
+_envr = Path(tempfile.mkdtemp())
+(_envr / ".chamnan").mkdir(parents=True)
+for _n in ("production", "staging"):
+    env_mod.upsert(_envr, _n, env_mod.render_entry(_n, platform="k8s"))
+for _cmd, _want in (("kubectl config use-context production", "production"),
+                    ("terraform workspace select staging", "staging"),
+                    ("kubectl --context production get pods", "production"),
+                    ("grep use-context deploy.log", None),
+                    ("echo select production", None)):
+    check(f"match_command({_cmd[:34]!r}…)", env_mod.match_command(_envr, _cmd) == _want)
+shutil.rmtree(_envr, ignore_errors=True)
+
+# The bulk-read notice priced a file with a flat divisor while the package's own estimator existed
+# and had been re-fitted precisely because a flat divisor undercounts CJK and path-dense text.
+_brn = import_hook_module("chamnan_bulk_read_notice.py")
+check("the bulk-read notice uses the package's own estimator",
+      "tokens.estimate" in (ROOT / "hooks" / "chamnan_bulk_read_notice.py").read_text(
+          encoding="utf-8"))
+# ...and its build/vendor check ran over the file's ABSOLUTE path, so a repo checked out beneath
+# any directory named `vendor` had every one of its own source files called generated.
+_vend = Path(tempfile.mkdtemp()) / "vendor" / "realproject"
+(_vend / "src").mkdir(parents=True)
+_vf = _vend / "src" / "app.py"
+_vf.write_text("x = 1\n", encoding="utf-8")
+check("A REPO BENEATH A DIRECTORY NAMED vendor IS NOT ALL GENERATED",
+      _brn.reason_for(_vf, _vend) == "")
+(_vend / "vendor").mkdir()
+_rv = _vend / "vendor" / "lib.py"
+_rv.write_text("y = 2\n", encoding="utf-8")
+check("...while a real vendor directory inside it is still flagged",
+      _brn.reason_for(_rv, _vend) != "")
+shutil.rmtree(_vend.parent.parent, ignore_errors=True)
+
+# ------------------------------ measured against real trees, not fixtures
+# All three found by running the current build over tokio and Homebrew and reading the result as a
+# stranger would. Two are regressions introduced earlier in this same release.
+
+# Once one dominant directory pushes the roll-up to depth 2, a file with only ONE directory
+# segment fell into "(root)" — so `src/blocking.rs` (production) and `tests/fs.rs` (integration
+# tests) landed in one bucket of 175, under a name true of neither.
+_deep = "\n".join(["## Quick Index", ""] + [
+    f"- **`{q}`** (10L) — x" for q in
+    ["src/blocking.rs", "tests/fs.rs", "tests/io.rs", "Cargo.toml"]
+    + [f"src/runtime/f{i}.rs" for i in range(40)]])
+_deep_out = _ru.collapse(_deep, "MAP.md", per_dir=0)
+check("A FILE SHALLOWER THAN THE CHOSEN DEPTH KEEPS ITS OWN PARENT",
+      "- **src/** (1)" in _deep_out and "- **tests/** (2)" in _deep_out)
+check("...and (root) means what it says: a file with no directory at all",
+      "- **(root)/** (1)" in _deep_out)
+
+# A directive can span lines and only its first line looked like one, so line two of Rust's
+# `#![allow(\n …\n)]` fell through to the comment reader, which returned "" and made the whole
+# function give up — on the file carrying the crate's architecture overview.
+_multi = ("#![allow(\n    clippy::cognitive_complexity,\n    clippy::needless_doctest_main,\n)]\n\n"
+          "//! A runtime for writing reliable network applications.\n")
+check("A MULTI-LINE ATTRIBUTE DOES NOT SWALLOW THE FILE'S OWN DOC",
+      "runtime for writing reliable" in (mapper.leading_comment(_multi, "rs") or ""))
+check("...and an unbalanced one is bounded rather than eating the file",
+      mapper.leading_comment("#![allow(\n" + "x,\n" * 100, "rs") == "")
+check("...while a C include block still steps aside for the real description",
+      "Real description" in (mapper.leading_comment(
+          "#include <stdio.h>\n#define X 1\n\n/* Real description here */\n", "c") or ""))
+
+# `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
+# first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
+_aside = ("// loom is an internal implementation detail. Do not show this label.\n"
+          "//! A runtime for writing reliable network applications.\n")
+check("the language's own file-doc marker wins over whatever comment comes first",
+      "runtime for writing reliable" in (mapper.leading_comment(_aside, "rs") or ""))
+
+# Full Detail is what the index tells a reader to grep for symbol-level truth, and it was calling
+# a union type alias a class.
+_tsrender = mapper.render([dict(path="t.ts", lang="js", lines=3, chars=40, doc="types",
+                                funcs=[], consts=[], imports=[],
+                                classes=[("AgentInput", "", [])])], ROOT)
+check("Full Detail names a TypeScript declaration a type, not a class",
+      "**type AgentInput**" in _tsrender and "**class AgentInput**" not in _tsrender)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
