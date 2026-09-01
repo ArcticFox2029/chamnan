@@ -151,6 +151,22 @@ def workspace(root=None):
     return find_root(root) / WORKSPACE_DIRNAME
 
 
+# Type was checked and range was not, and for a retention setting the two are not the same thing.
+# `{"log_retention_days": -1}` is valid JSON, the right type, and survives the key filter -- and
+# then `time.time() - (-1) * 86400` puts the cutoff a day in the FUTURE, so every file is "older"
+# than it. Reproduced: a log and a session record written one second earlier, both deleted. Session
+# records are committed work, not cache. One mistyped minus sign.
+_NON_NEGATIVE = ("log_retention_days", "session_retention_days", "index_token_budget",
+                 "state_token_budget", "output_byte_ceiling")
+
+
+def _in_range(key, value):
+    """False for a value whose TYPE is right and whose meaning is not."""
+    if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):
+        return value >= 0
+    return True
+
+
 def load_config(root=None):
     """The config, with every value guaranteed to be the type its default is.
 
@@ -170,7 +186,13 @@ def load_config(root=None):
             continue
         if want is not bool and isinstance(v, bool):
             continue
-        if isinstance(v, want):
+        # Range as well as type, and this is the loader every caller actually uses -- ensure()'s
+        # own merge is a different function and patching only that one left the real path open.
+        # `{"log_retention_days": -1}` is valid JSON, the right type, and survives the key filter;
+        # `time.time() - (-1) * 86400` then puts the cutoff a day in the FUTURE, so every file on
+        # disk is older than it. Reproduced: a log and a session record written one second earlier,
+        # both deleted. Session records are committed work.
+        if isinstance(v, want) and _in_range(k, v):
             cfg[k] = v
     return cfg
 
@@ -259,6 +281,7 @@ class NotAWorkspace(Exception):
     """`.chamnan` exists and is not a directory, so no workspace can be built at that path."""
 
 
+
 def ensure(root=None):
     ws = workspace(root)
     # Checked before anything is attempted. A plain file named `.chamnan` -- a bad merge, a stray
@@ -291,9 +314,18 @@ def ensure(root=None):
     # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
     # filter, and then raises TypeError on the first `>` comparison in a different module.
     merged.update({k: v for k, v in current.items()
-                   if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))})
+                   if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
+                   and _in_range(k, v)})
     if merged != current:
-        cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        try:
+            cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            # Every other failure in this function is caught deliberately -- a mkdir collision must
+            # not take the rest of the scaffold with it, and a plain-file `.chamnan` raises its own
+            # named error. This write had no guard, so a read-only workspace (a checkout mounted
+            # read-only, a config left at 444) crashed ensure() outright and with it every command
+            # and hook that calls it. Merging new defaults is a nicety; running is not.
+            pass
     _mark_generated(root or find_root())
     _mark_ignored(root or find_root())
     return ws

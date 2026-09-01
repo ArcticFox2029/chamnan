@@ -596,8 +596,21 @@ NOT_A_FUNCTION = {
 KEYWORD_DEFINED = {"rs", "rb", "py", "go", "ex", "nim", "php", "swift", "kotlin", "zig", "lua"}
 
 
+# `#ifndef X` immediately followed by `#define X` is an include guard: a name that exists to stop
+# the file being included twice and describes nothing about what the file does. Every C and C++
+# header has one, so listing it as a constant put one pure-noise entry in every header's row --
+# `BOARD_ESP32_H` beside `LED_PIN` and `I2C_SDA`, which are the real ones a reader wants.
+_INCLUDE_GUARD = re.compile(r"^[ \t]*#\s*ifndef[ \t]+(\w+)[ \t]*\r?\n[ \t]*#\s*define[ \t]+\1\b",
+                            re.M)
+
+
+def _guard_names(source):
+    return {m.group(1) for m in _INCLUDE_GUARD.finditer(source)}
+
+
 def extract_regex(source, lang):
     funcs, classes, consts = [], [], []
+    guards = _guard_names(source) if lang == "c" else set()
     rules = REGEX_RULES.get(lang, [])
     for kind, pattern in rules:
         for m in re.finditer(pattern, source, re.M):
@@ -617,7 +630,7 @@ def extract_regex(source, lang):
                 label = ".".join(groups) if len(groups) > 1 else name
                 if label not in [c for c, _, _ in classes]:
                     classes.append((label, "", []))
-            elif name not in consts:
+            elif name not in consts and name not in guards:
                 consts.append(name)
     return leading_comment(source, lang), funcs, classes, consts
 

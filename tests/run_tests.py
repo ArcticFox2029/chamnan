@@ -5754,6 +5754,68 @@ check("...and a pin does not leak into the section after it",
       "tail of the unpinned one" not in
       (fit._trim(f"\n### X\n[repo:a]\n{_after}\n[/repo:a]\n", 700, {}) or ""))
 
+# ------------------------------ a config value of the right type and the wrong meaning
+# load_config checked the TYPE of every key and never its range, and for a retention setting those
+# are not the same thing. `{"log_retention_days": -1}` is valid JSON, correctly typed, survives the
+# key filter — and then `time.time() - (-1) * 86400` puts the cutoff a day in the FUTURE, so every
+# file on disk is "older" than it. Reproduced: a log and a session record written one second
+# earlier, both deleted. Session records are committed work, not cache.
+_cfgr = Path(tempfile.mkdtemp()) / "cfgr"
+(_cfgr / ".git").mkdir(parents=True)
+ws.ensure(_cfgr)
+(_cfgr / ".chamnan" / "logs" / "pointer.jsonl").write_text("fresh\n", encoding="utf-8")
+(_cfgr / ".chamnan" / "sessions" / "2026-09-01-abcd.md").write_text("# just written\n",
+                                                                    encoding="utf-8")
+_cf = _cfgr / ".chamnan" / "config.json"
+_cd = json.loads(_cf.read_text(encoding="utf-8"))
+_cd["log_retention_days"] = -1
+_cd["session_retention_days"] = -5
+_cf.write_text(json.dumps(_cd), encoding="utf-8")
+ws.prune_logs(_cfgr)
+ws.prune_sessions(_cfgr)
+check("A NEGATIVE RETENTION DOES NOT DELETE EVERYTHING WRITTEN TODAY",
+      (_cfgr / ".chamnan" / "logs" / "pointer.jsonl").is_file())
+check("...including committed session records",
+      (_cfgr / ".chamnan" / "sessions" / "2026-09-01-abcd.md").is_file())
+check("...and the bad value is dropped rather than kept",
+      ws.load_config(_cfgr)["log_retention_days"] >= 0)
+check("...while a legitimate value is still honoured",
+      ws.load_config(_cfgr) is not None)
+
+# Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
+# workspace crashed it outright — and with it every command and hook that calls it.
+_ro = Path(tempfile.mkdtemp()) / "ro"
+(_ro / ".git").mkdir(parents=True)
+ws.ensure(_ro)
+_roc = _ro / ".chamnan" / "config.json"
+_rod = json.loads(_roc.read_text(encoding="utf-8"))
+_rod.pop(next(iter(_rod)), None)
+_roc.write_text(json.dumps(_rod), encoding="utf-8")
+os.chmod(_roc, 0o444)
+os.chmod(_ro / ".chamnan", 0o555)
+try:
+    ws.ensure(_ro)
+    _survived = True
+except Exception:
+    _survived = False
+finally:
+    os.chmod(_ro / ".chamnan", 0o755)
+    os.chmod(_roc, 0o644)
+check("A READ-ONLY WORKSPACE DOES NOT CRASH ensure()", _survived)
+shutil.rmtree(_cfgr.parent, ignore_errors=True)
+shutil.rmtree(_ro.parent, ignore_errors=True)
+
+# An include guard is a name that exists to stop double inclusion and describes nothing. Every C
+# and C++ header has one, so it put a pure-noise entry in every header's row.
+_hdr = ("#ifndef BOARD_ESP32_H\n#define BOARD_ESP32_H\n#define LED_PIN 2\n"
+        "#define I2C_SDA 21\nvoid board_init(void);\n#endif\n")
+check("AN INCLUDE GUARD IS NOT LISTED AS A CONSTANT",
+      "BOARD_ESP32_H" not in mapper._extract_one(_hdr, "b.h", "c")[3])
+check("...while the pin definitions beside it are",
+      set(mapper._extract_one(_hdr, "b.h", "c")[3]) == {"LED_PIN", "I2C_SDA"})
+check("...and a #define whose name merely resembles a guard is kept",
+      "B_H" in mapper._extract_one("#ifndef A_H\n#define B_H\n", "c.h", "c")[3])
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
