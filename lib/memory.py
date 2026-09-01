@@ -26,6 +26,7 @@ files are small and each one was written on purpose.
 """
 import re
 import mdblock
+import state
 
 CATEGORIES = ("decisions", "lessons", "rules")
 
@@ -58,7 +59,11 @@ def title_of(path, text=None):
         text = text if text is not None else path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return path.stem.replace("-", " ")
-    for line in text.splitlines():
+    # 🐛 A UTF-8 BOM sits before the `#`, so `startswith("# ")` was False on the first line and the
+    # real title was unreachable: `# Why Postgres over SQLite` was injected as `why postgres`, the
+    # de-slugged filename. Editors on Windows write a BOM by default, and this is the only place a
+    # BOM could change what a session is told.
+    for line in text.lstrip("\ufeff").splitlines():
         if line.startswith("# "):
             return line[2:].strip()
     return path.stem.replace("-", " ")
@@ -66,7 +71,7 @@ def title_of(path, text=None):
 
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
-    out = []
+    out, titles = [], []
     for path in entries(root, "rules"):
         try:
             body = path.read_text(encoding="utf-8", errors="replace").strip()
@@ -74,14 +79,33 @@ def rules_text(root):
             continue
         if body:
             out.append(_flatten(body))
+            titles.append(title_of(path))
     if not out:
         return ""
     joined = "\n\n".join(out)
-    if len(joined) > MAX_RULES_CHARS:
-        cut = joined[:MAX_RULES_CHARS].rsplit("\n", 1)[0]
-        joined = cut + (f"\n\n_…more rules in `.chamnan/memory/rules/` — "
-                        f"{len(out)} in total._")
-    return joined
+    if len(joined) <= MAX_RULES_CHARS:
+        return joined
+    # 🐛 Two things went wrong at this cut, and both were silent.
+    #
+    # It landed anywhere, including inside a ``` block, leaving the fence open — after which every
+    # later line of the injected block rendered as code, INCLUDING the "more rules" notice itself,
+    # so the reader was not told anything had been left out. `state._safe_cut` was written for
+    # exactly this and was never used here.
+    #
+    # And it dropped WHOLE RULES by filename alphabet without naming them: a verbose `a-*.md`
+    # starved `c-prod.md` — "Never write to prod" — out of the injection entirely, under a notice
+    # that said only how many rules exist. A rule that does not arrive is the one case where saying
+    # which one is missing costs a line and buys everything.
+    cut = state._safe_cut(joined, MAX_RULES_CHARS)
+    kept = joined[:cut].rstrip()
+    missing = [t for t in titles if t not in kept]
+    tail = f"\n\n_…more rules in `.chamnan/memory/rules/` — {len(out)} in total."
+    if missing:
+        tail += " Not shown above: " + ", ".join(f"**{t}**" for t in missing[:6])
+        if len(missing) > 6:
+            tail += f", and {len(missing) - 6} more"
+        tail += "."
+    return kept + tail + "_"
 
 
 def rules_with_titles(root):
@@ -152,10 +176,27 @@ def render_titles(found):
     def _cap(title):
         return title if len(title) <= MAX_TITLE_CHARS else title[:MAX_TITLE_CHARS].rstrip() + "…"
 
-    lines = [f"- **{cat[:-1]}** · `{name}` — {_cap(title)}"
-             for cat, title, name in found[:MAX_TITLES]]
+    # 🐛 The cap was applied to the concatenation, which is in category-then-filename order — so a
+    # repository with ten decisions and two lessons sent NO LESSON to the session at all, under a
+    # line reading "…and 4 more" that never said a whole category was missing. Interleave, so each
+    # category is represented before either takes a second slot.
+    by_cat = {}
+    for row in found:
+        by_cat.setdefault(row[0], []).append(row)
+    interleaved, i = [], 0
+    while len(interleaved) < len(found):
+        for cat in sorted(by_cat):
+            if i < len(by_cat[cat]):
+                interleaved.append(by_cat[cat][i])
+        i += 1
+    shown = interleaved[:MAX_TITLES]
+    lines = [f"- **{cat[:-1]}** · `{name}` — {_cap(title)}" for cat, title, name in shown]
     if len(found) > MAX_TITLES:
-        lines.append(f"- _…and {len(found) - MAX_TITLES} more in `.chamnan/memory/`_")
+        missing = sorted({c for c, _, _ in found} - {c for c, _, _ in shown})
+        note = f"- _…and {len(found) - MAX_TITLES} more in `.chamnan/memory/`"
+        if missing:
+            note += ", including every " + " and ".join(missing)
+        lines.append(note + "_")
     return "\n".join(lines)
 
 

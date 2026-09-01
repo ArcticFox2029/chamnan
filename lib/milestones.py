@@ -80,7 +80,12 @@ def recent_titles(root, count=INJECT_RECENT):
     found = entries(root)
     if not found:
         return ""
-    lines = [f"- **{date}** — {title}" for date, title, _ in found[-count:][::-1]]
+    # 🐛 `found[-count:]` takes the last few by WRITE POSITION, and this file is append-only — so a
+    # backfilled `2026-01-05` entry appended today rendered above `2026-08-20`, under a hook comment
+    # that says "newest first", and pushed the genuinely second-newest out of the list entirely.
+    # An undated entry sorts last rather than being dropped: it still happened.
+    ordered = sorted(found, key=lambda e: (e[0] or "", ), reverse=True)
+    lines = [f"- **{date}** — {title}" for date, title, _ in ordered[:count]]
     if len(found) > count:
         lines.append(f"- _…{len(found) - count} earlier in `.chamnan/{FILENAME}`_")
     return "\n".join(lines)

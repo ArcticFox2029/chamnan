@@ -6685,6 +6685,56 @@ check("...while a real past date still resolves", _ledx._ymd_to_ts(2024, 1, 10) 
 check("...and a day of slack is allowed for a machine in a timezone ahead of this one",
       _ledx._ymd_to_ts(*time.strftime("%Y %m %d").split()) is not None)
 
+# ------------------------------ the rules and titles that reach a session, or do not
+import memory as _mem2  # noqa: E402
+import milestones as _ms2  # noqa: E402
+
+_memd = Path(tempfile.mkdtemp(prefix="chamnan-mem-")) / ".chamnan" / "memory"
+(_memd / "rules").mkdir(parents=True)
+# The cut landed anywhere, including inside a ``` block — after which the fence was open and every
+# later line rendered as code, INCLUDING the "more rules" notice, so nothing said anything was
+# missing. And it dropped whole rules by filename alphabet without naming them: a verbose `a-*.md`
+# starved `c-prod.md` — "Never write to prod" — out of the injection entirely.
+(_memd / "rules" / "a-verbose.md").write_text(
+    "# Long-winded convention\n\n" + "This rule goes on at length about formatting. " * 40
+    + "\n\n```bash\nchamnan-map --preview\n" + "echo padding\n" * 30 + "```\n", encoding="utf-8")
+(_memd / "rules" / "c-prod.md").write_text(
+    "# Never write to prod\n\nThe production database is read-only from here.\n", encoding="utf-8")
+_rules = _mem2.rules_text(_memd.parent.parent)
+check("THE RULES CUT NEVER LEAVES A FENCE OPEN", _rules.count("```") % 2 == 0)
+check("...so the notice that something was left out is itself visible",
+      "more rules in" in _rules)
+check("A RULE THAT DID NOT FIT IS NAMED, NOT JUST COUNTED", "Never write to prod" in _rules)
+
+# The title cap was applied to a category-then-filename concatenation, so ten decisions and two
+# lessons sent NO lesson at all, under a line that never said a category was missing.
+for _cat, _n in (("decisions", 10), ("lessons", 2)):
+    (_memd / _cat).mkdir(parents=True, exist_ok=True)
+    for _i in range(_n):
+        (_memd / _cat / f"{_cat[0]}{_i:02}.md").write_text(
+            f"# {_cat[:-1].title()} number {_i}\n\nbody\n", encoding="utf-8")
+_titles = _mem2.render_titles(_mem2.titles(_memd.parent.parent))
+check("NEITHER CATEGORY IS STARVED OUT OF THE INJECTED TITLE LIST",
+      "**lesson**" in _titles and "**decision**" in _titles)
+
+# A UTF-8 BOM sits before the `#`, so the real title was unreachable and the de-slugged filename
+# was injected instead. Editors on Windows write one by default.
+(_memd / "decisions" / "bom.md").write_bytes("\ufeff# Why Postgres over SQLite\n\nbody\n".encode())
+check("A BOM DOES NOT HIDE AN ENTRY'S TITLE",
+      _mem2.title_of(_memd / "decisions" / "bom.md") == "Why Postgres over SQLite")
+
+# `found[-count:]` takes the last few by WRITE POSITION, and milestones.md is append-only — so a
+# backfilled entry appended today rendered above a newer one, under a comment saying "newest first".
+(_memd.parent / "milestones.md").write_text(
+    "# Milestones\n\n## 2026-08-20 — Recent work\nbody\n\n"
+    "## 2026-07-01 — Middle\nbody\n\n## 2026-01-05 — Backfilled today\nbody\n", encoding="utf-8")
+_recent = _ms2.recent_titles(_memd.parent.parent)
+check("MILESTONES ARE NEWEST BY DATE, NOT BY WHERE THEY WERE APPENDED: " + repr(_recent[:40]),
+      _recent.index("2026-08-20") < _recent.index("2026-07-01"))
+check("...and the backfilled one does not displace the genuinely second-newest",
+      "2026-07-01" in _recent)
+shutil.rmtree(_memd.parent.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
