@@ -80,7 +80,12 @@ SECRET_WORDS = (
     # came back as `self.tokenizer_config = <REDACTED>`, and so did `detokenize_output_text`,
     # `retokenized_batch`, `credentialing_deadline` and `secretariat_id`. Ordinary identifiers,
     # destroyed in the index the tool exists to write.
-    r"(?<![A-Za-z])(?:password|passwd|pwd|secret|token|credential)s?(?![A-Za-z])"
+    r"(?<![A-Za-z])(?:password|passwd|pwd|secret|credential)s?(?![A-Za-z])"
+    # `token` needs a component beside it, for the same reason `key` does: a bare `token` in source
+    # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
+    # the identifier family this module's own docstring says was already fixed once. The credential
+    # spellings — access_token, auth_token, api_token, refresh_token — all carry one.
+    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]tokens?(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
     r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Secret|Token|Credential)s?)(?![A-Za-z])"
@@ -89,7 +94,15 @@ SECRET_WORDS = (
     # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
     # without the left one `monkey_patch` matches, without the right one `keyboard_layout` does,
     # and destroying ordinary configuration is the other half of this module's trade.
-    r"|(?<![A-Za-z])(?:[A-Za-z0-9]+[_-])?keys?(?![A-Za-z])"
+    # 🐛 ...but the leading component is now REQUIRED, not optional. `key` is the commonest
+    # parameter name in Python, and measured against 257 real files it accounted for 70 of 129
+    # destroyed lines on its own: `key=lambda p: p.stat().st_mtime` became `key=<REDACTED> p: …`,
+    # `st.button("บันทึก", key="save_sn_key")` lost its widget id. `token`/`tokens` alone is the
+    # same story — `tokens = tokenizer.encode(prompt)`. The credential spellings all carry another
+    # component (api_key, ssh_key, AccountKey), so requiring one costs nothing on the secret side
+    # and stops the single largest source of damage on the other. `password`, `secret` and
+    # `credential` keep their bare form, because `password = "…"` really is one.
+    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]keys?(?![A-Za-z])"
     # ...and the same component written in CamelCase, where there is no separator to anchor on:
     # AccountKey, ApiKey, PrivateKey. `(?-i:...)` turns the surrounding re.I off for this branch
     # only, because the distinction IS the case -- a capital K after a lowercase letter is a word
@@ -97,8 +110,19 @@ SECRET_WORDS = (
     r"|(?-i:(?<=[a-z0-9])Keys?)(?![A-Za-z])"
     # Word-anchored on the left, and `authentication` excluded on the right. Unanchored, `auth`
     # fires inside `oauth_flow` and `authentication_flow`, whose values are OAuth grant types.
-    r"|(?<![A-Za-z])auth(?!ors?\b|entication)"
+    # `entic` covers authentication, authenticate, authenticates, authenticated, authenticator and
+    # authenticity in one: only `authentication` was excluded, so a sentence saying what a gate
+    # "authenticates" lost its last word. Prose is the other half of this module's trade.
+    r"|(?<![A-Za-z])auth(?!ors?\b|entic|orit)"
 )
+
+# A compiled regular expression is not a credential, whatever it is called. `TOKEN_RE`,
+# `TOKEN_LEAK_RE` and `SECRET_PATTERN` are the names a scanner gives its own patterns — including
+# this module's — and they were being redacted out of the index of any repository that has one.
+_NOT_A_CREDENTIAL_NAME = re.compile(
+    r"(?:_|\b)(?:re|regex|rx|pattern|patterns|prefix|suffix|header|headers|field|fields|column|"
+    r"columns|param|params|arg|args|label|labels|id|ids|name|names|type|types|kind|order|sort|"
+    r"index|idx|map|maps|dict|list|set|count|len|size|fn|func|cls|class)$", re.I)
 
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
@@ -116,9 +140,45 @@ ASSIGNED_SECRET_BARE = re.compile(
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
     # a now-broken line -- a leak and a corruption from one missing character.
-    r"(?!<REDACTED>)([^\s'\"#;,()\[\]{}]{6,})", re.I)
+    # 🐛 The value class stopped at the first excluded character and the REMAINDER was printed
+    # beside a `<REDACTED>` — `API_TOKEN=abcdef,Tr0ub4dorENV88` became
+    # `API_TOKEN=<REDACTED>,Tr0ub4dorENV88`, which is worse than a plain miss because the marker
+    # tells a reviewer the line was handled. And a value STARTING with an excluded character was
+    # missed entirely: `DB_PASSWORD=#Tr0ub4dorENV99` passed through whole. The run may now begin
+    # with any non-space and continue to the end of the line; `#` and `;` still terminate it only
+    # when they follow whitespace, which is where a real trailing comment lives.
+    # Still a single unbroken run — spanning spaces ate `password: ask the platform team for it`,
+    # and prose is the other half of this module's trade — but the run may now START with an
+    # excluded character and CONTAIN one. Before, the class stopped at the first `, # ; ( ) [ ] { }`
+    # and the remainder was printed beside a `<REDACTED>`: `API_TOKEN=abcdef,Tr0ub4dorENV88` came
+    # back as `API_TOKEN=<REDACTED>,Tr0ub4dorENV88`, which is worse than a plain miss because the
+    # marker says the line was handled. And a value beginning with one was missed outright:
+    # `DB_PASSWORD=#Tr0ub4dorENV99` passed through whole.
+    r"(?!<REDACTED>)(\S{6,})", re.I)
 # A secret-named assignment whose value is a CALL. What is inside is not knowable from here and the
 # name says it is a credential, so the whole expression goes -- to the end of that line, no further.
+# A credential written as XML/HTML element text. Maven `settings.xml`, Tomcat `server.xml`, .NET
+# `web.config`, Spring XML and JBoss datasources all put it here, and every assignment rule above
+# requires a literal `[:=]` that element syntax does not have. A whole ecosystem's config format,
+# passing through untouched.
+XML_SECRET = re.compile(
+    r"(<\s*(?:\w+:)?(?:" + SECRET_WORDS + r")[\w.-]*\s*(?:\s[^>]*)?>)([^<>]{4,})(</)", re.I)
+# The hash rocket. After `[:=]` matches the `=`, `\s*` cannot cross the `>` — so the quoted rule
+# found no quote and the bare rule captured `>` alone and failed its six-character floor. This is
+# how `config/database.php` is written in every Laravel app and every Rails `.rb` config.
+ROCKET_SECRET = re.compile(
+    r"((?:" + SECRET_WORDS + r")[\w-]*['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I)
+# A YAML block scalar puts `|` or `>-` where the value would be and the value on the next line, so
+# there was nothing on the key's own line to capture. Helm values.yaml is full of them.
+YAML_BLOCK_SECRET = re.compile(
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>][-+]?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I)
+# Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
+# `.pgpass`'s colon-delimited final field. `_netrc` — the Windows spelling — and `.pgpass` are in
+# neither refusal list, so peek opens both.
+SPACED_SECRET = re.compile(
+    r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})$", re.I | re.M)
+PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)$", re.M)
+
 ASSIGNED_SECRET_CALL = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
     r"(?!<REDACTED>)([A-Za-z_][\w.]*\s*\(.*)$", re.I | re.M)
@@ -158,11 +218,25 @@ def is_blocked(path):
 
 
 def is_never_opened(path):
-    """Files peek refuses outright, because a summary of them is a summary of a secret."""
+    """Files peek refuses outright, because a summary of them is a summary of a secret.
+
+    🐛 `is_blocked` above carries an ANY-SEGMENT extension check and the comment inside it claims
+    both functions run "the same four checks". They did not: this one tested only the last segment,
+    so `backup.pem.txt`, `server.key.old` and `deploy.key.bak` — the ordinary ways a key gets copied
+    aside — were blocked from the indexer and opened by `chamnan-peek`. And peek prints only the
+    first eight lines, so the `-----END PRIVATE KEY-----` never reached the scrubber, the greedy
+    block pattern could not match, and the header-only fallback replaced the BEGIN line alone.
+    Measured on a real 2048-bit RSA key: line 1 `<REDACTED>`, lines 2 onward live key material,
+    under a header that tells a reviewer the file was handled. The lists drifted apart once before
+    and the comment written to stop it happening again was attached to the function that was
+    already right.
+    """
     name = path.name.lower()
     if name.startswith(("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")):
         return True
     stem = name.rsplit(".", 1)[0] if "." in name else name
+    if any(f".{seg}" in NEVER_OPENED_SUFFIXES for seg in name.split(".")[1:]):
+        return True
     return (name.endswith(NEVER_OPENED_SUFFIXES) or name in BLOCKED_NAMES
             or stem in BLOCKED_NAMES)
 
@@ -183,6 +257,17 @@ NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "ur
 SCHEME_WORDS = frozenset({"bearer", "basic", "digest", "negotiate", "ntlm", "token", "apikey"})
 
 
+def _looks_like_a_credential_name(key):
+    """False when the name's own tail says it is something other than a credential.
+
+    Complements `_names_a_mechanism` below, which reads a curated suffix list. This one reads the
+    LAST component: a name ending `_RE`, `_PATTERN`, `_HEADER` or `_ORDER` describes a regex, a
+    header or an ordering, and no value it holds is a secret.
+    """
+    bare = re.sub(r"['\"\s:=]+$", "", (key or "").strip())
+    return not _NOT_A_CREDENTIAL_NAME.search(bare)
+
+
 def _names_a_mechanism(key):
     """True when the key is describing HOW a credential is handled, not holding one."""
     tail = key.rstrip(": =\t").lower().rsplit("_", 1)[-1].rsplit("-", 1)[-1]
@@ -201,15 +286,39 @@ def scrub(text):
         else:
             text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
-    text = ASSIGNED_SECRET.sub(
+    # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
+    # and running them first means a value they take is not left for a looser rule to half-capture.
+    text = XML_SECRET.sub(
         lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
+    text = ROCKET_SECRET.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+    text = YAML_BLOCK_SECRET.sub(
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        else f"{m.group(1)}  {PLACEHOLDER}\n", text)
+    text = SPACED_SECRET.sub(
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        or PLACEHOLDER in m.group(2)
+        else f"{m.group(1)}{PLACEHOLDER}", text)
+    text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
+    text = ASSIGNED_SECRET.sub(
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
         else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
     text = ASSIGNED_SECRET_CALL.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        lambda m: m.group(0)
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
         else f"{m.group(1)}{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or m.group(2).lower() in SCHEME_WORDS
+        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        # An earlier, more specific rule already replaced this value. Re-matching it swallowed the
+        # `<REDACTED>` and everything after: `'password' => '<REDACTED>',` collapsed to
+        # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
+        or PLACEHOLDER in m.group(2)
+        or m.group(2).lower() in SCHEME_WORDS
         else f"{m.group(1)}{PLACEHOLDER}", text)
     return text

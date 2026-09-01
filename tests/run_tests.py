@@ -6527,6 +6527,350 @@ check("...and the site root is not claimed as an endpoint", "/" not in _dj)
 check("...and a real leaf route in the root urlconf survives", "/healthz/" in _dj)
 shutil.rmtree(_rtd, ignore_errors=True)
 
+# ------------------------------ the one number chamnan-report exists to produce
+# `st_ctime` on Unix is inode-change time, not creation time: it moves whenever an entry is created
+# directly under `.chamnan/`, and a clone or a machine move resets it to now. Measured on the two
+# workspaces this project is developed in, ctime was 13.0 and 4.2 days after their real birth, both
+# landing in the current week — so `any(week > marker_week)` was false and the before/after table
+# was permanently suppressed, with the user told to come back in a week or two, forever.
+_wsc = Path(tempfile.mkdtemp(prefix="chamnan-ctime-")) / ".chamnan"
+(_wsc / "sessions").mkdir(parents=True)
+(_wsc / "sessions" / "2026-01-15-first-session.md").write_text("# first\n", encoding="utf-8")
+(_wsc / "sessions" / "2026-06-02-later.md").write_text("# later\n", encoding="utf-8")
+# Touching the workspace now is what a `/chamnan:resume` does, and it is what moved ctime.
+(_wsc / "STATE.md").write_text("## → HANDOFF 📌\n\nwork\n", encoding="utf-8")
+_born = _rep._workspace_created(_wsc)
+check("THE WORKSPACE'S AGE SURVIVES A WRITE INTO IT: " + str(_born and _born.date()),
+      _born is not None and _born.year == 2026 and _born.month == 1)
+check("...and a workspace with no session records still resolves to something",
+      _rep._workspace_created(_wsc.parent) is not None or not (_wsc.parent).exists())
+check("...and a directory that does not exist is None, not a crash",
+      _rep._workspace_created(_wsc / "nope") is None)
+shutil.rmtree(_wsc.parent, ignore_errors=True)
+
+# ------------------------------ ageing a section must not change what the file means
+import state as _st2  # noqa: E402
+
+
+def _aged(doc, edited, label):
+    """`doc` seen 30 days ago, `edited` seen now — what a session is told."""
+    d = Path(tempfile.mkdtemp(prefix=f"chamnan-age-{label}-")) / ".chamnan"
+    d.mkdir(parents=True)
+    _st2.age_out(doc, d, 14, now=time.time() - 30 * 86400)
+    out = _st2.age_out(edited, d, 14, now=time.time())
+    shutil.rmtree(d.parent, ignore_errors=True)
+    return out[0] if isinstance(out, tuple) else out
+
+
+# A `##` whose body is entirely `###` subsections had a one-line unit that never changed, so it
+# aged out on schedule while its live children survived and slid up under whatever came before.
+# Reproduced: "Do NOT touch — vendored" left standing over a file the same document calls safe to
+# refactor. The session was told the opposite of what the file says.
+_nest = ("# Work in flight\n\n"
+         "## Do NOT touch — vendored, upstream owns it\nRead-only mirrors; never edit them here.\n\n"
+         "## Ours — safe to refactor\n\n### src/cascade.py\nTimeout handling still rough.\n")
+_nested_out = _aged(_nest, _nest.replace("still rough", "still rough, and worse"), "nest")
+check("A SUBSECTION IS NEVER RE-PARENTED UNDER A HEADING THAT MEANS THE OPPOSITE",
+      "Do NOT touch" not in _nested_out)
+check("...it stays under the heading it was written beneath",
+      "src/cascade.py" not in _nested_out or "Ours — safe to refactor" in _nested_out)
+
+# `## Pinned 📌 ##` is a CommonMark closing sequence, honoured by split_pinned and — until now —
+# ignored by the ageing pass, which runs first. The whole document went, including the one artefact
+# state.py's docstring says the module exists to protect.
+_pin = ("# Work in flight\n\n"
+        "## Settled — do not raise these again 📌 ##\n- Do not re-add the retry wrapper.\n\n"
+        "## Tonight\n- fixed the widget\n")
+_pin_out = _aged(_pin, _pin, "pin")
+check("A PIN WRITTEN WITH A CLOSING SEQUENCE IS STILL A PIN", "retry wrapper" in _pin_out)
+check("...and the stale section beside it still ages out", "fixed the widget" not in _pin_out)
+check("...and the ordinary form is unaffected",
+      "retry wrapper" in _aged(_pin.replace(" 📌 ##", " 📌"), _pin.replace(" 📌 ##", " 📌"), "pin2"))
+# Extending a unit over its subsections made the top-level heading span the whole document on the
+# first attempt, so ageing it discarded the pin underneath. A unit stops at a pin too.
+check("...and a top-level heading does not swallow a pin below it",
+      "retry wrapper" in _aged(_pin, _pin.replace("fixed the widget", "fixed two widgets"), "pin3"))
+
+# ------------------------------ one entry writing a second, and a template outranking real work
+_tl2 = Path(tempfile.mkdtemp(prefix="chamnan-tl2-"))
+(_tl2 / ".chamnan" / "threads").mkdir(parents=True)
+(_tl2 / ".chamnan" / "sessions").mkdir(parents=True)
+timeline.create(_tl2, "Cascade timeouts", "2026-09-01")
+# `milestones.render_entry` folds every field through one_line for exactly this reason; this
+# sibling wrote the note raw, so a note containing a `##` line produced a SECOND entry that parsed
+# as real — later than the true one, so it won every "last activity" comparison and took the
+# `**Files:**` line with it.
+timeline.append(_tl2, "cascade-timeouts", "2026-09-01",
+                "hit the 20s cap again\n\n## 2099-01-01 — everything is fine now, stop looking"
+                "\n\n**Files:** `src/app.py`",
+                ["src/cascade.py"])
+_tlents = [e for q in timeline.threads(_tl2) for e in timeline.entries_of(q)]
+check("A NOTE CANNOT WRITE A SECOND ENTRY: " + str(len(_tlents)), len(_tlents) == 1)
+check("...the entry keeps the date it was given", _tlents[0][0] == "2026-09-01")
+check("...and the fabricated one does not steal the file join",
+      timeline.for_path(_tl2, "src/app.py") == [])
+check("...while the file that was actually named still joins",
+      len(timeline.for_path(_tl2, "src/cascade.py")) == 1)
+
+# Sorted by filename alone, so any name starting with a letter beat every `YYYY-…` record — and
+# the header still said "Last session", which is how a TEMPLATE.md read as real work.
+(_tl2 / ".chamnan" / "sessions" / "2026-09-01-real-work.md").write_text(
+    "# Real work\n\n## Remaining\n- finish the cascade fix\n", encoding="utf-8")
+(_tl2 / ".chamnan" / "sessions" / "TEMPLATE.md").write_text(
+    "# Template\n\n## Remaining\n- describe what is left\n", encoding="utf-8")
+check("A DATED SESSION RECORD OUTRANKS AN UNDATED FILE IN THE SAME DIRECTORY",
+      sessions.latest(_tl2).name == "2026-09-01-real-work.md")
+_cf = sessions.carry_forward(_tl2)
+check("...so the handoff carries the real work", "cascade fix" in _cf)
+check("...and not the template", "describe what is left" not in _cf)
+shutil.rmtree(_tl2, ignore_errors=True)
+
+# ------------------------------ what the trim keeps, and what the ledger claims
+# `_fit_lines` gave any line starting with `#` a heading depth, so a `# rebuild the map` comment
+# inside a ```bash block had depth 1 — <= the pin's depth — and ended the pinned span, dropping the
+# subsections under it and leaving the fence unclosed. `lib/md.py` exists for exactly this.
+_fence_body = ("# Settled — do not raise these again 📌\nStanding decisions.\n\n"
+               "```bash\n# rebuild the map before you start\nchamnan-map\n```\n\n"
+               "## Retry wrapper\nDo not re-add the retry wrapper — tried twice, both reverted.\n\n"
+               "## Embedding model\nbge-m3 only. No quantized build.\n")
+_fenced_kept = "\n".join(_fitx._fit_lines(_fence_body.split("\n"), 120))
+check("A `#` COMMENT INSIDE A CODE BLOCK DOES NOT END A PINNED SPAN",
+      "retry wrapper" in _fenced_kept and "No quantized build" in _fenced_kept)
+check("...and the fence it sits in is still closed",
+      _fenced_kept.count("```") % 2 == 0)
+
+# One pasted traceback discarded everything after it: `## Blockers` thrown away with 380 of 400
+# bytes unused, under a marker that said only "cut to fit".
+_long = ["## Open", "- finish the cascade fix", "  Traceback: " + "x" * 900,
+         "- re-run the harness", "- ask about the API key", "## Blockers", "- waiting on the key"]
+_longkept = _fitx._fit_lines(_long, 400)
+check("A LINE TOO BIG FOR AN EMPTY BUDGET IS SKIPPED, NOT A FULL STOP",
+      "## Blockers" in _longkept and "- waiting on the key" in _longkept)
+check("...and the oversized line itself is not kept",
+      not any(len(l) > 400 for l in _longkept))
+
+# `_rank`'s unranked default dropped a section second, ahead of everything but the index — and one
+# such section's source file is deleted by the hook as it emits it, so the notice named a path that
+# no longer existed. fit.py justifies whole-section dropping on "recoverable in one grep".
+check("AN UNRANKED SECTION IS NOT THE SECOND THING TO GO",
+      _fitx._rank("\n### Repeated last session and never kept\nbody\n")
+      > _fitx._rank("\n### Architecture index\nbody\n"))
+check("...and it still goes before what has been argued for",
+      _fitx._rank("\n### Repeated last session and never kept\nbody\n")
+      < _fitx._rank("\n### Rules this repository works under\nbody\n"))
+
+# `t.endswith("/" + f)` is the fuzzy basename match for_path's own docstring says it refuses: a bare
+# `app.py` entry answered three different files, so one file's rollback history attached to every
+# sibling in a repo with an `index.js` in several packages.
+_fz = Path(tempfile.mkdtemp(prefix="chamnan-fuzzy-"))
+(_fz / ".chamnan" / "threads").mkdir(parents=True)
+(_fz / ".chamnan" / "threads" / "bare.md").write_text(
+    "# Parser\n\n## 2026-08-01 — rolled back twice\n\n**Files:** `app.py`\n", encoding="utf-8")
+(_fz / ".chamnan" / "threads" / "full.md").write_text(
+    "# Cascade\n\n## 2026-08-02 — timeout work\n\n**Files:** `src/cascade.py`\n", encoding="utf-8")
+_tl._NAMES_CACHE.clear()
+check("A BARE BASENAME ENTRY DOES NOT ANSWER FOR EVERY FILE OF THAT NAME",
+      timeline.for_path(_fz, "src/vendor/app.py") == []
+      and timeline.for_path(_fz, "src/app.py") == [])
+check("...while it still answers for itself", len(timeline.for_path(_fz, "app.py")) == 1)
+check("...and a full-path entry still answers a query from a subdirectory",
+      len(timeline.for_path(_fz, "cascade.py")) == 1)
+shutil.rmtree(_fz, ignore_errors=True)
+
+# `calendar.timegm` does not validate the day, and a future date read as "today" while satisfying
+# `record_recent` — so the one line injected into every session manufactured movement.
+check("2026-02-30 IS NOT A DATE", _ledx._ymd_to_ts(2026, 2, 30) is None)
+check("...nor is a year somebody typed wrong", _ledx._ymd_to_ts(2099, 1, 1) is None)
+check("...while a real past date still resolves", _ledx._ymd_to_ts(2024, 1, 10) is not None)
+check("...and a day of slack is allowed for a machine in a timezone ahead of this one",
+      _ledx._ymd_to_ts(*time.strftime("%Y %m %d").split()) is not None)
+
+# ------------------------------ the rules and titles that reach a session, or do not
+import memory as _mem2  # noqa: E402
+import milestones as _ms2  # noqa: E402
+
+_memd = Path(tempfile.mkdtemp(prefix="chamnan-mem-")) / ".chamnan" / "memory"
+(_memd / "rules").mkdir(parents=True)
+# The cut landed anywhere, including inside a ``` block — after which the fence was open and every
+# later line rendered as code, INCLUDING the "more rules" notice, so nothing said anything was
+# missing. And it dropped whole rules by filename alphabet without naming them: a verbose `a-*.md`
+# starved `c-prod.md` — "Never write to prod" — out of the injection entirely.
+(_memd / "rules" / "a-verbose.md").write_text(
+    "# Long-winded convention\n\n" + "This rule goes on at length about formatting. " * 40
+    + "\n\n```bash\nchamnan-map --preview\n" + "echo padding\n" * 30 + "```\n", encoding="utf-8")
+(_memd / "rules" / "c-prod.md").write_text(
+    "# Never write to prod\n\nThe production database is read-only from here.\n", encoding="utf-8")
+_rules = _mem2.rules_text(_memd.parent.parent)
+check("THE RULES CUT NEVER LEAVES A FENCE OPEN", _rules.count("```") % 2 == 0)
+check("...so the notice that something was left out is itself visible",
+      "more rules in" in _rules)
+check("A RULE THAT DID NOT FIT IS NAMED, NOT JUST COUNTED", "Never write to prod" in _rules)
+
+# The title cap was applied to a category-then-filename concatenation, so ten decisions and two
+# lessons sent NO lesson at all, under a line that never said a category was missing.
+for _cat, _n in (("decisions", 10), ("lessons", 2)):
+    (_memd / _cat).mkdir(parents=True, exist_ok=True)
+    for _i in range(_n):
+        (_memd / _cat / f"{_cat[0]}{_i:02}.md").write_text(
+            f"# {_cat[:-1].title()} number {_i}\n\nbody\n", encoding="utf-8")
+_titles = _mem2.render_titles(_mem2.titles(_memd.parent.parent))
+check("NEITHER CATEGORY IS STARVED OUT OF THE INJECTED TITLE LIST",
+      "**lesson**" in _titles and "**decision**" in _titles)
+
+# A UTF-8 BOM sits before the `#`, so the real title was unreachable and the de-slugged filename
+# was injected instead. Editors on Windows write one by default.
+(_memd / "decisions" / "bom.md").write_bytes("\ufeff# Why Postgres over SQLite\n\nbody\n".encode())
+check("A BOM DOES NOT HIDE AN ENTRY'S TITLE",
+      _mem2.title_of(_memd / "decisions" / "bom.md") == "Why Postgres over SQLite")
+
+# `found[-count:]` takes the last few by WRITE POSITION, and milestones.md is append-only — so a
+# backfilled entry appended today rendered above a newer one, under a comment saying "newest first".
+(_memd.parent / "milestones.md").write_text(
+    "# Milestones\n\n## 2026-08-20 — Recent work\nbody\n\n"
+    "## 2026-07-01 — Middle\nbody\n\n## 2026-01-05 — Backfilled today\nbody\n", encoding="utf-8")
+_recent = _ms2.recent_titles(_memd.parent.parent)
+check("MILESTONES ARE NEWEST BY DATE, NOT BY WHERE THEY WERE APPENDED: " + repr(_recent[:40]),
+      _recent.index("2026-08-20") < _recent.index("2026-07-01"))
+check("...and the backfilled one does not displace the genuinely second-newest",
+      "2026-07-01" in _recent)
+shutil.rmtree(_memd.parent.parent, ignore_errors=True)
+
+# ------------------------------ the redactor, measured on code rather than on a decoy list
+# `is_blocked` carries an any-segment extension check and the comment inside it claims both
+# functions run "the same four checks". They did not, so peek OPENED the ordinary ways a key gets
+# copied aside — and prints only the first eight lines, so the END marker never reached the
+# scrubber and the header-only fallback replaced the BEGIN line alone. A real key body under a
+# `<REDACTED>` header is the "miss dressed as a hit" this module calls unrecoverable.
+for _copied in ("backup.pem.txt", "server.key.old", "deploy.key.bak", "prod.pem.bak"):
+    check(f"peek refuses {_copied}, as it already refused the bare file",
+          redact.is_never_opened(Path(_copied)))
+for _ordinary in ("notes.txt", "report.pdf", "keyboard.md", "monkey.py"):
+    check(f"...and still opens {_ordinary}", not redact.is_never_opened(Path(_ordinary)))
+check("the two refusal lists agree on every shape either one knows",
+      all(redact.is_blocked(Path(n)) for n in
+          ("backup.pem.txt", "server.key.old", "deploy.key.bak", "prod.pem.bak")))
+
+# 100% precision on a 22-string decoy corpus is "no known false positive". Measured on 257 real
+# files it damaged 144 lines, 70 of them from `key` alone — the commonest parameter name in Python.
+for _code in ('for f in sorted(d.glob("*"), key=lambda p: p.stat().st_mtime):',
+              'if st.button("save", key="save_sn_key"):',
+              'tokens = tokenizer.encode(prompt)',
+              'TOKEN_RE = re.compile(r"[a-z]+")',
+              'SECRET_PATTERN = re.compile(r"x")',
+              'sort_order = "asc"'):
+    check("ORDINARY CODE SURVIVES THE REDACTOR: " + _code[:44], redact.scrub(_code) == _code)
+
+# ...and none of that may cost anything on the secret side.
+for _cred in ('api_key = "sk-abcdefghijklmnop"', 'access_token = "ya29.abcdefghijklmno"',
+              'auth_token: "Tr0ub4dor2026x"', 'password = "Tr0ub4dor-2026"',
+              'AccountKey=abcdefghijklmnopqrstuvwxyz==', 'refresh_token=abcdefghijklmnop'):
+    check("A REAL CREDENTIAL IS STILL REDACTED: " + _cred[:40],
+          redact.PLACEHOLDER in redact.scrub(_cred))
+check("the README publishes the real-codebase number beside the corpus one",
+      "on 257 real files" in (ROOT / "README.md").read_text(encoding="utf-8"))
+
+# Four config syntaxes with no `[:=]` for the assignment rules to anchor on. Maven settings.xml,
+# Laravel's config/database.php, Helm values.yaml, Dockerfile, .netrc and .pgpass between them
+# cover most of how a credential is actually written down.
+for _label, _leak in [
+    ("XML element text", "<password>Tr0ub4dorXML99</password>"),
+    ("the Ruby/PHP hash rocket", "'password' => 'Tr0ub4dorPHP99',"),
+    ("a YAML block scalar", "password: >-\n  Tr0ub4dorYAML99\n"),
+    ("Dockerfile's ENV K V", "ENV DB_PASSWORD Tr0ub4dorPass99"),
+    ("a .netrc line", "machine api.example.com login bob password Tr0ub4dorPass99"),
+    ("a .pgpass line", "db.internal:5432:maindb:admin:Tr0ub4dorPass99"),
+    ("a value containing a comma", "API_TOKEN=abcdef,Tr0ub4dorENV88"),
+    ("a value starting with #", "DB_PASSWORD=#Tr0ub4dorENV99"),
+]:
+    check(f"A CREDENTIAL IN {_label} DOES NOT SURVIVE", "Tr0ub4dor" not in redact.scrub(_leak))
+check("...and the half-redaction that named the line handled is gone too",
+      redact.scrub("PASSWORD=aaaaaa;bbbbbb") == "PASSWORD=" + redact.PLACEHOLDER)
+# The other half of the trade, which these rules must not cost.
+for _prose in ("# password: ask the platform team for it",
+               "the gate in front of it is what actually authenticates callers.",
+               "AUTHORS=alexander,brigitte", "token_ttl=3600"):
+    check("PROSE AND CONFIGURATION SURVIVE: " + _prose[:40], redact.scrub(_prose) == _prose)
+
+# ------------------------------ three guards that were not guarding
+import rulecheck as _rc2  # noqa: E402
+import tools_index as _ti2  # noqa: E402
+
+# A `**Check:**` trailer arrives with a clone and is compiled and run at EVERY session start, and
+# `re` has no timeout. The flat guard could not look inside a nested group: `((a+)b?)+$`,
+# `(([a-z])+)+$` and `(?:(a+))+$` took 3.1s, 3.6s and 7.6s on twenty-odd characters.
+def _would_refuse(pat):
+    return bool(_rc2._NESTED_QUANTIFIER.search(pat)
+                or _rc2._quantified_group_over_quantifier(pat)
+                or _rc2._ambiguous(pat))
+
+
+for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(x*)*$",
+             "((ab)*)+$"):
+    check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
+# ...and the guard must not refuse the patterns a rule would actually be written with.
+for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
+            r"\b[A-Z_]{3,}\b", r"https?://[^\s]+", r"^\s*#\s*(TODO|NOTE)"):
+    check("...while an ordinary rule pattern still runs: " + _ok, not _would_refuse(_ok))
+# Escapes and character classes are literal, not quantifiers.
+check("an escaped paren is not a group", not _would_refuse(r"\(a\)+"))
+check("...and a character class of quantifier characters is not one either",
+      not _would_refuse(r"([+*])"))
+
+# `ws.exclusive` yields False after two seconds, and the rewrite sat outside the guard — so on
+# contention the log was truncated and rewritten from a stale snapshot, discarding every append
+# another process had made. Verbatim the failure the lock was added to fix.
+_wfsrc = (ROOT / "lib" / "workflows.py").read_text(encoding="utf-8")
+check("THE TRIM DOES NOT REWRITE THE LOG WHEN THE LOCK WAS NOT HELD",
+      "if not held:\n                return" in _wfsrc)
+
+# `record_call` locked; `register` and `remove` did the same read-modify-write with no lock, and a
+# lock only one of three writers holds serialises nothing.
+_tisrc = (ROOT / "lib" / "tools_index.py").read_text(encoding="utf-8")
+check("EVERY WRITER OF tools/index.json GOES THROUGH THE SAME LOCK",
+      _tisrc.count("ws.exclusive(path(root))") >= 3)
+# ...and the lock must not stop the very first registration, which is what creates the file.
+_tid = Path(tempfile.mkdtemp(prefix="chamnan-ti-"))
+(_tid / ".chamnan").mkdir()
+_ti2.register(_tid, {"name": "first-tool.sh", "desc": "the first one"})
+check("...and the first registration still lands, though it creates the index it locks",
+      [e["name"] for e in _ti2.load(_tid)] == ["first-tool.sh"])
+shutil.rmtree(_tid, ignore_errors=True)
+
+# ------------------------------ the impact map, whose own comment sets the standard
+# "an invented edge is worse than a missing one" — impact.py. Three ways it produced both.
+import impact as _imp2  # noqa: E402
+import pointer as _pt2  # noqa: E402
+
+# `by_noext[noext] = p` overwrote, so two files sharing a path-minus-extension collided and the
+# last in scan order won. Which real file became invisible depended on directory listing order.
+_amb = [_imp2.build([a, b, {"path": "src/app.ts", "imports": ["./util"]}])
+        for a, b in (({"path": "src/util.js"}, {"path": "src/util.ts"}),
+                     ({"path": "src/util.ts"}, {"path": "src/util.js"}))]
+check("TWO FILES SHARING A STEM PRODUCE NO EDGE, NOT A COIN FLIP: " + str(_amb),
+      _amb[0] == {} and _amb[1] == {})
+check("...while one file with that stem still resolves normally",
+      "src/util.ts" in _imp2.build([{"path": "src/util.ts"},
+                                    {"path": "src/app.ts", "imports": ["./util"]}]))
+
+# `lstrip("./")` strips a character SET, so `../shared/util` became `shared/util` and resolved
+# DOWNWARD from the importer's own directory — an invented edge — or vanished entirely.
+_up = _imp2.build([{"path": "src/shared/util.js"}, {"path": "vendor/shared/util.js"},
+                   {"path": "src/a/b.js", "imports": ["../shared/util"]}])
+check("A `..` IMPORT RESOLVES UPWARD: " + str(list(_up)),
+      list(_up) == ["src/shared/util.js"])
+
+# The same mistake meant lookup could not find a row it had written itself.
+_dotsec = _imp2.render({".github/workflows/ci.yml": {"used_by": ["Makefile"], "tests": []}})
+check("A DOT-DIRECTORY PATH IS FOUND IN THE SECTION THAT NAMES IT",
+      _imp2.lookup(_dotsec, ".github/workflows/ci.yml")[0] == ".github/workflows/ci.yml")
+# ...and in the pointer, where it meant the tier-0 full-path match could never fire.
+check("the pointer keeps a dot-directory path whole",
+      ".github/workflows/ci.yml" in _pt2.needles(".github/workflows/ci.yml"))
+check("...and a root dotfile keeps its name at all",
+      ".env.example" in _pt2.needles(".env.example"))
+check("...while a genuine `./` prefix is still stripped",
+      "src/app.py" in _pt2.needles("./src/app.py"))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

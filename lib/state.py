@@ -215,14 +215,30 @@ def _age_units(text):
         level = len(m.group(1))
         if pinned_until is not None and m.start() < pinned_until:
             continue                      # inside a pin — exempt, subsections included
-        if m.group(2).rstrip().endswith(PIN_MARK):
+        if _heading_text(m.group(2)).endswith(PIN_MARK):
             pinned_until = len(text)
             for nxt in heads[i + 1:]:
                 if len(nxt.group(1)) <= level:
                     pinned_until = nxt.start()
                     break
             continue
-        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        # 🐛 The unit used to end at the NEXT HEADING OF ANY DEPTH, so a `##` whose body is
+        # entirely `###` subsections had a one-line unit that never changed — it aged out on
+        # schedule while its live children survived and slid up under whatever heading came before.
+        # Reproduced: `## Do NOT touch — vendored, upstream owns it` was left standing over
+        # `### src/cascade.py`, a file the same document calls safe to refactor. The session was
+        # told the exact opposite of what the file says, and the marker reported only that two
+        # sections were held back. A heading and the subsections under it age together or not at
+        # all; that is what a section IS.
+        # ...and it also stops at a PINNED heading of any depth, because a unit that spans a pin
+        # cannot age without taking the pin with it. Extending units to cover their subsections
+        # made `# Work in flight` span the whole document on the first try, so ageing the top
+        # heading discarded the do-not-raise-again list underneath it.
+        end = len(text)
+        for nxt in heads[i + 1:]:
+            if len(nxt.group(1)) <= level or _heading_text(nxt.group(2)).endswith(PIN_MARK):
+                end = nxt.start()
+                break
         units.append({"start": m.start(), "end": end})
     return units
 

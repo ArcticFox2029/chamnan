@@ -202,9 +202,18 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
         # Re-read INSIDE the lock rather than trusting the snapshot, so anything appended between
         # the read above and the lock is trimmed rather than lost.
         with ws.exclusive(log_path) as held:
-            if held:
-                history = read(log_path)
-                kept = prune(history)
+            # 🐛 The rewrite sat OUTSIDE this guard. `ws.exclusive` yields False after a two-second
+            # timeout, and on that path the log was truncated and rewritten from the stale snapshot
+            # read before the lock was attempted — discarding every append another process had made
+            # in the meantime. Reproduced with the lock held elsewhere: 50 concurrent appends, 0
+            # survivors. That is verbatim the failure the comment above says was fixed by adding
+            # the lock; under real contention the lock bought two seconds and then did the damage
+            # anyway. Skipping the trim costs nothing — the log is trimmed on the next call, and a
+            # log slightly over its bound is not a defect. Losing an append is.
+            if not held:
+                return
+            history = read(log_path)
+            kept = prune(history)
             _rewrite(log_path, kept)
         history = kept
     return history

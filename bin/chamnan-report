@@ -170,6 +170,39 @@ def print_usage(root):
     print()
 
 
+def _workspace_created(wsdir):
+    """When the workspace was created, as well as this machine can know.
+
+    🐛 This read `st_ctime`, which on Unix is INODE-CHANGE time, not creation time. It moves every
+    time an entry is created directly under `.chamnan/` — a `/chamnan:resume`, the first session
+    record — and a clone, a `cp -R`, a restore or a machine move resets it to now. Measured on the
+    two workspaces this project is developed in: ctime 13.0 and 4.2 days after their real birth,
+    both landing in the current week, so `any(week > marker_week)` was false and the before/after
+    table — which is what `/chamnan:report` exists to produce, and what the README's whole "is this
+    worth keeping" argument rests on — was permanently suppressed. The user was told to come back
+    in a week or two, forever.
+
+    Three sources, best first: `st_birthtime` where the platform has it (macOS, and FreeBSD); the
+    oldest session record's own date, which is content rather than filesystem metadata and survives
+    a clone; then ctime, which is at least an upper bound on this copy.
+    """
+    if not wsdir.exists():
+        return None
+    stat = wsdir.stat()
+    born = getattr(stat, "st_birthtime", None)
+    oldest = None
+    sessions = wsdir / "sessions"
+    if sessions.is_dir():
+        dates = sorted(f.name[:10] for f in sessions.glob("[0-9][0-9][0-9][0-9]-*.md"))
+        if dates:
+            try:
+                oldest = datetime.strptime(dates[0], "%Y-%m-%d").astimezone().timestamp()
+            except ValueError:
+                oldest = None
+    candidates = [t for t in (born, oldest, stat.st_ctime) if t]
+    return datetime.fromtimestamp(min(candidates)).astimezone() if candidates else None
+
+
 def print_pointer(root, project_dir):
     """Did the session open what it was pointed at?
 
@@ -263,10 +296,7 @@ def main(argv):
         print("chamnan: transcripts found but no usage records yet")
         return 0
 
-    marker = None
-    wsdir = ws.workspace(root)
-    if wsdir.exists():
-        marker = datetime.fromtimestamp(wsdir.stat().st_ctime).astimezone()
+    marker = _workspace_created(ws.workspace(root))
 
     weeks = defaultdict(lambda: {"calls": 0, "cread": 0, "cwrite": 0, "out": 0})
     per_model = defaultdict(lambda: {"calls": 0, "cread": 0})

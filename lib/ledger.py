@@ -55,11 +55,28 @@ def _mtimes(paths):
 
 
 def _ymd_to_ts(y, m, d):
-    import calendar
+    """The timestamp for a date, or None when the date is not one.
+
+    🐛 `calendar.timegm` does not validate the day: it rolled 2026-02-30 forward to 2026-03-02 and
+    returned a timestamp for a date nobody wrote. The same gap is documented in `sessions.prune`
+    and listed as open for `environments.py`; this was the third copy. `datetime` refuses it, which
+    is what the caller's "undated" branch already exists to handle.
+
+    A date in the FUTURE is refused for a different reason and it is the one that mattered: a typo'd
+    `2099-01-01` made `_age()` report "today" (it floors a negative difference to 0) and satisfied
+    `record_recent`'s `t >= cutoff`, so the ledger line claimed a record written this week when the
+    newest real one was six months old. That line is injected into every session, and this module's
+    own docstring says it exists because "a count that never changes gets tuned out" — it was
+    manufacturing movement instead. A slack of one day is allowed, so a record written in a
+    timezone ahead of this machine is not thrown away.
+    """
+    import datetime
     try:
-        return calendar.timegm((int(y), int(m), int(d), 12, 0, 0))
-    except (ValueError, TypeError):
+        when = datetime.datetime(int(y), int(m), int(d), 12, 0, 0, tzinfo=datetime.timezone.utc)
+    except (ValueError, TypeError, OverflowError):
         return None
+    ts = when.timestamp()
+    return None if ts > time.time() + 86400 else ts
 
 
 def _milestone_timestamps(root):
