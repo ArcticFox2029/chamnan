@@ -758,6 +758,18 @@ top: discovery cost and re-solving cost, with token reduction as the consequence
 above are the outside evidence for that framing, and they say the same thing the local arithmetic
 does - the effect is in the search path, not the answer.
 
+**And the finding that puts an expiry date on the whole category.** Holding the model fixed and
+varying only the agent framework, the resolution-rate gap attributable to scaffold choice narrowed
+across three successive Claude generations: **19.4pp → 3.8pp → 0.9pp**
+([arXiv:2604.02547](https://arxiv.org/abs/2604.02547)). Every other counter-finding here says the
+effect is *smaller than claimed*; this one says it **shrinks with each model generation**. What can
+fairly be said against it is that it measures *scaffold* — loop, tool wiring, orchestration — not
+repository-specific knowledge, which is the one thing that cannot be in any model's weights however
+large, because it is private (see the 85.25% above). Those are different quantities. But it measures
+the thing this tool is most often mistaken for, three generations running, in one direction. **The
+measurement that would settle it is running the A/B across two model generations rather than one, and
+it has not been run.**
+
 **And the finding that argues against the architecture index**: architectural overviews were
 measured to *increase inference cost and encourage broader file traversal without improving task
 success*. Restating the README hurts. Longer context files hurt, because the agent follows some
@@ -1018,6 +1030,32 @@ Sources: [arXiv:2601.23254](https://arxiv.org/html/2601.23254v2), [arXiv:2608.13
 
 ---
 
+### 5b. Why the index copies a comment instead of writing one
+
+| LLM summary correctness, by scope | |
+|---|---|
+| single function | **76.5%** |
+| single class | **33.3%** |
+| multiple classes | **28.4%** |
+| multi-threaded system | **17.3%** |
+
+Measured by mutation analysis — inject a behaviour-changing mutation, then check whether the summary
+updates to reflect it. That is a behavioural definition rather than similarity to a reference text
+([arXiv:2602.17838](https://arxiv.org/abs/2602.17838)), and the same literature finds string-metric
+scores below a 2-point margin do not reliably predict human judgement at all
+([DOI 10.1145/3468264.3468588](https://doi.org/10.1145/3468264.3468588), 226 annotators).
+
+**chamnan does not generate summaries. It copies each file's existing leading comment verbatim.** The
+table is what the alternative would have cost: a generated one-line description of a large module is
+correct **17–33%** of the time. And §1's companion finding is that a *wrong* comment degrades code
+reasoning by **23.2%** while a *missing* one costs comparatively little — so a generated index would
+have been manufacturing precisely the expensive kind of error, at scale, once per file.
+
+The trade is stated rather than hidden: **the index inherits the correctness of the comments beneath
+it.** A repository whose comments are wrong gets an index wrong in the same places. What can be
+checked mechanically is checked — every identifier named in a description was verified still present
+in the file it describes, **105 of 105**.
+
 ### 6. What a compaction destroys, and what an index must not
 
 | | |
@@ -1242,6 +1280,24 @@ drawn from the first 30% of a page).
 **The fuller record**, including the 42 search angles that returned nothing and the findings that
 changed nothing, is kept in the development repository under `.chamnan/state/` rather than shipped
 with the plugin.
+
+### What a reference list does to you, including this one
+
+A live study varying 0 / 1 / 5 citations, relevant against random, found that **citation presence
+significantly increased self-reported trust regardless of whether the citations were valid** — and
+that trust **significantly decreased when participants actually verified them**
+([arXiv:2501.01303](https://arxiv.org/abs/2501.01303), AAAI 2025).
+
+That lands on this page. The apparatus above — numbered references, a table of what each supports —
+raises confidence in it **independently of whether any of it is right**, which is the failure a
+reference list exists to prevent, arriving through the front door.
+
+The list stays, because references that *can* be checked beat claims that cannot. But the paper's own
+result is that **verification reverses the effect**, so the useful response is to make checking cheap
+and to say plainly what the list is for: **it is there to be checked, not to be counted.** Every
+number labelled *measured here* has a command beside it; every citation links to the source rather
+than to a summary of it; and where a figure came from a secondary summary, the reference says so and
+gives no title.
 
 ### How to disagree with any of it
 
