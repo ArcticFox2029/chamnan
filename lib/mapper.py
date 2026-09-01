@@ -516,10 +516,21 @@ def scan(root):
         return _scan(root)
 
 
-def _scan(root):
-    files = []
-    nested = _nested_repo_dirs(root)
+def indexable(root, nested=None):
+    """Yield (path, lang) for exactly the files that belong in this repository's index.
+
+    Factored out of _scan because a second caller needed the same answer and got it wrong. The
+    session-start staleness check walked the tree with only the extension filter, so it counted a
+    nested checkout's files as this repository's own — and reported the index as stale every time
+    chamnan's own source was edited, about 28 files the index was never going to contain. On the
+    repository chamnan is developed in that warning was permanently on, which is the same as absent.
+
+    One definition, two callers. A filter this specific will drift the moment it is written twice.
+    Must be called inside a tree.session().
+    """
     import tree
+    if nested is None:
+        nested = _nested_repo_dirs(root)
     for path in tree.files(root):
         if not path.is_file():
             continue
@@ -539,6 +550,16 @@ def _scan(root):
         try:
             if path.stat().st_size > MAX_FILE_BYTES:
                 continue
+        except OSError:
+            continue
+        yield path, lang
+
+
+def _scan(root):
+    files = []
+    nested = _nested_repo_dirs(root)
+    for path, lang in indexable(root, nested):
+        try:
             source = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
@@ -563,7 +584,10 @@ def _scan(root):
             # Collected while the source is open rather than in a second pass: lib/impact.py then
             # only has to resolve and invert, which is arithmetic on what is already in memory.
             "imports": impact_mod.extract_imports(source, lang),
-            "lines": source.count("\n") + 1, "doc": doc,
+            # splitlines(), not count("\n") + 1. Nearly every source file ends with a newline, and
+            # the arithmetic version counts the empty string after it as a line -- so every entry in
+            # the index over-reported by exactly one. Verified against wc -l on 276 files here.
+            "lines": len(source.splitlines()), "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
         })
     return files

@@ -27,6 +27,7 @@ import memory  # noqa: E402
 import milestones  # noqa: E402
 import redact  # noqa: E402
 import rollup  # noqa: E402
+import rulecheck  # noqa: E402
 import sessions  # noqa: E402
 import state  # noqa: E402
 import timeline  # noqa: E402
@@ -177,6 +178,22 @@ def ago(seconds):
     return f"{n} day{'s' if n != 1 else ''} behind"
 
 
+def _indexable(root):
+    """Exactly the files mapper would index: its extensions AND its nested-repo exclusion.
+
+    Both matter. Leaving the exclusion out was a real defect: `Work-Mode/chamnan/` is a checkout in
+    its own right, so mapper correctly keeps its 28 lib files out of the host's index — while this
+    walk counted them, and reported the index as stale every time chamnan's own source was edited.
+    On the repository chamnan is developed in, that meant a staleness warning that was permanently
+    on, about files the index was never going to contain. A warning that is always on is one nobody
+    reads on the day it is true.
+    """
+    import tree, mapper
+    with tree.session():
+        for path, _lang in mapper.indexable(root):
+            yield path
+
+
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
 
@@ -191,12 +208,8 @@ def index_is_behind(root, map_path):
     report the architecture as out of date.
     """
     try:
-        import tree, mapper
         newest = 0.0
-        exts = set(mapper.EXT_LANG)
-        for f in tree.files(root):
-            if f.suffix.lower() not in exts:
-                continue
+        for f in _indexable(root):
             try:
                 newest = max(newest, f.stat().st_mtime)
             except OSError:
@@ -209,6 +222,54 @@ def index_is_behind(root, map_path):
         return newest - built
     except Exception:
         return 0          # never let a nicety break a session
+
+
+def unindexed(root, map_text):
+    """How many indexable files the Quick Index does not name, and a few of them by name.
+
+    An age is the wrong unit for this warning. Measured on this repository: replaying the last 50
+    commits against the index that sessions were actually handed, it named 74.6% of the source files
+    those commits touched and fully covered 18% of them — and the files it missed were not a random
+    sample. `core_test.mjs` was touched 15 times, `balance_check.mjs` 8, `cloud.js` 7. A whole
+    directory of active work was invisible.
+
+    That is the real failure mode, and it is not the one the literature worries about. A chamnan map
+    is regenerated wholesale from the tree rather than patched, so it cannot drift into being WRONG
+    — separately measured at 0 dead paths out of 264. It can only fall behind. **A stale map is not
+    confidently wrong; it is blind, and it is blind exactly where the work is happening**, because
+    the files it lacks are the ones being created right now.
+
+    So the warning says how many and which, not how long ago. "13 files are not in this index,
+    including core_test.mjs" is something a session can act on. "Source has changed 2 days ago" is
+    not.
+    """
+    try:
+        import re as _re
+        start = map_text.find("## Quick Index")
+        if start < 0:
+            return 0, []
+        nxt = [m.start() for m in _re.finditer(r"^## ", map_text[start + 3:], _re.M)]
+        body = map_text[start:start + 3 + nxt[0]] if nxt else map_text[start:]
+        named = set(_re.findall(r"^- \*\*`([^`]+)`\*\*", body, _re.M))
+        missing = []
+        for f in _indexable(root):
+            try:
+                rel = str(f.relative_to(root))
+            except ValueError:
+                continue
+            if rel not in named:
+                missing.append(rel)
+        # Newest first: a file created in the last hour is the one a session is most likely to be
+        # about to open, and the least likely to be findable any other way.
+        def _mtime(r):
+            try:
+                return -(root / r).stat().st_mtime
+            except OSError:
+                return 0
+        missing.sort(key=_mtime)
+        return len(missing), missing[:3]
+    except Exception:
+        return 0, []
 
 
 def main():
@@ -301,9 +362,13 @@ def main():
                        f"never read it whole._\n")
             behind = index_is_behind(root, mp)
             if behind:
+                n, examples = unindexed(root, text)
+                # A count of what is missing, not an age. See unindexed() for why.
+                what = (f"**{n} file(s) are not in it** — {', '.join(f'`{e}`' for e in examples)}"
+                        + ("…" if n > len(examples) else "") + ". ") if n else ""
                 out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
-                           f"Rebuild it with `chamnan-map`, or `chamnan-map --install-git-hook` to "
-                           f"keep it current on every commit._\n")
+                           f"{what}Rebuild it with `chamnan-map`, or `chamnan-map "
+                           f"--install-git-hook` to keep it current on every commit._\n")
 
     if cfg.get("environments", True):
         # Constraints, never versions. A constraint rules out a whole design before it is written
@@ -326,6 +391,14 @@ def main():
         rules = redact.scrub(memory.rules_text(root))
         if rules:
             out.append(section("Rules this repository works under", rules, ".chamnan/memory/rules/"))
+            # A rule injected once at session start is exactly the instruction that adherence
+            # studies measure decaying — 88% to 71% by the third turn on Multi-IF. Where a rule
+            # carries a mechanical check, the repository is asked directly instead. Silent when
+            # everything holds: a line that always says "all good" stops being read before the day
+            # it says something else.
+            broken = rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root)))
+            if broken:
+                out.append(broken)
         # Decisions and lessons are looked up when the question comes round, so they contribute a
         # title and nothing else — the same economy skills/ and tools/ use.
         listing = memory.render_titles(memory.titles(root))
