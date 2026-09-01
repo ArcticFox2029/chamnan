@@ -6428,6 +6428,54 @@ check("...and the rows below it are the rows that are in the file",
 
 shutil.rmtree(_pkd, ignore_errors=True)
 
+# ------------------------------ the data model, which is injected into every session
+# schema.py's own docstring: "An invented table is the worse half of that: a reader can go looking
+# for it." Commenting out superseded DDL is how migration files are maintained, so the
+# false-positive rate scaled with the age of the schema.
+_sqd = Path(tempfile.mkdtemp(prefix="chamnan-sql-"))
+(_sqd / "migrations").mkdir(parents=True)
+subprocess.run(["git", "-C", str(_sqd), "init", "-q"], capture_output=True)
+(_sqd / "migrations" / "001_init.sql").write_text(
+    "-- CREATE TABLE legacy_payments (id int, amount decimal);\n"
+    "/* The staging mirror below was dropped in 2026-03.\n"
+    "   CREATE TABLE payments_staging_old (id int); */\n"
+    "-- Every payment the platform has taken.\n"
+    "CREATE TABLE payments (id int, customer_id int, amount decimal(10, 2), "
+    "currency varchar(3), status varchar(20));\n"
+    "INSERT INTO audit (note) VALUES ('-- CREATE TABLE not_a_table (x int);');\n",
+    encoding="utf-8")
+_sqfiles = [{"path": str(q.relative_to(_sqd))} for q in _tr.files(_sqd)]
+_sqtables = {t["name"]: t for t in _schm.scan(_sqd, _sqfiles)}
+check("COMMENTED-OUT DDL IS NOT A TABLE: " + str(sorted(_sqtables)),
+      sorted(_sqtables) == ["payments"])
+check("...nor is a CREATE TABLE written inside a string literal", "not_a_table" not in _sqtables)
+# The two rules are only compatible because masking blanks in place: matches come from the masked
+# copy, the summary from the original at the same offset.
+check("...while a comment ABOVE a table is still its description",
+      "Every payment" in _sqtables["payments"]["summary"])
+# Anchored `^\s*` under re.M, so a one-line CREATE TABLE yielded exactly its first column --
+# which reads as "this table has no status column".
+check("A ONE-LINE CREATE TABLE STILL LISTS EVERY COLUMN: " + str(_sqtables["payments"]["columns"]),
+      _sqtables["payments"]["columns"] == ["id", "customer_id", "amount", "currency", "status"])
+
+# `[^{]*?` ran past the closing paren of `@Entity()` into the next annotation, so a NamedQuery's
+# name became the table AND the real table went missing in the same pass.
+(_sqd / "domain").mkdir()
+(_sqd / "domain" / "Driver.java").write_text(
+    '@Entity()\n@NamedQuery(name = "Driver.findAllActive", query = "select d from Driver d")\n'
+    'public class Driver { }\n', encoding="utf-8")
+(_sqd / "domain" / "Vehicle.java").write_text(
+    '@Entity\n@Table(name = "fleet_vehicles", uniqueConstraints = @UniqueConstraint(name = "uk_plate"))\n'
+    'public class Vehicle { }\n', encoding="utf-8")
+(_sqd / "domain" / "Trip.java").write_text(
+    '@Entity\n@Table(uniqueConstraints = @UniqueConstraint(name = "uk_leg"))\n'
+    'public class Trip { }\n', encoding="utf-8")
+_jpa = sorted(t["name"] for t in _schm.scan(_sqd, [{"path": str(q.relative_to(_sqd))}
+                                                   for q in _tr.files(_sqd)]))
+check("A NAMED QUERY IS NOT A TABLE, AND THE REAL ONE IS NOT LOST: " + str(_jpa),
+      _jpa == ["Driver", "Trip", "fleet_vehicles", "payments"])
+shutil.rmtree(_sqd, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
