@@ -3760,6 +3760,37 @@ check("the correction is still in the release history too",
 check("the release history moved out of the README but did not disappear",
       _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
 
+# ------------- nothing outside chamnan reaches a file that can execute
+# The published exfiltration chain has four links: repository content influences the agent, the agent
+# reads something sensitive, the agent writes it into a security-relevant configuration, and a later
+# capability turns that configuration into network activity. Amazon Kiro was compromised exactly that
+# way -- injected instructions, a modified workspace URL, an outbound request carrying the secret.
+#
+# chamnan is link one by design: it reads the repository and puts it in front of the model. So links
+# three and four are where it has to be clean. Link four is already pinned above (no network, no
+# dependency). This pins link three: the only two files chamnan writes that can carry executable or
+# configuring directives -- .gitattributes, which accepts filter= directives, and .git/hooks/pre-commit,
+# which IS a script -- are written from module constants with nothing interpolated but another constant.
+_mapsrc = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+import workspace as _wsec  # noqa: E402
+
+check("the installed git hook is a constant, not a built string",
+      'body = HOOK_BODY.format(marker=HOOK_MARKER)' in _mapsrc)
+check("...and the only placeholder in it is that marker",
+      _mapsrc[_mapsrc.index("HOOK_BODY = "):_mapsrc.index("def preview")].count("{") == 1)
+check("the hook body names no host, scheme or redirect",
+      not re.search(r"https?://|curl|wget|nc |ssh ", ss_hookbody := _mapsrc[
+          _mapsrc.index("HOOK_BODY = "):_mapsrc.index("def preview")]))
+check("the hook can never fail a commit, which is what makes it safe to install",
+      "|| true" in ss_hookbody)
+
+check("the .gitattributes line is a constant with no interpolation",
+      "{" not in _wsec.GENERATED_ATTR and "{" not in _wsec.GENERATED_NOTE)
+check("...and it is inert — no filter, diff or clean directive",
+      not re.search(r"\bfilter=|\bdiff=|\bclean=|\bsmudge=", _wsec.GENERATED_ATTR))
+check("what it writes is exactly what it declares",
+      _wsec.GENERATED_ATTR.strip().endswith("linguist-generated=true"))
+
 # ------------- the two claims that matter most for something you install
 # An installed plugin runs arbitrary code on a developer's machine with that developer's privileges
 # and no sandbox. The measured shape of the threat: 100+ VS Code extensions found carrying hard-coded

@@ -1114,6 +1114,34 @@ suite** rather than asserted in a sentence:
 There is nothing to fetch, so there is nothing to fetch *and execute*; and there is nothing beneath
 it to compromise. Those four rows are `check()`s that fail the build if they stop being true.
 
+### 9a. The exfiltration chain, and where chamnan breaks it
+
+The published chain has four links: **repository content influences the agent → the agent reads
+something sensitive → the agent writes it into a security-relevant configuration → a later capability
+turns that configuration into network activity.** Amazon Kiro was compromised exactly that way —
+injected instructions, a modified workspace URL, an outbound request carrying the secret. The
+detection problem is that every individual step looks legitimate; only the flow reveals it.
+
+**chamnan is link one on purpose.** It reads the repository and puts it in front of the model. So the
+question is not whether it participates — it does — but whether the chain can complete.
+
+| link | chamnan |
+|---|---|
+| 1. repo content reaches the agent | **yes, by design** — mitigated only by the fence below, which is worth about a halving |
+| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **96.3% recall / 100% precision** |
+| 3. it is written into something that configures or executes | **no**, and this is now pinned by tests |
+| 4. a capability turns that into network activity | **no** — pinned by the tests in §9 |
+
+Link 3 is the one that needed proving rather than asserting. chamnan writes exactly two files that
+can carry executing or configuring directives — `.gitattributes`, which accepts `filter=` directives,
+and `.git/hooks/pre-commit`, which *is* a script. **Both are written from module-level constants with
+nothing interpolated but another constant**, so no repository content and no model output can reach
+either. Seven checks pin that, including that the hook body contains no URL, no `curl`, no `wget`,
+and cannot fail a commit.
+
+**Breaking link 4 is what makes the rest survivable.** A tool that reads your whole repository and
+cannot talk to the network is a tool whose worst case stays on your disk.
+
 ### 9b. Prompt injection
 
 | variant | attack success rate |
