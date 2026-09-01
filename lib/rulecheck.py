@@ -26,6 +26,8 @@ because "I could not check" and "this is violated" are different facts and colla
 check becomes noise that gets ignored.
 """
 import re
+
+import redact
 from pathlib import Path
 
 CHECK = re.compile(r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+`(.+?)`\s*$", re.M)
@@ -53,11 +55,31 @@ def parse(text):
 # is the same outcome as a syntactically invalid pattern, which the caller already handles, and
 # unverifiable is already kept distinct from BROKEN.
 _NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*{]")
+# The other classic shape, and the one the pattern above is blind to: ambiguous ALTERNATION with
+# no inner quantifier at all -- `(a|a)*`, `(x|xy)+`, `(\s|\s)*`. Measured here: `(a|a)*$` against
+# 20 identical characters took 0.25s, 24 took 4.2s, and 28 had not finished after five seconds.
+# It sailed straight through a guard whose whole reason for existing is that hang.
+_AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)\s*[+*{]")
+
+
+def _ambiguous(pattern):
+    """True for an alternation whose branches can match the same text under a quantifier."""
+    for m in _AMBIGUOUS_ALTERNATION.finditer(pattern):
+        branches = m.group(1).split("|")
+        # Duplicates are the unmistakable case; a prefix relation ((x|xy)+) is the same hazard,
+        # because the engine has two ways to consume the same input and must try both.
+        if len(set(branches)) != len(branches):
+            return True
+        for i, a in enumerate(branches):
+            for b in branches[i + 1:]:
+                if a.startswith(b) or b.startswith(a):
+                    return True
+    return False
 
 
 def _matches(root, pattern, glob):
     """(files_scanned, files_matching) or None when the check cannot be run at all."""
-    if _NESTED_QUANTIFIER.search(pattern):
+    if _NESTED_QUANTIFIER.search(pattern) or _ambiguous(pattern):
         return None
     try:
         rx = re.compile(pattern)
@@ -67,6 +89,22 @@ def _matches(root, pattern, glob):
         paths = [p for p in sorted(root.glob(glob)) if p.is_file()][:MAX_FILES]
     except (ValueError, OSError):
         return None
+    # Containment, checked here rather than trusted from the glob. `root.glob()` follows `..`
+    # segments, so a rule whose Check trailer read ``in `../../../../etc/hosts` `` read a real file
+    # outside the repository and reported its match count into the session -- a working oracle for
+    # any file the process can open, from a rule file that arrives with a clone. It bypassed
+    # redact's never-open list too, which is why that is consulted as well: this module is the one
+    # place a path in repository text turns into an open().
+    base = root.resolve()
+    inside = []
+    for q in paths:
+        try:
+            if q.resolve().parent == base or base in q.resolve().parents:
+                if not redact.is_never_opened(q):
+                    inside.append(q)
+        except (OSError, RuntimeError):
+            continue
+    paths = inside
     if not paths:
         return None
     hits = 0

@@ -87,8 +87,13 @@ def _walk(root):
                     hasattr(os.path, "isjunction") and os.path.isjunction(full))
                 if _linked and not str(full.resolve()).startswith(str(base.resolve())):
                     continue
-            except OSError:
-                continue          # a broken or unresolvable link is not indexable either
+            except (OSError, RuntimeError):
+                # RuntimeError as well as OSError, and it is not defensive padding: a symlink loop
+                # (`a -> b -> a`, or a link to itself) makes Path.resolve() raise
+                # RuntimeError("Symlink loop from ..."), which this except never caught. That
+                # escaped the walk, killed mapper.scan(), and with it every other section of
+                # chamnan-map -- assets, catalogs, deploy and schema all share this walk.
+                continue          # a broken, looping or unresolvable link is not indexable either
             files.append(rel_dir / name)
     files.sort()
     return files, gits

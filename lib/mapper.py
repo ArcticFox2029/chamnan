@@ -29,6 +29,7 @@ import argparse
 import ast
 import warnings
 import re
+import mdblock
 import unicodedata
 import sys
 from pathlib import Path
@@ -719,7 +720,13 @@ def _render(files, root):
         if f["classes"]:
             counts.append(f"{len(f['classes'])}cls")
         summary = f["doc"] or "—"
-        lines.append(f"- **`{f['path']}`** ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {summary}")
+        # `one_line` on the PATH, not only on the summary. A file name may legally contain a
+        # newline, and an index row is a `- ` bullet -- so a file called
+        # "safe\n- **INJECTED** (999L) -- ....py" rendered as TWO bullets, the second of which a
+        # reader has no way to tell from a real entry, inside the one section every session reads
+        # in full. Same class as the milestone-title bug, on a surface the fix had not reached.
+        lines.append(f"- **`{mdblock.one_line(f['path'])}`**"
+                     f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {summary}")
 
     # Optional sections, in one file rather than several: a repo of plain scripts should end up
     # with a code index and nothing else, not a folder of empty catalogues. Each renderer returns
