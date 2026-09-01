@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chamnan report — measure this repo's context cost per turn, before and after the workspace existed.
+"""chamnan-report — measure this repo's context cost per turn, before and after the workspace existed.
 
 Claude Code already writes every request's token usage to ~/.claude/projects/<encoded-cwd>/. This
 reads that, groups by week, and marks the week the workspace was created, so the user sees the effect
@@ -255,7 +255,7 @@ def main(argv):
         pm = per_model[model]
         pm["calls"] += 1; pm["cread"] += cread
 
-    print(f"chamnan report — {root.name}   ({len(entries):,} calls across {len(weeks)} week(s))\n")
+    print(f"chamnan-report — {root.name}   ({len(entries):,} calls across {len(weeks)} week(s))\n")
     print(f"  {'week':<10}{'calls':>8}{'context/call':>15}{'new-read/call':>16}{'out/call':>11}")
     marker_week = marker.isocalendar()[:2] if marker else None
     for key in sorted(weeks):

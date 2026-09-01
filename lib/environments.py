@@ -30,6 +30,7 @@ is inferred. Every fact in this file was typed by a person who knew it, which is
 worth keeping — and why a `Checked:` date is the only honest way to say how much to trust it.
 """
 import re
+import mdblock
 
 FILENAME = "environments.md"
 HEADER = "# Environments\n"
@@ -79,7 +80,7 @@ def entries(root):
     except OSError:
         return []
 
-    found = list(_ENV.finditer(text))
+    found = list(_ENV.finditer(mdblock.masked(text)))
     out = []
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
@@ -152,17 +153,22 @@ def render_entry(name, platform="", versions="", constraints=(), checked=""):
     """One environment in the canonical shape. A field with nothing in it is left out rather than
     written empty — the same rule milestones.render_entry() follows, and for the same reason: a
     heading followed by nothing reads as an oversight rather than as "not applicable"."""
-    parts = [f"## {name.strip()}", ""]
-    if platform.strip():
-        parts.append(f"**Platform:** {platform.strip()}")
-    if versions.strip():
-        parts.append(f"**Versions:** {versions.strip()}")
-    bullets = [c.strip() for c in constraints if c and c.strip()]
+    # Folded onto one line each, for the reason milestones.render_entry() spells out: this file is
+    # read back by its `## ` headings, and a name carrying a newline wrote a second environment
+    # that silently absorbed the platform and constraints meant for the first.
+    name, platform = mdblock.one_line(name), mdblock.one_line(platform)
+    versions, checked = mdblock.one_line(versions), mdblock.one_line(checked)
+    parts = [f"## {name}", ""]
+    if platform:
+        parts.append(f"**Platform:** {platform}")
+    if versions:
+        parts.append(f"**Versions:** {versions}")
+    bullets = [b for b in (mdblock.one_line(c) for c in constraints) if b]
     if bullets:
         parts.append("**Constraints:**")
         parts.extend(f"- {b}" for b in bullets)
-    if checked.strip():
-        parts.append(f"**Checked:** {checked.strip()}")
+    if checked:
+        parts.append(f"**Checked:** {checked}")
     parts.append("")
     return "\n".join(parts)
 
@@ -180,7 +186,7 @@ def upsert(root, name, entry_text):
     if not text.strip():
         text = HEADER + "\n"
 
-    found = list(_ENV.finditer(text))
+    found = list(_ENV.finditer(mdblock.masked(text)))
     for i, m in enumerate(found):
         if m.group(1).strip().lower() != name.strip().lower():
             continue

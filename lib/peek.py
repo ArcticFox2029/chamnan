@@ -28,6 +28,7 @@ import zipfile
 from collections import Counter
 from pathlib import Path
 
+import mapper
 import redact
 import tokens
 DEFAULT_BUDGET = 400           # tokens of output; the whole point is to stay small
@@ -397,6 +398,52 @@ def has_structure(path):
     return path.name.endswith((".tar.gz", ".tar.bz2", ".tar.xz"))
 
 
+def peek_source(path, find=None):
+    """A source file's shape: what it opens with, and what it defines.
+
+    Source code used to reach peek_binary -- there was no branch for `.py`, `.js`, `.go` or any
+    other language, and no source extension in TEXT_LIKE either, so the single most common kind of
+    file in every repository chamnan targets got the worst answer the tool can give: "unrecognised;
+    100% printable in the first 4KB", a CRC32 and a strings dump. Two commands earlier, chamnan-map
+    had read the same file and listed its functions by name.
+
+    Same extractor as the index, so a file peeked and a file indexed agree with each other.
+    """
+    lang = mapper.EXT_LANG.get(path.suffix.lower())
+    source = path.read_text(encoding="utf-8", errors="replace")
+    out = []
+    try:
+        summary, functions, classes, _rest = mapper._extract_one(source, str(path), lang)
+    except Exception:
+        return peek_text(path, find)
+    if summary:
+        out.append(summary)
+        out.append("")
+    # The extractor returns tuples, and the shape differs per kind: (signature, comment) for a
+    # function, (name, comment, [methods]) for a type. Read positionally, the way render() does.
+    for name, note, methods in (classes or []):
+        members = ", ".join(methods[:MAX_MEMBERS]) if methods else ""
+        line = f"type `{name}`" + (f" — {note}" if note else "")
+        out.append(line + (f"\n  members: {members}" if members else ""))
+    funcs = [sig for sig, _note in (functions or [])]
+    if funcs:
+        out.append(f"{len(funcs)} function(s):")
+        out.extend(f"  {sig}" for sig in funcs[:MAX_MEMBERS])
+        if len(funcs) > MAX_MEMBERS:
+            out.append(f"  …and {len(funcs) - MAX_MEMBERS} more")
+    if find:
+        hits = [f"{i}: {ln.strip()[:120]}" for i, ln in enumerate(source.splitlines(), 1)
+                if find.lower() in ln.lower()][:SAMPLE_ROWS * 4]
+        out.append("")
+        out.append(f"lines matching {find!r}: {len(hits)}" if hits else f"no line matches {find!r}")
+        out.extend(f"  {h}" for h in hits)
+    if not out:
+        # A file this extractor finds nothing in is still text, and showing its opening lines beats
+        # describing it as an unrecognised blob.
+        return peek_text(path, find)
+    return out
+
+
 def peek(path, find=None, budget=DEFAULT_BUDGET):
     path = Path(path)
     if not path.is_file():
@@ -443,6 +490,8 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
                     *peek_binary(path)]
         elif ext in TEXT_LIKE or ext == "":
             body = peek_text(path, find)
+        elif ext in mapper.EXT_LANG:
+            body = peek_source(path, find)
         else:
             body = peek_binary(path)
     except Exception as err:                     # a malformed file must not crash the caller
@@ -507,7 +556,11 @@ def _cost_note(path, ext, size, out):
     its own headline up.
     """
     spent = tokens.estimate(out)
-    if ext in TEXT_LIKE or ext in (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson", ""):
+    # Source code belongs on the comparable side. A plain read CAN open a .py, so claiming
+    # otherwise would be the same dishonesty in the other direction that this function exists to
+    # avoid -- and the comparison is real: the outline of a 3.4KB module is genuinely smaller.
+    if (ext in TEXT_LIKE or ext in mapper.EXT_LANG
+            or ext in (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson", "")):
         try:
             whole, sampled = _whole_file_tokens(path, size)
         except OSError:

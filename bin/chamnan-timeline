@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-"""chamnan timeline — one line of work followed across the sessions it actually took.
+"""chamnan-timeline — one line of work followed across the sessions it actually took.
 
-  chamnan timeline                          list declared threads (same as `list`)
-  chamnan timeline show <id>                one thread, every entry in order
-  chamnan timeline new <title>              DECLARE a thread — nothing else creates one
-  chamnan timeline add <id> <note>          append an entry to a declared thread
-  chamnan timeline add <id> <note> --files a.py,b.py    …and name what it touched
-  chamnan timeline close <id>               stop injecting it; the entries stay readable
-  chamnan timeline reopen <id>              the reverse
-  chamnan timeline for <path>               every entry that named this file
+  chamnan-timeline                          list declared threads (same as `list`)
+  chamnan-timeline show <id>                one thread, every entry in order
+  chamnan-timeline new <title>              DECLARE a thread — nothing else creates one
+  chamnan-timeline add <id> <note>          append an entry to a declared thread
+  chamnan-timeline add <id> <note> --files a.py,b.py    …and name what it touched
+  chamnan-timeline close <id>               stop injecting it; the entries stay readable
+  chamnan-timeline reopen <id>              the reverse
+  chamnan-timeline for <path>               every entry that named this file
 
 <id> is a thread's slug, its filename, or its position in the list above (1, 2, 3 — computed
 fresh each call, never cached from an earlier one).
@@ -36,7 +36,7 @@ def _today():
 def _list_threads(root, stream=sys.stdout):
     found = timeline.threads(root)
     if not found:
-        print("chamnan: no threads declared — `chamnan timeline new \"<title>\"` starts one",
+        print("chamnan: no threads declared — `chamnan-timeline new \"<title>\"` starts one",
               file=stream)
         return found
     print(f"{len(found)} thread(s)\n", file=stream)
@@ -61,7 +61,7 @@ def _resolve_or_complain(root, ident):
     if path is None:
         print(f"chamnan: no thread matches {ident!r} — declared threads are:\n", file=sys.stderr)
         _list_threads(root, stream=sys.stderr)
-        print("\n  `chamnan timeline new \"<title>\"` declares a new one.", file=sys.stderr)
+        print("\n  `chamnan-timeline new \"<title>\"` declares a new one.", file=sys.stderr)
     return path
 
 
@@ -78,10 +78,10 @@ def cmd_new(root, title):
     rel = path.relative_to(root)
     if not is_new:
         print(f"chamnan: that thread already exists — {rel}")
-        print(f"  add to it with `chamnan timeline add {path.stem} \"<what happened>\"`")
+        print(f"  add to it with `chamnan-timeline add {path.stem} \"<what happened>\"`")
         return 0
     print(f"chamnan: declared — {rel}")
-    print(f"  add to it with `chamnan timeline add {path.stem} \"<what happened>\"`")
+    print(f"  add to it with `chamnan-timeline add {path.stem} \"<what happened>\"`")
     return 0
 
 
@@ -142,7 +142,7 @@ def main(argv):
         return 2
     if not rest:
         needs = {"new": "a title", "for": "a path"}.get(cmd, "a thread — number or name from "
-                                                              "`chamnan timeline`")
+                                                              "`chamnan-timeline`")
         print(f"chamnan: {cmd} needs {needs}", file=sys.stderr)
         return 2
 
@@ -162,7 +162,7 @@ def main(argv):
         files = [f for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
         note_parts = note_parts[:at]
     if not note_parts:
-        print("chamnan: add needs a note — chamnan timeline add <id> \"<what happened>\"",
+        print("chamnan: add needs a note — chamnan-timeline add <id> \"<what happened>\"",
               file=sys.stderr)
         return 2
     return cmd_add(root, ident, " ".join(note_parts), files)

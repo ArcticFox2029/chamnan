@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""chamnan impact — what breaks if I change this file, and what happened last time it changed.
+"""chamnan-impact — what breaks if I change this file, and what happened last time it changed.
 
-  chamnan impact <path>          who depends on it, what tests cover it, what threads name it
+  chamnan-impact <path>          who depends on it, what tests cover it, what threads name it
 
 The dependency half already existed and already feeds MAP.md; it simply had no way to be ASKED.
 The other half is the join this exists for: a thread entry that named this file carries "last time
@@ -70,7 +70,7 @@ def main(argv):
                   f"change it freely")
         return 0
 
-    print(f"chamnan impact — {resolved or target}\n")
+    print(f"chamnan-impact — {resolved or target}\n")
 
     if edges:
         if edges["used_by"]:

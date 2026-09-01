@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chamnan map — build .chamnan/MAP.md from the repository's source, and report what it cost.
+"""chamnan-map — build .chamnan/MAP.md from the repository's source, and report what it cost.
 
 The map exists so an agent can answer "which file do I open for X" without reading or grepping the
 tree. Measured across three real repositories (Python, JS+shell, mixed), the Quick Index came to
@@ -9,6 +9,7 @@ The coverage number printed at the end is not decoration. The index is built fro
 opening comment, so a repository that does not write them gets an index of filenames and function
 counts, which is worth far less. Reporting coverage tells the user which lever to pull.
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -117,6 +118,24 @@ def _hooks_dir(root):
     return None
 
 
+_UNREACHABLE_TAIL = re.compile(r"^\s*exit\s+\d*\s*$")
+
+
+def _ends_unreachable(script):
+    """True when the last thing this script does is exit unconditionally.
+
+    Read from the end backwards over blanks and comments only. An `exit 0` inside an `if` or a
+    function is not the end of the script, and treating it as one would refuse a hook that is
+    perfectly fine to append to.
+    """
+    for line in reversed(script.splitlines()):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        return bool(_UNREACHABLE_TAIL.match(line))
+    return False
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
@@ -131,6 +150,18 @@ def install_git_hook(root):
         if HOOK_MARKER in existing:
             print(f"chamnan: already installed in {target.relative_to(root)}")
             return 0
+        # A hook that ends in `exit 0` -- a common way to write one -- makes everything appended
+        # after it dead shell code. The install said "the index now refreshes on every commit"
+        # and it never ran once, which is the stale index the README warns is worse than none.
+        # Refused rather than worked around: prepending would change when the user's own hook
+        # runs, and editing their script is not this tool's call to make.
+        if _ends_unreachable(existing):
+            print(f"chamnan: {target.relative_to(root)} ends in an unconditional `exit`, so "
+                  f"anything appended after it would never run.", file=sys.stderr)
+            print("  Add this line yourself, above that exit:", file=sys.stderr)
+            print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
+                  file=sys.stderr)
+            return 1
         target.write_text(existing.rstrip() + "\n\n" + body, encoding="utf-8")
         print(f"chamnan: appended to your existing {target.relative_to(root)}")
     else:
@@ -157,6 +188,20 @@ def main(argv):
     targets = [Path(a).resolve() for a in argv if not a.startswith("-")]
     if not targets:
         targets = [root]
+    # Checked BEFORE anything is walked. `chamnan-map /etc` used to read its way through /etc --
+    # a directory it has no business in -- and only then die on the relative_to() below with a
+    # traceback, having already spent the time and touched the files.
+    outside = [t for t in targets if t != root and root not in t.parents]
+    if outside:
+        for t in outside:
+            print(f"chamnan: {t} is not inside {root} — the index only covers this repository",
+                  file=sys.stderr)
+        return 2
+    missing = [t for t in targets if not t.exists()]
+    if missing:
+        for t in missing:
+            print(f"chamnan: no such path: {t}", file=sys.stderr)
+        return 2
     # Silently ignoring the second path was worse than refusing it: `chamnan-map src game` looked
     # like it had indexed both and indexed only src, so the map was wrong in a way nothing showed.
     target = targets[0]
@@ -182,7 +227,11 @@ def main(argv):
         print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
         return 1
     text = mapper.render(files, root)
-    out = ws.ensure(root) / "MAP.md"
+    try:
+        out = ws.ensure(root) / "MAP.md"
+    except ws.NotAWorkspace as err:
+        print(f"chamnan: {err}", file=sys.stderr)
+        return 1
     out.write_text(text, encoding="utf-8")
 
     src = sum(f["tokens"] for f in files)
@@ -208,7 +257,7 @@ def main(argv):
             print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
         except ValueError:
             print(f"chamnan: scanning {root}")
-    print(f"chamnan map -> {out.relative_to(root)}{scope}")
+    print(f"chamnan-map -> {out.relative_to(root)}{scope}")
     # len(files), not `total`. `total` is the DESCRIBABLE subset -- the denominator of the coverage
     # bar two lines down -- and printing it here labelled "source file(s)" put two different
     # populations on one line: a file count that excluded the undescribable files beside a token

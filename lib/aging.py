@@ -69,7 +69,7 @@ def check(root, now=None):
 
     envs = environments.entries(root)
     if not envs:
-        return [], [], ("no environments declared — `chamnan env set <name> …` gives this "
+        return [], [], ("no environments declared — `chamnan-env set <name> …` gives this "
                         "something to compare against. Nothing is checked against a clock.")
 
     stale = dict(environments.stale_environments(root, now=now))
@@ -78,7 +78,7 @@ def check(root, now=None):
         names = ", ".join(sorted(stale))
         return [], [], (f"every declared environment has gone cold ({names}) — nothing here is "
                         f"checked, because an unconfirmed entry is evidence nobody looked, not "
-                        f"evidence nothing changed. `chamnan env check` says what to re-confirm.")
+                        f"evidence nothing changed. `chamnan-env check` says what to re-confirm.")
 
     fresh_versions = {}
     for env in fresh:

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""SessionEnd hook — one quiet digest of what repeated today, and nothing else.
+"""SessionEnd hook — one quiet digest of what repeated today, left for the next session.
 
 The inline nudge in scratch_watch.py speaks once, at the moment the third copy of a script is
 written, because that is when the file still exists and promoting it costs one command. This is the
 other half: at the end of the session, everything that repeated and was never kept gets summarised
 in one place, so a pattern that built up across the day is visible even if the moment was missed.
 
-Deliberately not a second chance to nag. It prints once, lists at most a handful, and says nothing
-at all when there is nothing to say.
+Deliberately not a second chance to nag. It writes at most a handful of lines, session_start.py
+shows them exactly once and deletes the file, and nothing is written at all when there is nothing
+to say.
 """
 import json
 import sys
@@ -23,6 +24,8 @@ SIMILAR = 0.55
 WINDOW_HOURS = 24
 MIN_REPEATS = 2
 MAX_LISTED = 4
+# Read, shown once and deleted by session_start.py on the next session in this repository.
+DIGEST_NAME = "repeat_digest.json"
 
 
 def jaccard(a, b):
@@ -76,11 +79,21 @@ def main():
     repeated = sorted((f for f in families if f["n"] > MIN_REPEATS), key=lambda f: -f["n"])
     if not repeated:
         return 0
-    print("## chamnan — repeated this session\n")
-    for fam in repeated[:MAX_LISTED]:
-        print(f"- {fam['n']}x  `{fam['head'][:70]}`")
-    print("\nAnything here worth keeping: `chamnan-promote <file> <name> --desc \"...\"`. "
-          "Next session it is one command instead of writing it again.")
+
+    # Handed to the next session rather than printed. SessionEnd is not one of the four events
+    # whose stdout Claude Code shows the model -- and by then the session it would be speaking to
+    # is over anyway, so a `print()` here reached nobody at all. Writing the digest turns the same
+    # finding into something SessionStart can say at the one moment it can still be acted on.
+    digest = {
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "lines": [f"{fam['n']}x  `{fam['head'][:70]}`" for fam in repeated[:MAX_LISTED]],
+    }
+    out = wsdir / "logs" / DIGEST_NAME
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(digest, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
     return 0
 
 

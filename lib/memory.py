@@ -25,6 +25,7 @@ characters, titles are capped by count, and the store itself is allowed to grow 
 files are small and each one was written on purpose.
 """
 import re
+import mdblock
 
 CATEGORIES = ("decisions", "lessons", "rules")
 
@@ -105,8 +106,13 @@ def _flatten(body):
     rule looks like a new top-level document rather than one item in a list of constraints.
     """
     out = []
-    for line in body.splitlines():
-        if line.startswith("# "):
+    for line, in_fence in mdblock.fenced_lines(body):
+        if in_fence:
+            # A `#` inside a fence is a comment in the example, not a heading of the rule. It used
+            # to be demoted like any other, so a rule whose whole point was `# retries=3 is
+            # load-bearing` was injected with that marker stripped off the line it annotated.
+            out.append(line)
+        elif line.startswith("# "):
             out.append(f"**{line[2:].strip()}**")
         elif line.startswith("#"):
             out.append(re.sub(r"^#+\s*", "", line))

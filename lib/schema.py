@@ -45,10 +45,27 @@ SQL_PARTITION = re.compile(
     r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?\w+[`\"\]]?"
     r"\s+PARTITION\s+OF\s+[`\"\[]?(?:\w+[`\"\]]?\.[`\"\[]?)?(\w+)", re.I)
 PRISMA_MODEL = re.compile(r"^model\s+(\w+)\s*\{", re.M)
-DJANGO_MODEL = re.compile(r"^class\s+(\w+)\s*\(\s*(?:models\.)?Model\s*\)\s*:", re.M)
+# `models.Model` must be among the bases, not the only one. Requiring it alone indexed
+# TimestampedMixin -- which is abstract and is not a table -- and missed Order, which is. An
+# invented table is the worse half of that: a reader can go looking for it.
+DJANGO_MODEL = re.compile(
+    r"^class\s+(\w+)\s*\(([^)]*\b(?:models\.)?Model\b[^)]*)\)\s*:", re.M)
+# An abstract base declares no table of its own, and Django says so in its own Meta.
+DJANGO_ABSTRACT = re.compile(r"abstract\s*=\s*True")
 SQLALCHEMY_TABLE = re.compile(r"__tablename__\s*=\s*[\"'](\w+)[\"']")
+# SQLAlchemy 2.0's shared-base idiom computes __tablename__ in a declared_attr instead of writing
+# it. There is no literal to read, so the table name genuinely is not in this file -- but the
+# class IS a table, and saying nothing said the file had no tables at all.
+SQLALCHEMY_DECLARED = re.compile(
+    r"@declared_attr[\s\S]{0,200}?def\s+__tablename__")
+SQLALCHEMY_CLASS = re.compile(r"^class\s+(\w+)\s*\([^)]*\)\s*:", re.M)
 RAILS_TABLE = re.compile(r"create_table\s+[:\"'](\w+)", re.I)
 TYPEORM_ENTITY = re.compile(r"@Entity\([^)]*\)\s*(?:export\s+)?class\s+(\w+)", re.S)
+# `@Entity({ name: "orders" })` -- the decorator names the real table, and the class name is not
+# it. Read first, exactly as ROOM_JPA_TABLE is read before ROOM_JPA_CLASS below, and for the same
+# reason: `Order` is not what the table is called.
+TYPEORM_NAMED = re.compile(
+    r"@Entity\s*\(\s*(?:[\"']([\w.]+)[\"']|\{[^{}]*?name\s*:\s*[\"']([\w.]+)[\"'])", re.S)
 # A view is a queryable object, and an analytics materialized view is often the only place a
 # derived figure is defined. Neither was matched at all, so "where does lane performance come
 # from" had no answer in the index even though the repo declares it.
@@ -73,7 +90,14 @@ COMMENT_ABOVE = re.compile(r"(?:^|\n)((?:[ \t]*(?://|--|#)[^\n]*\n)+)[ \t]*$")
 SQL_COLUMN = re.compile(r"^\s*[`\"\[]?(\w+)[`\"\]]?\s+"
                         r"(varchar|char|text|int|integer|bigint|smallint|decimal|numeric|float|"
                         r"double|real|bool|boolean|date|datetime|timestamp|time|json|jsonb|uuid|"
-                        r"blob|bytea|serial|bigserial)", re.I | re.M)
+                        r"blob|bytea|serial|bigserial|"
+                        # Dialect types, added because a column of one vanished from the list with
+                        # nothing saying the list was short -- which reads as "this table has no
+                        # status column", not as "this tool does not know ENUM".
+                        r"enum|tinyint|mediumint|nvarchar|nchar|ntext|varchar2|number|clob|"
+                        r"money|bit|year|set|inet|cidr|macaddr|xml|citext|interval|"
+                        r"timestamptz|datetime2|smalldatetime|binary|varbinary|image|geometry)",
+                        re.I | re.M)
 
 SCHEMA_HINTS = ("migration", "migrations", "schema", "models", "db", "database", "sql",
                 # Where JPA, Room, Hibernate and Doctrine entities actually live. The corpus only
@@ -160,9 +184,36 @@ def scan(root, files):
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        for pattern in (PRISMA_MODEL, DJANGO_MODEL, SQLALCHEMY_TABLE, RAILS_TABLE,
-                        TYPEORM_ENTITY, ROOM_JPA_TABLE, ROOM_JPA_CLASS):
+        for pattern in (PRISMA_MODEL, SQLALCHEMY_TABLE, RAILS_TABLE,
+                        ROOM_JPA_TABLE, ROOM_JPA_CLASS):
             for m in pattern.finditer(text):
+                add(m.group(1), f["path"], _summary_above(text, m.start()))
+
+        # Django, separately: a class is a table only if `models.Model` is among its bases AND the
+        # class is not abstract. Abstract mixins are a table's worth of fields with no table.
+        for m in DJANGO_MODEL.finditer(text):
+            body = text[m.end():m.end() + 800]
+            nxt = DJANGO_MODEL.search(text, m.end())
+            if nxt:
+                body = text[m.end():min(nxt.start(), m.end() + 800)]
+            if DJANGO_ABSTRACT.search(body):
+                continue
+            add(m.group(1), f["path"], _summary_above(text, m.start()))
+
+        # TypeORM, separately: the decorator's own name beats the class name where it is given,
+        # and the class name is only the fallback for a bare @Entity().
+        named = set()
+        for m in TYPEORM_NAMED.finditer(text):
+            named.add(m.start())
+            add(m.group(1) or m.group(2), f["path"], _summary_above(text, m.start()))
+        for m in TYPEORM_ENTITY.finditer(text):
+            if m.start() not in named:
+                add(m.group(1), f["path"], _summary_above(text, m.start()))
+
+        # A computed __tablename__ names no table in this file, but the classes are still tables.
+        # Recorded under their class names, which is the only name present, rather than dropped.
+        if SQLALCHEMY_DECLARED.search(text) and not SQLALCHEMY_TABLE.search(text):
+            for m in SQLALCHEMY_CLASS.finditer(text):
                 add(m.group(1), f["path"], _summary_above(text, m.start()))
 
     for name, count in partitions.items():

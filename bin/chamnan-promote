@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chamnan promote — turn a one-off script into a tool the repo keeps.
+"""chamnan-promote — turn a one-off script into a tool the repo keeps.
 
 Measured on one developer over 34 days: 2,104 of 17,290 Bash calls (12.2%) wrote a script inline,
 and 1,486 distinct paths under /tmp were touched — about 44 throwaway files a day. Most deserve to
@@ -7,8 +7,8 @@ be thrown away. The ones that do not are the checks and reports that get re-deri
 each time costing the tokens to think them up again and arriving slightly different, which is worse
 than the cost: a regression check that is rewritten each run is not a regression check.
 
-  chamnan promote <file> <name> [--desc "..."]   install a script as a permanent tool
-  chamnan promote --list                          show what this repo already has
+  chamnan-promote <file> <name> [--desc "..."]   install a script as a permanent tool
+  chamnan-promote --list                          show what this repo already has
 """
 import shutil
 import stat
@@ -26,7 +26,7 @@ def show(root):
     entries = tools_index.load(root)
     if not entries:
         print("chamnan: no promoted tools yet.")
-        print("  When a script proves worth keeping: chamnan promote <file> <name>")
+        print("  When a script proves worth keeping: chamnan-promote <file> <name>")
         return 0
     print(f"chamnan tools — {len(entries)} in {ws.workspace(root).name}/tools/\n")
     for e in entries:
@@ -57,8 +57,19 @@ def main(argv):
         print(f"chamnan: no such file: {src}", file=sys.stderr)
         return 1
 
-    tools = ws.ensure(root) / "tools"
-    dest = tools / (name if Path(name).suffix else name + src.suffix)
+    safe = ws.safe_tool_name(name)
+    if safe is None:
+        print(f"chamnan: {name!r} is not a usable tool name — it has to be a plain filename,\n"
+              "  no directory separators and no leading dot. The registry stores the bare\n"
+              "  name, so a path here would leave an entry pointing at a file nothing can find.",
+              file=sys.stderr)
+        return 2
+    try:
+        tools = ws.ensure(root) / "tools"
+    except ws.NotAWorkspace as err:
+        print(f"chamnan: {err}", file=sys.stderr)
+        return 1
+    dest = tools / (safe if Path(safe).suffix else safe + src.suffix)
     if dest.exists():
         print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
               file=sys.stderr)
@@ -76,7 +87,7 @@ def main(argv):
     print(f"  run it with:  {rel}")
     if not desc:
         print("  no description given — add one so a future session knows when to reach for it:")
-        print(f"    chamnan promote --list   (then edit {tools_index.path(root).relative_to(root)})")
+        print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root)})")
     return 0
 
 

@@ -8,35 +8,58 @@ decides how much of the architecture index gets injected at session start. A rep
 whose summaries are not in English was silently blowing through the budget it set.
 
 The weights below come from bench/calibrate_tokens.py, which measures real prompts
-against the real API rather than guessing. Over-estimating tokens wastes a little
-budget while under-estimating overruns it, so where the two directions are not
-equally safe the constants sit on the over-estimating side.
+against the real API rather than guessing.
 
-Where it actually lands, checked against bench/calibration.json (real counts, seven
-scripts) and re-checked on every run of tests/run_tests.py:
+WHAT THIS MODULE DOES NOT DO, stated first because it used to be claimed here and was
+not true: it does not always err toward over-counting. That was written as a design
+principle and read back for a year as a measured property. It was never checked
+against a real artefact -- the calibration corpus is seven short synthetic samples,
+none of them an architecture index -- and when chamnan's own MAP.md was finally
+measured it came back UNDER by 8.2%, and its symbol-dense Full Detail section by
+18.1%. The safe direction was the one the module was wrong in, on the single file it
+exists to budget.
 
-    chinese   -7.7% -> +0.4%     thai            -0.7%
-    japanese  +6.7% -> +14.5%     english_code    +3.1%
-    german          -7.8%         russian        +17.6%
-                                  english_prose  +36.2%
+What was missing was a term for punctuation. A path or a signature is a third
+non-alphanumeric (`/`, `.`, `_`, `-`, `:`, backtick, `|`), each mostly a token of its
+own, and pricing those at the same rate as letters is what produced the gap. Splitting
+the old single divisor into letters, symbols and whitespace closes most of it without
+moving prose, which has almost no symbols and so is barely touched.
 
-The two arrows are this commit: CJK punctuation was falling through to the Latin
-divisor. Nothing else moved, because nothing else was wrong.
+Measured against the real API, on real artefacts as well as the synthetic corpus --
+the left column is before that split, the right is after:
 
-Two of those deserve their numbers said out loud rather than buried:
+    chamnan's own MAP.md, Quick Index   -8.2%  ->  -1.5%
+    ...its Full Detail section         -18.1%  ->  -8.5%
+    a real STATE.md                     +9.8%  -> +13.3%
+    this repo's own Python             +14.3%  -> +16.9%
+    JSON                               -11.8%  ->  -1.7%
+    URLs                                -6.3%  ->  +3.1%
+    english_code                        +3.1%  ->  +7.9%
+    english_prose                      +36.2%  -> +34.1%
+    russian                            +17.6%  -> +16.3%
+    german                              -7.8%  ->  -9.0%
+    thai / chinese / japanese                 unmoved
 
-English PROSE is over-estimated by a third, because _LATIN_DIVISOR is calibrated on
-code (2.47 chars/token measured) and prose runs far lighter (3.27). That is the right
-bias for this module's main caller -- the architecture index is paths and signatures,
-not prose -- but it means a prose-heavy STATE.md is reported as costing more than it
-does, and can be rolled up earlier than it needs to be.
+So the honest claim is narrower than the old one, and it is the claim the callers
+should be read against: on the content chamnan actually budgets the error is now
+within about 10% in either direction, where it used to reach 18% in the direction
+that overruns. It is not a bound, and three shapes are still badly under-counted and
+left that way on purpose because no caller budgets them: base64 and other
+high-entropy blobs (-56%), emoji (-32%), and a long run of one repeated character,
+which costs one real token per character where this module charges 0.4.
 
-GERMAN is the one script still under-estimated, at -7.8%, and it is left that way on
-purpose. One 1,266-character sample is not enough to move a constant that every other
-Latin-script repository depends on, and compounding is exactly the feature that makes
-German an outlier rather than a correction. The number is recorded here instead of
-being tuned away, and the byte ceiling in lib/fit.py now bounds what a token error of
-this size can actually cost: delivery is enforced in bytes, which no estimate touches.
+GERMAN is the one script under-estimated in the synthetic corpus, at -9.0%, and it is
+left that way. One 1,266-character sample is not enough to move a constant every other
+Latin-script repository depends on, and compounding is what makes German an outlier
+rather than a correction -- the same effect shows up in long code identifiers, which
+are under-counted by 16.6% for the same reason. The numbers are recorded here instead
+of being tuned away, and the byte ceiling in lib/fit.py bounds what an error of this
+size can actually cost: delivery is enforced in bytes, which no estimate touches.
+
+ENGLISH PROSE is over-estimated by a third, because the letter divisor is fitted on a
+corpus that is mostly code and index. That is the right bias for this module's main
+caller, but it means a prose-heavy STATE.md is reported as costing more than it does
+and can be rolled up earlier than it needs to be.
 """
 
 # One token per character, roughly: Han, kana, Hangul, and CJK compatibility forms.
@@ -61,7 +84,18 @@ _DENSE = ((0x0E00, 0x0EFF), (0x0900, 0x0DFF), (0x1000, 0x109F))
 # both and this one is set by the heavier.
 _CJK_WEIGHT = 1.05
 _DENSE_WEIGHT = 0.84
-_LATIN_DIVISOR = 2.4      # covers Latin, Cyrillic, Greek, Arabic, Hebrew, and code
+# Letters and digits only. One divisor for every non-CJK character could not be right for both
+# prose and paths at once, and the direction it was wrong in was the unsafe one -- see the
+# measurements in the docstring above.
+_LATIN_DIVISOR = 2.43     # covers Latin, Cyrillic, Greek, Arabic, Hebrew, and code
+# Punctuation and symbols, priced per character rather than by a divisor. `/`, `.`, `_`, `-`, `:`,
+# backtick and `|` mostly tokenize alone or split the word beside them, which is why an index of
+# paths and signatures costs far more per character than the prose the old single divisor was
+# fitted on. This is the term that was missing.
+_SYMBOL_WEIGHT = 0.68
+# Whitespace is cheap but not free: runs fold, and a newline is usually absorbed by the token
+# beside it. Fitted rather than assumed, because an indented index is a third whitespace.
+_SPACE_WEIGHT = 0.38
 
 
 def _in(o, ranges):
@@ -75,6 +109,10 @@ def weight(ch):
         return _CJK_WEIGHT
     if _in(o, _DENSE):
         return _DENSE_WEIGHT
+    if ch.isspace():
+        return _SPACE_WEIGHT
+    if not ch.isalnum():
+        return _SYMBOL_WEIGHT
     return 1.0 / _LATIN_DIVISOR
 
 
@@ -82,16 +120,21 @@ def estimate(text):
     """Estimated token count for a string, weighted by the scripts it contains."""
     if not text:
         return 0.0
-    cjk = dense = other = 0
+    cjk = dense = symbol = space = other = 0
     for ch in text:
         o = ord(ch)
         if _in(o, _CJK):
             cjk += 1
         elif _in(o, _DENSE):
             dense += 1
+        elif ch.isspace():
+            space += 1
+        elif not ch.isalnum():
+            symbol += 1
         else:
             other += 1
-    return cjk * _CJK_WEIGHT + dense * _DENSE_WEIGHT + other / _LATIN_DIVISOR
+    return (cjk * _CJK_WEIGHT + dense * _DENSE_WEIGHT + symbol * _SYMBOL_WEIGHT
+            + space * _SPACE_WEIGHT + other / _LATIN_DIVISOR)
 
 
 def cut_at(text, budget):

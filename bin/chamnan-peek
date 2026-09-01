@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""chamnan peek — read the shape of one file instead of the whole thing.
+"""chamnan-peek — read the shape of one file instead of the whole thing.
 
 The index tells a session that a directory holds thousands of documents so that nobody goes
 looking. This is for the moment when a task genuinely needs one of them. Opening it whole is the

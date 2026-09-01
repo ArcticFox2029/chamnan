@@ -1,0 +1,72 @@
+"""Reading markdown structure out of text that a person -- or an agent -- wrote freely.
+
+Four modules in this package find their structure by scanning for lines that start with `#`:
+session records split on `##`, milestones and environments parse entries back out of one appended
+file, and memory demotes an entry's own headings before injecting it. Every one of them was a
+plain per-line regex, and a plain per-line regex cannot tell a heading from a line of a fenced
+code block that happens to begin with `#` -- which is what a shell comment, a Python comment and
+a markdown example all look like.
+
+That is not cosmetic in this package, because the results are injected. A `## Done` section whose
+body quoted a snippet containing `## Remaining` parsed as two sections, and `carry_forward()` --
+which is read at the top of the next session -- delivered the fabricated one and silently dropped
+the real section that followed it. The same gap in reverse let a milestone title carrying a
+newline write a second, complete-looking milestone into the file underneath the real one.
+
+So: `fenced_lines` for reading, `one_line` for writing. Both are deliberately small. A markdown
+parser is not being added to a plugin whose whole deployment story is the standard library.
+"""
+import re
+
+# ``` or ~~~, at least three, optionally indented and optionally carrying an info string.
+_FENCE = re.compile(r"^(`{3,}|~{3,})")
+
+
+def fenced_lines(text):
+    """Yield `(line, in_fence)` for every line of `text`.
+
+    A fence opens on the first ``` or ~~~ and closes on the next one of the same character that is
+    at least as long -- which is the rule that lets a fence containing ``` be written with ````.
+    The fence markers themselves are reported as inside, since neither is ever structure.
+    An unclosed fence swallows the rest of the text on purpose: that is what a renderer does, and
+    guessing otherwise would put the structure back in the hands of the malformed input.
+    """
+    fence = None
+    for line in text.splitlines():
+        m = _FENCE.match(line.lstrip())
+        if m:
+            mark = m.group(1)
+            if fence is None:
+                fence = mark
+                yield line, True
+                continue
+            if mark[0] == fence[0] and len(mark) >= len(fence):
+                fence = None
+                yield line, True
+                continue
+        yield line, fence is not None
+
+
+def one_line(value):
+    """A single-line field, forced onto one line before it is written into a shared file.
+
+    A title is written as `## {title}`. Left alone, a title containing a newline followed by
+    `## ...` appends a second entry that every reader afterwards treats as real -- including the
+    injection. Folding the newlines away is enough: what remains cannot open a heading, because a
+    heading has to start a line.
+    """
+    return " ".join(str(value).split())
+
+
+def masked(text):
+    """`text` with every fenced line blanked to spaces, same length, same offsets.
+
+    For the two callers that scan a whole file with `finditer` rather than line by line: run the
+    pattern over this and every `.start()` still indexes into the original string, so the match
+    offsets can be used against the real text unchanged.
+    """
+    out = []
+    for line, in_fence in fenced_lines(text):
+        out.append(" " * len(line) if in_fence else line)
+    tail = "\n" if text.endswith("\n") else ""
+    return "\n".join(out) + tail

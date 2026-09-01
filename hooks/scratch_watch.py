@@ -15,6 +15,7 @@ needed parsing would have to understand every language a user might write a scra
 import json
 import re
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -40,7 +41,6 @@ MIN_TOKENS = 8
 # make before the resume nudge is even considered. Not the first thing a session sees before any
 # real work has happened; low enough to still fire well inside a normal working session.
 NUDGE_AT = 10
-NUDGE_KEEP_SESSIONS = 50  # bounded state file; old session_ids are evicted, not archived
 
 
 def body_of(payload):
@@ -72,6 +72,71 @@ def headline(text):
             return " ".join(line.split())[:80]
     return " ".join(text.strip().splitlines()[0].split())[:80] if text.strip() else ""
 
+
+
+NUDGE_DIR = "logs/nudge"
+NUDGE_MAX_AGE = 2 * 24 * 3600     # a session older than this is over; its marker is dead weight
+
+
+def _nudge_path(wsdir, session_id):
+    """One state file per session, never one shared dict keyed by session id.
+
+    The shared file was a read-modify-write with no lock, and two sessions in one repository is
+    normal rather than exotic -- 98 of 100 concurrent increments were lost when it was measured
+    at the function level. It stayed valid JSON the whole time, just wrong, which is the lost
+    update anomaly: an atomic write does not prevent it, only a lock spanning read AND write, or
+    not sharing the file at all.
+
+    lib/pointer.py reached the same conclusion for exactly the same shape of store and chose the
+    same answer, with the reasoning written out there: a lock would have to survive flock's
+    non-reentrancy and fcntl's rule that closing any descriptor drops the process's locks, while
+    a per-session file needs none of that to be correct. This applies that decision to the one
+    store in this package that had not received it. The eviction loop goes with it -- a sweep of
+    files older than the session that wrote them replaces counting entries in one dict.
+    """
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(session_id))[:64] or "none"
+    return wsdir / NUDGE_DIR / f"{safe}.json"
+
+
+def _nudge_read(wsdir, session_id):
+    try:
+        d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"calls": 0, "nudged": False}
+    # Valid JSON of the wrong shape is not a missing file: a list here raised AttributeError on
+    # every subsequent tool call in the session.
+    return d if isinstance(d, dict) else {"calls": 0, "nudged": False}
+
+
+def _nudge_write(wsdir, session_id, entry):
+    p = _nudge_path(wsdir, session_id)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # Beside the target: os.replace fails with EXDEV across mount points, and a copy-and-delete
+        # fallback would give up the atomicity this is here for.
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(entry), encoding="utf-8")
+        tmp.replace(p)
+        for old in p.parent.glob("*.json"):
+            if old != p and time.time() - old.stat().st_mtime > NUDGE_MAX_AGE:
+                old.unlink()
+    except OSError:
+        pass
+
+
+def say(text):
+    """Emit one notice to the model.
+
+    PostToolUse is NOT one of the four events whose plain stdout Claude Code shows to the model --
+    only `UserPromptSubmit`, `UserPromptExpansion`, `SessionStart` and `PostModelSwitch` are, and
+    everything else goes to the debug log alone. A `print()` here therefore reached nobody. The
+    documented channel for this event is a JSON object on stdout carrying
+    `hookSpecificOutput.additionalContext`, which is what the two PreToolUse hooks in this
+    directory have always used. Exactly one object may be written, which is why every check in
+    main() returns immediately after speaking.
+    """
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PostToolUse", "additionalContext": text}}) + "\n")
 
 def jaccard(a, b):
     if not a or not b:
@@ -119,7 +184,7 @@ def notice_workflow(payload, wsdir, root):
     # threshold was passed earlier and saying so again is repetition.
     if before and before[0] == sequence:
         return False
-    print(workflows.describe(sequence, count, candidate_path.relative_to(root)))
+    say(workflows.describe(sequence, count, candidate_path.relative_to(root)))
     return True
 
 
@@ -198,9 +263,9 @@ def _track_tool_health(payload, root):
     if not just_flagged or entry is None:
         return False
     signal = max(entry.get("interrupted", 0), entry.get("stderr_seen", 0))
-    print(f"chamnan: `.chamnan/tools/{name}` has been interrupted or written to stderr "
+    say(f"chamnan: `.chamnan/tools/{name}` has been interrupted or written to stderr "
           f"{signal} times in its last {entry.get('runs', '?')} run(s) — worth a look. "
-          f"`chamnan candidates demote {name}` sends it back for review if it no longer does "
+          f"`chamnan-candidates demote {name}` sends it back for review if it no longer does "
           f"what you expect.")
     return True
 
@@ -238,25 +303,13 @@ def _environment_notice(payload, wsdir, root):
     session_id = str(payload.get("session_id") or "")
     if not session_id:
         return False
-    state_path = wsdir / "logs" / "nudge_state.json"
-    state = {}
-    if state_path.is_file():
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            # Valid JSON of the wrong shape is not a missing file: a list here raised
-            # AttributeError on every subsequent tool call in the session.
-            state = state if isinstance(state, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            state = {}
-    entry = state.get(session_id) or {"calls": 0, "nudged": False}
+    entry = _nudge_read(wsdir, session_id)
     told = entry.get("envs_told") or []
     if name in told:
         return False
     entry["envs_told"] = told + [name]
-    state[session_id] = entry
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    print(notice)
+    _nudge_write(wsdir, session_id, entry)
+    say(notice)
     return True
 
 
@@ -278,38 +331,16 @@ def _resume_nudge(payload, wsdir, root):
     if not session_id:
         return False
 
-    state_path = wsdir / "logs" / "nudge_state.json"
-    state = {}
-    if state_path.is_file():
-        try:
-            state = json.loads(state_path.read_text(encoding="utf-8"))
-            # Valid JSON of the wrong shape is not a missing file: a list here raised
-            # AttributeError on every subsequent tool call in the session.
-            state = state if isinstance(state, dict) else {}
-        except (OSError, json.JSONDecodeError):
-            state = {}
-    entry = state.get(session_id) or {"calls": 0, "nudged": False}
+    entry = _nudge_read(wsdir, session_id)
     entry["calls"] = entry.get("calls", 0) + 1
-    state[session_id] = entry
+    _nudge_write(wsdir, session_id, entry)
 
-    # Bounded: keep only the most recently active sessions, so a machine that runs chamnan for
-    # months does not grow this file forever. Least-active (by call count) are evicted first,
-    # which in practice means the oldest sessions, since an old session's count stops climbing the
-    # moment it ends.
-    if len(state) > NUDGE_KEEP_SESSIONS:
-        for old_id in sorted(state, key=lambda k: state[k].get("calls", 0))[:len(state) - NUDGE_KEEP_SESSIONS]:
-            del state[old_id]
-
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-
-    if entry["nudged"] or entry["calls"] < NUDGE_AT or sessions.written_today(root):
+    if entry.get("nudged") or entry["calls"] < NUDGE_AT or sessions.written_today(root):
         return False
 
     entry["nudged"] = True
-    state[session_id] = entry
-    state_path.write_text(json.dumps(state), encoding="utf-8")
-    print("chamnan: a fair bit has happened this session and nothing is recorded for today yet. "
+    _nudge_write(wsdir, session_id, entry)
+    say("chamnan: a fair bit has happened this session and nothing is recorded for today yet. "
           "/chamnan:resume takes about 30 seconds and is what the next session reads first.")
     return True
 
@@ -324,12 +355,21 @@ def main():
         return 0
     root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
-    if not wsdir.is_dir() or not ws.enabled("promote", root):
+    if not wsdir.is_dir():
         return 0
 
     # Silent and independent of everything below: never prints, so it does not compete for the
     # one-notice-per-turn budget the checks after it share.
-    _stamp_memory_entry(payload, root)
+    #
+    # Gated on `memory`, and checked BEFORE the `promote` gate rather than under it. It used to sit
+    # inside that gate, which meant `"memory": false` still stamped As-of/Provenance trailers onto
+    # memory entries and `"promote": false` stopped it -- the exact opposite of what the remember
+    # skill documents, in both directions.
+    if ws.enabled("memory", root):
+        _stamp_memory_entry(payload, root)
+
+    if not ws.enabled("promote", root):
+        return 0
 
     # A plain Bash command carries no script body, so the path below ignores it entirely — and a
     # repeated SEQUENCE of them is the thing that leaves no file behind at all. Checked first, and
@@ -400,9 +440,9 @@ def main():
     # noise the user learns to scroll past.
     if len(matches) + 1 == REPEAT_AT:
         first = matches[0].get("at", "")[:10]
-        print(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "
+        say(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "
               f"If it is worth keeping, save it and run: "
-              f"chamnan promote <file> <name> --desc \"what it checks\" — "
+              f"chamnan-promote <file> <name> --desc \"what it checks\" — "
               f"then it is one command next time instead of writing it again.")
     return 0
 

@@ -253,8 +253,20 @@ def load_json(path, want=dict):
     return data if isinstance(data, want) else want()
 
 
+class NotAWorkspace(Exception):
+    """`.chamnan` exists and is not a directory, so no workspace can be built at that path."""
+
+
 def ensure(root=None):
     ws = workspace(root)
+    # Checked before anything is attempted. A plain file named `.chamnan` -- a bad merge, a stray
+    # download -- made the first mkdir succeed-by-exist_ok and then killed the run several lines
+    # later on a NotADirectoryError from write_text, with a traceback naming config.json rather
+    # than the thing that is actually wrong.
+    if ws.exists() and not ws.is_dir():
+        raise NotAWorkspace(
+            f"{ws} exists and is not a directory. chamnan's workspace has to be a folder at that "
+            f"path — move or delete the file, then run this again.")
     for sub in ("", "skills", "tools", "logs", "sessions", "threads",
                 "memory", "memory/decisions", "memory/lessons", "memory/rules"):
         try:
@@ -284,7 +296,7 @@ def ensure(root=None):
     return ws
 
 
-GENERATED_ATTR = ".chamnan/MAP.md linguist-generated=true\n"
+GENERATED_ATTR = "MAP.md linguist-generated=true\n"
 GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap. This line collapses\n"
                   "# it in pull-request diffs, so a rebuild does not bury the review in a file nobody\n"
                   "# reads by hand. Delete it if you would rather see the diff.\n")
@@ -304,15 +316,24 @@ def _mark_generated(root):
     showing it. chamnan-map is byte-identical across consecutive runs on an unchanged tree, which
     is asserted by the test suite, so a collapsed diff means "regenerated, nothing else changed".
 
-    Appended, never rewritten. A .gitattributes is the user's file and may carry rules that matter
-    far more than this one.
+    Written INSIDE the workspace, at `.chamnan/.gitattributes`, and that placement is the point.
+    git reads a .gitattributes in any directory and applies its patterns to that directory and
+    below, so one line there does exactly what a root-level rule would -- and it does it without
+    chamnan reaching outside the folder it owns. It used to append to the repository's own root
+    .gitattributes, silently, on the first session, which contradicted the README's promise that
+    `.git/hooks/pre-commit` is the only file chamnan ever writes outside `.chamnan/` and that even
+    that one is opt-in. A promise like that is worth more than a diff-collapsing nicety.
+
+    Appended, never rewritten, since a user may have put their own rules in this file too.
     """
     try:
         if not root or not (Path(root) / ".git").exists():
             return
-        ga = Path(root) / ".gitattributes"
+        ga = Path(root) / WORKSPACE_DIRNAME / ".gitattributes"
+        if not ga.parent.is_dir():
+            return
         existing = ga.read_text(encoding="utf-8", errors="replace") if ga.is_file() else ""
-        if "chamnan/MAP.md" in existing:
+        if "MAP.md linguist-generated" in existing:
             return
         with ga.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
@@ -414,3 +435,26 @@ def available_update(plugin_root):
     except (OSError, ValueError, TypeError):
         pass
     return ""
+
+
+# A promoted tool is addressed by its bare name everywhere afterwards -- the registry stores
+# `dest.name`, the index lists it, and `demote` looks it up by it. So a name that is really a
+# path does not merely escape the workspace, it escapes it and then leaves a registry entry
+# pointing at a file that is not where the entry says it is, which nothing can clean up.
+_UNSAFE_NAME = ("/", "\\", "\x00")
+
+
+def safe_tool_name(name):
+    """The name as it may be written into `.chamnan/tools/`, or None if it may not be.
+
+    Refused rather than sanitised. Silently turning `../../x` into `x` writes a file the user did
+    not ask for under a name they did not choose; saying no leaves them in control of both.
+    """
+    name = (name or "").strip()
+    if not name or name in (".", ".."):
+        return None
+    if any(ch in name for ch in _UNSAFE_NAME):
+        return None
+    if name.startswith("."):
+        return None
+    return name

@@ -277,7 +277,7 @@ def unindexed(root, map_text):
     sample. `core_test.mjs` was touched 15 times, `balance_check.mjs` 8, `cloud.js` 7. A whole
     directory of active work was invisible.
 
-    That is the real failure mode, and it is not the one the literature worries about. A chamnan map
+    That is the real failure mode, and it is not the one the literature worries about. A chamnan-map
     is regenerated wholesale from the tree rather than patched, so it cannot drift into being WRONG
     — separately measured at 0 dead paths out of 264. It can only fall behind. **A stale map is not
     confidently wrong; it is blind, and it is blind exactly where the work is happening**, because
@@ -355,7 +355,12 @@ def main():
     # writes only when something actually changed. Running it every session is what makes an
     # upgrade reach the repository rather than only the plugin.
     try:
-        wsdir = ws.ensure(root)
+        try:
+            wsdir = ws.ensure(root)
+        except ws.NotAWorkspace:
+            # A hook has no good way to raise. Saying nothing is the only safe failure here, and
+            # every foreground command explains it properly the moment the user runs one.
+            return 0
     except OSError:
         return 0                      # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
@@ -523,8 +528,11 @@ def main():
             if len(tools) > MAX_TOOLS:
                 lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
                              f"`{(wsdir/'tools').relative_to(root)}/`_")
+            # Scrubbed like every other section. A tool description is text a person wrote and
+            # this file read off disk; it reached the injection raw only because index.json looked
+            # like chamnan's own data rather than a place somebody could paste a token.
             out.append(section("This repo's own tools — prefer these over writing a new script",
-                               "\n".join(lines), ".chamnan/tools/index.json"))
+                               redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
 
     if cfg.get("capture", True):
         skills = sorted((wsdir / "skills").glob("*.md")) if (wsdir / "skills").is_dir() else []
@@ -542,6 +550,33 @@ def main():
                 "\n".join(lines) +
                 f"\n\nFull text in `{(wsdir/'skills').relative_to(root)}/`. Load one when it applies; "
                 f"do not read them all.", ".chamnan/skills/"))
+
+    if cfg.get("promote", True):
+        # Written by session_end.py, which cannot speak for itself: SessionEnd is not one of the
+        # four events whose stdout reaches the model, and the session it would address is over by
+        # then. Shown once and deleted, so a digest never becomes a standing nag.
+        digest_path = wsdir / "logs" / "repeat_digest.json"
+        if digest_path.is_file():
+            lines = []
+            try:
+                data = json.loads(digest_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    lines = [str(x) for x in (data.get("lines") or [])][:6]
+            except (OSError, json.JSONDecodeError):
+                lines = []
+            try:
+                digest_path.unlink()
+            except OSError:
+                pass
+            if lines:
+                out.append(section(
+                    "Repeated last session and never kept",
+                    # The lines are headlines lifted from scripts the last session wrote, so this
+                    # is repository text like any other, not chamnan's own words.
+                    redact.scrub("\n".join(f"- {ln}" for ln in lines)) +
+                    "\n\nIf one of these is worth keeping: `chamnan-promote <file> <name> "
+                    "--desc \"what it checks\"` — then it is one command instead of writing it "
+                    "again.", ".chamnan/logs/repeat_digest.json"))
 
     style = cfg.get("reply_style", "off")
     if style in REPLY_STYLES:
@@ -623,7 +658,7 @@ def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
     """
     total = tokens.estimate(body)
     size = len(body.encode())
-    print(f"chamnan context — {total:,.0f} tokens injected at session start\n")
+    print(f"chamnan context — {round(total):,} tokens injected at session start\n")
     # Bytes, not tokens, because the host's cut is made on bytes. A block can be well inside its
     # token budgets and still be truncated to 2,048 bytes on the way out.
     print(f"  {size:,} bytes of the {ceiling:,}-byte hook limit "
@@ -638,14 +673,19 @@ def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
         width = max(len(e["title"]) for e in shown)
         width = min(max(width, 20), 52)
         print(f"  {'section'.ljust(width)}  {'tokens':>7}   from")
+        # Rounded once, then summed -- not summed and then rounded. The remainder is the gap
+        # between the printed numbers and the printed total, so it has to be computed from the
+        # same rounded values a reader can add up, or the column silently fails to reconcile by a
+        # token or two depending on where the fractions happen to fall.
+        attributed = 0
         for e in sorted(shown, key=lambda x: -x["tokens"]):
-            t = e["tokens"]
+            t = round(e["tokens"])
+            attributed += t
             title = e["title"] if len(e["title"]) <= width else e["title"][: width - 1] + "…"
-            print(f"  {title.ljust(width)}  {t:>7,.0f}   {e['source'] or '—'}")
-        attributed = sum(e["tokens"] for e in shown)
-        rest = total - attributed
-        if rest > 0:
-            print(f"  {'(the ledger line, skills line and trailers)'.ljust(width)}  {rest:>7,.0f}   —")
+            print(f"  {title.ljust(width)}  {t:>7,}   {e['source'] or '—'}")
+        rest = round(total) - attributed
+        if rest:
+            print(f"  {'(the ledger line, skills line and trailers)'.ljust(width)}  {rest:>7,}   —")
     fenced = [e for e in shown if e.get("fenced")]
     if fenced:
         cost = tokens.estimate(FRAMING + "\n") + sum(
@@ -673,7 +713,11 @@ def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
         print(f"  Those are tokens; the ceiling is bytes. At this block's measured "
               f"{per_token:.2f} bytes/token, {ceiling:,} bytes is about {room:,.0f} tokens — and "
               f"those two budgets alone ask for {asked:,}"
-              + (", which cannot fit." if asked > room else "."))
+              + ("." if asked <= room else
+                 ".\n  They are caps on two sections, not an allocation, so this is not a "
+                 "contradiction:\n  the byte ceiling binds first. A block that reaches it is "
+                 "rolled up to a coarser index\n  before anything is dropped, and only then are "
+                 "whole sections left out, cheapest first."))
     # Said only when it is actually happening, because otherwise the budget line above looks
     # contradicted by the table. A pinned heading is exempt from the cut on purpose — that is the
     # whole point of pinning — so the state section can legitimately exceed its budget, and the

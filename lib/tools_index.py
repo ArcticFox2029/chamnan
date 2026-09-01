@@ -113,7 +113,7 @@ def usage(root):
 def remove(root, name):
     """Delete one entry from the index (the tool FILE itself is a separate deletion the caller does
     — this module only ever owns index.json). Returns the removed entry, or None if there was no
-    such name. Used by `chamnan candidates demote` to undo a promotion."""
+    such name. Used by `chamnan-candidates demote` to undo a promotion."""
     entries = load(root)
     entry = next((e for e in entries if e["name"] == name), None)
     if entry is None:

@@ -28,6 +28,7 @@ reconstruct. Only the two most recent titles are injected, so the file's length 
 session.
 """
 import re
+import mdblock
 
 FILENAME = "milestones.md"
 HEADER = "# Project milestones\n"
@@ -66,7 +67,7 @@ def entries(root):
     except OSError:
         return []
 
-    found = list(_ENTRY.finditer(text))
+    found = list(_ENTRY.finditer(mdblock.masked(text)))
     out = []
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
@@ -88,9 +89,13 @@ def recent_titles(root, count=INJECT_RECENT):
 def render_entry(date, title, why="", affected="", decisions=""):
     """One entry in the canonical shape. Fields with nothing in them are left out rather than
     written empty — a heading followed by nothing reads as an oversight."""
-    parts = [f"## {date} — {title.strip()}", ""]
+    # Every field folded onto one line before it is written. This file is append-only and is
+    # parsed back out by `## ` headings, so a title carrying a newline used to write a second,
+    # entirely well-formed milestone underneath the real one -- and being later in the file, the
+    # fabricated one won the "most recent" slot that recent_titles() injects.
+    parts = [f"## {mdblock.one_line(date)} — {mdblock.one_line(title)}", ""]
     for label, value in (("Why", why), ("Affected", affected), ("Decisions", decisions)):
-        value = (value or "").strip()
+        value = mdblock.one_line(value or "")
         if value:
             parts.append(f"**{label}:** {value}")
     parts.append("")

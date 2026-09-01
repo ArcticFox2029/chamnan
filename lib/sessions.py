@@ -22,6 +22,7 @@ between the skill that writes and the hook that reads.
 import calendar
 import datetime
 import re
+import mdblock
 import time
 
 # Written by skills/resume. Deliberately flat markdown with no frontmatter: the file is meant to be
@@ -69,10 +70,16 @@ def written_today(root, today=None):
 
 def _sections(text):
     """Split a record into {heading: body}. Unknown headings are kept, so a record written by a
-    newer version is read rather than discarded."""
+    newer version is read rather than discarded.
+
+    Fence-aware, because this feeds carry_forward() and carry_forward() is injected at the top of
+    the next session. A `## Done` body quoting a snippet that contained the line `## Remaining`
+    used to split there: the next session was handed a fabricated section, and the real one after
+    it was dropped without a trace.
+    """
     out, current, buf = {}, None, []
-    for line in text.splitlines():
-        m = re.match(r"^##\s+(.+?)\s*$", line)
+    for line, in_fence in mdblock.fenced_lines(text):
+        m = None if in_fence else re.match(r"^##\s+(.+?)\s*$", line)
         if m:
             if current:
                 out[current] = "\n".join(buf).strip()

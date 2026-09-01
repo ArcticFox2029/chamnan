@@ -19,9 +19,20 @@ from collections import defaultdict
 import tree
 
 K8S_KIND = re.compile(r"^kind:\s*([A-Za-z]+)\s*$", re.M)
+# `[\w.-]` deliberately does not match `{{ include "of-service.fullname" . }}` -- a
+# templated name is not a name, and the fallback above says so in words instead.
 K8S_NAME = re.compile(r"^\s{0,4}name:\s*([\w.-]+)\s*$", re.M)
 IMAGE = re.compile(r"^\s*image:\s*[\"']?([\w./-]+(?::[\w.-]+)?)[\"']?\s*$", re.M)
-COMPOSE_SERVICE = re.compile(r"^  ([a-z][\w-]*):\s*$", re.M)
+# Any indent, not exactly two. Two spaces is the common style and was taken for the rule; a
+# compose file written with four -- equally valid, and what several generators emit -- produced
+# zero services, and an empty catalog looks identical to a repo that simply has no compose file.
+# The depth is decided per file below, from the shallowest key actually present under `services:`.
+COMPOSE_SERVICE = re.compile(r"^([ \t]+)([a-z][\w-]*):\s*$", re.M)
+# Helm's `image:` is a mapping, not a string -- `repository:` and `tag:` on the lines under it --
+# which is how most charts declare the thing IMAGE exists to find, and none of them were found.
+HELM_IMAGE = re.compile(r"^(\s*)image:\s*$\n(?:\1\s+\w+:.*$\n)*?\1\s+repository:\s*"
+                        r"[\"']?([\w./-]+)[\"']?\s*$(?:\n(?:\1\s+\w+:.*$)?)*", re.M)
+HELM_TAG = re.compile(r"^\s+tag:\s*[\"']?([\w.-]+)[\"']?\s*$", re.M)
 ANSIBLE_PLAY = re.compile(r"^-\s*(?:name|hosts):\s*(.+)$", re.M)
 CI_JOB = re.compile(r"^\s{0,4}([a-z][\w-]*):\s*$", re.M)
 
@@ -62,6 +73,80 @@ def _read(root):
                 continue
 
 
+# A List is a wrapper `kubectl get -o yaml` produces, not an object anyone deployed. Its own kind
+# used to be indexed -- with the filename as its name, since a List carries none -- while every
+# real object inside it stayed invisible.
+K8S_WRAPPERS = {"List"}
+K8S_NESTED_KIND = re.compile(r"^\s*-?\s*kind:\s*([A-Za-z]+)\s*$", re.M)
+K8S_NESTED_NAME = re.compile(r"^\s*name:\s*([\w.-]+)\s*$", re.M)
+DOC_SPLIT = re.compile(r"^---\s*$", re.M)
+
+
+def _pair_in(doc, kind_re, name_re, fallback):
+    """Give every `kind:` the name that belongs to IT, by position within its own document.
+
+    Each kind used to be handed `names[0]` -- the first name anywhere in the whole file. A
+    three-document manifest holding a ConfigMap, a Deployment and a Service therefore indexed all
+    three under whichever name came first, and the index said so with no hedge. An invented entry
+    is worse here than a missing one: a reader can act on it.
+    """
+    kinds = [(m.start(), m.group(1)) for m in kind_re.finditer(doc)]
+    names = [(m.start(), m.group(1)) for m in name_re.finditer(doc)]
+    out = []
+    for i, (pos, kind) in enumerate(kinds):
+        nxt = kinds[i + 1][0] if i + 1 < len(kinds) else len(doc)
+        after = [n for p, n in names if pos < p < nxt]
+        if after:
+            out.append((kind, after[0]))
+            continue
+        # `metadata:` above `kind:` is unusual but perfectly legal YAML, so a kind with nothing
+        # after it looks backwards for a name belonging to the same object before giving up.
+        prev = kinds[i - 1][0] if i else 0
+        before = [n for p, n in names if prev <= p < pos]
+        out.append((kind, before[-1] if before else fallback))
+    return out
+
+
+def _k8s_pairs(text, fallback):
+    out = []
+    for doc in DOC_SPLIT.split(text):
+        pairs = _pair_in(doc, K8S_KIND, K8S_NAME, fallback)
+        if len(pairs) == 1 and pairs[0][0] in K8S_WRAPPERS:
+            # Only inside a wrapper is an indented `kind:` read. Elsewhere it would index the
+            # `subjects:` of every RoleBinding as objects of their own.
+            out.extend(p for p in _pair_in(doc, K8S_NESTED_KIND, K8S_NESTED_NAME, fallback)
+                       if p[0] not in K8S_WRAPPERS)
+            continue
+        out.extend(p for p in pairs if p[0] not in K8S_WRAPPERS)
+    return out
+
+
+def _compose_services(body):
+    """Service keys at the shallowest indent present, whatever that indent is."""
+    hits = COMPOSE_SERVICE.findall(body)
+    if not hits:
+        return []
+    depth = min(len(indent.expandtabs(2)) for indent, _ in hits)
+    return [name for indent, name in hits
+            if len(indent.expandtabs(2)) == depth][:40]
+
+
+def _helm_images(text):
+    """`image:` as a mapping — Helm's convention — assembled back into repository:tag.
+
+    A templated value (`image: "{{ .Values.image.repository }}"`) is deliberately still skipped.
+    It is not an image name, and recording it would put a string nothing can pull into the index.
+    """
+    out = set()
+    for m in HELM_IMAGE.finditer(text):
+        repo = m.group(2)
+        if "/" not in repo and "." not in repo:
+            continue
+        tag = HELM_TAG.search(m.group(0))
+        out.add(f"{repo}:{tag.group(1)}" if tag else repo)
+    return out
+
+
 def scan(root):
     found = {"k8s": defaultdict(set), "images": set(), "compose": set(),
              "ansible": set(), "ci": set(), "helm": set(),
@@ -74,15 +159,20 @@ def scan(root):
         low = rel.lower()
         claimed_before = _claim_count(found)
 
-        for kind in K8S_KIND.findall(text):
-            names = K8S_NAME.findall(text)
-            found["k8s"][kind].add(names[0] if names else path.stem)
+        # A Helm template's name comes from values at render time, so there is no name in the
+        # file to read. Falling back to the FILENAME invented one: templates/deployment.yaml gave
+        # `Deployment: deployment`, hpa.yaml gave `PodDisruptionBudget: hpa`, and both sat in the
+        # index looking exactly like the fourteen real object names beside them.
+        fallback = "(name from chart values)" if "{{" in text else path.stem
+        for kind, name in _k8s_pairs(text, fallback):
+            found["k8s"][kind].add(name)
         for img in IMAGE.findall(text):
             if "/" in img or ":" in img:
                 found["images"].add(img)
+        found["images"].update(_helm_images(text))
         if path.name in ("docker-compose.yml", "docker-compose.yaml", "compose.yaml", "compose.yml"):
             body = text.split("services:", 1)[-1]
-            found["compose"].update(COMPOSE_SERVICE.findall(body)[:40])
+            found["compose"].update(_compose_services(body))
         parts = {q.lower() for q in path.relative_to(root).parts[:-1]}
         if parts & set(ANSIBLE_DIRS) or path.name.lower() in ANSIBLE_FILES:
             found["ansible"].add(rel)

@@ -46,16 +46,28 @@ def _outside(path, nested):
 # declared somewhere else in the file. Reporting the relative half alone put `GET /{quote_id}` and
 # `GET /rates` in the index for endpoints that actually live at /v1/quotes/{quote_id} and
 # /v1/fx/rates -- a wrong path is worse than no path, because it is acted on and 404s.
+# `[^)]` used to end the search at the first ")" in the argument list, so a perfectly ordinary
+# `APIRouter(dependencies=[Depends(get_current_user)], prefix="/v1/quotes")` lost its prefix and
+# put `GET /{quote_id}` in the index for an endpoint at /v1/quotes/{quote_id}. Bounded by length
+# instead of by a paren -- a constructor call is not a language this can parse, and a bound keeps
+# it from running away across a whole file looking for the word.
 ROUTER_PREFIX = re.compile(
-    r"""(\w+)\s*=\s*(?:APIRouter|Blueprint)\s*\([^)]*?"""
+    r"""(\w+)\s*=\s*(?:APIRouter|Blueprint)\s*\((?:[^()]|\([^()]*\)){0,400}?"""
     r"""(?:url_)?prefix\s*=\s*["']([^"']*)["']""", re.S)
+# Every Blueprint and APIRouter, prefix or not. Registering the VARIABLE is what lets a route
+# decorated with it be found at all -- `orders_bp = Blueprint("orders", __name__)` followed by
+# `@orders_bp.route(...)` produced no routes whatsoever, because the flask pattern below only
+# knew the names app/bp/blueprint and this pattern only registered a router that declared a
+# prefix. Naming a blueprint after its feature is the standard way to keep them apart across
+# files, so this blanked whole applications.
+ROUTER_ANY = re.compile(r"""(\w+)\s*=\s*(?:APIRouter|Blueprint)\s*\(""")
 # Spring puts the shared half on the class, and it is optional -- @RequestMapping(produces=...)
 # with no path at all is ordinary, so the path must be a positional string to count.
 SPRING_CLASS_PREFIX = re.compile(r"""@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']+)["']""")
 
 ROUTE_PATTERNS = [
     (re.compile(r"@(\w+)\.(get|post|put|patch|delete|head|options)\s*\(\s*[\"']([^\"']*)", re.I), "decorator"),
-    (re.compile(r"@(?:app|bp|blueprint)\.route\s*\(\s*[\"']([^\"']+)[\"'](?:[^)]*methods\s*=\s*\[([^\]]*)\])?", re.I), "flask"),
+    (re.compile(r"@(\w+)\.route\s*\(\s*[\"']([^\"']+)[\"'](?:[^)]*methods\s*=\s*\[([^\]]*)\])?", re.I), "flask"),
     # (?<!@) or this also matches the Python decorator above: \b happens after the @, so every
     # FastAPI route was counted twice -- once with its router prefix and once without, and the
     # index carried both the real path and a wrong one for the same endpoint.
@@ -64,7 +76,11 @@ ROUTE_PATTERNS = [
     (re.compile(r"^\s*path\s*\(\s*[\"']([^\"']*)[\"']", re.M), "django"),
 ]
 ENV_IN_CODE = re.compile(
-    r"""(?:os\.environ(?:\.get)?\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
+    # The subscript form was missing while the call forms were matched, which is backwards: in
+    # Python `os.environ["X"]` is how you say the variable is REQUIRED, and `.get()` is how you
+    # say it is optional. The ones most worth listing were the ones not listed.
+    r"""(?:os\.environ\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
+    r"""|os\.environ(?:\.get)?\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
     r"""|os\.getenv\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
     r"""|process\.env\.([A-Z][A-Z0-9_]{2,})"""
     r"""|process\.env\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
@@ -112,6 +128,30 @@ def _grpc_source(root, service):
         except OSError:
             continue
     return ""
+
+
+# `servers: [{url: https://api.example.com/v1}]` moves every path in the document under /v1, and
+# the spec branch used to ignore it -- the same class of error as a lost APIRouter prefix, and
+# the same consequence: a path in the index that 404s. Only the path component is taken; the host
+# is not part of what this catalog describes. A templated server ({basePath}) is skipped, because
+# a placeholder is not a prefix.
+_SPEC_SERVER_JSON = re.compile(r'"servers"\s*:\s*\[\s*\{[^}]*?"url"\s*:\s*"([^"]+)"', re.S)
+_SPEC_SERVER_YAML = re.compile(r"^servers:\s*\n\s*-\s+url:\s*[\"']?([^\s\"']+)", re.M)
+_SPEC_BASEPATH = re.compile(r"^\s*[\"']?basePath[\"']?\s*:\s*[\"']?(/[^\s\"',]*)", re.M)
+
+
+def _spec_base(text):
+    """The path every route in this spec hangs under, or "" when there is none."""
+    for pattern in (_SPEC_SERVER_JSON, _SPEC_SERVER_YAML):
+        m = pattern.search(text)
+        if m:
+            url = m.group(1)
+            if "{" in url:
+                return ""
+            tail = re.sub(r"^[a-zA-Z][\w+.-]*://[^/]*", "", url).rstrip("/")
+            return tail if tail.startswith("/") else ""
+    m = _SPEC_BASEPATH.search(text)          # OpenAPI 2 / Swagger
+    return m.group(1).rstrip("/") if m else ""
 
 
 def _spec_files(root):
@@ -173,6 +213,10 @@ def scan_routes(root, files):
             continue
         # Mount points declared in this file, by the variable the decorator will name.
         prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)}
+        # Every router/blueprint variable in the file, prefix or not. A decorator is only trusted
+        # when its object is one of these or one of the conventional names -- which is what keeps
+        # an unrelated `@retry.route(...)` out of the API surface.
+        routers = set(ROUTER_ANY.findall(text)) | set(prefixes)
         spring = SPRING_CLASS_PREFIX.search(text)
         class_prefix = spring.group(1) if spring else ""
 
@@ -180,15 +224,18 @@ def scan_routes(root, files):
             for m in pattern.finditer(text):
                 g = [x for x in m.groups() if x is not None]
                 if kind == "flask":
-                    methods = re.findall(r"[\"'](\w+)[\"']", g[1]) if len(g) > 1 else ["GET"]
+                    obj, route = g[0], g[1]
+                    if obj.lower() not in ("app", "bp", "blueprint") and obj not in routers:
+                        continue
+                    methods = re.findall(r"[\"'](\w+)[\"']", g[2]) if len(g) > 2 else ["GET"]
                     for meth in methods or ["GET"]:
-                        add(meth, g[0], f["path"])
+                        add(meth, route, f["path"], prefixes.get(obj, ""))
                 elif kind == "django":
                     add("ANY", "/" + g[0].lstrip("/"), f["path"])
                 elif kind == "decorator" and len(g) >= 3:
                     obj, meth, route = g[0], g[1], g[2]
                     if obj.lower() not in ("app", "router", "api", "bp", "blueprint") \
-                            and obj not in prefixes:
+                            and obj not in routers:
                         continue          # not a router; some other decorator that happens to fit
                     add(meth, route, f["path"], prefixes.get(obj, ""))
                 elif kind == "spring" and len(g) >= 2:
@@ -201,17 +248,26 @@ def scan_routes(root, files):
 
     for path, text in _spec_files(root):
         rel = str(path.relative_to(root))
+        base = _spec_base(text)
         if path.suffix == ".json":
             try:
-                for p, ops in (json.loads(text).get("paths") or {}).items():
+                doc = json.loads(text)
+                for p, ops in (doc.get("paths") or {}).items():
                     for meth in ops:
                         if meth.lower() in ("get", "post", "put", "patch", "delete"):
-                            add(meth, p, rel)
+                            add(meth, p, rel, base)
             except (json.JSONDecodeError, AttributeError):
                 continue
         else:
             # No yaml in the stdlib; the path keys are indented two spaces under `paths:` and that
             # is all this needs. Anything more would mean shipping a parser for one section.
+            # A spec that splits its paths into other files (`paths:\n  $ref: ./paths/index.yaml`)
+            # has nothing here to read, and reporting zero routes for it looked identical to a
+            # service with no API. Following the ref needs a YAML parser and a resolver, which is
+            # not what this is; saying the spec is split is the honest answer.
+            if re.search(r"^paths:\s*\n\s+\$ref:", text, re.M):
+                add("ANY", "(paths are $ref'd into other files — not resolved)", rel)
+                continue
             in_paths = False
             for line in text.splitlines():
                 if re.match(r"^paths:\s*$", line):
@@ -222,7 +278,7 @@ def scan_routes(root, files):
                         break
                     m = re.match(r"^\s{1,4}(/[^\s:]*):\s*$", line)
                     if m:
-                        add("ANY", m.group(1), rel)
+                        add("ANY", m.group(1), rel, base)
     return sorted(routes.items(), key=lambda kv: (kv[0][1], kv[0][0]))
 
 

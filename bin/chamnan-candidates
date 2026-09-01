@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""chamnan candidates — review what the workflow detector has found, quickly.
+"""chamnan-candidates — review what the workflow detector has found, quickly.
 
 `notice_workflow()` already writes one file per repeated command sequence under
 `.chamnan/candidates/` (see lib/candidates.py) the moment it crosses the detection threshold. This
 is the other half: looking at what accumulated, and deciding what to do with each one.
 
-  chamnan candidates                       list what is waiting (same as `list`)
-  chamnan candidates confirm <id>          mark reviewed and worth keeping (Provenance -> ai-confirmed)
-  chamnan candidates reject <id>           delete it — not a routine worth keeping
-  chamnan candidates edit <id>             print the file's path, to open and adjust by hand
-  chamnan candidates promote <id>          suggest where a CONFIRMED candidate belongs, decide nothing
-  chamnan candidates promote <id> tool <name>   install a script SKELETON in .chamnan/tools/<name>
-  chamnan candidates promote <id> skill         print what to hand to /chamnan:capture
-  chamnan candidates demote <tool-name>         undo a tool promotion — flagged too often, send it back
+  chamnan-candidates                       list what is waiting (same as `list`)
+  chamnan-candidates confirm <id>          mark reviewed and worth keeping (Provenance -> ai-confirmed)
+  chamnan-candidates reject <id>           delete it — not a routine worth keeping
+  chamnan-candidates edit <id>             print the file's path, to open and adjust by hand
+  chamnan-candidates promote <id>          suggest where a CONFIRMED candidate belongs, decide nothing
+  chamnan-candidates promote <id> tool <name>   install a script SKELETON in .chamnan/tools/<name>
+  chamnan-candidates promote <id> skill         print what to hand to /chamnan:capture
+  chamnan-candidates demote <tool-name>         undo a tool promotion — flagged too often, send it back
 
 <id> (for confirm/reject/edit/promote) is either a candidate's position in the list above
 (1, 2, 3 — computed fresh each time, not cached from an earlier call) or its slug/filename, with or
 without `.md`. `demote` takes a TOOL's name instead — from `.chamnan/tools/`, or from the notice
-that suggested it (`chamnan candidates demote deploy-check.sh`).
+that suggested it (`chamnan-candidates demote deploy-check.sh`).
 
 **`confirm` does not promote anything into `skills/` or `tools/`.** It only records that a human
 looked at the candidate and thinks the routine is real — moving Provenance from `ai-inferred` to
@@ -27,7 +27,7 @@ candidate rather than skip a link in evidence -> candidate -> human confirm -> m
 **Promoting to `tool` never writes real commands, because chamnan does not have them.** A
 candidate stores SIGNATURES (`git commit`, not the literal command that ran) — `promote ... tool`
 writes a skeleton with each step as a labelled placeholder and registers it in
-`.chamnan/tools/index.json` via the same machinery `chamnan promote` uses, but the file is not
+`.chamnan/tools/index.json` via the same machinery `chamnan-promote` uses, but the file is not
 runnable until you fill in the real commands. **Promoting to `skill` writes nothing at all** — a
 good skill needs prose explaining WHY, which this tool cannot honestly generate from a signature
 list, so it prints the sequence as a starting point and tells you to run `/chamnan:capture`
@@ -69,14 +69,14 @@ def cmd_list(root):
         print(f"[{i}] {_title(p)}")
         print(f"    observed {f.get('observed', '?')} time(s) · last seen {f.get('last seen', '?')} "
               f"· {f.get('provenance', '?')}")
-    print("\nconfirm/reject/edit by number or by name — see `chamnan candidates --help`")
+    print("\nconfirm/reject/edit by number or by name — see `chamnan-candidates --help`")
     return 0
 
 
 def _find_or_complain(root, ident):
     p = candidates.resolve(root, ident)
     if p is None:
-        print(f"chamnan: no candidate matches {ident!r} — run `chamnan candidates` to list them",
+        print(f"chamnan: no candidate matches {ident!r} — run `chamnan-candidates` to list them",
               file=sys.stderr)
     return p
 
@@ -88,7 +88,7 @@ def cmd_confirm(root, ident):
     candidates.set_provenance(p, "ai-confirmed")
     print(f"chamnan: confirmed — {_title(p)}")
     print(f"  Provenance -> ai-confirmed. To keep it, run:")
-    print(f"    chamnan promote <script-file> <name>   (a tool)")
+    print(f"    chamnan-promote <script-file> <name>   (a tool)")
     print(f"    /chamnan:capture                        (a written-out procedure)")
     return 0
 
@@ -125,7 +125,7 @@ def cmd_promote(root, ident, destination=None, name=None):
 
     if fields.get("provenance") not in CONFIRMED_PROVENANCE:
         print(f"chamnan: {title!r} has not been confirmed yet — run "
-              f"`chamnan candidates confirm {ident}` first", file=sys.stderr)
+              f"`chamnan-candidates confirm {ident}` first", file=sys.stderr)
         return 1
 
     if destination is None:
@@ -137,17 +137,28 @@ def cmd_promote(root, ident, destination=None, name=None):
         print("  Suggested: tool — this is a sequence of shell commands, which is what a tool is.")
         print("  Choose skill instead if the real value is explaining WHY, or a judgement call at")
         print("  one of the steps — chamnan cannot tell that from the sequence alone; you can.")
-        print(f"\n  chamnan candidates promote {ident} tool <name>")
-        print(f"  chamnan candidates promote {ident} skill")
+        print(f"\n  chamnan-candidates promote {ident} tool <name>")
+        print(f"  chamnan-candidates promote {ident} skill")
         return 0
 
     if destination == "tool":
         if not name:
-            print("chamnan: promote ... tool needs a name — chamnan candidates promote <id> tool <name>",
+            print("chamnan: promote ... tool needs a name — chamnan-candidates promote <id> tool <name>",
                   file=sys.stderr)
             return 2
-        tools = ws.ensure(root) / "tools"
-        dest = tools / (name if Path(name).suffix else name + ".sh")
+        safe = ws.safe_tool_name(name)
+        if safe is None:
+            print(f"chamnan: {name!r} is not a usable tool name — it has to be a plain filename,\n"
+                  "  no directory separators and no leading dot. The registry stores the bare\n"
+                  "  name, so a path here would leave an entry pointing at a file nothing can find.",
+                  file=sys.stderr)
+            return 2
+        try:
+            tools = ws.ensure(root) / "tools"
+        except ws.NotAWorkspace as err:
+            print(f"chamnan: {err}", file=sys.stderr)
+            return 1
+        dest = tools / (safe if Path(safe).suffix else safe + ".sh")
         if dest.exists():
             print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
                   file=sys.stderr)
@@ -195,7 +206,7 @@ def cmd_demote(root, tool_name):
     that reminds a reviewer what the tool was for is more honest than pretending otherwise."""
     entry = tools_index.remove(root, tool_name)
     if entry is None:
-        print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan promote --list`",
+        print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan-promote --list`",
               file=sys.stderr)
         return 1
     tool_path = ws.workspace(root) / "tools" / tool_name
@@ -232,10 +243,10 @@ def main(argv):
         return 2
     if not rest:
         if cmd == "demote":
-            print("chamnan: demote needs a tool name — see `chamnan promote --list`",
+            print("chamnan: demote needs a tool name — see `chamnan-promote --list`",
                   file=sys.stderr)
         else:
-            print(f"chamnan: {cmd} needs a candidate — number or name from `chamnan candidates`",
+            print(f"chamnan: {cmd} needs a candidate — number or name from `chamnan-candidates`",
                   file=sys.stderr)
         return 2
 
