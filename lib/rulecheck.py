@@ -54,7 +54,62 @@ def parse(text):
 # a pattern of this shape is refused and the check reports UNVERIFIABLE rather than running. That
 # is the same outcome as a syntactically invalid pattern, which the caller already handles, and
 # unverifiable is already kept distinct from BROKEN.
+# 🐛 `[^()]*` cannot look inside a group that contains another group, so `((a+)b?)+$`,
+# `(([a-z])+)+$` and `(?:(a+))+$` all passed the guard and then took 3.1s, 3.6s and 7.6s on
+# twenty-odd characters, growing exponentially. A `**Check:**` trailer arrives with a clone and is
+# compiled and run at EVERY SESSION START, and `re` has no timeout — the hang this guard exists to
+# prevent, reachable through one extra pair of brackets.
+#
+# Two patterns now: the original flat shape, and a quantified group that contains any quantifier
+# anywhere inside it, however deeply nested. The second is broader than strictly necessary — it
+# will refuse some safe patterns — and that is the right direction for a check whose failure mode
+# is a session that never starts.
 _NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*{]")
+
+
+def _quantified_group_over_quantifier(pattern):
+    """True when a quantified group contains a quantifier anywhere inside it, at any depth.
+
+    Scanned rather than matched. A regex cannot see into arbitrarily nested brackets, which is why
+    the flat pattern above missed `((a+)b?)+`, `(([a-z])+)+` and `(?:(a+))+` — 3.1s, 3.6s and 7.6s
+    on twenty-odd characters, growing exponentially. Escapes and character classes are skipped, so
+    a backslash-escaped paren is a literal one and `[+*]` is a class of two characters rather than
+    two quantifiers.
+    """
+    depth, i, n = 0, 0, len(pattern)
+    starts, inner = [], []
+    while i < n:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":                      # a character class: quantifier characters are literal
+            i += 1
+            if i < n and pattern[i] == "^":
+                i += 1
+            if i < n and pattern[i] == "]":
+                i += 1
+            while i < n and pattern[i] != "]":
+                i += 2 if pattern[i] == "\\" else 1
+            i += 1
+            continue
+        if ch == "(":
+            starts.append(i)
+            inner.append(False)
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+            starts.pop()
+            had = inner.pop()
+            nxt = pattern[i + 1] if i + 1 < n else ""
+            if had and nxt in "+*{":
+                return True
+            if inner and (had or nxt in "+*{"):
+                inner[-1] = True
+        elif ch in "+*{" and inner:
+            inner[-1] = True
+        i += 1
+    return False
 # The other classic shape, and the one the pattern above is blind to: ambiguous ALTERNATION with
 # no inner quantifier at all -- `(a|a)*`, `(x|xy)+`, `(\s|\s)*`. Measured here: `(a|a)*$` against
 # 20 identical characters took 0.25s, 24 took 4.2s, and 28 had not finished after five seconds.
@@ -79,7 +134,8 @@ def _ambiguous(pattern):
 
 def _matches(root, pattern, glob):
     """(files_scanned, files_matching) or None when the check cannot be run at all."""
-    if _NESTED_QUANTIFIER.search(pattern) or _ambiguous(pattern):
+    if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
+            or _ambiguous(pattern)):
         return None
     try:
         rx = re.compile(pattern)

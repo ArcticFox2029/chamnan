@@ -6791,6 +6791,51 @@ for _prose in ("# password: ask the platform team for it",
                "AUTHORS=alexander,brigitte", "token_ttl=3600"):
     check("PROSE AND CONFIGURATION SURVIVE: " + _prose[:40], redact.scrub(_prose) == _prose)
 
+# ------------------------------ three guards that were not guarding
+import rulecheck as _rc2  # noqa: E402
+import tools_index as _ti2  # noqa: E402
+
+# A `**Check:**` trailer arrives with a clone and is compiled and run at EVERY session start, and
+# `re` has no timeout. The flat guard could not look inside a nested group: `((a+)b?)+$`,
+# `(([a-z])+)+$` and `(?:(a+))+$` took 3.1s, 3.6s and 7.6s on twenty-odd characters.
+def _would_refuse(pat):
+    return bool(_rc2._NESTED_QUANTIFIER.search(pat)
+                or _rc2._quantified_group_over_quantifier(pat)
+                or _rc2._ambiguous(pat))
+
+
+for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(x*)*$",
+             "((ab)*)+$"):
+    check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
+# ...and the guard must not refuse the patterns a rule would actually be written with.
+for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
+            r"\b[A-Z_]{3,}\b", r"https?://[^\s]+", r"^\s*#\s*(TODO|NOTE)"):
+    check("...while an ordinary rule pattern still runs: " + _ok, not _would_refuse(_ok))
+# Escapes and character classes are literal, not quantifiers.
+check("an escaped paren is not a group", not _would_refuse(r"\(a\)+"))
+check("...and a character class of quantifier characters is not one either",
+      not _would_refuse(r"([+*])"))
+
+# `ws.exclusive` yields False after two seconds, and the rewrite sat outside the guard — so on
+# contention the log was truncated and rewritten from a stale snapshot, discarding every append
+# another process had made. Verbatim the failure the lock was added to fix.
+_wfsrc = (ROOT / "lib" / "workflows.py").read_text(encoding="utf-8")
+check("THE TRIM DOES NOT REWRITE THE LOG WHEN THE LOCK WAS NOT HELD",
+      "if not held:\n                return" in _wfsrc)
+
+# `record_call` locked; `register` and `remove` did the same read-modify-write with no lock, and a
+# lock only one of three writers holds serialises nothing.
+_tisrc = (ROOT / "lib" / "tools_index.py").read_text(encoding="utf-8")
+check("EVERY WRITER OF tools/index.json GOES THROUGH THE SAME LOCK",
+      _tisrc.count("ws.exclusive(path(root))") >= 3)
+# ...and the lock must not stop the very first registration, which is what creates the file.
+_tid = Path(tempfile.mkdtemp(prefix="chamnan-ti-"))
+(_tid / ".chamnan").mkdir()
+_ti2.register(_tid, {"name": "first-tool.sh", "desc": "the first one"})
+check("...and the first registration still lands, though it creates the index it locks",
+      [e["name"] for e in _ti2.load(_tid)] == ["first-tool.sh"])
+shutil.rmtree(_tid, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

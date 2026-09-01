@@ -54,6 +54,30 @@ def _save(root, entries):
 def register(root, entry):
     """Append one entry and write the index back. `entry` must have `name`; every other field is
     optional and defaults sensibly. Returns the full, updated list."""
+    # 🐛 `record_call` wraps its read-modify-write in `ws.exclusive`; `register` and `remove` did
+    # the same read-modify-write with no lock at all. A lock only one of three writers holds
+    # serialises nothing: reproduced by racing a promotion against `record_call`, the freshly
+    # registered tool was written and then overwritten by the other writer's snapshot. The file
+    # existed on disk and the registry had no record of it, so the session-start tool list,
+    # `chamnan-report` and `match_call` would never see it again. `record_call` fires from a
+    # PostToolUse hook on every Bash call, which is exactly the window a promotion runs in.
+    # The lockfile lives beside the index, and `register` is usually what CREATES the index — so
+    # without this the very first call cannot take a lock, `exclusive` yields False, and the
+    # registration is skipped. Found by the suite the moment the lock went in.
+    try:
+        path(root).parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    with ws.exclusive(path(root)) as held:
+        if not held:
+            # Registering matters more than serialising it: a promotion the user asked for that
+            # silently does nothing is worse than a rare lost update, and the file is written
+            # atomically either way.
+            return _register_locked(root, entry)
+        return _register_locked(root, entry)
+
+
+def _register_locked(root, entry):
     entries = load(root)
     entries.append({
         "name": entry["name"],
@@ -127,9 +151,12 @@ def remove(root, name):
     """Delete one entry from the index (the tool FILE itself is a separate deletion the caller does
     — this module only ever owns index.json). Returns the removed entry, or None if there was no
     such name. Used by `chamnan-candidates demote` to undo a promotion."""
-    entries = load(root)
-    entry = next((e for e in entries if e["name"] == name), None)
-    if entry is None:
-        return None
-    _save(root, [e for e in entries if e["name"] != name])
-    return entry
+    # The third writer of this file. `record_call` fires from a PostToolUse hook on every Bash
+    # call, so a demotion racing it lost either the removal or the run counter, silently.
+    with ws.exclusive(path(root)):
+        entries = load(root)
+        entry = next((e for e in entries if e["name"] == name), None)
+        if entry is None:
+            return None
+        _save(root, [e for e in entries if e["name"] != name])
+        return entry
