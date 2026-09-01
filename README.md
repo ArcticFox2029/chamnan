@@ -336,112 +336,92 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
-## What's new in 1.11.0
+## What's new in 1.12.0
 
-**Six defects, three of them in code shipped a day earlier, and all six found by using the thing
-rather than reading it.** 1.10.0 introduced a byte ceiling to stop the host truncating the injected
-block. It worked, and then three separate bugs inside it quietly threw away most of what it had just
-saved.
+**Eight defects, every one reproduced before it was fixed.** Three research rounds went looking for
+evidence about people and found a great deal of it; this release came from pointing the same method
+at the code instead — filesystem paths, markdown parsing, git states, concurrent writes, text
+decoding — and asking for documented failure modes with a reproduction rather than survey figures.
 
-- **The restore loop returned the cheapest dropped section, not the best.** Sections are dropped
-  cheapest-first, so the most valuable one sits at the *end* of that list, and the loop walked it
-  forwards. On the development repository the block came out at **4,039 of 9,000 bytes — 45%, with
-  the session handoff dropped and 55% of the room unused.** Its test had passed by accident: the
-  fixture's index section was unfenced and therefore untrimmable, so the loop fell through to the
-  right answer for the wrong reason.
-- **The trim then undid what a pin protected.** `state.render` correctly produced both pinned
-  headings; `_trim` took the head of that and dropped the tail, and *"do not audit, do not report as
-  pending"* happened to sit last. **That is the host's positional cut reproduced inside the module
-  written to replace it** — the third appearance of the same shape. Pinned blocks are now reserved
-  before anything else is fitted, line by line rather than block by block, because filling by block
-  makes a section with no headings one indivisible atom that either fits or vanishes.
-- **chamnan's own note about trimming was sitting inside the repository fence**, whose framing line
-  says everything between the markers is text read from a file. The fence makes one claim and the
-  trim was quietly making it untrue.
+### A symlink out of the repository was being read and committed
 
-**Constraints now come first, and it costs nothing.** Mid-prompt rules are measured losing **30–50%**
-of their compliance, while content at the beginning is used correctly in about **73%** of
-positionally-sensitive cases. chamnan emitted the architecture index — pure data — in the primacy
-slot and the repository's own rules in the middle: the worst available arrangement of those two.
-`fit.reorder()` moves rules and reply style to the front, the session handoff to the back, and
-everything else stays where it was. Blocks move with their own footnotes. **The block measured 8,912
-bytes before and after.** A second argument lands on the same order — with `output_byte_ceiling: 0`
-the host's positional cut takes over, so whatever is emitted first is what survives the degraded case.
+`followlinks=False` stops recursion into symlinked **directories**. It does nothing about a symlink
+to a **file**: that is still yielded by the walk, `read_text()` follows it transparently, its leading
+comment is copied verbatim into `MAP.md` — and the pre-commit hook then `git add`s `MAP.md`.
 
-**Every line count in the index was over by exactly one.** `source.count("\n") + 1` counts the empty
-string after a trailing newline: **276 of 277 entries**, verified against `wc -l`. And
-`index_is_behind` filtered the tree differently from `mapper`, so a nested checkout — chamnan's own
-source, 28 files the index will never contain — reported the host repository's index as stale on
-every edit. **On the repository chamnan is developed in, that warning was permanently on, which is
-the same as absent on the day it is true.** One filter written twice had drifted; there is now one
-definition, `mapper.indexable()`, and 39 phantom missing files became 0.
+Reproduced: a link named `leaked.py` pointing at a file outside the root holding a database DSN was
+walked, read, and its docstring copied into the index. **The redactor does not catch this** — it
+gates on the link's own name and suffix, so an innocuous `.py` passes, and it strips
+`key = "value"` assignments rather than prose. Links that stay inside the repository are still
+indexed, because that is an ordinary way to arrange a tree; only escapes are dropped, and a broken
+link is dropped rather than raised.
 
-**The staleness warning also said the wrong thing.** Replaying the last 50 commits against the index
-a session was actually handed: it named **74.6%** of the files those commits touched and fully
-covered 18% of them, and the misses clustered in a directory of active work. But **0 of 264 paths it
-named had disappeared.** A chamnan map is regenerated wholesale rather than patched, so it cannot
-drift into being *wrong* — only behind. It is not confidently wrong, it is blind, and blind where the
-work is happening. The warning gives a count and names the newest missing files instead of an age.
+### The hook was being installed where git would never look
 
-**A rule the repository can check for itself.** Adherence to a session-start instruction decays with
-turn count — models measure **39% worse and 112% less reliable** multi-turn, and o1-preview falls from
-**88% to 71%** by the third turn. Injecting a rule harder does not fix that. A rule may now carry:
+`core.hooksPath` relocates hooks entirely, and **pre-commit, Husky and lefthook all set it**. A file
+written to `.git/hooks/pre-commit` in such a repository is a dead file: git runs the other directory,
+the commit succeeds, and nothing reports that the hook installed a moment ago will never fire. And in
+a **worktree**, `.git` is a file rather than a directory, so an `is_dir()` test called a perfectly
+good repository *"not a git repository"* and refused to install at all.
 
-```
-**Check:** present `PATTERN` in `GLOB`
-**Check:** absent  `PATTERN` in `GLOB`
-```
+`git rev-parse --git-path hooks` resolves both. Verified across four states: plain repository,
+`core.hooksPath` set, inside a worktree, and not a repository at all.
 
-and the repository is asked directly instead of the model being asked to remember. **Silent while
-every rule holds** — a line that always says "all good" stops being read before the day it says
-something else — and *unverifiable* is kept distinct from *BROKEN*, because a check that could not run
-and a rule that is violated are different facts. The same glob then does double duty: `pointer.py`
-uses it to surface a rule when a file it governs is opened, which is the decision point. **There is
-no timer, and there will not be one** — periodic re-injection of a whole block is measured *not* to
-restore adherence, while a short message at the decision point does.
+### The fence bug came back in the function next door
 
-**The redactor was replacing the label and leaving the token.** `Authorization: Bearer <token>`
-matched the bare-assignment rule, which captured the word `Bearer` as the value and replaced *that* —
-emitting a line that reads as redacted with the credential intact beneath it. A miss is recoverable;
-a reviewer can still see the secret. A miss dressed as a hit is not. Also: a PGP secret key block ends
-`PRIVATE KEY BLOCK-----` and the pattern was anchored on `PRIVATE KEY-----`. Against a labelled corpus
-of 27 secret shapes and 17 ordinary strings that must survive: **66.7% recall / 81.8% precision →
-96.3% / 100%**.
+`state.py`'s `_age_units` called `_HEADING.finditer` directly instead of `md.headings` — the same
+fence-blindness fixed in 1.10.0, still live in the sibling function the fix was never ported to. A
+`#` comment inside a bash fence became a unit boundary, splitting a pinned section's ageing span so
+the half after the fence aged out on its own. **Found in the module whose entire docstring is about
+not letting that happen again.**
 
-**CJK text is written with CJK punctuation, and it was priced as Latin.** The ideographic comma and
-full stop and the fullwidth comma were in none of the estimator's CJK ranges — 18 of 306 characters
-in the Chinese calibration sample, each costing 0.42 tokens where it costs about 1. Chinese **−7.7%
-→ +0.4%**.
+### `## Pinned 📌 ##` was not pinned
 
-**`MAP.md` now tells git it is generated.** chamnan recommends committing it, and it is 285KB on the
-development repository; a large regenerated file is the purest form of the noisy diff that slows
-review down. `.gitattributes` gets `linguist-generated=true`, appended once, never rewriting a file
-that already exists, skipped outside a git repository. What makes collapsing it honest rather than
-negligent is that `chamnan-map` is **byte-identical across consecutive runs**.
+A closing ATX sequence is syntax, not content — CommonMark examples 71 and 73 — and every markdown
+viewer renders it away. chamnan captured it as heading text, so `endswith(PIN)` was `False`. The
+author sees a pin, the tool does not, and nothing says so.
 
-### And the evidence trail, in this README — [Evidence](#evidence)
+### The pointer's "once per file per session" rule kept nothing under concurrency
 
-Every number this project quotes, where it came from, and what it changed. Published results are kept
-in separate columns from what was measured here. **Findings that argue against chamnan are in the same
-tables as the ones for it**: architectural overviews measured *increasing* inference cost without
-improving task success; context files buying **no correctness gain** at all; the `[repo:nonce]` fence
-being *delimiting*, the weakest of three known variants, worth about a halving of attack success rate
-where datamarking reaches under 3%.
+`pointer_seen.json` was a single shared file holding `{"session": id, "paths": [...]}`, read, modified
+and written with no lock. Measured on the real function: **four concurrent writers recorded 48 of 160
+paths — 70% lost** — and two sessions alternating **wiped each other down to a single entry**, so
+`already_pointed` returned `False` for a file that had just been pointed at. Two sessions in one
+repository is normal, not exotic.
 
-It also carries **eight features that were measured and then deliberately not built** — marking
-unreferenced files as dead would have been **93.9% false positives** here; `llms.txt` receives **408
-of 500M+** AI crawler visits with no significant correlation to citations; JSON-LD in a README is
-stripped by GitHub.
+That is the lost-update anomaly, and an atomic write does not prevent it — only a lock spanning the
+read *and* the write does, or not sharing the file at all. Each session now has its own store, named
+after it, swept when it is two days stale. No lock has to be reasoned about, which matters given that
+`flock` is not reentrant across two descriptors in one process and `fcntl` drops every lock a process
+holds the moment **any** descriptor to the file is closed.
 
-**Three of chamnan's own claims were corrected rather than defended.** *"Across a hundred sessions it
-is close to free"* is gone — the published mean is **12.6 sessions per repository**, this machine
-measures **1.2**, and the index build costs 12 seconds and zero tokens, so there was little to
-amortise in the first place. A zero is a bound, not a rate: ten quiet days still permit 0.259 uses a
-day. And the fence answers *who said this*; it is not a defence.
+### Churn was splitting a renamed file's history in half
+
+`git log --name-only` without `-M` gives a renamed file two literal names: the old one collects the
+commits before the move, the new one only those after. Measured on a file with six touches across one
+`git mv` — **old: 4, new: 2, and the true six appears nowhere.** The file that actually exists was
+ranked on a third of its churn and dropped off roll-up lines it had earned a place on. Now
+`--name-status -M`, following a chain of renames to the name that survives.
+
+### Three quieter ones
+
+**A UTF-8 BOM is not whitespace**, so the comment regex missed the first line entirely and the file
+got no summary at all — silently lowering the coverage figure the whole index leans on. Now
+`utf-8-sig`.
+
+**Clipping by character count is not clipping by what a reader sees.** `"👍🏽 …"[:1]` is a thumbs-up
+with the skin tone silently removed; `"🇯🇵"[:1]` is a lone regional indicator most terminals draw as a
+boxed letter. The word-boundary back-off cannot help — from Python's side each half is already a
+valid string. Trailing combining marks, joiners, variation selectors, skin tones and odd regional
+indicators are now trimmed before the ellipsis.
+
+**And a comment that claimed more than it had shown.** The line-count fix said it was "verified
+against `wc -l` on 276 files." True, and narrower than it sounds: `splitlines()` breaks on eleven
+boundaries and `wc -l` on one. They agreed because none of those files contains a form feed, a lone
+carriage return or a Unicode line separator — not because they are equivalent. The comment now says
+so.
 
 ---
-
-**Earlier releases:** [CHANGELOG.md](CHANGELOG.md) — every version back to 1.0, or the [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 ## Bootstrap does not rewrite your code
 

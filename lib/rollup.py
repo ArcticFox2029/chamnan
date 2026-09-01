@@ -44,7 +44,14 @@ def _churn(root, window=CHURN_WINDOW):
         return _CHURN_CACHE[key]
     try:
         out = subprocess.run(
-            ["git", "-C", str(root), "log", "--name-only", "--pretty=format:", "-n", str(window)],
+            # --name-status -M, not --name-only. Without rename detection a file that has been
+            # renamed has its history split across two literal strings: the old name collects the
+            # commits before the move, the new name only those after. Measured on a file with six
+            # touches across one `git mv`, plain --name-only reports old:4 new:2 and the true six
+            # appears nowhere -- so the file that actually exists is ranked on a third of its real
+            # churn, and drops off a roll-up line it had earned a place on.
+            ["git", "-C", str(root), "log", "--name-status", "-M",
+             "--pretty=format:", "-n", str(window)],
             # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
             # bytes the hook has not read yet, or block waiting on a prompt that will never come.
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
@@ -54,12 +61,28 @@ def _churn(root, window=CHURN_WINDOW):
         return _CHURN_CACHE.setdefault(key, {})
     counts = {}
     seen_commits = 0
+    renamed_from = {}          # old path -> the name it ends up under
     for line in out.stdout.splitlines():
-        line = line.strip()
-        if not line:
+        if not line.strip():
             seen_commits += 1
             continue
-        counts[line] = counts.get(line, 0) + 1
+        # --name-status emits "<status>\t<path>", and for a rename or copy
+        # "R100\t<old>\t<new>". Credit the whole history to the name that survives.
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[0][:1] in ("R", "C"):
+            old, new = parts[1], parts[2]
+            renamed_from[old] = renamed_from.get(new, new)
+            counts[new] = counts.get(new, 0) + 1
+        elif len(parts) >= 2:
+            counts[parts[1]] = counts.get(parts[1], 0) + 1
+    # Fold each old name's commits into whatever it was renamed to, following a chain of moves.
+    for old, new in renamed_from.items():
+        seen = set()
+        while new in renamed_from and new not in seen:
+            seen.add(new)
+            new = renamed_from[new]
+        if old in counts and old != new:
+            counts[new] = counts.get(new, 0) + counts.pop(old)
     if seen_commits < MIN_COMMITS_TO_RANK:
         return _CHURN_CACHE.setdefault(key, {})
     return _CHURN_CACHE.setdefault(key, counts)

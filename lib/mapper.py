@@ -29,6 +29,7 @@ import argparse
 import ast
 import warnings
 import re
+import unicodedata
 import sys
 from pathlib import Path
 
@@ -135,6 +136,37 @@ def _strip_doc_tags(text):
 # one very long token should not be allowed to eat a fifth of the description to save itself.
 CLIP_BACKOFF = 18
 
+# Code points that are never the end of a well-formed cluster: a cut landing after any of them has
+# taken half a character. Slicing by character count is not slicing by what a reader sees --
+# "👍🏽"[:1] is a thumbs-up with the skin tone silently removed, and "🇯🇵"[:1] is a lone regional
+# indicator that most terminals draw as a boxed letter rather than a flag. The word-boundary
+# back-off does not help: from Python's side each half is already a valid, ordinary string.
+_ZWJ = "\u200d"
+_VARIATION = range(0xFE00, 0xFE10)
+_SKIN_TONE = range(0x1F3FB, 0x1F400)
+_REGIONAL = range(0x1F1E6, 0x1F200)
+
+
+def _whole_graphemes(text):
+    """`text` with any trailing fragment of an incomplete cluster removed."""
+    while text:
+        c = text[-1]
+        o = ord(c)
+        if (unicodedata.combining(c) or c == _ZWJ
+                or o in _VARIATION or o in _SKIN_TONE):
+            text = text[:-1]
+            continue
+        # A regional indicator is only a flag in a pair; an odd one left at the end is half of one.
+        if o in _REGIONAL:
+            run = 0
+            while run < len(text) and ord(text[-1 - run]) in _REGIONAL:
+                run += 1
+            if run % 2:
+                text = text[:-1]
+                continue
+        break
+    return text
+
 
 def _clip(text, limit=110):
     """The description, cut to `limit`, ending on a word rather than inside one.
@@ -158,7 +190,7 @@ def _clip(text, limit=110):
     space = head.rfind(" ")
     if space >= len(head) - CLIP_BACKOFF and space > 0:
         head = head[:space]
-    return head.rstrip(" ,;:-") + "…"
+    return _whole_graphemes(head).rstrip(" ,;:-") + "…"
 
 
 COMMENT_PREFIX = re.compile(r"^\s*(?:/\*+!?|\*+/?|//+!?|#+|--+|<!--|;;+)\s?")
@@ -609,7 +641,15 @@ def _scan(root):
             "imports": impact_mod.extract_imports(source, lang),
             # splitlines(), not count("\n") + 1. Nearly every source file ends with a newline, and
             # the arithmetic version counts the empty string after it as a line -- so every entry in
-            # the index over-reported by exactly one. Verified against wc -l on 276 files here.
+            # the index over-reported by exactly one -- 276 of 277 entries.
+            #
+            # The check that confirmed it is narrower than it looks, which is worth writing down
+            # rather than leaving as an implied guarantee: splitlines() breaks on eleven boundaries,
+            # not one, while wc -l counts only newline. They agreed on all 276 files because none of
+            # those files contains a form feed, a lone carriage return or a Unicode line separator --
+            # not because the two are equivalent. One stray form feed makes them disagree again,
+            # silently, and in chamnan's favour: splitlines is the better count of what a reader
+            # sees.
             "lines": len(source.splitlines()), "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
         })

@@ -3757,8 +3757,55 @@ check("...and says what a zero does establish, which is a bound and not a rate",
       "a bound, not a rate" in _readme)
 check("the correction is still in the release history too",
       "does not mean the rate is zero" in _readme + _changelog)
-check("the release history moved out of the README but did not disappear",
-      _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
+# Version-agnostic on purpose. Pinning a specific release number here made this check fail on the
+# next release rather than on a real regression -- which is the shape of test that trains a reader to
+# edit the assertion instead of reading it.
+check("the README carries exactly one release section — the current one",
+      len(re.findall(r"^## What's new in ", _readme, re.M)) == 1)
+check("...and the rest of the history is in the CHANGELOG, not gone",
+      len(re.findall(r"^## What's new in ", _changelog, re.M)) >= 10)
+
+import unicodedata  # noqa: E402
+# ------------- churn must follow a rename, and a clip must not split a character
+# Without -M, `git log --name-only` splits a renamed file's history across two literal strings: the
+# old name collects the commits before the move, the new name only those after. Measured on a file
+# with six touches across one `git mv`: old:4, new:2, and the true six appears nowhere -- so the file
+# that exists is ranked on a third of its churn and drops off a line it had earned.
+_rn = Path(tempfile.mkdtemp()) / "r"
+_rn.mkdir()
+def _rg(*a):
+    return subprocess.run(["git", *a], cwd=str(_rn), capture_output=True, text=True)
+_rg("init", "-q")
+for _i in range(4):
+    (_rn / "old.py").write_text("l" * (_i + 1), encoding="utf-8")
+    _rg("add", "-A"); _rg("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", f"c{_i}")
+_rg("mv", "old.py", "new.py")
+_rg("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "mv")
+(_rn / "new.py").write_text("after", encoding="utf-8")
+_rg("add", "-A"); _rg("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "after")
+
+import mapper as _mp  # noqa: E402
+import rollup as _rl  # noqa: E402
+_min_before = _rl.MIN_COMMITS_TO_RANK
+_rl.MIN_COMMITS_TO_RANK = 1
+_rl._CHURN_CACHE.clear()
+_c = _rl._churn(_rn)
+_rl.MIN_COMMITS_TO_RANK = _min_before
+_rl._CHURN_CACHE.clear()
+check("a renamed file's whole history lands on the name that still exists",
+      _c.get("new.py") == 6)
+check("...and the name that no longer exists is gone from the ranking",
+      "old.py" not in _c)
+shutil.rmtree(_rn.parent, ignore_errors=True)
+
+# Slicing by character count is not slicing by what a reader sees.
+check("a skin-tone modifier is not left dangling", _mp._clip("👍🏽 tail text here", 3) == "👍…")
+check("a regional-indicator pair is kept whole or dropped whole",
+      _mp._clip("🇯🇵🇺🇸 tail text here", 4) == "🇯🇵…")
+check("a combining mark is not separated from its base",
+      not unicodedata.combining(_mp._clip("cafe\u0301" + "x" * 40, 6).rstrip("…")[-1]))
+check("plain text is unaffected by the grapheme guard",
+      _mp._clip("plain ascii sentence long enough to clip", 20).endswith("…"))
 
 # ---------------- a symlink out of the repository is an exfiltration path, not a file
 # followlinks=False stops recursion into symlinked DIRECTORIES. It does nothing about a symlink to a
