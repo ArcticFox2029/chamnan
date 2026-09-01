@@ -3748,9 +3748,17 @@ check("it never reaches zero on any finite window", _upper_bound(3650) > 0)
 check("the rule of three approximates it within 5 points at n=30",
       abs(3 / 30 - _upper_bound(30)) < 0.05)
 _readme = (ROOT / "README.md").read_text()
-check("the README quotes the bound beside the zero", "0.259 per day" in _readme)
-check("...and says what the zero does not establish",
-      "does not mean the rate is zero" in _readme)
+# Pinned on the substance rather than one release note's wording. The correction was originally
+# written into "What's new in 1.9.0", which now lives in CHANGELOG.md; what must survive is that a
+# READER of the README meets the bound, not that a particular sentence stays in a particular file.
+_changelog = (ROOT / "CHANGELOG.md").read_text()
+check("the README quotes the bound beside the zero", "0.259" in _readme)
+check("...and says what a zero does establish, which is a bound and not a rate",
+      "a bound, not a rate" in _readme)
+check("the correction is still in the release history too",
+      "does not mean the rate is zero" in _readme + _changelog)
+check("the release history moved out of the README but did not disappear",
+      _changelog.count("\n## ") >= 10 and "What's new in 1.11.0" in _readme)
 
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
