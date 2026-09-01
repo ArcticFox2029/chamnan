@@ -6103,6 +6103,31 @@ check("...and a file git has never heard of still matches nothing",
       _tl.for_path(_rn, "src/unrelated.py") == [])
 shutil.rmtree(_rn, ignore_errors=True)
 
+# ------------------------------ the front page, which is the only thing most readers see
+# A broken in-page link shipped once already, from raw block-level HTML swallowing the markdown
+# inside it. These check the two ways the page can lie about itself: a jump that goes nowhere, and
+# a relative link to a file that is not there.
+_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+
+def _slug(h):
+    h = re.sub(r"`", "", h)
+    h = re.sub(r"[^\w\s-]", "", h, flags=re.U)
+    return re.sub(r"\s+", "-", h.strip()).lower()
+
+
+_heads = {_slug(m.group(2)) for m in re.finditer(r"^(#{1,6})\s+(.+?)\s*$", _readme, re.M)}
+_broken = sorted({a for a in re.findall(r"\]\(#([^)]+)\)", _readme) if a not in _heads})
+check("EVERY IN-PAGE LINK IN THE README RESOLVES TO A HEADING: " + str(_broken), not _broken)
+_relpaths = [t for t in re.findall(r"\]\((?!https?:|#)([^)\s]+)\)", _readme)]
+_missing = sorted({t for t in _relpaths if not (ROOT / t.split("#")[0]).exists()})
+check("...and every relative link names a file that exists: " + str(_missing), not _missing)
+check("the page opens with a self-contained digest, because it is what a summariser reads",
+      "## In one screen" in _readme
+      and _readme.index("## In one screen") < _readme.index("## Evidence"))
+check("...and a contents list, so the shape is visible without reading 1,900 lines",
+      "## Contents" in _readme)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

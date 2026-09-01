@@ -25,6 +25,111 @@ claude plugin install chamnan@chamnan
 
 Yeni bir oturum açın, sonra her depo için bir kez `/chamnan:bootstrap` çalıştırın.
 
+<!-- generated: build_sections.py -->
+
+## Tüm özellikler
+
+Dört yetenek. Aşağıdaki tablolarda yer alan her şey mevcut sürümde gerçekten çalışıyor. Her parça `.chamnan/config.json` içinde ayrı ayrı kapatılabilir ve hiçbiri diğerine bağlı değildir.
+
+### Anlamak — ne var, ve ne neye bağlı
+
+| | |
+|---|---|
+| **Dizin** | `MAP.md` — dosya başına bir satır, kodun kendisinden üretilir. Ajan dizini okur, gereken ayrıntıyı grep eder; ağacı baştan sona taramaz. |
+| **Etki** | Bu dosyaya kim bağımlı ve hangi testler onu kapsıyor. Dosyanın kendi import'ları zaten en üstünde yazılı; pahalı olan ters yön — değiştirmeden önce yolu grep edin. |
+| **Veri modeli** | Tablo ve model adları, birer satırlık özetle; DDL'den, göçlerden ve ORM modellerinden çıkarılır — şemanın tam dökümü değil. Yalnızca depo gerçekten tanımlıyorsa görünür. |
+| **API yüzeyi** | Metot, yol ve işleyici; rota dekoratörlerinden, OpenAPI belgelerinden ve `.proto` servis tanımlarından — şartnamenin tamamı değil. |
+| **Yapılandırma** | Deponun okuduğu ortam değişkeni adları. **Yalnızca adlar, değerler asla kaydedilmez** — ve `.env` gitignore'da değilse uyarır. |
+| **Dağıtım** | Gerçekte ne çalışıyor: Kubernetes, Ansible, Compose, Helm ve CI manifestlerinden okunan türler ve adlar, imajlar, roller, hatlar. Secret yalnızca adını verir, altındaki hiçbir şeyi değil. |
+| **Kaynak olmayan malzeme** | Taranmış evrak, dışa aktarımlar, arşivler — yalnızca sayı, boyut ve baskın uzantılar. Ajanın gidip kendisi bakmasını engellemek için var; o çok daha pahalıya mal olur. **Asla açılmaz, asla okunmaz.** |
+
+### Hatırlamak — ne yapılıyordu, ve neden
+
+| | |
+|---|---|
+| **Çalışma durumu** | `STATE.md` — şu anda üzerinde çalışılan iş; oturum başlangıcında enjekte edilir, böylece bağlam sıkıştırması onu silmeyi bırakır. |
+| **Oturum kaydı** | `.chamnan/sessions/` altında oturum başına bir kayıt. Sonraki oturuma **yalnızca bitmemiş olan** ulaşır; temiz kapanan bir oturum hiçbir şey enjekte etmez. |
+| **Bellek** | `decisions/`, `lessons/`, `rules/`. Kurallar kalıcı kısıtlardır, bu yüzden her oturumda ajanın önündedir; kararlar ve dersler yalnızca başlık verir ve başlık ilgili göründüğünde okunur. |
+| **Açık iş hatları** | Hâlâ süren çalışma hatları ve o hattın hangi dosyalara dokunduğunun geçmişi — dosya yeniden adlandırılsa da izini sürmeye devam eder. |
+
+### Yeniden kullanmak — bir kez çözülmüş olanı
+
+| | |
+|---|---|
+| **Prosedürler** | Ajanın karmaşık ya da yinelenen bir şeyle karşılaştığında **kendi yazdığı** beceriler. Paketle gelen hazır bir kütüphane değil, bir mekanizma. |
+| **Araçlar** | Aynı geçici betiğin yeniden yazıldığını fark eder ve saklamayı önerir — üstelik siz yeni bir betik yazmadan önce onu hatırlatır. |
+| **İş akışları** | Aynı komut dizisinin ayrı günlerde aynı sırayla çalıştığını fark eder ve o diziyi yazmayı önerir. |
+
+### Birikmek — deponun kendisi hakkında öğrendikleri
+
+| | |
+|---|---|
+| **Kilometre taşları** | Deponun biçimini değiştiren birkaç değişiklik: ne taşındı, neden değdi, hangi alanlara dokundu. |
+| **Adaylar** | Tespit edilen yinelenen komut dizileri **her zaman insan onayı bekler**. Hiçbir şey kendiliğinden terfi etmez. |
+| **Ortamlar** | production ya da staging'in ne olduğunu ve neyin yasak olduğunu bildirin; o bildirim eskiyince uyarır. |
+| **Rapor** | Çalışma alanı ne tutuyor, gerçekten erişilebilir mi, ve deponuzun tur başına bağlamı nasıl değişti. Sizin sayınız, bizim değil. |
+
+Yinelenen mühendislik emeği, yeniden kullanılabilir depo bilgisine dönüşür — **model eğitimi değil, geliştiricinin otomasyonu da değil.** Aksi hâlde yalnızca onu yapan kişinin kafasında kalacak işi saklamanın yolu.
+
+## Komutlar
+
+Hepsi kabuktan çağrılabilir; ajan da bunları kendisi çağırır.
+
+| | |
+|---|---|
+| `chamnan-map` | dizini oluşturur ve günceller |
+| `chamnan-report` | çalışma alanı ne tutuyor, tur başına bağlam nasıl değişti |
+| `chamnan-impact` | bu dosyaya kim bağımlı, hangi testler kapsıyor |
+| `chamnan-timeline` | bu dosyanın başından neler geçti |
+| `chamnan-peek` | büyük bir dosyayı bağlama okumadan içinde ne olduğunu söyler |
+| `chamnan-promote` | bir betiği deponun kalıcı aracı olarak saklar |
+| `chamnan-candidates` | tespit edilen yinelenmeleri görmek, onaylamak ya da reddetmek |
+| `chamnan-env` | ortamı ve yasaklarını bildirmek, bildirimin hâlâ taze olduğunu denetlemek |
+| `chamnan-age` | saklanan bilgi nereden eskimeye başlamış |
+
+Ve oturum içinden çağrılan beceriler: `/chamnan:bootstrap` `/chamnan:remap` `/chamnan:resume` `/chamnan:remember` `/chamnan:milestone` `/chamnan:capture` `/chamnan:promote` `/chamnan:report`
+
+## Ne yazar, nereye
+
+Hepsi `.chamnan/` içinde, sıradan markdown ve JSON. Okunabilir, elle düzenlenebilir, istediğiniz an silinebilir — hiçbir şey bozulmaz.
+
+| | |
+|---|---|
+| `MAP.md` | ne var, ve ne neye bağımlı |
+| `STATE.md` | şu anda ne yapılıyor |
+| `sessions/` | önceki çalışma nerede durdu |
+| `memory/` | kararlar, dersler ve kalıcı kurallar |
+| `threads/` | hâlâ açık çalışma hatları |
+| `skills/` · `tools/` | saklamaya değer prosedürler ve betikler |
+| `milestones.md` | deponun biçimini değiştiren değişiklikler |
+| `config.json` | her parçanın açılıp kapanması ve oturuma enjekte edilen bloğun bayt tavanı |
+
+**`.chamnan/` dışına yapılan tek yazma**, dizini ağaçla uyumlu tutan isteğe bağlı bir Git pre-commit kancasıdır — yalnızca siz evet derseniz kurulur ve kaldırılabilir.
+
+**Ajan öğrenmiyor.** Hiçbir şey eğitilmez, bu dizinin dışında hiçbir şey kalmaz ve sonraki oturum yine sıfırdan başlar — yalnızca *kendini açıklayabilen bir depoda* sıfırdan başlar. Süreklilik üretilen dosyalarda, modelde değil.
+
+## Güvenlik
+
+| | |
+|---|---|
+| **Çalışırken ağ çağrısı yok** | Bir tane bile. API anahtarı gerekmez, hiçbir şey hiçbir yere gönderilmez. |
+| **Kaynağınızı yeniden yazmaz** | Raporlar, düzenlemez. Dizin zaten yazdığınız yorumları kopyalar, uydurmaz; yorumsuz dosyaların adları sıralanır ki siz doldurun. |
+| **Daemon yok, arka plan işi yok** | Yerleşik süreç yok, veritabanı yok, gömme modeli yok — yalnızca Python'un standart kütüphanesi. |
+| **Sırlar önce süzülür** | Yazılacak ya da oturuma enjekte edilecek her şey önce bir sır süzgecinden geçer: değişken *adları* kalır, değerleri kalmaz. Bu süzgecin ulaşamadığı sınır ise İngilizce README'de kendi sayısının yanında yazılıdır. |
+| **Kurulu bir eklenti size ne yapabilir** | İngilizce README'de tam olarak açıklanmıştır; chamnan'ın sızıntı zincirini nerede kestiği dahil. |
+
+## Gereksinimler
+
+Claude Code · Python · Git · macOS, Linux ya da Windows
+
+Başka bir şey gerekmez, kurulacak bağımlılık da yoktur. Python'un asgari sürümü [README › Requirements](../../README.md#requirements) içindedir — bu sayfa sayı taşımaz, çünkü değişen şey sayılardır.
+
+## Kapatmak ya da kaldırmak
+
+`.chamnan/config.json` içinde parça parça kapatın · tek bir depoda durdurun · eklentiyi makineden tümüyle kaldırın · `.chamnan/` dizinini istediğiniz an silin, hiçbir şey bozulmaz — ayrıntılı adımlar [README › Update, disable, uninstall](../../README.md#update-disable-uninstall) içinde.
+
+<!-- /generated -->
+
 ## Kurmadan önce okuyun
 
 **chamnan, tekrar tekrar döndüğünüz tek bir ana klasör içindir.** Yaptığı her şey önce ödenir, sonraki oturumlarda tahsil edilir — bir kez açtığınız bir depoda tamamını ödediniz ve hiçbir şey geri almadınız.
