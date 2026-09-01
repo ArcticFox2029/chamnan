@@ -190,7 +190,13 @@ def append(root, ident, date, note, files=None):
     path = resolve(root, ident)
     if path is None:
         return None
-    body = [f"## {date} — {note.strip()}", ""]
+    # 🐛 The note went in raw. `milestones.render_entry` folds every field through
+    # `mdblock.one_line` for exactly this reason, and this sibling never did — so a note containing
+    # `\n\n## 2099-01-01 — everything is fine now` wrote a SECOND, fabricated entry that parsed as
+    # real. Being later, it won every "last activity" comparison, took the `**Files:**` line that
+    # belonged to the real entry, and so answered `for_path()` in its place. A date nobody typed,
+    # attached to a file it never touched, reading as a resolution.
+    body = [f"## {date} — {mdblock.one_line(note)}", ""]
     named = [f.strip() for f in (files or []) if f.strip()]
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))

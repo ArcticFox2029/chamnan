@@ -45,13 +45,21 @@ def directory(root):
     return workspace(root) / "sessions"
 
 
+_SESSION_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
+
+
 def records(root):
     """Every session record, newest first. Sorted by filename, which begins with the date."""
     d = directory(root)
     if not d.is_dir():
         return []
+    # 🐛 Sorted by filename alone, so ANY name starting with a letter beat every `YYYY-…` record:
+    # a `TEMPLATE.md`, a `README.md` or a `notes.md` dropped in this directory became "the last
+    # session", and the header still said so, which is how it read as real. `prune()` already
+    # treats the filename date as the authority; this did not. Dated records first, newest first;
+    # anything undated sorts behind all of them rather than in front.
     return sorted((p for p in d.glob("*.md") if p.is_file()),
-                  key=lambda p: p.name, reverse=True)
+                  key=lambda p: (bool(_SESSION_DATE.match(p.name)), p.name), reverse=True)
 
 
 def latest(root):
