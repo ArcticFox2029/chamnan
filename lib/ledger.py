@@ -25,6 +25,11 @@ WEEK = 7 * 86400
 # time on a fresh clone or machine move and would otherwise report every existing session as
 # written this week the moment the repository is cloned.
 _SESSION_DATE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})")
+# The date `memory.py` writes at the foot of every entry. Same reason as above, and it was
+# available for a whole release before this read it: the comment below used to say memory entries
+# "carry no date of their own until Stage 4 adds `as-of`" — Stage 4 shipped, and nothing came back
+# here, so a fresh clone reported every decision ever recorded as written today.
+_AS_OF = re.compile(r"^\*\*As-of:\*\*\s*(\d{4})-(\d{2})-(\d{2})", re.M)
 
 
 def _files(root, *parts):
@@ -78,6 +83,24 @@ def _milestone_timestamps(root):
     return out
 
 
+def _dated(paths):
+    """One timestamp per memory entry, read from its own `**As-of:**` line when present and from
+    mtime otherwise. A hand-written entry with no As-of still counts, just less precisely."""
+    out = []
+    for p in paths:
+        ts = None
+        try:
+            m = _AS_OF.search(p.read_text(encoding="utf-8", errors="replace"))
+            if m:
+                ts = _ymd_to_ts(*m.groups())
+            if ts is None:
+                ts = p.stat().st_mtime
+        except OSError:
+            continue
+        out.append(ts)
+    return out
+
+
 def _session_timestamps(paths):
     """One timestamp per session record, read from the date at the start of its filename when it
     parses, falling back to the file's mtime otherwise -- a session record written by hand outside
@@ -109,11 +132,7 @@ def snapshot(root, now=None):
     thread_files = _files(root, "threads")   # None until 1.6.0 creates the directory
 
     memory_files = (decisions or []) + (lessons or []) + (rules or [])
-    # Memory entries carry no date of their own until Stage 4 adds `as-of`, so mtime is the only
-    # signal available today -- imprecise across a fresh clone, but not silently wrong the way
-    # using it for sessions would be, since a decision's mtime at least reflects when THIS copy
-    # last saw a write, not a date the file never claimed to have.
-    memory_mtimes = _mtimes(memory_files)
+    memory_mtimes = _dated(memory_files)
 
     session_ts = _session_timestamps(sessions or [])
     milestone_ts = _milestone_timestamps(root)
@@ -222,9 +241,9 @@ def inventory(root, now=None):
 
     return [
         ("sessions/", len(sessions), last(_session_timestamps(sessions))),
-        ("memory/decisions/", len(decisions), last(_mtimes(decisions))),
-        ("memory/lessons/", len(lessons), last(_mtimes(lessons))),
-        ("memory/rules/", len(rules), last(_mtimes(rules))),
+        ("memory/decisions/", len(decisions), last(_dated(decisions))),
+        ("memory/lessons/", len(lessons), last(_dated(lessons))),
+        ("memory/rules/", len(rules), last(_dated(rules))),
         ("milestones.md", len(ms), last(_milestone_timestamps(root))),
         ("candidates/", len(cand), last(_mtimes(cand))),
         ("threads/", len(thr), last(_mtimes(thr))),
@@ -242,6 +261,16 @@ _EXTENSIONLESS_FILES = frozenset({
     "Rakefile", "Gemfile", "Procfile", "Vagrantfile", "Brewfile", "Justfile", "justfile",
     "LICENSE", "LICENCE", "NOTICE", "CODEOWNERS", "AUTHORS", "CHANGELOG", "README",
 })
+
+
+_LOCATOR = re.compile(r":\d+(?:-\d+)?$")
+
+
+def _strip_locator(token):
+    """`src/fit.py:142` names a file; `.exists()` says it does not. chamnan's own guidance asks for
+    exactly this citation format, so every entry that followed it counted against the repository it
+    was written about -- the check was measuring compliance with its own convention as a failure."""
+    return _LOCATOR.sub("", token)
 
 
 def _looks_like_a_path(token):
@@ -281,7 +310,10 @@ def entries_naming_no_file(root, category="lessons"):
         except OSError:
             naming_none += 1
             continue
-        candidates = [t for t in _BACKTICK.findall(text) if _looks_like_a_path(t)]
+        # Stripped BEFORE the shape test, not after: `Makefile:12` has no slash and no longer ends
+        # in a dot-extension, so testing the raw token throws away the extensionless case entirely.
+        spans = [_strip_locator(t) for t in _BACKTICK.findall(text)]
+        candidates = [t for t in spans if _looks_like_a_path(t)]
         if not candidates or not any((repo_root / c).exists() for c in candidates):
             naming_none += 1
     return naming_none, total

@@ -5928,6 +5928,90 @@ _tsrender = mapper.render([dict(path="t.ts", lang="js", lines=3, chars=40, doc="
 check("Full Detail names a TypeScript declaration a type, not a class",
       "**type AgentInput**" in _tsrender and "**class AgentInput**" not in _tsrender)
 
+# ------------------------------ what the report says about YOUR repo, and only yours
+import fit as _fitx  # noqa: E402
+import ledger as _ledx  # noqa: E402
+
+_rspec = importlib.util.spec_from_loader(
+    "chamnan_report",
+    importlib.machinery.SourceFileLoader("chamnan_report", str(ROOT / "bin" / "chamnan-report")))
+_rep = importlib.util.module_from_spec(_rspec)
+_rspec.loader.exec_module(_rep)
+
+# `~/work/Lumin-App` and `~/Documents/Lumin-App` encode to two directories that both end in the
+# same basename. The fallback returned whichever sorted first, so a second checkout of the same
+# project -- or an unrelated repo sharing a basename -- had its token spend printed as this one's.
+# Two OTHER checkouts of the same project; the exact encoding of this one is absent, which is the
+# only situation the suffix fallback exists for.
+_tie_a, _tie_b = "-Users-me-work-Lumin-App", "-Volumes-ext-Lumin-App"
+_want = "-Users-me-Documents-Lumin-App"
+check("a basename shared by two checkouts scores them equally -- which is the tie condition",
+      _rep._shared_tail(_want, _tie_a) == _rep._shared_tail(_want, _tie_b))
+_fakeproj = Path(tempfile.mkdtemp(prefix="chamnan-proj-"))
+(_fakeproj / _tie_a).mkdir(); (_fakeproj / _tie_b).mkdir()
+_realproj, _rep.PROJECT_ROOT = _rep.PROJECT_ROOT, _fakeproj
+check("AND A TIE IS ANSWERED WITH SILENCE, NOT WITH WHICHEVER SORTED FIRST",
+      _rep.encoded_dir(Path("/Users/me/Documents/Lumin-App")) is None)
+shutil.rmtree(_fakeproj / _tie_b)
+check("...while a single candidate is still resolved by suffix",
+      _rep.encoded_dir(Path("/Users/me/Documents/Lumin-App")) == _fakeproj / _tie_a)
+_rep.PROJECT_ROOT = _realproj
+shutil.rmtree(_fakeproj, ignore_errors=True)
+check("...while the longer agreement wins outright when there is one",
+      _rep._shared_tail("-a-b-c-app", "-a-b-c-app") > _rep._shared_tail("-a-b-c-app", "-z-app"))
+check("...and a suffix is anchored on the dash, so -app is not a match for -my-app",
+      _rep._shared_tail("-x-my-app", "-y-app") == 1)
+
+# Memory entries carry `**As-of:**` and the ledger still read mtime, so every decision ever
+# recorded reported as written today the moment the repo was cloned.
+_led = Path(tempfile.mkdtemp(prefix="chamnan-ledger-")) / "repo"
+(_led / ".chamnan" / "memory" / "lessons").mkdir(parents=True)
+_lf = _led / ".chamnan" / "memory" / "lessons" / "x.md"
+_lf.write_text("# x\n\n**As-of:** 2020-03-04\n", encoding="utf-8")
+check("A MEMORY ENTRY IS DATED BY ITS OWN As-of, NOT BY WHEN THIS MACHINE TOUCHED IT",
+      abs(_ledx._dated([_lf])[0] - 1583323200) < 86400)
+_lf2 = _led / ".chamnan" / "memory" / "lessons" / "y.md"
+_lf2.write_text("# y\n\nno date here\n", encoding="utf-8")
+check("...and an entry that claims no date still counts, by mtime",
+      abs(_ledx._dated([_lf2])[0] - _lf2.stat().st_mtime) < 2)
+
+# chamnan's own guidance asks for `path:line` citations, and its own check counted every entry
+# that complied as naming no file in this repository.
+check("A path:line CITATION STILL NAMES A FILE", _ledx._strip_locator("src/fit.py:142") == "src/fit.py")
+check("...including a line range", _ledx._strip_locator("src/fit.py:142-158") == "src/fit.py")
+check("...and a path with no locator is untouched", _ledx._strip_locator("src/fit.py") == "src/fit.py")
+check("...and the shape test runs on the stripped span, so Makefile:12 survives it",
+      _ledx._looks_like_a_path(_ledx._strip_locator("Makefile:12")))
+
+# A footnote whose section was dropped points at a heading that is not in the block. The live
+# 9,000-byte block shipped "Full detail lives in .chamnan/MAP.md" while naming Architecture index
+# in its own list of what had been left out.
+_parts = ["\n### Architecture index\n" + "i" * 400 + "\n",
+          "_Full detail lives in `.chamnan/MAP.md`._\n",
+          "\n### Rules this repository works under\n" + "r" * 400 + "\n"]
+_body, _drop = _fitx.shrink("H\n", _parts, ceiling=700)
+check("A DROPPED SECTION TAKES ITS OWN FOOTNOTES WITH IT",
+      "i" * 400 not in _body and "Full detail lives in" not in _body)
+check("...and the section that was kept still has its content", "r" * 400 in _body)
+_body2, _drop2 = _fitx.shrink("H\n", _parts, ceiling=100000)
+check("...while nothing is removed when everything fits",
+      "Full detail lives in" in _body2 and not _drop2)
+
+# Emitted since 1.11.0 and never ranked, so it was dropped ahead of everything but the index.
+check("EVERY SECTION THE HOOK EMITS HAS A DROP RANK",
+      all(any(t.startswith(n) for n in _fitx.DROP_ORDER) for t in
+          ["Environment constraints — check these before proposing infrastructure work",
+           "Rules this repository works under", "Work in flight (from the last session)"]))
+check("...and it outranks what is merely useful to know",
+      _fitx.DROP_ORDER.index("Environment constraints") > _fitx.DROP_ORDER.index("Recent milestones"))
+
+# Retention was reachable from 2 of the 9 commands in bin/. The hook is the one thing that runs
+# whatever the session does.
+check("RETENTION RUNS FROM THE HOOK, NOT ONLY FROM THE TWO COMMANDS THAT HAPPEN TO CALL IT",
+      "ws.prune_logs(root)" in (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8"))
+
+shutil.rmtree(_led.parent, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

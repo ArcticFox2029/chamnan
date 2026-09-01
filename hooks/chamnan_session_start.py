@@ -371,6 +371,19 @@ def main():
     root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
     first_session = not wsdir.is_dir()
+    if not first_session:
+        # Retention was reachable from `chamnan-report` and `chamnan-map` and from nowhere else --
+        # 2 of the 9 commands in bin/. Someone who only ever uses the write skills accumulates
+        # logs/ for ever and the documented window is a claim nothing enforces, while state left
+        # behind by a removed feature (`pointer_seen.json`, `nudge_state.json`) never expires at
+        # all. This hook is the one thing that runs whatever the session does. Best-effort and
+        # silent, exactly as prune_logs already promises: housekeeping must never be the reason a
+        # session fails to start.
+        try:
+            ws.prune_logs(root)
+            ws.prune_sessions(root)
+        except Exception:
+            pass
     if first_session:
         # 🐛 [2026-08-28, owner: a teammate installed the plugin, opened a new project in VS Code,
         # and got nothing at all] The workspace used to be created only by chamnan-map,

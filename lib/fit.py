@@ -47,6 +47,10 @@ DROP_ORDER = [
     "Where the last session stopped",
     "Open threads",
     "Reply style for this repo",
+    # Emitted since 1.11.0 and never ranked, so it fell to the unlisted-section default and was
+    # dropped ahead of everything but the index. It is the section that stops a wrong action being
+    # proposed at all, which puts it above what is merely useful to know.
+    "Environment constraints",
     "Work in flight (from the last session)",
     "Rules this repository works under",
 ]
@@ -129,6 +133,19 @@ def reorder(parts):
     return lead + [part for i in ordered for part in blocks[i]]
 
 
+def _followers(order, i):
+    """The bare lines after a section that belong to it -- the index's "Full detail lives in
+    MAP.md" pointer, the staleness warning, the "more rules in ..." tail. `reorder` already treats
+    these as one block with their heading; dropping did not, so a live block shipped
+    "Full detail lives in .chamnan/MAP.md" while naming Architecture index in the same breath as a
+    section it had left out. A pointer to a heading that is not there is worse than silence."""
+    j, out = i + 1, []
+    while j < len(order) and not title_of(order[j]):
+        out.append(j)
+        j += 1
+    return out
+
+
 def shrink(header, parts, ceiling=CEILING, sources=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
@@ -167,6 +184,8 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
         dropped.append((t, (sources or {}).get(t, "")))
         dropped_at.append(i)
         parts[i] = ""
+        for j in _followers(order, i):
+            parts[j] = ""
 
     # Dropping whole sections can overshoot badly. A single section larger than the ceiling forces
     # every cheaper one out and then goes itself, and the block lands at a third of the limit with
@@ -185,9 +204,13 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                 continue
             if i not in dropped_at:
                 continue
-            trimmed = _trim(order[i], room, sources)
+            # The followers come back with it, so they have to be paid for out of the same room.
+            foll = _followers(order, i)
+            trimmed = _trim(order[i], room - len("".join(order[j] for j in foll).encode()), sources)
             if trimmed:
                 parts[i] = trimmed
+                for j in foll:
+                    parts[j] = order[j]
                 at = dropped_at.index(i)
                 dropped.pop(at)
                 dropped_at.pop(at)
