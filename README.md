@@ -87,7 +87,7 @@ interesting thing about it.
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.13.0](#whats-new-in-1130) · [Commands](#commands)
+[What's new in 1.13.0](#whats-new-in-1140) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -396,111 +396,132 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
+## What's new in 1.14.0
 
-## What's new in 1.13.0
+**A crash that made the hook print nothing behind a symlink, a command whose own advice erased the
+record, and thirty-two translated pages that finally say what this does.** Twenty-five commits.
+Every defect was reproduced before it was believed and pinned by a test afterwards; the suite is at
+1,495 checks and now runs in CI on Linux and macOS, at the Python version this project calls its
+floor and at the newest release.
 
-**Two credential leaks, a rule that could read outside the repository, and one bug that was thirty
-bugs.** Five research rounds, every finding required to come with a reproduction before it was
-believed. Twenty-eight defects fixed; these are the ones worth your time.
+### CI, and the two defects it found before its first merge
 
-### A comment mentioning an END marker was enough to publish the key it sat above
+There was none until this release. The front page asserted that Linux was "expected to work, not
+tested" and that Python 3.8 was the floor, on a page whose own headline is "verifiable claims, not
+adjectives" — a support matrix nobody runs is an adjective. There is no dependency step, on
+purpose: chamnan is standard library only, and a workflow that ever needs a `pip install` is the
+change to reject rather than the workflow to fix.
 
-The private-key pattern matched lazily, so it stopped at the *first* text shaped like an END line.
-A README snippet, or a comment reading "keys are terminated with `-----END RSA PRIVATE KEY-----`",
-supplies one — and everything between it and the real END went through untouched. The header and
-the decoy were replaced; the entire base64 body of a real key was published. It is greedy now:
-over-covering a decoy costs a line of prose.
+It earned its keep immediately.
 
-Three more in the same file. Only four compound spellings of "key" were listed by hand, so
-`ssh_key`, `signing_key`, `encryption_key`, `master_key` and `db_key` — the commonest form there
-is — were never trigger words at all; `AccountKey` and `apiKey` were missed for the separate reason
-that CamelCase has no separator to anchor on. A value that was a call had the callee captured *as*
-the secret: `AWS_SECRET = base64.b64decode("QUtJQ…")` redacted `base64.b64decode` and left the
-payload beside a line it had just broken. And `auth` was unanchored, so it fired inside
-`oauth_flow`, whose value is a grant type — the over-redaction side of the same trade.
+**`find_root()` resolved its path and `hook_root()` did not.** When the host hands over a path that
+goes through a symlink — `/tmp` and `/var` are symlinks on macOS, and keeping a project behind one
+is ordinary — one returned `/var/x` while the workspace lookup returned `/private/var/x/.chamnan`,
+and the first `relative_to` raised `ValueError`. Uncaught. The hook died with a traceback: zero
+bytes of output, exit 1, no message. That is precisely the silent-nothing failure `hook_root` was
+written to prevent, reintroduced by disagreeing with `find_root` about one path. Measured on a
+symlinked project: **0 bytes before, 4,622 after.** Both layers are closed, because either alone
+would let it recur — `hook_root` resolves now, and every path the block prints falls back to the
+bare filename rather than raising. A label is never worth an exception.
 
-### A rule shipped in a clone could read `/etc/hosts` and report the match count
+**`sys.stdlib_module_names` arrived in Python 3.10**, and the fallback below it left the set empty.
+So on 3.8 and 3.9 — the two versions this project declares as its floor — every `import re` in the
+codebase was reported as a third-party dependency. Standard-library-only is one of three things
+chamnan actually promises, and the check for it had inverted into a false alarm on the interpreter
+least likely to be the one you ran it on.
 
-A `**Check:**` trailer is a path written in repository text, and `rulecheck` is the one place such a
-path becomes an `open()`. `root.glob()` follows `..`, so a rule reading ``present `localhost` in
-`../../../../../../etc/hosts` `` read the real file and reported its match count into the session —
-a working oracle for anything the process can open, arriving with a clone. It went around the
-never-open list too. Every resolved path must now sit under the repository root.
+Two test blocks were also found to be asserting the author's own folder layout: they resolved a
+fixture path two directories above the checkout, which happens to be another chamnan workspace on
+that machine and an empty directory everywhere else. On any other machine they tested nothing.
 
-The ReDoS guard beside it was blind to the other classic shape. It refused a quantified group that
-is itself quantified; ambiguous *alternation* has no inner quantifier at all, and `(a|a)*$` measured
-0.25s against 20 identical characters, 4.2s against 24, and had not finished at 28 — through a
-guard whose entire reason for existing is that hang, on a pattern that runs at every session start.
+### The command `chamnan-env check` tells you to run was the one that erased the entry
 
-### One formula for every language produced the same bug once per language
+It ends with "re-confirm with `chamnan-env set <name> --checked <date>`". Running exactly that
+replaced the whole record — the platform, the versions and every constraint went with it. Anything
+not named on the command line is now carried forward from what is already recorded, and
+`--platform ""` still clears a field, so there is a way to say it really is empty.
 
-`#` was read as a comment everywhere except three languages someone had noticed. So Rust's
-`#[cfg(not(windows))]` became a file's **description** in **149 of tokio's 555 files**, and the index
-said a networking module was "[cfg(not(windows))]". Fix Rust and Ruby brings it back; fix Ruby and
-TypeScript does. The defect was the shape, not the entries.
+`chamnan-candidates demote` deleted the tool file. A promoted tool ships as a skeleton whose steps
+are placeholders — the command's own help says it is not runnable until you fill in the commands —
+so demoting destroyed exactly the part a person wrote, in exchange for a candidate that the code
+itself calls not a reconstruction. It is archived now, and the path is printed.
 
-Each language now states its own facts and the universal rule is derived from them, so a language
-nobody has written facts for is visibly missing rather than silently wrong. Re-measured on tokio:
-**149 attribute-descriptions to 0**. Reported coverage falls from 67% to 41% — and that is the
-point, the 149 were being counted as described.
+### The block told you to read a section it had already thrown away
 
-Three languages the generic rule could not know. **Ruby**: a method name may end in `?`, `!` or `=`,
-so `def boot!` was recorded as `boot` and `def owner=` collided with its own getter; a method name
-may be an *operator* with no word character at all, so `def ==`, `def <=>` and `def []` were
-invisible; and `module` — Ruby's actual namespacing keyword — had no rule. **Terraform**: a `data`
-block carries two names and the second is its identity, so nine distinct `data "aws_iam_policy"`
-blocks in a real production module deduped into one row. **TypeScript**: a real 4,133-line `.d.ts`
-with 91 exported interfaces reported "100% described" and zero symbols.
+Caught in a live session: "Full detail lives in `.chamnan/MAP.md`" printed a few lines above a list
+naming the architecture index as one of the sections left out to stay under the byte ceiling.
+Dropping a section now takes its footnotes with it, and restoring one pays for them out of the same
+room. Separately, "Environment constraints" had been emitted since 1.11.0 without ever being
+ranked, so it fell to the unranked default and was dropped ahead of everything but the index — the
+one section whose job is to stop a wrong action being proposed at all.
 
-### A quoted example could close an open thread and drop it from the next session's handoff
+### What the index says about real repositories
 
-Four modules found their structure by scanning for lines starting with `#`, and none could tell a
-heading from a line inside a fenced code block. A thread quoting `**Status:** closed` inside a fence
-read as closed, and the next session was never told that work was open. A session record quoting
-`## Remaining` split there, and the handoff delivered the fabricated section while dropping the real
-one after it. A milestone title carrying a newline wrote a second, well-formed milestone that won
-the most-recent slot.
+Found by running the build over tokio and Homebrew rather than over fixtures.
 
-### Thirty-two languages, and the rule that keeps them honest
+- **A crate root described by an aside about a build flag.** tokio's `src/lib.rs` carries 431 lines
+  of `//!` saying what the crate is; the index said "loom is an internal implementation detail. Do
+  not show…". A multi-line `#![allow(…)]` matched only on its first line, and once that was fixed
+  the first ordinary `//` won, because nothing preferred the marker the language itself uses for
+  file-level documentation.
+- **A Homebrew tap with nothing said about any of it**: a formula states its summary in
+  `desc "..."`, which is not a comment. **0 of 36 described, now 33.** Anchored on the Formula
+  declaration, so Rake's per-task `desc` is not mistaken for a description of the file.
+- **`(root)` swallowing real directories.** One dominant directory pushing the roll-up to depth two
+  sent every single-segment path into one bucket, so production code and integration tests shared a
+  group of 175 under a name true of neither.
+- Full Detail called a TypeScript interface a class — the half the index tells a reader to grep
+  when they want symbol-level truth.
 
-The README now opens with a flag row. Each translated page is short — what this is, the problem it
-solves, how to install it, what to know first — and **none of them contains a number**.
+### chamnan-report was reading another project's numbers
 
-That is not laziness. Measured across large open-source repositories: once a translation is merged,
-the English source takes a median of **8.5 more commits in six months while the translation takes a
-median of 0**, with a maximum observed gap of 166. chamnan releases often, and a wrong translation
-is worse than an absent one because it still reads as current. So the measurements stay in English
-and every translated page links to them. The ordinary release touches one document.
+Its fallback for a working directory whose exact encoding is missing accepted any transcript
+directory ending with this repository's basename and returned the first in sort order. A second
+checkout, or an unrelated repo sharing a basename, was silently reported as this one. It ranks
+candidates by how much of the path agrees now, and returns nothing at all when two agree equally,
+because there is no honest answer there.
 
-### The strongest evidence against this tool is now on its front page
+Same command: `input_tokens` was unpacked from every usage record and then never added to anything.
+That is the input the model read which was *not* served from cache — the whole prompt on every
+session's first call, and on every call after the cache expires. Those calls reported a context of
+zero and pulled the per-call average down by exactly the calls that cost the most.
 
-A leak-audited causal ablation of an index *richer* than this one beat a grep-only agent by +5.1pp
-on resolve rate at **p = 0.087 — not significant**, with the gain concentrated in cross-file changes.
-Cursor's own before-and-after sits beside it: **+12.5%** on their internal benchmark, **+0.3%** in
-live production traffic. Both are in the README, at the top, not buried.
+And the ledger dated memory entries by file mtime, under a comment saying they carry no date of
+their own "until Stage 4 adds `as-of`". Stage 4 shipped three releases ago. On a fresh clone every
+decision ever recorded read as written today.
 
-One code change follows from reading them. `## Impact` — what is connected to what — has been built
-and committed all along, and the injected block never told a session it existed. Eighty bytes now
-name it.
+### The front page, rebuilt for how it is actually read
+
+People paste the link into an AI and ask for a summary. It now opens with a self-contained digest
+and a contents list, so a summariser that reads only the top of a 1,900-line page still gets the
+tool right. The hero image says what chamnan is rather than what its biggest number is; the
+token-ratio figure moved down to sit directly under the two rows that produce it, with its
+qualification travelling alongside.
+
+### Thirty-two translated pages that finally say what it does
+
+They carried what chamnan is and how to install it, and not one word about the features. Someone
+who cannot read English had no way to learn from their own language's page that there is an impact
+query, or a secret filter, or that nothing is ever promoted without a person saying yes. Each page
+now covers all four capability groups, every command and skill, what is written and where, the
+safety guarantees and how to remove it — and still carries no digits, which is the rule that keeps
+them from needing an edit every release.
+
+They are generated from one shared table rather than written out thirty-two times, because the
+failure mode of the latter is a row missing from some languages that nobody would ever catch. The
+suite asserts every language carries every row, none carries a row the others do not, and no page
+has acquired a number.
 
 ### Quieter ones
 
-Five PostToolUse notices had used `print()` since 0.1.0, and PostToolUse is not one of the four
-events whose plain stdout reaches the model — every one of them was written to a channel nobody
-reads. The token estimator claimed for a year that it errs toward over-counting; measured against
-the API on chamnan's own `MAP.md` it came back **under** by 8.2%, and 18.1% on the symbol-dense
-section — wrong in the direction that overruns a budget, on the one file it exists to budget. A
-`.gitattributes` line was being appended to the repository root on first session, contradicting the
-README's promise that `pre-commit` is the only file written outside `.chamnan/`. A tool name that
-was a path escaped the workspace and left a registry entry pointing at a file nothing could find.
-`chamnan-map /etc` walked `/etc` before dying on it. A symlink loop raised `RuntimeError` past an
-`OSError` guard and killed the entire scan. `chamnan-peek` described source code — the most common
-file in every repository chamnan targets — as an unrecognised binary blob. Seventy printed
-suggestions named commands that do not exist.
-
-**Verified on an 804-file, 28-language corpus rather than on this repository**: 8.1 seconds, 29 MB,
-byte-identical across runs, and 2,329 claimed symbols with not one absent from its own source file.
-1,334 checks pass.
+`timeline.for_path` follows renames, so a thread entry written before a `git mv` still answers a
+question asked about the new name. `chamnan-peek` says when it stopped counting rows and how many
+columns it left out, instead of printing a cap as if it were a fact. The Configuration list is
+ranked by how many places each variable is referenced rather than cut alphabetically, and says so.
+Retention runs from the SessionStart hook instead of only from the two commands in `bin/` that
+happened to call it. `entries_naming_no_file` stopped counting `path:line` — the citation format
+chamnan's own guidance asks for — as naming no file. The injected tools list is ranked by use, so a
+thirteenth promoted tool can actually appear.
 
 ## Bootstrap does not rewrite your code
 

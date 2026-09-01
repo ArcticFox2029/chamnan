@@ -1,11 +1,118 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1130), and every one of these is on the
+[README](README.md#whats-new-in-1140), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.13.0
+
+**Two credential leaks, a rule that could read outside the repository, and one bug that was thirty
+bugs.** Five research rounds, every finding required to come with a reproduction before it was
+believed. Twenty-eight defects fixed; these are the ones worth your time.
+
+### A comment mentioning an END marker was enough to publish the key it sat above
+
+The private-key pattern matched lazily, so it stopped at the *first* text shaped like an END line.
+A README snippet, or a comment reading "keys are terminated with `-----END RSA PRIVATE KEY-----`",
+supplies one — and everything between it and the real END went through untouched. The header and
+the decoy were replaced; the entire base64 body of a real key was published. It is greedy now:
+over-covering a decoy costs a line of prose.
+
+Three more in the same file. Only four compound spellings of "key" were listed by hand, so
+`ssh_key`, `signing_key`, `encryption_key`, `master_key` and `db_key` — the commonest form there
+is — were never trigger words at all; `AccountKey` and `apiKey` were missed for the separate reason
+that CamelCase has no separator to anchor on. A value that was a call had the callee captured *as*
+the secret: `AWS_SECRET = base64.b64decode("QUtJQ…")` redacted `base64.b64decode` and left the
+payload beside a line it had just broken. And `auth` was unanchored, so it fired inside
+`oauth_flow`, whose value is a grant type — the over-redaction side of the same trade.
+
+### A rule shipped in a clone could read `/etc/hosts` and report the match count
+
+A `**Check:**` trailer is a path written in repository text, and `rulecheck` is the one place such a
+path becomes an `open()`. `root.glob()` follows `..`, so a rule reading ``present `localhost` in
+`../../../../../../etc/hosts` `` read the real file and reported its match count into the session —
+a working oracle for anything the process can open, arriving with a clone. It went around the
+never-open list too. Every resolved path must now sit under the repository root.
+
+The ReDoS guard beside it was blind to the other classic shape. It refused a quantified group that
+is itself quantified; ambiguous *alternation* has no inner quantifier at all, and `(a|a)*$` measured
+0.25s against 20 identical characters, 4.2s against 24, and had not finished at 28 — through a
+guard whose entire reason for existing is that hang, on a pattern that runs at every session start.
+
+### One formula for every language produced the same bug once per language
+
+`#` was read as a comment everywhere except three languages someone had noticed. So Rust's
+`#[cfg(not(windows))]` became a file's **description** in **149 of tokio's 555 files**, and the index
+said a networking module was "[cfg(not(windows))]". Fix Rust and Ruby brings it back; fix Ruby and
+TypeScript does. The defect was the shape, not the entries.
+
+Each language now states its own facts and the universal rule is derived from them, so a language
+nobody has written facts for is visibly missing rather than silently wrong. Re-measured on tokio:
+**149 attribute-descriptions to 0**. Reported coverage falls from 67% to 41% — and that is the
+point, the 149 were being counted as described.
+
+Three languages the generic rule could not know. **Ruby**: a method name may end in `?`, `!` or `=`,
+so `def boot!` was recorded as `boot` and `def owner=` collided with its own getter; a method name
+may be an *operator* with no word character at all, so `def ==`, `def <=>` and `def []` were
+invisible; and `module` — Ruby's actual namespacing keyword — had no rule. **Terraform**: a `data`
+block carries two names and the second is its identity, so nine distinct `data "aws_iam_policy"`
+blocks in a real production module deduped into one row. **TypeScript**: a real 4,133-line `.d.ts`
+with 91 exported interfaces reported "100% described" and zero symbols.
+
+### A quoted example could close an open thread and drop it from the next session's handoff
+
+Four modules found their structure by scanning for lines starting with `#`, and none could tell a
+heading from a line inside a fenced code block. A thread quoting `**Status:** closed` inside a fence
+read as closed, and the next session was never told that work was open. A session record quoting
+`## Remaining` split there, and the handoff delivered the fabricated section while dropping the real
+one after it. A milestone title carrying a newline wrote a second, well-formed milestone that won
+the most-recent slot.
+
+### Thirty-two languages, and the rule that keeps them honest
+
+The README now opens with a flag row. Each translated page is short — what this is, the problem it
+solves, how to install it, what to know first — and **none of them contains a number**.
+
+That is not laziness. Measured across large open-source repositories: once a translation is merged,
+the English source takes a median of **8.5 more commits in six months while the translation takes a
+median of 0**, with a maximum observed gap of 166. chamnan releases often, and a wrong translation
+is worse than an absent one because it still reads as current. So the measurements stay in English
+and every translated page links to them. The ordinary release touches one document.
+
+### The strongest evidence against this tool is now on its front page
+
+A leak-audited causal ablation of an index *richer* than this one beat a grep-only agent by +5.1pp
+on resolve rate at **p = 0.087 — not significant**, with the gain concentrated in cross-file changes.
+Cursor's own before-and-after sits beside it: **+12.5%** on their internal benchmark, **+0.3%** in
+live production traffic. Both are in the README, at the top, not buried.
+
+One code change follows from reading them. `## Impact` — what is connected to what — has been built
+and committed all along, and the injected block never told a session it existed. Eighty bytes now
+name it.
+
+### Quieter ones
+
+Five PostToolUse notices had used `print()` since 0.1.0, and PostToolUse is not one of the four
+events whose plain stdout reaches the model — every one of them was written to a channel nobody
+reads. The token estimator claimed for a year that it errs toward over-counting; measured against
+the API on chamnan's own `MAP.md` it came back **under** by 8.2%, and 18.1% on the symbol-dense
+section — wrong in the direction that overruns a budget, on the one file it exists to budget. A
+`.gitattributes` line was being appended to the repository root on first session, contradicting the
+README's promise that `pre-commit` is the only file written outside `.chamnan/`. A tool name that
+was a path escaped the workspace and left a registry entry pointing at a file nothing could find.
+`chamnan-map /etc` walked `/etc` before dying on it. A symlink loop raised `RuntimeError` past an
+`OSError` guard and killed the entire scan. `chamnan-peek` described source code — the most common
+file in every repository chamnan targets — as an unrecognised binary blob. Seventy printed
+suggestions named commands that do not exist.
+
+**Verified on an 804-file, 28-language corpus rather than on this repository**: 8.1 seconds, 29 MB,
+byte-identical across runs, and 2,329 claimed symbols with not one absent from its own source file.
+1,334 checks pass.
 
 ---
 
