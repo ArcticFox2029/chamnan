@@ -42,7 +42,7 @@ is plain markdown committed beside the code.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.1% recall / 100% precision** on a 34-secret, 17-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 22-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
 
@@ -834,11 +834,11 @@ No credential scanner wins both axes. The published head-to-head over 818 reposi
 true secrets puts **Gitleaks at 46% precision / 88% recall**, **GitHub's own scanner at 75% / 6%**,
 and **git-secrets at 1% / 23%**. "Credentials are stripped" with no pair of numbers beside it is a
 claim nobody has measured, so here is the pair, from `tools/redactor_recall.py` against a labelled
-corpus of 27 secret shapes and 17 ordinary strings that must survive:
+corpus of 38 secret shapes and 22 ordinary strings that must survive:
 
 | | |
 |---|---|
-| recall | **97.1%** — 33 of 34 secret shapes redacted |
+| recall | **97.4%** — 37 of 38 secret shapes redacted |
 | precision | **100%** — 0 of 17 ordinary strings damaged |
 
 Read those honestly. 44 labelled cases is not 818 repositories, and 100% on a corpus this size means
@@ -1239,7 +1239,7 @@ Sources: [arXiv:2601.09832](https://arxiv.org/abs/2601.09832); [arXiv:1907.00376
 | | |
 |---|---|
 | chamnan's redactor, **before** | **66.7%** recall / **81.8%** precision |
-| chamnan's redactor, **after** | **97.1%** recall / **100%** precision |
+| chamnan's redactor, **after** | **97.4%** recall / **100%** precision |
 | corpus | 27 secret shapes, 17 ordinary strings that must survive |
 | **the ceiling it cannot reach** | verification by live API call: TruffleHog **6% → 90%** precision |
 
@@ -1322,7 +1322,7 @@ question is not whether it participates — it does — but whether the chain ca
 | link | chamnan |
 |---|---|
 | 1. repo content reaches the agent | **yes, by design** — mitigated only by the fence below, which is worth about a halving |
-| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **97.1% recall / 100% precision** |
+| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **97.4% recall / 100% precision** |
 | 3. it is written into something that configures or executes | **no**, and this is now pinned by tests |
 | 4. a capability turns that into network activity | **no** — pinned by the tests in §9 |
 

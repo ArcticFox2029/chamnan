@@ -5520,6 +5520,39 @@ check("...while a repository already flat at depth one is left alone",
       len([ln for ln in _rup.collapse(_flat, "MAP.md", per_dir=0).splitlines()
            if ln.startswith("- **")]) == 3)
 
+# ------------------------------ the two secret words nobody re-read
+# `key` and `auth` were given careful component boundaries; `password`, `secret`, `token` and
+# `credential` sitting beside them stayed bare substrings. Same bug, left in the words that had
+# not been the ones failing at the time.
+for _label, _text in [
+    ("a tokenizer attribute", "self.tokenizer_config = AutoTokenizer.from_pretrained(model)"),
+    ("a detokenize function", "detokenize_output_text = join_pieces(chunks)"),
+    ("a retokenized batch", "retokenized_batch = pad_and_stack(items)"),
+    ("a credentialing deadline", "credentialing_deadline = 2026-12-01"),
+    ("a secretariat id", "secretariat_id = SEC-2026-04"),
+]:
+    check(f"{_label} survives the redactor", redact.PLACEHOLDER not in redact.scrub(_text))
+for _label, _text in [
+    ("a plural token name", f"API_TOKENS={_F}{_F}"),
+    ("a CamelCase password", f'dbPassword = "{_F}{_F}"'),
+    ("an ordinary password", f'password = "{_F}{_F}"'),
+]:
+    check(f"...while {_label} is still redacted", _F not in redact.scrub(_text))
+
+# A signed URL keeps its credential in the query string, where there is no `key=` and no
+# `user:pass@` for any other pattern to find. Reproduced end to end before this: an Azure SAS token
+# in a docstring reached the committed MAP.md verbatim, twice.
+for _label, _url in [
+    ("an Azure SAS token", f"https://x.blob.core.windows.net/b/f?sv=2022-11-02&sig={_F}{_F}"),
+    ("an AWS presigned signature", f"https://s3.amazonaws.com/b/k?X-Amz-Signature={_F}{_F}"),
+]:
+    check(f"A SIGNED URL DOES NOT CARRY {_label.upper()} THROUGH", _F not in redact.scrub(_url))
+check("...and the host is left readable, because that is what the index should say",
+      "blob.core.windows.net" in redact.scrub(
+          f"https://x.blob.core.windows.net/b/f?sv=2022-11-02&sig={_F}{_F}"))
+check("...while `sig` in prose is not a credential",
+      redact.PLACEHOLDER not in redact.scrub("the sig= parameter is documented upstream"))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

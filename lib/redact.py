@@ -61,12 +61,29 @@ LATE_PREFIXES = [
     re.compile(r"(?<![A-Za-z0-9_-])pypi-[A-Za-z0-9_-]{20,}"),
     re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]{20,}"),
     re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{20,}"),
+    # A signed URL carries its credential in the query string, where no `key=` and no `user:pass@`
+    # exists for the other patterns to find. Reproduced end to end: an Azure SAS token in a
+    # docstring reached the committed MAP.md verbatim, twice. The parameter names are anchored to a
+    # `?` or `&` and the value to sixteen characters, so `sig` -- three letters -- cannot fire on
+    # prose. The NAME is kept and only the value replaced, because "this talks to blob storage" is
+    # exactly what the index should still say.
+    re.compile(r"(?<=[?&])(?:sig|signature|x-amz-signature|awsaccesskeyid|x-goog-signature)"
+               r"=([A-Za-z0-9%+/=_.~-]{16,})", re.I),
 ]
 
 # The names that mean "a credential lives here". Written once and shared by the assignment
 # patterns below, which had drifted -- one had gained spellings the other had not.
 SECRET_WORDS = (
-    r"password|passwd|pwd|secret|token|credential"
+    # Each one a whole COMPONENT of the name, with a plural allowed. These were bare substrings
+    # while `key` and `auth` beside them were carefully bounded -- the same bug, left in the words
+    # nobody re-read. Measured: `self.tokenizer_config = AutoTokenizer.from_pretrained(model_name)`
+    # came back as `self.tokenizer_config = <REDACTED>`, and so did `detokenize_output_text`,
+    # `retokenized_batch`, `credentialing_deadline` and `secretariat_id`. Ordinary identifiers,
+    # destroyed in the index the tool exists to write.
+    r"(?<![A-Za-z])(?:password|passwd|pwd|secret|token|credential)s?(?![A-Za-z])"
+    # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
+    # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
+    r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Secret|Token|Credential)s?)(?![A-Za-z])"
     # `key` as a whole COMPONENT of the name, not the four compound spellings that were listed by
     # hand. ssh_key, signing_key, encryption_key, master_key and db_key all passed through
     # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
