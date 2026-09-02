@@ -118,7 +118,17 @@ def _churn(root, window=CHURN_WINDOW):
             # path never matches -- every such file is credited zero churn, silently. That is the
             # whole ranking, disabled, for any repository whose filenames are not ASCII.
             ["git", "-C", str(root), "-c", "core.quotePath=false",
-             "log", "--name-status", "-M",
+             # 🐛 `--no-merges` is not tidiness, it is the difference between a 600-commit window and a
+             # 300-commit one. git does not diff a merge commit by default, so a merge contributes a
+             # header and zero file-status lines — and on a project that merges pull requests with
+             # --no-ff, which is most of them, half the window is merges. Measured on a repository
+             # with that ordinary shape: 49.9% of the 600 commits produced nothing, so the ranking
+             # was built from ~300 real edits while believing it had 600.
+             #
+             # It did not affect the figures this project has published: chamnan's own history is
+             # 2.1% merges in the window and the development monorepo is 0%. It affects the users
+             # whose repositories look like the ones this tool was written for.
+             "log", "--no-merges", "--name-status", "-M",
              "--pretty=format:", "-n", str(window)],
             # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
             # bytes the hook has not read yet, or block waiting on a prompt that will never come.

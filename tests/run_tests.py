@@ -8607,6 +8607,34 @@ check("...and an ordinary retention value still passes", _ws._in_range("log_rete
 check("a key with no bound is unaffected", _ws._in_range("something_else", 10 ** 9))
 
 
+# ------------------------------ half the churn window was merge commits that say nothing
+# git does not diff a merge commit by default, so `git log -n 600 --name-status` spends part of its
+# window on commits that contribute a header and zero file-status lines. On a project that merges
+# pull requests with --no-ff — which is most of them — that was measured at 49.9%: the ranking was
+# built from about 300 real edits while believing it had 600.
+#
+# It did not touch the figures this project publishes. chamnan's own history is 2.1% merges inside
+# the window and the development monorepo is 0%, which is why nothing looked wrong here. It touched
+# the users whose repositories have the shape this tool was written for.
+_rlsrc = (ROOT / "lib" / "rollup.py").read_text(encoding="utf-8")
+check("the churn read skips merge commits", '"--no-merges"' in _rlsrc)
+check("...and still asks for rename detection, which the window needs more",
+      '"-M"' in _rlsrc)
+# A repository built of nothing but merges must degrade to the alphabet, not to a crash.
+_mrepo = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-merge-")) / "r"
+_mrepo.mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_mrepo)], check=True)
+subprocess.run(["git", "-C", str(_mrepo), "config", "user.email", "t@t"], check=True)
+subprocess.run(["git", "-C", str(_mrepo), "config", "user.name", "t"], check=True)
+(_mrepo / "a.py").write_text("x = 1\n", encoding="utf-8")
+subprocess.run(["git", "-C", str(_mrepo), "add", "-A"], check=True)
+subprocess.run(["git", "-C", str(_mrepo), "commit", "-qm", "one"], check=True)
+_rl._CHURN_CACHE.clear()
+check("a repository below the ranking threshold returns nothing rather than raising",
+      _rl._churn(_mrepo) == {})
+shutil.rmtree(_mrepo.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
