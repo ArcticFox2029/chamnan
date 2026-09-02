@@ -1700,14 +1700,19 @@ It used to say ~3,000 here. That was `index_token_budget`, which is the ceiling 
 up to fit — a budget, not a delivery — and no workspace measured has ever reached it. Each part of it replaces
 something an agent would otherwise have to go and read:
 
-| Instead of reading | tokens | chamnan says it in | |
-|---|---|---|---|
-| 53 migration and model files, to learn the schema | 154,680 | **889** | **174×** |
-| 109 Kubernetes, Ansible and Terraform manifests | 170,871 | **1,583** | **108×** |
-| 27 env and config files | 67,994 | **616** | **110×** |
-| 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** |
-| 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** |
-| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **25.4×** |
+| Instead of reading | tokens | chamnan says it in | | reduction |
+|---|---|---|---|---|
+| 53 migration and model files, to learn the schema | 154,680 | **889** | **174×** | 99.43% |
+| 109 Kubernetes, Ansible and Terraform manifests | 170,871 | **1,583** | **108×** | 99.07% |
+| 27 env and config files | 67,994 | **616** | **110×** | 99.09% |
+| 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** | 98.28% |
+| 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** | 99.55% |
+| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **25.4×** | **96.06%** |
+
+The last column is the same arithmetic as the one before it, and it is here because the rest of this
+field publishes in percent while chamnan published in multiples. `25.4×` and `96.06%` are one
+measurement; the first reads smaller than tools reporting 60-95%, and the second does not. Both are
+printed so neither can be quoted without the other.
 
 <img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which 308 to 1,428 reach each session." width="100%">
 
