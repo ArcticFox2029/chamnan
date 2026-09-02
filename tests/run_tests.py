@@ -7902,6 +7902,40 @@ check("...while the table that comment does belong to still has it",
       "reaper job" in _ormmap.split("`audit_log`")[1].split("\n")[0])
 shutil.rmtree(_orm, ignore_errors=True)
 
+# ------------------------------ the fence marker is the one thing allowed to change, and it changed too much
+# `secrets.token_hex` was called at import, so the marker was per invocation, not per session — the
+# thing the comment beside it says it is. The hook re-runs on every resume and every compaction, and
+# one real session was measured emitting 39 blocks carrying 42 different markers, so the whole
+# ~8.5 KB block differed from the previous one every time. The comment directly under the nonce
+# warns that a changing prefix is reprocessed at full price; the nonce was the only thing breaking it.
+#
+# The security property survives: what the marker resists is a repository file closing the fence
+# early, and a file is written before the session exists, so its author cannot know the session id.
+_hook = ROOT / "hooks" / "chamnan_session_start.py"
+
+
+def _fire_start(session_id=None):
+    _pl = {"cwd": str(ROOT), "hook_event_name": "SessionStart"}
+    if session_id is not None:
+        _pl["session_id"] = session_id
+    return subprocess.run([sys.executable, str(_hook)], input=json.dumps(_pl),
+                          capture_output=True, text=True).stdout
+
+
+_a1, _a2 = _fire_start("session-AAA"), _fire_start("session-AAA")
+check("two firings of one session emit a byte-identical block", _a1 == _a2)
+check("...and that is not passing on empty output", len(_a1) > 200)
+_b1 = _fire_start("session-BBB")
+check("a different session gets a different fence marker", _a1 != _b1)
+# An older Claude Code, or a payload without the field, must not fall back to a fixed guessable
+# marker — it stays random there, which is the behaviour that existed before.
+check("with no session id the marker is still unpredictable", _fire_start() != _fire_start())
+_ma = set(re.findall(r"repo:([0-9a-f]{6})", _a1))
+_mb = set(re.findall(r"repo:([0-9a-f]{6})", _b1))
+check("each session's block carries exactly one marker", len(_ma) == 1 and len(_mb) == 1)
+check("the two sessions' markers do not collide", _ma != _mb)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
