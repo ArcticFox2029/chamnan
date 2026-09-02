@@ -53,6 +53,25 @@ def entries(root, category):
     return sorted(p for p in d.glob("*.md") if p.is_file())
 
 
+def case_collisions(paths):
+    """Group `paths` whose filename stems are identical except for case.
+
+    🐛 On a case-insensitive filesystem (APFS, the default on this machine, and NTFS), writing
+    `no-force-push.md` and then `No-Force-Push.md` leaves exactly one FILE on disk -- the first
+    name, the second file's CONTENT -- with nothing on disk that records a second file ever
+    existed. `git status` on this same machine's default `core.ignorecase=true` shows it as an
+    ordinary single-file edit too, so there is no recovery signal once it happens. On a
+    case-sensitive checkout of the same tree (Linux, most CI), both files coexist and both reach
+    `entries()` -- injected as two independent-looking rules that happen to say opposite things,
+    with nothing marking them as the same name in disguise. This is the one place that coexistence
+    is still visible: before the workspace is ever synced to a case-insensitive machine.
+    """
+    groups = {}
+    for p in paths:
+        groups.setdefault(p.stem.casefold(), []).append(p)
+    return [sorted(g) for g in groups.values() if len(g) > 1]
+
+
 def title_of(path, text=None):
     """The entry's `# ` heading, falling back to a readable form of the filename."""
     try:
@@ -116,12 +135,26 @@ def unresolved_conflict(body):
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
     out, titles = [], []
-    for path in entries(root, "rules"):
+    rule_paths = entries(root, "rules")
+    collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
+    for path in rule_paths:
         try:
             body = path.read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
             continue
-        if body and unresolved_conflict(body):
+        group = collision_of.get(path)
+        if group:
+            # Same reasoning as the merge-conflict branch below, same shape of injection: a rule
+            # whose filename collides by case only is not reliably ONE rule -- on a case-sensitive
+            # checkout the sibling file is real content nobody meant to inject as fact, and on the
+            # case-insensitive machine that wrote it, it already silently ate the other one's body.
+            others = ", ".join(f"`{p.name}`" for p in group if p != path)
+            out.append(f"**{title_of(path)}** — ⚠ this rule's filename collides with {others}, "
+                       f"differing only by case. Filesystems disagree on whether these are one file "
+                       f"or two, so it is NOT in force until the files are merged or renamed apart; "
+                       f"do not act on either side.")
+            titles.append(title_of(path))
+        elif body and unresolved_conflict(body):
             # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
             # was never written, and the point is to get this file resolved.
             out.append(f"**{title_of(path)}** — ⚠ this rule is mid-merge and both sides are still "

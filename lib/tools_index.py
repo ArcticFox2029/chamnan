@@ -25,6 +25,7 @@ same discipline Stage 8's promotion classifier already applies to itself: state 
 its limits, never invent a confidence number to paper over not having one.
 """
 import json
+from datetime import datetime
 
 import workspace as ws
 
@@ -87,6 +88,7 @@ def _register_locked(root, entry):
         "runs": entry.get("runs", 0),
         "interrupted": entry.get("interrupted", 0),
         "stderr_seen": entry.get("stderr_seen", 0),
+        "last_run": entry.get("last_run", ""),
     })
     _save(root, entries)
     return entries
@@ -128,6 +130,16 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
         if entry is None:
             return None, False
         entry["runs"] = entry.get("runs", 0) + 1
+        # 🐛 Two developers each adding one call on their own branch both write `runs: 5 -> 6` --
+        # the same line, the same text, no conflict marker -- and `git merge` takes either side
+        # cleanly. Seven real calls land recorded as six, forever, because nothing recomputes a
+        # running total. Unequal deltas (5->6 vs 5->8) already conflict on their own; only the
+        # equal-delta case was silent. A microsecond timestamp on every call makes two
+        # independently-recorded increments differ almost always even when `runs` lands on the
+        # same number, which turns the silent case into the same human-visible merge conflict the
+        # unequal-delta case already gets -- cheaper than a custom git merge driver, which would
+        # need a `.gitattributes` entry AND a per-clone `git config` write outside this workspace.
+        entry["last_run"] = datetime.now().astimezone().isoformat(timespec="microseconds")
         was_flaggable = (entry.get("interrupted", 0) >= FLAG_AT
                          or entry.get("stderr_seen", 0) >= FLAG_AT)
         if interrupted:

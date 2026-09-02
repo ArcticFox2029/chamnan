@@ -118,11 +118,27 @@ def main(argv):
         except (OSError, UnicodeDecodeError):
             pass          # unreadable as text: leave it alone rather than corrupt it
 
-    tools_index.register(root, {
-        "name": dest.name, "desc": desc,
-        "added": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "origin": str(src),
-    })
+    # 🐛 `shutil.copy2` and `chmod` above always succeed before this runs, so a read-only
+    # `index.json` (permissions, a read-only mount, disk full) raised OSError HERE, uncaught --
+    # a traceback, and the file left on disk: copied, executable, but unregistered. Retrying under
+    # the same name then failed forever too, since `dest.exists()` above is checked before any of
+    # this runs. Rolled back on failure so the name is free to try again once the real problem
+    # (the index file's permissions) is fixed.
+    try:
+        tools_index.register(root, {
+            "name": dest.name, "desc": desc,
+            "added": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "origin": str(src),
+        })
+    except OSError as err:
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        print(f"chamnan: could not register {dest.name!r} in the tools index: {err}", file=sys.stderr)
+        print("  nothing was left behind -- fix the underlying issue (often the index file's "
+              "permissions) and run this again.", file=sys.stderr)
+        return 1
     rel = dest.relative_to(root)
     print(f"chamnan: promoted -> {rel}")
     # Only claim direct execution when the file can actually be executed directly. A promoted file
