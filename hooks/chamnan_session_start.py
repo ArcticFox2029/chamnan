@@ -813,6 +813,17 @@ def main():
                 "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
                 "index and record a baseline; the write skills listed above work from now on, whether "
                 "or not that has been run.", "(generated)"))
+        elif not (wsdir / "MAP.md").is_file():
+            # 🐛 The section above is said ONCE, on the session that created the workspace. A user
+            # who was not paying attention that minute never hears it again: every session after
+            # shows a generic ledger line mentioning neither bootstrap nor the missing index, and
+            # the repository sits indexed by nothing. Reproduced with three consecutive hook runs.
+            #
+            # One line rather than the whole section, and only while the index is genuinely
+            # absent — so it stops the moment it is acted on and never nags a repository that
+            # already has one.
+            out.append("_There is no architecture index in this repository yet — `chamnan-map` "
+                       "builds one, or `/chamnan:bootstrap` builds it and records a baseline._\n")
 
         if _bad_cfg:
             out.insert(0, "_⚠ `.chamnan/config.json` does not parse — a stray comma or quote. "

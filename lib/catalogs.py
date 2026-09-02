@@ -302,7 +302,11 @@ def scan_routes(root, files):
         # of ~1,900 ms of total findall time, roughly half of it spent inside large `.js` files that
         # cannot contain either name. Gated to Python, checked for misses across three repositories
         # with route-carrying files in six languages: none.
-        py = f["lang"] == "py"
+        # 🐛 These two were gated by LANGUAGE while the sibling loop below got a literal
+        # pre-filter, in the same function, added the same day. Language is much too coarse here:
+        # on the real repository 188 `.py` files reach this line and exactly 2 contain either name.
+        # `APIRouter` and `Blueprint` are the literals the patterns cannot match without.
+        py = f["lang"] == "py" and ("APIRouter" in text or "Blueprint" in text)
         # Mount points declared in this file, by the variable the decorator will name.
         prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)} if py else {}
         # Every router/blueprint variable in the file, prefix or not. A decorator is only trusted

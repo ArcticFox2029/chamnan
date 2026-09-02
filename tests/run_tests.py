@@ -8882,6 +8882,57 @@ for _on in ("notes.txt", "app.py", "netrc_helper.py", "pgpass_setup.md"):
     check(f"an ordinary file is not ({_on})", not _rd.is_blocked(_ppl.Path("/x") / _on))
 
 
+# ------------------------------ three things a new user meets first
+# 🐛 `chamnan-map` had no `--help`, and it treats any non-flag argument as a directory to scan — so
+# `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the most cautious
+# thing a new user can type performed a write. Found by an agent that typed it by reflex in the
+# wrong directory and rewrote a real repository's index.
+for _hc in ("chamnan-map", "chamnan-promote"):
+    for _hf in ("--help", "-h"):
+        _hr = subprocess.run([str(ROOT / "bin" / _hc), _hf], capture_output=True, text=True,
+                             cwd=tempfile.mkdtemp())
+        check(f"{_hc} {_hf} prints help and exits cleanly",
+              _hr.returncode == 0 and _hc in _hr.stdout)
+# An unknown flag used to be dropped in silence and the command did something else.
+_hu = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--nonsense"], capture_output=True,
+                     text=True, cwd=tempfile.mkdtemp())
+check("an unknown flag is refused rather than ignored",
+      _hu.returncode != 0 and "unknown flag" in _hu.stderr)
+
+# 🐛 The "chamnan is set up" section is said ONCE, on the session that created the workspace. A user
+# who missed that minute never heard it again — every session after showed a generic ledger line
+# mentioning neither bootstrap nor the missing index, and the repository sat indexed by nothing.
+_nuroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-newuser-")) / "r"
+(_nuroot / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_nuroot)], check=True)
+subprocess.run(["git", "-C", str(_nuroot), "config", "user.email", "t@t"], check=True)
+subprocess.run(["git", "-C", str(_nuroot), "config", "user.name", "t"], check=True)
+(_nuroot / "src" / "a.py").write_text("def f(): pass\n", encoding="utf-8")
+subprocess.run(["git", "-C", str(_nuroot), "add", "-A"], check=True)
+subprocess.run(["git", "-C", str(_nuroot), "commit", "-qm", "one"], check=True)
+
+
+def _fire_nu(sid):
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          input=json.dumps({"cwd": str(_nuroot), "hook_event_name": "SessionStart",
+                                            "session_id": sid}),
+                          capture_output=True, text=True).stdout
+
+
+_fire_nu("first")            # creates the workspace and says so once
+_said = [("no architecture index" in _fire_nu(f"s{i}")) for i in range(3)]
+check("a repository with no index is told so on EVERY session, not just the first", all(_said))
+subprocess.run([str(ROOT / "bin" / "chamnan-map")], cwd=_nuroot, capture_output=True, text=True)
+check("...and told nothing once it has one", "no architecture index" not in _fire_nu("after"))
+shutil.rmtree(_nuroot.parent, ignore_errors=True)
+
+# 🐛 `ROUTER_PREFIX`/`ROUTER_ANY` were gated by LANGUAGE while the sibling loop in the same function
+# got a literal pre-filter the same day. 188 `.py` files reach that line on the real repository and
+# exactly 2 contain either name.
+check("the router patterns are gated on the literals they require",
+      '"APIRouter" in text or "Blueprint" in text' in (ROOT / "lib" / "catalogs.py").read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
