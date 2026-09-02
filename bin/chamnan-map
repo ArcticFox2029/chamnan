@@ -265,6 +265,16 @@ def main(argv):
     # has always used len(files), so the tool and its own artifact reported different sizes for the
     # same scan. Caught by reading both at once on a real repository: 187 printed, 189 in the file.
     print(f"  {len(files)} source file(s), {src:,.0f} tokens of code")
+    # Said out loud because the silence was the indefensible half of the defect this reports.
+    # coveragepy's index was built without `coverage/` -- the shipped library, 29% of the repo --
+    # and the run said nothing at all, so the only visible number was a coverage bar computed over
+    # what survived. A directory named like build output is still usually build output, so this
+    # does not warn; it states what was left out and how to disagree with it.
+    if mapper.SKIPPED_BUILD_DIR:
+        named = ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6])
+        more = len(mapper.SKIPPED_BUILD_DIR) - 6
+        print(f"  not indexed, read as build output: {named}" + (f" +{more} more" if more > 0 else ""))
+        print("  (git-tracked directories with these names ARE indexed; these are not tracked)")
     # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
     # `__init__.py`, or any tree whose files are all empty. It crashed at this line, which is
     # AFTER MAP.md has already been overwritten, so the user's index was replaced and the report

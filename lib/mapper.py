@@ -27,6 +27,7 @@ Never imports or executes the code it reads.
 """
 import argparse
 import ast
+import subprocess
 import warnings
 import re
 import mdblock
@@ -57,6 +58,54 @@ MAX_FILE_BYTES = 2_000_000
 # reports coverage, so a skipped file is a number someone can see rather than an absence.
 SKIPPED_TOO_LARGE = []
 SKIPPED_BINARY = []
+# 🐛 Eight names in SKIP_DIRS are ORDINARY SOURCE DIRECTORY NAMES as well as build-output names,
+# and the list could not tell the two apart. Measured: coveragepy's index contained 130 files and
+# not one of them was from `coverage/` -- the shipped library, 54 files, 29% of the repository and
+# 100% of what anybody opens the map to find. The Quick Index was its tests, its CI scripts and its
+# docs. pypa/build lost all 13 files of `src/build/`, 36% of its source, the same way. Neither run
+# said anything: no warning, and the coverage bar read "85%" of what remained.
+#
+# The name cannot decide it. Deleting these entries re-admits `target/` on every Rust repository
+# and `build/` on every Gradle tree, which is thousands of generated files and the reason the list
+# exists. What separates them is whether git is tracking the directory -- `build/lib/pkg/` produced
+# by setuptools is ignored, `src/build/` is committed -- so that is the question asked, per PATH
+# rather than per name, and only for these eight. The rest of SKIP_DIRS is unambiguous machinery
+# and is never rescued: a committed `vendor/` or `node_modules/` is still noise.
+AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp", "logs"})
+# Directories skipped under one of those names. Reported by chamnan-map, because the silence was
+# the half of this defect that could not be argued about -- and note SKIPPED_TOO_LARGE and
+# SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
+# those do" would have been another write-only list.
+SKIPPED_BUILD_DIR = set()
+_TRACKED_AMBIGUOUS = {}
+
+
+def _tracked_ambiguous(root):
+    """Relative paths of AMBIGUOUS_SKIP-named directories that git is tracking files under.
+
+    Empty when there is no git, no repository, or the call fails -- chamnan has to work on a plain
+    directory, so this can only ever RESCUE a directory the name list would have dropped. It never
+    causes one to be skipped, which keeps the failure direction the same as before.
+    """
+    key = str(root)
+    if key in _TRACKED_AMBIGUOUS:
+        return _TRACKED_AMBIGUOUS[key]
+    found = set()
+    try:
+        done = subprocess.run(["git", "-C", key, "ls-files", "-z"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        if done.returncode == 0:
+            for raw in done.stdout.split(b"\0"):
+                if not raw:
+                    continue
+                parts = raw.decode("utf-8", "replace").split("/")[:-1]
+                for i, part in enumerate(parts):
+                    if part in AMBIGUOUS_SKIP:
+                        found.add("/".join(parts[:i + 1]))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    _TRACKED_AMBIGUOUS[key] = frozenset(found)
+    return _TRACKED_AMBIGUOUS[key]
 
 def _nested_repo_dirs(root):
     """Directories under `root` that are repositories in their own right.
@@ -820,7 +869,22 @@ def indexable(root, nested=None):
         # a repository that happens to live under /tmp, ~/build, or any directory named env/out/
         # target would have every one of its files skipped and report "no source files" — silently,
         # since nothing errors. Found 2026-08-19 by running the tool inside /private/tmp.
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+        rel_parts = path.relative_to(root).parts
+        tracked = _tracked_ambiguous(root)
+        dropped = None
+        for i, part in enumerate(rel_parts[:-1]):
+            if part not in SKIP_DIRS:
+                continue
+            here = "/".join(rel_parts[:i + 1])
+            if part in AMBIGUOUS_SKIP and here in tracked:
+                continue      # committed source that happens to share a build-output name
+            dropped = here
+            break
+        if dropped is not None:
+            # `.chamnan/logs` is our own workspace, not the user's build output, and reporting it
+            # on every run in every repository is noise that trains the reader to ignore the line.
+            if dropped.rsplit("/", 1)[-1] in AMBIGUOUS_SKIP and not dropped.startswith(".chamnan/"):
+                SKIPPED_BUILD_DIR.add(dropped)
             continue
         if redact.is_blocked(path):
             continue          # private keys, certificates, local databases — never opened at all
@@ -853,6 +917,7 @@ def indexable(root, nested=None):
 def _scan(root):
     SKIPPED_TOO_LARGE.clear()
     SKIPPED_BINARY.clear()
+    SKIPPED_BUILD_DIR.clear()
     files = []
     nested = _nested_repo_dirs(root)
     for path, lang in indexable(root, nested):

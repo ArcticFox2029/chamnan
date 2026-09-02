@@ -6096,6 +6096,49 @@ check("...but a namespaced class name inside a real sentence is not a tag",
                              " suite.\n */\nclass F {}\n", "php")
       == "Test fixture. Used in the `PHPMailer\\LocalizationTest` suite.")
 
+# 🐛 Eight SKIP_DIRS entries are ordinary SOURCE directory names as well as build-output names, and
+# the list could not tell them apart. coveragepy's index held 130 files and not one from
+# `coverage/` -- the shipped library, 54 files, 29% of the repository and 100% of what anyone opens
+# the map to find; its Quick Index was tests, CI scripts and docs. pypa/build lost all 13 files of
+# `src/build/` the same way. Neither run said a word about it.
+#
+# The name cannot decide it, and deleting the entries is not an option: that re-admits `target/` on
+# every Rust repository and `build/` on every Gradle tree. Git tracking decides it, asked per PATH
+# so that one repository can hold a tracked `src/build/` and an ignored `build/` at the same time.
+_bd = tempfile.mkdtemp()
+_bdr = Path(_bd)
+(_bdr / "src" / "build").mkdir(parents=True)
+(_bdr / "build" / "lib" / "pkg").mkdir(parents=True)
+for _bi in range(6):
+    (_bdr / "src" / "build" / ("mod%d.py" % _bi)).write_text('"""Shipped module."""\ndef f():\n    pass\n')
+(_bdr / "build" / "lib" / "pkg" / "gen.py").write_text('"""Generated copy."""\n')
+# `/build/`, not `build/`: the unanchored form matches at EVERY depth and would hide src/build from
+# git as well -- which is exactly how this fixture was wrong the first time it was written.
+(_bdr / ".gitignore").write_text("/build/\n")
+for _bc in (["git", "init", "-q", "."], ["git", "add", "-A"],
+            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"]):
+    subprocess.run(_bc, cwd=_bd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+mapper.SKIPPED_BUILD_DIR.clear()
+mapper._TRACKED_AMBIGUOUS.clear()
+with tree.session():
+    _bgot = sorted(str(_p.relative_to(_bdr)) for _p, _ in mapper.indexable(_bdr))
+check("A GIT-TRACKED DIRECTORY IS SOURCE EVEN WHEN IT IS NAMED LIKE BUILD OUTPUT",
+      any(g.startswith("src/build/") for g in _bgot))
+check("...while the untracked directory of the same name is still left out",
+      not any(g.startswith("build/") for g in _bgot))
+check("...and what was left out is recorded, because the silence was the worse half",
+      "build" in mapper.SKIPPED_BUILD_DIR)
+# The rescue may only ever ADD files. With no git there is no answer to ask, and the behaviour has
+# to be exactly what it was before -- chamnan must still work on a plain directory.
+shutil.rmtree(_bdr / ".git")
+mapper._TRACKED_AMBIGUOUS.clear()
+with tree.session():
+    _bnogit = sorted(str(_p.relative_to(_bdr)) for _p, _ in mapper.indexable(_bdr))
+check("...and with no git at all the old name list still decides, unchanged",
+      _bnogit == [])
+shutil.rmtree(_bd, ignore_errors=True)
+
+
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
 _aside = ("// loom is an internal implementation detail. Do not show this label.\n"
