@@ -6636,6 +6636,43 @@ if (_wt / "tree").is_dir():
     check("...and running it again says already installed, also without a traceback",
           _r2.returncode == 0 and "already installed" in _r2.stdout)
 shutil.rmtree(_wt, ignore_errors=True)
+
+# 🐛 estimate() ran per CHARACTER, calling _in() — itself a generator over range tuples — twice
+# each. Measured at 0.35 MB/s: on apache/commons-lang (625 files, 8.5 MB) it was 44 of
+# chamnan-map's 46 seconds of scan time, 96% of the command's runtime, producing one headline
+# number on line 2 of the output that no budget decision reads.
+#
+# Counting DISTINCT characters is the same arithmetic: source is overwhelmingly ASCII, so a
+# megabyte of Java collapses to about a hundred keys. The weights are untouched — this file's own
+# docstring records that a flat divisor was measurably wrong for CJK, and a Japanese repository's
+# headline would be off ~2.5× without them.
+def _old_estimate(text):
+    c = d = y = sp = o = 0
+    for ch in text:
+        n = ord(ch)
+        if tokens._in(n, tokens._CJK):
+            c += 1
+        elif tokens._in(n, tokens._DENSE):
+            d += 1
+        elif ch.isspace():
+            sp += 1
+        elif not ch.isalnum():
+            y += 1
+        else:
+            o += 1
+    return (c * tokens._CJK_WEIGHT + d * tokens._DENSE_WEIGHT + y * tokens._SYMBOL_WEIGHT
+            + sp * tokens._SPACE_WEIGHT + o / tokens._LATIN_DIVISOR)
+for _ts in ("def f(x):\n    return x + 1\n" * 200,
+            "ยอดขายรายเดือน สรุปผล\n" * 200,
+            "認証とパスワードの管理\n" * 200,
+            "🚀 deploy ✅ done\n" * 200,
+            "", "a", "\t\t  ", "Ω≈ç√∫˜µ"):
+    check(f"THE FAST ESTIMATOR AGREES WITH THE OLD ONE EXACTLY: {_ts[:18]!r}",
+          abs(tokens.estimate(_ts) - _old_estimate(_ts)) < 1e-9)
+# The weighting is the point of the module, so pin it rather than assume the equality above covers
+# it: a CJK character must still cost more than a Latin one.
+check("...and CJK is still weighted above Latin, which is why this file exists",
+      tokens.estimate("認証システム") > tokens.estimate("authsystem"))
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 
