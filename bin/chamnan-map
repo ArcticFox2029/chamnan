@@ -270,6 +270,11 @@ def main(argv):
     # and the run said nothing at all, so the only visible number was a coverage bar computed over
     # what survived. A directory named like build output is still usually build output, so this
     # does not warn; it states what was left out and how to disagree with it.
+    # Said, not silent — same reasoning as the line below it. A file the repository itself declares
+    # machine-written is the one exclusion a reader can check against a file they can open.
+    if mapper.SKIPPED_GENERATED:
+        print(f"  not indexed, declared linguist-generated in .gitattributes: "
+              f"{len(mapper.SKIPPED_GENERATED)} file(s)")
     if mapper.SKIPPED_BUILD_DIR:
         named = ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6])
         more = len(mapper.SKIPPED_BUILD_DIR) - 6

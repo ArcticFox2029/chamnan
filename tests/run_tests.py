@@ -6265,6 +6265,54 @@ check("...and with no git at all the old name list still decides, unchanged",
       _bnogit == [])
 shutil.rmtree(_bd, ignore_errors=True)
 
+# 🎯 `.gitattributes` is the one machine-readable place a repository states that a human did not
+# write a file, and it is what GitHub itself reads to answer the same question. Measured against
+# the trees API over the files chamnan would index: kubernetes declares 1,356 of 13,748 generated
+# (9.9%, `**/zz_generated.*.go`), elasticsearch 1,466 (6.2%), grafana 654 (4.2%), numpy 12 (1.2%).
+# next.js and prometheus declare patterns matching nothing chamnan indexes, so they are unaffected.
+#
+# Not the same judgement as .gitignore, which this file refuses to read and says why — often
+# absent, often wrong, never covers a nested checkout's output. That reasoning does not transfer to
+# a narrow, deliberate declaration. `linguist-vendored` is deliberately NOT read: a vendored tree is
+# often a fork somebody edits, and the machinery directories are already in SKIP_DIRS.
+_ga = Path(tempfile.mkdtemp())
+(_ga / "pkg").mkdir()
+for _i in range(4):
+    (_ga / "pkg" / f"real{_i}.go").write_text("// Hand written.\npackage p\nfunc F() {}\n")
+    (_ga / "pkg" / f"zz_generated.x{_i}.go").write_text("// DO NOT EDIT.\npackage p\nfunc G() {}\n")
+(_ga / ".gitattributes").write_text("**/zz_generated.*.go linguist-generated=true\n")
+mapper.SKIPPED_GENERATED.clear()
+mapper._GENERATED_GLOBS.clear()
+mapper._TRACKED_AMBIGUOUS.clear()
+with tree.session():
+    _gg = sorted(str(_p.relative_to(_ga)) for _p, _ in mapper.indexable(_ga))
+check("A FILE THE REPOSITORY DECLARES GENERATED IS NOT INDEXED AS SOURCE",
+      not any("zz_generated" in g for g in _gg))
+check("...while the hand-written files beside it are",
+      len([g for g in _gg if "real" in g]) == 4)
+check("...and what was excluded is recorded, so a reader can check it against a real file",
+      len(mapper.SKIPPED_GENERATED) == 4)
+# The patterns are git's, not fnmatch's: `**/` means any depth and a slashless pattern applies at
+# every level. All four shapes below are real lines from real repositories.
+for _rel, _want in (("pkg/apis/core/v1/zz_generated.deepcopy.go", True),
+                    ("pkg/apis/core/v1/types.go", False),
+                    ("public/app/foo.gen.ts", True),
+                    ("x-pack/plugin/esql/compute/src/main/generated/A.java", True),
+                    ("numpy/linalg/lapack_lite/f2c.c", True),
+                    ("numpy/core/setup.py", False)):
+    check(f"...gitattributes globbing: {_rel[:44]}",
+          mapper._is_generated(_rel, ("**/zz_generated.*.go", "*.gen.ts",
+                                      "x-pack/plugin/esql/compute/src/main/generated/**",
+                                      "numpy/linalg/lapack_lite/f2c.c")) is _want)
+# A repository that declares nothing must be bit-for-bit unaffected.
+mapper._GENERATED_GLOBS.clear()
+(_ga / ".gitattributes").unlink()
+with tree.session():
+    _gnone = sorted(str(_p.relative_to(_ga)) for _p, _ in mapper.indexable(_ga))
+check("...and a repository with no .gitattributes indexes exactly what it did before",
+      len(_gnone) == 8)
+shutil.rmtree(_ga, ignore_errors=True)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
