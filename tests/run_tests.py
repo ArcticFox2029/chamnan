@@ -8302,6 +8302,55 @@ check("the detector needs an opener AND a closer",
 shutil.rmtree(_cfroot, ignore_errors=True)
 
 
+# ------------------------------ every session start rewrote the ages file with no lock and a shared tmp
+# `age_out` read the ages file, decided from it, and wrote it back, with nothing held across the
+# three — and `_save_ages` staged through `state-ages.tmp`, the SAME path for every process. Every
+# session start runs this. Forced overlap on the real shape (one STATE.md, many sessions opening
+# together): the file did not parse at all and all 24 writers raised.
+#
+# That failure is silent and permanent in effect: an unparseable ages file makes `_load_ages` return
+# {}, every section then reads as first-seen-now, and nothing ever ages out again.
+#
+# The write was already atomic, which is exactly the trap CLAUDE.md names for the identical defect in
+# the vector index: atomic alone does not stop a lost update, and a lock alone does not stop a torn
+# file. Both halves are needed and both are here now.
+import threading  # noqa: E402
+import state as _st  # noqa: E402
+_agetext = "".join("## Section %d\n\nbody %d\n\n" % (i, i) for i in range(12))
+_agewant = len(_st._age_units(_agetext))
+_ageroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-ages-"))
+(_ageroot / "state").mkdir(parents=True, exist_ok=True)
+_ageerrs = []
+
+
+def _age_worker():
+    try:
+        _st.age_out(_agetext, _ageroot, 30)
+    except Exception as exc:                      # noqa: BLE001 - the point is that none occur
+        _ageerrs.append(repr(exc)[:80])
+
+
+_agethreads = [threading.Thread(target=_age_worker) for _ in range(24)]
+for _t in _agethreads:
+    _t.start()
+for _t in _agethreads:
+    _t.join()
+check("twenty-four concurrent session starts raise nothing", not _ageerrs)
+try:
+    _agedata = json.loads((_ageroot / _st.AGES_PATH).read_text(encoding="utf-8"))
+except Exception:
+    _agedata = None
+check("...and the ages file is still valid JSON afterwards", isinstance(_agedata, dict))
+check("...holding every section, not a survivor of the last writer",
+      isinstance(_agedata, dict) and len(_agedata) == _agewant)
+# The staging name is per-process, which is what the atomic replace was assuming all along.
+check("the temp file is named per process, so two writers cannot stage over each other",
+      "os.getpid()" in (ROOT / "lib" / "state.py").read_text(encoding="utf-8"))
+check("...and the read-modify-write is held under the same lock the tool index uses",
+      "exclusive" in (ROOT / "lib" / "state.py").read_text(encoding="utf-8"))
+shutil.rmtree(_ageroot, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
