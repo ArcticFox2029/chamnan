@@ -8372,6 +8372,32 @@ check("the dedup compares only the usage counters, so the tuple can grow again",
       "sum(entry[2:6])" in _rep and "sum(entry[2:])" not in _rep)
 
 
+# ------------------------------ the record nudge asked once, at call 10, and then went silent
+# Measured on a real work repository: one session ran 489 calls across three days, the nudge fired
+# once near the very beginning, and the workspace finished with zero sessions, decisions, lessons,
+# rules and threads — while Claude Code's own memory tool captured six substantive lessons from the
+# same work in the same window. Asking once, early, before there is much to record, and never again
+# is close to not asking at all.
+#
+# Three points across a long session, and never more: the thing a nudge has to avoid becoming is a
+# tool that nags, and a session that has declined twice has answered.
+import chamnan_scratch_watch as _sw  # noqa: E402
+check("the nudge has later marks, not just the first one",
+      hasattr(_sw, "NUDGE_AGAIN_AT") and len(_sw.NUDGE_AGAIN_AT) == 2)
+check("...the first is still early enough to fire inside a normal session", _sw.NUDGE_AT <= 25)
+check("...and the later ones are far enough out to be a different moment, not a repeat",
+      min(_sw.NUDGE_AGAIN_AT) > _sw.NUDGE_AT * 5)
+_marks = [_sw.NUDGE_AT] + list(_sw.NUDGE_AGAIN_AT)
+check("...in increasing order, so a session cannot skip one and land on the next",
+      _marks == sorted(_marks))
+check("three asks across a session, and no fourth", len(_marks) == 3)
+# The old state key has to keep working: a workspace written by the previous build carries
+# `nudged: true` and no counter, and must not be handed two fresh asks because of an upgrade.
+_old_state = {"calls": 489, "nudged": True}
+_done = int(_old_state.get("nudges", 1 if _old_state.get("nudged") else 0))
+check("an existing workspace's `nudged: true` counts as one ask already spent", _done == 1)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
