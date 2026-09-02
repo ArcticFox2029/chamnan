@@ -575,7 +575,12 @@ def main():
                 if not tokens.fits(index, budget):
                     index = rollup.collapse(index, display(mp, root), budget, root)
                 index_slot = len(out)
-                out.append(section("Architecture index", index, display(mp, root)))
+                # 🐛 The largest section injected every session, and the one that never went
+                # through the redactor. Every sibling section is scrubbed; this one was read
+                # straight off disk and handed over. MAP.md is a committed file that arrives
+                # with a clone, so a key written into it — by hand, or by a generated comment —
+                # reached the session intact.
+                out.append(section("Architecture index", redact.scrub(index), display(mp, root)))
                 tail = (f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
                         f"never read it whole._")
                 # Named only when it is actually there. A causal ablation of a structural codebase
@@ -860,7 +865,7 @@ def main():
                 if len(("## chamnan\n" + "".join(out)).encode()) <= ceiling:
                     break
                 folded = rollup.collapse(raw, map_rel, budget, groot, per_dir)
-                out[index_slot] = section("Architecture index", folded, str(map_rel))
+                out[index_slot] = section("Architecture index", redact.scrub(folded), str(map_rel))
 
         # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
         # index has finished being resized and before anything is dropped, so neither step depends on a

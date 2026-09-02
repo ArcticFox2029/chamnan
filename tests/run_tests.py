@@ -9025,6 +9025,45 @@ check("a quoted semicolon does not fabricate a workflow step",
       if hasattr(_wf2, "steps_of") else True)
 
 
+# ------------------------------ the largest injected section was the one that skipped the redactor
+# 🐛 Every section of the block goes through `redact.scrub`. MAP.md — the biggest of them, injected
+# every session — was read off disk and handed over. It is a COMMITTED file that arrives with a
+# clone, so a key written into it by hand or by a generated comment reached the session intact.
+_mlroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-mapleak-")) / "r"
+(_mlroot / ".chamnan").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_mlroot)], check=True)
+(_mlroot / ".chamnan" / "MAP.md").write_text(
+    "# Architecture map\n\n## Quick Index\n\n**`src/`**\n"
+    "- **`x.py`** (10L) — connects with " + "sk-ant-" + "api03-" + "A" * 36 + "\n\n## Full Detail\n",
+    encoding="utf-8")
+_mlout = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input=json.dumps({"cwd": str(_mlroot), "hook_event_name": "SessionStart",
+                                          "session_id": "m"}),
+                        capture_output=True, text=True).stdout
+check("a key written into MAP.md does not reach the session", "sk-ant-" + "api03" not in _mlout)
+check("...and the row is still delivered, redacted rather than dropped",
+      "x.py" in _mlout and "REDACTED" in _mlout)
+shutil.rmtree(_mlroot.parent, ignore_errors=True)
+
+# 🐛 `RecursionError` is a RuntimeError, NOT a ValueError, so every `except ValueError` around a
+# `json.loads` let it through and the hook died with zero output. A 20 KB config of nested `[`
+# silently killed every session in that repository — and config.json arrives with a clone.
+_dcroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-deep-")) / "r"
+(_dcroot / ".chamnan").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_dcroot)], check=True)
+(_dcroot / ".chamnan" / "config.json").write_text("[" * 10000 + "]" * 10000, encoding="utf-8")
+_dcr = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                      input=json.dumps({"cwd": str(_dcroot), "hook_event_name": "SessionStart",
+                                        "session_id": "d"}),
+                      capture_output=True, text=True)
+check("a config nested past the recursion limit does not kill the session",
+      "Traceback" not in _dcr.stdout and "Traceback" not in _dcr.stderr)
+check("...the block is still injected", len(_dcr.stdout) > 500)
+check("...and it says the config did not parse rather than pretending it did",
+      "does not parse" in _dcr.stdout)
+shutil.rmtree(_dcroot.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

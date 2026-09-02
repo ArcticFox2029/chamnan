@@ -181,6 +181,12 @@ _UPPER_BOUND = {
 }
 
 
+# 🐛 A `.chamnan/config.json` nested past JSON's recursion limit raises RecursionError, which is a
+# RuntimeError and NOT a ValueError — so every `except ValueError` around a `json.loads` here let
+# it through and the SessionStart hook died with zero output. A 20 KB file of 10,000 nested `[`
+# silently killed every session in that repository, and the file arrives with a clone.
+
+
 def _in_range(key, value):
     """False for a value whose TYPE is right and whose meaning is not."""
     if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):
@@ -327,7 +333,7 @@ def load_json(path, want=dict):
     """
     try:
         data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
+    except (OSError, json.JSONDecodeError, ValueError, RecursionError):
         return want()
     return data if isinstance(data, want) else want()
 
@@ -376,7 +382,7 @@ def ensure(root=None):
     try:
         if cfg.is_file() and cfg.read_text(encoding="utf-8", errors="replace").strip():
             json.loads(cfg.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         malformed = True
     current = load_json(cfg, dict)
     merged = dict(DEFAULT_CONFIG)
@@ -740,6 +746,6 @@ def config_is_malformed(root):
         return False
     try:
         json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return True
     return False
