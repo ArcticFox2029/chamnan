@@ -8751,6 +8751,52 @@ check("...with its original first line still there", "import json" in _prdest.re
 shutil.rmtree(_prtmp, ignore_errors=True)
 
 
+# ------------------------------ two ways a secret left the workspace through a command
+# 🐛 `chamnan-promote` accepts ANY path on the machine and copies it into `.chamnan/tools/`, which
+# is committed by design — deliberately not in the workspace's ignore rules. One mistyped argument
+# put a private key from outside the repository into a git-tracked path, unscrubbed. Reproduced
+# with a test key. Refused rather than scrubbed: a tool is source, and rewriting somebody's file on
+# the way in would be worse than declining it.
+_pksrc = (ROOT / "bin" / "chamnan-promote").read_text(encoding="utf-8")
+check("promote refuses a credential file before copying it",
+      "redact.is_blocked(src)" in _pksrc and "is_never_opened(src)" in _pksrc)
+_pkroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-key-"))
+(_pkroot / ".chamnan" / "tools").mkdir(parents=True)
+(_pkroot / "id_rsa_x").write_text(
+    "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\n", encoding="utf-8")
+(_pkroot / "fine.py").write_text("print('hi')\n", encoding="utf-8")
+_pkr = subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "id_rsa_x"), "k",
+                       "--desc", "d"], cwd=_pkroot, capture_output=True, text=True)
+check("...and says so rather than failing silently", "refusing" in _pkr.stderr)
+check("...and the key does not land in the committed directory",
+      not any(p.name.startswith("k") for p in (_pkroot / ".chamnan" / "tools").iterdir()))
+subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "fine.py"), "fine",
+                "--desc", "d"], cwd=_pkroot, capture_output=True, text=True)
+check("an ordinary script is still promoted", (_pkroot / ".chamnan" / "tools" / "fine.py").is_file())
+shutil.rmtree(_pkroot, ignore_errors=True)
+
+# 🐛 `chamnan-peek` printed an env file like any other text file — values and all. `scan_env`
+# publishes names only for this same file class; peek is a different path and did not share it.
+import peek as _pk  # noqa: E402
+_envdir = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-env-"))
+for _n in (".env", ".env.production", "local.env"):
+    (_envdir / _n).write_text("DB_HOST=db.internal.example\nADMIN_EMAIL=ops@example.com\n"
+                              "# a comment\nexport API_KEY=sk_live_zzz\n", encoding="utf-8")
+for _n in (".env", ".env.production", "local.env"):
+    _out = _pk.peek(_envdir / _n)
+    check(f"peek prints no env VALUES ({_n})",
+          "db.internal.example" not in _out and "ops@example.com" not in _out
+          and "sk_live_zzz" not in _out)
+    check("...but does print the names, which is what a reader wants",
+          "DB_HOST" in _out and "API_KEY" in _out)
+# 🐛 `Path(".env").suffix` is "", so the commonest env file never matched an extension test.
+check("the match is by name, since the plainest env file has no extension",
+      _pk._is_env_file(".env") and _pk._is_env_file(".env.production") and _pk._is_env_file("a.env"))
+check("...and an ordinary text file is not mistaken for one",
+      not _pk._is_env_file("notes.txt") and not _pk._is_env_file("environment.md"))
+shutil.rmtree(_envdir, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
