@@ -1151,11 +1151,32 @@ def indexable(root, nested=None, with_text=False):
             yield path, lang
 
 
-def _scan(root):
+def reset_skips():
+    """Empty the five "what did not make it into the index" lists. Call once per REPORT, not per scan.
+
+    🐛 `_scan` used to clear four of them on entry, which is wrong the moment a run scans more than
+    one directory: `chamnan-map <a> <b>` calls scan() per target, so the second call wiped the first
+    target's skips and the report named only the last one's. Reproduced with a 2.3 MB file under `a`
+    — `chamnan-map a` says "not indexed, over the size limit: big.py (2.3MB)", `chamnan-map a b` says
+    nothing at all, and the coverage bar still reads 100%. These lists exist because, in this file's
+    own words, a silently missing file is "false confidence rather than degraded confidence, which is
+    the worse kind"; a multi-directory run had exactly that.
+
+    PARSE_WARNINGS had the mirror bug — cleared by nobody, so warnings leaked from one scan into an
+    unrelated later one in the same process. Same list, same lifetime, so it is reset here too.
+
+    Accumulating within a run and resetting between runs is the safe direction for both: the failure
+    of over-reporting is a reader seeing a file named twice, and the failure of under-reporting is a
+    file vanishing from a report that claims to be complete.
+    """
     SKIPPED_TOO_LARGE.clear()
     SKIPPED_BINARY.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
+    PARSE_WARNINGS.clear()
+
+
+def _scan(root):
     files = []
     nested = _nested_repo_dirs(root)
     for path, lang, source in indexable(root, nested, with_text=True):
@@ -1350,6 +1371,7 @@ def main():
     if not root.is_dir():
         print(f"not a directory: {root}", file=sys.stderr)
         return 1
+    reset_skips()
     files = scan(root)
     if not files:
         print(f"no recognised source files under {root}", file=sys.stderr)

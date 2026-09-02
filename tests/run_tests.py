@@ -7922,6 +7922,30 @@ for _l in _ex_body.splitlines(keepends=True):
         _ex_cur = _l[4:].strip(); _ex_delivered[_ex_cur] = ""
     elif _ex_cur is not None:
         _ex_delivered[_ex_cur] += _l
+# `_scan` cleared the skip lists on entry, so a run over two directories reported only the last
+# one's — while the coverage bar still read 100%. These lists exist precisely so a missing file is
+# degraded confidence rather than false confidence.
+_sk = Path(tempfile.mkdtemp()) / "repo"
+(_sk / "a").mkdir(parents=True); (_sk / "b").mkdir(); (_sk / ".git").mkdir()
+(_sk / "a" / "big.py").write_text("# huge\n" + "x = 1\n" * 400_000, encoding="utf-8")
+(_sk / "a" / "ok.py").write_text("# fine\nA = 1\n", encoding="utf-8")
+(_sk / "b" / "ok.py").write_text("# fine\nB = 2\n", encoding="utf-8")
+import mapper as _mp  # noqa: E402
+with _tree.session():
+    _mp.reset_skips()
+    _mp.scan(_sk / "a")
+    _first = list(_mp.SKIPPED_TOO_LARGE)
+    _mp.scan(_sk / "b")
+    _both = list(_mp.SKIPPED_TOO_LARGE)
+check("a file skipped for size is recorded", len(_first) == 1)
+check("A SECOND TARGET DOES NOT ERASE THE FIRST TARGET'S SKIPS", len(_both) == 1)
+with _tree.session():
+    _mp.reset_skips()
+    check("...and reset_skips clears them between runs", _mp.SKIPPED_TOO_LARGE == [])
+check("...including PARSE_WARNINGS, which nothing used to clear at all",
+      _mp.PARSE_WARNINGS == [])
+shutil.rmtree(_sk.parent, ignore_errors=True)
+
 check("the explain splitter sees exactly the sections the body carries",
       set(_ex_delivered) == {"Kept", "Also kept"})
 check("...and a section left out of the body cannot appear in it",

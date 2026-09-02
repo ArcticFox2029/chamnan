@@ -281,6 +281,9 @@ def main(argv):
     ws.prune_sessions(root)
     files = []
     seen_paths = set()
+    # Once per run, not once per target — scan() no longer clears these itself, because doing so
+    # made `chamnan-map <a> <b>` report only the last target's skipped files. See mapper.reset_skips.
+    mapper.reset_skips()
     for one in targets:
         for f in mapper.scan(one):
             # Paths are made relative to the repo root so several scanned directories share one
