@@ -38,9 +38,9 @@ is plain markdown committed beside the code.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 22-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
-**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
+**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
 runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
@@ -87,7 +87,7 @@ interesting thing about it.
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.13.0](#whats-new-in-1140) · [Commands](#commands)
+[What's new in 1.15.0](#whats-new-in-1150) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -314,7 +314,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses four hook events: `SessionStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
 | **Python 3.8 or newer** | Required, and it must be on `PATH` as `python3`. The hooks are launched by path, relying on their `#!/usr/bin/env python3` line and executable bit. 3.8 is the floor because the assignment expression (`:=`) is the newest syntax used; nothing later appears anywhere in the plugin. |
 | **Third-party packages** | None. Standard library only — `ast`, `pathlib`, `re`, `json`, `csv`, `sqlite3`, `zipfile`, `tarfile`, `zlib`, `struct`, `subprocess`. Nothing to install, nothing to keep updated, and no virtualenv. |
-| **Git** | Not required. The plugin never invokes the `git` binary. The one exception is opt-in: `chamnan-map --install-git-hook` needs a `.git` directory to write into, and the hook it writes is a `/bin/sh` script that calls `git diff` and `git add`. |
+| **Git** | Not required, and everything works without it — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Five paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
 | **Disk** | Whatever `.chamnan/` holds — an index, a state file, a config file, and logs pruned on a retention window. Nothing outside the repository. |
 
 ### Platforms
@@ -322,7 +322,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | | |
 |---|---|
 | **macOS** | **Supported and tested.** Developed and exercised on macOS (arm64) with Python 3.12; the test suite and the polyglot run below were both done there. |
-| **Linux** | **Expected to work, not tested.** Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
+| **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else, since no arm64 macOS build of 3.8 exists. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
 | **Windows** | **Not tested, and not expected to work as-is.** The hooks are invoked as bare paths to `.py` files, which depends on the `#!/usr/bin/env python3` line and the executable bit; Windows honours neither. The optional Git hook is a `/bin/sh` script. Under WSL it is the Linux row above. |
 
 ## Quick start
@@ -396,132 +396,76 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.14.0
+## What's new in 1.15.0
 
-**A crash that made the hook print nothing behind a symlink, a command whose own advice erased the
-record, and thirty-two translated pages that finally say what this does.** Twenty-five commits.
-Every defect was reproduced before it was believed and pinned by a test afterwards; the suite is at
-1,495 checks and now runs in CI on Linux and macOS, at the Python version this project calls its
-floor and at the newest release.
+**Seventy findings from seven audits, and the two that mattered most were about numbers this
+project publishes about itself.** Thirty-three commits, 1,495 → 1,815 checks. Every defect was
+reproduced before it was believed and pinned by a test afterwards.
 
-### CI, and the two defects it found before its first merge
+### The command that answers "is this worth keeping" was answering it wrong
 
-There was none until this release. The front page asserted that Linux was "expected to work, not
-tested" and that Python 3.8 was the floor, on a page whose own headline is "verifiable claims, not
-adjectives" — a support matrix nobody runs is an adjective. There is no dependency step, on
-purpose: chamnan is standard library only, and a workflow that ever needs a `pip install` is the
-change to reject rather than the workflow to fix.
+`chamnan-report` printed **−27.5% context per call**. Recomputed from the same transcripts,
+separating a conversation turn from a subagent step, the real figure is **+0.8%** — no improvement
+at all. A subagent carries roughly a fifth of a main-thread context, and subagents first appear in
+the very week the workspace was created, so the "after" side filled with cheap calls and the
+average fell on its own. The context a real turn carries never moved: 467k, 516k, 507k, 432k, 481k,
+495k, 470k across seven weeks.
 
-It earned its keep immediately.
+The two populations are now reported separately, and the report also says whether the two periods
+were even the same kind of work — 20% of files revisited from an earlier week before the workspace
+existed, 10% after. An index pays when you come back to code you already know, so on this
+repository the comparison cannot answer the question in either direction. Saying that is worth more
+than the percentage above it.
 
-**`find_root()` resolved its path and `hook_root()` did not.** When the host hands over a path that
-goes through a symlink — `/tmp` and `/var` are symlinks on macOS, and keeping a project behind one
-is ordinary — one returned `/var/x` while the workspace lookup returned `/private/var/x/.chamnan`,
-and the first `relative_to` raised `ValueError`. Uncaught. The hook died with a traceback: zero
-bytes of output, exit 1, no message. That is precisely the silent-nothing failure `hook_root` was
-written to prevent, reintroduced by disagreeing with `find_root` about one path. Measured on a
-symlinked project: **0 bytes before, 4,622 after.** Both layers are closed, because either alone
-would let it recur — `hook_root` resolves now, and every path the block prints falls back to the
-bare filename rather than raising. A label is never worth an exception.
+### Every session on the repository this was built in started with one truncated rule
 
-**`sys.stdlib_module_names` arrived in Python 3.10**, and the fallback below it left the set empty.
-So on 3.8 and 3.9 — the two versions this project declares as its floor — every `import re` in the
-codebase was reported as a third-party dependency. Standard-library-only is one of three things
-chamnan actually promises, and the check for it had inverted into a false alarm on the interpreter
-least likely to be the one you ran it on.
+`_trim` may return more bytes than the room it is given — `_fit_lines` reserves pinned lines before
+it starts filling, and keeps them even when they alone exceed the budget, which is the promise a
+📌 exists for. The restore branch accepted that on truthiness alone, so the block finished at
+**11,230 bytes against a 9,000 ceiling**, the host kept the first 2,048, and what arrived was 557
+bytes of framing and one rule cut mid-sentence. No index, no procedures, no decisions, no handoff.
+It now refuses an oversized restore, names the section it left out, and delivers 8,868 bytes whole.
 
-Two test blocks were also found to be asserting the author's own folder layout: they resolved a
-fixture path two directories above the checkout, which happens to be another chamnan workspace on
-that machine and an empty directory everywhere else. On any other machine they tested nothing.
+### chamnan-map is 22× faster, and it stopped losing files
 
-### The command `chamnan-env check` tells you to run was the one that erased the entry
+96% of its runtime was the token estimator — a per-character loop measured at 0.35 MB/s, producing
+one headline number that no budget decision reads. Counting distinct characters is the same
+arithmetic with the same weights: 1.66s → 0.075s on a megabyte of Java, and eight samples including
+Thai, Japanese and emoji are pinned as exactly equal to the old result.
 
-It ends with "re-confirm with `chamnan-env set <name> --checked <date>`". Running exactly that
-replaced the whole record — the platform, the versions and every constraint went with it. Anything
-not named on the command line is now carried forward from what is already recorded, and
-`--platform ""` still clears a field, so there is a way to say it really is empty.
+An interrupted rebuild used to leave half an index, and the next session was handed it as a whole
+one. `sqlite3.c` — 8.5 MB, 71% of its repository — was dropped for being too large under a green
+"3/3 files (100%)". A directory that could not be read was indistinguishable from one that is not
+there. All three are now written atomically, or named out loud.
 
-`chamnan-candidates demote` deleted the tool file. A promoted tool ships as a skeleton whose steps
-are placeholders — the command's own help says it is not runnable until you fill in the commands —
-so demoting destroyed exactly the part a person wrote, in exchange for a candidate that the code
-itself calls not a reconstruction. It is archived now, and the path is printed.
+### The index describes more, and mislabels less
 
-### The block told you to read a section it had already thrown away
+A file with no opening comment is now described by what is documented inside it: **flask 6% → 44%,
+requests 51% → 81%, coveragepy → 90%**. A repository's own `.gitattributes` is read, so
+kubernetes stops indexing 1,356 files it declares nobody wrote. `coverage/`, `build/` and `src/`
+are no longer dropped as build output when git says they are tracked. Perl, PowerShell and 67 other
+extensions stop being filed under "do not read these to understand the system", and a Justfile is a
+build manifest rather than payload.
 
-Caught in a live session: "Full detail lives in `.chamnan/MAP.md`" printed a few lines above a list
-naming the architecture index as one of the sections left out to stay under the byte ceiling.
-Dropping a section now takes its footnotes with it, and restoring one pays for them out of the same
-room. Separately, "Environment constraints" had been emitted since 1.11.0 without ever being
-ranked, so it fell to the unranked default and was dropped ahead of everything but the index — the
-one section whose job is to stop a wrong action being proposed at all.
+### Two more the audits found before this shipped
 
-### What the index says about real repositories
+**35 of 101 paths the rolled-up index named did not exist.** Above the token budget the Quick Index
+folds by directory and printed basenames, so every sample naming a file in a subdirectory pointed
+nowhere — gum 6 of 6, execa 29 of 34. Paths are now relative to their group and re-measured at 0
+wrong.
 
-Found by running the build over tokio and Homebrew rather than over fixtures.
+**A committed file was printed as chamnan's own speech.** `.chamnan/.version` is tracked, and its
+raw contents went into the ⚠ banner; a planted one produced three paragraphs of forged
+`_chamnan: …_` prose above the fence, on every session, permanently. Only a version-shaped string
+is quoted now. The fence itself was attacked directly and held — everything that escaped went
+around it, through lines emitted outside it.
 
-- **A crate root described by an aside about a build flag.** tokio's `src/lib.rs` carries 431 lines
-  of `//!` saying what the crate is; the index said "loom is an internal implementation detail. Do
-  not show…". A multi-line `#![allow(…)]` matched only on its first line, and once that was fixed
-  the first ordinary `//` won, because nothing preferred the marker the language itself uses for
-  file-level documentation.
-- **A Homebrew tap with nothing said about any of it**: a formula states its summary in
-  `desc "..."`, which is not a comment. **0 of 36 described, now 33.** Anchored on the Formula
-  declaration, so Rake's per-task `desc` is not mistaken for a description of the file.
-- **`(root)` swallowing real directories.** One dominant directory pushing the roll-up to depth two
-  sent every single-segment path into one bucket, so production code and integration tests shared a
-  group of 175 under a name true of neither.
-- Full Detail called a TypeScript interface a class — the half the index tells a reader to grep
-  when they want symbol-level truth.
+### Smaller, and mostly about not lying
 
-### chamnan-report was reading another project's numbers
-
-Its fallback for a working directory whose exact encoding is missing accepted any transcript
-directory ending with this repository's basename and returned the first in sort order. A second
-checkout, or an unrelated repo sharing a basename, was silently reported as this one. It ranks
-candidates by how much of the path agrees now, and returns nothing at all when two agree equally,
-because there is no honest answer there.
-
-Same command: `input_tokens` was unpacked from every usage record and then never added to anything.
-That is the input the model read which was *not* served from cache — the whole prompt on every
-session's first call, and on every call after the cache expires. Those calls reported a context of
-zero and pulled the per-call average down by exactly the calls that cost the most.
-
-And the ledger dated memory entries by file mtime, under a comment saying they carry no date of
-their own "until Stage 4 adds `as-of`". Stage 4 shipped three releases ago. On a fresh clone every
-decision ever recorded read as written today.
-
-### The front page, rebuilt for how it is actually read
-
-People paste the link into an AI and ask for a summary. It now opens with a self-contained digest
-and a contents list, so a summariser that reads only the top of a 1,900-line page still gets the
-tool right. The hero image says what chamnan is rather than what its biggest number is; the
-token-ratio figure moved down to sit directly under the two rows that produce it, with its
-qualification travelling alongside.
-
-### Thirty-two translated pages that finally say what it does
-
-They carried what chamnan is and how to install it, and not one word about the features. Someone
-who cannot read English had no way to learn from their own language's page that there is an impact
-query, or a secret filter, or that nothing is ever promoted without a person saying yes. Each page
-now covers all four capability groups, every command and skill, what is written and where, the
-safety guarantees and how to remove it — and still carries no digits, which is the rule that keeps
-them from needing an edit every release.
-
-They are generated from one shared table rather than written out thirty-two times, because the
-failure mode of the latter is a row missing from some languages that nobody would ever catch. The
-suite asserts every language carries every row, none carries a row the others do not, and no page
-has acquired a number.
-
-### Quieter ones
-
-`timeline.for_path` follows renames, so a thread entry written before a `git mv` still answers a
-question asked about the new name. `chamnan-peek` says when it stopped counting rows and how many
-columns it left out, instead of printing a cap as if it were a fact. The Configuration list is
-ranked by how many places each variable is referenced rather than cut alphabetically, and says so.
-Retention runs from the SessionStart hook instead of only from the two commands in `bin/` that
-happened to call it. `entries_naming_no_file` stopped counting `path:line` — the citation format
-chamnan's own guidance asks for — as naming no file. The injected tools list is ranked by use, so a
-thirteenth promoted tool can actually appear.
+A `config.json` with a trailing comma is no longer overwritten with defaults. A pasted screenshot is
+no longer priced at 431,195 tokens and advised to be grepped. A prerelease no longer outranks its
+own release and leaves a downgrade banner nobody can clear. The README no longer claims the plugin
+never invokes git, because five paths do.
 
 ## Bootstrap does not rewrite your code
 
@@ -911,31 +855,43 @@ corpus of 38 secret shapes and 22 ordinary strings that must survive:
 | | |
 |---|---|
 | recall | **97.4%** — 37 of 38 secret shapes redacted |
-| precision, on the corpus | **100%** — 0 of 22 ordinary strings damaged |
-| precision, on 257 real files | **69 lines damaged**, down from 144 |
+| precision, on the corpus | **100%** — 0 of 30 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
+| precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |
+| `scrub()` applied to whole source files | **69 lines damaged**, down from 144 |
 
-Read those honestly, and read the third row first, because it is the one that generalises.
+Read those honestly, and mind which is which — the third row is what a user experiences, the fourth
+is a property of one function measured on input it is never given.
 
-**100% on a 22-string decoy corpus is "no known false positive", not "no false positives".** Run
-the same redactor over a real 257-file application and it damages **69 lines**. Before this release
-it damaged **144**, including `key=lambda p: p.stat().st_mtime` — `key` is the commonest parameter
-name in Python — and `tokens = tokenizer.encode(prompt)`, which is the identical identifier family
+**100% on a 22-string decoy corpus is "no known false positive", not "no false positives"** — so
+here is the measurement on a real 257-file application, taken twice, because the two numbers answer
+different questions and the difference is the point.
+
+**Through the paths chamnan actually uses — the generated `MAP.md`, `chamnan-peek` output, and the
+session-start block — that codebase produces zero redactions, and therefore zero false positives.**
+What reaches the redactor there is a leading comment, a docstring, a section heading. It is not
+source code.
+
+**Call `scrub()` on whole source files and it damages 69 lines.** That is a property of the
+function rather than an experience anyone has, and it is worth publishing anyway, because it bounds
+what would happen the day some new caller hands it raw source. Before this release the same
+measurement was **144**, including `key=lambda p: p.stat().st_mtime` — `key` is the commonest
+parameter name in Python — and `tokens = tokenizer.encode(prompt)`, the identical identifier family
 the module's own docstring records as already fixed once. `key` and `token` now require a second
 name component, which every credential spelling has (`api_key`, `access_token`, `AccountKey`) and
-no bare parameter does; a name whose last component is `_RE`, `_PATTERN`, `_HEADER` or `_ORDER` is
-exempted outright.
+no bare parameter does; a name ending `_RE`, `_PATTERN`, `_HEADER` or `_ORDER` is exempted outright.
 
-The number went 144 → 54 on that change alone, then back to 69 when four new rules closed real
-leaks — XML element text, the Ruby/PHP hash rocket, YAML block scalars, and the space-separated
-forms in Dockerfile, `.netrc` and `.pgpass`. **That is the trade this whole module is, stated in
-one line: every shape it learns to catch costs it something on the other axis.** Recall did not
-move either way.
+That went 144 → 54, then back to 69 when four new rules closed real leaks — XML element text, the
+Ruby/PHP hash rocket, YAML block scalars, and the space-separated forms in Dockerfile, `.netrc` and
+`.pgpass`. **That is the trade this whole module is, in one line: every shape it learns to catch
+costs it something on the other axis.** Recall did not move either way.
 
-The 69 that remain are compound names that genuinely look like credentials — `CONFIG_KEY`,
-`current_key`, `INDEX_KEY`, `max_tokens`. **A keyword redactor cannot tell
-`CONFIG_KEY = "openai_api_key"` from `API_KEY = "sk-…"` without reading the value, and reading the
-value is the thing it refuses to do.** That is a ceiling, not a bug backlog, and it is why the
-corpus number alone would have been a misleading thing to publish on its own.
+**On the denominator.** Google's static-analysis platform admits an analyzer only if it produces
+[less than 10% effective false positives](https://abseil.io/resources/swe-book/html/ch20.html), and
+counts them against what the tool *asserted*, not against files scanned. Measured that way here,
+through the real paths, it is 0 of 0 — and the 69 figure would be 69 of 69, which is exactly why
+naming which denominator you used matters more than the percentage does. This project has made the
+opposite mistake before: the 223× hero ratio, corrected in an earlier release for choosing the
+flattering corpus.
 
 The single recall miss is the point of the next paragraph, and it is deliberate.
 
@@ -995,7 +951,7 @@ your repository, which is the number that should actually decide anything.
 ### Where every other number in this README comes from
 
 <details>
-<summary><strong>Open the full trail — 18 citations, what each changed, and eight features measured and then not built</strong></summary>
+<summary><strong>Open the full trail — 18 citations, what each changed, and nine features measured and then not built</strong></summary>
 
 Below is the full trail: what was measured, by whom, and what it changed. Two rules keep it honest —
 **published results and results measured here are never mixed**, and **findings that argue against
@@ -1165,6 +1121,46 @@ against that ratio.
 Sources: [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), [cursor.com/blog/semsearch](https://cursor.com/blog/semsearch).
 
 ---
+
+### 5d. The strongest argument against injecting anything at session start
+
+Facebook deployed Infer as a nightly batch over the whole Android codebase and hand-assigned the
+issues it found. In the author's own words: *"We had worked hard to get the false positive rate
+down to what we thought was less than 20%, and yet the fix rate — the proportion of reported issues
+that developers resolved — was near zero."* They moved the same analysis to code-review time and
+**"the fix rate rocketed to over 70%. The same program analysis, with same false positive rate, had
+much greater impact when deployed at diff time."**
+([O'Hearn, CACM 62(8), 2019](https://discovery.ucl.ac.uk/id/eprint/10084236/) — quoted from the
+author-accepted manuscript, because the CACM page refuses automated fetches.)
+
+**Read what that controls for.** Content quality held constant. False-positive rate held constant.
+Only the moment of delivery changed, and the outcome moved from ~0% to >70%. chamnan's
+session-start block is the batch arm of that experiment: a correct, bounded, well-written report,
+delivered before the reader has a problem, addressed to nobody in particular. This finding says
+that is the deployment shape measured at near-zero impact, and that no amount of improving the
+block's *content* would have fixed it at Facebook.
+
+It also says where the value should be, and chamnan already has those surfaces: the file pointer
+that fires when you open a file, the bulk-read notice that fires before a large read, the impact
+answer you ask for by name. Those are diff-time. **They should be measured separately from the
+session-start block rather than credited with its effect**, and this project has not done that yet.
+
+Two related measurements point the same way. Across 22,326 AI review comments in 178 repositories,
+the addressing rate was **0.9–19.2%** against **60%** for human comments
+([arXiv:2508.18771](https://arxiv.org/abs/2508.18771)) — and the mechanism the authors identify is
+targeting: humans aimed 79% of their comments at less-experienced contributors, while the tools
+reviewed indiscriminately. And across 54,791 agent review comments in 342 repositories, *"the
+presence of an inline code suggestion is the strongest predictor of comment resolution, while
+lengthy and complex comments are less likely to be acted upon"*
+([arXiv:2607.21997](https://arxiv.org/abs/2607.21997)).
+
+That second one is uncomfortable here, and it should be. **chamnan's constitution is "report, never
+rewrite", and its output is long argued prose — which is the format measured as least likely to be
+acted on.** The finding does not require breaking the no-rewrite rule; the measured predictor is
+whether there was something the reader could apply directly, which a precise one-line "check X
+before editing this" satisfies without the tool touching anything. But it does mean the longest and
+most carefully argued entries in a `.chamnan/` workspace are, on this evidence, its least useful
+ones.
 
 ### 5c-i. Wrong is worse than missing — but missing is not fine either
 
@@ -1504,6 +1500,7 @@ attached that said no.
 | **Put symbol names into the injected roll-up** | `MAP.md` already answers **51.1%** of searched identifiers for **zero injected bytes**. |
 | **Incremental index rebuilds** | The published 8.7×/25.4× speedups are dominated by **embedding API cost**. chamnan has no embeddings; a full rebuild is **11.9 seconds** and free — and rebuilding wholesale is what makes the map unable to drift into being wrong. |
 | **Rank the injected tools list** | This repository has no `tools/index.json`, so the section never fires. Ranking an empty list is how a zero becomes a fake finding. |
+| **Log which searches the index failed to answer**, and **record what was injected each session** | Both would have made the 51.1% figure above recomputable instead of measured once by hand, and both write only local, gitignored, 7-day plain text that never leaves the machine. Not built anyway, on two grounds. The measurement does not need them: every figure on this page was taken from public repositories cloned for the purpose, and index-answerability can be measured the same way, with no user's searches in it. And the files would be telemetry-*shaped* — a reader who finds a log of what they grepped for has to be talked out of a conclusion, and "it never phones home" is worth more than a number that can be obtained another way. |
 
 ---
 
@@ -1974,7 +1971,7 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
 python3 tests/run_tests.py
 ```
 
-378 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
+Over 1,800 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.
@@ -1988,7 +1985,7 @@ and silently ignored the short repeated ones it exists to catch, and a Google AP
 outside the expected length slipped the pattern.
 
 The rest came out of hardening it against the polyglot system below, and from the continuity work
-in 1.3 — which took the suite from 87 checks to 378.
+in 1.3 — which took the suite from 87 checks to over 1,800.
 
 ## More documentation
 

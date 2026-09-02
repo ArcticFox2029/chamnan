@@ -74,7 +74,7 @@ So write the thing itself, not a description of it:
 | write | not |
 |---|---|
 | `src/cascade.py:214`, in `run_cloud_pool_cascade` | "the cascade timeout code" |
-| `python3 .chamnan/tools/preflight.py` | "the pre-commit checker" |
+| `npm run test:integration -- --grep auth` | "the integration tests" |
 | commit `a29362d` | "the churn ranking change" |
 | `ECONNREFUSED 127.0.0.1:5432` | "a connection error" |
 | 8,878 bytes of a 9,000-byte ceiling | "close to the limit" |

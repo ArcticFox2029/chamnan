@@ -36,16 +36,48 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
-import peek as peek_mod  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
 LOCKFILES = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "cargo.lock", "poetry.lock",
     "composer.lock", "gemfile.lock", "go.sum", "pipfile.lock", "flake.lock", "bun.lockb",
+    # 🐛 uv.lock was missing, and it is the one a Python project written since 2024 is most likely
+    # to have — pallets/flask's is 364 KB and 1,993 lines. Found while checking whether chamnan
+    # should report resolved dependency versions: it turns out chamnan tells the model not to read
+    # every OTHER lock format and stayed silent about the newest one, so the largest of them was
+    # the one file this notice did not cover. uv.lock is TOML, Gemfile.lock is capitalised in the
+    # wild and the comparison here is lowercased, and Podfile.lock is CocoaPods' equivalent.
+    "uv.lock", "podfile.lock", "packages.lock.json", "mix.lock", "pubspec.lock",
 }
 GENERATED = re.compile(r"\.(min\.(js|css)|bundle\.js|map|pb\.go|generated\.\w+)$", re.I)
-GENERATED_DIRS = ("dist", "build", "node_modules", "vendor", "__generated__", ".next", "target")
+# 🐛 `autogen` was missing, and it is where a project that generates bindings puts them. tinygrad:
+# 89 of 226 entries under `tinygrad/runtime/autogen/`, 716,834 of MAP.md's 1,566,175 characters —
+# 46% of the index is machine-written ctypes bindings. The notice fired correctly on the 475 KB
+# amd_gpu.py and said only that it was LARGE: "a grep or a line range costs a fraction of that."
+# It should have said generated. Told a file is large, an agent still reads it to understand the
+# system, which is the thing this notice exists to prevent; told it is generated, it greps.
+#
+# `autogen` only, and not the tempting `gen` or `generated`. Mislabelling real source as generated
+# is strictly worse than the reverse — it tells the agent not to read the file it needs — and
+# `gen/` is a hand-written directory often enough to make that a real risk. `__generated__` was
+# already here for the same reason: it is unambiguous.
+GENERATED_DIRS = ("dist", "build", "node_modules", "vendor", "__generated__", ".next", "target",
+                  "autogen")
+# Extensions whose bytes are not text, so a token estimate over them is a fabricated number and
+# "grep it instead" is not a thing the reader can do. Images dominate in practice — a pasted
+# screenshot is the commonest large file a session opens.
+NOT_TEXT_BY_SIZE = frozenset({
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".ico", ".tiff", ".heic", ".avif",
+    ".pdf", ".zip", ".gz", ".bz2", ".xz", ".tar", ".7z", ".rar", ".jar", ".war",
+    ".mp3", ".mp4", ".mov", ".avi", ".wav", ".flac", ".ogg", ".webm",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot",
+    ".so", ".dylib", ".dll", ".exe", ".bin", ".o", ".a", ".class", ".pyc", ".wasm",
+    ".db", ".sqlite", ".sqlite3", ".parquet", ".avro",
+})
+# Below this, naming a file as generated costs more to read than the file does.
+NAMED_FLOOR_BYTES = 4_000
+
 BIG_BYTES = 200_000        # ~55k tokens; worth a word before it lands in the context
 HUGE_BYTES = 1_000_000
 
@@ -95,7 +127,7 @@ def reason_for(path, root=None):
     except ValueError:
         inside = path.parts
     if any(part in GENERATED_DIRS for part in inside):
-        return "inside a build/vendor directory"
+        return "inside a generated or vendored directory"
     return ""
 
 
@@ -123,7 +155,29 @@ def main():
         return 0
 
     why = reason_for(path, root)
+    # 🐛 The size branch priced BINARY bytes through a text tokenizer and then advised grepping the
+    # result. Replayed over a real 2,431-Read session, the notice fired 28 times and all 28 were
+    # the user's own pasted screenshots — 212 KB to 1.3 MB JPEGs under ~/.claude/uploads — each
+    # told "~431,195 tokens … a grep or a line range costs a fraction of that". A JPEG read costs
+    # roughly 1,500 image tokens and cannot be grepped at all. Zero true positives, 28 false ones,
+    # about 12 CPU-seconds spent per wrong alarm.
+    #
+    # Only the SIZE branch is gated. A binary inside a generated directory still gets named, which
+    # is the branch that was right about tinygrad's 475 KB autogen bindings.
+    if not why and path.suffix.lower() in NOT_TEXT_BY_SIZE:
+        return 0
     if not why and size < BIG_BYTES:
+        return 0
+    # 🐛 ...and no size floor at all on the `why` branch, so a 62-byte hand-written
+    # build/release.sh was answered with "grep instead of reading it whole" — advice longer than
+    # the file. `build/`, `vendor/` and `target/` hold hand-written CI and packaging scripts in
+    # ordinary repositories. The floor is small on purpose: it has to stay far below the 475 KB
+    # generated file the branch exists to catch.
+    # Only the DIRECTORY reason. A lock file or a minified bundle is named because of what it IS,
+    # at any size — a 300-byte package-lock.json is still machine-written and still not read for
+    # meaning, and there is a check pinning that. A file is named because of where it SITS only
+    # when it is big enough that reading it whole would cost something.
+    if why.startswith("inside a generated") and size < NAMED_FLOOR_BYTES:
         return 0
     # A read that already has a line range is a targeted read; the point has been taken.
     inp = payload.get("tool_input") or {}
@@ -133,6 +187,11 @@ def main():
     # The shape, when there is one to give. Budgeted deliberately below peek's own default: this
     # arrives unasked, next to a warning, in the middle of somebody else's task.
     shape = ""
+    # 🐛 Imported here, not at module scope. `peek` pulls in `mapper` and `redact` — measured at
+    # +51 ms of interpreter start on EVERY Read, against 2,431 Reads and 28 that reached this
+    # branch: two CPU-minutes a session to load 787 + 1,198 + 456 lines for 1% of calls. Moving it
+    # makes the rare call ~200 ms worse and the common one 51 ms better, at 87:1.
+    import peek as peek_mod
     if peek_mod.has_structure(path):
         try:
             shape = peek_mod.peek(path, budget=280)

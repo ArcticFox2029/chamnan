@@ -278,6 +278,14 @@ def index_is_behind(root, map_path):
     """
     try:
         newest = 0.0
+        # 🐛 The walk already stats every indexable file to find the newest, so counting the ones
+        # that moved costs nothing — and without it this warning could not say how much. Measured:
+        # editing one existing file produced "1 minute behind" and no more, while ADDING a file
+        # produced "1 file(s) are not in it — src/requests/brandnew.py". Editing is the far commoner
+        # case, and it was the one told nothing. On a repository at 40 commits a day, "2 hours
+        # behind" is anywhere between 0 and 80 files, so a reader learns to ignore the line at the
+        # same rate whether it matters or not.
+        changed = []
         for f in _indexable(root):
             try:
                 # Capped at now. One file with an mtime in the future — clock skew, a bad touch, a
@@ -285,17 +293,21 @@ def index_is_behind(root, map_path):
                 # whose mtime is the real now, still less than the fake future one. Measured with a
                 # file five years ahead: "1824 days behind" on every session, and the remedy the
                 # tool itself suggests could not clear it until wall-clock time caught up.
-                newest = max(newest, min(f.stat().st_mtime, time.time()))
+                _mt = min(f.stat().st_mtime, time.time())
+                newest = max(newest, _mt)
+                changed.append((_mt, f))
             except OSError:
                 continue
         built = map_path.stat().st_mtime
         if newest <= built:
-            return 0
+            return 0, []
         # Seconds, not days. Rounding a two-hour gap up to "1 day behind" is a small lie, and this
         # line exists to be trusted -- the caller decides how to say it.
-        return newest - built
+        newer = sorted((f for mt, f in changed if mt > built),
+                       key=lambda f: -f.stat().st_mtime)
+        return newest - built, [str(f.relative_to(root)) for f in newer]
     except Exception:
-        return 0          # never let a nicety break a session
+        return 0, []      # never let a nicety break a session
 
 
 HOOK_MARKER = "# >>> chamnan"
@@ -423,13 +435,26 @@ def main():
     try:
         try:
             wsdir = ws.ensure(root)
-        except ws.NotAWorkspace:
-            # A hook has no good way to raise. Saying nothing is the only safe failure here, and
-            # every foreground command explains it properly the moment the user runs one.
+        except ws.NotAWorkspace as err:
+            # 🐛 "every foreground command explains it properly the moment the user runs one" — but
+            # the user's reason to run a foreground command is this block telling them to, and
+            # there is no block. A `.chamnan` that is a plain file (a bad merge, a stray download)
+            # made the plugin silent for the entire session: no index, no rules, no handoff, and no
+            # indication that a plugin is installed. The message already exists and is good; it was
+            # on the one surface nobody was looking at.
+            #
+            # One sentence on stdout, like every other degraded path in this file. Raising or
+            # exiting non-zero would be worse — a SessionStart hook that fails is noise on every
+            # session, and some hosts surface it as an error.
+            print(f"_chamnan: {err} Until then this session has no index, no rules and no "
+                  f"handoff._")
             return 0
     except OSError:
         return 0                      # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
+    # Said once, plainly. A config that does not parse is running on defaults, and every value the
+    # user set is being ignored — silently, that is a settings file that appears not to work.
+    _bad_cfg = ws.config_is_malformed(root)
     out = []
     # Set before the guard below, not inside it: the emit step needs all three, and a failure part
     # way through must still be able to print what was built rather than dying on a name.
@@ -470,7 +495,17 @@ def main():
                        f"this repository has already been set up by {newer}.** An older build is live "
                        f"— usually a plugin upgraded mid-session (its `bin/` stays on PATH until you "
                        f"restart), or a second install under another config directory. Restart the "
-                       f"session, and `claude plugin update chamnan` if it is genuinely behind.\n")
+                       f"session, and `claude plugin update chamnan` if it is genuinely behind.\n"
+                       # 🐛 There was no way out, and the banner is permanent by design: the record
+                       # only ever moves forward, so restarting does not change it and
+                       # `claude plugin update` does not help someone already on the newest
+                       # release. `.chamnan/.version` is COMMITTED, so one teammate who tried a
+                       # newer build left every other teammate a ⚠ on every session with nothing
+                       # they could do about it. Saying how to clear it costs one sentence, and a
+                       # warning nobody can act on is a warning they learn to skip — which is the
+                       # standard this file sets for every other notice in it.
+                       f"If that newer install is gone for good, clear it with "
+                       f"`echo {ws.plugin_version(HERE.parent)} > .chamnan/.version`.\n")
 
         if cfg.get("ledger", True):
             # Always the first thing in the injection, and gated on nothing but the flag itself --
@@ -485,6 +520,21 @@ def main():
             if mp.is_file():
                 text = mp.read_text(encoding="utf-8", errors="replace")
                 cut = text.find("## Full Detail")
+                # 🐛 A MAP.md that is HALF AN INDEX was injected as a complete one. chamnan-map
+                # writes atomically now, so it can no longer produce this itself — but a bad merge
+                # resolution, a partial copy, an editor that saved half, or a truncating filesystem
+                # all still can, and every one of them lands here. `cut` is -1 on a truncated file,
+                # so the whole remnant was injected AS the index, ending mid-row on `- **`li`, with
+                # the header above it still stating a file count the rows do not reach.
+                #
+                # The marker is the check. Every map this tool writes carries `## Full Detail`
+                # (verified across five real repositories), so a non-empty map without it is not a
+                # map — and saying so is cheaper than any count comparison, which the roll-up would
+                # break anyway by design.
+                if text.strip() and cut < 0:
+                    out.append("_⚠ `" + display(mp, root) + "` is missing its `## Full Detail` "
+                               "section, so it is truncated or hand-edited — what follows is a "
+                               "PART of the index, not all of it. Rebuild it with `chamnan-map`._\n")
                 index = text[:cut] if cut > 0 else text
                 budget = cfg.get("index_token_budget", 3000)
                 # Held before folding. collapse() recognises rows by their `- **\`path\`**` shape, and a
@@ -509,7 +559,7 @@ def main():
                     tail += ("\n_`## Impact` in that file is what is connected to what — grep it "
                              "before changing a file, not after._")
                 out.append(tail + "\n")
-                behind = index_is_behind(root, mp)
+                behind, edited = index_is_behind(root, mp)
                 if behind:
                     n, examples = unindexed(root, text)
                     # A count of what is missing, not an age. See unindexed() for why.
@@ -520,6 +570,13 @@ def main():
                     fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
                            "`chamnan-map`, or `chamnan-map --install-git-hook` to keep it current on "
                            "every commit")
+                    # A count and up to three names, so the reader can judge whether it matters
+                    # rather than guessing from a duration. Capped because on a two-week gap this
+                    # would name most of the tree, which is noise wearing the costume of a signal.
+                    if edited and not what:
+                        _shown = ", ".join(f"`{e}`" for e in edited[:3])
+                        _more = f" _+{len(edited)-3} more_" if len(edited) > 3 else ""
+                        what = f"**{len(edited)} file(s) changed since** — {_shown}{_more}. "
                     out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
                                f"{what}Rebuild it with {fix}._\n")
 
@@ -709,6 +766,11 @@ def main():
                 "index and record a baseline; the write skills listed above work from now on, whether "
                 "or not that has been run.", "(generated)"))
 
+        if _bad_cfg:
+            out.insert(0, "_⚠ `.chamnan/config.json` does not parse — a stray comma or quote. "
+                          "This session is running on DEFAULTS and every value set in that file is "
+                          "being ignored. It has NOT been overwritten; fix the syntax and it takes "
+                          "effect on the next session._\n")
         if any(OPEN_MARK in part for part in out):
             out.insert(0, FRAMING + "\n")
             # Everything after position 0 has just moved. index_slot is an index into this list.

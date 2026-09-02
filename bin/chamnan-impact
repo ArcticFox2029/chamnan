@@ -72,7 +72,13 @@ def main(argv):
     if map_path.is_file():
         text = map_path.read_text(encoding="utf-8", errors="replace")
         resolved, edges = impact_mod.lookup(text, target)
-    elif ws.enabled("map", root):
+    # 🐛 This returned before the thread join below, so in a repository where chamnan-map has not
+    # been run — which is every repository on day one — asking "what happened last time this
+    # changed" produced exit 1 and none of the history sitting in .chamnan/threads/. The comment
+    # under it already says the join "runs whether or not the index has anything, because the two
+    # halves answer different questions". It did not.
+    elif ws.enabled("map", root) and not (
+            timeline.for_path(root, target) if ws.enabled("timeline", root) else []):
         print(f"chamnan: no index yet — run `chamnan-map` first", file=sys.stderr)
         return 1
 

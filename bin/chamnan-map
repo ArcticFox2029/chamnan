@@ -17,7 +17,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
+import assets as assets_mod  # noqa: E402
 import mapper  # noqa: E402
+import tree  # noqa: E402
 import rollup  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -136,6 +138,26 @@ def _ends_unreachable(script):
     return False
 
 
+def _show(path, root):
+    """A path to print. Relative when it is inside the repository, absolute when it is not.
+
+    🐛 `relative_to(root)` raised ValueError on exactly the paths _hooks_dir goes out of its way to
+    resolve OUTSIDE the root — a `git worktree` checkout, where hooks live in the main checkout,
+    and any repository with `core.hooksPath` set (husky, lefthook, pre-commit). The install had
+    already succeeded and written the file; the user got a traceback and exit 1, and the second
+    run crashed on the "already installed" path too.
+    #
+    And the same call hid a different bug in the map line: printing the output path relative made
+    `chamnan-map` look like it had rebuilt the repository the session was told about, when run from
+    inside a nested checkout it had rebuilt that checkout's own map instead — so the staleness
+    warning never cleared and the advice looked broken.
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
@@ -148,7 +170,7 @@ def install_git_hook(root):
     if target.exists():
         existing = target.read_text(encoding="utf-8", errors="replace")
         if HOOK_MARKER in existing:
-            print(f"chamnan: already installed in {target.relative_to(root)}")
+            print(f"chamnan: already installed in {_show(target, root)}")
             return 0
         # A hook that ends in `exit 0` -- a common way to write one -- makes everything appended
         # after it dead shell code. The install said "the index now refreshes on every commit"
@@ -156,19 +178,39 @@ def install_git_hook(root):
         # Refused rather than worked around: prepending would change when the user's own hook
         # runs, and editing their script is not this tool's call to make.
         if _ends_unreachable(existing):
-            print(f"chamnan: {target.relative_to(root)} ends in an unconditional `exit`, so "
+            print(f"chamnan: {_show(target, root)} ends in an unconditional `exit`, so "
                   f"anything appended after it would never run.", file=sys.stderr)
             print("  Add this line yourself, above that exit:", file=sys.stderr)
             print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
                   file=sys.stderr)
             return 1
         target.write_text(existing.rstrip() + "\n\n" + body, encoding="utf-8")
-        print(f"chamnan: appended to your existing {target.relative_to(root)}")
+        print(f"chamnan: appended to your existing {_show(target, root)}")
     else:
         target.write_text("#!/bin/sh\n\n" + body, encoding="utf-8")
         target.chmod(0o755)
-        print(f"chamnan: installed {target.relative_to(root)}")
+        print(f"chamnan: installed {_show(target, root)}")
     print("  The index now refreshes on every commit that touches tracked files.")
+    # 🎯 Said at install time because it is the only moment the user is making this choice, and
+    # because the rebuild is a FULL rescan with no incremental path — on tinygrad, 1,032 source
+    # files, it measured 107 seconds, and this hook runs it in the foreground, so every commit that
+    # adds, deletes or renames a file waits for it. Nobody discovers that until their first commit
+    # hangs, by which point the cause is three steps away from the symptom.
+    #
+    # A count and a measured comparison, not an estimate in seconds: extrapolating a duration from
+    # a file count would be a guess presented as a fact, which is the failure this project keeps
+    # finding in its own output. The walk costs about 0.04s on 1,478 files, so saying it is free.
+    try:
+        import tree as _tree
+        with _tree.session():
+            n = sum(1 for _ in mapper.indexable(root))
+        if n >= 300:
+            print(f"  Note: rebuilding is a full rescan of all {n:,} source files, and this hook "
+                  f"runs it in the FOREGROUND — every commit that adds, deletes or renames a file "
+                  f"waits for it. For scale: a 1,032-file tree measured 107 seconds.")
+            print("  On a tree this size you may prefer to run `chamnan-map` by hand instead.")
+    except Exception:
+        pass          # a nicety; never the reason an install fails
     print(f"  Remove it by deleting the block marked '{HOOK_MARKER}'.")
     return 0
 
@@ -232,7 +274,37 @@ def main(argv):
     except ws.NotAWorkspace as err:
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
-    out.write_text(text, encoding="utf-8")
+    # 🐛 Was a plain write_text, which truncates the file and then fills it — so an interrupted run
+    # leaves a MAP.md that is HALF AN INDEX, and the session-start hook injects it as a complete
+    # one. Reproduced with `ulimit -f 8`: the header still said "41 source file(s)", 31 rows were
+    # present, the last was the two characters `- **`li`, and ten files including lib/workspace.py
+    # were simply absent. No warning, exit 0. A reader looping on the file during a rebuild also
+    # caught 8 zero-byte reads in 85,934, because the truncation is a window of its own.
+    #
+    # Every other shared-file writer in this project already does this — pointer.py writes beside
+    # the target and replaces, tools_index.py does the same under a lock, and their comments say
+    # why. MAP.md is the largest and most load-bearing artefact in the workspace and was the one
+    # doing neither.
+    #
+    # Beside the target, never in the system temp directory: os.replace fails with EXDEV across
+    # mount points, and a copy-and-delete fallback would give up the atomicity this exists for.
+    tmp = out.with_suffix(".md.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(out)
+    except OSError as err:
+        # 🐛 The first version of this fix fell back to `out.write_text(text)` here, "so a failed
+        # run does not lose its output" — and the fixture caught it in one run: the fallback hit
+        # the same limit and truncated the GOOD index from 4,712 bytes to 4,096. Losing this run's
+        # output is the correct outcome; destroying the index that was already there is not.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        print(f"chamnan: could not write the index ({err.__class__.__name__}: {err}).",
+              file=sys.stderr)
+        print(f"  The existing {out.name} is unchanged.", file=sys.stderr)
+        return 1
 
     src = sum(f["tokens"] for f in files)
     index_chars = text.index("## Full Detail")
@@ -257,7 +329,7 @@ def main(argv):
             print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
         except ValueError:
             print(f"chamnan: scanning {root}")
-    print(f"chamnan-map -> {out.relative_to(root)}{scope}")
+    print(f"chamnan-map -> {_show(out, root)}{scope}")
     # len(files), not `total`. `total` is the DESCRIBABLE subset -- the denominator of the coverage
     # bar two lines down -- and printing it here labelled "source file(s)" put two different
     # populations on one line: a file count that excluded the undescribable files beside a token
@@ -265,12 +337,55 @@ def main(argv):
     # has always used len(files), so the tool and its own artifact reported different sizes for the
     # same scan. Caught by reading both at once on a real repository: 187 printed, 189 in the file.
     print(f"  {len(files)} source file(s), {src:,.0f} tokens of code")
+    # Said out loud because the silence was the indefensible half of the defect this reports.
+    # coveragepy's index was built without `coverage/` -- the shipped library, 29% of the repo --
+    # and the run said nothing at all, so the only visible number was a coverage bar computed over
+    # what survived. A directory named like build output is still usually build output, so this
+    # does not warn; it states what was left out and how to disagree with it.
+    # Said, not silent — same reasoning as the line below it. A file the repository itself declares
+    # machine-written is the one exclusion a reader can check against a file they can open.
+    # 🐛 Three ways a file could vanish from the index while the run reported full confidence.
+    # SKIPPED_TOO_LARGE and SKIPPED_BINARY were recorded with a comment saying "Recorded, not
+    # merely skipped … false confidence rather than degraded confidence, which is the worse kind"
+    # — and then read by nothing but one test. Measured on azadkuh/sqlite-amalgamation: sqlite3.c
+    # is 8.5 MB, 71% of the repository and the reason it exists, absent from the index, with
+    # "described 3/3 files (100%)" printed beneath. The nested-checkout exclusion is correct but
+    # equally unannounced, so a submodule superproject's map is its glue file and nothing else.
+    if mapper.SKIPPED_TOO_LARGE:
+        _big = ", ".join(f"{p.name} ({assets_mod._human(sz) if isinstance(sz, int) else sz})"
+                        for p, sz in mapper.SKIPPED_TOO_LARGE[:4])
+        _more = len(mapper.SKIPPED_TOO_LARGE) - 4
+        print(f"  not indexed, over the size limit: {_big}" + (f" +{_more} more" if _more > 0 else ""))
+    if mapper.SKIPPED_BINARY:
+        print(f"  not indexed, binary content behind a source extension: "
+              f"{len(mapper.SKIPPED_BINARY)} file(s)")
+    if getattr(tree, "UNREADABLE", None):
+        _un = ", ".join(sorted(tree.UNREADABLE)[:4])
+        print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}")
+    if mapper.SKIPPED_GENERATED:
+        print(f"  not indexed, declared linguist-generated in .gitattributes: "
+              f"{len(mapper.SKIPPED_GENERATED)} file(s)")
+    if mapper.SKIPPED_BUILD_DIR:
+        named = ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6])
+        more = len(mapper.SKIPPED_BUILD_DIR) - 6
+        print(f"  not indexed, read as build output: {named}" + (f" +{more} more" if more > 0 else ""))
+        print("  (git-tracked directories with these names ARE indexed; these are not tracked)")
     # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
     # `__init__.py`, or any tree whose files are all empty. It crashed at this line, which is
     # AFTER MAP.md has already been overwritten, so the user's index was replaced and the report
     # that would have explained it never printed. `chamnan-map` is the first thing
     # `/chamnan:bootstrap` runs.
-    share = f"{index_tokens / src * 100:.1f}% of the source" if src else "no code to compare against"
+    # 🐛 On a small repository this printed things like "1150.6% of the source" — true, and the
+    # first number a new user sees from `/chamnan:bootstrap`, where it reads as a malfunction. The
+    # README already says plainly that on a four-file repository this costs more than it saves;
+    # the tool should say the same thing in the same words rather than as a percentage nobody can
+    # act on. Above 100% the ratio is not a saving at all, so it stops being reported as one.
+    if not src:
+        share = "no code to compare against"
+    elif index_tokens >= src:
+        share = "larger than the source — this repository is too small for an index to pay"
+    else:
+        share = f"{index_tokens / src * 100:.1f}% of the source"
     print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({share})")
     print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))

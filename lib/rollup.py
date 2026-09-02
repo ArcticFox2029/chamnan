@@ -245,10 +245,29 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         # A repeated basename across subpackages is the normal shape of a large repo
         # (__init__.py, index.js, types.ts), so this is common rather than exotic.
         chosen = entries[:per_dir]
+        # 🐛 The basename was shown, so the line named a path that DOES NOT EXIST whenever the file
+        # sits in a subdirectory. Measured across four real repositories: 35 of 101 sampled paths
+        # were wrong — gum's `internal/ (6) — align.go, context.go, tty.go` are really
+        # internal/decode/align.go, internal/timeout/context.go and internal/tty/tty.go, 6 of 6
+        # wrong; execa 29 of 34, because all 108 of its `lib/` files are in subdirectories.
+        #
+        # A wrong path costs a failed Read and then a recovery search, which is the failure this
+        # project calls worse than a missing entry — and the roll-up exists precisely to be the
+        # thing a session trusts when the per-file index does not fit.
+        #
+        # The path relative to the group, always: `decode/align.go` under `internal/` reconstructs
+        # to the real file by concatenation. The disambiguation below stays for the case it was
+        # written for — two files that are genuinely identical relative to the group cannot happen,
+        # but a group at depth > 1 can still produce repeats.
+        def _rel_to_group(pth):
+            return pth[len(top) + 1:] if top != "(root)" and pth.startswith(top + "/") else pth
         counts = {}
-        for _, n in chosen:
-            counts[n] = counts.get(n, 0) + 1
-        picked = sorted(_disambiguate(pth, n, top) if counts[n] > 1 else n for pth, n in chosen)
+        for pth, _ in chosen:
+            r = _rel_to_group(pth)
+            counts[r] = counts.get(r, 0) + 1
+        picked = sorted(_disambiguate(pth, _rel_to_group(pth), top)
+                        if counts[_rel_to_group(pth)] > 1 else _rel_to_group(pth)
+                        for pth, _ in chosen)
         shown = ", ".join(f"`{n}`" for n in picked)
         hidden = len(names) - len(picked)
         # "+N more" is only meaningful next to names it is more THAN. With none shown the count

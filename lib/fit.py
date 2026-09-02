@@ -152,6 +152,10 @@ def _followers(order, i):
     return out
 
 
+# Filled when a restore is refused for being oversized; read once, at the end of shrink().
+_oversize = []
+
+
 def shrink(header, parts, ceiling=CEILING, sources=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
@@ -161,6 +165,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     `dropped` is a list of (title, source) for what was removed, so the caller can say so out loud
     instead of leaving the reader to trust a block that is quietly missing its middle.
     """
+    _oversize.clear()      # per call, not per process
     order = list(parts)          # the untouched originals, to trim from after the drops
     parts = list(parts)
     dropped = []
@@ -212,7 +217,29 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                 continue
             # The followers come back with it, so they have to be paid for out of the same room.
             foll = _followers(order, i)
-            trimmed = _trim(order[i], room - len("".join(order[j] for j in foll).encode()), sources)
+            room_here = room - len("".join(order[j] for j in foll).encode())
+            trimmed = _trim(order[i], room_here, sources)
+            # 🐛 `_trim` is allowed to return MORE than the room it was given: `_fit_lines` reserves
+            # every pinned line before it starts filling, and if the pins alone exceed the budget it
+            # keeps them anyway — which is the promise the pin exists for. This branch accepted the
+            # result on truthiness alone, so an oversized section came back and the whole block went
+            # past the host's cap.
+            #
+            # Measured on this project's own repository: `_trim` was asked for 5,773 bytes and
+            # returned 7,822 — larger than the section it was shrinking, with zero lines removed.
+            # The block finished at 11,230 bytes against a 9,000 ceiling, the host kept the first
+            # 2,048, and every session began with one rule cut mid-sentence and nothing else: no
+            # index, no procedures, no decisions, no handoff. 81.8% of the block destroyed.
+            #
+            # Refused rather than clamped. Clamping means cutting pinned lines, which is exactly the
+            # loss state.py was written to end — a 📌 heading is how the owner stops a session
+            # re-raising settled work, and trimming it silently would trade a visible catastrophe
+            # for an invisible one. A section left dropped is NAMED in the notice and is one grep
+            # away; a host-truncated one is not named at all.
+            if trimmed and len(trimmed.encode()) > room_here:
+                head = (order[i].strip().splitlines() or ["?"])[0][:60]
+                _oversize.append(head)
+                trimmed = ""
             if trimmed:
                 parts[i] = trimmed
                 for j in foll:
@@ -220,9 +247,23 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                 at = dropped_at.index(i)
                 dropped.pop(at)
                 dropped_at.pop(at)
-                break
+                # 🐛 `break` after the first restore. It was right while a refused restore could not
+                # happen: whatever came back filled the room and there was nothing left to give.
+                # Now that an oversized section is refused rather than accepted, the room it did not
+                # take is real — measured on this repository, 5,308 of 9,000 bytes sat unused with
+                # five sections still dropped. Recompute and keep going; the loop is already
+                # ordered most-valuable-first, so it fills with the best of what is left.
+                used = len((header + "".join(parts) + notice(dropped, ceiling)).encode())
+                room = ceiling - used
+                if room <= 0:
+                    break
+                continue
 
     body = header + "".join(parts) + notice(dropped, ceiling)
+    if _oversize:
+        body += ("\n_A dropped section could not be brought back: its pinned lines alone exceed the "
+                 "room left. Pins are never cut, so it stays out rather than push the block past "
+                 "the host's limit. Shorten a 📌 heading, or raise `output_byte_ceiling`._\n")
     # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
     # the header itself -- can exceed the ceiling on its own, and both loops above then run out of
     # moves and return anyway. `dropped` still names what it removed, which reads as "handled".

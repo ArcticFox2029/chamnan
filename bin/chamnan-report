@@ -16,6 +16,7 @@ Three details decide whether the figures are right, each learned the hard way (2
      nothing to do with this tool. Tokens carried per turn is what a workspace can actually change.
 """
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -30,6 +31,39 @@ import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
 PROJECT_ROOT = Path.home() / ".claude" / "projects"
+
+
+def _project_roots():
+    """Every directory Claude Code might be keeping this machine's transcripts in.
+
+    🐛 This was a single hardcoded `~/.claude/projects`. Two things break it, and both are live on
+    the developer's own machine:
+
+    `CLAUDE_CONFIG_DIR` moves the whole config tree, which is how anyone runs two accounts at once
+    — measured here: 299 transcripts under `~/.claude` and 33 under the configured directory, with
+    the second set invisible. Somebody had hand-made a symlink to paper over it, and a workaround
+    is evidence the bug is live.
+
+    `CLAUDE_CODE_PROJECT_DIR_NAME` (2.1.234) lets a host choose the per-project directory NAME, at
+    which point `encoded_dir`'s path-derived match cannot work at all — neither the exact form nor
+    the shared-tail fallback — and the fallback's tie rule then reports nothing without saying why.
+
+    Both are read, newest-first is left to the caller, and the ordinary single-account machine is
+    unchanged because the environment variable is simply absent there.
+    """
+    roots, seen = [], set()
+    cfg = os.environ.get("CLAUDE_CONFIG_DIR")
+    # PROJECT_ROOT stays the default and the single seam a test can move; the environment variable
+    # adds the second tree rather than replacing it, because a machine running two accounts has
+    # work in both and the question "how much context did this repo cost" spans them.
+    for d in ([Path(cfg) / "projects"] if cfg else []) + [PROJECT_ROOT]:
+        if d.is_dir() and str(d) not in seen:
+            seen.add(str(d))
+            roots.append(d)
+    return roots
+# day -> set of file paths opened that day; folded to weeks in main().
+touched_by_week = __import__("collections").defaultdict(set)
+
 SNAPSHOT = re.compile(r"-\d{8}$")
 
 
@@ -39,9 +73,10 @@ def encoded_dir(repo_root):
     The encoding is lossy — a directory whose own name contains a dash is indistinguishable from a
     separator — so an exact match is tried first and a suffix match is the fallback."""
     want = str(repo_root).replace("/", "-")
-    exact = PROJECT_ROOT / want
-    if exact.is_dir():
-        return exact
+    for root in _project_roots():
+        exact = root / want
+        if exact.is_dir():
+            return exact
     # The fallback used to accept any directory whose name ended with this repo's basename, and
     # return the first in sort order. `~/work/Lumin-App` and `~/Documents/Lumin-App` both end that
     # way, so a checkout of the same project elsewhere -- or an unrelated repo that happens to
@@ -49,7 +84,7 @@ def encoded_dir(repo_root):
     # saying which had been read. Rank by how much of the path actually agrees, and when two
     # candidates agree equally there is no honest answer: say nothing rather than guess.
     best, best_score, tied = None, 0, False
-    for cand in sorted(PROJECT_ROOT.glob("*")):
+    for cand in sorted(c for root in _project_roots() for c in root.glob("*")):
         if not cand.is_dir():
             continue
         score = _shared_tail(want, cand.name)
@@ -89,6 +124,15 @@ def collect(project_dir):
                 msg = rec.get("message") or {}
                 usage, rid, model = msg.get("usage"), rec.get("requestId"), msg.get("model")
                 ts = rec.get("timestamp")
+                # 🎯 Which FILES a week touched, gathered in the pass that is already reading every
+                # line. It answers the question the before/after cannot answer on its own: was this
+                # week the same work as last week, or new work? See _confound() below.
+                if ts:
+                    for _c in (msg.get("content") or []):
+                        if isinstance(_c, dict) and _c.get("type") == "tool_use":
+                            _fp = (_c.get("input") or {}).get("file_path")
+                            if _fp:
+                                touched_by_week[ts[:10]].add(_fp)
                 if not (isinstance(usage, dict) and rid and model and ts):
                     continue
                 try:
@@ -100,6 +144,9 @@ def collect(project_dir):
                     usage.get("input_tokens") or 0, usage.get("output_tokens") or 0,
                     usage.get("cache_read_input_tokens") or 0,
                     usage.get("cache_creation_input_tokens") or 0,
+                    # 🐛 A subagent step and a conversation turn were averaged together, and the
+                    # headline was the artefact. See the split in main().
+                    bool(rec.get("isSidechain")),
                 )
                 prior = best.get(rid)
                 if prior is None or sum(entry[2:]) > sum(prior[2:]):
@@ -271,6 +318,13 @@ def print_pointer(root, project_dir):
 
 
 def main(argv):
+    # 🐛 argv was never read, so `chamnan-report --help` ran the full report — and because this is
+    # the one command that prunes, it also deleted session records older than 30 days. Every
+    # sibling command handles -h/--help; this one answered a question about itself by mutating the
+    # workspace.
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__.strip())
+        return 0
     root = ws.find_root()
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")
@@ -289,6 +343,13 @@ def main(argv):
         print(f"chamnan: no Claude Code transcripts found for {root}")
         print("  (nothing to measure until this repo has been worked on in Claude Code)")
         return 0
+    # 🐛 These ran BEFORE _workspace_created() reads the session filenames to date the workspace,
+    # and prune_sessions deletes by that same filename date at 30 days. So on any repository whose
+    # first session record is older than a month — any repository chamnan has actually lived in —
+    # the before/after comparison was permanently suppressed, and the tool blamed the user's
+    # history for its own housekeeping. The inventory printed at the top of the same run counted
+    # the records that the marker computation, 170 lines later, could no longer see.
+    marker_early = _workspace_created(ws.workspace(root))
     ws.prune_logs(root)
     ws.prune_sessions(root)
     entries = collect(project_dir)
@@ -296,11 +357,11 @@ def main(argv):
         print("chamnan: transcripts found but no usage records yet")
         return 0
 
-    marker = _workspace_created(ws.workspace(root))
+    marker = marker_early or _workspace_created(ws.workspace(root))
 
     weeks = defaultdict(lambda: {"calls": 0, "cread": 0, "cwrite": 0, "out": 0})
     per_model = defaultdict(lambda: {"calls": 0, "cread": 0})
-    for when, model, inp, out, cread, cwrite in entries:
+    for when, model, inp, out, cread, cwrite, sidechain in entries:
         key = when.isocalendar()[:2]
         w = weeks[key]
         # `inp` is input the model read that was NOT served from cache -- the whole prompt on a
@@ -308,6 +369,9 @@ def main(argv):
         # It was unpacked here and then dropped, so those calls reported a context of zero and
         # dragged the per-call average down by exactly the calls that cost the most.
         w["calls"] += 1; w["cread"] += cread + inp; w["cwrite"] += cwrite; w["out"] += out
+        if sidechain:
+            w["subcalls"] = w.get("subcalls", 0) + 1
+            w["subcread"] = w.get("subcread", 0) + cread + inp
         pm = per_model[model]
         pm["calls"] += 1; pm["cread"] += cread + inp
 
@@ -321,17 +385,84 @@ def main(argv):
         print(f"  {key[0]}-w{key[1]:<5}{w['calls']:>8,}{w['cread']/c:>15,.0f}{w['cwrite']/c:>16,.0f}{w['out']/c:>11,.0f}{tag}")
 
     if marker_week and any(k < marker_week for k in weeks) and any(k > marker_week for k in weeks):
-        def side(pred):
+        # 🐛 A SUBAGENT STEP AND A CONVERSATION TURN WERE AVERAGED TOGETHER, and on this machine
+        # the headline was entirely that artefact. Subagents carry about a fifth of a main-thread
+        # context each and they appeared for the first time in the very week the workspace was
+        # created, so the "after" side filled with cheap calls. Measured here, independently, by
+        # week:
+        #
+        #     all calls      467k 516k 507k 432k 421k 452k 231k   -> printed as -27.5%
+        #     main thread    467k 516k 507k 432k 481k 495k 470k   -> flat, no trend
+        #
+        # The context a real conversation turn carries did not fall at all. This command is the one
+        # the README points at to answer "is chamnan worth keeping", so a composition artefact here
+        # is the most expensive kind of wrong this project can be.
+        #
+        # Reported as two populations rather than one corrected average, because "user turns" is
+        # not reliably derivable from these records and inventing a denominator is how the first
+        # number went wrong. The main-thread row is the one to read; the subagent row is shown so
+        # nobody has to wonder where the rest went.
+        def side(pred, main_only=False):
             calls = cread = cwrite = 0
             for key, w in weeks.items():
-                if pred(key):
-                    calls += w["calls"]; cread += w["cread"]; cwrite += w["cwrite"]
+                if not pred(key):
+                    continue
+                sc, scr = w.get("subcalls", 0), w.get("subcread", 0)
+                calls += w["calls"] - (sc if main_only else 0)
+                cread += w["cread"] - (scr if main_only else 0)
+                cwrite += w["cwrite"] if not main_only else 0
             return calls, cread / max(calls, 1), cwrite / max(calls, 1)
         bc, bcr, bcw = side(lambda k: k < marker_week)
         ac, acr, acw = side(lambda k: k > marker_week)
-        print(f"\n  before  {bc:>7,} calls   context/call {bcr:>10,.0f}   new-read/call {bcw:>9,.0f}")
-        print(f"  after   {ac:>7,} calls   context/call {acr:>10,.0f}   new-read/call {acw:>9,.0f}")
-        print(f"  change  {'':>7}          {(acr-bcr)/max(bcr,1)*100:>+21.1f}%{(acw-bcw)/max(bcw,1)*100:>+22.1f}%")
+        bmc, bmr, _ = side(lambda k: k < marker_week, main_only=True)
+        amc, amr, _ = side(lambda k: k > marker_week, main_only=True)
+        # 🎯 The confound the before/after cannot see, and the owner named it before this measured
+        # it: the comparison assumes the two sides are the SAME KIND of work. On this repository
+        # they are not — the weeks after the workspace was created are the least repetitive in the
+        # whole corpus (8%, 7%, 12% of files revisited from an earlier week, against 27% and 36%
+        # before). Returning to code you already know is where an index pays; opening new code
+        # every week is not. So a flat result is not evidence the tool does not help, and a falling
+        # one would not have been evidence that it does. Saying which of those applies is worth
+        # more than the percentage above it.
+        def _revisit(pred):
+            weeks_seen, cur, prior = {}, set(), set()
+            for day in sorted(touched_by_week):
+                try:
+                    wk = datetime.fromisoformat(day).isocalendar()[:2]
+                except ValueError:
+                    continue
+                weeks_seen.setdefault(wk, set()).update(touched_by_week[day])
+            # The earliest week is skipped, not counted as 0%: it has no earlier week to revisit
+            # by construction, and including it drags the "before" side down for a reason that has
+            # nothing to do with the work. Measured here, that one correction moves before from
+            # 17% to 20% and is the difference between the two sides looking similar and looking
+            # as different as they are.
+            for n, wk in enumerate(sorted(weeks_seen)):
+                files = weeks_seen[wk]
+                if pred(wk) and n > 0:
+                    cur.add((len(files & prior), len(files)))
+                prior |= files
+            rev = sum(a for a, _ in cur)
+            tot = sum(b for _, b in cur)
+            return (100 * rev / tot) if tot else None
+        # Short on purpose. Three blocks of caveats that half-contradict each other leave a reader
+        # less able to decide than one clear line does, and this is the screen somebody opens to
+        # answer one question. The reasoning lives in these comments, not in the output.
+        print(f"\n  context per turn   before {bmr:>10,.0f}   after {amr:>10,.0f}   "
+              f"{(amr-bmr)/max(bmr,1)*100:+.1f}%")
+        if ac != amc:
+            # Subagent steps carry about a fifth of a turn's context, so a period with more of
+            # them looks cheaper per call while no turn got cheaper. Counted out, never averaged
+            # in — that average is what this command used to print as its headline.
+            print(f"  ({ac - amc:,} subagent steps excluded — they carry a fraction of a turn "
+                  f"and would flatter the result)")
+        _b, _a = _revisit(lambda k: k < marker_week), _revisit(lambda k: k > marker_week)
+        if _b is not None and _a is not None:
+            print(f"\n  repeat work        before {_b:>4.0f}%      after {_a:>4.0f}%   "
+                  f"of files opened again from an earlier week")
+            if _a + 8 < _b:
+                print("  An index pays when you come back to the same code. Most of the work since")
+                print("  then was new files, so this period could not show the effect either way.")
         print("\n  Read this as an observation, not an experiment: your model, your task mix and")
         print("  Claude Code itself all changed over the same period. It is your repo's number,")
         print("  which is the point — but it is not a controlled trial.")

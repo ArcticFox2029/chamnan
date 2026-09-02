@@ -18,6 +18,54 @@ import re
 
 PLACEHOLDER = "<REDACTED>"
 
+# 🐛 Two rules in this file match on ADJACENCY alone — a secret word sitting next to a value, with
+# no `=` or `:` anywhere to say an assignment is happening. That is the weakest evidence any rule
+# here has, and it is what destroyed ordinary prose inside committed MAP.md files. Measured by
+# running the current redactor over four cloned repositories:
+#
+#   class HTTPBasicAuth — Attaches HTTP Basic <REDACTED> to the given Request object.
+#   _basic_auth_str(username, password) — Returns a Basic Auth <REDACTED>
+#   class DefaultCredentialsError — Used to indicate that acquiring default credentials <REDACTED>
+#   google/oauth2/gdch_credentials.py — Experimental GDCH credentials <REDACTED>
+#   class CustomAwsSupplier — Custom AWS Security Credentials <REDACTED>
+#
+# The published precision figure was 100%, and it stayed 100% because the decoy corpus tested
+# identifiers and config lines — not SENTENCES. MAP.md summaries are prose harvested from
+# docstrings, and MAP.md is the committed, shared surface, so this is where a false positive costs
+# most: the marker tells a reviewer the line was handled, which is worse than a plain miss.
+#
+# The discriminator is the VALUE's shape. A credential is not an ordinary word: `dXNlcjpwYXNz` has
+# capitals inside it, a JWT has dots, `hunter2secret` has a digit. `Authentication`, `Supplier.`,
+# `failed.` and `string.` are words. Anything past 18 letters is treated as a value regardless,
+# because a lowercase run that long is not prose in these positions.
+#
+# Deliberately NOT applied to the assignment rules. `api_key = correcthorse` is an explicit
+# assignment and a plain word there is exactly the secret; the guard is only for the two rules that
+# have nothing but adjacency to go on.
+# The trailing class carries `…` on purpose: summaries are clipped before they reach the index, so
+# the last word of a truncated docstring arrives as `functionality.…` and stopped looking like a
+# word for the sake of one character.
+_PLAIN_WORD = re.compile("^[A-Za-z][a-z]{1,17}[.,;:!?)\\]\u2026\"'`]*$")
+
+
+def _is_a_plain_word(value):
+    """True when the captured value reads as prose rather than as a credential.
+
+    Two shapes, both measured on real output rather than imagined. One ordinary word, clipped or
+    not — `Authentication`, `Supplier.`, `functionality.…`. And anything opening with a bracket,
+    which in this position is a docstring's type annotation: `private_key (Union["rsa.key…` and
+    `id_token (str):` were both being redacted inside an Args: block. A credential does not begin
+    with `(`, and the assignment rules still cover `password = {...}` if one ever did.
+    """
+    value = value or ""
+    return bool(_PLAIN_WORD.match(value)) or value[:1] in "([{"
+
+
+# `Authorization: Bearer <jwt>` and `Basic <base64>` — but "Basic Authentication" is a phrase, and
+# this rule matched it for years because twelve letters is twelve characters.
+AUTH_SCHEME_SECRET = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{12,})")
+
 PATTERNS = [
     # Provider tokens with unambiguous prefixes — no false positives worth worrying about.
     re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
@@ -36,7 +84,7 @@ PATTERNS = [
     # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
     # itself in plain sight under a line that looks redacted. A miss is recoverable; a miss dressed
     # as a hit is not.
-    re.compile(r"(?<![A-Za-z0-9_-])(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{12,})"),
+    AUTH_SCHEME_SECRET,
     # A JWT is three base64 segments; the header almost always starts eyJ.
     re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
     # Private key and certificate blocks.
@@ -201,6 +249,36 @@ NEVER_OPENED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der",
                          ".jks", ".keystore", ".asc", ".gpg")
 
 
+def _has_source_extension(name):
+    """True when the extension names a language the index extracts symbols from.
+
+    🐛 Used only to switch OFF the stem rule below, and nothing else. The stem rule exists so that
+    `credentials.ini` is caught by a deny-list entry spelled `credentials` -- and it caught
+    `credentials.py`, `credentials.ts`, `credentials.rb` and `credentials.go` with it, which is the
+    commonest filename in any authentication library. google-auth-library-python lost FOUR files
+    this way, including google/auth/credentials.py, the abstract base class every credential type
+    in the package subclasses; 201 files indexed and the four most central absent, with no notice.
+    chamnan-peek refused the same file with "its contents are credentials or a key", about 23.8KB
+    of `class Credentials:` definitions.
+
+    The discriminator is the extension, not the stem. An EXTENSIONLESS `credentials` -- which is
+    what ~/.aws/credentials is, and the file the entry was written for -- or credentials.ini,
+    .cfg, .json, .yaml is a credential store. `credentials.<source extension>` is a module.
+
+    Asked of mapper rather than of a second list kept here, because a list would drift and the
+    drift would be silent in the unsafe direction. Imported inside the function: mapper imports
+    this module, so a top-level import would be a cycle. If it cannot be answered at all the answer
+    is False, which leaves the old over-cautious behaviour exactly as it was.
+    """
+    if "." not in name:
+        return False
+    try:
+        import mapper
+        return ("." + name.rsplit(".", 1)[-1]) in mapper.EXT_LANG
+    except Exception:
+        return False
+
+
 def is_blocked(path):
     name = path.name.lower()
     # The same four is_never_opened checks. These two lists had drifted apart, so a renamed
@@ -214,7 +292,8 @@ def is_blocked(path):
     # key gets copied aside, and an endswith() check lets both through while catching the bare file.
     if any(f".{seg}" in BLOCKED_SUFFIXES for seg in name.split(".")[1:]):
         return True
-    return name.endswith(BLOCKED_SUFFIXES) or name in BLOCKED_NAMES or stem in BLOCKED_NAMES
+    return (name.endswith(BLOCKED_SUFFIXES) or name in BLOCKED_NAMES
+            or (stem in BLOCKED_NAMES and not _has_source_extension(name)))
 
 
 def is_never_opened(path):
@@ -238,7 +317,7 @@ def is_never_opened(path):
     if any(f".{seg}" in NEVER_OPENED_SUFFIXES for seg in name.split(".")[1:]):
         return True
     return (name.endswith(NEVER_OPENED_SUFFIXES) or name in BLOCKED_NAMES
-            or stem in BLOCKED_NAMES)
+            or (stem in BLOCKED_NAMES and not _has_source_extension(name)))
 
 
 # A key can carry a secret word and still be naming a mechanism rather than holding a credential:
@@ -255,6 +334,53 @@ NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "ur
 # after it, which the Bearer/Basic pattern above has already taken. Without this the bare rule
 # replaces the scheme too and an Authorization header reads "<REDACTED> <REDACTED>".
 SCHEME_WORDS = frozenset({"bearer", "basic", "digest", "negotiate", "ntlm", "token", "apikey"})
+
+
+# 🐛 A secret-named assignment whose value is CODE was having the code replaced. Reproduced with
+# chamnan-peek on httpie:
+#
+#   285: default_auth_plugin = <REDACTED>       was: plugin_manager.get_auth_plugins()[0]
+#   294: self.args.auth = <REDACTED>            was: AuthCredentials(
+#   ws_tokens = <REDACTED> token.NEWLINE, …}    was: {token.DEDENT, token.NEWLINE, tokenize.NL}
+#   soft_key_lines: <REDACTED> = set()          was: set[int]
+#   print(json.dumps(x, sort_keys=<REDACTED>    was: True
+#
+# Those are the two lines that answer "how does httpie choose an auth plugin", which is why anyone
+# ran that command. The third also shows the failure this module already calls worse than a plain
+# miss: the value class is one unbroken run, so the rest of the set literal is printed beside the
+# marker, telling a reviewer the line was handled.
+#
+# The aggressive behaviour is deliberate and documented — `AWS_SECRET = base64.b64decode("QUtJQ…")`
+# must not survive, and what is inside a call is not knowable from here. So this does NOT relax it.
+# When the value is an expression, the STRING LITERALS INSIDE IT are redacted instead of the whole
+# thing: base64.b64decode(<REDACTED>) keeps the secret gone and the code readable, while an
+# expression carrying no literal — a call, a set, a type annotation, True — has nothing to remove
+# and is left alone. Strictly safer than before in both directions: nothing that used to be removed
+# survives, and code that never held a secret stops being destroyed.
+_CODE_EXPRESSION = re.compile(
+    r"^(?:[A-Za-z_]\w*(?:\s*\.\s*\w+)*\s*[([{]|[([{]|(?:True|False|None|self)\b)")
+_STRING_LITERAL = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1""")
+
+
+def _redact_literals_in(expr):
+    """`expr` with every quoted literal of six or more characters emptied, or None when there is
+    nothing to empty — in which case the caller must leave the expression alone rather than
+    replace it wholesale."""
+    if not _CODE_EXPRESSION.match(expr):
+        return None
+    out, hit = [], False
+    last = 0
+    for m in _STRING_LITERAL.finditer(expr):
+        if len(m.group(2)) < 6:
+            continue
+        hit = True
+        out.append(expr[last:m.start()])
+        out.append(f"{m.group(1)}{PLACEHOLDER}{m.group(1)}")
+        last = m.end()
+    if not hit:
+        return expr                      # a valid expression holding no literal: nothing to remove
+    out.append(expr[last:])
+    return "".join(out)
 
 
 def _looks_like_a_credential_name(key):
@@ -282,7 +408,13 @@ def scrub(text):
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
         # as an Authorization header while the credential goes. Groupless patterns replace whole.
         if pattern.groups == 1:
-            text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
+            # Same position in the order, one extra question asked. See _is_a_plain_word.
+            if pattern is AUTH_SCHEME_SECRET:
+                text = pattern.sub(
+                    lambda m: m.group(0) if _is_a_plain_word(m.group(1))
+                    else m.group(0).replace(m.group(1), PLACEHOLDER), text)
+            else:
+                text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
         else:
             text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
@@ -300,7 +432,7 @@ def scrub(text):
     text = SPACED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
-        or PLACEHOLDER in m.group(2)
+        or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}", text)
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET.sub(
@@ -311,7 +443,7 @@ def scrub(text):
     text = ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
-        else f"{m.group(1)}{PLACEHOLDER}", text)
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
@@ -320,5 +452,5 @@ def scrub(text):
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
-        else f"{m.group(1)}{PLACEHOLDER}", text)
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     return text

@@ -27,6 +27,8 @@ Never imports or executes the code it reads.
 """
 import argparse
 import ast
+import fnmatch
+import subprocess
 import warnings
 import re
 import mdblock
@@ -57,6 +59,108 @@ MAX_FILE_BYTES = 2_000_000
 # reports coverage, so a skipped file is a number someone can see rather than an absence.
 SKIPPED_TOO_LARGE = []
 SKIPPED_BINARY = []
+# 🐛 Eight names in SKIP_DIRS are ORDINARY SOURCE DIRECTORY NAMES as well as build-output names,
+# and the list could not tell the two apart. Measured: coveragepy's index contained 130 files and
+# not one of them was from `coverage/` -- the shipped library, 54 files, 29% of the repository and
+# 100% of what anybody opens the map to find. The Quick Index was its tests, its CI scripts and its
+# docs. pypa/build lost all 13 files of `src/build/`, 36% of its source, the same way. Neither run
+# said anything: no warning, and the coverage bar read "85%" of what remained.
+#
+# The name cannot decide it. Deleting these entries re-admits `target/` on every Rust repository
+# and `build/` on every Gradle tree, which is thousands of generated files and the reason the list
+# exists. What separates them is whether git is tracking the directory -- `build/lib/pkg/` produced
+# by setuptools is ignored, `src/build/` is committed -- so that is the question asked, per PATH
+# rather than per name, and only for these eight. The rest of SKIP_DIRS is unambiguous machinery
+# and is never rescued: a committed `vendor/` or `node_modules/` is still noise.
+AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp", "logs"})
+# Directories skipped under one of those names. Reported by chamnan-map, because the silence was
+# the half of this defect that could not be argued about -- and note SKIPPED_TOO_LARGE and
+# SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
+# those do" would have been another write-only list.
+SKIPPED_BUILD_DIR = set()
+_TRACKED_AMBIGUOUS = {}
+_GENERATED_GLOBS = {}
+SKIPPED_GENERATED = set()
+
+
+def _generated_globs(root):
+    """Path patterns the repository itself declares are machine output, from `.gitattributes`.
+
+    🎯 The only machine-readable statement a repository makes that a human did not write a file.
+    Measured against the GitHub trees API: of the files chamnan would index, kubernetes declares
+    **1,356 of 13,748 (9.9%)** generated — `**/zz_generated.*.go` — elasticsearch 1,466 (6.2%),
+    grafana 654 (4.2%), numpy 12 (1.2%). next.js and prometheus declare patterns that match nothing
+    chamnan indexes, so they are unaffected. Those rows cost index bytes and drag down the
+    described figure to say that a generated file exists.
+
+    `linguist-generated` only, deliberately. `linguist-vendored` is also declared here and is NOT
+    read: a vendored directory is often a fork somebody actually edits, and the machinery
+    directories are already covered by SKIP_DIRS.
+
+    Not the same judgement as .gitignore, which this file refuses to read a few lines down and for
+    a reason that does not transfer: .gitignore is often absent, often wrong, and never covers a
+    nested checkout's build output. `.gitattributes` is narrow, deliberate, and is what GitHub
+    itself reads to decide the same question.
+    """
+    key = str(root)
+    if key in _GENERATED_GLOBS:
+        return _GENERATED_GLOBS[key]
+    pats = []
+    for name in (".gitattributes", ".github/.gitattributes"):
+        try:
+            text = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "linguist-generated" not in line:
+                continue
+            if "-linguist-generated" in line:      # an explicit un-marking; leave the file alone
+                continue
+            pats.append(line.split()[0])
+    _GENERATED_GLOBS[key] = tuple(pats)
+    return _GENERATED_GLOBS[key]
+
+
+def _is_generated(rel, pats):
+    """`rel` against gitattributes-style patterns. `**/` means any depth, and a pattern with no
+    slash in it applies at every level -- which is git's own rule, not fnmatch's."""
+    for pat in pats:
+        bare = pat[3:] if pat.startswith("**/") else pat
+        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, bare) \
+                or fnmatch.fnmatch("/" + rel, pat):
+            return True
+        if "/" not in bare and fnmatch.fnmatch(rel.rsplit("/", 1)[-1], bare):
+            return True
+    return False
+
+
+def _tracked_ambiguous(root):
+    """Relative paths of AMBIGUOUS_SKIP-named directories that git is tracking files under.
+
+    Empty when there is no git, no repository, or the call fails -- chamnan has to work on a plain
+    directory, so this can only ever RESCUE a directory the name list would have dropped. It never
+    causes one to be skipped, which keeps the failure direction the same as before.
+    """
+    key = str(root)
+    if key in _TRACKED_AMBIGUOUS:
+        return _TRACKED_AMBIGUOUS[key]
+    found = set()
+    try:
+        done = subprocess.run(["git", "-C", key, "ls-files", "-z"],
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        if done.returncode == 0:
+            for raw in done.stdout.split(b"\0"):
+                if not raw:
+                    continue
+                parts = raw.decode("utf-8", "replace").split("/")[:-1]
+                for i, part in enumerate(parts):
+                    if part in AMBIGUOUS_SKIP:
+                        found.add("/".join(parts[:i + 1]))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    _TRACKED_AMBIGUOUS[key] = frozenset(found)
+    return _TRACKED_AMBIGUOUS[key]
 
 def _nested_repo_dirs(root):
     """Directories under `root` that are repositories in their own right.
@@ -109,8 +213,33 @@ DECORATION = re.compile(r"(?:[=*#_~-]\s*){4,}")
 DOC_TAG_HEAD = re.compile(r"^\s*[\\@]file\s+\S+\s*", re.I)
 DOC_TAG_MARKER = re.compile(r"[\\@](?:brief|short|summary|ref|see|link|endlink)\b\s*", re.I)
 DOC_TAG_TAIL = re.compile(
-    r"[\\@](?:param(?:\[[^\]]*\])?|returns?|retval|throws?|exception|author|date|version|since|"
-    r"copyright|note|warning|deprecated|todo|inheritdoc|tparam)\b.*$", re.I | re.S)
+    # `(?<!\{)` because javadoc has an INLINE form -- `{@link Fleet#drivers}` means the words, and
+    # JAVADOC_INLINE below unwraps it. This pattern runs first, so without the lookbehind adding
+    # `link` to the name list cut the sentence at the brace and threw the target away. Caught by
+    # the existing check rather than by reading; it is the reason the name list grows carefully.
+    r"(?<!\{)[\\@](?:param(?:\[[^\]]*\])?|returns?|retval|throws?|exception|author|date|version|since|"
+    r"copyright|note|warning|deprecated|todo|inheritdoc|tparam|"
+    # 🐛 The tags below are the ones that actually occupy the summary slot on real repositories,
+    # and they were all missing. Measured over four clones: 33 of psr7's 59 described rows carried
+    # a tag (55%), and 28 of those said NOTHING ELSE -- `@covers \GuzzleHttp\Psr7\Integers` is the
+    # whole summary for a test file, and nine psr7 sources are described entirely as `@internal`.
+    # PHPMailer: 103 of 131 rows (78%), most of them `@package`. CodeIgniter: 118 of 173 (68%),
+    # `@package` and `@category`. Those rows all count as DESCRIBED, so the coverage figure -- the
+    # number that tells a user whether to run /chamnan:bootstrap -- says the work is done when the
+    # index is saying nothing. That is the same failure BOILERPLATE was written for, arriving
+    # through a different door.
+    #
+    # Enumerated rather than generalised, deliberately. The tempting rule is "cut at any @word or
+    # \word", and it is wrong twice over: PHPMailer's real summary "Test fixture. Used in the
+    # `PHPMailer\LocalizationTest`..." is shared by 12 files and would be truncated mid-sentence,
+    # and zod carries prose containing `@zod` and `@standard-schema` that is not a tag at all.
+    # A name list cannot make that mistake.
+    r"internal|package|subpackage|category|covers\w*|group|requires|api|filesource|uses|see|link|"
+    r"example|licen[cs]e|method|property(?:-read|-write)?|mixin|template|extends|implements|"
+    r"immutable|readonly|psalm|phpstan|(?:phpstan|psalm)-[\w-]+|type|"
+    r"runTestsInSeparateProcesses|runInSeparateProcess|dataProvider|testWith|test|"
+    r"backupGlobals|preserveGlobalState|small|medium|large|"
+    r"__NO_SIDE_EFFECTS__|__PURE__)\b.*$", re.I | re.S)
 
 
 # C# and VB document with XML rather than @tags, and `<summary>` was reaching the index on 46 of
@@ -250,7 +379,17 @@ SKIP_OPENERS = re.compile(
     r"^\s*(?:#!|<\?php\b|<\?=|declare\s*\(|namespace\s|use\s|package\s|@file:|"
     r"import\s|from\s+[\'\"\w.]+\s+import\b|require[\s(]|require_relative\s|using\s\w|"
     r"extern\s+crate|part\s+of\s|library\s\w|@?import\b|open\s+\w+\s*$|"
-    r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|import|pragma|ifndef|if\s|endif))",
+    r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|import|pragma|ifndef|if\s|endif)|"
+    # 🐛 A prologue is an opener too, and leaving these three out cost more coverage than every
+    # other gap in this file put together. `leading_comment` abandons the whole file on the first
+    # line that is neither blank, an opener, nor a comment -- so ONE line of prologue between the
+    # licence header and the real description threw the description away. Measured on real
+    # repositories: express described 1 of 140 files ('use strict' on line 8), CodeIgniter 12 of
+    # 289 (defined('BASEPATH') on line 3), and every shell script opening `set -euo pipefail`.
+    # These are not statements the file is about; they are the same class of thing as `#!` and
+    # `import`, and they belong here rather than in a new branch of the reader.
+    r"""['\"]use (?:strict|client|server)['\"]|set\s+[-+][a-zA-Z]|shopt\s|"""
+    r"defined\s*\([^)]*\)\s*(?:or|\|\|)\s*(?:exit|die)\b)",
     re.I)
 # Only the /* ... */ family. Python never reaches leading_comment with a docstring — ast handles
 # those — so a triple-quote branch here would be dead code carrying its own escaping hazards.
@@ -271,6 +410,27 @@ MAGIC_COMMENT = re.compile(
     r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
 # How far into the opening comment to look for a licence. See the use site.
 BOILERPLATE_WINDOW = 240
+# 🐛 A comment that labels the import block is not a description of the file, and letting one
+# through is worse than leaving the file blank -- it counts as described, inflates coverage, and
+# every file in the project ends up sharing the same summary. Measured: skipping the JS directive
+# prologue took express from 1 described file to 37, and 31 of those 37 read "Module dependencies."
+# -- the JSDoc belonging to the `require` block below it. sinatra's 2,173-line core file has been
+# described as "external dependencies" all along, with no prologue involved at all.
+#
+# Matched on the wording rather than on what follows, deliberately. The tempting rule is "reject a
+# comment whose next code line is an import", but express's next line is `var Buffer =
+# require(...)`, which is an assignment and not an opener -- so that rule does not fire where it is
+# needed, and it WOULD fire on `// A small HTTP client.` above a plain `import`, which is a real
+# description. The wording is the reliable signal: a comment whose entire content is the word
+# "dependencies" is never about the file.
+IMPORT_LABEL = re.compile(
+    r"^(?:load(?:s|ing)?|require|import|include)?\s*(?:the\s+)?"
+    r"(?:module|external|internal|package|third[-\s]party|project|core|npm|node|composer|vendor)?\s*"
+    r"(?:dependencies|dependency|imports|requires|includes|autoloader|autoload)\b[\s.:;,-]*$", re.I)
+# Used only for the comparison against IMPORT_LABEL: a trailing doc tag of ANY name, not only the
+# handful DOC_TAG_TAIL knows. "Module dependencies. @private" and "Module dependencies. @api
+# private" are the same label with a visibility marker stapled on, and both have to read as one.
+ANY_DOC_TAG_TAIL = re.compile(r"[@\\]\w[\w-]*\b.*$", re.S)
 BOILERPLATE = re.compile(
     r"(?:copyright|\(c\)|©|licen[cs]ed?\b|all rights reserved|spdx|permission is hereby|"
     r"this (?:file|program|software|source) (?:is|may)\s+(?:free|provided|distributed|licensed|be)|redistribution|frozen_string_literal|"
@@ -380,7 +540,9 @@ def leading_comment(source, lang=None):
         # whole licence became a file's description. The window is the first sentence-ish now,
         # which is where a licence announces itself and where a real description has already said
         # what the file is.
-        if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]):
+        bare = ANY_DOC_TAG_TAIL.sub("", text).strip()
+        if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]) \
+                and not IMPORT_LABEL.match(bare):
             return _clip(text)
     return ""
 
@@ -487,6 +649,37 @@ def extract_python(source, path, lang='py'):
             for t in node.targets:
                 if isinstance(t, ast.Name) and t.id.isupper() and len(t.id) > 2:
                     consts.append(t.id)
+    # 🎯 Last resort, and the largest measured gap in the whole map. chamnan prints its own verdict
+    # on a fresh pallets/flask clone -- "described 5/81 files (6%) ... 76 file(s) have no opening
+    # comment, so the index cannot say what they do. That is the single biggest lever on this map's
+    # usefulness" -- and the 79 rows ending in `— —` spend 4,553 of the Quick Index's 9,549 bytes
+    # saying a path exists and how long it is. src/flask/app.py, 1,628 lines, is one of them.
+    #
+    # The description is already inside the file. Measured with ast across that clone: 1 module
+    # docstring in 83 Python files (1%), against 256 of 442 functions and classes documented (57%).
+    #
+    # The objection is real and this is shaped around it: a symbol's docstring describes a SYMBOL,
+    # and a utility module whose first documented thing is a private helper would get a summary
+    # confidently about the wrong subject -- the failure this project says is worse than silence.
+    # Three things answer that. Only PUBLIC names are considered, so `_slugify` cannot be picked.
+    # A class is preferred over a function, because a file usually holds one class and many
+    # functions. And the symbol is NAMED in the summary, so the row reads "`Flask`: The flask
+    # object implements a WSGI application" -- which cannot be read as a claim about the file,
+    # only as a pointer to what is in it.
+    if not doc:
+        # 🐛 The FIRST documented class is usually not the file's subject. Measured by reading
+        # flask's own rows: cli.py came out as `NoAppException` rather than `FlaskGroup`,
+        # config.py as `ConfigAttribute` rather than `Config`, blueprints.py as
+        # `BlueprintSetupState` rather than `Blueprint` -- in each case an exception or a helper
+        # that happens to be defined above the thing the file is named after. Ranking by method
+        # count fixes all three and costs nothing: the list is already collected two lines up, and
+        # "the class with the most methods" is a good proxy for "the class this file is about".
+        cands = [c for c in classes if c[1] and not c[0].startswith("_")]
+        pick = max(cands, key=lambda c: len(c[2])) if cands else \
+            next((f for f in funcs if f[1] and not f[0].startswith("_")), None)
+        if pick:
+            name = pick[0].split("(")[0]
+            doc = f"`{name}`: " + _clip(pick[1].split(". ")[0], 100)
     return doc, funcs, classes, consts
 
 
@@ -762,7 +955,26 @@ def indexable(root, nested=None):
         # a repository that happens to live under /tmp, ~/build, or any directory named env/out/
         # target would have every one of its files skipped and report "no source files" — silently,
         # since nothing errors. Found 2026-08-19 by running the tool inside /private/tmp.
-        if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
+        rel_parts = path.relative_to(root).parts
+        _gen = _generated_globs(root)
+        if _gen and _is_generated("/".join(rel_parts), _gen):
+            SKIPPED_GENERATED.add("/".join(rel_parts))
+            continue
+        tracked = _tracked_ambiguous(root)
+        dropped = None
+        for i, part in enumerate(rel_parts[:-1]):
+            if part not in SKIP_DIRS:
+                continue
+            here = "/".join(rel_parts[:i + 1])
+            if part in AMBIGUOUS_SKIP and here in tracked:
+                continue      # committed source that happens to share a build-output name
+            dropped = here
+            break
+        if dropped is not None:
+            # `.chamnan/logs` is our own workspace, not the user's build output, and reporting it
+            # on every run in every repository is noise that trains the reader to ignore the line.
+            if dropped.rsplit("/", 1)[-1] in AMBIGUOUS_SKIP and not dropped.startswith(".chamnan/"):
+                SKIPPED_BUILD_DIR.add(dropped)
             continue
         if redact.is_blocked(path):
             continue          # private keys, certificates, local databases — never opened at all
@@ -795,6 +1007,8 @@ def indexable(root, nested=None):
 def _scan(root):
     SKIPPED_TOO_LARGE.clear()
     SKIPPED_BINARY.clear()
+    SKIPPED_BUILD_DIR.clear()
+    SKIPPED_GENERATED.clear()
     files = []
     nested = _nested_repo_dirs(root)
     for path, lang in indexable(root, nested):

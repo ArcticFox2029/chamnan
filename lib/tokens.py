@@ -70,6 +70,8 @@ and can be rolled up earlier than it needs to be.
 # the Latin divisor at 0.42 tokens where it costs about 1. That was 18 of 306 characters in the
 # Chinese calibration sample and 18 of 480 in the Japanese one, which is most of the gap those two
 # used to show.
+from collections import Counter
+
 _CJK = ((0x4E00, 0x9FFF), (0x3040, 0x30FF), (0x3400, 0x4DBF),
         (0xAC00, 0xD7AF), (0xF900, 0xFAFF), (0x2E80, 0x2FDF), (0x3100, 0x312F),
         (0x3000, 0x303F), (0xFF00, 0xFFEF))
@@ -116,25 +118,46 @@ def weight(ch):
     return 1.0 / _LATIN_DIVISOR
 
 
+# 🐛 The loop below used to run per CHARACTER, calling _in() — itself a generator over range
+# tuples — twice each. Measured at 0.35 MB/s, and on apache/commons-lang (625 files, 8.5 MB) it was
+# **44 of chamnan-map's 46 seconds of scan time: 96% of the command's runtime**, producing one
+# headline number on line 2 of the output that no budget decision reads.
+#
+# Counter is the same arithmetic over DISTINCT characters instead of every character. Source is
+# overwhelmingly ASCII, so a megabyte of Java collapses to ~100 keys and the classification runs
+# ~100 times rather than a million. The weights are untouched: tokens.py's own docstring records
+# that a single flat divisor was measurably wrong for CJK, which is why the weighted version
+# exists, and a Japanese repository's headline would be off ~2.5× without it. Same inputs, same
+# outputs, one classification per distinct character.
+_WEIGHT_CACHE = {}
+
+
 def estimate(text):
     """Estimated token count for a string, weighted by the scripts it contains."""
     if not text:
         return 0.0
-    cjk = dense = symbol = space = other = 0
-    for ch in text:
-        o = ord(ch)
-        if _in(o, _CJK):
-            cjk += 1
-        elif _in(o, _DENSE):
-            dense += 1
-        elif ch.isspace():
-            space += 1
-        elif not ch.isalnum():
-            symbol += 1
-        else:
-            other += 1
-    return (cjk * _CJK_WEIGHT + dense * _DENSE_WEIGHT + symbol * _SYMBOL_WEIGHT
-            + space * _SPACE_WEIGHT + other / _LATIN_DIVISOR)
+    total = 0.0
+    cache = _WEIGHT_CACHE
+    for ch, n in Counter(text).items():
+        w = cache.get(ch)
+        if w is None:
+            o = ord(ch)
+            if _in(o, _CJK):
+                w = _CJK_WEIGHT
+            elif _in(o, _DENSE):
+                w = _DENSE_WEIGHT
+            elif ch.isspace():
+                w = _SPACE_WEIGHT
+            elif not ch.isalnum():
+                w = _SYMBOL_WEIGHT
+            else:
+                w = 1.0 / _LATIN_DIVISOR
+            # Bounded by the number of distinct characters a repository actually contains; a
+            # polyglot tree with CJK, Thai and emoji is still a few thousand keys.
+            if len(cache) < 20000:
+                cache[ch] = w
+        total += w * n
+    return total
 
 
 def cut_at(text, budget):

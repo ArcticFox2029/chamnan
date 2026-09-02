@@ -35,6 +35,10 @@ from pathlib import Path
 #
 # So each module keeps its own filter, applied after the walk exactly as before, and this set holds
 # only the directories all five agreed on. That is enough: these are the ones that are enormous.
+# Directories the walk could not enter, filled by the onerror hook below and reported by
+# chamnan-map. A set, because one walk may hit the same parent repeatedly.
+UNREADABLE = set()
+
 PRUNE_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".venv"}
 
 _CACHE = {}
@@ -56,7 +60,24 @@ def _walk(root):
     """
     base = Path(root)
     files, gits = [], []
-    for dirpath, dirnames, filenames in os.walk(base, topdown=True, followlinks=False):
+    # 🐛 os.walk defaults to onerror=None, which means IGNORE SILENTLY. A directory chamnan could
+    # not read was indistinguishable from one that is not there: chmod 000 on a subtree holding 5
+    # of a repository's 6 source files produced "1 source file(s)" and a green
+    # "described 1/1 files (100%)". Root-owned directories left by a Docker bind mount or a CI
+    # checkout are the ordinary way this happens, and the session-start hook's own comment names
+    # that exact scenario as the reason its guard exists.
+    #
+    # Collected, never raised: every scanner shares this one walk and a session must still start.
+    UNREADABLE.clear()
+
+    def _note(err):
+        try:
+            UNREADABLE.add(str(Path(err.filename).relative_to(base)))
+        except (ValueError, TypeError):
+            pass
+
+    for dirpath, dirnames, filenames in os.walk(base, topdown=True, followlinks=False,
+                                                onerror=_note):
         here = Path(dirpath)
         rel_dir = here.relative_to(base)
         # A submodule and a `git worktree add` checkout both carry `.git` as a FILE holding
