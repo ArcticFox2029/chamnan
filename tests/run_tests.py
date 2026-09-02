@@ -8096,6 +8096,73 @@ check("a file that is ONLY the Xcode header is left undescribed rather than wron
                              "struct A {}\n", "swift") == "")
 
 
+# ------------------------------ what this package is allowed to execute, checked by reading the AST
+# The README states what `subprocess` is used for, and a security claim needs a guard that can fail.
+# The claim said "only ever to run `git`" and was false: `bin/chamnan-map` re-runs chamnan's own
+# session-start hook under `sys.executable`. Nothing caught it, because nothing was looking.
+#
+# So this walks every source file, finds every `subprocess.*` call, and reads the first element of
+# the argv list it is handed. Two things are permitted and both are named in the README: the literal
+# "git", and `sys.executable` — this interpreter re-running a file that ships inside this package.
+# Anything else fails here, including a new call site added by someone who did not read the README.
+_exec_allowed, _exec_found, _exec_bad = {"git"}, [], []
+for _pyf in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))
+                   + [p for p in (ROOT / "bin").iterdir() if p.is_file()]):
+    try:
+        _tree = _pa.parse(_pyf.read_text(encoding="utf-8"))
+    except SyntaxError:
+        continue
+    for _node in _pa.walk(_tree):
+        if not isinstance(_node, _pa.Call):
+            continue
+        _fn = _node.func
+        if not (isinstance(_fn, _pa.Attribute) and isinstance(_fn.value, _pa.Name)
+                and _fn.value.id == "subprocess"):
+            continue
+        if not _node.args:
+            continue
+        _argv = _node.args[0]
+        _where = f"{_pyf.name}:{_node.lineno}"
+        # A list literal: read its first element. Anything else (a name built earlier) is resolved
+        # by hand below, because a test that silently skips what it cannot read is the vacuous kind.
+        if isinstance(_argv, (_pa.List, _pa.Tuple)) and _argv.elts:
+            _first = _argv.elts[0]
+            if isinstance(_first, _pa.Constant) and _first.value == "git":
+                _exec_found.append((_where, "git"))
+            elif (isinstance(_first, _pa.Attribute) and _first.attr == "executable"):
+                _exec_found.append((_where, "sys.executable"))
+            else:
+                _exec_bad.append((_where, _pa.dump(_first)[:60]))
+        elif isinstance(_argv, _pa.Name):
+            # `subprocess.run(args, ...)` — chamnan-map builds `args` from sys.executable one line up.
+            _src = _pyf.read_text(encoding="utf-8").split("\n")
+            _prev = "\n".join(_src[max(0, _node.lineno - 12):_node.lineno])
+            if f"{_argv.id} = [sys.executable" in _prev:
+                _exec_found.append((_where, "sys.executable"))
+            else:
+                _exec_bad.append((_where, f"argv built as {_argv.id}, unresolved"))
+        else:
+            _exec_bad.append((_where, type(_argv).__name__))
+
+check("every subprocess call site executes git or this interpreter, and nothing else",
+      not _exec_bad)
+if _exec_bad:
+    for _w, _d in _exec_bad:
+        print(f"    executes something else: {_w} — {_d}")
+check("...and the check actually found call sites, so it is not passing on an empty list",
+      len(_exec_found) >= 5)
+check("...including at least one that is NOT git, which is why the README's old wording was wrong",
+      any(k == "sys.executable" for _, k in _exec_found))
+# The claim in the README has to match what was just measured, or the guard guards nothing.
+# Assert the property, not the absence of a string: the first wording of the fix still contained
+# the old phrase inside a longer, correct sentence, and a substring check called that a failure.
+_rdm = (ROOT / "README.md").read_text(encoding="utf-8")
+_srow = next((l for l in _rdm.split("\n") if l.startswith("| `subprocess` |")), "")
+check("the README has a row describing what subprocess runs", bool(_srow))
+check("...and it names BOTH git and this interpreter, which is what the AST walk just measured",
+      "git" in _srow and ("interpreter" in _srow or "sys.executable" in _srow))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

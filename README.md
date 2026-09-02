@@ -1393,10 +1393,17 @@ suite** rather than asserted in a sentence:
 | network calls at runtime | **none** — no runtime file imports `socket`, `urllib`, `http`, `requests` or any sibling |
 | third-party dependencies | **none** — every import is Python's standard library or chamnan's own `lib/` |
 | a manifest to install one from | **none** — no `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile` or lockfile |
-| `subprocess` | present, and only ever to run `git` |
+| `subprocess` | present, and only ever to run `git` or this same Python interpreter on a file that ships inside chamnan — `chamnan-map` re-runs the session-start hook so it shows you the real injection rather than a second model of it |
 
 There is nothing to fetch, so there is nothing to fetch *and execute*; and there is nothing beneath
 it to compromise. Those four rows are `check()`s that fail the build if they stop being true.
+
+That last row said "only ever to run `git`" until 2026-09-02, and it was wrong: `chamnan-map` spawns
+`sys.executable` on `hooks/chamnan_session_start.py`. Nothing caught it, because the row had no
+guard — so the fix is not only the wording. A check now parses every source file, finds every
+`subprocess` call, and reads the first element of the argv it is handed; a call site that executes
+anything but `git` or this interpreter fails the build, and a call site whose argv the check cannot
+resolve fails it too rather than being skipped.
 
 ### 9a. The exfiltration chain, and where chamnan breaks it
 
