@@ -7549,8 +7549,14 @@ _memd = Path(tempfile.mkdtemp(prefix="chamnan-mem-")) / ".chamnan" / "memory"
     "# Never write to prod\n\nThe production database is read-only from here.\n", encoding="utf-8")
 _rules = _mem2.rules_text(_memd.parent.parent)
 check("THE RULES CUT NEVER LEAVES A FENCE OPEN", _rules.count("```") % 2 == 0)
-check("...so the notice that something was left out is itself visible",
-      "more rules in" in _rules)
+# 🐛 This asserted the exact wording of the WHOLE-BUDGET notice, which is one of two paths now. A
+# single overall cap meant one long rule ate the budget and every rule after it was dropped —
+# measured on the repository this was built in, two rules totalling 6,392 characters returned
+# 1,612, with rule one cut mid-sentence and rule two never shown. Every rule now gets a share
+# first, so this fixture fits and takes the other path. The property being protected is that the
+# reader is told where the rest went, not which of the two sentences says it.
+check("...so the reader is told where the part that did not fit has gone",
+      "memory/rules/" in _rules)
 check("A RULE THAT DID NOT FIT IS NAMED, NOT JUST COUNTED", "Never write to prod" in _rules)
 
 # The title cap was applied to a category-then-filename concatenation, so ten decisions and two

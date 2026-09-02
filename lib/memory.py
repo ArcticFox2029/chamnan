@@ -69,6 +69,25 @@ def title_of(path, text=None):
     return path.stem.replace("-", " ")
 
 
+def _cut_clean(body, limit):
+    """`body` cut to `limit`, never inside a fenced block and never mid-line.
+
+    The same two hazards the whole-budget cut below documents: a cut inside ``` leaves the fence
+    open and everything after it renders as code, and a cut mid-sentence reads as corruption.
+    """
+    head = body[:limit]
+    if head.count("```") % 2:
+        head = head[:head.rfind("```")]
+    # Back off to a line break, but only a nearby one: a rule written as one long paragraph has no
+    # newline to find, and `rsplit("\n", 1)[0]` then returned the heading alone — 171 characters of
+    # a 1,500-character budget. Fall back to a word boundary, which every text has.
+    nl = head.rfind("\n")
+    if nl > limit * 0.6:
+        return head[:nl].rstrip()
+    sp = head.rfind(" ")
+    return (head[:sp] if sp > limit * 0.6 else head).rstrip()
+
+
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
     out, titles = [], []
@@ -85,6 +104,27 @@ def rules_text(root):
     joined = "\n\n".join(out)
     if len(joined) <= MAX_RULES_CHARS:
         return joined
+    # 🐛 A single overall cap, so ONE long rule ate the whole budget and every rule after it was
+    # dropped. Measured on the repository this was built in: two rules totalling 6,392 characters
+    # returned 1,612 — rule one cut mid-sentence, rule two never shown at all. The comment above
+    # says "a repository with more than this in standing constraints has a documentation problem";
+    # the first real user hit the cap at n=2, which makes it a cap problem.
+    #
+    # A per-rule share first, so every rule gets a turn before any rule gets a second helping. The
+    # whole-budget cut below still runs afterwards and is still what guarantees the total — this
+    # only changes WHICH characters survive to reach it.
+    share = max(300, MAX_RULES_CHARS // max(len(out), 1))
+    if len(out) > 1 and any(len(o) > share for o in out):
+        trimmed = []
+        for body, title in zip(out, titles):
+            if len(body) <= share:
+                trimmed.append(body)
+            else:
+                trimmed.append(_cut_clean(body, share) +
+                               f"\n\n_…the rest of **{title}** is in `.chamnan/memory/rules/`._")
+        joined = "\n\n".join(trimmed)
+        if len(joined) <= MAX_RULES_CHARS:
+            return joined
     # 🐛 Two things went wrong at this cut, and both were silent.
     #
     # It landed anywhere, including inside a ``` block, leaving the fence open — after which every
