@@ -6498,6 +6498,29 @@ _cout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                        cwd=str(_clean), capture_output=True, text=True)
 check("...while a repository with nothing skipped says nothing about skipping",
       "not indexed" not in _cout.stdout and "COULD NOT BE READ" not in _cout.stdout)
+
+# 🐛 chamnan-report averaged a SUBAGENT STEP and a CONVERSATION TURN into one figure, and on this
+# machine the headline was entirely that artefact. Subagents carry about a fifth of a main-thread
+# context each and first appear in the very week the workspace was created, so the "after" side
+# filled with cheap calls. Recomputed independently, by week:
+#
+#     all calls    467k 516k 507k 432k 421k 452k 231k   -> printed -27.5%
+#     main thread  467k 516k 507k 432k 481k 495k 470k   -> flat, no trend
+#
+# The context a real turn carries did not fall. This is the command the README points at to answer
+# "is chamnan worth keeping", so a composition artefact here is the most expensive kind of wrong
+# this project can be — and it is the same shape as a precision figure measured on a corpus that
+# cannot fail: an arithmetic that is correct over a population nobody asked about.
+_rep = ROOT / "bin" / "chamnan-report"
+_rsrc = _rep.read_text(encoding="utf-8")
+check("THE REPORT SEPARATES CONVERSATION TURNS FROM SUBAGENT STEPS",
+      "isSidechain" in _rsrc and "subcalls" in _rsrc)
+check("...and says which of the two the reader is meant to act on",
+      "the number to read" in _rsrc and "not to be read as the result" in _rsrc)
+# The artefact is shown rather than hidden: a reader who saw -27.5% yesterday must be able to find
+# out where it went, or the correction looks like the tool quietly moving its own goalposts.
+check("...and still shows the all-calls figure, with the reason it differs",
+      "carries roughly a fifth of a turn's context" in _rsrc)
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 
