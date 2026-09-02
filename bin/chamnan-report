@@ -318,6 +318,13 @@ def print_pointer(root, project_dir):
 
 
 def main(argv):
+    # 🐛 argv was never read, so `chamnan-report --help` ran the full report — and because this is
+    # the one command that prunes, it also deleted session records older than 30 days. Every
+    # sibling command handles -h/--help; this one answered a question about itself by mutating the
+    # workspace.
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__.strip())
+        return 0
     root = ws.find_root()
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")

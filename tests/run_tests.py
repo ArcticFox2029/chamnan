@@ -6673,6 +6673,47 @@ for _ts in ("def f(x):\n    return x + 1\n" * 200,
 # it: a CJK character must still cost more than a Latin one.
 check("...and CJK is still weighted above Latin, which is why this file exists",
       tokens.estimate("認証システム") > tokens.estimate("authsystem"))
+
+# 🐛 Four commands that answered the wrong question or none at all.
+_cmdr = Path(tempfile.mkdtemp()).resolve()
+(_cmdr / ".git").mkdir()
+(_cmdr / "src").mkdir()
+(_cmdr / "src" / "a.py").write_text('"""A."""\ndef a(): pass\n')
+ws.ensure(_cmdr)
+# append() only writes to a DECLARED thread — an unknown name is far more likely a typo than a
+# genuinely new line of work, and it says so. The first version of this fixture skipped create()
+# and silently recorded nothing, which is the module behaving exactly as documented.
+timeline.create(_cmdr, "Auth rework", "2026-09-01")
+timeline.append(_cmdr, "auth-rework", "2026-09-02", "rolled back once", ["src/a.py"])
+def _run(cmd, *args):
+    return subprocess.run([sys.executable, str(ROOT / "bin" / cmd), *args],
+                          cwd=str(_cmdr), capture_output=True, text=True)
+# An ABSOLUTE path is the canonical form in Claude Code — Read and Edit both require one — and
+# chamnan-timeline passed it to for_path raw, so it answered "nothing recorded" about a file with
+# entries while chamnan-impact answered correctly. Two commands, same file, opposite answers,
+# both exit 0. chamnan-impact documents fixing exactly this; the sibling never got it.
+_tl_rel = _run("chamnan-timeline", "for", "src/a.py")
+_tl_abs = _run("chamnan-timeline", "for", str(_cmdr / "src" / "a.py"))
+check("AN ABSOLUTE PATH GETS THE SAME TIMELINE ANSWER AS A RELATIVE ONE",
+      ("rolled back once" in _tl_rel.stdout) == ("rolled back once" in _tl_abs.stdout))
+# chamnan-impact returned before its own thread join, so on day one — no index yet — asking what
+# happened last time a file changed gave exit 1 and none of the history sitting in threads/.
+_imp = _run("chamnan-impact", "src/a.py")
+check("...and with no index yet, a file's recorded history is still shown",
+      "rolled back once" in _imp.stdout)
+check("...while a file with neither index nor history still says to build the index",
+      _run("chamnan-impact", "src/nothing.py").returncode == 1)
+# The one command taking two positional arguments printed a single newline when you forgot the
+# second, because [-3] of the docstring is the blank separator between the two usage lines.
+_pro = _run("chamnan-promote", "x.sh")
+check("...a missing argument prints the usage, not a blank line",
+      "chamnan-promote" in _pro.stderr and len(_pro.stderr.strip()) > 20)
+# chamnan-report never read argv, so --help ran the report — and since it is the one command that
+# prunes, asking it a question about itself deleted session records older than 30 days.
+_hlp = _run("chamnan-report", "--help")
+check("...and --help on the one command that prunes explains itself instead of running",
+      _hlp.returncode == 0 and "context/call" not in _hlp.stdout)
+shutil.rmtree(_cmdr, ignore_errors=True)
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 
