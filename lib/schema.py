@@ -281,10 +281,18 @@ def scan(root, files):
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # 🐛 These read `raw`, which is bound only inside the SQL loop above. A repository with an
+        # ORM model and no `.sql` or `.prisma` file — a bare Django, Rails, SQLAlchemy, Room or JPA
+        # project, which is the ordinary case because most repositories check in no DDL — raised
+        # UnboundLocalError and wrote NO MAP.md AT ALL. Not a missing table: the whole index. The
+        # git pre-commit hook swallows the error with `|| true`, so the index then rots in silence.
+        # Where a `.sql` did exist it was worse than a crash: `raw` held the LAST SQL file's text,
+        # so every ORM table was described by a comment from a different file, read at the ORM
+        # file's byte offset. Each loop reads its own file's text, which is what `text` is.
         for pattern in (PRISMA_MODEL, SQLALCHEMY_TABLE, RAILS_TABLE,
                         ROOM_JPA_TABLE, ROOM_JPA_CLASS):
             for m in pattern.finditer(text):
-                add(m.group(1), f["path"], _summary_above(raw, m.start()))
+                add(m.group(1), f["path"], _summary_above(text, m.start()))
 
         # Django, separately: a class is a table only if `models.Model` is among its bases AND the
         # class is not abstract. Abstract mixins are a table's worth of fields with no table.
@@ -295,23 +303,23 @@ def scan(root, files):
                 body = text[m.end():min(nxt.start(), m.end() + 800)]
             if DJANGO_ABSTRACT.search(body):
                 continue
-            add(m.group(1), f["path"], _summary_above(raw, m.start()))
+            add(m.group(1), f["path"], _summary_above(text, m.start()))
 
         # TypeORM, separately: the decorator's own name beats the class name where it is given,
         # and the class name is only the fallback for a bare @Entity().
         named = set()
         for m in TYPEORM_NAMED.finditer(text):
             named.add(m.start())
-            add(m.group(1) or m.group(2), f["path"], _summary_above(raw, m.start()))
+            add(m.group(1) or m.group(2), f["path"], _summary_above(text, m.start()))
         for m in TYPEORM_ENTITY.finditer(text):
             if m.start() not in named:
-                add(m.group(1), f["path"], _summary_above(raw, m.start()))
+                add(m.group(1), f["path"], _summary_above(text, m.start()))
 
         # A computed __tablename__ names no table in this file, but the classes are still tables.
         # Recorded under their class names, which is the only name present, rather than dropped.
         if SQLALCHEMY_DECLARED.search(text) and not SQLALCHEMY_TABLE.search(text):
             for m in SQLALCHEMY_CLASS.finditer(text):
-                add(m.group(1), f["path"], _summary_above(raw, m.start()))
+                add(m.group(1), f["path"], _summary_above(text, m.start()))
 
     for name, count in partitions.items():
         if name in tables:

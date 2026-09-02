@@ -6961,6 +6961,40 @@ check("no skill names a .chamnan path the plugin never creates",
       not any("chamnan/tools/preflight" in q.read_text(encoding="utf-8")
               for q in (ROOT / "skills").rglob("*.md")))
 
+# ------------------------------ a repository with an ORM and no checked-in DDL
+# 🐛 A regression introduced by the comment-masking fix earlier tonight: `raw` was bound only
+# inside the `.sql`/`.prisma` loop and then read by the ORM loop below it. A bare Django, Rails,
+# SQLAlchemy, Room or JPA repository — the ordinary case, since most projects check in no DDL —
+# raised UnboundLocalError and wrote NO MAP.md AT ALL. The git pre-commit hook swallows the error
+# with `|| true`, so the index would then rot in silence.
+_orm = Path(tempfile.mkdtemp(prefix="chamnan-orm-"))
+(_orm / "models").mkdir()
+subprocess.run(["git", "-C", str(_orm), "init", "-q"], capture_output=True)
+(_orm / "models" / "orders.py").write_text(
+    "# Orders placed by customers.\nclass Order(models.Model):\n    pass\n", encoding="utf-8")
+(_orm / "app.py").write_text("# The entry point.\ndef main(): pass\n", encoding="utf-8")
+_ormrun = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                         cwd=str(_orm), capture_output=True, text=True)
+check("AN ORM MODEL WITH NO .sql FILE DOES NOT CRASH THE WHOLE INDEX",
+      _ormrun.returncode == 0 and "UnboundLocalError" not in _ormrun.stderr)
+check("...and the index is actually written", (_orm / ".chamnan" / "MAP.md").is_file())
+
+# The non-crashing form of the same bug: with a .sql present, `raw` held the LAST sql file's text,
+# so every ORM table was described by a comment from a different file at the ORM file's offset.
+(_orm / "db").mkdir()
+(_orm / "db" / "zz_last.sql").write_text(
+    "-- Rows purged nightly by the reaper job.\nCREATE TABLE audit_log (id int);\n", encoding="utf-8")
+(_orm / "models" / "sa.py").write_text(
+    "# Payment refunds issued to customers.\nclass Refund(Base):\n    __tablename__ = \"refunds\"\n",
+    encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_orm), capture_output=True)
+_ormmap = (_orm / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("A TABLE IS NOT DESCRIBED BY A COMMENT FROM A DIFFERENT FILE",
+      "reaper job" not in _ormmap.split("`refunds`")[1].split("\n")[0])
+check("...while the table that comment does belong to still has it",
+      "reaper job" in _ormmap.split("`audit_log`")[1].split("\n")[0])
+shutil.rmtree(_orm, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
