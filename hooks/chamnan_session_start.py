@@ -853,6 +853,27 @@ def main():
                 tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8"))
             except Exception:
                 tools = []
+            # 🐛 index.json arrives with a clone like anything else, and nothing checked that an
+            # entry names a tool that is actually there. This section's own header says "prefer
+            # these over writing a new script" — a direct push toward running whatever sits at the
+            # named path — so a listing of tools that do not exist is a listing of names a session
+            # will go looking for. `chamnan-promote` already applies `safe_tool_name` when it
+            # WRITES an entry; the existence check is the half a write-time guard cannot cover,
+            # because a name stays valid after the file it points at is deleted or swapped.
+            #
+            # Not a dict, and `name` not a string, are both reachable from committed JSON: the
+            # whole listing used to be one `.strip()` away from an AttributeError that would have
+            # taken the section with it.
+            def _real_tool(t):
+                if not isinstance(t, dict) or not isinstance(t.get("name"), str):
+                    return False
+                name = ws.safe_tool_name(t["name"])
+                if name is None:
+                    return False
+                t["name"] = name          # the validated form, not the raw field
+                f = wsdir / "tools" / name
+                return f.is_file() and ws.inside(f, root)
+            tools = [t for t in tools if _real_tool(t)] if isinstance(tools, list) else []
             if tools:
                 # index.json is in registration order, and this used to take the first MAX_TOOLS of it.
                 # So the twelve oldest tools held the list for ever: promote a thirteenth and it was
