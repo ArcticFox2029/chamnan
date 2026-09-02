@@ -17,7 +17,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
+import assets as assets_mod  # noqa: E402
 import mapper  # noqa: E402
+import tree  # noqa: E402
 import rollup  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -322,6 +324,24 @@ def main(argv):
     # does not warn; it states what was left out and how to disagree with it.
     # Said, not silent — same reasoning as the line below it. A file the repository itself declares
     # machine-written is the one exclusion a reader can check against a file they can open.
+    # 🐛 Three ways a file could vanish from the index while the run reported full confidence.
+    # SKIPPED_TOO_LARGE and SKIPPED_BINARY were recorded with a comment saying "Recorded, not
+    # merely skipped … false confidence rather than degraded confidence, which is the worse kind"
+    # — and then read by nothing but one test. Measured on azadkuh/sqlite-amalgamation: sqlite3.c
+    # is 8.5 MB, 71% of the repository and the reason it exists, absent from the index, with
+    # "described 3/3 files (100%)" printed beneath. The nested-checkout exclusion is correct but
+    # equally unannounced, so a submodule superproject's map is its glue file and nothing else.
+    if mapper.SKIPPED_TOO_LARGE:
+        _big = ", ".join(f"{p.name} ({assets_mod._human(sz) if isinstance(sz, int) else sz})"
+                        for p, sz in mapper.SKIPPED_TOO_LARGE[:4])
+        _more = len(mapper.SKIPPED_TOO_LARGE) - 4
+        print(f"  not indexed, over the size limit: {_big}" + (f" +{_more} more" if _more > 0 else ""))
+    if mapper.SKIPPED_BINARY:
+        print(f"  not indexed, binary content behind a source extension: "
+              f"{len(mapper.SKIPPED_BINARY)} file(s)")
+    if getattr(tree, "UNREADABLE", None):
+        _un = ", ".join(sorted(tree.UNREADABLE)[:4])
+        print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}")
     if mapper.SKIPPED_GENERATED:
         print(f"  not indexed, declared linguist-generated in .gitattributes: "
               f"{len(mapper.SKIPPED_GENERATED)} file(s)")

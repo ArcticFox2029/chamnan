@@ -6453,6 +6453,42 @@ _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme and "read-only" in _rdme.split("| **Git** |")[1][:900])
 
+# 🐛 Three ways a file could vanish from the index while the run reported full confidence.
+# SKIPPED_TOO_LARGE and SKIPPED_BINARY were recorded with a comment saying "Recorded, not merely
+# skipped … false confidence rather than degraded confidence, which is the worse kind" — and then
+# read by nothing but one test. Measured on azadkuh/sqlite-amalgamation: sqlite3.c is 8.5 MB, 71%
+# of the repository and the reason it exists, absent from the index, with "described 3/3 files
+# (100%)" printed underneath. And os.walk defaults to onerror=None, which means IGNORE SILENTLY:
+# chmod 000 on a subtree holding five of six source files gave "1 source file(s)" and a green
+# 100% bar. Root-owned directories from a Docker bind mount or a CI checkout are how that happens.
+_sil = Path(tempfile.mkdtemp())
+(_sil / "app" / "private").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", "."], cwd=str(_sil), capture_output=True)
+(_sil / "app" / "api.py").write_text('"""Public API surface."""\ndef routes(): pass\n')
+for _i in range(5):
+    (_sil / "app" / "private" / f"m{_i}.py").write_text(f'"""Private {_i}."""\ndef p(): pass\n')
+(_sil / "asset.py").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 50)
+os.chmod(_sil / "app" / "private", 0o000)
+_silout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                         cwd=str(_sil), capture_output=True, text=True)
+os.chmod(_sil / "app" / "private", 0o755)
+check("A DIRECTORY THAT COULD NOT BE READ IS NAMED, NOT SILENTLY TREATED AS ABSENT",
+      "COULD NOT BE READ" in _silout.stdout and "app/private" in _silout.stdout)
+check("...and a binary hiding behind a source extension is counted out loud",
+      "binary content behind a source extension" in _silout.stdout)
+# The skip stays a skip — printing it is the whole fix, per the report that found it. What must not
+# happen is a clean repository growing any of these lines.
+_clean = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q", "."], cwd=str(_clean), capture_output=True)
+for _i in range(6):
+    (_clean / f"m{_i}.py").write_text(f'"""Module {_i}."""\ndef f(): pass\n')
+_cout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                       cwd=str(_clean), capture_output=True, text=True)
+check("...while a repository with nothing skipped says nothing about skipping",
+      "not indexed" not in _cout.stdout and "COULD NOT BE READ" not in _cout.stdout)
+shutil.rmtree(_sil, ignore_errors=True)
+shutil.rmtree(_clean, ignore_errors=True)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
