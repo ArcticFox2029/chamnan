@@ -8870,6 +8870,18 @@ check("...and the whole leaf agreeing is",
       _rep._shared_tail("-a-my-app", "-b-my-app") >= 2)
 
 
+# ------------------------------ the same credential file was refused or read depending on its spelling
+# 🐛 `.netrc` was on the blocked list and its siblings were not. `_netrc` is the Windows name for
+# exactly `.netrc`; `.pgpass` and `pgpass.conf` are libpq's password file in its two spellings, and
+# every line in one ends with the password in clear. All four are stores whose whole content is the
+# secret, which is the property this list is for — not "a file that might contain one".
+for _cn in (".netrc", "_netrc", ".pgpass", "pgpass.conf", "id_rsa"):
+    check(f"a credential store is refused whatever its spelling ({_cn})",
+          _rd.is_blocked(_ppl.Path("/x") / _cn))
+for _on in ("notes.txt", "app.py", "netrc_helper.py", "pgpass_setup.md"):
+    check(f"an ordinary file is not ({_on})", not _rd.is_blocked(_ppl.Path("/x") / _on))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
