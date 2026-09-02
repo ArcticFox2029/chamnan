@@ -526,6 +526,7 @@ def main():
     root = ws.hook_root(payload)
     wsdir = ws.workspace(root)
     first_session = not wsdir.is_dir()
+    _expiring = []
     if not first_session:
         # Retention was reachable from `chamnan-report` and `chamnan-map` and from nowhere else --
         # 2 of the 9 commands in bin/. Someone who only ever uses the write skills accumulates
@@ -534,6 +535,13 @@ def main():
         # all. This hook is the one thing that runs whatever the session does. Best-effort and
         # silent, exactly as prune_logs already promises: housekeeping must never be the reason a
         # session fails to start.
+        # Named BEFORE the prune, not after: after, there is nothing left to keep. A `.md` under
+        # logs/ is a note somebody typed, and the window was designed for machine scratch — see
+        # ws.expiring_logs. The policy is unchanged; the loss is just no longer silent.
+        try:
+            _expiring = ws.expiring_logs(root)
+        except Exception:
+            _expiring = []
         try:
             ws.prune_logs(root)
             ws.prune_sessions(root)
@@ -589,6 +597,19 @@ def main():
     # user set is being ignored — silently, that is a settings file that appears not to work.
     _bad_cfg = ws.config_is_malformed(root)
     out = []
+    # 🐛 This was appended at the prune site, forty lines before `out` exists — a NameError the
+    # hook's own guard swallowed, so the warning never appeared and nothing said why. The
+    # MEASUREMENT has to happen before the delete and the EMIT has to happen after `out`; they are
+    # two statements, not one.
+    if _expiring:
+        # Filenames come from the repository, so they are made inert before interpolation and the
+        # whole line is scrubbed, like every other warning built from repository-controlled strings.
+        _names = ", ".join(f"`{mdblock.as_quoted(n)}` (in {h * 24:.0f}h)" for n, h in _expiring[:3])
+        _rest = f" _+{len(_expiring) - 3} more_" if len(_expiring) > 3 else ""
+        out.append(redact.scrub(
+            f"_⚠ **{len(_expiring)} written log(s) expire within a day** — {_names}{_rest}. "
+            f"`logs/` is scratch and they are deleted on the window; if any of it is worth keeping, "
+            f"`/chamnan:remember` puts it somewhere that is not on a timer._\n"))
     # Set before the guard below, not inside it: the emit step needs all three, and a failure part
     # way through must still be able to print what was built rather than dying on a name.
     header = "## chamnan\n"
