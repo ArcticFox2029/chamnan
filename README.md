@@ -40,7 +40,7 @@ is plain markdown committed beside the code.
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
-**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
+**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
 runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
@@ -1007,7 +1007,7 @@ your repository, which is the number that should actually decide anything.
 ### Where every other number in this README comes from
 
 <details>
-<summary><strong>Open the full trail — 18 citations, what each changed, and eight features measured and then not built</strong></summary>
+<summary><strong>Open the full trail — 18 citations, what each changed, and nine features measured and then not built</strong></summary>
 
 Below is the full trail: what was measured, by whom, and what it changed. Two rules keep it honest —
 **published results and results measured here are never mixed**, and **findings that argue against
@@ -1556,6 +1556,7 @@ attached that said no.
 | **Put symbol names into the injected roll-up** | `MAP.md` already answers **51.1%** of searched identifiers for **zero injected bytes**. |
 | **Incremental index rebuilds** | The published 8.7×/25.4× speedups are dominated by **embedding API cost**. chamnan has no embeddings; a full rebuild is **11.9 seconds** and free — and rebuilding wholesale is what makes the map unable to drift into being wrong. |
 | **Rank the injected tools list** | This repository has no `tools/index.json`, so the section never fires. Ranking an empty list is how a zero becomes a fake finding. |
+| **Log which searches the index failed to answer**, and **record what was injected each session** | Both would have made the 51.1% figure above recomputable instead of measured once by hand, and both write only local, gitignored, 7-day plain text that never leaves the machine. Not built anyway, on two grounds. The measurement does not need them: every figure on this page was taken from public repositories cloned for the purpose, and index-answerability can be measured the same way, with no user's searches in it. And the files would be telemetry-*shaped* — a reader who finds a log of what they grepped for has to be talked out of a conclusion, and "it never phones home" is worth more than a number that can be obtained another way. |
 
 ---
 
