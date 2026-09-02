@@ -7911,6 +7911,22 @@ for _cmd in sorted((ROOT / "bin").glob("chamnan-*")):
     check(f"EVERY COMMAND SCRUBS WHAT IT PRINTS: {_cmd.name}",
           "print = redact.emit" in _src and "import redact" in _src)
 
+# `--explain` billed sections that `fit.shrink` had left out of the block, so its own remainder
+# line printed NEGATIVE — the parts adding to more than the total they were subtracted from. The
+# table is measured from the delivered body now, so it cannot disagree with what shipped.
+_ex_body = ("## chamnan\n\n### Kept\nsome delivered text here\n\n"
+            "### Also kept\nmore delivered text\n")
+_ex_delivered, _ex_cur = {}, None
+for _l in _ex_body.splitlines(keepends=True):
+    if _l.startswith("### "):
+        _ex_cur = _l[4:].strip(); _ex_delivered[_ex_cur] = ""
+    elif _ex_cur is not None:
+        _ex_delivered[_ex_cur] += _l
+check("the explain splitter sees exactly the sections the body carries",
+      set(_ex_delivered) == {"Kept", "Also kept"})
+check("...and a section left out of the body cannot appear in it",
+      "Dropped" not in _ex_delivered)
+
 check("redact.emit scrubs a string argument", "AKIA" not in redact.scrub("k AKIAIOSFODNN7EXAMPLE"))
 check("...and leaves a non-string alone — a caller printing an int means it",
       redact.emit.__doc__ is not None and "Non-string" in redact.emit.__doc__)
