@@ -4598,6 +4598,34 @@ check("a complete index reports nothing missing", _ss2.unindexed(_st, _map_all) 
 check("a map with no Quick Index reports nothing rather than everything",
       _ss2.unindexed(_st, "# Map\n\nno index here\n") == (0, []))
 
+# The fixture above uses the pre-grouping row format — a full path in the row and no directory
+# heading — which is why this pair of checks passed while the real format was being misread. A
+# generated Quick Index groups by directory: the row carries a bare filename and the heading above
+# it carries the directory. Both shapes have to parse, so the fixtures now cover both.
+_map_grouped = ("# Map\n\n## Quick Index\n\n**`src/`**\n"
+                "- **`kept.py`** (2L) — kept\n- **`added.py`** (2L) — added later\n\n## Full Detail\n")
+check("a grouped Quick Index resolves rows against their directory heading",
+      _ss2.unindexed(_st, _map_grouped) == (0, []))
+_map_grouped_partial = ("# Map\n\n## Quick Index\n\n**`src/`**\n"
+                        "- **`kept.py`** (2L) — kept\n\n## Full Detail\n")
+_gn, _gex = _ss2.unindexed(_st, _map_grouped_partial)
+check("and still counts what a grouped index leaves out", _gn == 1 and _gex == ["src/added.py"])
+
+# Deleting a file moves no mtime forward, so index_is_behind cannot see this case at all — which is
+# why dead_entries is evaluated whether or not the index is stale.
+_dn, _dtotal, _dex = _ss2.dead_entries(_st, _map_grouped)
+check("an index naming only files that exist reports no dead entries",
+      _dn == 0 and _dtotal == 2)
+_map_dead = ("# Map\n\n## Quick Index\n\n**`src/`**\n"
+             "- **`kept.py`** (2L) — kept\n- **`deleted.py`** (2L) — since removed\n\n## Full Detail\n")
+_dn2, _dtotal2, _dex2 = _ss2.dead_entries(_st, _map_dead)
+check("a file the index names but disk does not have is reported dead",
+      _dn2 == 1 and _dtotal2 == 2 and _dex2 == ["src/deleted.py"])
+check("the total is named alongside the count, so 1-of-2 and 2-of-2 read differently",
+      _ss2.dead_entries(_st, _map_dead.replace("- **`kept.py`** (2L) — kept\n", ""))[:2] == (1, 1))
+check("a map with no Quick Index reports no dead entries",
+      _ss2.dead_entries(_st, "# Map\n\nno index here\n") == (0, 0, []))
+
 # The two callers must agree on what counts, or they will drift apart again.
 import tree as _tree, mapper as _mapper  # noqa: E402
 with _tree.session():
