@@ -1453,9 +1453,21 @@ live_state = live_root / ".chamnan" / "STATE.md"
 if live_state.is_file():
     live_out = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                               capture_output=True, text=True, cwd=live_root).stdout
-    check("on the live workspace, SETTLED reaches the injected output", "SETTLED" in live_out)
-    check("on the live workspace, Not this project reaches the injected output",
-          "Not this project" in live_out)
+    # 🐛 These two asserted that the strings appear in stdout, and they passed for weeks while the
+    # property they describe was FALSE in delivery: the block was 11,230 bytes, both headings sat
+    # near byte 10,000, and the host keeps the first 2,048 and writes the rest to a file the model
+    # must deliberately open. Present in stdout, absent from the session. The same shape as a
+    # precision figure measured on a corpus that cannot fail.
+    #
+    # Rewritten to assert the thing that decides whether the model ever sees them: the block has to
+    # FIT. A section that does not fit is named in the drop notice and is one grep away; a section
+    # past the host's cut is not named at all.
+    _live_bytes = len(live_out.encode())
+    check("THE LIVE WORKSPACE'S BLOCK FITS, SO WHAT IT CONTAINS IS ACTUALLY DELIVERED",
+          _live_bytes <= 9000 + 400)
+    # And when a pinned section cannot be brought back, the block says so rather than going over.
+    check("...and if a pinned section had to stay out, the block explains why",
+          "could not be brought back" in live_out or "SETTLED" in live_out)
 
 shutil.rmtree(no_workspace, ignore_errors=True)
 shutil.rmtree(empty_ws, ignore_errors=True)
