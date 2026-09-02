@@ -1065,7 +1065,30 @@ def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
         for title, src in dropped:
             print(f"    {title}" + (f"   {src}" if src else ""))
     print()
-    shown = [e for e in LEDGER if not e.get("skipped")]
+    # 🐛 The table used to be built from LEDGER alone, which records what each section COST TO
+    # BUILD — including sections `fit.shrink` then left out of the block entirely. So it billed a
+    # 3,304-token STATE.md that was never delivered, and its own remainder line printed as -3,396:
+    # the parts added up to more than the total they were being subtracted from. A negative
+    # remainder is the report saying it does not believe itself, and it was printed anyway.
+    #
+    # Measured from the delivered body instead, which is what this function's docstring already
+    # claimed ("every number here is measured from the text that was actually built"). That makes
+    # the dropped case right by construction rather than by remembering to subtract, and it fixes
+    # the second case nobody had noticed: a section RESTORED TRIMMED was billed at its full size.
+    # LEDGER is still where `source` comes from — it is the only record of where a section was read
+    # from, and that does not change when the text is cut.
+    delivered = {}
+    _cur = None
+    for _line in body.splitlines(keepends=True):
+        if _line.startswith("### "):
+            _cur = _line[4:].strip()
+            delivered[_cur] = ""
+        elif _cur is not None:
+            delivered[_cur] += _line
+    _src = {e["title"]: e.get("source", "") for e in LEDGER}
+    shown = [{"title": k, "tokens": tokens.estimate(f"### {k}\n" + v), "source": _src.get(k, ""),
+              "fenced": OPEN_MARK in v}
+             for k, v in delivered.items()]
     if shown:
         width = max(len(e["title"]) for e in shown)
         width = min(max(width, 20), 52)
