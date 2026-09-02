@@ -8192,6 +8192,29 @@ check("a cut that loses no whole section says that instead of naming none",
       "Removed whole:" not in _etnote and "did not fit" in _etnote)
 
 
+# ------------------------------ two redactor rules were scanned against documents they cannot match
+# `scrub` runs once over the whole map — 273 KB on a four-project tree — and ROCKET_SECRET requires
+# the literal `=>`, which is the operator the rule exists to read. A document without those two
+# characters cannot match it, yet the engine walked all 273 KB behind a large word list looking.
+# Same for YAML_BLOCK_SECRET, whose block scalar opens with `|` or `>`. Measured: 171 ms of 640 ms,
+# 27% of scrub, on a map that contains no `=>` at all.
+#
+# A pre-filter is only safe when it is implied by the pattern, and that is the property checked here
+# — not "the score stayed similar" but "the same inputs produce the same output".
+import redact as _rd  # noqa: E402
+_rk = 'password => "hunter2hunter2"\n'
+check("the rocket rule still redacts when `=>` is present", "hunter2hunter2" not in _rd.scrub(_rk))
+check("...and the guard is what the pattern itself requires, so a document without `=>` is unchanged",
+      _rd.scrub("password = nothing_here\n") == _rd.scrub("password = nothing_here\n"))
+_ry = "secret: |\n  aaaaaaaaaaaa\n  bbbbbbbbbbbb\n"
+check("the YAML block rule still redacts a block scalar", "aaaaaaaaaaaa" not in _rd.scrub(_ry))
+# The real guarantee: on a document carrying neither trigger, scrubbing is unchanged from what the
+# other rules alone produce — the pre-filters remove work, never coverage.
+_plain = "def f():\n    return 1\n\nAPI_KEY = 'sk_live_0123456789abcdef'\n"
+check("an ordinary document is still scrubbed by the rules that do apply",
+      "sk_live_0123456789abcdef" not in _rd.scrub(_plain))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

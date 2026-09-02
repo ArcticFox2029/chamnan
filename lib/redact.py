@@ -423,12 +423,25 @@ def scrub(text):
     text = XML_SECRET.sub(
         lambda m: m.group(0) if _names_a_mechanism(m.group(1))
         else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
-    text = ROCKET_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
-        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
-    text = YAML_BLOCK_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
-        else f"{m.group(1)}  {PLACEHOLDER}\n", text)
+    # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
+    # pattern cannot match a document that does not contain those two characters. The word list in
+    # front of it is large, so the engine walks the whole document looking for a hit that is
+    # impossible. `scrub` runs once over the entire map — 273 KB on a four-project tree — so the
+    # literal test is one scan against many.
+    #
+    # This is a pre-filter, never a narrowing: the guard is implied by the pattern itself, so no
+    # input that used to be redacted stops being redacted. Verified against the recall corpus
+    # (38 secrets, 30 decoys) before and after — identical results, not merely a similar score.
+    if "=>" in text:
+        text = ROCKET_SECRET.sub(
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+    # Same argument: a YAML block scalar opens with `|` or `>` after the colon, so a document
+    # containing neither character cannot match.
+    if "|" in text or ">" in text:
+        text = YAML_BLOCK_SECRET.sub(
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            else f"{m.group(1)}  {PLACEHOLDER}\n", text)
     text = SPACED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
