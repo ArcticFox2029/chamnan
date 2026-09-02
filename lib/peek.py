@@ -104,8 +104,46 @@ def _identify(head):
 
 
 # ------------------------------------------------------------------ tabular
+def _delimiter_for(path, default):
+    """The default, unless the header line says plainly that it is something else.
+
+    🐛 The comma was hard-coded, so `name;age;city` came back as **"1 columns"** with the whole
+    header line printed as the single column name. Stated as a fact, which is worse than declining:
+    `--find` against a column name can never match, and the two hundred tokens this function
+    produces are supposed to substitute for opening the file. Semicolon is what Excel writes in
+    every locale that uses the comma as a decimal separator — de, fr, es, it, pt, nl, pl, br — so
+    this is not an exotic shape.
+    #
+    A FALLBACK, never a replacement, and csv.Sniffer is deliberately not used. Sniffer raises on
+    plenty of legitimate files (a genuine single-column CSV among them) and, worse, GUESSES on
+    ambiguous ones: a comma-delimited file with semicolons inside quoted free text can sniff as
+    semicolon-delimited, turning a correct column list into a wrong one. That trades a visible
+    failure for an invisible one.
+
+    So the default is tried first and kept unless it yields exactly one column AND the header
+    itself contains a candidate. Reading only the header line matters: a real one-column file whose
+    VALUES contain semicolons keeps its single column, because the header does not.
+    """
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
+            header = fh.readline()
+    except OSError:
+        return default
+    if not header or len(next(csv.reader([header], delimiter=default), [])) > 1:
+        return default
+    best, best_n = default, 1
+    for cand in (";", "\t", "|"):
+        if cand == default or cand not in header:
+            continue
+        n = len(next(csv.reader([header], delimiter=cand), []))
+        if n > best_n:
+            best, best_n = cand, n
+    return best
+
+
 def peek_csv(path, find=None):
-    delim = "\t" if path.suffix.lower() in (".tsv", ".tab") else ","
+    default = "\t" if path.suffix.lower() in (".tsv", ".tab") else ","
+    delim = _delimiter_for(path, default)
     rows, total, widths = [], 0, Counter()
     hits, capped = [], False
     # 🐛 utf-8-SIG, matching mapper. A UTF-8 BOM is what Excel writes on "Save As CSV UTF-8" and
@@ -144,9 +182,14 @@ def peek_csv(path, find=None):
     # instead of the file being read. "2,000,000 data rows" for a file with three million of them
     # is a stated fact that is wrong, and a 60-column CSV listed 40 columns and never said the
     # other 20 existed. `_shape` below has always written `…+N`; say it here too.
+    # Named when it is not the one the extension implies, because a WRONG split looks exactly like
+    # a right one from the column list alone — and this function's whole claim is that its two
+    # hundred tokens stand in for opening the file.
+    _named = {";": "semicolon", "\t": "tab", "|": "pipe"}.get(delim) if delim != default else None
     out = [f"{len(header)} columns, "
            + (f"more than {total:,} data rows (stopped counting at the {ROW_CAP:,} cap)"
-              if capped else f"{total:,} data rows")]
+              if capped else f"{total:,} data rows")
+           + (f" — {_named}-delimited" if _named else "")]
     shown = header[:MAX_KEYS]
     more = f", …+{len(header)-len(shown)} more" if len(header) > len(shown) else ""
     out.append("columns: " + ", ".join(f"`{c.strip()}`" for c in shown) + more)

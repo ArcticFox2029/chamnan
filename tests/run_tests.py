@@ -6419,6 +6419,36 @@ check("...nor does it end up inside the first CSV column's name",
       "`name`" in _bomcsv and "\ufeff" not in _bomcsv)
 shutil.rmtree(_bomdir, ignore_errors=True)
 
+# 🐛 The comma was hard-coded, so a semicolon CSV came back as "1 columns" with the whole header
+# line printed as the single column name — a stated fact that is wrong, which is worse than
+# declining. Semicolon is what Excel writes in every locale using the comma as a decimal separator
+# (de, fr, es, it, pt, nl, pl, br), so this is not an exotic file.
+_dl = Path(tempfile.mkdtemp())
+(_dl / "semi.csv").write_text("name;age;city\nAlice;30;Berlin\nBob;41;Paris\n")
+(_dl / "pipe.csv").write_text("a|b|c\n1|2|3\n")
+# The traps, and why csv.Sniffer is not used: it raises on a genuine single-column file and GUESSES
+# on ambiguous ones, so a comma file with semicolons inside quoted text can sniff as semicolon and
+# turn a correct column list into a wrong one. The fallback reads the HEADER only, which is what
+# keeps these three right.
+(_dl / "single.csv").write_text("onlyonecolumn\nvalue1\nvalue2\n")
+(_dl / "semivalues.csv").write_text("notes\na;b\nc;d\n")
+(_dl / "quoted.csv").write_text('name,age\n"Smith, John",30\n')
+(_dl / "tabs.tsv").write_text("name\tage\tcity\nAlice\t30\tBerlin\n")
+check("A SEMICOLON CSV IS NOT ONE COLUMN CALLED `name;age;city`",
+      _pk.peek_csv(_dl / "semi.csv")[0].startswith("3 columns"))
+check("...and the delimiter is named, because a wrong split looks like a right one",
+      "semicolon-delimited" in _pk.peek_csv(_dl / "semi.csv")[0])
+check("...pipe too", _pk.peek_csv(_dl / "pipe.csv")[0].startswith("3 columns"))
+check("...while a genuinely single-column file keeps its one column",
+      _pk.peek_csv(_dl / "single.csv")[0].startswith("1 columns"))
+check("...and so does one whose VALUES contain semicolons but whose header does not",
+      _pk.peek_csv(_dl / "semivalues.csv")[0].startswith("1 columns"))
+check("...a quoted comma inside a field is still not a delimiter",
+      _pk.peek_csv(_dl / "quoted.csv")[0].startswith("2 columns"))
+check("...and .tsv still says nothing about a delimiter, because tab IS its default",
+      _pk.peek_csv(_dl / "tabs.tsv")[0] == "3 columns, 1 data rows")
+shutil.rmtree(_dl, ignore_errors=True)
+
 # The Configuration list is capped and was cut alphabetically, so a repo with 200 variables showed
 # everything up to about `D` under a line that said only "Showing 50 of 200".
 check("A CAPPED CONFIGURATION LIST NAMES THE RANKING IT WAS CUT ON",
