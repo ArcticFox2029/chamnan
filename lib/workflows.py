@@ -43,7 +43,7 @@ NOISE = {
 }
 
 # 🐛 [2026-08-27] Shell reserved words, not programs — a DIFFERENT reason for dropping a token than
-# NOISE, so kept as its own set rather than folded in. `_SPLIT` breaks a command on `;`, so
+# NOISE, so kept as its own set rather than folded in. `_split_unquoted` breaks a command on `;`, so
 # `for f in *; do echo "$f"; done` becomes three parts whose first words are `for`, `do` and `done`;
 # each parsed clean as a "program name" and was recorded as a signature. Measured on the live
 # workspace this module was developed against: `do` had appeared 50 times in commands.jsonl, `for`
@@ -76,11 +76,59 @@ KEEP_DAYS = 30        # calendar days retained
 KEEP_PER_DAY = 300    # ordinary commands kept per day; chamnan's own are never dropped
 TRIM_SLACK = 100      # amortise: rewrite once per ~100 surplus entries, not on every append
 
-_SPLIT = re.compile(r"\s*(?:&&|\|\||;|\|)\s*")
 _WORD = re.compile(r"^[A-Za-z_][\w.-]*$")
 # This plugin's own commands, which the per-day cap must never evict. Anchored, so a signature
 # that merely CONTAINS the word (`add-chamnan`, seen in the live log) is correctly not matched.
 _KEEP_ALWAYS = re.compile(r"^chamnan-")
+
+_SEPARATORS = ("&&", "||", ";", "|")
+
+
+def _split_unquoted(text):
+    """Split `text` on `;`, `&&`, `||` and `|`, but never inside a quoted string.
+
+    🐛 The regex this replaced (`\\s*(?:&&|\\|\\||;|\\|)\\s*`) split blindly on every occurrence
+    of these characters, with no idea one might sit inside a quoted argument. A commit message
+    like `git commit -m "Refactor; use fetch instead of urllib"` split into TWO parts on the `;`
+    still inside the quotes, and the second part's first word ("use" -- plain English from the
+    commit message, not a command) became a fabricated `signature()`, scored the same as a real
+    shell step and counted toward `repeated()`'s "you keep running this sequence" detector.
+
+    Not a full shell parser -- just enough to track single/double-quote state (with basic
+    backslash-escape handling inside double quotes, matching POSIX) for the four separators this
+    module actually splits on.
+    """
+    parts, buf, quote, i, n = [], [], None, 0, len(text)
+    while i < n:
+        ch = text[i]
+        if quote:
+            buf.append(ch)
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                i += 1
+                buf.append(text[i])
+            elif ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if text[i:i + 2] in ("&&", "||"):
+            parts.append("".join(buf))
+            buf = []
+            i += 2
+            continue
+        if ch in ";|":
+            parts.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    parts.append("".join(buf))
+    return parts
 
 
 def signature(command):
@@ -130,7 +178,7 @@ def signatures(command_text):
     collapse because `git add && git commit` twice in a row is one step repeated, not two.
     """
     out = []
-    for part in _SPLIT.split(command_text):
+    for part in _split_unquoted(command_text):
         sig = signature(part)
         if sig and (not out or out[-1] != sig):
             out.append(sig)

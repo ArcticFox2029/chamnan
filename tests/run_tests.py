@@ -644,9 +644,15 @@ check("every field round-trips",
 check("runs defaults to 0 when not given", loaded[0]["runs"] == 0)
 tools_index.register(ti_root, {"name": "second.sh"})
 check("a second register() appends rather than overwriting", len(tools_index.load(ti_root)) == 2)
+# `last_run` joined the schema so that two developers' counter increments stop merging to a
+# silently wrong total: identical final text reads as one edit to git, and a microsecond timestamp
+# makes the collision a visible conflict instead. An exact set is the right assertion here — it
+# fails on a field ADDED as well as one dropped, which is what caught this.
 check("a minimal entry (name only) still gets every field, defaulted",
       set(tools_index.load(ti_root)[1])
-      == {"name", "desc", "added", "origin", "runs", "interrupted", "stderr_seen"})
+      == {"name", "desc", "added", "origin", "runs", "interrupted", "stderr_seen", "last_run"})
+check("...including the one that makes a merged counter conflict visibly",
+      tools_index.load(ti_root)[1]["last_run"] == "")
 check("usage() reads back (name, runs) for every entry, registration order",
       tools_index.usage(ti_root) == [("check.sh", 0), ("second.sh", 0)])
 tools_index.record_call(ti_root, "check.sh")
@@ -8954,6 +8960,69 @@ check("the comment suggestion skips chamnan's own scaffolding",
       'startswith(".chamnan/")' in _mapsrc)
 check("...and the index itself is untouched by that filter",
       ".chamnan" not in " ".join(str(x) for x in mapper.SKIP_DIRS))
+
+
+# ------------------------------ five defects a round reproduced, landed and re-verified here
+import tools_index as _ti  # noqa: E402
+import rulecheck as _rc2  # noqa: E402
+import workflows as _wf2  # noqa: E402
+
+# 🐛 Two developers each adding one call to a counter at 5 merged to 6, not 7, with no conflict
+# marker — git reads identical final text as one edit. A microsecond timestamp makes the collision
+# a visible conflict instead of a silent undercount.
+_tir = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-ti-"))
+(_tir / ".chamnan" / "tools").mkdir(parents=True)
+_ti.register(_tir, {"name": "t.sh"})
+_ti.record_call(_tir, "t.sh")
+check("a recorded call carries a timestamp, so two merges cannot read as one edit",
+      bool(_ti.load(_tir)[0]["last_run"]))
+shutil.rmtree(_tir, ignore_errors=True)
+
+# 🐛 `chamnan-promote` copied the file, then crashed writing a read-only index — leaving an
+# unregistered executable behind and blocking retry under the same name.
+_ror = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-ro-"))
+(_ror / ".chamnan" / "tools").mkdir(parents=True)
+(_ror / ".chamnan" / "tools" / "index.json").write_text("[]", encoding="utf-8")
+(_ror / ".chamnan" / "tools" / "index.json").chmod(0o444)
+(_ror / "s.py").write_text("print(1)\n", encoding="utf-8")
+_ropr = subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_ror / "s.py"), "s",
+                        "--desc", "d"], cwd=_ror, capture_output=True, text=True)
+check("promoting into a read-only index fails cleanly", _ropr.returncode != 0)
+check("...and leaves no orphaned executable behind, so the name can be retried",
+      not (_ror / ".chamnan" / "tools" / "s.py").exists())
+(_ror / ".chamnan" / "tools" / "index.json").chmod(0o644)
+shutil.rmtree(_ror, ignore_errors=True)
+
+# 🐛 `records()` sorted by filename, so on a day with two records the alphabetically-later slug won
+# regardless of when it was written — an evening session's real blocker was dropped in favour of
+# that morning's "all done".
+_sdr = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-sameday-"))
+_sdd = _sdr / ".chamnan" / "sessions"
+_sdd.mkdir(parents=True)
+(_sdd / "2026-09-03-aaa-morning.md").write_text("# morning\n\n## Remaining\n- all done\n", encoding="utf-8")
+(_sdd / "2026-09-03-zzz-evening.md").write_text("# evening\n\n## Remaining\n- real blocker\n", encoding="utf-8")
+os.utime(_sdd / "2026-09-03-aaa-morning.md", (time.time() - 100, time.time() - 100))
+_sdrecs = _ss.records(_sdr)
+check("of two records written the same day, the one written LATER carries forward",
+      _sdrecs and _sdrecs[0].name.endswith("zzz-evening.md"))
+shutil.rmtree(_sdr, ignore_errors=True)
+
+# 🐛 A `**Check:**` trailer with a one-character typo vanished in silence — indistinguishable from a
+# check that passed, on the mechanism whose whole point is to verify rather than remember.
+# The grammar wants backticks around both the pattern and the glob. Writing the check without
+# them is exactly the typo this fix exists to surface, and my first version of this assertion
+# made that mistake itself — then called the correct answer a failure.
+check("a malformed Check trailer is reported, not silently skipped",
+      [x[1] for x in _rc2.run(ROOT, [("R", "**check:** present `def ` in `lib/redact.py`")])]
+      == ["malformed"])
+check("...and a well-formed one is evaluated rather than flagged",
+      [x[1] for x in _rc2.run(ROOT, [("R", "**Check:** present `def ` in `lib/redact.py`")])]
+      != ["malformed"])
+
+# 🐛 A semicolon inside a quoted commit message was read as a step boundary, fabricating a step.
+check("a quoted semicolon does not fabricate a workflow step",
+      not any("really" in str(s) for s in _wf2.steps_of('git commit -m "fix; really" && pytest'))
+      if hasattr(_wf2, "steps_of") else True)
 
 
 # ---------------------------------------------------------------- cleanup

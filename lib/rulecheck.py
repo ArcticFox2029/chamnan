@@ -32,6 +32,16 @@ from pathlib import Path
 
 CHECK = re.compile(r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+`(.+?)`\s*$", re.M)
 
+# 🐛 CHECK's grammar is exact: wrong case (`**check:**`), the wrong keyword ("for" instead of
+# "in"), a missing backtick -- any of it makes `CHECK.finditer()` find nothing, and `parse()`
+# returns [] exactly as it would for a rule that never had a Check trailer at all. A typo and "not
+# meant to be checked" were indistinguishable in the one line a session ever sees (`line()`),
+# which is worse than the check simply failing: a failing check says the rule is broken, a typo'd
+# one says nothing and looks like a check that passed. `_CHECK_LIKE` is deliberately loose --
+# case-insensitive, no keyword or backtick requirements -- so it catches an attempted trailer that
+# CHECK's strict grammar rejects, without trying to guess what was meant.
+_CHECK_LIKE = re.compile(r"^\*\*check:\*\*.*$", re.M | re.I)
+
 # Bounded on purpose: a rule check runs at session start, and a glob that matches the whole tree
 # would turn a health report into a reason to uninstall.
 MAX_FILES = 400
@@ -41,6 +51,19 @@ MAX_BYTES = 400_000
 def parse(text):
     """Every Check trailer in one rule's text, as (mode, pattern, glob)."""
     return [(m.group(1), m.group(2), m.group(3)) for m in CHECK.finditer(text)]
+
+
+def malformed(text):
+    """Lines that look like an attempted `**Check:**` trailer but do not match CHECK's grammar.
+
+    Stripped on both sides before comparing: `CHECK`'s trailing `\\s*$` can match right up to (but
+    not past) the line's own newline, and comparing an unstripped `_CHECK_LIKE` match against an
+    unstripped `CHECK` match must not report a well-formed trailer as malformed just because the
+    two patterns consumed a different amount of trailing whitespace on the same line.
+    """
+    well_formed = {m.group(0).strip() for m in CHECK.finditer(text)}
+    return [m.group(0).strip() for m in _CHECK_LIKE.finditer(text)
+            if m.group(0).strip() not in well_formed]
 
 
 # A quantified group that is itself quantified -- (a+)+, (\w*)*, (x|y+)* -- is the classic shape
@@ -182,7 +205,8 @@ def _matches(root, pattern, glob):
 def run(root, rules):
     """Evaluate every rule's checks. `rules` is [(title, text), ...].
 
-    Returns [(title, status, detail)] with status in {"holds", "BROKEN", "unverifiable"}.
+    Returns [(title, status, detail)] with status in
+    {"holds", "BROKEN", "unverifiable", "malformed"}.
     """
     out = []
     for title, text in rules:
@@ -202,6 +226,14 @@ def run(root, rules):
                 out.append((title, "BROKEN",
                             f"expected {mode} `{pattern}` in `{glob}`, "
                             f"found {hits} match(es) across {scanned} file(s)"))
+        # A distinct status from "unverifiable": that one means "the grammar is fine, the check
+        # just can't run right now" (a glob matching nothing yet). This means the grammar itself
+        # never parsed, so the check has NEVER run -- closer in spirit to BROKEN, but reported
+        # separately so it isn't confused with a rule the tree actually violates.
+        for bad_line in malformed(text):
+            out.append((title, "malformed",
+                        f"looks like an attempted **Check:** trailer but does not match the "
+                        f"required form (present|absent `PATTERN` in `GLOB`): `{bad_line}`"))
     return out
 
 
@@ -212,13 +244,28 @@ def line(results):
     and then does not read it on the day it says something else.
     """
     broken = [r for r in results if r[1] == "BROKEN"]
-    if not broken:
+    # 🐛 A typo in a `**Check:**` trailer (wrong case, "for" instead of "in", a missing backtick)
+    # made `parse()` find nothing, which is exactly what a rule with no Check trailer at all also
+    # produces -- so the typo silently never ran, forever, and looked identical to "this rule isn't
+    # meant to be mechanically checked." Reported here under its own line so it can't be confused
+    # with either "holds" or "not meant to be checked."
+    malformed_ = [r for r in results if r[1] == "malformed"]
+    if not broken and not malformed_:
         return ""
     # Rule titles and their `**Check:**` trailers are written by whoever wrote the repository, and
     # this line prints them in chamnan's own voice, outside the fence. Made inert first; the caller
     # scrubs the assembled block.
-    named = "; ".join(f"**{mdblock.as_quoted(t)}** — {mdblock.as_quoted(d, 120)}"
-                      for t, _, d in broken[:3])
-    more = f" _(+{len(broken) - 3} more)_" if len(broken) > 3 else ""
-    return (f"\n_⚠ {len(broken)} recorded rule(s) no longer hold against the tree: "
-            f"{named}{more}. Verified mechanically, not remembered._\n")
+    parts = []
+    if broken:
+        named = "; ".join(f"**{mdblock.as_quoted(t)}** — {mdblock.as_quoted(d, 120)}"
+                          for t, _, d in broken[:3])
+        more = f" _(+{len(broken) - 3} more)_" if len(broken) > 3 else ""
+        parts.append(f"⚠ {len(broken)} recorded rule(s) no longer hold against the tree: "
+                     f"{named}{more}. Verified mechanically, not remembered.")
+    if malformed_:
+        named = "; ".join(f"**{mdblock.as_quoted(t)}** — {mdblock.as_quoted(d, 120)}"
+                          for t, _, d in malformed_[:3])
+        more = f" _(+{len(malformed_) - 3} more)_" if len(malformed_) > 3 else ""
+        parts.append(f"⚠ {len(malformed_)} **Check:** trailer(s) do not parse and have never run: "
+                     f"{named}{more}. Fix the syntax or the rule is not actually verified.")
+    return "\n_" + "_\n\n_".join(parts) + "_\n"
