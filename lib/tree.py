@@ -190,12 +190,6 @@ def by_suffix(root, *suffixes):
     return [p for p in files(root) if p.suffix.lower() in wanted]
 
 
-def by_name(root, *names):
-    """Files whose exact name matches. Replaces `rglob('name')` for a literal filename."""
-    wanted = set(names)
-    return [p for p in files(root) if p.name in wanted]
-
-
 def matching(root, pattern):
     """Files matching a glob pattern. Replaces `rglob(pattern)`.
 
@@ -211,10 +205,3 @@ def matching(root, pattern):
             out.append(base / rel)
     return out
 
-
-def reset(root=None):
-    """Drop the cache. Only a long-lived process that mutates the tree needs this."""
-    if root is None:
-        _CACHE.clear()
-    else:
-        _CACHE.pop(str(Path(root).resolve()), None)
