@@ -258,10 +258,15 @@ def _django_mounts(root, files):
     for f in files:
         if f.get("lang") != "py":
             continue
-        try:
-            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        # `mapper._scan()` already read and decoded this file to build `f` -- reuse it rather than
+        # opening the file again. Falls back to a fresh read for a `files` list built without that
+        # field (a caller that assembled its own, a future test fixture).
+        text = f.get("_source")
+        if text is None:
+            try:
+                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
         if "include" not in text:
             continue          # DJANGO_INCLUDE requires `include(`; 86.6% of this loop was this file
         for m in DJANGO_INCLUDE.finditer(text):
@@ -291,10 +296,13 @@ def scan_routes(root, files):
         if f["lang"] not in ("py", "js", "go", "rb", "java", "php"):
             continue
         path = root / f["path"]
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        # Same reuse as _django_mounts above -- `mapper._scan()` already holds this text.
+        text = f.get("_source")
+        if text is None:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
         # `APIRouter` and `Blueprint` are FastAPI and Flask, so these two patterns can only ever
         # match Python — and both are unanchored scans with a 400-character bounded body, which is
         # the expensive shape. Running them over every JavaScript and Go file in a repository is
@@ -499,10 +507,15 @@ def scan_env(root, files):
             if not _is_ignored(root, path):
                 unsafe.append(rel)
     for f in files:
-        try:
-            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        # Same reuse as _django_mounts/scan_routes above -- every file in `files` was already read
+        # once by mapper._scan(). This loop has no language gate at all (env vars can be referenced
+        # from any source file), so before this it was the least selective of the three re-reads.
+        text = f.get("_source")
+        if text is None:
+            try:
+                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
         for m in ENV_IN_CODE.finditer(text):
             name = next(g for g in m.groups() if g)
             names.setdefault(name, f["path"])
