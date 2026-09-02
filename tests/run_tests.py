@@ -7936,6 +7936,47 @@ check("each session's block carries exactly one marker", len(_ma) == 1 and len(_
 check("the two sessions' markers do not collide", _ma != _mb)
 
 
+# ------------------------------ every Python file was parsed twice, once per caller
+# `extract_python` parsed the source, then `_is_empty_module` parsed the same string again a few
+# lines later in scan()'s loop. Measured over a 399-file corpus: 5.38 ms/file before, 2.75 ms/file
+# after -- 48.8% of the extract path. The memo is keyed by object identity, which can only miss,
+# never hit for a different string, so a miss degrades to exactly the behaviour that existed before.
+import ast as _pa  # noqa: E402
+import pathlib as _ppl  # noqa: E402
+import mapper as _pm  # noqa: E402
+
+_msrc = "import os\n\n\ndef f(a, b):\n    'Does a thing.'\n    return a + b\n"
+_pcalls = []
+_real_parse = _pa.parse
+
+
+def _counting_parse(*a, **k):
+    _pcalls.append(1)
+    return _real_parse(*a, **k)
+
+
+_pa.parse = _counting_parse
+try:
+    _pm._PARSE_MEMO = (None, None)
+    _pm._extract_one(_msrc, _ppl.Path("x.py"), "py")
+    _pm._is_empty_module(_msrc, "py")
+    check("one Python file is parsed once, not twice", len(_pcalls) == 1)
+    _pcalls.clear()
+    _pm._is_empty_module("x = 1\n", "py")
+    check("a different source is parsed rather than served from the memo", len(_pcalls) == 1)
+finally:
+    _pa.parse = _real_parse
+
+check("an empty module is still recognised as empty", _pm._is_empty_module("\n# only a comment\n", "py"))
+check("...and a module with a statement is not", not _pm._is_empty_module("x = 1\n", "py"))
+_pd, _pf, _pc, _pk = _pm._extract_one(_msrc, _ppl.Path("x.py"), "py")
+check("the extractor still returns the docstring through the memo", "Does a thing" in (_pd or ""))
+check("...and still finds the function", any(str(_n).startswith("f") for _n, *_ in _pf))
+check("unparseable source is still not described",
+      _pm._extract_one("def (:\n", _ppl.Path("b.py"), "py")[1] == [])
+check("...and is not called empty either", not _pm._is_empty_module("def (:\n", "py"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
