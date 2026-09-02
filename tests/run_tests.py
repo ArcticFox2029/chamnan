@@ -3902,7 +3902,28 @@ rollup.subprocess.run = _counting
 for _ in range(4):
     rollup.collapse(_many, "M.md", root=ROOT)
 rollup.subprocess.run = _real
-check("four collapses shell out to git at most once", len(_calls) <= 1)
+# Counted by SUBCOMMAND now, and with the disk cache removed first. Persisting the churn
+# answer across processes added a `git rev-parse HEAD` — 44 ms against the 1,263 ms
+# `git log` it lets a fresh session skip — so "at most one git call" became the wrong
+# assertion for the right property.
+#
+# 🐛 And without the unlink below this check passed for the wrong reason: a cache file left
+# by an earlier run made the first collapse skip the log, so the count fell to one whether
+# the code was right or not. A test that passes because of a leftover file is not a test.
+_cdisk = rollup._disk_cache_path(ROOT, rollup.CHURN_WINDOW)
+if _cdisk and _cdisk.exists():
+    _cdisk.unlink()
+_calls.clear()
+rollup._CHURN_CACHE.clear()
+rollup.subprocess.run = _counting
+for _ in range(4):
+    rollup.collapse(_many, "M.md", root=ROOT)
+rollup.subprocess.run = _real
+_subcmds = [next((x for x in (a[0] if a else []) if x in ("log", "rev-parse")), "?")
+            for a in _calls]
+check("four collapses walk the git history at most once", _subcmds.count("log") <= 1)
+check("...and ask for HEAD at most once", _subcmds.count("rev-parse") <= 1)
+check("...and shell out for nothing else", set(_subcmds) <= {"log", "rev-parse"})
 rollup._CHURN_CACHE.clear()
 
 # ------------------------------------- a zero is a bound, not a rate
@@ -8452,6 +8473,40 @@ check("a half-written line does not take the whole ledger down",
 check("the hook excludes chamnan's own files before recording",
       '.parts[0] == ".chamnan"' in (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8"))
 shutil.rmtree(_ceroot, ignore_errors=True)
+
+
+# ------------------------------ the churn ranking was recomputed from git on every single session
+# `_CHURN_CACHE` is per PROCESS, and the process that needs it most is the SessionStart hook — a
+# fresh interpreter on every session start and every compaction. Profiled: one
+# `git log --name-status -M -n 600` was 1.263 s of the hook's 2.387 s, 53%, on the critical path,
+# paid again each time for an answer that had not changed.
+#
+# HEAD is the exact key. Churn is derived from commit history and nothing else, so an unchanged HEAD
+# means an unchanged answer, and `git rev-parse HEAD` costs 44 ms against 1,263. Measured on this
+# repository: 1,560 ms cold, 36 ms in a fresh process with HEAD unchanged, identical result.
+import rollup as _rl  # noqa: E402
+_chroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-churn-"))
+(_chroot / ".chamnan" / "state").mkdir(parents=True)
+_chdisk = _rl._disk_cache_path(_chroot, _rl.CHURN_WINDOW)
+check("the cache lands in the workspace's state directory, not beside the source",
+      _chdisk is not None and _chdisk.parent.name == "state")
+_rl._remember(_chdisk, "abc123", ("k", 1), {"a.py": 4})
+check("a stored answer is read back for the same commit",
+      _rl._read_disk_cache(_chdisk, "abc123") == {"a.py": 4})
+check("...and refused for a different one, so a new commit recomputes",
+      _rl._read_disk_cache(_chdisk, "def456") is None)
+_chdisk.write_text("{not json", encoding="utf-8")
+check("a corrupt cache is ignored rather than raising", _rl._read_disk_cache(_chdisk, "abc123") is None)
+_chdisk.write_text('{"head": "abc123", "counts": "not a dict"}', encoding="utf-8")
+check("...and so is a cache of the wrong shape", _rl._read_disk_cache(_chdisk, "abc123") is None)
+# A repository with no git must still start a session; `_head` returns "" and the disk path is
+# simply never used.
+check("no git means no head and no cache, not an error", _rl._head(_chroot) == "")
+# 🐛 The file is 40 KB and changes with every commit. Committing it would put it in every diff and
+# merge it for nothing — the answer is a function of the commit, so any clone recomputes it.
+check("the shipped ignore template excludes it",
+      any("churn" in l for l in _ws.IGNORE_LINES))
+shutil.rmtree(_chroot, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup

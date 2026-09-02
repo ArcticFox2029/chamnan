@@ -594,6 +594,11 @@ IGNORE_LINES = [
     "logs/pointer_seen*.json",
     "logs/*.lock",
     "logs/repeat_digest.json",
+    "",
+    "# Derived, not recorded: rebuilt from git history whenever HEAD moves. Committing it would put",
+    "# a 40 KB file that changes on every commit into every diff, and merge it for no reason — the",
+    "# answer is a function of the commit, so any clone can recompute it in a second.",
+    "state/churn-*.json",
 ]
 
 

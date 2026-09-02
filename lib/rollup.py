@@ -5,6 +5,8 @@ the folding at session start, and chamnan-map, which has to tell the user what t
 separate estimate in the reporting path was wrong by 2.4x the first time it was tried — close enough
 to look plausible, far enough to make the decision on bad numbers. One implementation, called twice.
 """
+import json
+import os
 import subprocess
 
 import tokens
@@ -31,6 +33,54 @@ def forget_churn():
     _CHURN_CACHE.clear()
 
 
+def _head(root):
+    """The commit the churn answer belongs to, or "" when git cannot say."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def _disk_cache_path(root, window):
+    try:
+        import workspace as ws_mod
+        d = ws_mod.workspace(root) / "state"
+        return d / f"churn-{window}.json" if d.parent.is_dir() else None
+    except Exception:
+        return None
+
+
+def _read_disk_cache(path, head):
+    """The stored counts when they belong to this commit, else None. Never raises."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or data.get("head") != head:
+        return None
+    counts = data.get("counts")
+    return counts if isinstance(counts, dict) else None
+
+
+def _remember(path, head, key, counts):
+    """Store in both caches and return the counts, so a caller can `return _remember(...)`.
+
+    Best-effort on disk: a read-only checkout, a full disk or a racing writer all fall back to the
+    in-process cache, which is exactly the behaviour that existed before.
+    """
+    if path and head:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".%d.tmp" % os.getpid())
+            tmp.write_text(json.dumps({"head": head, "counts": counts}), encoding="utf-8")
+            tmp.replace(path)
+        except Exception:
+            pass
+    return _CHURN_CACHE.setdefault(key, counts)
+
+
 def _churn(root, window=CHURN_WINDOW):
     """Commits touching each tracked path over the last `window` commits, or {} if git cannot say.
 
@@ -42,6 +92,19 @@ def _churn(root, window=CHURN_WINDOW):
     key = (str(root), window)
     if key in _CHURN_CACHE:
         return _CHURN_CACHE[key]
+    # 🐛 That cache is per PROCESS, and the process it most needs to serve is the SessionStart hook,
+    # which is a fresh interpreter every session and every compaction. Profiled: this one
+    # `git log --name-status -M -n 600` is 1.263 s of the hook's 2.387 s — 53% of the thing sitting
+    # on the critical path of every session start on a 1,209-commit repository, paid again each time
+    # for an answer that had not changed.
+    #
+    # HEAD is the exact key: churn is derived from commit history and nothing else, so an unchanged
+    # HEAD means an unchanged answer, and `git rev-parse HEAD` costs 44 ms against 1,263.
+    head, disk = _head(root), _disk_cache_path(root, window)
+    if head and disk:
+        cached = _read_disk_cache(disk, head)
+        if cached is not None:
+            return _CHURN_CACHE.setdefault(key, cached)
     try:
         out = subprocess.run(
             # --name-status -M, not --name-only. Without rename detection a file that has been
@@ -65,9 +128,9 @@ def _churn(root, window=CHURN_WINDOW):
             # so the except below would not catch it and the whole hook would die.
             errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return _CHURN_CACHE.setdefault(key, {})
+        return _remember(disk, head, key, {})
     if out.returncode != 0:
-        return _CHURN_CACHE.setdefault(key, {})
+        return _remember(disk, head, key, {})
     counts = {}
     seen_commits = 0
     renamed_from = {}          # old path -> the name it ends up under
@@ -93,8 +156,8 @@ def _churn(root, window=CHURN_WINDOW):
         if old in counts and old != new:
             counts[new] = counts.get(new, 0) + counts.pop(old)
     if seen_commits < MIN_COMMITS_TO_RANK:
-        return _CHURN_CACHE.setdefault(key, {})
-    return _CHURN_CACHE.setdefault(key, counts)
+        return _remember(disk, head, key, {})
+    return _remember(disk, head, key, counts)
 
 
 def _disambiguate(path, name, top):
