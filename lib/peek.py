@@ -108,7 +108,23 @@ def peek_csv(path, find=None):
     delim = "\t" if path.suffix.lower() in (".tsv", ".tab") else ","
     rows, total, widths = [], 0, Counter()
     hits, capped = [], False
-    with path.open("r", encoding="utf-8", errors="replace", newline="") as fh:
+    # 🐛 utf-8-SIG, matching mapper. A UTF-8 BOM is what Excel writes on "Save As CSV UTF-8" and
+    # what a good many Windows editors add to source, and read as plain utf-8 it arrives as a
+    # U+FEFF character at the front of the file. The damage is not cosmetic:
+    #
+    #   bom.py   the index row reads `(3L, 1fn) — Module docstring here.` and peek showed
+    #            `1: ﻿"""Module docstring here."""` with NO summary and NO symbol list,
+    #            because the extractor did not recognise the docstring and peek fell through to
+    #            its plain-text branch. peek_source's own docstring says "same extractor as the
+    #            index, so a file peeked and a file indexed agree with each other". They did not.
+    #   bom.csv  the first column came back named `﻿name`, so `--find name` never matched it
+    #            and neither would anything downstream.
+    #
+    # Changed at all six decode points in one pass rather than at the branch that was noticed.
+    # _whole_file_tokens below prices the file by decoding it too, and if only some of them learn
+    # about the BOM then peek's shape and peek's own cost note stop being computed from the same
+    # string — which is the shape of the bug being fixed here, one level down.
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
         reader = csv.reader(fh, delimiter=delim)
         try:
             header = next(reader)
@@ -162,7 +178,7 @@ def _shape(value, depth=0):
 
 def peek_json(path, find=None):
     try:
-        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        data = json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
     except (json.JSONDecodeError, MemoryError) as err:
         return [f"not valid JSON as a whole ({type(err).__name__}); may be JSON Lines",
                 *peek_text(path, find)]
@@ -188,7 +204,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
     rows, total, bad = [], 0, 0
     hits = []
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
             for i, line in enumerate(fh):
                 line = line.strip()
                 if not line:
@@ -450,7 +466,7 @@ def peek_image(path):
 # ------------------------------------------------------------------ text and fallback
 def peek_text(path, find=None):
     lines, total = [], 0
-    with path.open("r", encoding="utf-8", errors="replace") as fh:
+    with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
         for i, line in enumerate(fh):
             total += 1
             if find:
@@ -509,7 +525,7 @@ def peek_source(path, find=None):
     Same extractor as the index, so a file peeked and a file indexed agree with each other.
     """
     lang = mapper.EXT_LANG.get(path.suffix.lower())
-    source = path.read_text(encoding="utf-8", errors="replace")
+    source = path.read_text(encoding="utf-8-sig", errors="replace")
     out = []
     try:
         summary, functions, classes, _rest = mapper._extract_one(source, str(path), lang)
@@ -634,7 +650,7 @@ def _whole_file_tokens(path, size):
     real cost.
     """
     if size <= SAMPLE_BYTES:
-        return tokens.estimate(path.read_text(encoding="utf-8", errors="replace")), False
+        return tokens.estimate(path.read_text(encoding="utf-8-sig", errors="replace")), False
     with path.open("rb") as fh:
         raw = fh.read(SAMPLE_BYTES)
     # Drop a trailing partial character rather than letting errors="replace" invent one.

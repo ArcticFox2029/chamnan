@@ -6397,6 +6397,28 @@ check("...while a file under the cap still states its count plainly",
       _pk.peek_csv(_many)[0] == "1 columns, 10 data rows")
 shutil.rmtree(_wide.parent, ignore_errors=True)
 
+# 🐛 peek read files as plain utf-8 while mapper reads them as utf-8-sig, so a UTF-8 BOM — what
+# Excel writes on "Save As CSV UTF-8", and what a good many Windows editors add to source — arrived
+# as a U+FEFF character at the front. peek_source's own docstring promises "same extractor as the
+# index, so a file peeked and a file indexed agree with each other"; the index row read
+# `(3L, 1fn) — Module docstring here.` while peek showed the raw BOM, no summary and no symbols,
+# because the extractor did not recognise the docstring and the plain-text branch took over.
+_bomdir = Path(tempfile.mkdtemp())
+(_bomdir / "bom.py").write_bytes(
+    b'\xef\xbb\xbf"""Module docstring here."""\ndef foo():\n    pass\n')
+(_bomdir / "bom.csv").write_bytes(b"\xef\xbb\xbfname,age\nAlice,30\n")
+_bomout = "\n".join(_pk.peek_source(_bomdir / "bom.py", None))
+check("A UTF-8 BOM DOES NOT COST THE FILE ITS SUMMARY AND SYMBOLS",
+      "Module docstring here." in _bomout and "foo()" in _bomout)
+check("...and the BOM character itself never reaches the output",
+      "\ufeff" not in _bomout)
+# Same root, second surface: the first column came back named with an invisible U+FEFF in front, so
+# `--find name` could never match it and neither could anything downstream.
+_bomcsv = "\n".join(_pk.peek_csv(_bomdir / "bom.csv"))
+check("...nor does it end up inside the first CSV column's name",
+      "`name`" in _bomcsv and "\ufeff" not in _bomcsv)
+shutil.rmtree(_bomdir, ignore_errors=True)
+
 # The Configuration list is capped and was cut alphabetically, so a repo with 200 variables showed
 # everything up to about `D` under a line that said only "Showing 50 of 200".
 check("A CAPPED CONFIGURATION LIST NAMES THE RANKING IT WAS CUT ON",
