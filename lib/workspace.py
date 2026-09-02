@@ -283,6 +283,46 @@ def enabled(part, root=None):
 SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl")
 
 
+def expiring_logs(root=None, within_days=1.0):
+    """Human-written log files about to be deleted by `prune_logs`, newest first.
+
+    🐛 Logs are scratch BY DESIGN, and `prune_logs` deletes them silently at the retention window —
+    which is correct for the `.jsonl` machine scratch it was written for, and quietly destructive
+    for a dated `.md` note somebody typed. Found on a real work repository: `logs/2026-08-27.md`,
+    8.1 KB documenting a root cause and a push-mirror gotcha, sitting 6.5 days into a 7-day window,
+    due to vanish on the next session opened there with nothing said before or after.
+
+    The repository's own CLAUDE.md was telling people to put durable knowledge in `logs/` — it
+    predates the write skills and never mentions them — so this is not one person's slip. Where the
+    instructions and the retention disagree, the retention wins in silence.
+
+    Not a change to the policy: a `.md` under `logs/` is still scratch and still goes. What changes
+    is that it is named once before it does, so the choice to keep it is available. `.jsonl` and
+    `.json` are excluded — machine scratch is what the window was designed for and naming it is
+    noise. So is anything in SELF_PRUNING_LOGS, which is not on this clock at all.
+    """
+    import time
+    logs = workspace(root) / "logs"
+    if not logs.is_dir():
+        return []
+    window = load_config(root).get("log_retention_days", 7) * 86400
+    cutoff = time.time() - window
+    soon = cutoff + within_days * 86400
+    out = []
+    for path in logs.iterdir():
+        try:
+            if not path.is_file() or path.suffix.lower() != ".md":
+                continue
+            if path.name in SELF_PRUNING_LOGS:
+                continue
+            mt = path.stat().st_mtime
+            if cutoff <= mt < soon:
+                out.append((path.name, (mt - cutoff) / 86400))
+        except OSError:
+            continue
+    return sorted(out, key=lambda r: r[1])
+
+
 def prune_logs(root=None):
     """Delete files under logs/ older than the retention window. Best-effort and silent: a
     housekeeping failure must never be the reason a command the user asked for fails.
@@ -749,6 +789,44 @@ def safe_tool_name(name):
 # is a worse hint; refusing to record anything is a worse tool.
 LOCK_TIMEOUT = 2.0
 LOCK_STALE = 30.0
+
+
+def atomic_write_text(dest, text, encoding="utf-8"):
+    """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
+
+    🐛 Two halves, and having only one is worse than having neither, because it looks correct.
+    `os.replace` is atomic and was never the problem; a STAGING NAME SHARED BETWEEN PROCESSES is.
+    Two writers put their content into the same `x.tmp` and then each replaced `x` with whatever
+    that file held at its own moment. `state.py` documented this and fixed itself; `coedit.py` and
+    `rollup.py` copied the fix; `pointer.py`, `chamnan-map` and `chamnan_scratch_watch.py` did not,
+    and each was reproduced losing data. Two of three concurrent `chamnan-map` runs produced a
+    MAP.md with content from BOTH builds interleaved, and the losing process exited 0.
+
+    So it is one function now rather than a rule every writer has to remember — the same reasoning
+    that put `redact.emit` behind every command's `print`. `test_no_writer_builds_its_own_tmp_name`
+    fails if a new one starts hand-rolling this again.
+
+    Returns True on success. Best-effort by default: a workspace on a read-only checkout must still
+    let a session start, so the caller decides whether a failed write is worth reporting.
+    """
+    tmp = None
+    try:
+        dest = pathlib.Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Per-process, and `.tmp` last so a suffix-matching reader never mistakes it for the real
+        # file. os.getpid() is enough here: two threads of one process writing the same workspace
+        # file is what `exclusive()` below is for, and every entry point is a separate process.
+        tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, dest)
+        return True
+    except Exception:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return False
 
 
 @contextlib.contextmanager

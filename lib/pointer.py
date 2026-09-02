@@ -40,6 +40,7 @@ from pathlib import Path
 import fnmatch
 
 import md
+import workspace as ws
 
 # Scanned in the order they are listed, which is the order they are printed: the reason first, then
 # the procedure, then the line of work. `label` is what the reader sees.
@@ -311,12 +312,10 @@ def mark_pointed(wsdir, session_id, rel_path):
         return
     d.setdefault("paths", []).append(rel_path)
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        # Beside the target, never in the system temp directory: os.replace fails with EXDEV across
-        # mount points, and a copy-and-delete fallback would give up the atomicity this is here for.
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d), encoding="utf-8")
-        tmp.replace(p)
+        # `.tmp` was a name shared by every process, so two sessions staged into the same file and
+        # each replaced the target with whatever it held at their own moment. One helper now, so
+        # the staging name cannot be got wrong here or anywhere else -- see ws.atomic_write_text.
+        ws.atomic_write_text(p, json.dumps(d))
         _sweep_seen(wsdir, p)
     except OSError:
         pass

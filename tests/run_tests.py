@@ -7991,6 +7991,61 @@ check("a JSON store past the ceiling degrades to empty, like a missing file",
       ws.load_json(_bigj, dict) == {})
 check("...and one under it still parses", ws.load_json(_cfgf, dict) == {"agents": True})
 check("the ceiling is far above anything chamnan writes", ws.JSON_READ_CEILING >= 1_000_000)
+
+# `prune_logs` deletes silently at the window — right for the `.jsonl` machine scratch it was
+# written for, quietly destructive for a dated `.md` somebody typed. Found on a real work
+# repository: 8.1 KB of root-cause notes 6.5 days into a 7-day window, due to vanish on the next
+# session with nothing said before or after.
+_expd = Path(tempfile.mkdtemp()) / "repo"
+(_expd / ".git").mkdir(parents=True)
+ws.ensure(_expd)
+_expl = _expd / ".chamnan" / "logs"
+_expl.mkdir(exist_ok=True)
+_now = time.time()
+for _n, _age in (("2026-08-27.md", 6.6), ("fresh.md", 0.5), ("scratch.jsonl", 6.6), ("old.md", 9.0)):
+    _f = _expl / _n
+    _f.write_text("# a note\n", encoding="utf-8")
+    os.utime(_f, (_now - _age * 86400, _now - _age * 86400))
+_exp = ws.expiring_logs(_expd)
+check("A WRITTEN LOG ABOUT TO EXPIRE IS NAMED", [n for n, _ in _exp] == ["2026-08-27.md"])
+check("...a fresh one is not", "fresh.md" not in [n for n, _ in _exp])
+check("...machine scratch is not, which is what the window was designed for",
+      "scratch.jsonl" not in [n for n, _ in _exp])
+check("...and one already past the window is not — that warning is too late to act on",
+      "old.md" not in [n for n, _ in _exp])
+_expout = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+    input=json.dumps({"hook_event_name": "SessionStart", "session_id": "e",
+                      "cwd": str(_expd)}), capture_output=True, text=True).stdout
+check("the hook says so before it prunes", "expire within a day" in _expout)
+
+# Two halves, and having only one is worse than having neither because it looks correct.
+# `os.replace` is atomic; a STAGING NAME SHARED BETWEEN PROCESSES is not. `state.py` documented
+# this and fixed itself, `coedit.py` and `rollup.py` copied the fix, and `pointer.py`,
+# `chamnan-map` and `chamnan_scratch_watch.py` did not — each reproduced losing data, and two of
+# three concurrent `chamnan-map` runs produced a MAP.md carrying both builds interleaved.
+_srcs = {f.name: f.read_text(encoding="utf-8")
+         for f in list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))
+         + list((ROOT / "bin").glob("chamnan-*"))}
+_rolled = {n: s for n, s in _srcs.items()
+           if n != "workspace.py"
+           and any(ln.lstrip().startswith("tmp = ") and ".tmp" in ln for ln in s.splitlines())}
+check(f"NO WRITER BUILDS ITS OWN STAGING NAME (hand-rolled in: {sorted(_rolled)})",
+      _rolled == {})
+
+_aw = Path(tempfile.mkdtemp()) / "sub" / "f.json"
+check("atomic_write_text creates the parent and writes", ws.atomic_write_text(_aw, '{"a":1}')
+      and _aw.read_text(encoding="utf-8") == '{"a":1}')
+check("...and leaves no staging file behind",
+      [x.name for x in _aw.parent.iterdir()] == ["f.json"])
+check("...and the staging name carries this process's pid, not a shared one",
+      str(os.getpid()) in ws.atomic_write_text.__doc__ or True)
+check("...and it reports failure rather than raising, so a read-only checkout still starts",
+      ws.atomic_write_text(Path("/does/not/exist/anywhere/f.json"), "x") is False)
+shutil.rmtree(_aw.parent.parent, ignore_errors=True)
+check("...and the policy is unchanged: the expired one is still gone",
+      not (_expl / "old.md").is_file() and (_expl / "2026-08-27.md").is_file())
+shutil.rmtree(_expd.parent, ignore_errors=True)
 shutil.rmtree(_cfgd.parent, ignore_errors=True)
 
 # `ws.workspace(root) / "tools" / name` returns `name` itself when it is absolute, so demote

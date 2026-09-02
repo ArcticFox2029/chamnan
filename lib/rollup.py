@@ -72,10 +72,8 @@ def _remember(path, head, key, counts):
     """
     if path and head:
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".%d.tmp" % os.getpid())
-            tmp.write_text(json.dumps({"head": head, "counts": counts}), encoding="utf-8")
-            tmp.replace(path)
+            import workspace as ws_mod
+            ws_mod.atomic_write_text(path, json.dumps({"head": head, "counts": counts}))
         except Exception:
             pass
     return _CHURN_CACHE.setdefault(key, counts)

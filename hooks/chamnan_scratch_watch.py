@@ -123,12 +123,8 @@ def _nudge_read(wsdir, session_id):
 def _nudge_write(wsdir, session_id, entry):
     p = _nudge_path(wsdir, session_id)
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        # Beside the target: os.replace fails with EXDEV across mount points, and a copy-and-delete
-        # fallback would give up the atomicity this is here for.
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(entry), encoding="utf-8")
-        tmp.replace(p)
+        # Shared `.tmp` name, same bug as pointer.py and chamnan-map had. See ws.atomic_write_text.
+        ws.atomic_write_text(p, json.dumps(entry))
         for old in p.parent.glob("*.json"):
             if old != p and time.time() - old.stat().st_mtime > NUDGE_MAX_AGE:
                 old.unlink()
