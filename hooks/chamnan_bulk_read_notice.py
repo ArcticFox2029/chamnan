@@ -43,6 +43,13 @@ import workspace as ws  # noqa: E402
 LOCKFILES = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "cargo.lock", "poetry.lock",
     "composer.lock", "gemfile.lock", "go.sum", "pipfile.lock", "flake.lock", "bun.lockb",
+    # 🐛 uv.lock was missing, and it is the one a Python project written since 2024 is most likely
+    # to have — pallets/flask's is 364 KB and 1,993 lines. Found while checking whether chamnan
+    # should report resolved dependency versions: it turns out chamnan tells the model not to read
+    # every OTHER lock format and stayed silent about the newest one, so the largest of them was
+    # the one file this notice did not cover. uv.lock is TOML, Gemfile.lock is capitalised in the
+    # wild and the comparison here is lowercased, and Podfile.lock is CocoaPods' equivalent.
+    "uv.lock", "podfile.lock", "packages.lock.json", "mix.lock", "pubspec.lock",
 }
 GENERATED = re.compile(r"\.(min\.(js|css)|bundle\.js|map|pb\.go|generated\.\w+)$", re.I)
 GENERATED_DIRS = ("dist", "build", "node_modules", "vendor", "__generated__", ".next", "target")

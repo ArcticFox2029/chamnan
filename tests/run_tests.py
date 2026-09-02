@@ -6338,6 +6338,17 @@ check("...and a file that did not move is not named",
       "a.py" not in _edited)
 shutil.rmtree(_st, ignore_errors=True)
 
+# 🐛 uv.lock was missing from the notice's list, and it is the lock file a Python project written
+# since 2024 is most likely to have — pallets/flask's is 364 KB and 1,993 lines. chamnan warned
+# about every other lock format and stayed silent about the largest and newest one. Found while
+# measuring whether resolved dependency versions were worth reporting; the answer to that is still
+# open, but this gap is not.
+_brn = import_hook_module("chamnan_bulk_read_notice.py")
+for _lf in ("uv.lock", "podfile.lock", "mix.lock", "pubspec.lock", "packages.lock.json",
+            "package-lock.json", "go.sum", "cargo.lock"):
+    check(f"a bulk read of {_lf} is noticed", _lf in _brn.LOCKFILES)
+check("...and an ordinary source file is not", "app.py" not in _brn.LOCKFILES)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
