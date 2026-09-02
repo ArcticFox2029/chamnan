@@ -449,7 +449,16 @@ def main(argv):
         print(f"\n  Under the {budget:,}-token session budget — injected per session as-is,"
               f" one line per file.")
     if pct < 70:
-        missing = [f["path"] for f in files if not f["doc"] and f.get("describable", True)][:8]
+        # 🐛 A new user with one real file was told to add a comment to a file chamnan itself had
+        # installed under `.chamnan/tools/`. Suggesting somebody comment the tool's own
+        # scaffolding is advice they cannot act on and would be wrong to.
+        #
+        # Only the SUGGESTION is filtered, never the index: on a repository that uses
+        # `.chamnan/` as a real working directory — which this project's own CLAUDE.md
+        # instructs — those files are the owner's work and belong in the map.
+        missing = [f["path"] for f in files
+                   if not f["doc"] and f.get("describable", True)
+                   and not str(f["path"]).startswith(".chamnan/")][:8]
         print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
         print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")
         for m in missing:

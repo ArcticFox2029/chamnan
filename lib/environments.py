@@ -29,6 +29,7 @@ touched in a long time, and the aging check REFUSES to report against an environ
 is inferred. Every fact in this file was typed by a person who knew it, which is exactly why it is
 worth keeping — and why a `Checked:` date is the only honest way to say how much to trust it.
 """
+import datetime
 import re
 import mdblock
 
@@ -59,8 +60,15 @@ def _ymd_to_ts(text):
     m = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text.strip())
     if not m:
         return None
+    # 🐛 `calendar.timegm` does arithmetic, not validation: it turns 2026-02-30 into 2026-03-02 and
+    # 2026-06-31 into 2026-07-01, silently, so a typo in a date became a real date two days later
+    # and the staleness check it feeds reported an all-clear about a day that does not exist.
+    # `datetime.date` refuses instead, which is what a validator is for. Same treatment
+    # `sessions.prune()` already applies to the dates it parses.
     try:
-        return calendar.timegm((int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, 0, 0))
+        y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        datetime.date(y, mo, d)                      # raises on 2026-02-30, 2026-06-31, 2026-13-01
+        return calendar.timegm((y, mo, d, 12, 0, 0))
     except (ValueError, TypeError):
         return None
 

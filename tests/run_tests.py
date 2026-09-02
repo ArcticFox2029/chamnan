@@ -8933,6 +8933,29 @@ check("the router patterns are gated on the literals they require",
       '"APIRouter" in text or "Blueprint" in text' in (ROOT / "lib" / "catalogs.py").read_text(encoding="utf-8"))
 
 
+# ------------------------------ an impossible date became a real one two days later
+# 🐛 `calendar.timegm` does arithmetic, not validation. `2026-02-30` came back as 2026-03-02 and
+# `2026-06-31` as 2026-07-01, silently — so a typo in a recorded date became a real date and the
+# staleness check it feeds reported an all-clear about a day that does not exist.
+import environments as _env  # noqa: E402
+for _bad in ("2026-02-30", "2026-06-31", "2026-13-01", "2026-00-10", "2025-02-29"):
+    check(f"an impossible date is refused rather than rolled forward ({_bad})",
+          _env._ymd_to_ts(_bad) is None)
+for _good in ("2026-02-28", "2026-12-31", "2024-02-29"):
+    check(f"a real date still parses ({_good})", _env._ymd_to_ts(_good) is not None)
+
+# 🐛 A new user with one real file was told to add a comment to a file chamnan itself had installed
+# under `.chamnan/tools/`. Only the SUGGESTION is filtered, never the index — on a repository that
+# uses `.chamnan/` as a working directory, which this project's own CLAUDE.md instructs, those files
+# are the owner's work and belong in the map. Measured here: 139 of 284 index rows are under
+# `.chamnan/`, and skipping them would hide 108 real regression tests.
+_mapsrc = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+check("the comment suggestion skips chamnan's own scaffolding",
+      'startswith(".chamnan/")' in _mapsrc)
+check("...and the index itself is untouched by that filter",
+      ".chamnan" not in " ".join(str(x) for x in mapper.SKIP_DIRS))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
