@@ -18,6 +18,54 @@ import re
 
 PLACEHOLDER = "<REDACTED>"
 
+# 🐛 Two rules in this file match on ADJACENCY alone — a secret word sitting next to a value, with
+# no `=` or `:` anywhere to say an assignment is happening. That is the weakest evidence any rule
+# here has, and it is what destroyed ordinary prose inside committed MAP.md files. Measured by
+# running the current redactor over four cloned repositories:
+#
+#   class HTTPBasicAuth — Attaches HTTP Basic <REDACTED> to the given Request object.
+#   _basic_auth_str(username, password) — Returns a Basic Auth <REDACTED>
+#   class DefaultCredentialsError — Used to indicate that acquiring default credentials <REDACTED>
+#   google/oauth2/gdch_credentials.py — Experimental GDCH credentials <REDACTED>
+#   class CustomAwsSupplier — Custom AWS Security Credentials <REDACTED>
+#
+# The published precision figure was 100%, and it stayed 100% because the decoy corpus tested
+# identifiers and config lines — not SENTENCES. MAP.md summaries are prose harvested from
+# docstrings, and MAP.md is the committed, shared surface, so this is where a false positive costs
+# most: the marker tells a reviewer the line was handled, which is worse than a plain miss.
+#
+# The discriminator is the VALUE's shape. A credential is not an ordinary word: `dXNlcjpwYXNz` has
+# capitals inside it, a JWT has dots, `hunter2secret` has a digit. `Authentication`, `Supplier.`,
+# `failed.` and `string.` are words. Anything past 18 letters is treated as a value regardless,
+# because a lowercase run that long is not prose in these positions.
+#
+# Deliberately NOT applied to the assignment rules. `api_key = correcthorse` is an explicit
+# assignment and a plain word there is exactly the secret; the guard is only for the two rules that
+# have nothing but adjacency to go on.
+# The trailing class carries `…` on purpose: summaries are clipped before they reach the index, so
+# the last word of a truncated docstring arrives as `functionality.…` and stopped looking like a
+# word for the sake of one character.
+_PLAIN_WORD = re.compile("^[A-Za-z][a-z]{1,17}[.,;:!?)\\]\u2026\"'`]*$")
+
+
+def _is_a_plain_word(value):
+    """True when the captured value reads as prose rather than as a credential.
+
+    Two shapes, both measured on real output rather than imagined. One ordinary word, clipped or
+    not — `Authentication`, `Supplier.`, `functionality.…`. And anything opening with a bracket,
+    which in this position is a docstring's type annotation: `private_key (Union["rsa.key…` and
+    `id_token (str):` were both being redacted inside an Args: block. A credential does not begin
+    with `(`, and the assignment rules still cover `password = {...}` if one ever did.
+    """
+    value = value or ""
+    return bool(_PLAIN_WORD.match(value)) or value[:1] in "([{"
+
+
+# `Authorization: Bearer <jwt>` and `Basic <base64>` — but "Basic Authentication" is a phrase, and
+# this rule matched it for years because twelve letters is twelve characters.
+AUTH_SCHEME_SECRET = re.compile(
+    r"(?<![A-Za-z0-9_-])(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{12,})")
+
 PATTERNS = [
     # Provider tokens with unambiguous prefixes — no false positives worth worrying about.
     re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
@@ -36,7 +84,7 @@ PATTERNS = [
     # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
     # itself in plain sight under a line that looks redacted. A miss is recoverable; a miss dressed
     # as a hit is not.
-    re.compile(r"(?<![A-Za-z0-9_-])(?:Bearer|Basic|Token)\s+([A-Za-z0-9._~+/=-]{12,})"),
+    AUTH_SCHEME_SECRET,
     # A JWT is three base64 segments; the header almost always starts eyJ.
     re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
     # Private key and certificate blocks.
@@ -313,7 +361,13 @@ def scrub(text):
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
         # as an Authorization header while the credential goes. Groupless patterns replace whole.
         if pattern.groups == 1:
-            text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
+            # Same position in the order, one extra question asked. See _is_a_plain_word.
+            if pattern is AUTH_SCHEME_SECRET:
+                text = pattern.sub(
+                    lambda m: m.group(0) if _is_a_plain_word(m.group(1))
+                    else m.group(0).replace(m.group(1), PLACEHOLDER), text)
+            else:
+                text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
         else:
             text = pattern.sub(PLACEHOLDER, text)
     text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
@@ -331,7 +385,7 @@ def scrub(text):
     text = SPACED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
-        or PLACEHOLDER in m.group(2)
+        or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}", text)
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET.sub(

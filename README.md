@@ -38,7 +38,7 @@ is plain markdown committed beside the code.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 22-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the eight features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
 
@@ -911,7 +911,7 @@ corpus of 38 secret shapes and 22 ordinary strings that must survive:
 | | |
 |---|---|
 | recall | **97.4%** — 37 of 38 secret shapes redacted |
-| precision, on the corpus | **100%** — 0 of 22 ordinary strings damaged |
+| precision, on the corpus | **100%** — 0 of 30 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
 | precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |
 | `scrub()` applied to whole source files | **69 lines damaged**, down from 144 |
 

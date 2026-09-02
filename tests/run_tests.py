@@ -1696,6 +1696,39 @@ check("scrub still redacts a quoted one",
       "hunter2secret" not in redact.scrub('db_password = "hunter2secret"'))
 check("scrub leaves a short non-secret alone", "3600" in redact.scrub("token_ttl = 3600"))
 check("scrub does not eat prose", "vault" in redact.scrub("# password: ask the vault team"))
+
+# 🐛 Two rules match on ADJACENCY alone — a secret word next to a value, no `=` or `:` anywhere —
+# and that is the weakest evidence in this file. Measured over four cloned repositories, they
+# destroyed ordinary prose inside COMMITTED MAP.md files, which is the shared surface where a false
+# positive costs most: the marker tells a reviewer the line was handled, which is worse than a
+# plain miss. The published precision figure was 100% and stayed there because the decoy corpus
+# held identifiers and config lines, never a SENTENCE.
+for _fp in (
+        "class HTTPBasicAuth — Attaches HTTP Basic Authentication to the given Request object.",
+        "_basic_auth_str(username, password) — Returns a Basic Auth string.",
+        "class DefaultCredentialsError — Used to indicate that acquiring default credentials failed.",
+        "class CustomAwsSupplier — Custom AWS Security Credentials Supplier.",
+        "## Basic Authentication",
+        "Add Forced Basic Authentication for proxies",
+        # Clipped before it reaches the index, so the last word arrives carrying the ellipsis.
+        "Tools for the IAM API's auth-related functionality.…",
+        # A docstring Args: block. The value is a type annotation, not a credential.
+        'Signs messages with an RSA private key. Args: private_key (Union["rsa.key.PrivateKey"',
+        "Verifies an ID Token issued by Firebase Authentication. Args: id_token (str):"):
+    check(f"prose survives the redactor: {_fp[:44]}", redact.scrub(_fp) == _fp)
+# The half that must not move. Every one of these still goes, including a letters-only secret long
+# enough that no word is that shape.
+for _tp, _keep in (
+        ("machine api.example.com login bob password hunter2secret", "hunter2secret"),
+        ("ENV DB_PASSWORD s3cr3tvalue99", "s3cr3tvalue99"),
+        ("password correcthorsebatterystaple", "correcthorsebatterystaple"),
+        ("Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9"),
+        ("curl -H 'Authorization: Basic dXNlcjpwYXNzd29yZA=='", "dXNlcjpwYXNzd29yZA==")):
+    check(f"...and the secret in {_tp[:34]!r} still goes", _keep not in redact.scrub(_tp))
+# Deliberately NOT guarded: an explicit assignment is strong enough evidence on its own, and there
+# a plain word is exactly what the secret looks like.
+check("an assignment is still redacted even when the value is one plain word",
+      "correcthorse" not in redact.scrub('api_key = "correcthorse"'))
 check("credentials.ini is blocked by stem, not just by exact name",
       redact.is_blocked(Path("credentials.ini")))
 check("an ordinary config file is not blocked", not redact.is_blocked(Path("settings.ini")))
