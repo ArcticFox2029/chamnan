@@ -5649,6 +5649,33 @@ check("...while `sig` in prose is not a credential",
 import assets as _as  # noqa: E402
 import tree as _tr  # noqa: E402
 
+# 🐛 Source in a language chamnan has no extractor for was filed under "Payload, not code — do not
+# read these to understand the system." mojolicious: 151 .pm and 110 .t files, the entire
+# framework, sent past under that instruction, while the Quick Index it left was nine minified
+# vendor bundles and test fixtures. An empty map at least sends the agent to grep; that one tells
+# it not to look. Third carve-out of this shape — .md/.sql and the build manifests were the first
+# two, both because the heading's sentence was FALSE about them.
+_perl = _as.render({"lib": {"count": 120, "bytes": 2_200_000,
+                            "exts": {".pm": 112, ".png": 8}}})
+check("PERL SOURCE IS NOT FILED AS PAYLOAD TO SKIP",
+      ".pm" not in _perl.split("## Source chamnan cannot index")[0])
+check("...it is named as source and the reader is told to open it",
+      "## Source chamnan cannot index" in _perl
+      and ".pm ×112" in _perl.split("## Source chamnan cannot index")[1]
+      and "read them directly" in _perl)
+# Split by EXTENSION, not by directory: one directory holds both, and calling the whole of it
+# either thing is wrong about most of the files in it.
+check("...while the images in the SAME directory stay payload",
+      ".png ×8" in _perl.split("## Source chamnan cannot index")[0])
+check("...and neither section claims the other's file count",
+      "120 files" not in _perl)
+# A repository with nothing unindexable must not grow an empty second heading.
+_only_payload = _as.render({"assets": {"count": 40, "bytes": 5_000_000,
+                                       "exts": {".png": 30, ".jpg": 10}}})
+check("...and a repository of real payload gains no second section",
+      "## Source chamnan cannot index" not in _only_payload
+      and "## Stored material" in _only_payload)
+
 # A fixed list of comment markers said `#` opens a comment in every language — while this same
 # file builds LINE_COMMENT two hundred lines above precisely because it does not. A real Rust
 # crate header and two lines of C pointer dereference both read as empty files.
