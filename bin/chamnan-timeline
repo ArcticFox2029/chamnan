@@ -28,6 +28,13 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import timeline  # noqa: E402
 import workspace as ws  # noqa: E402
+import redact  # noqa: E402
+
+# Everything this command prints comes out of committed files, and none of it used to go through
+# the redactor while the SessionStart hook scrubbed the same stores. Shadowing `print` here rather
+# than wrapping each call site: a per-call rule is one every future print has to remember, and the
+# misses are silent. See redact.emit.
+print = redact.emit  # noqa: A001
 
 
 def _today():

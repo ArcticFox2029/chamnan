@@ -505,3 +505,27 @@ def scrub(text):
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     return text
+
+
+def emit(*args, **kwargs):
+    """`print`, with every string argument scrubbed first. Meant to SHADOW the builtin.
+
+    🐛 Three commands — `chamnan-env`, `chamnan-timeline`, `chamnan-impact` — printed the bodies of
+    committed files straight to stdout with no redaction, while the SessionStart hook scrubbed the
+    same stores. That is the shape that has produced five findings running: one store, several
+    readers, and only some of them guarded. An agent runs these commands, so their stdout lands in
+    a session's context exactly like the injected block does.
+
+    Scrubbing at each `print` call was the obvious fix and is the wrong one: it is a rule every
+    future print has to remember, and the misses are silent. A module-level `print = redact.emit`
+    makes the guarded path the DEFAULT one, so a print added next year is safe without its author
+    knowing this note exists.
+
+    Non-string arguments are left alone — a caller printing an int or a Path means it, and coercing
+    everything to str here would change what those commands output.
+    """
+    return _print(*(scrub(a) if isinstance(a, str) else a for a in args), **kwargs)
+
+
+# Captured before any module shadows the name, so `emit` still reaches the real builtin.
+_print = print
