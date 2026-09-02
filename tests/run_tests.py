@@ -9064,6 +9064,43 @@ check("...and it says the config did not parse rather than pretending it did",
 shutil.rmtree(_dcroot.parent, ignore_errors=True)
 
 
+# ------------------------------ a committed symlink read a file from outside the repository
+# 🐛 chamnan reads whatever is at a workspace path. A symlink at `.chamnan/skills/x.md` or
+# `.chamnan/STATE.md` pointing to `~/.ssh/id_rsa` put that file's content into the injected block.
+# The workspace travels with a clone, so the link is chosen by whoever wrote the repository.
+#
+# It also exposed a second bug on the way: `describe()`'s markdown cleanup strips a leading `-----`
+# before `redact.scrub` sees it, so the KEY HEADER survived in the title line while the body was
+# redacted. Refusing the read closes both for this path.
+_slroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-symlink-")) / "r"
+(_slroot / ".chamnan" / "skills").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_slroot)], check=True)
+_outside = _slroot.parent / "outside_key"
+_outside.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n"
+                    "-----END OPENSSH PRIVATE KEY-----\n", encoding="utf-8")
+os.symlink(_outside, _slroot / ".chamnan" / "skills" / "evil.md")
+os.symlink(_outside, _slroot / ".chamnan" / "STATE.md")
+_slout = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input=json.dumps({"cwd": str(_slroot), "hook_event_name": "SessionStart",
+                                          "session_id": "sl"}),
+                        capture_output=True, text=True).stdout
+check("a symlink out of the repository contributes nothing to the block",
+      "PRIVATE KEY" not in _slout and "b3Blb" not in _slout)
+check("...and the session still gets its block rather than an error", len(_slout) > 300)
+check("the containment test resolves both sides, so a repo under a symlinked parent still works",
+      _ws.inside(_slroot / ".chamnan" / "config.json", _slroot))
+check("...and a path outside is refused", not _ws.inside(_outside, _slroot))
+# A path that does not exist but sits under the root IS inside it — this is a containment test,
+# not an existence test, and my first assertion here conflated the two. What must be refused is a
+# link that RESOLVES outside, including a dangling one.
+check("a path that does not exist but is under the root counts as inside",
+      _ws.inside(_slroot / "nowhere" / "x", _slroot))
+os.symlink(_slroot.parent / "gone", _slroot / "dangling")
+check("...while a dangling link pointing outside is refused",
+      not _ws.inside(_slroot / "dangling", _slroot))
+shutil.rmtree(_slroot.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

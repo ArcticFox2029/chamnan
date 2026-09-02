@@ -703,6 +703,10 @@ def main():
 
         if cfg.get("state", True):
             sp = wsdir / "STATE.md"
+            # Same containment rule as the skills listing above: a committed symlink at this path
+            # pointing outside the repository put that file's content into the block.
+            if sp.exists() and not ws.inside(sp, root):
+                sp = wsdir / "STATE.md.refused"          # a path that does not exist: read nothing
             if sp.is_file():
                 # Scrubbed on the way in, BEFORE the token cut -- STATE.md and the session records are
                 # free text written about the repository, which makes them the likeliest place for a
@@ -753,7 +757,12 @@ def main():
                                    redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
 
         if cfg.get("capture", True):
-            skills = sorted((wsdir / "skills").glob("*.md")) if (wsdir / "skills").is_dir() else []
+            # A committed symlink under `skills/` pointing outside the repository put that
+            # file's content into the block — reproduced with `~/.ssh/id_rsa` behind a `.md`
+            # name. The workspace arrives with a clone, so the link is the repository's
+            # choice and not the reader's.
+            skills = ([p for p in sorted((wsdir / "skills").glob("*.md")) if ws.inside(p, root)]
+                      if (wsdir / "skills").is_dir() else [])
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
                 # session is that the agent loads one on demand — and it cannot decide which one to load
