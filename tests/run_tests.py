@@ -7557,6 +7557,38 @@ check("THE RULES CUT NEVER LEAVES A FENCE OPEN", _rules.count("```") % 2 == 0)
 # reader is told where the rest went, not which of the two sentences says it.
 check("...so the reader is told where the part that did not fit has gone",
       "memory/rules/" in _rules)
+
+# 🐛 The roll-up printed BASENAMES under the group, so every sample naming a file in a subdirectory
+# was a path that DOES NOT EXIST. Measured across four real repositories: 35 of 101 sampled paths
+# were wrong. gum's `internal/ (6) — align.go, context.go, tty.go` are really
+# internal/decode/align.go, internal/timeout/context.go and internal/tty/tty.go — 6 of 6 wrong;
+# execa 29 of 34, because all 108 of its lib/ files sit in subdirectories.
+#
+# A wrong path costs a failed Read and then a recovery search, which this project calls worse than
+# a missing entry — and the roll-up is exactly what a session falls back on when the per-file index
+# does not fit, so it is the last place that should be guessing.
+_rup = Path(tempfile.mkdtemp())
+for _d, _f in (("internal/decode", "align.go"), ("internal/tty", "tty.go"),
+               ("internal/timeout", "context.go"), ("cmd", "main.go")):
+    (_rup / _d).mkdir(parents=True, exist_ok=True)
+    (_rup / _d / _f).write_text("// One line.\npackage p\n")
+_rows = "\n".join(f"- **`{d}/{f}`** (2L) — one line"
+                  for d, f in (("internal/decode", "align.go"), ("internal/tty", "tty.go"),
+                               ("internal/timeout", "context.go"), ("cmd", "main.go")))
+_folded = rollup.collapse("## Quick Index\n\n" + _rows + "\n", ".chamnan/MAP.md", None, _rup)
+_missing = []
+for _line in _folded.splitlines():
+    _m = re.match(r"^- \*\*`?([^*`]+?)/`?\*\* \((\d+)\)(?: — (.+))?$", _line)
+    if not _m or not _m.group(3):
+        continue
+    for _nm in re.findall(r"`([^`]+)`", _m.group(3)):
+        _cand = _rup / _nm if _m.group(1) == "(root)" else _rup / _m.group(1) / _nm
+        if not _cand.exists():
+            _missing.append(f"{_m.group(1)}/{_nm}")
+check("EVERY PATH THE ROLL-UP NAMES IS A PATH THAT EXISTS: " + str(_missing), not _missing)
+check("...and it names them relative to the group, so they reconstruct by concatenation",
+      "decode/align.go" in _folded or "internal/decode/align.go" in _folded)
+shutil.rmtree(_rup, ignore_errors=True)
 check("A RULE THAT DID NOT FIT IS NAMED, NOT JUST COUNTED", "Never write to prod" in _rules)
 
 # The title cap was applied to a category-then-filename concatenation, so ten decisions and two
