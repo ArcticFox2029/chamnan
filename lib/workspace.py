@@ -212,6 +212,11 @@ def _in_range(key, value):
     return True
 
 
+# Keyed on (path, mtime_ns, size); see load_config. Bounded because a process could in principle
+# resolve several roots, and an unbounded memo in a library is a leak waiting to be found.
+_CONFIG_MEMO = {}
+
+
 def load_config(root=None):
     """The config, with every value guaranteed to be the type its default is.
 
@@ -222,8 +227,22 @@ def load_config(root=None):
     before numbers because `isinstance(True, int)` is True in Python and `"agents": 1` should not
     quietly become a truthy switch.
     """
+    path = workspace(root) / "config.json"
+    # 🐛 Re-read and re-parsed on every call, and the PostToolUse hook alone calls `enabled()` four
+    # times per tool call, with one more from each PreToolUse hook. Six full parses of the same
+    # unchanged file per Edit. Keyed on (mtime_ns, size) rather than held outright, so a config
+    # edited mid-session is still picked up; every entry point here is a short-lived process, so the
+    # memo never outlives the run that made it.
+    try:
+        st = path.stat()
+        stamp = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = (str(path), None, None)
+    hit = _CONFIG_MEMO.get(stamp)
+    if hit is not None:
+        return dict(hit)
     cfg = dict(DEFAULT_CONFIG)
-    for k, v in load_json(workspace(root) / "config.json", dict).items():
+    for k, v in load_json(path, dict).items():
         if k not in DEFAULT_CONFIG:
             continue
         want = type(DEFAULT_CONFIG[k])
@@ -239,6 +258,7 @@ def load_config(root=None):
         # both deleted. Session records are committed work.
         if isinstance(v, want) and _in_range(k, v):
             cfg[k] = v
+    _CONFIG_MEMO[stamp] = dict(cfg)
     return cfg
 
 
@@ -337,6 +357,16 @@ def hook_root(payload=None):
     return find_root()
 
 
+# Every JSON store this package keeps is a handful of keys or a short list. A ceiling here is not a
+# guess at what is reasonable; it is far above anything chamnan itself writes, and it exists because
+# `config.json` and `tools/index.json` arrive with a clone like every other committed file. Measured
+# on a 50 MB (valid, ordinary) config.json: the PostToolUse hook, which reads it several times per
+# tool call, went from 0.28s to 0.56s — and that scales linearly, so the 300 MB an agent tried took
+# it past 3s of silent latency on every Edit. MAP.md and STATE.md already have ceilings for exactly
+# this shape; the JSON stores did not.
+JSON_READ_CEILING = 4_000_000    # bytes
+
+
 def load_json(path, want=dict):
     """A JSON store read back, or an empty one of the right type. Never raises, never wrong-typed.
 
@@ -350,8 +380,13 @@ def load_json(path, want=dict):
     inside a SessionStart hook takes the whole injection with it.
     """
     try:
-        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError, RecursionError):
+        # Read bounded, then parse. Reading it whole and rejecting afterwards would still have paid
+        # for the read, which is the cost being avoided. A file over the ceiling is not truncated
+        # into a parse -- `read(n)` of a bigger file yields invalid JSON and lands in the `except`
+        # below, which returns the empty store, the same degraded answer as a missing file.
+        with pathlib.Path(path).open(encoding="utf-8") as fh:
+            data = json.loads(fh.read(JSON_READ_CEILING))
+    except (OSError, json.JSONDecodeError, ValueError, RecursionError, UnicodeDecodeError):
         return want()
     return data if isinstance(data, want) else want()
 
