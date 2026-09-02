@@ -8351,6 +8351,27 @@ check("...and the read-modify-write is held under the same lock the tool index u
 shutil.rmtree(_ageroot, ignore_errors=True)
 
 
+# ------------------------------ a before/after across ONE resumed session compares nothing
+# `chamnan-report` reported +114.1% context per turn on a work repository after the workspace was
+# created. The whole four-week window was one continuously-resumed session — one transcript, no
+# restart in nineteen days — with the creation marker seven days into it. "Before" was that
+# session's only genuinely fresh hours; "after" was seven post-compaction cycles, whose floor is
+# structurally higher whatever plugin is installed.
+#
+# Two independent checks settle it: chamnan's whole payload on that repo is ~3,200-4,300 tokens,
+# 60 to 80 times too small for the +265,203 per call it was blamed for; and the repository that
+# uses chamnan an order of magnitude more, across eighteen separate sessions, reads +0.7%.
+#
+# Same shape as the subagent artefact this command already excludes, one level up: the comparison
+# is only meaningful across many sessions, and nothing said so.
+_rep = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+check("the report carries the session-count warning", "session(s) before and" in _rep)
+check("...and the entry tuple carries which transcript each call came from", "path.stem," in _rep)
+# 🐛 Adding that field broke the dedup, which summed the WHOLE tail of the tuple and hit a string.
+check("the dedup compares only the usage counters, so the tuple can grow again",
+      "sum(entry[2:6])" in _rep and "sum(entry[2:])" not in _rep)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
