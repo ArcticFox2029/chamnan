@@ -435,9 +435,19 @@ def main():
     try:
         try:
             wsdir = ws.ensure(root)
-        except ws.NotAWorkspace:
-            # A hook has no good way to raise. Saying nothing is the only safe failure here, and
-            # every foreground command explains it properly the moment the user runs one.
+        except ws.NotAWorkspace as err:
+            # 🐛 "every foreground command explains it properly the moment the user runs one" — but
+            # the user's reason to run a foreground command is this block telling them to, and
+            # there is no block. A `.chamnan` that is a plain file (a bad merge, a stray download)
+            # made the plugin silent for the entire session: no index, no rules, no handoff, and no
+            # indication that a plugin is installed. The message already exists and is good; it was
+            # on the one surface nobody was looking at.
+            #
+            # One sentence on stdout, like every other degraded path in this file. Raising or
+            # exiting non-zero would be worse — a SessionStart hook that fails is noise on every
+            # session, and some hosts surface it as an error.
+            print(f"_chamnan: {err} Until then this session has no index, no rules and no "
+                  f"handoff._")
             return 0
     except OSError:
         return 0                      # read-only checkout, or no permission — never fail a session

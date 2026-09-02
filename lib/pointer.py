@@ -65,6 +65,9 @@ _HEADING = re.compile(r"^#{1,3}[ \t]+(.+?)\s*$", re.M)
 _COMMENT_DESC = re.compile(r"<!--\s*description:\s*(.+?)\s*-->", re.S)
 
 
+_BOUNDARY_CACHE = {}
+
+
 def _title(text, fallback):
     """One short line naming what an entry is, from whichever convention it happens to use.
 
@@ -196,7 +199,21 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
             except OSError:
                 continue
             for tier, needle in enumerate(wanted):
-                seen = text.count(needle)
+                # 🐛 A raw substring count, so `memory.py` matched inside `vector_memory.py`. The
+                # docstring calls carrying the extension "the whole guard", and it is not: opening
+                # chamnan/lib/memory.py pointed at two procedures for a DIFFERENT codebase's vector
+                # store — five substring hits, zero real ones, 1 of 5 pointer fires in a live
+                # session. The ranking made it worse: `-seen` rewards the collision, so a document
+                # mentioning `vector_memory.py` five times outranks one naming the real file once.
+                #
+                # A boundary on the LEFT only. The right side is already anchored by the extension,
+                # and requiring one there would lose `` `path/to/memory.py` `` in prose, which is how
+                # these documents actually write a filename. `/` and `.` are deliberately NOT in the
+                # exclusion set for the same reason — a path separator or a `./` prefix is exactly
+                # the context a real reference appears in. Only a word character or a hyphen before
+                # the name means it is part of a LONGER name.
+                seen = len(_BOUNDARY_CACHE.setdefault(
+                    needle, re.compile(r"(?<![\w-])" + re.escape(needle))).findall(text))
                 if seen:
                     found.append(((tier, -seen, rank, f.name), label, f, text))
                     break

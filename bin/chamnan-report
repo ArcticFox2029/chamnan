@@ -343,6 +343,13 @@ def main(argv):
         print(f"chamnan: no Claude Code transcripts found for {root}")
         print("  (nothing to measure until this repo has been worked on in Claude Code)")
         return 0
+    # 🐛 These ran BEFORE _workspace_created() reads the session filenames to date the workspace,
+    # and prune_sessions deletes by that same filename date at 30 days. So on any repository whose
+    # first session record is older than a month — any repository chamnan has actually lived in —
+    # the before/after comparison was permanently suppressed, and the tool blamed the user's
+    # history for its own housekeeping. The inventory printed at the top of the same run counted
+    # the records that the marker computation, 170 lines later, could no longer see.
+    marker_early = _workspace_created(ws.workspace(root))
     ws.prune_logs(root)
     ws.prune_sessions(root)
     entries = collect(project_dir)
@@ -350,7 +357,7 @@ def main(argv):
         print("chamnan: transcripts found but no usage records yet")
         return 0
 
-    marker = _workspace_created(ws.workspace(root))
+    marker = marker_early or _workspace_created(ws.workspace(root))
 
     weeks = defaultdict(lambda: {"calls": 0, "cread": 0, "cwrite": 0, "out": 0})
     per_model = defaultdict(lambda: {"calls": 0, "cread": 0})

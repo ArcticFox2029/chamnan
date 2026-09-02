@@ -5251,9 +5251,17 @@ try:
 except ws.NotAWorkspace as err:
     _raised = "not a directory" in str(err)
 check("A PLAIN FILE NAMED .chamnan IS DIAGNOSED, NOT TRACEBACKED THROUGH", _raised)
-check("...and the hook stays silent rather than raising at a user",
-      not subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True,
-                         text=True, cwd=_nf).stdout.strip())
+# 🐛 This used to assert the hook printed NOTHING, and that silence was a whole-session outage: no
+# index, no rules, no handoff, and no indication a plugin was installed. The reasoning in the hook
+# was "every foreground command explains it properly the moment the user runs one" — but the user's
+# reason to run a foreground command is this block telling them to, and there was no block. The
+# concern this check is named for is not raising AT the user, and one plain sentence is not that.
+_nfrun = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True,
+                        text=True, cwd=_nf)
+check("...and the hook says so in one line rather than going silent for the session",
+      _nfrun.returncode == 0 and "not a directory" in _nfrun.stdout
+      and "Traceback" not in _nfrun.stderr)
+check("...in one sentence, not a section", _nfrun.stdout.strip().count("\n") == 0)
 shutil.rmtree(_nf.parent, ignore_errors=True)
 
 # Source code is the most common file in every repo chamnan targets, and it used to reach the
