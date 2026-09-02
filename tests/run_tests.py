@@ -8848,6 +8848,28 @@ check("the list is bounded and says how many it left out", "_+" in _many)
 shutil.rmtree(_gsroot.parent, ignore_errors=True)
 
 
+# ------------------------------ the usage report could attach a repo to somebody else's numbers
+# 🐛 `encoded_dir`'s fuzzy fallback needed only ONE shared trailing word. A path with no transcript
+# directory of its own — `/Users/alice/Documents/rancher` — resolved to this machine's real
+# `-Users-wasuplao-Documents-itscon-rancher`, and every figure the command prints would then be
+# somebody else's usage presented as yours: call counts, context per turn, the before/after table
+# the README points at. Reproduced against the real directory set, not a fixture.
+#
+# A fuzzy match has to agree on the repository's WHOLE leaf name, never a fragment, with two
+# components as the floor so a single generic word can never carry a match alone.
+_rep = type(sys)("rep")
+_rep.__dict__.update({"__name__": "rep", "__file__": str((ROOT / "bin" / "chamnan-report").resolve())})
+exec(compile((ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8").split("def main(")[0],
+             "rep", "exec"), _rep.__dict__)
+check("a leaf name is split into the components a match must agree on",
+      _rep._leaf_tokens(_ppl.Path("/a/b/my-app")) == ["my", "app"])
+check("...and an underscore counts as a separator, like the encoder treats it",
+      _rep._leaf_tokens(_ppl.Path("/a/b/my_app")) == ["my", "app"])
+check("one shared word is not a match", _rep._shared_tail("-x-rancher", "-y-rancher") == 1)
+check("...and the whole leaf agreeing is",
+      _rep._shared_tail("-a-my-app", "-b-my-app") >= 2)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

@@ -87,12 +87,28 @@ def encoded_dir(repo_root):
     for cand in sorted(c for root in _project_roots() for c in root.glob("*")):
         if not cand.is_dir():
             continue
+        # 🐛 Any shared trailing word was enough. `/Users/alice/Documents/rancher` — a path with no
+        # transcript directory of its own — resolved to this machine's real
+        # `-Users-wasuplao-Documents-itscon-rancher` on one word, and every figure the command
+        # prints would then be somebody else's usage presented as yours: call counts, context per
+        # turn, the before/after table the README points at.
+        #
+        # A fuzzy match has to agree on the repository's WHOLE leaf name, not a fragment of it. Two
+        # components minimum, so a single generic word can never carry a match on its own.
         score = _shared_tail(want, cand.name)
+        if score < min(max(2, len(_leaf_tokens(repo_root))), len(want.split("-"))):
+            continue
         if score > best_score:
             best, best_score, tied = cand, score, False
         elif score and score == best_score:
             tied = True
     return None if tied else best
+
+
+def _leaf_tokens(repo_root):
+    """The encoded components of the repository's own directory name — what a fuzzy match must
+    agree on in full before it is allowed to stand in for an exact one."""
+    return [t for t in str(Path(repo_root).name).replace("_", "-").split("-") if t]
 
 
 def _shared_tail(want, have):
