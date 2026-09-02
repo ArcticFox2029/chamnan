@@ -18,6 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import redact
 import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -77,6 +78,18 @@ def main(argv):
     if dest.exists():
         print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
               file=sys.stderr)
+        return 1
+    # 🐛 `src` is any path on the machine, and what lands in `.chamnan/tools/` is committed by
+    # design — it is deliberately NOT in the workspace's ignore rules. So a private key, a
+    # credentials file or an `.env` sitting outside the repository could be copied straight into a
+    # git-tracked path, unscrubbed, by one mistyped argument. Reproduced with a test key.
+    #
+    # The same two gates `peek()` and `catalogs._readable()` already apply before reading a file are
+    # applied here before copying one. Refused rather than scrubbed: a tool is source, and silently
+    # rewriting somebody's file on the way in would be worse than declining it.
+    if redact.is_blocked(src) or redact.is_never_opened(src):
+        print(f"chamnan: {src.name} looks like a credential or key file — refusing to copy it into "
+              f"a committed directory. Promote a script, not a secret.", file=sys.stderr)
         return 1
     shutil.copy2(src, dest)
     dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)

@@ -653,6 +653,35 @@ def peek_source(path, find=None):
     return out
 
 
+def _is_env_file(name):
+    """`.env`, `.env.production`, `local.env` — the shapes people actually use."""
+    low = name.lower()
+    return low == ".env" or low.startswith(".env.") or low.endswith(".env")
+
+
+def _env_names(path):
+    """The variable names an env file declares, and nothing to the right of the `=`."""
+    names = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key = line.split("=", 1)[0].strip()
+            if key.lower().startswith("export "):
+                key = key[7:].strip()
+            if key:
+                names.append(key)
+    except OSError:
+        return "unreadable"
+    if not names:
+        return "no variables declared"
+    shown = ", ".join(f"`{n}`" for n in names[:24])
+    more = f" _+{len(names) - 24} more_" if len(names) > 24 else ""
+    return (f"{len(names)} variable(s), names only — values are never printed for an env file:\n"
+            f"  {shown}{more}")
+
+
 def peek(path, find=None, budget=DEFAULT_BUDGET):
     path = Path(path)
     if not path.is_file():
@@ -668,6 +697,15 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
                 f"_[nothing read]_")
     ext = path.suffix.lower()
     header = [f"# {path.name}", f"{_human(size)} · {ext or 'no extension'}"]
+
+    # 🐛 An env file was printed like any other text file, values and all — an internal
+    # hostname, an admin address, a live DSN. `catalogs.scan_env` publishes NAMES only for this
+    # exact file class and says so; peek is a different path and did not share the rule.
+    #
+    # Matched by NAME, not extension: `Path('.env').suffix` is `''`, so the commonest env file
+    # in existence never matched an extension test in the first place.
+    if _is_env_file(path.name):
+        return "\n".join(header + ["", _env_names(path)])
 
     # An extension is a claim, not a fact. Handed binary data named .csv, the csv reader parses it
     # perfectly happily -- errors="replace" guarantees it never raises -- and the result was a
