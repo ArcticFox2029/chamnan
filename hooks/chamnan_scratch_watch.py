@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
 import environments  # noqa: E402
+import redact  # noqa: E402
 import sessions  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -320,7 +321,11 @@ def _environment_notice(payload, wsdir, root):
         return False
     entry["envs_told"] = told + [name]
     _nudge_write(wsdir, session_id, entry)
-    say(notice)
+    # The constraint text comes straight out of a committed `environments.md`. The SessionStart
+    # block scrubs the same text; this second, automatic path did not, and it fires on any Bash
+    # command that matches a declared environment — so the guarded and unguarded readers of one
+    # store sat two hooks apart.
+    say(redact.scrub(notice))
     return True
 
 

@@ -2468,6 +2468,17 @@ def _bash(command, session_id):
             "tool_input": {"command": command},
             "tool_response": {"stdout": "", "stderr": "", "interrupted": False}}
 
+# Two automatic paths carry repository text to the model without anyone typing a command, and
+# neither went through the redactor. Both are guarded at session start, so the store had a guarded
+# reader and an unguarded one sitting two hooks apart.
+envs.upsert(aw_root, "leaky",
+            envs.render_entry("leaky", "somewhere",
+                              "", ["deploy key AKIAIOSFODNN7EXAMPLE is required"], "2026-08-27"))
+_leaky = run_scratch_watch(_bash("kubectl --context leaky get pods", "awleak"), aw_root)
+check("THE ENVIRONMENT NOTICE REDACTS A SECRET IN A DECLARED CONSTRAINT",
+      "AKIAIOSFODNN7EXAMPLE" not in _leaky and "REDACTED" in _leaky)
+check("...and still says which environment it is about", "`leaky`" in _leaky)
+
 first = run_scratch_watch(_bash("kubectl --context production get pods", "aw1"), aw_root)
 check("THE HOOK SPEAKS ON THE COMMAND THAT TARGETS A DECLARED ENVIRONMENT",
       "targets `production`" in first)
@@ -4007,6 +4018,29 @@ check("...and from CLAUDE_PROJECT_DIR, which the host actually promises", len(_o
 _out3 = _run_hook("null", str(_hk), _env_clean)
 check("a payload that is JSON null does not crash the hook",
       _out3.returncode == 0 and len(_out3.stdout) > 1000)
+
+# The cheapest leak in the plugin to trigger: no command to run and nothing to opt into. This hook
+# is PreToolUse on Read/Edit/Write, and it prints the first line of any stored lesson, decision,
+# rule, thread or skill that names the file being opened.
+_pk = Path(tempfile.mkdtemp()) / "repo"
+(_pk / ".git").mkdir(parents=True)
+ws.ensure(_pk)
+(_pk / ".chamnan" / "memory" / "lessons").mkdir(parents=True, exist_ok=True)
+(_pk / ".chamnan" / "memory" / "lessons" / "deploy.md").write_text(
+    "# Rotate AKIAIOSFODNN7EXAMPLE before touching `src/deploy.py`\n\nbody\n", encoding="utf-8")
+(_pk / "src").mkdir(exist_ok=True)
+(_pk / "src" / "deploy.py").write_text("x = 1\n", encoding="utf-8")
+_ptr = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_file_pointer.py")],
+    input=json.dumps({"hook_event_name": "PreToolUse", "tool_name": "Read", "session_id": "p1",
+                      "tool_input": {"file_path": str(_pk / "src" / "deploy.py")},
+                      "cwd": str(_pk)}),
+    capture_output=True, text=True, cwd=str(_pk)).stdout
+check("THE FILE POINTER REDACTS A SECRET IN A STORED TITLE",
+      "AKIAIOSFODNN7EXAMPLE" not in _ptr and "REDACTED" in _ptr)
+check("...and still points at the file that records it",
+      "memory/lessons/deploy.md" in _ptr)
+shutil.rmtree(_pk.parent, ignore_errors=True)
 _out4 = _run_hook("not json at all", str(_hk), _env_clean)
 check("neither does a payload that is not JSON", _out4.returncode == 0)
 

@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import impact as impact_mod  # noqa: E402
 import pointer  # noqa: E402
+import redact  # noqa: E402
 import workspace as ws  # noqa: E402
 
 TOOLS = {"Read", "Edit", "Write", "NotebookEdit"}
@@ -105,8 +106,16 @@ def main():
         return 0
 
     pointer.note(wsdir, session_id, rel, hits, (time.time() - started) * 1000)
+    # 🐛 Every title in this block is the first line of a committed file, and none of it went
+    # through the redactor. That made this the cheapest leak in the plugin to trigger: no command
+    # to run and nothing to opt into, just an ordinary `Read` of any file a stored lesson happens
+    # to mention. Reproduced with an AWS key in a lesson's own heading, which arrived in
+    # `additionalContext` on the first Read of the file that lesson names.
+    #
+    # Scrubbed here rather than in `pointer.render`, because this is the one place the text leaves
+    # the process, and it also covers the `coedit.line` tail appended above it.
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "additionalContext": block}}))
+        "hookEventName": "PreToolUse", "additionalContext": redact.scrub(block)}}))
     return 0
 
 
