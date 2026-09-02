@@ -8700,6 +8700,29 @@ check("the django mount scan is gated too",
       '"include" not in text' in (ROOT / "lib" / "catalogs.py").read_text(encoding="utf-8"))
 
 
+# ------------------------------ stepping over `Author:` alone left the address on the next line
+# 🐛 The realistic header is the one that got through. `# Author: Jane Roe` followed by
+# `# Email: jane@example.com` published `Email: jane.roe` as the file's description — the fix
+# shipped hours earlier moved the leak down one line rather than closing it. Two more shapes did
+# the same: a labelled `Contact:` line, and an address written alone under the name.
+for _el, _esrc in [
+    ("Email after Author", "# Author: Jane Roe\n# Email: jane.roe@example.com\n# Parses dock manifests.\ndef f(): pass\n"),
+    ("labelled Contact", "# Contact: jane@example.com\n# Parses dock manifests.\ndef f(): pass\n"),
+    ("an address alone", "# jane.roe@example.com\n# Parses dock manifests.\ndef f(): pass\n"),
+]:
+    _esum = mapper.leading_comment(_esrc, "py")
+    check(f"no address reaches the index ({_el})", "@example.com" not in _esum)
+    check("...and the real summary below it is still read", "Parses dock manifests" in _esum)
+# Anchored on the LINE being an address, so a summary that mentions one is untouched. Both of these
+# are real descriptions of real files.
+check("a summary that mentions an email address survives",
+      "email address" in mapper.leading_comment(
+          "# Validates an email address before sending.\ndef f(): pass\n", "py"))
+check("...and one that starts with the word Emails does too",
+      mapper.leading_comment("# Emails the nightly digest to subscribers.\ndef f(): pass\n", "py")
+      .startswith("Emails the nightly"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

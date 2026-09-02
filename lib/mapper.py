@@ -394,8 +394,16 @@ XCODE_ATTRIBUTION = re.compile(r"\bcreated\s+by\b.{0,80}?\bon\b\s*\d", re.I | re
 # Anchored on the punctuation, not on the word. `# Author model for the blog` is a real summary
 # of a real file and has no colon; `# Authors: see AUTHORS` is a pointer and has one.
 AUTHORSHIP_HEADER = re.compile(
-    r"^\s*(?:@?authors?|maintainers?|contributors?|copyright\s+holder)\s*::?"
+    r"^\s*(?:@?authors?|maintainers?|contributors?|copyright\s+holder"
+    # 🐛 Stepping over `Author:` alone was not enough, and the realistic header is the one that got
+    # through: `# Author: Jane Roe` followed by `# Email: jane@example.com` published the address on
+    # the next line instead. Contact fields carry exactly what the author line does.
+    r"|e-?mails?|contacts?)\s*::?"
     r"|^\s*written\s+by\b", re.I)
+# A line that is essentially just an address is a contact line without the label — some headers
+# write the address alone under the name. Anchored on the whole line being one address so a summary
+# that happens to MENTION an address ("Validates an email address before sending") is untouched.
+BARE_EMAIL_LINE = re.compile(r"^\s*<?[\w.+-]+@[\w-]+\.[\w.]+>?\s*$")
 # Lines that open a file without saying anything about it — including the import block, which on a
 # Java or TypeScript file sits between the licence header and the class doc. Leaving imports out
 # meant the reader stopped there: 250 of 268 gson files and 401 of 455 type-fest files came back
@@ -488,7 +496,7 @@ def _is_authorship_line(line):
     became nothing, which trades a leak for a blank index row rather than fixing anything.
     """
     body = re.sub(r"^\s*(?:#+|//+|/\*+|\*+|--+|;+|%+)\s?", "", line)
-    return bool(AUTHORSHIP_HEADER.match(body))
+    return bool(AUTHORSHIP_HEADER.match(body)) or bool(BARE_EMAIL_LINE.match(body))
 
 
 def _skip_continuation(lines, i):
