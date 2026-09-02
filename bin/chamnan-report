@@ -147,9 +147,17 @@ def collect(project_dir):
                     # 🐛 A subagent step and a conversation turn were averaged together, and the
                     # headline was the artefact. See the split in main().
                     bool(rec.get("isSidechain")),
+                    # 🎯 Which transcript this call came from — one file is one session. The
+                    # before/after comparison is only meaningful across MANY sessions; see
+                    # `_one_session_warning` in main().
+                    path.stem,
                 )
                 prior = best.get(rid)
-                if prior is None or sum(entry[2:]) > sum(prior[2:]):
+                # 🐛 `entry[2:]` summed the whole tail, so adding a non-numeric field to the tuple
+                # raised TypeError on the first duplicate requestId. Bounded to the four usage
+                # counters it was always meant to compare, so the tuple can grow again without this
+                # breaking a second time.
+                if prior is None or sum(entry[2:6]) > sum(prior[2:6]):
                     best[rid] = entry
     return list(best.values())
 
@@ -361,7 +369,7 @@ def main(argv):
 
     weeks = defaultdict(lambda: {"calls": 0, "cread": 0, "cwrite": 0, "out": 0})
     per_model = defaultdict(lambda: {"calls": 0, "cread": 0})
-    for when, model, inp, out, cread, cwrite, sidechain in entries:
+    for when, model, inp, out, cread, cwrite, sidechain, _sess in entries:
         key = when.isocalendar()[:2]
         w = weeks[key]
         # `inp` is input the model read that was NOT served from cache -- the whole prompt on a
@@ -463,6 +471,28 @@ def main(argv):
             if _a + 8 < _b:
                 print("  An index pays when you come back to the same code. Most of the work since")
                 print("  then was new files, so this period could not show the effect either way.")
+        # 🐛 The confound that mattered most, and it was not named at all. On one work repository
+        # this command reported +114.1% context per turn after the workspace was created. The whole
+        # four-week window turned out to be ONE continuously-resumed session — one transcript, no
+        # restart in nineteen days — with the creation marker seven days into it. "Before" was that
+        # session's only genuinely fresh hours; "after" was seven post-compaction cycles, whose
+        # floor is structurally higher whatever plugin is installed.
+        #
+        # The arithmetic settles it independently: chamnan's whole injected payload on that repo is
+        # about 3,200-4,300 tokens, 60 to 80 times too small to account for the +265,203 per call it
+        # was being blamed for. And the repository that uses chamnan an order of magnitude more, with
+        # eighteen separate sessions, reads +0.7%.
+        #
+        # So the number is reported either way — hiding it would be its own dishonesty — but a
+        # window that is one session on either side gets told what it is looking at.
+        _bs = {e[7] for e in entries if e[0].isocalendar()[:2] < marker_week}
+        _as = {e[7] for e in entries if e[0].isocalendar()[:2] > marker_week}
+        if len(_bs) <= 1 or len(_as) <= 1:
+            print(f"\n  ⚠ {len(_bs)} session(s) before and {len(_as)} after. A window that is one"
+                  f" resumed session is\n    comparing its own fresh hours against its own"
+                  f" post-compaction ones, and the difference\n    above is mostly that, not this"
+                  f" workspace. Compare again once there are several\n    separate sessions on"
+                  f" both sides.")
         print("\n  Read this as an observation, not an experiment: your model, your task mix and")
         print("  Claude Code itself all changed over the same period. It is your repo's number,")
         print("  which is the point — but it is not a controlled trial.")
