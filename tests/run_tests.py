@@ -8575,6 +8575,38 @@ check("...and both make the repository's words inert first",
 check("the hook imports what those lines use", "import mdblock" in _hs)
 
 
+# ------------------------------ two ways the budget was not a budget
+# 🐛 The cut note listed every removed section by name and had no bound of its own, so the note
+# became the thing that blew the limit it exists to respect: a 20-token budget over a map with forty
+# sections produced 1,052 tokens, 1,050 of them the note. An enforcer that overruns by 53x is not one.
+_bdoc = "## Quick Index\n- **`a.py`** (1L) — x\n" + "".join(
+    "\n\n## Section %03d with a long descriptive heading that costs real tokens\n\nbody %d\n" % (i, i)
+    for i in range(200))
+_bworst = 0
+for _b in (10, 20, 50, 100, 500, 2000):
+    _got = tokens_mod.estimate(_gr.collapse(_bdoc, ".chamnan/MAP.md", _b, None))
+    _bworst = max(_bworst, _got - _b)
+check("the overrun is bounded by the notice, not by how much was cut", _bworst <= 60)
+check("...and at a workable budget there is no overrun at all",
+      tokens_mod.estimate(_gr.collapse(_bdoc, ".chamnan/MAP.md", 500, None)) <= 500)
+_bnote = next((l for l in _gr.collapse(_bdoc, ".chamnan/MAP.md", 2000, None).split("\n")
+               if "Cut to fit" in l), "")
+check("many removed sections become four names and a count, not a list",
+      "_+" in _bnote and _bnote.count("`Section") <= 4)
+
+# 🐛 `_in_range` enforced only `>= 0`, so a config shipped WITH a repository could set
+# `output_byte_ceiling` past the ~10,000 bytes Claude Code truncates hook output at — positionally
+# and silently — reopening the failure `fit.py` was written to prevent. Reproduced elsewhere as a
+# 31,916-byte block whose fence closed at byte 31,822.
+check("a ceiling a clone could use to defeat the host's own cut is refused",
+      not _ws._in_range("output_byte_ceiling", 900_000))
+check("...while a real one, and a slightly generous one, are accepted",
+      _ws._in_range("output_byte_ceiling", 9_000) and _ws._in_range("output_byte_ceiling", 9_500))
+check("the token budgets are bounded too", not _ws._in_range("index_token_budget", 99_999_999))
+check("...and an ordinary retention value still passes", _ws._in_range("log_retention_days", 5))
+check("a key with no bound is unaffected", _ws._in_range("something_else", 10 ** 9))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

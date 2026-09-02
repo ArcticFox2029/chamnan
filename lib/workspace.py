@@ -161,10 +161,30 @@ _NON_NEGATIVE = ("log_retention_days", "session_retention_days", "index_token_bu
                  "state_token_budget", "output_byte_ceiling")
 
 
+# 🐛 `_in_range` enforced only `>= 0`, so a config that ships WITH a repository could set
+# `output_byte_ceiling` to any number it liked. `fit.CEILING` is 9,000 for one reason — Claude Code
+# truncates hook output at roughly 10,000 bytes, positionally and without saying so — and a cloned
+# repository could raise it past that and reopen the exact "block ends mid-sentence and nothing
+# reports it" failure `fit.py` exists to prevent. Reproduced: a 31,916-byte block, fence closing at
+# byte 31,822, far past what the host delivers.
+#
+# The upper bounds are generous — several times any real value — because the point is not to
+# second-guess a user who wants a bigger index. It is that a number from an untrusted clone cannot
+# push the block past what the host will carry. Out of range falls back to the default, which is
+# what an out-of-type value already did.
+_UPPER_BOUND = {
+    "output_byte_ceiling": 9_500,        # the host's own cut is around 10,000 and is positional
+    "index_token_budget": 100_000,
+    "state_token_budget": 100_000,
+    "log_retention_days": 3_650,
+    "session_retention_days": 3_650,
+}
+
+
 def _in_range(key, value):
     """False for a value whose TYPE is right and whose meaning is not."""
     if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):
-        return value >= 0
+        return 0 <= value <= _UPPER_BOUND.get(key, value)
     return True
 
 

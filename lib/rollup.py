@@ -389,13 +389,26 @@ def _enforce(out, map_rel, budget):
     # naming nothing produced a note that claimed `Quick Index` had been removed whole while it was
     # still in the output, because "lost" had been read off a provisional cut the final one did not
     # match. Three passes is enough for it to stop moving; the last one is authoritative.
+    # 🐛 The note had no bound of its own. Naming every removed section made the note itself the
+    # thing that blew the budget: a 20-token budget over a map with forty sections produced 1,052
+    # tokens of output, 1,050 of them the note. A budget enforcer that overruns by 53x is not one.
+    #
+    # Four names and a count. Four is what the sibling notices in `fit.py` and `impact.py` already
+    # use, and the reason is the same — past four, a reader is scanning a list rather than reading a
+    # sentence, and the count carries the rest. If even that does not fit, the short form does,
+    # because a truncated explanation is worse than a general one.
+    NAMED = 4
+
     def _note_for(lost):
-        if lost:
-            named = ", ".join(f"`{h}`" for h in lost)
-            return (f"\n\n_Cut to fit the session budget. Removed whole: {named}."
-                    f" Read `{map_rel}` for them._")
-        return (f"\n\n_Cut to fit the session budget — the tail did not fit."
-                f" Read `{map_rel}` for anything missing here._")
+        short = (f"\n\n_Cut to fit the session budget — the tail did not fit."
+                 f" Read `{map_rel}` for anything missing here._")
+        if not lost:
+            return short
+        named = ", ".join(f"`{h}`" for h in lost[:NAMED])
+        more = f" _+{len(lost) - NAMED} more_" if len(lost) > NAMED else ""
+        full = (f"\n\n_Cut to fit the session budget. Removed whole: {named}{more}."
+                f" Read `{map_rel}` for them._")
+        return full if tokens.estimate(full) < budget else short
 
     note, cut = _note_for([]), ""
     for _ in range(3):
