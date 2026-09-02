@@ -8060,9 +8060,27 @@ check("a directory holding more than one file is stated once as a heading",
       "**`src/`**" in _gqi)
 check("...and its files then carry only their basename",
       "- **`a.py`**" in _gqi and "- **`src/a.py`**" not in _gqi)
-check("a directory holding ONE file keeps its inline path, since a heading would cost more",
-      "- **`solo/only.py`**" in _gqi and "**`solo/`**" not in _gqi)
-check("a file at the repository root is untouched", "- **`top.py`**" in _gqi)
+# 🐛 This used to assert the opposite — that a single-file directory keeps its inline path,
+# because a heading costs more than the prefix it saves. True on tokens, wrong on correctness: a
+# row with no heading above it renders UNDERNEATH the previous directory's heading, so `top.py`
+# sat under `**`src/`**` and reads as `src/top.py`, which does not exist. That is the same
+# "names a path that is not there" class as the roll-up bug fixed earlier the same day.
+#
+# Measured cost of giving every transition a heading on a 283-file monorepo: 18,663 -> 18,688
+# tokens, 25 tokens, 0.13%. A row that cannot be resolved is worth more than that.
+check("every directory gets a heading, including one holding a single file",
+      "**`solo/`**" in _gqi and "- **`only.py`**" in _gqi)
+check("the repository root gets one too, so a root file is not read as the previous directory's",
+      "**`./`**" in _gqi and "- **`top.py`**" in _gqi)
+_grows = [l for l in _gqi.split("\n") if l.startswith("- **`")]
+_ghead = None
+_gorphan = 0
+for _l in _gqi.split("\n"):
+    if _l.startswith("**`") and _l.rstrip().endswith("/`**"):
+        _ghead = _l
+    elif _l.startswith("- **`") and _ghead is None:
+        _gorphan += 1
+check("...so no row is left without a directory above it", _gorphan == 0 and len(_grows) >= 4)
 check("Full Detail still carries the full path, because that is what a reader greps",
       "## `src/a.py`" in _grendered)
 

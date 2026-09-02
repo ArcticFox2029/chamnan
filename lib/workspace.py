@@ -212,7 +212,11 @@ def enabled(part, root=None):
 # Data nobody can reconstruct, destroyed by an unrelated command, and a wrong number presented as
 # an exact one. A log that prunes its own records is not stale because nobody appended to it
 # lately; that is the retention working.
-SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl")
+# 🐛 `edits.jsonl` was added by the co-edit ledger and not listed here, so `prune_logs()` would
+# have deleted the whole feature after seven quiet days — the identical failure the comment
+# below describes being fixed for its two siblings. A log that bounds itself by record must
+# say so here, or the directory sweep bounds it by date instead.
+SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl")
 
 
 def prune_logs(root=None):
