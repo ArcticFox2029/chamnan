@@ -270,7 +270,17 @@ def main(argv):
     # AFTER MAP.md has already been overwritten, so the user's index was replaced and the report
     # that would have explained it never printed. `chamnan-map` is the first thing
     # `/chamnan:bootstrap` runs.
-    share = f"{index_tokens / src * 100:.1f}% of the source" if src else "no code to compare against"
+    # 🐛 On a small repository this printed things like "1150.6% of the source" — true, and the
+    # first number a new user sees from `/chamnan:bootstrap`, where it reads as a malfunction. The
+    # README already says plainly that on a four-file repository this costs more than it saves;
+    # the tool should say the same thing in the same words rather than as a percentage nobody can
+    # act on. Above 100% the ratio is not a saving at all, so it stops being reported as one.
+    if not src:
+        share = "no code to compare against"
+    elif index_tokens >= src:
+        share = "larger than the source — this repository is too small for an index to pay"
+    else:
+        share = f"{index_tokens / src * 100:.1f}% of the source"
     print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({share})")
     print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))

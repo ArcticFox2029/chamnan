@@ -6935,6 +6935,32 @@ check("...while a symlink to a file genuinely inside it is still followed",
       "inside.py" in {q.name for q in _tree2.files(_esc / "app")})
 shutil.rmtree(_esc, ignore_errors=True)
 
+# ------------------------------ the first thing a new user sees, on a repository unlike this one
+# `/chamnan:bootstrap` runs `chamnan-map` first, and on a small repository the index legitimately
+# exceeds the source — which printed as "1150.6% of the source". True, useless, and it reads as a
+# malfunction at the exact moment a stranger is deciding whether to keep the tool. The README
+# already says in words that a four-file repository costs more than it saves.
+_tiny = Path(tempfile.mkdtemp(prefix="chamnan-tiny-"))
+(_tiny / "src").mkdir()
+(_tiny / "src" / "main.py").write_text("# The entry point.\ndef main(): pass\n", encoding="utf-8")
+_tinyout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                          cwd=str(_tiny), capture_output=True, text=True).stdout
+check("A REPOSITORY TOO SMALL TO PAY IS TOLD SO, NOT GIVEN A PERCENTAGE OVER 100",
+      "too small for an index to pay" in _tinyout and "%" not in _tinyout.split("Quick Index")[1].split("\n")[0])
+# ...and it has to work at all without git, which the README lists as not required.
+check("...and none of this needed a git directory", "MAP.md" in _tinyout)
+check("...while a repository with real code still gets the ratio",
+      "% of the source" in subprocess.run(
+          [sys.executable, str(ROOT / "bin" / "chamnan-map")],
+          cwd=str(ROOT), capture_output=True, text=True).stdout)
+shutil.rmtree(_tiny, ignore_errors=True)
+
+# A skill must not name a path chamnan does not create as though it did. `.chamnan/tools/…` reads
+# like a chamnan feature because of the prefix; every other example in that table is generic.
+check("no skill names a .chamnan path the plugin never creates",
+      not any("chamnan/tools/preflight" in q.read_text(encoding="utf-8")
+              for q in (ROOT / "skills").rglob("*.md")))
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
