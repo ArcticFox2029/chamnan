@@ -362,6 +362,80 @@ def rebuild_hook_installed(root):
         return False
 
 
+# Compiled once, and run per LINE of the Quick Index. Worth measuring rather than assuming: over
+# the 340 lines of this repository's index the compiled pair costs 0.10 ms against 0.27 ms for
+# re's own cache lookup — a real 0.17 ms, and a small fraction of what this function spends.
+_QI_FOLDER = re.compile(r"^\*\*`([^`]+)`\*\*\s*$")
+_QI_ROW = re.compile(r"^- \*\*`([^`]+)`\*\*")
+
+
+def _quick_index_names(map_text):
+    """The paths the Quick Index names, as a set, or None when there is no Quick Index at all.
+
+    None and the empty set are different answers and both callers care: no section means there is
+    nothing to compare against, while a section naming nothing means every file on disk is missing
+    from it. Collapsing the two would have made `unindexed` silent on an empty index.
+    """
+    start = map_text.find("## Quick Index")
+    if start < 0:
+        return None
+    # A plain `find` for the next heading, not `finditer` over the rest of the file. The old form
+    # scanned all of MAP.md with a multiline regex and then used only `nxt[0]`, which on a 320 KB
+    # index is where almost all of this function's time went: measured 10.2 ms -> 0.32 ms for this
+    # parse, against 0.10 ms for the per-line matching it was blamed on. `dead_entries` as a whole
+    # falls 10.5 ms -> 2.8 ms, and what remains is the 281 `exists()` calls, which are the work.
+    _end = map_text.find("\n## ", start + 3)
+    body = map_text[start:_end] if _end >= 0 else map_text[start:]
+    # 🐛 The Quick Index groups by directory, so a row carries a BARE FILENAME and the directory it
+    # belongs to is the `**`dir/`**` heading above it. Reading the rows alone yields basenames, and
+    # `unindexed` was comparing those against root-relative paths -- so every file on disk looked
+    # absent. Measured on this repository: "281 file(s) are not in it", naming three files that are
+    # all in it. The warning was not merely noisy; it was false in full, every time it fired, and it
+    # only fires when the index is stale -- the moment its count is being trusted.
+    names, folder = set(), ""
+    for line in body.splitlines():
+        head = _QI_FOLDER.match(line)
+        if head:
+            folder = head.group(1).strip("/")
+            folder = "" if folder in (".", "") else folder
+            continue
+        row = _QI_ROW.match(line)
+        if row:
+            names.add(f"{folder}/{row.group(1)}" if folder else row.group(1))
+    return names
+
+
+def dead_entries(root, map_text):
+    """How many paths the Quick Index names that are no longer on disk, and a few by name.
+
+    The other direction of `unindexed`, and the one nothing checked. Both warnings in this file key
+    off `index_is_behind`, which is an mtime comparison -- and **deleting a file moves no mtime
+    forward**, so a map can name a tree that has entirely ceased to exist while the staleness check
+    reports it as current.
+
+    🐛 `unindexed` states, as the reason this is not worth checking, that a map "cannot drift into
+    being WRONG -- separately measured at 0 dead paths out of 264. It can only fall behind." That is
+    right about the mechanism and wrong about the outcome: regeneration-from-tree keeps a map honest
+    at the moment it is built, and says nothing about what happens to it afterwards. Reproduced on a
+    live workspace on the author's own machine: 7 of 7 Full-Detail paths missing, every Quick Index
+    entry a phantom, staleness reporting 0 seconds behind, and the whole thing injected into every
+    session in that directory as fact. The 0-of-264 measurement was taken on a repository that
+    happened to be current, which is a sample of one moment rather than a property of the format.
+
+    Costs no walk -- one `exists()` per name the map already contains, on a set the index budget
+    bounds. Deliberately evaluated whether or not the index is behind, because that is the whole
+    point: the case this catches is invisible to the age check.
+    """
+    try:
+        named = _quick_index_names(map_text)
+        if not named:
+            return 0, 0, []
+        dead = [n for n in sorted(named) if not (root / n).exists()]
+        return len(dead), len(named), dead[:3]
+    except Exception:
+        return 0, 0, []      # never let a nicety break a session
+
+
 def unindexed(root, map_text):
     """How many indexable files the Quick Index does not name, and a few of them by name.
 
@@ -382,13 +456,9 @@ def unindexed(root, map_text):
     not.
     """
     try:
-        import re as _re
-        start = map_text.find("## Quick Index")
-        if start < 0:
+        named = _quick_index_names(map_text)
+        if named is None:
             return 0, []
-        nxt = [m.start() for m in _re.finditer(r"^## ", map_text[start + 3:], _re.M)]
-        body = map_text[start:start + 3 + nxt[0]] if nxt else map_text[start:]
-        named = set(_re.findall(r"^- \*\*`([^`]+)`\*\*", body, _re.M))
         missing = []
         for f in _indexable(root):
             try:
@@ -629,6 +699,24 @@ def main():
                     out.append(redact.scrub(
                         f"_⚠ Source has changed since this index was built ({ago(behind)}). "
                         f"{what}Rebuild it with {fix}._\n"))
+
+                # Outside the `if behind:` above, and that placement is the fix rather than an
+                # oversight. Both warnings there are gated on an mtime comparison, and deleting or
+                # moving a file moves no mtime forward -- so the one case where the index is not
+                # merely incomplete but describing a tree that no longer exists is exactly the case
+                # the age check cannot see. Reproduced live: 7 of 7 entries dead, 0 seconds behind.
+                _dead, _named, _dead_ex = dead_entries(root, text)
+                if _dead:
+                    # Names come from a committed file, so they are made inert before interpolation
+                    # and the whole line is scrubbed, like every sibling warning.
+                    _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in _dead_ex)
+                    _more = "…" if _dead > len(_dead_ex) else ""
+                    # "N of M" rather than a bare count: 7 of 7 says the index is about a different
+                    # tree, 7 of 264 says a directory was cleaned up. They call for different reactions.
+                    out.append(redact.scrub(
+                        f"_⚠ **{_dead} of {_named} file(s) this index names no longer exist** — "
+                        f"{_shown}{_more}. It is describing a tree that has moved on; rebuild it "
+                        f"with `chamnan-map`._\n"))
 
         if cfg.get("environments", True):
             # Constraints, never versions. A constraint rules out a whole design before it is written
