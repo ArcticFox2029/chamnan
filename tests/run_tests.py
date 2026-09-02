@@ -6449,6 +6449,39 @@ check("...and .tsv still says nothing about a delimiter, because tab IS its defa
       _pk.peek_csv(_dl / "tabs.tsv")[0] == "3 columns, 1 data rows")
 shutil.rmtree(_dl, ignore_errors=True)
 
+# 🐛 Two encoding failures in opposite directions, fixed together because fixing the second alone
+# converts a garbage dump into a WRONG refusal on a wider set of files.
+#
+# peek called UTF-16 and latin-1 text "binary". UTF-16 is half NUL bytes by construction and the
+# NUL test settled it before anything looked at the BOM, so `Export-Csv -Encoding Unicode`, SQL
+# Server bcp and Excel's "Unicode Text (*.txt)" — a large share of the Windows-origin CSVs peek
+# exists for — came back as "unrecognised; 48% printable" and, worse, as "of bin that a plain read
+# cannot open" about a file Read opens perfectly.
+_enc = Path(tempfile.mkdtemp())
+(_enc / "u16.csv").write_bytes("name,age\nAlice,30\nBob,41\n".encode("utf-16"))
+(_enc / "latin1.txt").write_bytes("Caf\xe9 na\xefve r\xe9sum\xe9 - a note.\n".encode("latin-1"))
+check("A UTF-16 CSV IS A CSV, NOT AN UNRECOGNISED BLOB",
+      _pk.peek_csv(_enc / "u16.csv")[0].startswith("2 columns"))
+check("...with its real column names, not a decoded blob",
+      "`name`" in "\n".join(_pk.peek_csv(_enc / "u16.csv")))
+check("...and a single-byte-page file keeps its accented characters",
+      "Caf\xe9" in "\n".join(str(x) for x in _pk.peek_text(_enc / "latin1.txt", None)))
+# The other direction, and the trap in fixing it: extensionless files skipped the sniff entirely,
+# so a compiled executable was printed as 536 lines of mojibake and priced "248x smaller". But
+# extensionless TEXT is common too — LICENSE, Makefile, Procfile, and every shell script written
+# without .sh — so the sniff had to stop calling latin-1 text binary BEFORE it could be applied
+# to a wider set of files.
+(_enc / "mytool").write_bytes(bytes(range(256)) * 40)
+(_enc / "LICENSE").write_text("MIT License\n\nCopyright (c) 2026 Caf\xe9 Ltd\n")
+check("an extensionless compiled binary is not printed as text",
+      _pk._text_encoding(_enc / "mytool") is None)
+check("...while an extensionless LICENSE with an accented name is still read",
+      _pk._text_encoding(_enc / "LICENSE") is not None
+      and "MIT License" in "\n".join(str(x) for x in _pk.peek_text(_enc / "LICENSE", None)))
+check("...and an ordinary UTF-8 source file is unaffected",
+      _pk._text_encoding(_enc / "latin1.txt") in ("cp1252", "utf-8-sig"))
+shutil.rmtree(_enc, ignore_errors=True)
+
 # The Configuration list is capped and was cut alphabetically, so a repo with 200 variables showed
 # everything up to about `D` under a line that said only "Showing 50 of 200".
 check("A CAPPED CONFIGURATION LIST NAMES THE RANKING IT WAS CUT ON",

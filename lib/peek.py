@@ -18,6 +18,7 @@ cost the plugin its only deployment advantage. Where a format cannot be understo
 says so instead of guessing.
 """
 import binascii
+import codecs
 import csv
 import io
 import json
@@ -89,6 +90,56 @@ def _looks_binary(path):
     return odd > len(text) * 0.05
 
 
+def _text_encoding(path):
+    """The encoding this file is text in, or None when it is not text at all.
+
+    🐛 Two failures, opposite directions, and they had to be fixed together because fixing the
+    second alone turns a garbage dump into a WRONG refusal on a wider set of files.
+
+    peek called UTF-16 and latin-1 text "binary". A UTF-16 file is full of NUL bytes, and the NUL
+    test above settles the question before anything looks at the BOM — so `Export-Csv -Encoding
+    Unicode`, SQL Server `bcp` and Excel's "Unicode Text (*.txt)", which is a large share of the
+    Windows-origin CSVs peek exists for, came back as "unrecognised; 48% printable in the first
+    4KB" instead of two columns and two rows. It also said "the file itself is 52B of bin that a
+    plain read cannot open", about a file Read opens perfectly — the exact dishonesty _cost_note's
+    own docstring says it exists to prevent.
+
+    And the other way: an extensionless file skipped the binary sniff entirely, so a compiled
+    executable copied to `./mytool` was printed as 536 lines of `����  @ ��` and priced at
+    "248x smaller than reading the whole file". Extensionless executables in bin/, scripts/ and
+    tools/ are the commonest extensionless file there is.
+
+    errors="ignore" is deliberately not used as a fallback — the docstring above says why: it would
+    swallow genuine mojibake, which is the case the sniff was written for. A BOM is a positive
+    statement about the encoding, and cp1252 is only accepted when what it produces reads as text
+    by the same printable-ratio test everything else passes.
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(4096)
+    except OSError:
+        return "utf-8-sig"
+    if not head:
+        return "utf-8-sig"
+    # Before the NUL test, not after: UTF-16 is half NUL bytes by construction.
+    for bom, enc in ((codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+                     (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16")):
+        if head.startswith(bom):
+            return enc
+    if not _looks_binary(path):
+        return "utf-8-sig"
+    if b"\x00" in head:
+        return None                     # a NUL with no BOM in front of it is a real binary
+    # Not UTF-8, no NULs: the Windows single-byte pages. cp1252 decodes any byte, so it can never
+    # fail — the printable ratio is what decides, exactly as it does for UTF-8 above.
+    try:
+        text = head.decode("cp1252")
+    except UnicodeDecodeError:
+        return None
+    odd = sum(1 for ch in text if ord(ch) < 32 and ch not in "\t\n\r")
+    return "cp1252" if odd <= len(text) * 0.05 else None
+
+
 def _human(n):
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1024 or unit == "GB":
@@ -125,7 +176,7 @@ def _delimiter_for(path, default):
     VALUES contain semicolons keeps its single column, because the header does not.
     """
     try:
-        with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
+        with path.open("r", encoding=_text_encoding(path) or "utf-8-sig", errors="replace", newline="") as fh:
             header = fh.readline()
     except OSError:
         return default
@@ -162,7 +213,7 @@ def peek_csv(path, find=None):
     # _whole_file_tokens below prices the file by decoding it too, and if only some of them learn
     # about the BOM then peek's shape and peek's own cost note stop being computed from the same
     # string — which is the shape of the bug being fixed here, one level down.
-    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as fh:
+    with path.open("r", encoding=_text_encoding(path) or "utf-8-sig", errors="replace", newline="") as fh:
         reader = csv.reader(fh, delimiter=delim)
         try:
             header = next(reader)
@@ -221,7 +272,7 @@ def _shape(value, depth=0):
 
 def peek_json(path, find=None):
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig", errors="replace"))
+        data = json.loads(path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace"))
     except (json.JSONDecodeError, MemoryError) as err:
         return [f"not valid JSON as a whole ({type(err).__name__}); may be JSON Lines",
                 *peek_text(path, find)]
@@ -247,7 +298,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
     rows, total, bad = [], 0, 0
     hits = []
     try:
-        with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
+        with path.open("r", encoding=_text_encoding(path) or "utf-8-sig", errors="replace") as fh:
             for i, line in enumerate(fh):
                 line = line.strip()
                 if not line:
@@ -509,7 +560,7 @@ def peek_image(path):
 # ------------------------------------------------------------------ text and fallback
 def peek_text(path, find=None):
     lines, total = [], 0
-    with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
+    with path.open("r", encoding=_text_encoding(path) or "utf-8-sig", errors="replace") as fh:
         for i, line in enumerate(fh):
             total += 1
             if find:
@@ -568,7 +619,7 @@ def peek_source(path, find=None):
     Same extractor as the index, so a file peeked and a file indexed agree with each other.
     """
     lang = mapper.EXT_LANG.get(path.suffix.lower())
-    source = path.read_text(encoding="utf-8-sig", errors="replace")
+    source = path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace")
     out = []
     try:
         summary, functions, classes, _rest = mapper._extract_one(source, str(path), lang)
@@ -624,7 +675,9 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     # and let the binary handler describe it instead; that handler exists precisely to say "this is
     # not text" without pretending to read it.
     if (ext in (".csv", ".tsv", ".tab", ".json", ".jsonl", ".ndjson")
-            or ext in TEXT_LIKE) and _looks_binary(path):
+            # `""` was the one case missing, and it is the case where the extension carries no
+            # information at all — so the sniff mattered most exactly where it was not run.
+            or ext in TEXT_LIKE or ext == "") and _text_encoding(path) is None:
         return "\n".join(header + ["", *[str(x) for x in peek_binary(path)]]) + \
                "\n\n" + _cost_note(path, ".bin", size, "")
 
@@ -693,7 +746,7 @@ def _whole_file_tokens(path, size):
     real cost.
     """
     if size <= SAMPLE_BYTES:
-        return tokens.estimate(path.read_text(encoding="utf-8-sig", errors="replace")), False
+        return tokens.estimate(path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace")), False
     with path.open("rb") as fh:
         raw = fh.read(SAMPLE_BYTES)
     # Drop a trailing partial character rather than letting errors="replace" invent one.
