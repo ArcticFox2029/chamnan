@@ -269,16 +269,14 @@ def _save_ages(wsdir, ages):
     assuming all along.
     """
     try:
-        dest = wsdir / AGES_PATH
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".%d.tmp" % os.getpid())
-        tmp.write_text(json.dumps(ages, indent=1, sort_keys=True), encoding="utf-8")
-        tmp.replace(dest)
+        # The per-pid fix this docstring describes now lives in one place, so it cannot be right
+        # here and missing three files away — which is exactly what happened. Imported inside the
+        # function, which is this file's existing convention for reaching workspace.
+        import workspace as ws_mod
+        ws_mod.atomic_write_text(wsdir / AGES_PATH,
+                                 json.dumps(ages, indent=1, sort_keys=True))
     except Exception:
-        try:
-            tmp.unlink()
-        except Exception:
-            pass
+        pass
 
 
 def age_out(text, wsdir, days, now=None):

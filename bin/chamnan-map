@@ -318,19 +318,23 @@ def main(argv):
     #
     # Beside the target, never in the system temp directory: os.replace fails with EXDEV across
     # mount points, and a copy-and-delete fallback would give up the atomicity this exists for.
-    tmp = out.with_suffix(".md.tmp")
+    # 🐛 `out.with_suffix(".md.tmp")` is the same path in every process. Reproduced with two
+    # concurrent rebuilds: two of three runs produced a MAP.md carrying content from BOTH builds
+    # interleaved, and the losing process exited 0 having installed the corrupted file. The
+    # `os.replace` was never the problem; the shared staging name is.
     try:
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(out)
+        if not ws.atomic_write_text(out, text):
+            raise OSError(f"could not write {out}")
     except OSError as err:
         # 🐛 The first version of this fix fell back to `out.write_text(text)` here, "so a failed
         # run does not lose its output" — and the fixture caught it in one run: the fallback hit
         # the same limit and truncated the GOOD index from 4,712 bytes to 4,096. Losing this run's
         # output is the correct outcome; destroying the index that was already there is not.
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+        #
+        # No `tmp.unlink()` here any more: the staging file belongs to `ws.atomic_write_text`, which
+        # removes its own on failure. Leaving the old cleanup behind raised NameError from inside an
+        # `except OSError`, so an interrupted rebuild died with a traceback instead of the sentence
+        # this branch exists to print — the failure path's own failure path.
         print(f"chamnan: could not write the index ({err.__class__.__name__}: {err}).",
               file=sys.stderr)
         print(f"  The existing {out.name} is unchanged.", file=sys.stderr)

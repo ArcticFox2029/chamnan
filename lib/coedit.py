@@ -32,6 +32,7 @@ import edge would ever show. And it is not stored as a derived artefact: the log
 correlation is computed on read, so there is nothing to regenerate, invalidate, or merge.
 """
 import json
+import workspace as ws
 import os
 import time
 from collections import Counter, defaultdict
@@ -93,9 +94,7 @@ def _trim(dest):
         lines = dest.read_text(encoding="utf-8", errors="replace").splitlines(True)
         if len(lines) <= TRIM_AT:
             return
-        tmp = dest.with_suffix(".%d.tmp" % os.getpid())
-        tmp.write_text("".join(lines[-MAX_LINES:]), encoding="utf-8")
-        tmp.replace(dest)
+        ws.atomic_write_text(dest, "".join(lines[-MAX_LINES:]))
     except OSError:
         pass
 
