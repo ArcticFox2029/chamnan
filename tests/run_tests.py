@@ -4637,6 +4637,25 @@ check("and returns a short file whole", len(_ss2._read_bounded(_big, 10_000_000)
 check("the ceilings sit far above anything real — STATE.md is tens of KB, MAP.md ~320,000 chars",
       _ss2.STATE_READ_CEILING >= 1_000_000 and _ss2.MAP_READ_CEILING > _ss2.STATE_READ_CEILING)
 
+# index.json is committed, so an entry can name a tool that was never copied in — under a header
+# telling the session to prefer these over writing a script of its own.
+_tw = Path(tempfile.mkdtemp()) / "repo"
+(_tw / ".chamnan" / "tools").mkdir(parents=True)
+(_tw / ".chamnan" / "tools" / "real.py").write_text("# a tool that is there\n", encoding="utf-8")
+(_tw / ".chamnan" / "tools" / "index.json").write_text(json.dumps([
+    {"name": "real.py", "desc": "present"},
+    {"name": "phantom.py", "desc": "listed, never copied in"},
+    {"name": "../../escape.sh", "desc": "a path, not a name"},
+    {"name": ["not", "a", "string"], "desc": "wrong type"},
+    "not even an object",
+]), encoding="utf-8")
+_block = _run_hook(json.dumps({"cwd": str(_tw)}), "/", _env_clean).stdout
+check("a tool that exists is still listed", "`real.py`" in _block)
+check("a tool the index names but the workspace lacks is not listed", "phantom.py" not in _block)
+check("a path-shaped tool name is refused", "escape.sh" not in _block)
+check("a malformed entry does not take the section with it",
+      "This repo's own tools" in _block and "not even an object" not in _block)
+
 # The two callers must agree on what counts, or they will drift apart again.
 import tree as _tree, mapper as _mapper  # noqa: E402
 with _tree.session():
@@ -5392,6 +5411,10 @@ _LEAK = "sk-ant-" + "abcdefghijklmnopqrstuvwxyz1234"
 (_scws / "tools" / "index.json").write_text(
     json.dumps([{"name": "deploy.sh", "desc": f"deploys with token {_LEAK} embedded"}]),
     encoding="utf-8")
+# The tool has to actually be there. The listing now drops entries naming a file the workspace
+# does not have, and without this the fixture was testing redaction of a section that no longer
+# rendered at all — a check that would have passed for the wrong reason.
+(_scws / "tools" / "deploy.sh").write_text("#!/bin/sh\necho deploying\n", encoding="utf-8")
 (_scws / "logs").mkdir(exist_ok=True)
 (_scws / "logs" / "repeat_digest.json").write_text(
     json.dumps({"lines": [f"3x  `curl -H 'Authorization: Bearer {_LEAK}'`"]}), encoding="utf-8")
