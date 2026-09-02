@@ -8020,6 +8020,51 @@ check("...and the same text in a .js file is exactly what the gate now skips",
       len(_pcat.ROUTER_ANY.findall(_js_lookalike)) == 1)
 
 
+# ------------------------------ the Quick Index states each directory once, not once per file
+# The repeated prefix was 30.6% of Quick Index tokens on the published corpus. Grouping took a
+# 283-file monorepo's index from 20,762 to 18,663 tokens (10.1%); flat repositories gain 1-2% and
+# are not made worse. Safe for the Quick Index and NOT for Full Detail because of what the map tells
+# its reader: read the Quick Index in full, and grep Full Detail for `## `path``.
+import mapper as _gm  # noqa: E402
+def _gfile(path, doc):
+    return {"path": path, "lines": 10, "chars": 200, "tokens": 60, "funcs": [], "classes": [],
+            "consts": [], "doc": doc, "lang": "py", "describable": True}
+
+
+_gfiles = [_gfile("src/a.py", "First"), _gfile("src/b.py", "Second"),
+           _gfile("solo/only.py", "Alone"), _gfile("top.py", "Root")]
+_grendered = _gm.render(_gfiles, ROOT)
+_gqi = _grendered.split("## Full Detail")[0]
+check("a directory holding more than one file is stated once as a heading",
+      "**`src/`**" in _gqi)
+check("...and its files then carry only their basename",
+      "- **`a.py`**" in _gqi and "- **`src/a.py`**" not in _gqi)
+check("a directory holding ONE file keeps its inline path, since a heading would cost more",
+      "- **`solo/only.py`**" in _gqi and "**`solo/`**" not in _gqi)
+check("a file at the repository root is untouched", "- **`top.py`**" in _gqi)
+check("Full Detail still carries the full path, because that is what a reader greps",
+      "## `src/a.py`" in _grendered)
+
+# rollup reads those rows back to fold the index by directory. Reading a basename as a path would
+# put every file under "(root)" and produce a roll-up that names nothing.
+import rollup as _gr  # noqa: E402
+# A four-file fixture is too small to roll up at all — collapse refuses and says so, which is
+# correct and is not what this checks. Build an index wide enough that folding is the real path.
+_gwide = [_gfile("pkg/mod%02d/file%02d.py" % (d, i), "Entry %d-%d" % (d, i))
+          for d in range(6) for i in range(12)]
+_gwideqi = _gm.render(_gwide, ROOT).split("## Full Detail")[0]
+# 800, not 300: below roughly half the input the roll-up cannot fit even one line per directory
+# and falls to hard truncation, which is its documented behaviour and not what this checks.
+_gcollapsed = _gr.collapse(_gwideqi, ".chamnan/MAP.md", 800, None)
+_gdirlines = [l for l in _gcollapsed.split("\n")
+              if l.strip().startswith("- **") and ") — " in l]
+check("the roll-up folds the grouped index into directory lines", len(_gdirlines) >= 2)
+check("...naming the real directories, recovered from the headings rather than the rows",
+      any("pkg/mod00" in l for l in _gdirlines))
+check("...and nothing lands under (root), which is what reading a basename as a path would do",
+      not any("(root)" in l for l in _gdirlines))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

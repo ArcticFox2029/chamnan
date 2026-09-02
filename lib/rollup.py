@@ -187,7 +187,24 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     # So: go deeper while the split is not telling anyone anything. The test is groups-per-file --
     # one directory holding almost everything means the depth is too shallow. It stops as soon as
     # the split is informative, so a repository that is already flat at depth 1 is untouched.
-    paths = [line.split("`")[1] for line in rows]
+    # The Quick Index states a directory once and then lists basenames under it, so a row's own
+    # backticks may hold only the filename. Reconstruct the full path from the nearest preceding
+    # `**\`dir/\`**` heading — reading the basename as a path would group every directory's files
+    # under "(root)" and produce a roll-up that names nothing.
+    paths = []
+    _dir = ""
+    _at = set(row_at)
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            _dir = ""
+            continue
+        st = line.strip()
+        if st.startswith("**`") and st.endswith("/`**"):
+            _dir = st[3:-4]
+            continue
+        if i in _at:
+            name = line.split("`")[1]
+            paths.append(f"{_dir}/{name}" if _dir and "/" not in name else name)
 
     def at_depth(depth):
         out = {}
