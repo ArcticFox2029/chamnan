@@ -88,6 +88,31 @@ def _cut_clean(body, limit):
     return (head[:sp] if sp > limit * 0.6 else head).rstrip()
 
 
+CONFLICT_MARKERS = ("<<<<<<< ", "=======", ">>>>>>> ")
+
+
+def unresolved_conflict(body):
+    """True when this entry is mid-merge and both sides are still in the file.
+
+    🐛 Nothing looked. A rule carrying `<<<<<<< HEAD` reached the model as one rule holding two
+    contradictory instructions — "deploy only on Tuesdays after the DBA signs off" and "deploy
+    whenever CI is green" — with no indication that the file was in conflict, inside the fence that
+    tells the reader this text comes from the repository. The model then has to guess which side is
+    current, and either guess is presented to it as settled policy.
+    
+    A rule in conflict is not a rule. Saying the file needs resolving is the only honest thing to
+    inject, and it is also what gets it fixed: the alternative is a session acting on the losing
+    side of a merge nobody finished.
+
+    Both a marker line AND a closer are required, so a document that merely quotes `=======` as a
+    markdown rule, or a diff pasted into a lesson, is not accused of being a conflict.
+    """
+    lines = body.split("\n")
+    opened = any(l.startswith(CONFLICT_MARKERS[0]) for l in lines)
+    closed = any(l.startswith(CONFLICT_MARKERS[2]) for l in lines)
+    return opened and closed
+
+
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
     out, titles = [], []
@@ -96,7 +121,14 @@ def rules_text(root):
             body = path.read_text(encoding="utf-8", errors="replace").strip()
         except OSError:
             continue
-        if body:
+        if body and unresolved_conflict(body):
+            # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
+            # was never written, and the point is to get this file resolved.
+            out.append(f"**{title_of(path)}** — ⚠ this rule is mid-merge and both sides are still "
+                       f"in `{path.name}`. It is NOT in force until someone resolves it; do not act "
+                       f"on either side.")
+            titles.append(title_of(path))
+        elif body:
             out.append(_flatten(body))
             titles.append(title_of(path))
     if not out:

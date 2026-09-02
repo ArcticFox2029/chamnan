@@ -8268,6 +8268,40 @@ for _keep in ("# Author model for the blog, with slug generation.\ndef f(): pass
           mapper.leading_comment(_keep, "py").startswith(_keep[2:12]))
 
 
+# ------------------------------ a rule in conflict is not a rule, and nothing was looking
+# A `<<<<<<< HEAD` in a memory rule reached the model as ONE rule carrying two contradictory
+# instructions — "deploy only on Tuesdays after the DBA signs off" and "deploy whenever CI is green"
+# — with nothing to say the file was mid-merge, inside the fence that tells the reader this text
+# comes from the repository. The model then guesses which side is current, and either guess arrives
+# as settled policy.
+import memory as _mem  # noqa: E402
+_cfroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-conflict-"))
+_cfr = _cfroot / ".chamnan" / "memory" / "rules"
+_cfr.mkdir(parents=True)
+(_cfr / "deploy.md").write_text(
+    "# How we deploy\n\n<<<<<<< HEAD\nDeploy only on Tuesdays, after the DBA signs off.\n"
+    "=======\nDeploy whenever CI is green.\n>>>>>>> feature/faster-deploys\n", encoding="utf-8")
+(_cfr / "ok.md").write_text(
+    "# Branch naming\n\nUse `fix/` for defects and `feat/` for features.\n", encoding="utf-8")
+# A rule that merely QUOTES a marker is not in conflict. Requiring both an opener and a closer is
+# what keeps a markdown style guide, or a pasted diff, from being accused.
+(_cfr / "style.md").write_text(
+    "# Markdown style\n\nDo not use `=======` as a heading underline; use `##`.\n", encoding="utf-8")
+_cftext = _mem.rules_text(_cfroot)
+check("a rule that is mid-merge is not injected as fact",
+      "Deploy only on Tuesdays" not in _cftext and "Deploy whenever CI is green" not in _cftext)
+check("...it is named rather than silently dropped, because the point is to get it resolved",
+      "How we deploy" in _cftext and "deploy.md" in _cftext)
+check("...and the model is told not to act on either side", "NOT in force" in _cftext)
+check("an ordinary rule is untouched", "Use `fix/` for defects" in _cftext)
+check("a rule that only quotes a marker is not accused of being a conflict",
+      "heading underline" in _cftext)
+check("the detector needs an opener AND a closer",
+      not _mem.unresolved_conflict("a\n=======\nb\n")
+      and _mem.unresolved_conflict("<<<<<<< a\nx\n=======\ny\n>>>>>>> b\n"))
+shutil.rmtree(_cfroot, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
