@@ -110,6 +110,12 @@ def describe(path):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
+        # Redact BEFORE the markdown cleanup, not after. `_LEADING_MARKUP` strips a run of
+        # `-` from the front of the line, which is exactly what the private-key pattern keys
+        # on: `-----BEGIN OPENSSH PRIVATE KEY-----` came out of the cleanup as
+        # `BEGIN OPENSSH PRIVATE KEY-----`, and the section's own scrub downstream then had
+        # nothing left to match. Cleaning first destroys the evidence the redactor needs.
+        stripped = redact.scrub(stripped)
         cleaned = _MD_MARKUP.sub("", _LEADING_MARKUP.sub("", stripped, count=1))
         if cleaned:
             return " ".join(cleaned.split())[:110]
