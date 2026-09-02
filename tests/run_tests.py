@@ -6515,12 +6515,20 @@ _rep = ROOT / "bin" / "chamnan-report"
 _rsrc = _rep.read_text(encoding="utf-8")
 check("THE REPORT SEPARATES CONVERSATION TURNS FROM SUBAGENT STEPS",
       "isSidechain" in _rsrc and "subcalls" in _rsrc)
-check("...and says which of the two the reader is meant to act on",
-      "the number to read" in _rsrc and "not to be read as the result" in _rsrc)
-# The artefact is shown rather than hidden: a reader who saw -27.5% yesterday must be able to find
-# out where it went, or the correction looks like the tool quietly moving its own goalposts.
-check("...and still shows the all-calls figure, with the reason it differs",
-      "carries roughly a fifth of a turn's context" in _rsrc)
+check("...and says the subagent steps were excluded rather than silently dropping them",
+      "subagent steps excluded" in _rsrc and "flatter the result" in _rsrc)
+# 🎯 The second half, and the owner's point before this measured it: the before/after assumes both
+# sides are the SAME KIND of work. On this repository they are not — 20% of files were opened again
+# from an earlier week before the workspace existed, 10% after. An index pays when you come back to
+# code you already know, so a period of mostly new files cannot show the effect in either
+# direction. Reporting that is worth more than the percentage above it.
+check("...and reports whether the two periods were even the same kind of work",
+      "repeat work" in _rsrc and "opened again from an earlier week" in _rsrc)
+# 🎯 Kept short deliberately. Three blocks of caveats that half-contradict each other leave a
+# reader less able to decide than one clear line does, and this is the screen somebody opens to
+# answer one question.
+check("...in a verdict short enough to act on",
+      _rsrc.count("print(") < 80 and "could not show the effect either way" in _rsrc)
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 

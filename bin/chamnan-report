@@ -61,6 +61,9 @@ def _project_roots():
             seen.add(str(d))
             roots.append(d)
     return roots
+# day -> set of file paths opened that day; folded to weeks in main().
+touched_by_week = __import__("collections").defaultdict(set)
+
 SNAPSHOT = re.compile(r"-\d{8}$")
 
 
@@ -121,6 +124,15 @@ def collect(project_dir):
                 msg = rec.get("message") or {}
                 usage, rid, model = msg.get("usage"), rec.get("requestId"), msg.get("model")
                 ts = rec.get("timestamp")
+                # 🎯 Which FILES a week touched, gathered in the pass that is already reading every
+                # line. It answers the question the before/after cannot answer on its own: was this
+                # week the same work as last week, or new work? See _confound() below.
+                if ts:
+                    for _c in (msg.get("content") or []):
+                        if isinstance(_c, dict) and _c.get("type") == "tool_use":
+                            _fp = (_c.get("input") or {}).get("file_path")
+                            if _fp:
+                                touched_by_week[ts[:10]].add(_fp)
                 if not (isinstance(usage, dict) and rid and model and ts):
                     continue
                 try:
@@ -390,19 +402,53 @@ def main(argv):
         ac, acr, acw = side(lambda k: k > marker_week)
         bmc, bmr, _ = side(lambda k: k < marker_week, main_only=True)
         amc, amr, _ = side(lambda k: k > marker_week, main_only=True)
-        print(f"\n  conversation turns only — the number to read")
-        print(f"    before {bmc:>7,} calls   context/call {bmr:>10,.0f}")
-        print(f"    after  {amc:>7,} calls   context/call {amr:>10,.0f}")
-        print(f"    change {'':>7}          {(amr-bmr)/max(bmr,1)*100:>+21.1f}%")
-        if bc != bmc or ac != amc:
-            print(f"\n  including subagent steps — shown so the difference is visible, not to be read"
-                  f" as the result")
-            print(f"    before {bc:>7,} calls   context/call {bcr:>10,.0f}   new-read/call {bcw:>9,.0f}")
-            print(f"    after  {ac:>7,} calls   context/call {acr:>10,.0f}   new-read/call {acw:>9,.0f}")
-            print(f"    change {'':>7}          {(acr-bcr)/max(bcr,1)*100:>+21.1f}%"
-                  f"{(acw-bcw)/max(bcw,1)*100:>+22.1f}%")
-            print("    A subagent step carries roughly a fifth of a turn's context, so a period with")
-            print("    more of them looks cheaper per call without any turn getting cheaper.")
+        # 🎯 The confound the before/after cannot see, and the owner named it before this measured
+        # it: the comparison assumes the two sides are the SAME KIND of work. On this repository
+        # they are not — the weeks after the workspace was created are the least repetitive in the
+        # whole corpus (8%, 7%, 12% of files revisited from an earlier week, against 27% and 36%
+        # before). Returning to code you already know is where an index pays; opening new code
+        # every week is not. So a flat result is not evidence the tool does not help, and a falling
+        # one would not have been evidence that it does. Saying which of those applies is worth
+        # more than the percentage above it.
+        def _revisit(pred):
+            weeks_seen, cur, prior = {}, set(), set()
+            for day in sorted(touched_by_week):
+                try:
+                    wk = datetime.fromisoformat(day).isocalendar()[:2]
+                except ValueError:
+                    continue
+                weeks_seen.setdefault(wk, set()).update(touched_by_week[day])
+            # The earliest week is skipped, not counted as 0%: it has no earlier week to revisit
+            # by construction, and including it drags the "before" side down for a reason that has
+            # nothing to do with the work. Measured here, that one correction moves before from
+            # 17% to 20% and is the difference between the two sides looking similar and looking
+            # as different as they are.
+            for n, wk in enumerate(sorted(weeks_seen)):
+                files = weeks_seen[wk]
+                if pred(wk) and n > 0:
+                    cur.add((len(files & prior), len(files)))
+                prior |= files
+            rev = sum(a for a, _ in cur)
+            tot = sum(b for _, b in cur)
+            return (100 * rev / tot) if tot else None
+        # Short on purpose. Three blocks of caveats that half-contradict each other leave a reader
+        # less able to decide than one clear line does, and this is the screen somebody opens to
+        # answer one question. The reasoning lives in these comments, not in the output.
+        print(f"\n  context per turn   before {bmr:>10,.0f}   after {amr:>10,.0f}   "
+              f"{(amr-bmr)/max(bmr,1)*100:+.1f}%")
+        if ac != amc:
+            # Subagent steps carry about a fifth of a turn's context, so a period with more of
+            # them looks cheaper per call while no turn got cheaper. Counted out, never averaged
+            # in — that average is what this command used to print as its headline.
+            print(f"  ({ac - amc:,} subagent steps excluded — they carry a fraction of a turn "
+                  f"and would flatter the result)")
+        _b, _a = _revisit(lambda k: k < marker_week), _revisit(lambda k: k > marker_week)
+        if _b is not None and _a is not None:
+            print(f"\n  repeat work        before {_b:>4.0f}%      after {_a:>4.0f}%   "
+                  f"of files opened again from an earlier week")
+            if _a + 8 < _b:
+                print("  An index pays when you come back to the same code. Most of the work since")
+                print("  then was new files, so this period could not show the effect either way.")
         print("\n  Read this as an observation, not an experiment: your model, your task mix and")
         print("  Claude Code itself all changed over the same period. It is your repo's number,")
         print("  which is the point — but it is not a controlled trial.")
