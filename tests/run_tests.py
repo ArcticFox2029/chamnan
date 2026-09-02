@@ -8215,6 +8215,30 @@ check("an ordinary document is still scrubbed by the rules that do apply",
       "sk_live_0123456789abcdef" not in _rd.scrub(_plain))
 
 
+# ------------------------------ `password: String` is a type, and the redactor was eating it
+# Found live in this repository's own committed MAP.md, not in a fixture: a Swift signature
+# `logIn(user: String, password: String, page: Page)` was published as
+# `logIn(user: String, password: <REDACTED> page: Page)`. `\S{6,}` had taken `String,` — seven
+# characters of type name — and the comma with it, so the signature was censored AND malformed.
+#
+# It was luck that it was not worse: `token: Token` survived only because `Token,` is six characters.
+# Every typed language writes `name: Type` in the shape the assignment rules read as `name = value`.
+check("a type annotation after a secret-shaped name is not a secret",
+      _rd.scrub("logIn(user: String, password: String, page: Page)")
+      == "logIn(user: String, password: String, page: Page)")
+check("...including a generic one",
+      "<REDACTED>" not in _rd.scrub("def f(secret: Optional<Token>, x: Int)"))
+check("a real value after the same name is still redacted",
+      "hunter2hunter2" not in _rd.scrub("password: hunter2hunter2"))
+check("...and a capitalised value carrying a digit is still a value, not a type",
+      "Passw0rdValue" not in _rd.scrub("password: Passw0rdValue"))
+check("...and a quoted one is untouched by this exemption",
+      "s3cr3t-value-here" not in _rd.scrub('password: "s3cr3t-value-here"'))
+# The exemption is anchored on the colon: `password = String` is an assignment, not an annotation.
+check("the exemption does not reach `=` assignments",
+      "<REDACTED>" in _rd.scrub("password = Str1ngy"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

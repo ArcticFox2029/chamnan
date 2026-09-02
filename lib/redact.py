@@ -61,6 +61,33 @@ def _is_a_plain_word(value):
     return bool(_PLAIN_WORD.match(value)) or value[:1] in "([{"
 
 
+def _is_a_type_annotation(value):
+    """True when what follows `password:` is a TYPE, not a value.
+
+    🐛 Found live in this repository's own MAP.md: a Swift signature
+    `logIn(user: String, password: String, page: Page)` came out as
+    `logIn(user: String, password: <REDACTED> page: Page)`. `\\S{6,}` had taken `String,` — seven
+    characters of type name — and with it the comma that separated the next parameter, so the
+    published signature was both censored and malformed.
+
+    It was luck rather than design that it did not happen more: `token: Token` survives only
+    because `Token,` is six characters and the rule wants six or more. Every language with type
+    annotations writes `name: Type` in exactly the shape the assignment rules read as `name = value`.
+
+    A type name is alphabetic and capitalised and carries no digits; a credential in this position
+    essentially always carries digits, punctuation or case mixing that a type does not. Optional
+    generics and a trailing separator are allowed, because that is how the annotation appears inside
+    a parameter list.
+    """
+    v = (value or "").rstrip(",);")
+    if v.endswith(">") and "<" in v:          # Dict<String, Int>, Optional<Token>
+        v = v[:v.index("<")]
+    return bool(_TYPE_ANNOTATION.match(v))
+
+
+_TYPE_ANNOTATION = re.compile(r"[A-Z][A-Za-z]*\??\]?$")
+
+
 # `Authorization: Bearer <jwt>` and `Basic <base64>` — but "Basic Authentication" is a phrase, and
 # this rule matched it for years because twelve letters is twelve characters.
 AUTH_SCHEME_SECRET = re.compile(
@@ -465,5 +492,6 @@ def scrub(text):
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
+        or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m.group(2)))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     return text
