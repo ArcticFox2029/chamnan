@@ -215,7 +215,26 @@ def install_git_hook(root):
     return 0
 
 
+KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure", "-h", "--help")
+
+
 def main(argv):
+    # 🐛 There was no `--help`, and this command treats any non-flag argument as a directory to
+    # scan — so `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the
+    # most cautious thing a new user can type performed a write. Found by an agent that typed it
+    # by reflex in the wrong directory and rewrote a real repository's index.
+    #
+    # An unknown flag is refused rather than ignored for the same reason the README already warns
+    # about: a misspelt flag used to be dropped in silence and the command did something other than
+    # what was asked, with nothing on screen to say so.
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
+        return 0
+    unknown = [a for a in argv if a.startswith("-") and a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"chamnan-map: unknown flag {unknown[0]} — try --help", file=sys.stderr)
+        return 2
+
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
