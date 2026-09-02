@@ -1216,14 +1216,21 @@ def _render(files, root):
         # Full Detail for `## \`path\``. Grepping by full path is a Full Detail workflow and its
         # headings are untouched. A directory with a single file keeps its inline path, since a
         # heading plus one row costs more than the prefix it removes.
+        # 🐛 A heading was emitted only for directories holding more than one file, so a root file
+        # or a lone file in its own directory kept its full path and rendered UNDERNEATH the
+        # previous directory's heading. `root.py` sat under `**`a/`**` and reads as `a/root.py`,
+        # which does not exist — the same "names a path that is not there" class as the roll-up bug
+        # fixed this morning, reintroduced by the grouping that replaced it.
+        #
+        # Every directory transition gets a heading now, root included, and every row is a basename.
+        # It costs a heading on a single-file directory, which is roughly what the full path cost
+        # anyway, and it removes the case where a row cannot be resolved at all.
         here = str(PurePosixPath(f["path"]).parent)
         if here != cur_dir:
             cur_dir = here
-            if here != "." and _dir_counts.get(here, 0) > 1:
-                lines.append("")
-                lines.append(f"**`{mdblock.one_line(here)}/`**")
-        shown = (PurePosixPath(f["path"]).name
-                 if here != "." and _dir_counts.get(here, 0) > 1 else f["path"])
+            lines.append("")
+            lines.append(f"**`{mdblock.one_line(here if here != '.' else '.')}/`**")
+        shown = PurePosixPath(f["path"]).name
         lines.append(f"- **`{mdblock.one_line(shown)}`**"
                      f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {summary}")
 
