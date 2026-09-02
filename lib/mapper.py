@@ -594,6 +594,37 @@ def extract_python(source, path, lang='py'):
             for t in node.targets:
                 if isinstance(t, ast.Name) and t.id.isupper() and len(t.id) > 2:
                     consts.append(t.id)
+    # 🎯 Last resort, and the largest measured gap in the whole map. chamnan prints its own verdict
+    # on a fresh pallets/flask clone -- "described 5/81 files (6%) ... 76 file(s) have no opening
+    # comment, so the index cannot say what they do. That is the single biggest lever on this map's
+    # usefulness" -- and the 79 rows ending in `— —` spend 4,553 of the Quick Index's 9,549 bytes
+    # saying a path exists and how long it is. src/flask/app.py, 1,628 lines, is one of them.
+    #
+    # The description is already inside the file. Measured with ast across that clone: 1 module
+    # docstring in 83 Python files (1%), against 256 of 442 functions and classes documented (57%).
+    #
+    # The objection is real and this is shaped around it: a symbol's docstring describes a SYMBOL,
+    # and a utility module whose first documented thing is a private helper would get a summary
+    # confidently about the wrong subject -- the failure this project says is worse than silence.
+    # Three things answer that. Only PUBLIC names are considered, so `_slugify` cannot be picked.
+    # A class is preferred over a function, because a file usually holds one class and many
+    # functions. And the symbol is NAMED in the summary, so the row reads "`Flask`: The flask
+    # object implements a WSGI application" -- which cannot be read as a claim about the file,
+    # only as a pointer to what is in it.
+    if not doc:
+        # 🐛 The FIRST documented class is usually not the file's subject. Measured by reading
+        # flask's own rows: cli.py came out as `NoAppException` rather than `FlaskGroup`,
+        # config.py as `ConfigAttribute` rather than `Config`, blueprints.py as
+        # `BlueprintSetupState` rather than `Blueprint` -- in each case an exception or a helper
+        # that happens to be defined above the thing the file is named after. Ranking by method
+        # count fixes all three and costs nothing: the list is already collected two lines up, and
+        # "the class with the most methods" is a good proxy for "the class this file is about".
+        cands = [c for c in classes if c[1] and not c[0].startswith("_")]
+        pick = max(cands, key=lambda c: len(c[2])) if cands else \
+            next((f for f in funcs if f[1] and not f[0].startswith("_")), None)
+        if pick:
+            name = pick[0].split("(")[0]
+            doc = f"`{name}`: " + _clip(pick[1].split(". ")[0], 100)
     return doc, funcs, classes, consts
 
 

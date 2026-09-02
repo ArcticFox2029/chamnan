@@ -6482,6 +6482,41 @@ check("...and an ordinary UTF-8 source file is unaffected",
       _pk._text_encoding(_enc / "latin1.txt") in ("cp1252", "utf-8-sig"))
 shutil.rmtree(_enc, ignore_errors=True)
 
+# 🎯 The largest measured gap in the map, and chamnan prints it itself: on a fresh pallets/flask
+# clone it said "described 5/81 files (6%) ... 76 file(s) have no opening comment, so the index
+# cannot say what they do. That is the single biggest lever on this map's usefulness." Those 79
+# blank rows spent 4,553 of the Quick Index's 9,549 bytes saying a path exists and how long it is,
+# and src/flask/app.py — 1,628 lines — was one of them.
+#
+# The description was inside the file the whole time: 1 module docstring in 83 files (1%) against
+# 256 of 442 functions and classes documented (57%). Measured after: flask 6% -> 44%, requests
+# 51% -> 81%, click -> 71%, coveragepy -> 90%.
+_pyfb = ('class NoAppException(Exception):\n    """Raised if an application cannot be loaded."""\n\n'
+         'class FlaskGroup:\n    """Special subclass that supports loading more commands."""\n'
+         '    def main(self): pass\n    def get_command(self): pass\n    def list_commands(self): pass\n')
+_d, _f, _c, _k = mapper.extract_python(_pyfb, Path("cli.py"))
+check("A FILE WITH NO OPENING COMMENT IS DESCRIBED BY WHAT IS DOCUMENTED INSIDE IT",
+      _d.startswith("`FlaskGroup`:") and "supports loading more commands" in _d)
+# 🐛 The FIRST documented class is usually not the file's subject. Reading flask's own rows caught
+# it: cli.py came out as `NoAppException`, config.py as `ConfigAttribute`, blueprints.py as
+# `BlueprintSetupState` — an exception or a helper defined above the thing the file is named after.
+# Ranking by method count fixed all three and costs nothing; the list is already collected.
+check("...and it is the class the file is ABOUT, not the exception declared above it",
+      "NoAppException" not in _d)
+# A symbol docstring describes a SYMBOL. Naming it is what stops the row being read as a claim
+# about the file — this project's own position is that a confident wrong summary is worse than
+# silence, and this is the guard against manufacturing exactly that.
+check("...and the symbol is named, so the row cannot be misread as a claim about the file",
+      _d.startswith("`"))
+check("...private names are never picked",
+      "_hidden" not in (mapper.extract_python(
+          'class _hidden:\n    """Internal only."""\n    def a(self): pass\n', Path("x.py"))[0] or ""))
+check("...and a real module docstring still wins over anything inside the file",
+      mapper.extract_python('"""The real module summary."""\nclass A:\n    """Not this."""\n',
+                            Path("x.py"))[0] == "The real module summary.")
+check("...while a file with nothing documented is still honestly undescribed",
+      mapper.extract_python("class A:\n    pass\n", Path("x.py"))[0] == "")
+
 # The Configuration list is capped and was cut alphabetically, so a repo with 200 variables showed
 # everything up to about `D` under a line that said only "Showing 50 of 200".
 check("A CAPPED CONFIGURATION LIST NAMES THE RANKING IT WAS CUT ON",
