@@ -27,6 +27,7 @@ import fit  # noqa: E402
 import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
+import mdblock  # noqa: E402
 import redact  # noqa: E402
 import rollup  # noqa: E402
 import rulecheck  # noqa: E402
@@ -594,7 +595,10 @@ def main():
                 if behind:
                     n, examples = unindexed(root, text)
                     # A count of what is missing, not an age. See unindexed() for why.
-                    what = (f"**{n} file(s) are not in it** — {', '.join(f'`{e}`' for e in examples)}"
+                    # Filenames are chosen by whoever wrote the clone, and this line prints them
+                    # in chamnan's own voice, outside the fence. Made inert before interpolation.
+                    what = (f"**{n} file(s) are not in it** — "
+                            + ", ".join(f"`{mdblock.as_quoted(e)}`" for e in examples)
                             + ("…" if n > len(examples) else "") + ". ") if n else ""
                     # The offer to install the hook goes only to a repo that has not installed it.
                     # Repeating it to someone who has is how a warning stops being read.
@@ -605,11 +609,15 @@ def main():
                     # rather than guessing from a duration. Capped because on a two-week gap this
                     # would name most of the tree, which is noise wearing the costume of a signal.
                     if edited and not what:
-                        _shown = ", ".join(f"`{e}`" for e in edited[:3])
+                        _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in edited[:3])
                         _more = f" _+{len(edited)-3} more_" if len(edited) > 3 else ""
                         what = f"**{len(edited)} file(s) changed since** — {_shown}{_more}. "
-                    out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
-                               f"{what}Rebuild it with {fix}._\n")
+                    # Scrubbed like every sibling section. It was the one warning built from
+                    # repository-controlled strings that skipped the redactor entirely, so a
+                    # credential in a FILENAME reached the block intact.
+                    out.append(redact.scrub(
+                        f"_⚠ Source has changed since this index was built ({ago(behind)}). "
+                        f"{what}Rebuild it with {fix}._\n"))
 
         if cfg.get("environments", True):
             # Constraints, never versions. A constraint rules out a whole design before it is written
@@ -637,7 +645,10 @@ def main():
                 # carries a mechanical check, the repository is asked directly instead. Silent when
                 # everything holds: a line that always says "all good" stops being read before the day
                 # it says something else.
-                broken = rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root)))
+                # Rule titles and their Check trailers are repository-authored and this line
+                # prints them outside the fence, so it gets the same scrub every section has.
+                broken = redact.scrub(
+                    rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root))))
                 if broken:
                     out.append(broken)
             # Decisions and lessons are looked up when the question comes round, so they contribute a
