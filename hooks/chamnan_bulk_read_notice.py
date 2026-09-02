@@ -52,7 +52,19 @@ LOCKFILES = {
     "uv.lock", "podfile.lock", "packages.lock.json", "mix.lock", "pubspec.lock",
 }
 GENERATED = re.compile(r"\.(min\.(js|css)|bundle\.js|map|pb\.go|generated\.\w+)$", re.I)
-GENERATED_DIRS = ("dist", "build", "node_modules", "vendor", "__generated__", ".next", "target")
+# 🐛 `autogen` was missing, and it is where a project that generates bindings puts them. tinygrad:
+# 89 of 226 entries under `tinygrad/runtime/autogen/`, 716,834 of MAP.md's 1,566,175 characters —
+# 46% of the index is machine-written ctypes bindings. The notice fired correctly on the 475 KB
+# amd_gpu.py and said only that it was LARGE: "a grep or a line range costs a fraction of that."
+# It should have said generated. Told a file is large, an agent still reads it to understand the
+# system, which is the thing this notice exists to prevent; told it is generated, it greps.
+#
+# `autogen` only, and not the tempting `gen` or `generated`. Mislabelling real source as generated
+# is strictly worse than the reverse — it tells the agent not to read the file it needs — and
+# `gen/` is a hand-written directory often enough to make that a real risk. `__generated__` was
+# already here for the same reason: it is unambiguous.
+GENERATED_DIRS = ("dist", "build", "node_modules", "vendor", "__generated__", ".next", "target",
+                  "autogen")
 BIG_BYTES = 200_000        # ~55k tokens; worth a word before it lands in the context
 HUGE_BYTES = 1_000_000
 
@@ -102,7 +114,7 @@ def reason_for(path, root=None):
     except ValueError:
         inside = path.parts
     if any(part in GENERATED_DIRS for part in inside):
-        return "inside a build/vendor directory"
+        return "inside a generated or vendored directory"
     return ""
 
 

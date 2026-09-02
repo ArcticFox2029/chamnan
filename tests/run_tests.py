@@ -6349,6 +6349,32 @@ for _lf in ("uv.lock", "podfile.lock", "mix.lock", "pubspec.lock", "packages.loc
     check(f"a bulk read of {_lf} is noticed", _lf in _brn.LOCKFILES)
 check("...and an ordinary source file is not", "app.py" not in _brn.LOCKFILES)
 
+# 🐛 `autogen` was not among the generated directories, and it is where a project that generates
+# bindings puts them. tinygrad: 89 of 226 index entries under `tinygrad/runtime/autogen/`, and
+# 716,834 of MAP.md's 1,566,175 characters — 46% of the index is machine-written ctypes bindings.
+# The notice fired on the 475 KB amd_gpu.py and said only that it was LARGE. Told a file is large
+# an agent still reads it to understand the system, which is what this notice exists to prevent;
+# told it is generated, it greps.
+check("A FILE UNDER autogen/ IS NAMED AS GENERATED, NOT MERELY AS LARGE",
+      "autogen" in _brn.GENERATED_DIRS)
+# `autogen` only, not the tempting `gen` or `generated`: mislabelling real source as generated is
+# strictly worse than the reverse, because it tells the agent not to read the file it needs.
+check("...but `gen` and `generated` stay out, because both are hand-written often enough",
+      "gen" not in _brn.GENERATED_DIRS and "generated" not in _brn.GENERATED_DIRS)
+
+# 🐛 The payload section held `makefile` and `rakefile` and stopped there, so a project keeping its
+# entry points anywhere else had them filed under "Payload, not code — do not read these to
+# understand the system." simonw/datasette keeps build, test and lint in a Justfile — `just test`
+# is what its own CONTRIBUTING tells contributors to run — and the injected block described its
+# root as "(none) x8" beneath that heading. assets.py's own comment already stated the intent: a
+# build manifest is "exactly what someone joining the repo needs". ledger.py had carried the right
+# list all along, Justfile included; two lists answering the same question and disagreeing is the
+# defect, not the missing name.
+for _bn in ("justfile", "dockerfile", "taskfile.yml", "procfile", "jenkinsfile", "makefile"):
+    check(f"{_bn} is a build manifest, not payload to skip", _bn in _as.BUILD_NAMES)
+check("...while a licence file is neither, and stays where it was",
+      "license" not in _as.BUILD_NAMES)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.

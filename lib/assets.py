@@ -65,7 +65,22 @@ BUILD_MANIFESTS = {".csproj", ".fsproj", ".vbproj", ".sln", ".props", ".targets"
 BUILD_NAMES = {"go.mod", "go.sum", "cargo.toml", "package.json", "pyproject.toml", "setup.cfg",
                "gemfile", "podfile", "config.ru", "rakefile", "makefile", "cmakelists.txt",
                "build.gradle", "settings.gradle", "pom.xml", "composer.json", "mix.exs",
-               "pubspec.yaml", "build.zig", "meson.build", "build", "workspace"}
+               "pubspec.yaml", "build.zig", "meson.build", "build", "workspace",
+               # 🐛 The list held `makefile` and `rakefile` and stopped there, so a project that
+               # keeps its entry points anywhere else had them filed under "Payload, not code — do
+               # not read these to understand the system." simonw/datasette keeps its build, test
+               # and lint commands in a Justfile — `just test` is what its own CONTRIBUTING tells
+               # contributors to run — and the injected block described its root directory as
+               # "17 files … (none) x8" beneath that heading. The comment four lines up already
+               # states the intent: a build manifest is "exactly what someone joining the repo
+               # needs", and being counted here "made that sentence false".
+               #
+               # ledger.py's _EXTENSIONLESS_FILES has carried the right list all along, Justfile
+               # included. Two lists answering the same question and disagreeing is the shape of
+               # this defect, not the missing name.
+               "justfile", "dockerfile", "containerfile", "jenkinsfile", "taskfile.yml",
+               "taskfile.yaml", "earthfile", "magefile.go", "tiltfile", "procfile", "vagrantfile",
+               "brewfile", "gnumakefile", "tox.ini", "noxfile.py", "justfile.toml"}
 
 
 def _human(size):
