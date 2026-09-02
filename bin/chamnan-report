@@ -130,8 +130,19 @@ def _shared_tail(want, have):
     return n
 
 
-def collect(project_dir):
+def collect(project_dir, want_opened=False):
+    """Read every transcript line once.
+
+    🎯 [perf] This used to be read twice — once here for usage stats, once more in
+    print_pointer() for which `.chamnan` files got opened. Both scans open the same 300+ files
+    and decode the same lines; on a repo with hundreds of MB of transcripts that is the whole
+    cost of `chamnan-report` twice over for no reason. `want_opened` lets the caller ask this
+    single pass to also build the pointer's "opened" set, so the second scan is never needed at
+    all — it costs nothing extra in file I/O, only a couple of cheap string checks per line that
+    was already being read.
+    """
     best = {}
+    opened = set() if want_opened else None
     for path in project_dir.rglob("*.jsonl"):
         try:
             fh = path.open(errors="replace")
@@ -139,7 +150,10 @@ def collect(project_dir):
             continue
         with fh:
             for line in fh:
-                if '"usage"' not in line:
+                has_usage = '"usage"' in line
+                # Same prefilter print_pointer() used to apply in its own separate pass.
+                is_pointer_candidate = want_opened and '"tool_use"' in line and ".chamnan" in line
+                if not has_usage and not is_pointer_candidate:
                     continue
                 try:
                     rec = json.loads(line)
@@ -151,13 +165,32 @@ def collect(project_dir):
                 # 🎯 Which FILES a week touched, gathered in the pass that is already reading every
                 # line. It answers the question the before/after cannot answer on its own: was this
                 # week the same work as last week, or new work? See _confound() below.
-                if ts:
-                    for _c in (msg.get("content") or []):
-                        if isinstance(_c, dict) and _c.get("type") == "tool_use":
-                            _fp = (_c.get("input") or {}).get("file_path")
-                            if _fp:
-                                touched_by_week[ts[:10]].add(_fp)
-                if not (isinstance(usage, dict) and rid and model and ts):
+                content = msg.get("content")
+                # `has_usage` here, not just `ts`. Before the merge this block was unreachable
+                # unless the line contained `"usage"`, because the prefilter above had already
+                # skipped it; a line now also reaches here for being a pointer candidate. Measured
+                # on 60 real transcript files: 3,527 lines carry tool_use AND `"usage"`, and ZERO
+                # carry tool_use without it — so on today's format the two conditions coincide and
+                # the merge is byte-identical, which is what the before/after showed. Keeping the
+                # condition explicit means that stays true if the format ever stops coinciding,
+                # rather than `touched_by_week` silently gaining rows and moving _confound().
+                if isinstance(content, list):
+                    for _c in content:
+                        if not (isinstance(_c, dict) and _c.get("type") == "tool_use"):
+                            continue
+                        _fp = (_c.get("input") or {}).get("file_path")
+                        if not _fp:
+                            continue
+                        # Two consumers of the same block, and they do NOT share a condition.
+                        # `touched_by_week` keeps `has_usage`, which is what gated it before the
+                        # merge — the prefilter above used to skip a usage-less line outright, so
+                        # widening the prefilter must not widen this. `opened` is the reason the
+                        # line was let through at all, so it takes no such gate.
+                        if has_usage and ts:
+                            touched_by_week[ts[:10]].add(_fp)
+                        if want_opened and ".chamnan" in _fp:
+                            opened.add(_fp.split(".chamnan/")[-1])
+                if not has_usage or not (isinstance(usage, dict) and rid and model and ts):
                     continue
                 try:
                     when = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
@@ -183,7 +216,7 @@ def collect(project_dir):
                 # breaking a second time.
                 if prior is None or sum(entry[2:6]) > sum(prior[2:6]):
                     best[rid] = entry
-    return list(best.values())
+    return list(best.values()), opened
 
 
 def print_inventory(root):
@@ -282,22 +315,12 @@ def _workspace_created(wsdir):
     return datetime.fromtimestamp(min(candidates)).astimezone() if candidates else None
 
 
-def print_pointer(root, project_dir):
-    """Did the session open what it was pointed at?
-
-    The measurement `hooks/chamnan_file_pointer.py` was built to allow, and it is deliberately NOT "how
-    often did it match". A pointer that fires on 39 of 42 files and names the wrong entry scores
-    identically to one that names the right entry, so a match rate measures the pointer's
-    enthusiasm, not its usefulness. What can be checked is whether the thing it named was then
-    opened — and both halves of that are already written down: logs/pointer.jsonl records what was
-    named, and Claude Code's own transcripts record every file the session read.
-
-    Still an observation, not proof. A session may act on knowledge without opening the file, and a
-    file may be opened for an unrelated reason. Reported as a count, never as a score.
-    """
+def _read_pointer_log(root):
+    """logs/pointer.jsonl only — cheap regardless of transcript size, so read it before deciding
+    whether the (potentially hundreds-of-MB) transcript scan for `opened` is even worth doing."""
     log = ws.workspace(root) / "logs" / "pointer.jsonl"
     if not log.is_file():
-        return
+        return 0, {}
     fired, named = 0, {}
     try:
         for line in log.read_text(encoding="utf-8").splitlines():
@@ -309,32 +332,29 @@ def print_pointer(root, project_dir):
             for path in rec.get("named") or []:
                 named.setdefault(path, set()).add(rec.get("session"))
     except OSError:
-        return
+        return 0, {}
+    return fired, named
+
+
+def print_pointer(fired, named, opened):
+    """Did the session open what it was pointed at?
+
+    The measurement `hooks/chamnan_file_pointer.py` was built to allow, and it is deliberately NOT "how
+    often did it match". A pointer that fires on 39 of 42 files and names the wrong entry scores
+    identically to one that names the right entry, so a match rate measures the pointer's
+    enthusiasm, not its usefulness. What can be checked is whether the thing it named was then
+    opened — and both halves of that are already written down: logs/pointer.jsonl records what was
+    named, and Claude Code's own transcripts record every file the session read.
+
+    Still an observation, not proof. A session may act on knowledge without opening the file, and a
+    file may be opened for an unrelated reason. Reported as a count, never as a score.
+
+    🎯 [perf] `opened` now arrives precomputed from collect()'s single pass over the transcripts —
+    this function used to do its OWN full rglob-and-read of every transcript file, duplicating the
+    exact same I/O and JSON decoding collect() was already doing. See collect()'s docstring.
+    """
     if not fired:
         return
-
-    # Every path this repo's sessions have READ, from the transcripts rather than from a new log.
-    opened = set()
-    for f in project_dir.rglob("*.jsonl"):
-        try:
-            with f.open(encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    if '"tool_use"' not in line or ".chamnan" not in line:
-                        continue          # cheap prefilter; these files run to hundreds of MB
-                    try:
-                        d = json.loads(line)
-                    except ValueError:
-                        continue
-                    content = (d.get("message") or {}).get("content")
-                    if not isinstance(content, list):
-                        continue
-                    for b in content:
-                        if isinstance(b, dict) and b.get("type") == "tool_use":
-                            fp = (b.get("input") or {}).get("file_path") or ""
-                            if ".chamnan" in fp:
-                                opened.add(fp.split(".chamnan/")[-1])
-        except OSError:
-            continue
 
     followed = sorted(p for p in named if p in opened)
     print("Pointer — knowledge named when a file was opened")
@@ -364,8 +384,17 @@ def main(argv):
     print_inventory(root)
     print_usage(root)
     project_dir = encoded_dir(root)
+    entries = []
     if project_dir:
-        print_pointer(root, project_dir)
+        # 🎯 [perf] One pass over the transcripts serves both the pointer report and the weekly
+        # table below — collect() used to be called a second time, later in this function, and
+        # print_pointer() used to run its own independent scan before that. Both re-read every
+        # transcript file this repo has (300+ files, hundreds of MB on a well-used repo); reading
+        # logs/pointer.jsonl first (cheap) tells us whether the `opened` set is worth building at
+        # all before paying for the scan.
+        fired, named = _read_pointer_log(root)
+        entries, opened = collect(project_dir, want_opened=bool(fired))
+        print_pointer(fired, named, opened)
     if not project_dir:
         # 🐛 [2026-08-28] Returned 1. A repository nobody has worked on in Claude Code yet has no
         # transcripts, which is the ordinary state on the day the plugin is installed — not a
@@ -384,7 +413,6 @@ def main(argv):
     marker_early = _workspace_created(ws.workspace(root))
     ws.prune_logs(root)
     ws.prune_sessions(root)
-    entries = collect(project_dir)
     if not entries:
         print("chamnan: transcripts found but no usage records yet")
         return 0

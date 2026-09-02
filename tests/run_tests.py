@@ -991,6 +991,27 @@ check("chamnan-report prints the Usage heading", "Usage" in report_out)
 check("a command never logged reads as 0, not absent", "chamnan-map" in report_out and "0 times" in report_out)
 check("no promoted tools yet -> no Promoted tools section", "Promoted tools" not in report_out)
 
+# `collect()` and `print_pointer()` each did their own full pass over every transcript this repo
+# has — 323 files and 746 MB, read and JSON-decoded twice. Merged into one pass, which means one
+# loop now feeds two consumers, and they must keep their SEPARATE conditions: `touched_by_week`
+# was reachable only from a line carrying `"usage"` before the merge, and widening the prefilter
+# to admit pointer candidates must not widen it.
+_rep_src = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+check("the transcript scan is entered once, not once per consumer",
+      _rep_src.count("rglob(\"*.jsonl\")") == 1)
+check("touched_by_week still keeps the has_usage condition the prefilter used to give it",
+      "if has_usage and ts:" in _rep_src)
+check("...while the pointer set does not, since that is why the line was let through",
+      "if want_opened and \".chamnan\" in _fp:" in _rep_src)
+# Compared at the CALL sites, not by a bare substring: `def collect(project_dir,` sits at the top
+# of the file and `def _read_pointer_log(root):` below it, so searching for either name alone
+# compares the definitions and fails while the code is right. That is the second time this session
+# an assertion matched something other than what it meant to.
+check("the pointer log is read before deciding to pay for the transcript scan",
+      "fired, named = _read_pointer_log(root)" in _rep_src
+      and _rep_src.index("fired, named = _read_pointer_log(root)")
+      < _rep_src.index("entries, opened = collect(project_dir,"))
+
 # ---------------------------------------------------------------- chamnan-report's Usage section (Stage 11)
 report_log = report_root / ".chamnan" / "logs" / "commands.jsonl"
 report_log.parent.mkdir(parents=True, exist_ok=True)
