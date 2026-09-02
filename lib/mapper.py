@@ -1025,9 +1025,19 @@ def _under_nested(path, nested):
     A resolve that raises is cached as its own unresolved path rather than re-raised, which is what
     the unguarded comprehension did anyway when a parent vanished mid-scan.
     """
+    # 🐛 The memo was unconditional and never cleared, unlike the sibling cache in `tree.py` which
+    # is explicitly scoped and says why: a caller that scans, changes the tree, and scans again gets
+    # the first answer back for the second scan. A directory created, deleted or re-symlinked
+    # between two scans in one process would keep resolving to what it used to be, and a stale
+    # answer here decides whether a whole checkout counts as this repository's source.
+    #
+    # Same rule as `tree._entries`: cache only inside a `tree.session()`, which is the scope the
+    # caller has already declared it will not mutate the tree within. Outside one, resolve fresh.
+    import tree as _tree
+    cache = _RESOLVED if _tree._DEPTH else {}
     for parent in path.parents:
         key = str(parent)
-        r = _RESOLVED.get(key)
+        r = cache.get(key)
         if r is None:
             try:
                 r = parent.resolve()
@@ -1036,7 +1046,7 @@ def _under_nested(path, nested):
                 # posixpath.realpath. The unguarded comprehension this replaced raised there too,
                 # so this is not a regression it introduces — it is one it closes while passing.
                 r = parent
-            _RESOLVED[key] = r
+            cache[key] = r
         if r in nested:
             return True
     return False
