@@ -337,6 +337,22 @@ def ensure(root=None):
     # setting appears broken. Found the first time this plugin was upgraded in place: the file
     # still held a key that had been deleted and none of the three that replaced it.
     cfg = ws / "config.json"
+    # 🐛 A file that EXISTS and does not parse was treated as a file that is missing. load_json
+    # returns {} for both — correct for absent, destructive for malformed: `merged` then equals
+    # DEFAULT_CONFIG, `merged != current` is true, and the user's settings are overwritten by the
+    # write below. Reproduced with one trailing comma: six deliberate values gone, the original
+    # text gone from disk, and nothing said. The knock-on is not cosmetic — log_retention_days
+    # 90 -> 7 starts deleting logs, output_byte_ceiling 12000 -> 9000 starts dropping sections.
+    #
+    # Refusing to start would be worse than the bug: a session with no chamnan block is what
+    # everything else in this file is written to prevent. So the run continues on defaults, the
+    # file is left exactly as the user wrote it, and the block says there is a typo in it.
+    malformed = False
+    try:
+        if cfg.is_file() and cfg.read_text(encoding="utf-8", errors="replace").strip():
+            json.loads(cfg.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        malformed = True
     current = load_json(cfg, dict)
     merged = dict(DEFAULT_CONFIG)
     # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale option
@@ -346,7 +362,7 @@ def ensure(root=None):
     merged.update({k: v for k, v in current.items()
                    if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
                    and _in_range(k, v)})
-    if merged != current:
+    if merged != current and not malformed:
         try:
             cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
         except OSError:
@@ -642,3 +658,24 @@ def exclusive(path):
                 lock.unlink()
             except OSError:
                 pass
+
+
+def config_is_malformed(root):
+    """True when config.json exists, is not empty, and does not parse.
+
+    Separate from ensure() so the hook can say so without ensure() having to return it, and cheap
+    enough to do twice — the file is a few hundred bytes. Missing, empty and unreadable all return
+    False: those degrade correctly and always have. Only a file the user clearly meant to write,
+    and got wrong, is worth a line in the block.
+    """
+    try:
+        text = (workspace(root) / "config.json").read_text(encoding="utf-8", errors="replace")
+    except (OSError, NotAWorkspace):
+        return False
+    if not text.strip():
+        return False
+    try:
+        json.loads(text)
+    except ValueError:
+        return True
+    return False

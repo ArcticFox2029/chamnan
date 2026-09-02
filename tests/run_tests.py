@@ -6563,6 +6563,38 @@ check("...and a big file under autogen/ is still named as generated", _fires("au
 check("...and a tiny lock file is still named, because size is not why it is named",
       _fires("package-lock.json"))
 shutil.rmtree(_bnr, ignore_errors=True)
+
+# 🐛 A config.json that EXISTS and does not parse was treated as one that is missing. load_json
+# returns {} for both — right for absent, destructive for malformed: the merge then equals the
+# defaults, differs from {}, and the user's file is overwritten. Reproduced with one trailing
+# comma: six deliberate values gone, the original text gone from disk, nothing said. The knock-on
+# is not cosmetic — log_retention_days 90 -> 7 starts deleting logs, output_byte_ceiling
+# 12000 -> 9000 starts dropping sections out of the injection.
+_bc = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q", "."], cwd=str(_bc), capture_output=True)
+(_bc / "m.py").write_text('"""M."""\ndef f(): pass\n')
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_bc), capture_output=True)
+_bccfg = _bc / ".chamnan" / "config.json"
+_bctext = '{\n  "reply_style": "terse",\n  "log_retention_days": 90,\n}\n'
+_bccfg.write_text(_bctext)
+_bcout = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input=json.dumps({"session_id": "t", "cwd": str(_bc)}),
+                        capture_output=True, text=True, cwd=str(_bc)).stdout
+check("A CONFIG THAT DOES NOT PARSE IS NOT OVERWRITTEN WITH DEFAULTS",
+      _bccfg.read_text() == _bctext)
+check("...and the session is told it is running on defaults", "does not parse" in _bcout)
+# Refusing to start would be worse than the bug — a session with no block is what the rest of this
+# hook exists to prevent — so the run continues and the block is still built.
+check("...while the session still gets its block", "## chamnan" in _bcout)
+# Missing and empty are NOT malformed: both degrade correctly and always have.
+_bccfg.unlink()
+check("...a missing config is not reported as malformed", not ws.config_is_malformed(_bc))
+_bccfg.write_text("   \n")
+check("...nor is an empty one", not ws.config_is_malformed(_bc))
+_bccfg.write_text('{"reply_style": "terse"}')
+check("...and a valid one is still merged and rewritten as before",
+      not ws.config_is_malformed(_bc))
+shutil.rmtree(_bc, ignore_errors=True)
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 

@@ -442,6 +442,9 @@ def main():
     except OSError:
         return 0                      # read-only checkout, or no permission — never fail a session
     cfg = ws.load_config(root)
+    # Said once, plainly. A config that does not parse is running on defaults, and every value the
+    # user set is being ignored — silently, that is a settings file that appears not to work.
+    _bad_cfg = ws.config_is_malformed(root)
     out = []
     # Set before the guard below, not inside it: the emit step needs all three, and a failure part
     # way through must still be able to print what was built rather than dying on a name.
@@ -743,6 +746,11 @@ def main():
                 "index and record a baseline; the write skills listed above work from now on, whether "
                 "or not that has been run.", "(generated)"))
 
+        if _bad_cfg:
+            out.insert(0, "_⚠ `.chamnan/config.json` does not parse — a stray comma or quote. "
+                          "This session is running on DEFAULTS and every value set in that file is "
+                          "being ignored. It has NOT been overwritten; fix the syntax and it takes "
+                          "effect on the next session._\n")
         if any(OPEN_MARK in part for part in out):
             out.insert(0, FRAMING + "\n")
             # Everything after position 0 has just moved. index_slot is an index into this list.
