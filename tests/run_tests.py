@@ -6004,6 +6004,71 @@ check("...while a C include block still steps aside for the real description",
       "Real description" in (mapper.leading_comment(
           "#include <stdio.h>\n#define X 1\n\n/* Real description here */\n", "c") or ""))
 
+# Same shape, and by far the most expensive instance of it. `leading_comment` abandons the whole
+# file on the first line that is neither blank, an opener, nor a comment — so ONE line of prologue
+# sitting between the licence header and the real description threw the description away. Measured
+# on real repositories before the fix: express described 1 of 140 files ('use strict' on line 8),
+# CodeIgniter 12 of 289 (defined('BASEPATH') on line 3), and every shell script that opens with
+# `set -euo pipefail`. None of these is a statement the file is ABOUT; they are the same class of
+# thing as `#!` and `import`, which is why they belong in SKIP_OPENERS rather than in a new branch.
+_express = ("/*!\n * Copyright (c) 2014 Foo\n * MIT Licensed\n */\n\n'use strict';\n\n"
+            "/**\n * Sends the HTTP response.\n */\nfunction send() {}\n")
+check("A JS DIRECTIVE PROLOGUE DOES NOT THROW AWAY THE DESCRIPTION BELOW IT",
+      "Sends the HTTP response" in (mapper.leading_comment(_express, "js") or ""))
+check("...and the React-era spellings count too, not only 'use strict'",
+      "Tab strip" in (mapper.leading_comment(
+          '"use client";\n\n// Tab strip for the docs sidebar.\nexport function Tabs() {}\n', "js") or ""))
+check("...a PHP direct-access guard is a prologue, not a description",
+      "Loader Class" in (mapper.leading_comment(
+          "<?php\n/** MIT licence text */\ndefined('BASEPATH') OR exit('No direct script access');\n"
+          "/**\n * Loader Class\n */\nclass CI_Loader {}\n", "php") or ""))
+check("...including WordPress's || form of the same guard",
+      "Renders the settings screen" in (mapper.leading_comment(
+          "<?php\ndefined('ABSPATH') || exit;\n\n/**\n * Renders the settings screen.\n */\n"
+          "class Settings {}\n", "php") or ""))
+check("...and a shell script's `set -euo pipefail` steps aside like the shebang above it",
+      "Installs the release tarball" in (mapper.leading_comment(
+          "#!/usr/bin/env bash\nset -euo pipefail\n\n"
+          "# Installs the release tarball into /usr/local.\nmain() {\n  :\n}\n", "sh") or ""))
+# The guard on the guard: these are skipped so the reader can look PAST them, never so that a file
+# whose only comment is a licence gets promoted. A prologue must not turn boilerplate into a summary.
+check("...and skipping a prologue still does not promote the licence above it",
+      mapper.leading_comment(
+          "/*!\n * Copyright (c) 2014 Foo\n * MIT Licensed\n */\n\n'use strict';\n\n"
+          "function send() {}\n", "js") == "")
+
+# The other half of the same fix, and the half that keeps it honest. Stepping over the prologue
+# reached express's next comment — which is the JSDoc for the `require` block, not for the file.
+# 31 of the 37 files it "described" came out as "Module dependencies.", one sentence shared across
+# a project, which is the exact failure BOILERPLATE exists to stop: it counts as described, inflates
+# coverage, and says nothing. sinatra's 2,173-line core file had been carrying "external
+# dependencies" all along, with no prologue involved at all.
+#
+# Matched on the WORDING, not on what follows. The tempting rule — reject a comment whose next code
+# line is an import — does not fire for express, whose next line is `var Buffer = require(...)`, an
+# assignment rather than an opener; and it WOULD fire on a real description sitting above a plain
+# `import`. So the four checks below are paired: two that must be refused, and two that must not.
+check("A COMMENT THAT LABELS THE IMPORT BLOCK IS NOT THE FILE'S DESCRIPTION",
+      mapper.leading_comment(
+          "/*!\n * MIT Licensed\n */\n\n'use strict';\n\n/**\n * Module dependencies.\n"
+          " * @private\n */\nvar Buffer = require('safe-buffer').Buffer;\n\nfunction send() {}\n",
+          "js") == "")
+check("...whatever visibility tag is stapled to it",
+      mapper.leading_comment("/**\n * Module dependencies.\n * @api private\n */\n"
+                             "var x = require('y');\n", "js") == "")
+check("...and Ruby's spelling of it, which needed no prologue to get through",
+      mapper.leading_comment("# frozen_string_literal: true\n\n# external dependencies\n"
+                             "require 'rack'\n\nmodule Sinatra\nend\n", "rb") == "")
+check("...but a real description sitting above an import survives",
+      mapper.leading_comment("// A small HTTP client.\nimport http from 'http';\n", "js")
+      == "A small HTTP client.")
+check("...and so does a sentence that merely CONTAINS a dependency word",
+      mapper.leading_comment("/**\n * Dependency injection container.\n */\nclass C {}\n", "js")
+      == "Dependency injection container.")
+check("...and one that starts with a verb the label form also uses",
+      mapper.leading_comment("# Load the config file and validate every key.\nimport json\n", "py")
+      == "Load the config file and validate every key.")
+
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
 _aside = ("// loom is an internal implementation detail. Do not show this label.\n"

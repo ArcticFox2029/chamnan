@@ -250,7 +250,17 @@ SKIP_OPENERS = re.compile(
     r"^\s*(?:#!|<\?php\b|<\?=|declare\s*\(|namespace\s|use\s|package\s|@file:|"
     r"import\s|from\s+[\'\"\w.]+\s+import\b|require[\s(]|require_relative\s|using\s\w|"
     r"extern\s+crate|part\s+of\s|library\s\w|@?import\b|open\s+\w+\s*$|"
-    r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|import|pragma|ifndef|if\s|endif))",
+    r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|import|pragma|ifndef|if\s|endif)|"
+    # 🐛 A prologue is an opener too, and leaving these three out cost more coverage than every
+    # other gap in this file put together. `leading_comment` abandons the whole file on the first
+    # line that is neither blank, an opener, nor a comment -- so ONE line of prologue between the
+    # licence header and the real description threw the description away. Measured on real
+    # repositories: express described 1 of 140 files ('use strict' on line 8), CodeIgniter 12 of
+    # 289 (defined('BASEPATH') on line 3), and every shell script opening `set -euo pipefail`.
+    # These are not statements the file is about; they are the same class of thing as `#!` and
+    # `import`, and they belong here rather than in a new branch of the reader.
+    r"""['\"]use (?:strict|client|server)['\"]|set\s+[-+][a-zA-Z]|shopt\s|"""
+    r"defined\s*\([^)]*\)\s*(?:or|\|\|)\s*(?:exit|die)\b)",
     re.I)
 # Only the /* ... */ family. Python never reaches leading_comment with a docstring — ast handles
 # those — so a triple-quote branch here would be dead code carrying its own escaping hazards.
@@ -271,6 +281,27 @@ MAGIC_COMMENT = re.compile(
     r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
 # How far into the opening comment to look for a licence. See the use site.
 BOILERPLATE_WINDOW = 240
+# 🐛 A comment that labels the import block is not a description of the file, and letting one
+# through is worse than leaving the file blank -- it counts as described, inflates coverage, and
+# every file in the project ends up sharing the same summary. Measured: skipping the JS directive
+# prologue took express from 1 described file to 37, and 31 of those 37 read "Module dependencies."
+# -- the JSDoc belonging to the `require` block below it. sinatra's 2,173-line core file has been
+# described as "external dependencies" all along, with no prologue involved at all.
+#
+# Matched on the wording rather than on what follows, deliberately. The tempting rule is "reject a
+# comment whose next code line is an import", but express's next line is `var Buffer =
+# require(...)`, which is an assignment and not an opener -- so that rule does not fire where it is
+# needed, and it WOULD fire on `// A small HTTP client.` above a plain `import`, which is a real
+# description. The wording is the reliable signal: a comment whose entire content is the word
+# "dependencies" is never about the file.
+IMPORT_LABEL = re.compile(
+    r"^(?:load(?:s|ing)?|require|import|include)?\s*(?:the\s+)?"
+    r"(?:module|external|internal|package|third[-\s]party|project|core|npm|node|composer|vendor)?\s*"
+    r"(?:dependencies|dependency|imports|requires|includes|autoloader|autoload)\b[\s.:;,-]*$", re.I)
+# Used only for the comparison against IMPORT_LABEL: a trailing doc tag of ANY name, not only the
+# handful DOC_TAG_TAIL knows. "Module dependencies. @private" and "Module dependencies. @api
+# private" are the same label with a visibility marker stapled on, and both have to read as one.
+ANY_DOC_TAG_TAIL = re.compile(r"[@\\]\w[\w-]*\b.*$", re.S)
 BOILERPLATE = re.compile(
     r"(?:copyright|\(c\)|©|licen[cs]ed?\b|all rights reserved|spdx|permission is hereby|"
     r"this (?:file|program|software|source) (?:is|may)\s+(?:free|provided|distributed|licensed|be)|redistribution|frozen_string_literal|"
@@ -380,7 +411,9 @@ def leading_comment(source, lang=None):
         # whole licence became a file's description. The window is the first sentence-ish now,
         # which is where a licence announces itself and where a real description has already said
         # what the file is.
-        if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]):
+        bare = ANY_DOC_TAG_TAIL.sub("", text).strip()
+        if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]) \
+                and not IMPORT_LABEL.match(bare):
             return _clip(text)
     return ""
 
