@@ -1,13 +1,141 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1140), and every one of these is on the
+[README](README.md#whats-new-in-1150), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
 
 ---
+
+## What's new in 1.14.0
+
+**A crash that made the hook print nothing behind a symlink, a command whose own advice erased the
+record, and thirty-two translated pages that finally say what this does.** Twenty-five commits.
+Every defect was reproduced before it was believed and pinned by a test afterwards; the suite is at
+1,495 checks and now runs in CI on Linux and macOS, at the Python version this project calls its
+floor and at the newest release.
+
+### CI, and the two defects it found before its first merge
+
+There was none until this release. The front page asserted that Linux was "expected to work, not
+tested" and that Python 3.8 was the floor, on a page whose own headline is "verifiable claims, not
+adjectives" — a support matrix nobody runs is an adjective. There is no dependency step, on
+purpose: chamnan is standard library only, and a workflow that ever needs a `pip install` is the
+change to reject rather than the workflow to fix.
+
+It earned its keep immediately.
+
+**`find_root()` resolved its path and `hook_root()` did not.** When the host hands over a path that
+goes through a symlink — `/tmp` and `/var` are symlinks on macOS, and keeping a project behind one
+is ordinary — one returned `/var/x` while the workspace lookup returned `/private/var/x/.chamnan`,
+and the first `relative_to` raised `ValueError`. Uncaught. The hook died with a traceback: zero
+bytes of output, exit 1, no message. That is precisely the silent-nothing failure `hook_root` was
+written to prevent, reintroduced by disagreeing with `find_root` about one path. Measured on a
+symlinked project: **0 bytes before, 4,622 after.** Both layers are closed, because either alone
+would let it recur — `hook_root` resolves now, and every path the block prints falls back to the
+bare filename rather than raising. A label is never worth an exception.
+
+**`sys.stdlib_module_names` arrived in Python 3.10**, and the fallback below it left the set empty.
+So on 3.8 and 3.9 — the two versions this project declares as its floor — every `import re` in the
+codebase was reported as a third-party dependency. Standard-library-only is one of three things
+chamnan actually promises, and the check for it had inverted into a false alarm on the interpreter
+least likely to be the one you ran it on.
+
+Two test blocks were also found to be asserting the author's own folder layout: they resolved a
+fixture path two directories above the checkout, which happens to be another chamnan workspace on
+that machine and an empty directory everywhere else. On any other machine they tested nothing.
+
+### The command `chamnan-env check` tells you to run was the one that erased the entry
+
+It ends with "re-confirm with `chamnan-env set <name> --checked <date>`". Running exactly that
+replaced the whole record — the platform, the versions and every constraint went with it. Anything
+not named on the command line is now carried forward from what is already recorded, and
+`--platform ""` still clears a field, so there is a way to say it really is empty.
+
+`chamnan-candidates demote` deleted the tool file. A promoted tool ships as a skeleton whose steps
+are placeholders — the command's own help says it is not runnable until you fill in the commands —
+so demoting destroyed exactly the part a person wrote, in exchange for a candidate that the code
+itself calls not a reconstruction. It is archived now, and the path is printed.
+
+### The block told you to read a section it had already thrown away
+
+Caught in a live session: "Full detail lives in `.chamnan/MAP.md`" printed a few lines above a list
+naming the architecture index as one of the sections left out to stay under the byte ceiling.
+Dropping a section now takes its footnotes with it, and restoring one pays for them out of the same
+room. Separately, "Environment constraints" had been emitted since 1.11.0 without ever being
+ranked, so it fell to the unranked default and was dropped ahead of everything but the index — the
+one section whose job is to stop a wrong action being proposed at all.
+
+### What the index says about real repositories
+
+Found by running the build over tokio and Homebrew rather than over fixtures.
+
+- **A crate root described by an aside about a build flag.** tokio's `src/lib.rs` carries 431 lines
+  of `//!` saying what the crate is; the index said "loom is an internal implementation detail. Do
+  not show…". A multi-line `#![allow(…)]` matched only on its first line, and once that was fixed
+  the first ordinary `//` won, because nothing preferred the marker the language itself uses for
+  file-level documentation.
+- **A Homebrew tap with nothing said about any of it**: a formula states its summary in
+  `desc "..."`, which is not a comment. **0 of 36 described, now 33.** Anchored on the Formula
+  declaration, so Rake's per-task `desc` is not mistaken for a description of the file.
+- **`(root)` swallowing real directories.** One dominant directory pushing the roll-up to depth two
+  sent every single-segment path into one bucket, so production code and integration tests shared a
+  group of 175 under a name true of neither.
+- Full Detail called a TypeScript interface a class — the half the index tells a reader to grep
+  when they want symbol-level truth.
+
+### chamnan-report was reading another project's numbers
+
+Its fallback for a working directory whose exact encoding is missing accepted any transcript
+directory ending with this repository's basename and returned the first in sort order. A second
+checkout, or an unrelated repo sharing a basename, was silently reported as this one. It ranks
+candidates by how much of the path agrees now, and returns nothing at all when two agree equally,
+because there is no honest answer there.
+
+Same command: `input_tokens` was unpacked from every usage record and then never added to anything.
+That is the input the model read which was *not* served from cache — the whole prompt on every
+session's first call, and on every call after the cache expires. Those calls reported a context of
+zero and pulled the per-call average down by exactly the calls that cost the most.
+
+And the ledger dated memory entries by file mtime, under a comment saying they carry no date of
+their own "until Stage 4 adds `as-of`". Stage 4 shipped three releases ago. On a fresh clone every
+decision ever recorded read as written today.
+
+### The front page, rebuilt for how it is actually read
+
+People paste the link into an AI and ask for a summary. It now opens with a self-contained digest
+and a contents list, so a summariser that reads only the top of a 1,900-line page still gets the
+tool right. The hero image says what chamnan is rather than what its biggest number is; the
+token-ratio figure moved down to sit directly under the two rows that produce it, with its
+qualification travelling alongside.
+
+### Thirty-two translated pages that finally say what it does
+
+They carried what chamnan is and how to install it, and not one word about the features. Someone
+who cannot read English had no way to learn from their own language's page that there is an impact
+query, or a secret filter, or that nothing is ever promoted without a person saying yes. Each page
+now covers all four capability groups, every command and skill, what is written and where, the
+safety guarantees and how to remove it — and still carries no digits, which is the rule that keeps
+them from needing an edit every release.
+
+They are generated from one shared table rather than written out thirty-two times, because the
+failure mode of the latter is a row missing from some languages that nobody would ever catch. The
+suite asserts every language carries every row, none carries a row the others do not, and no page
+has acquired a number.
+
+### Quieter ones
+
+`timeline.for_path` follows renames, so a thread entry written before a `git mv` still answers a
+question asked about the new name. `chamnan-peek` says when it stopped counting rows and how many
+columns it left out, instead of printing a cap as if it were a fact. The Configuration list is
+ranked by how many places each variable is referenced rather than cut alphabetically, and says so.
+Retention runs from the SessionStart hook instead of only from the two commands in `bin/` that
+happened to call it. `entries_naming_no_file` stopped counting `path:line` — the citation format
+chamnan's own guidance asks for — as naming no file. The injected tools list is ranked by use, so a
+thirteenth promoted tool can actually appear.
+
 
 ## What's new in 1.13.0
 
