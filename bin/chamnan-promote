@@ -80,6 +80,24 @@ def main(argv):
         return 1
     shutil.copy2(src, dest)
     dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    # 🐛 The chmod above says "run this directly" and the line printed below says it too, but a
+    # scratch script usually has no shebang — nobody writes one for a file they are about to run
+    # with `python3 x.py`. So the promoted tool was marked executable, announced as runnable, and
+    # then handed to /bin/sh, which met `import json` and said "command not found". Found by
+    # promoting a script this tool had itself asked three times to have promoted.
+    #
+    # The interpreter is chosen from the SUFFIX rather than guessed from the content: a `.py` file
+    # gets `python3`, a `.sh` gets `sh`, and anything else is left exactly as it arrived, because a
+    # binary or a language this does not know is not something to prepend a line to.
+    _SHEBANG = {".py": "#!/usr/bin/env python3", ".sh": "#!/usr/bin/env sh"}
+    _line = _SHEBANG.get(dest.suffix)
+    if _line:
+        try:
+            _body = dest.read_text(encoding="utf-8")
+            if not _body.startswith("#!"):
+                dest.write_text(_line + "\n" + _body, encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            pass          # unreadable as text: leave it alone rather than corrupt it
 
     tools_index.register(root, {
         "name": dest.name, "desc": desc,
@@ -88,7 +106,11 @@ def main(argv):
     })
     rel = dest.relative_to(root)
     print(f"chamnan: promoted -> {rel}")
-    print(f"  run it with:  {rel}")
+    # Only claim direct execution when the file can actually be executed directly. A promoted file
+    # with no shebang and no known suffix is still useful; it is just not a command.
+    _runnable = dest.read_bytes()[:2] == b"#!" if dest.is_file() else False
+    print(f"  run it with:  {rel}" if _runnable else f"  run it with:  python3 {rel}"
+          if dest.suffix == ".py" else f"  run it with:  {rel}")
     if not desc:
         print("  no description given — add one so a future session knows when to reach for it:")
         print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root)})")
