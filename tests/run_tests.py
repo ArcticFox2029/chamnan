@@ -5063,8 +5063,9 @@ check("a part that does not open with a heading has no title",
 _unknown = [_sec("Architecture index", 3000), _sec("Some future section", 3000),
             _sec("Rules this repository works under", 200)]
 _ubody, _udropped = fit.shrink("## chamnan\n", _unknown, 1200)
-check("an unranked section drops after the index but before the rules",
-      [t for t, _ in _udropped] == ["Architecture index", "Some future section"])
+check("an unranked section drops before the index and before the rules",
+      [t for t, _ in _udropped][:1] == ["Some future section"]
+      and "Rules this repository works under" not in [t for t, _ in _udropped])
 
 check("every name in the drop order is one the hook actually emits",
       all(any(n in open(ROOT / "hooks" / "chamnan_session_start.py").read() for n in [name])
@@ -7526,9 +7527,17 @@ check("...and the oversized line itself is not kept",
 # `_rank`'s unranked default dropped a section second, ahead of everything but the index — and one
 # such section's source file is deleted by the hook as it emits it, so the notice named a path that
 # no longer existed. fit.py justifies whole-section dropping on "recoverable in one grep".
+# The comparison used to be against the architecture index, which was rank 0. The index moved to
+# rank 9 on 2026-09-02 after it was measured being dropped first, for nothing, on every real firing
+# — so "not second" is now checked against the cheapest ranked section instead. The property is
+# unchanged and better served: an unranked section is dropped before what has been argued for and
+# after what has not.
 check("AN UNRANKED SECTION IS NOT THE SECOND THING TO GO",
       _fitx._rank("\n### Repeated last session and never kept\nbody\n")
-      > _fitx._rank("\n### Architecture index\nbody\n"))
+      > _fitx._rank("\n### Recent milestones\nbody\n"))
+check("...and it yields to the index, which has been argued for",
+      _fitx._rank("\n### Repeated last session and never kept\nbody\n")
+      < _fitx._rank("\n### Architecture index\nbody\n"))
 check("...and it still goes before what has been argued for",
       _fitx._rank("\n### Repeated last session and never kept\nbody\n")
       < _fitx._rank("\n### Rules this repository works under\nbody\n"))
