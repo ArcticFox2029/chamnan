@@ -212,6 +212,19 @@ def cmd_demote(root, tool_name):
     candidate's "sequence" is the tool's own description, not a reconstruction of the original
     detected steps — precise replay is not recoverable from what the index stores, and a record
     that reminds a reviewer what the tool was for is more honest than pretending otherwise."""
+    # 🐛 `ws.workspace(root) / "tools" / tool_name` returns tool_name ITSELF when it is absolute --
+    # that is what `/` does with an absolute right-hand side -- so an absolute path here escaped the
+    # workspace and the archive step below renamed a file anywhere on disk, then crashed on the
+    # `relative_to` that follows. The name reaches this command from `tools/index.json`, which
+    # arrives with a clone, and `--list` prints it verbatim for somebody to paste.
+    #
+    # `safe_tool_name` is the same guard `chamnan-promote` applies on the way IN. Refusing rather
+    # than sanitising is deliberate there and here: quietly turning `../../x` into `x` acts on a
+    # file the user did not name.
+    if ws.safe_tool_name(tool_name) is None:
+        print(f"chamnan: {tool_name!r} is not a tool name — it must be a plain filename under "
+              f"{ws.workspace(root).name}/tools/", file=sys.stderr)
+        return 1
     entry = tools_index.remove(root, tool_name)
     if entry is None:
         print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan-promote --list`",
