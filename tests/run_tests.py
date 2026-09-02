@@ -5514,7 +5514,17 @@ check("the rule itself is written down for whoever maintains them",
 # told. Silent, and a failure of the only thing this file does.
 _se = import_hook_module("chamnan_session_end.py")
 _adversarial = [({f"u{i}_{k}" for k in range(120)}, f"s{i}") for i in range(4000)]
-_t0 = time.time()
+# 🐛 [2026-09-02] This was time.time(), and it failed three times in one session — always while a
+# background agent had the CPU, always passing on a re-run with nothing changed. A wall-clock
+# assertion in a suite that has no other timing dependency measures whether the machine is busy,
+# which is not the property being defended. What IS being defended is algorithmic cost, and
+# process_time() measures that directly: it counts only CPU this process actually consumed, so a
+# competing process cannot inflate it while a real O(n x families) regression still can.
+#
+# Worth stating why the check is kept rather than deleted, since the check below already pins the
+# structural bound: the bound says the LOOP is capped, not that the work inside each iteration is
+# cheap. jaccard() getting slower would pass that one and fail this one.
+_t0 = time.process_time()
 _fams = []
 for _fp, _head in _adversarial[-_se.MAX_CLUSTERED:]:
     for _fam in _fams:
@@ -5524,7 +5534,7 @@ for _fp, _head in _adversarial[-_se.MAX_CLUSTERED:]:
     else:
         if len(_fams) < _se.MAX_FAMILIES:
             _fams.append({"fp": _fp, "n": 1, "head": _head})
-_elapsed = time.time() - _t0
+_elapsed = time.process_time() - _t0
 check("THE WORST CASE STAYS INSIDE THE 1.5s SessionEnd BUDGET", _elapsed < 1.0)
 check("...and the work is bounded, not merely fast on this machine",
       len(_fams) <= _se.MAX_FAMILIES and _se.MAX_CLUSTERED <= 500)
