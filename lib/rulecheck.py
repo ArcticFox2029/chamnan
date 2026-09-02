@@ -28,7 +28,6 @@ check becomes noise that gets ignored.
 import mdblock
 import re
 
-import redact
 from pathlib import Path
 
 CHECK = re.compile(r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+`(.+?)`\s*$", re.M)
@@ -157,6 +156,10 @@ def _matches(root, pattern, glob):
     for q in paths:
         try:
             if q.resolve().parent == base or base in q.resolve().parents:
+                # Imported here, not at module scope. `pointer._governs()` reaches `parse()`
+                # on every Read, Edit and Write and never comes near this branch, and
+                # `import redact` measured 15 ms of that hot path for nothing.
+                import redact
                 if not redact.is_never_opened(q):
                     inside.append(q)
         except (OSError, RuntimeError):

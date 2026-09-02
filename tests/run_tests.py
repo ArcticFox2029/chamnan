@@ -8635,6 +8635,34 @@ check("a repository below the ranking threshold returns nothing rather than rais
 shutil.rmtree(_mrepo.parent, ignore_errors=True)
 
 
+# ------------------------------ the co-edit ledger grew without bound, and an import sat on a hot path
+# 🐛 Listing `edits.jsonl` in SELF_PRUNING_LOGS stops the directory sweep deleting the feature after
+# a quiet week, but that list is a PROMISE that the file bounds itself by record — and this one did
+# not. Measured at ~1.7 µs per line on read, which reaches ~512 ms per lookup at 300,000 lines, on a
+# hook that fires on every Read, Edit and Write. The sweep's retention is mtime-based and cannot
+# catch a file appended to every day.
+check("the ledger declares a cap", _ce.MAX_LINES > 0 and _ce.TRIM_AT > _ce.MAX_LINES)
+_tlroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-trim-"))
+(_tlroot / "logs").mkdir(parents=True)
+_tlpath = _tlroot / _ce.LOG
+_tlpath.write_text("".join('{"at": 1, "fp": "src/f%d.py"}\n' % i for i in range(_ce.TRIM_AT + 800)),
+                   encoding="utf-8")
+_ce.record(_tlroot, "src/newest.py")
+_tlines = _tlpath.read_text(encoding="utf-8").splitlines()
+check("...and enforces it once the file drifts past", len(_tlines) <= _ce.MAX_LINES + 1)
+check("...keeping the newest, because last quarter's habit is not this one",
+      "newest.py" in _tlines[-1])
+shutil.rmtree(_tlroot, ignore_errors=True)
+
+# `pointer._governs()` reaches `rulecheck.parse()` on every Read, Edit and Write, and never comes
+# near the one branch that needs `redact`. Measured with `-X importtime`: `import redact` is 22.6 ms
+# of self time (range 22.0-25.0 over nine runs), paid on that path for nothing.
+_rcsrc = (ROOT / "lib" / "rulecheck.py").read_text(encoding="utf-8")
+check("rulecheck does not import redact at module scope",
+      not any(l.strip() == "import redact" and not l.startswith(" ") for l in _rcsrc.split("\n")))
+check("...but still imports it where it is used", "import redact" in _rcsrc)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
