@@ -4656,6 +4656,25 @@ check("a path-shaped tool name is refused", "escape.sh" not in _block)
 check("a malformed entry does not take the section with it",
       "This repo's own tools" in _block and "not even an object" not in _block)
 
+# The SAME store has a second reader, and it was not guarded. `chamnan-promote --list` is a command
+# an agent runs, so its stdout reaches a session's context exactly like the injected block does.
+(_tw / ".chamnan" / "tools" / "leaky.py").write_text("# a real tool\n", encoding="utf-8")
+_idx = json.loads((_tw / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))
+_idx.append({"name": "leaky.py", "desc": "deploys with AKIAIOSFODNN7EXAMPLE embedded", "runs": 0})
+(_tw / ".chamnan" / "tools" / "index.json").write_text(json.dumps(_idx), encoding="utf-8")
+_list = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
+                       capture_output=True, text=True, cwd=str(_tw)).stdout
+check("--list REDACTS A SECRET IN A TOOL DESCRIPTION, like the hook already does",
+      "AKIAIOSFODNN7EXAMPLE" not in _list and "REDACTED" in _list)
+check("...and never prints a path-shaped name as if it were a filename",
+      "escape.sh" not in _list and "unusable name" in _list)
+check("...but still SHOWS the broken rows, because this is the command that cleans them up",
+      "phantom.py" in _list and "no such file" in _list)
+check("...without their descriptions, which describe nothing real",
+      "listed, never copied in" not in _list)
+check("...and says how many there are to remove", "name nothing this workspace has" in _list)
+check("a real tool is still listed with its description", "present" in _list)
+
 # The two callers must agree on what counts, or they will drift apart again.
 import tree as _tree, mapper as _mapper  # noqa: E402
 with _tree.session():

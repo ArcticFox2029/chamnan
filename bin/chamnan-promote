@@ -30,10 +30,52 @@ def show(root):
         print("  When a script proves worth keeping: chamnan-promote <file> <name>")
         return 0
     print(f"chamnan tools — {len(entries)} in {ws.workspace(root).name}/tools/\n")
+    # 🐛 Two readers of `tools/index.json`, and only one of them was guarded. The SessionStart hook
+    # validates the name, checks the file is really there, and scrubs the description; this reader
+    # did none of the three, though it imports `redact` and never called it. The file is committed,
+    # so every field is somebody else's text -- and `chamnan-promote --list` is a command an agent
+    # runs, which puts its output in a session's context exactly like the block does.
+    #
+    # Where this DELIBERATELY differs from the hook: the hook drops a broken entry silently, because
+    # a session must not be pointed at a tool that is not there. The owner needs the opposite --
+    # this is the maintenance command, and an entry hidden here is a stale row they never learn to
+    # clean up. So it is reported, marked, and counted, with the name never printed raw.
+    broken = 0
     for e in entries:
+        # 🐛 A bare string in the array took the whole command down with an AttributeError on
+        # `.get`, mid-listing, exit code 1 -- so every entry after it was invisible AND the reader
+        # looked like it had crashed rather than found bad data. Found by a test fixture that
+        # included the shape the hook already guards against, which is the point of testing the two
+        # readers of a store against the same fixture.
+        if not isinstance(e, dict):
+            broken += 1
+            print(f"  {'(not an entry)':<24}   ← not an object; ignored by sessions")
+            continue
         used = e.get("runs", 0)
-        print(f"  {e['name']:<24} {e.get('desc','') or '(no description)'}")
-        print(f"  {'':24} added {e.get('added','?')[:10]}, run {used}x")
+        raw = e.get("name")
+        name = ws.safe_tool_name(raw) if isinstance(raw, str) else None
+        why = ""
+        if name is None:
+            # Never the raw field: a path-shaped name is the thing being reported, and printing it
+            # as if it were a filename is what makes it look legitimate.
+            name, why = "(unusable name)", "  ← not a filename; ignored by sessions"
+        else:
+            f = ws.workspace(root) / "tools" / name
+            if not (f.is_file() and ws.inside(f, root)):
+                why = "  ← no such file in tools/; ignored by sessions"
+        if why:
+            broken += 1
+        # A broken entry's description is not printed at all. It is text from a committed file
+        # that describes nothing real, so it carries no information the owner needs to find the
+        # row -- the name and the reason do that -- while an agent running this command would put
+        # it in a session's context. The hook drops such an entry whole for the same reason; this
+        # keeps the row visible and drops only the part with nothing to say.
+        desc = "" if why else redact.scrub(str(e.get("desc", "") or "(no description)"))
+        print(f"  {name:<24} {desc}{why}")
+        print(f"  {'':24} added {str(e.get('added','?'))[:10]}, run {used}x")
+    if broken:
+        print(f"\n  {broken} entr{'y' if broken == 1 else 'ies'} above name nothing this workspace "
+              f"has. Sessions skip them; remove them from tools/index.json.")
     return 0
 
 
