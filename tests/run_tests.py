@@ -1729,6 +1729,35 @@ for _tp, _keep in (
 # a plain word is exactly what the secret looks like.
 check("an assignment is still redacted even when the value is one plain word",
       "correcthorse" not in redact.scrub('api_key = "correcthorse"'))
+
+# 🐛 ...but a secret-named assignment whose value is CODE was having the code replaced. Reproduced
+# with chamnan-peek on httpie: the two lines that answer "how does httpie choose an auth plugin",
+# which is why anyone ran that command, came back as `default_auth_plugin = <REDACTED>` and
+# `self.args.auth = <REDACTED>`.
+#
+# The aggressive behaviour is deliberate and is NOT relaxed here — `AWS_SECRET =
+# base64.b64decode("QUtJQ…")` must not survive, and what is inside a call is not knowable from the
+# outside. Instead, when the value is an expression the string literals INSIDE it are redacted
+# rather than the whole thing. Strictly safer in both directions: nothing that used to be removed
+# survives, and an expression carrying no literal has nothing to remove.
+for _expr in ("default_auth_plugin = plugin_manager.get_auth_plugins()[0]",
+              "        self.args.auth = AuthCredentials(",
+              "ws_tokens = {token.DEDENT, token.NEWLINE, tokenize.NL}",
+              "soft_key_lines: set[int] = set()",
+              "print(json.dumps(x, sort_keys=True))"):
+    check(f"CODE IS NOT A CREDENTIAL: {_expr.strip()[:40]}", redact.scrub(_expr) == _expr)
+# The half that must not move, and the case the whole aggressive design exists for.
+check("...while a literal INSIDE a call still goes, which is what the whole-expression rule was for",
+      "QUtJQUlPU0ZPRE5ON0VYQU1QTEU" not in
+      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQUlPU0ZPRE5ON0VYQU1QTEU=")'))
+check("...and the call itself now survives, so the line still says where the value comes from",
+      "base64.b64decode(" in
+      redact.scrub('AWS_SECRET = base64.b64decode("QUtJQUlPU0ZPRE5ON0VYQU1QTEU=")'))
+check("...an environment lookup keeps its variable name and loses only its fallback secret",
+      redact.scrub('API_KEY = os.environ.get("KEY", "hunter2secret")')
+      == 'API_KEY = os.environ.get("KEY", "<REDACTED>")')
+check("...and a bare value, which is not an expression at all, still goes whole",
+      "tr0ub4dor" not in redact.scrub("DATABASE_PASSWORD=tr0ub4dor&3-horse"))
 check("credentials.ini is blocked by stem, not just by exact name",
       redact.is_blocked(Path("credentials.ini")))
 check("an ordinary config file is not blocked", not redact.is_blocked(Path("settings.ini")))

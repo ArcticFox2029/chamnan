@@ -336,6 +336,53 @@ NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "ur
 SCHEME_WORDS = frozenset({"bearer", "basic", "digest", "negotiate", "ntlm", "token", "apikey"})
 
 
+# 🐛 A secret-named assignment whose value is CODE was having the code replaced. Reproduced with
+# chamnan-peek on httpie:
+#
+#   285: default_auth_plugin = <REDACTED>       was: plugin_manager.get_auth_plugins()[0]
+#   294: self.args.auth = <REDACTED>            was: AuthCredentials(
+#   ws_tokens = <REDACTED> token.NEWLINE, …}    was: {token.DEDENT, token.NEWLINE, tokenize.NL}
+#   soft_key_lines: <REDACTED> = set()          was: set[int]
+#   print(json.dumps(x, sort_keys=<REDACTED>    was: True
+#
+# Those are the two lines that answer "how does httpie choose an auth plugin", which is why anyone
+# ran that command. The third also shows the failure this module already calls worse than a plain
+# miss: the value class is one unbroken run, so the rest of the set literal is printed beside the
+# marker, telling a reviewer the line was handled.
+#
+# The aggressive behaviour is deliberate and documented — `AWS_SECRET = base64.b64decode("QUtJQ…")`
+# must not survive, and what is inside a call is not knowable from here. So this does NOT relax it.
+# When the value is an expression, the STRING LITERALS INSIDE IT are redacted instead of the whole
+# thing: base64.b64decode(<REDACTED>) keeps the secret gone and the code readable, while an
+# expression carrying no literal — a call, a set, a type annotation, True — has nothing to remove
+# and is left alone. Strictly safer than before in both directions: nothing that used to be removed
+# survives, and code that never held a secret stops being destroyed.
+_CODE_EXPRESSION = re.compile(
+    r"^(?:[A-Za-z_]\w*(?:\s*\.\s*\w+)*\s*[([{]|[([{]|(?:True|False|None|self)\b)")
+_STRING_LITERAL = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1""")
+
+
+def _redact_literals_in(expr):
+    """`expr` with every quoted literal of six or more characters emptied, or None when there is
+    nothing to empty — in which case the caller must leave the expression alone rather than
+    replace it wholesale."""
+    if not _CODE_EXPRESSION.match(expr):
+        return None
+    out, hit = [], False
+    last = 0
+    for m in _STRING_LITERAL.finditer(expr):
+        if len(m.group(2)) < 6:
+            continue
+        hit = True
+        out.append(expr[last:m.start()])
+        out.append(f"{m.group(1)}{PLACEHOLDER}{m.group(1)}")
+        last = m.end()
+    if not hit:
+        return expr                      # a valid expression holding no literal: nothing to remove
+    out.append(expr[last:])
+    return "".join(out)
+
+
 def _looks_like_a_credential_name(key):
     """False when the name's own tail says it is something other than a credential.
 
@@ -396,7 +443,7 @@ def scrub(text):
     text = ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
-        else f"{m.group(1)}{PLACEHOLDER}", text)
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
@@ -405,5 +452,5 @@ def scrub(text):
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
-        else f"{m.group(1)}{PLACEHOLDER}", text)
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     return text
