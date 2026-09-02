@@ -32,6 +32,7 @@ import edge would ever show. And it is not stored as a derived artefact: the log
 correlation is computed on read, so there is nothing to regenerate, invalidate, or merge.
 """
 import json
+import os
 import time
 from collections import Counter, defaultdict
 
@@ -49,6 +50,19 @@ MAX_PARTNERS = 2
 MAX_AGE_DAYS = 30
 
 
+# 🐛 The log was appended to and never bounded. Listing it in `SELF_PRUNING_LOGS` stops the
+# directory sweep deleting the whole feature after a quiet week, but that list is a PROMISE that the
+# file bounds itself by record — and this one did not, so it just grew. Measured: ~1.7 µs per line
+# on read, which reaches ~512 ms per lookup at 300,000 lines, on a hook that fires on every Read,
+# Edit and Write. The retention the sweep applies is mtime-based and structurally cannot catch a
+# file that is appended to every day.
+MAX_LINES = 20_000
+# Rewritten only when it has grown well past the cap, so the cost is amortised rather than paid on
+# every edit. 20,000 lines is about 1.5 MB and several months of heavy work at the rate measured
+# here; the trim keeps the newest, because a co-edit habit from last quarter is not this one.
+TRIM_AT = int(MAX_LINES * 1.25)
+
+
 def record(wsdir, path):
     """Append one edit. Called from the PostToolUse hook, which already fires on Write and Edit."""
     try:
@@ -56,8 +70,34 @@ def record(wsdir, path):
         dest.parent.mkdir(parents=True, exist_ok=True)
         with dest.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps({"at": int(time.time()), "fp": str(path)}) + "\n")
+        _trim(dest)
     except OSError:
         pass          # a read-only checkout must still be able to edit files
+
+
+def _trim(dest):
+    """Drop the oldest lines once the file has drifted past the cap. Silent, and never partial.
+
+    Written through a per-pid temp and `os.replace`, for the reason the ages file needed the same
+    treatment: two hooks can run at once, a shared staging name is not made safe by an atomic
+    replace, and a half-written ledger reads as a torn line rather than as an error.
+    """
+    try:
+        # 🐛 The gate was `TRIM_AT * 40` bytes on the assumption of a 40-byte line. A real line with a
+        # short path is about 33, so a file could sit 5,800 lines over the cap and never trip it —
+        # the cheap check made the cap unenforceable rather than merely late. Bounded BELOW the
+        # shortest line a record can be (`{"at": N, "fp": "a"}` is 28 with its newline), so this can
+        # only ever fire early, which costs one read, never late, which costs the cap.
+        if dest.stat().st_size < TRIM_AT * 20:
+            return
+        lines = dest.read_text(encoding="utf-8", errors="replace").splitlines(True)
+        if len(lines) <= TRIM_AT:
+            return
+        tmp = dest.with_suffix(".%d.tmp" % os.getpid())
+        tmp.write_text("".join(lines[-MAX_LINES:]), encoding="utf-8")
+        tmp.replace(dest)
+    except OSError:
+        pass
 
 
 def _sequence(wsdir):
