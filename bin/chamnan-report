@@ -169,11 +169,18 @@ def collect(project_dir, want_opened=False):
                 # `has_usage` here, not just `ts`. Before the merge this block was unreachable
                 # unless the line contained `"usage"`, because the prefilter above had already
                 # skipped it; a line now also reaches here for being a pointer candidate. Measured
-                # on 60 real transcript files: 3,527 lines carry tool_use AND `"usage"`, and ZERO
-                # carry tool_use without it — so on today's format the two conditions coincide and
-                # the merge is byte-identical, which is what the before/after showed. Keeping the
-                # condition explicit means that stays true if the format ever stops coinciding,
-                # rather than `touched_by_week` silently gaining rows and moving _confound().
+                # on a 60-file sample: every line carrying `tool_use` AND `.chamnan` also carried
+                # `"usage"`, none carried it without — so on today's format the two conditions
+                # coincide, which is why the before/after was byte-identical. Keeping the condition
+                # explicit means that stays true if the format ever stops coinciding, rather than
+                # `touched_by_week` silently gaining rows and moving _confound().
+                #
+                # That sample says nothing about the prefilter's selectivity, and an earlier
+                # version of this comment quoted its raw count in a way that read as if it did.
+                # Profiled over the whole corpus — 330 files, 770 MB, 238K lines — the prefilter
+                # admits **38.1%** of lines, because it is an OR of two conditions rather than the
+                # AND that sample measured. It costs ~25% of the scan's 4.78s and is the one part
+                # of it with headroom left; the read itself is ~40% and is a floor.
                 if isinstance(content, list):
                     for _c in content:
                         if not (isinstance(_c, dict) and _c.get("type") == "tool_use"):
