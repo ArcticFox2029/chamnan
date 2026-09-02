@@ -368,6 +368,29 @@ def _resume_nudge(payload, wsdir, root):
     return True
 
 
+def _record_edit(payload, root, wsdir):
+    """Append this edit to the ledger co-edit partners are counted from. Never prints, never fails.
+
+    chamnan's own files are excluded. A session that edits `.chamnan/STATE.md` after every third
+    source file would otherwise learn that every file in the repository is followed by STATE.md,
+    which is true and useless.
+    """
+    if (payload.get("tool_name") or "") not in ("Write", "Edit"):
+        return
+    file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
+    if not file_path:
+        return
+    try:
+        resolved = Path(file_path).resolve()
+        rel = resolved.relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return
+    if rel.parts and rel.parts[0] == ".chamnan":
+        return
+    import coedit
+    coedit.record(wsdir, rel)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -390,6 +413,12 @@ def main():
     # skill documents, in both directions.
     if ws.enabled("memory", root):
         _stamp_memory_entry(payload, root)
+        # Silent, and the whole point: this is the one thing chamnan can learn without the user
+        # doing anything. Measured on a real work repository, three days and 764 commands produced
+        # zero recorded sessions, decisions, lessons, rules and threads, because every one of those
+        # needs a command somebody has to remember to run. An edit is a fact the hook already sees.
+        # `lib/coedit.py` carries the measurement behind it.
+        _record_edit(payload, root, wsdir)
 
     if not ws.enabled("promote", root):
         return 0

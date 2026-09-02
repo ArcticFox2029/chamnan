@@ -81,6 +81,22 @@ def main():
             edges = None
 
     block = pointer.render(rel, hits, edges)
+
+    # What this repository has learned about the file WITHOUT anyone recording anything: which file
+    # gets edited right after it. Appended rather than folded into `render`, so a file with no
+    # recorded knowledge at all can still say something useful — which on a repository where nobody
+    # runs the write commands is every file.
+    #
+    # Last, and only when the budget above was not already spent: it is the cheapest of the three
+    # lookups but it is also the weakest claim, and the impact edges deserve the room first.
+    if (time.time() - started) * 1000 < MAX_MS:
+        try:
+            import coedit
+            nxt = coedit.line(wsdir, rel)
+        except Exception:
+            nxt = ""
+        if nxt:
+            block = (block + "\n" + nxt) if block else nxt
     # Marked as seen even when nothing matched. Otherwise a file with no knowledge behind it pays
     # the whole scan again on every one of the session's edits to it, which is the case where the
     # cost is least deserved.

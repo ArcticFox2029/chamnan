@@ -8409,6 +8409,51 @@ _done = int(_old_state.get("nudges", 1 if _old_state.get("nudged") else 0))
 check("an existing workspace's `nudged: true` counts as one ask already spent", _done == 1)
 
 
+# ------------------------------ the one thing chamnan can learn without being asked
+# Every store chamnan keeps needs a command somebody has to remember to run, and on a real work
+# repository nobody ran one: three days, 764 commands, zero sessions/decisions/lessons/rules/threads
+# recorded, while Claude Code's own memory tool captured six lessons from the same work.
+#
+# Command signatures cannot close that. `commands.jsonl` stores first tokens — `ssh` 107 times,
+# `sudo` 43, `curl` 23 — and `workflows.repeated()` returns None on all 2,477 real entries.
+#
+# Edits can. Across 16 real sessions and 929 files, asking "of the times A was edited, how often was
+# B edited within the next five", 45 pairs cleared a 40% bar and the strongest sat at 100%. Backfilled
+# over 4,019 real edits this speaks about 61 of 453 files — selective, which is the point.
+import coedit as _ce  # noqa: E402
+_ceroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-coedit-"))
+(_ceroot / "logs").mkdir(parents=True)
+for _ in range(10):
+    for _f in ("src/auth.py", "tests/test_auth.py"):
+        _ce.record(_ceroot, _f)
+for _ in range(12):
+    _ce.record(_ceroot, "src/lonely.py")
+
+_cep = _ce.partners(_ceroot, "src/auth.py")
+check("a file edited right after another is found", any(b == "tests/test_auth.py" for b, _, _ in _cep))
+check("...with a confidence that is a probability, never above 1",
+      all(0 < p <= 1.0 for _, _, p in _cep))
+check("a file edited often but always alone has no partner", _ce.partners(_ceroot, "src/lonely.py") == [])
+check("...and therefore says nothing at all, rather than saying it has nothing",
+      _ce.line(_ceroot, "src/lonely.py") == "")
+check("a file edited only a few times is not generalised from",
+      _ce.partners(_ceroot, "tests/test_auth.py") == []
+      or all(c >= 3 for _, c, _ in _ce.partners(_ceroot, "tests/test_auth.py")))
+check("the sentence names the partner and its share",
+      "tests/test_auth.py" in _ce.line(_ceroot, "src/auth.py")
+      and "%" in _ce.line(_ceroot, "src/auth.py"))
+# A torn append is one lost edit, not a broken feature — the log is appended to by a hook that can
+# be killed mid-write at any moment.
+(_ceroot / _ce.LOG).open("a", encoding="utf-8").write('{"at": 1, "fp": "src/hal')
+check("a half-written line does not take the whole ledger down",
+      isinstance(_ce.partners(_ceroot, "src/auth.py"), list))
+# chamnan's own files are excluded at the recording end, not here — a workspace file edited after
+# every source file would otherwise become everybody's partner.
+check("the hook excludes chamnan's own files before recording",
+      '.parts[0] == ".chamnan"' in (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8"))
+shutil.rmtree(_ceroot, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
