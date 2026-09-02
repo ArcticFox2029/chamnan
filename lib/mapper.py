@@ -109,8 +109,33 @@ DECORATION = re.compile(r"(?:[=*#_~-]\s*){4,}")
 DOC_TAG_HEAD = re.compile(r"^\s*[\\@]file\s+\S+\s*", re.I)
 DOC_TAG_MARKER = re.compile(r"[\\@](?:brief|short|summary|ref|see|link|endlink)\b\s*", re.I)
 DOC_TAG_TAIL = re.compile(
-    r"[\\@](?:param(?:\[[^\]]*\])?|returns?|retval|throws?|exception|author|date|version|since|"
-    r"copyright|note|warning|deprecated|todo|inheritdoc|tparam)\b.*$", re.I | re.S)
+    # `(?<!\{)` because javadoc has an INLINE form -- `{@link Fleet#drivers}` means the words, and
+    # JAVADOC_INLINE below unwraps it. This pattern runs first, so without the lookbehind adding
+    # `link` to the name list cut the sentence at the brace and threw the target away. Caught by
+    # the existing check rather than by reading; it is the reason the name list grows carefully.
+    r"(?<!\{)[\\@](?:param(?:\[[^\]]*\])?|returns?|retval|throws?|exception|author|date|version|since|"
+    r"copyright|note|warning|deprecated|todo|inheritdoc|tparam|"
+    # 🐛 The tags below are the ones that actually occupy the summary slot on real repositories,
+    # and they were all missing. Measured over four clones: 33 of psr7's 59 described rows carried
+    # a tag (55%), and 28 of those said NOTHING ELSE -- `@covers \GuzzleHttp\Psr7\Integers` is the
+    # whole summary for a test file, and nine psr7 sources are described entirely as `@internal`.
+    # PHPMailer: 103 of 131 rows (78%), most of them `@package`. CodeIgniter: 118 of 173 (68%),
+    # `@package` and `@category`. Those rows all count as DESCRIBED, so the coverage figure -- the
+    # number that tells a user whether to run /chamnan:bootstrap -- says the work is done when the
+    # index is saying nothing. That is the same failure BOILERPLATE was written for, arriving
+    # through a different door.
+    #
+    # Enumerated rather than generalised, deliberately. The tempting rule is "cut at any @word or
+    # \word", and it is wrong twice over: PHPMailer's real summary "Test fixture. Used in the
+    # `PHPMailer\LocalizationTest`..." is shared by 12 files and would be truncated mid-sentence,
+    # and zod carries prose containing `@zod` and `@standard-schema` that is not a tag at all.
+    # A name list cannot make that mistake.
+    r"internal|package|subpackage|category|covers\w*|group|requires|api|filesource|uses|see|link|"
+    r"example|licen[cs]e|method|property(?:-read|-write)?|mixin|template|extends|implements|"
+    r"immutable|readonly|psalm|phpstan|(?:phpstan|psalm)-[\w-]+|type|"
+    r"runTestsInSeparateProcesses|runInSeparateProcess|dataProvider|testWith|test|"
+    r"backupGlobals|preserveGlobalState|small|medium|large|"
+    r"__NO_SIDE_EFFECTS__|__PURE__)\b.*$", re.I | re.S)
 
 
 # C# and VB document with XML rather than @tags, and `<summary>` was reaching the index on 46 of

@@ -6069,6 +6069,33 @@ check("...and one that starts with a verb the label form also uses",
       mapper.leading_comment("# Load the config file and validate every key.\nimport json\n", "py")
       == "Load the config file and validate every key.")
 
+# A doc-tool annotation is not a description either, and DOC_TAG_TAIL knew a dozen tag names —
+# none of them the ones that actually turn up in the summary slot. Measured over four clones:
+# 33 of psr7's 59 described rows carried a tag (55%) and 28 of those said NOTHING else, so a test
+# file's whole summary was `@covers \GuzzleHttp\Psr7\Integers` and nine sources read `@internal`.
+# PHPMailer 103 of 131 rows (78%), CodeIgniter 118 of 173 (68%). Every one counted as DESCRIBED,
+# which is what makes it expensive: the coverage figure is the number that tells a user whether
+# running /chamnan:bootstrap would help, and it said the work was done.
+check("A SUMMARY THAT IS NOTHING BUT A DOC TAG IS NO SUMMARY",
+      mapper.leading_comment("<?php\n/**\n * @covers \\GuzzleHttp\\Psr7\\Integers\n */\n"
+                             "class IntegersTest {}\n", "php") == "")
+check("...and @internal alone leaves the file honestly undescribed",
+      mapper.leading_comment("<?php\n/**\n * @internal\n */\nclass UriParser {}\n", "php") == "")
+check("...while a real sentence keeps its words and loses only the tags",
+      mapper.leading_comment("<?php\n/**\n * Database Utility Class\n *\n * @category Database\n"
+                             " * @package CodeIgniter\n */\nclass DB_utility {}\n", "php")
+      == "Database Utility Class")
+check("...and a bare JSDoc type annotation is a tag, not a description",
+      mapper.leading_comment("/** @type {import('rollup').RollupOptions} */\nexport default {};\n",
+                             "js") == "")
+# The trap in the obvious fix. "Cut at any @word or \word" would also cut PHPMailer's real
+# summary, which is shared by 12 fixtures and contains a namespaced class name mid-sentence.
+# A name list cannot make that mistake; a generic rule can, and silently.
+check("...but a namespaced class name inside a real sentence is not a tag",
+      mapper.leading_comment("<?php\n/**\n * Test fixture. Used in the `PHPMailer\\LocalizationTest`"
+                             " suite.\n */\nclass F {}\n", "php")
+      == "Test fixture. Used in the `PHPMailer\\LocalizationTest` suite.")
+
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
 _aside = ("// loom is an internal implementation detail. Do not show this label.\n"
