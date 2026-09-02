@@ -278,6 +278,14 @@ def index_is_behind(root, map_path):
     """
     try:
         newest = 0.0
+        # 🐛 The walk already stats every indexable file to find the newest, so counting the ones
+        # that moved costs nothing — and without it this warning could not say how much. Measured:
+        # editing one existing file produced "1 minute behind" and no more, while ADDING a file
+        # produced "1 file(s) are not in it — src/requests/brandnew.py". Editing is the far commoner
+        # case, and it was the one told nothing. On a repository at 40 commits a day, "2 hours
+        # behind" is anywhere between 0 and 80 files, so a reader learns to ignore the line at the
+        # same rate whether it matters or not.
+        changed = []
         for f in _indexable(root):
             try:
                 # Capped at now. One file with an mtime in the future — clock skew, a bad touch, a
@@ -285,17 +293,21 @@ def index_is_behind(root, map_path):
                 # whose mtime is the real now, still less than the fake future one. Measured with a
                 # file five years ahead: "1824 days behind" on every session, and the remedy the
                 # tool itself suggests could not clear it until wall-clock time caught up.
-                newest = max(newest, min(f.stat().st_mtime, time.time()))
+                _mt = min(f.stat().st_mtime, time.time())
+                newest = max(newest, _mt)
+                changed.append((_mt, f))
             except OSError:
                 continue
         built = map_path.stat().st_mtime
         if newest <= built:
-            return 0
+            return 0, []
         # Seconds, not days. Rounding a two-hour gap up to "1 day behind" is a small lie, and this
         # line exists to be trusted -- the caller decides how to say it.
-        return newest - built
+        newer = sorted((f for mt, f in changed if mt > built),
+                       key=lambda f: -f.stat().st_mtime)
+        return newest - built, [str(f.relative_to(root)) for f in newer]
     except Exception:
-        return 0          # never let a nicety break a session
+        return 0, []      # never let a nicety break a session
 
 
 HOOK_MARKER = "# >>> chamnan"
@@ -509,7 +521,7 @@ def main():
                     tail += ("\n_`## Impact` in that file is what is connected to what — grep it "
                              "before changing a file, not after._")
                 out.append(tail + "\n")
-                behind = index_is_behind(root, mp)
+                behind, edited = index_is_behind(root, mp)
                 if behind:
                     n, examples = unindexed(root, text)
                     # A count of what is missing, not an age. See unindexed() for why.
@@ -520,6 +532,13 @@ def main():
                     fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
                            "`chamnan-map`, or `chamnan-map --install-git-hook` to keep it current on "
                            "every commit")
+                    # A count and up to three names, so the reader can judge whether it matters
+                    # rather than guessing from a duration. Capped because on a two-week gap this
+                    # would name most of the tree, which is noise wearing the costume of a signal.
+                    if edited and not what:
+                        _shown = ", ".join(f"`{e}`" for e in edited[:3])
+                        _more = f" _+{len(edited)-3} more_" if len(edited) > 3 else ""
+                        what = f"**{len(edited)} file(s) changed since** — {_shown}{_more}. "
                     out.append(f"_⚠ Source has changed since this index was built ({ago(behind)}). "
                                f"{what}Rebuild it with {fix}._\n")
 

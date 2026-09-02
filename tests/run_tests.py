@@ -6313,6 +6313,31 @@ check("...and a repository with no .gitattributes indexes exactly what it did be
       len(_gnone) == 8)
 shutil.rmtree(_ga, ignore_errors=True)
 
+# 🐛 The staleness warning could say how many files were MISSING from the index but not how many
+# had CHANGED, and editing is far commoner than adding. Reproduced on a real requests clone:
+# adding a file gave "**1 file(s) are not in it** — src/requests/brandnew.py", while editing one
+# gave "1 minute behind" and nothing else. On a repository at 40 commits a day "2 hours behind" is
+# anywhere between 0 and 80 files, so the reader learns to ignore the line at the same rate whether
+# it matters or not. The walk already stats every file to find the newest, so the count is free.
+_st = Path(tempfile.mkdtemp())
+(_st / "a.py").write_text('"""A."""\ndef a(): pass\n')
+(_st / "b.py").write_text('"""B."""\ndef b(): pass\n')
+_stmap = _st / ".chamnan" / "MAP.md"
+_stmap.parent.mkdir(parents=True)
+_stmap.write_text("## Quick Index\n\n- **`a.py`** (2L)\n- **`b.py`** (2L)\n")
+_sshook = import_hook_module("chamnan_session_start.py")
+_behind, _edited = _sshook.index_is_behind(_st, _stmap)
+check("a current index reports nothing behind and nothing changed",
+      _behind == 0 and _edited == [])
+_t_future = time.time() + 5
+os.utime(_st / "b.py", (_t_future, _t_future))
+_behind, _edited = _sshook.index_is_behind(_st, _stmap)
+check("AN EDITED FILE IS NAMED, NOT JUST COUNTED AS ELAPSED TIME",
+      _behind > 0 and _edited == ["b.py"])
+check("...and a file that did not move is not named",
+      "a.py" not in _edited)
+shutil.rmtree(_st, ignore_errors=True)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
