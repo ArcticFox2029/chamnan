@@ -8723,6 +8723,34 @@ check("...and one that starts with the word Emails does too",
       .startswith("Emails the nightly"))
 
 
+# ------------------------------ a promoted tool was marked executable and could not be executed
+# 🐛 `chamnan-promote` chmod +x's what it copies and prints "run it with: <path>". A scratch script
+# normally has no shebang — nobody writes one for a file they are about to run as `python3 x.py` —
+# so the promoted tool was announced as a command and then handed to /bin/sh, which met `import
+# json` and answered "command not found". Found by promoting a script chamnan's own repeat-notice
+# had asked three times to have promoted.
+_prsrc = (ROOT / "bin" / "chamnan-promote").read_text(encoding="utf-8")
+check("promote adds a shebang when the suffix says which interpreter", "_SHEBANG" in _prsrc)
+check("...only for suffixes it knows, so a binary is never prepended to",
+      '".py"' in _prsrc and '".sh"' in _prsrc)
+check("...and never over an existing one", 'startswith("#!")' in _prsrc)
+check("the printed command is checked against the file rather than assumed",
+      "_runnable" in _prsrc)
+_prtmp = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-promote-shebang-"))
+(_prtmp / ".chamnan" / "tools").mkdir(parents=True)
+(_prtmp / "s.py").write_text("import json\nprint('ok')\n", encoding="utf-8")
+subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_prtmp / "s.py"), "s",
+                "--desc", "d"], cwd=_prtmp, capture_output=True, text=True)
+_prdest = _prtmp / ".chamnan" / "tools" / "s.py"
+check("a promoted python script starts with a shebang",
+      _prdest.is_file() and _prdest.read_text(encoding="utf-8").startswith("#!"))
+check("...and actually runs as the command it was announced as",
+      subprocess.run([str(_prdest)], capture_output=True, text=True).stdout.strip() == "ok")
+# The body must survive intact — a shebang is prepended, not substituted.
+check("...with its original first line still there", "import json" in _prdest.read_text(encoding="utf-8"))
+shutil.rmtree(_prtmp, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
