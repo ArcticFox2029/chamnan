@@ -1052,8 +1052,9 @@ def _under_nested(path, nested):
     return False
 
 
-def indexable(root, nested=None):
-    """Yield (path, lang) for exactly the files that belong in this repository's index.
+def indexable(root, nested=None, with_text=False):
+    """Yield (path, lang) for exactly the files that belong in this repository's index, or
+    (path, lang, text) when `with_text` asks for the content too.
 
     Factored out of _scan because a second caller needed the same answer and got it wrong. The
     session-start staleness check walked the tree with only the extension filter, so it counted a
@@ -1063,6 +1064,13 @@ def indexable(root, nested=None):
 
     One definition, two callers. A filter this specific will drift the moment it is written twice.
     Must be called inside a tree.session().
+
+    `with_text=True` exists because `_scan()` re-opened and re-read every file `read_text()` had
+    just been sniffed for a NUL byte -- 564 opens for 281 files, measured on this repository, the
+    second read discarding nothing the first one hadn't already paid for. The staleness caller
+    (`_indexable` in the session-start hook) never wants content, only the path, so it keeps the
+    cheap 8 KB sniff and default `with_text=False` -- this does not add a whole-file read to a path
+    that used to sniff a prefix.
     """
     import tree
     if nested is None:
@@ -1103,11 +1111,12 @@ def indexable(root, nested=None):
         if not lang:
             continue
         try:
-            if path.stat().st_size > MAX_FILE_BYTES:
+            size = path.stat().st_size
+            if size > MAX_FILE_BYTES:
                 # Recorded, not merely skipped. A 2.2MB generated file used to disappear from the
                 # index while the run reported "1 source file(s)" and 100% coverage of what it saw
                 # — false confidence rather than degraded confidence, which is the worse kind.
-                SKIPPED_TOO_LARGE.append((path, path.stat().st_size))
+                SKIPPED_TOO_LARGE.append((path, size))
                 continue
         except OSError:
             continue
@@ -1115,14 +1124,31 @@ def indexable(root, nested=None):
         # errors="replace" and indexed as code: 351 "lines" counted from newline bytes inside the
         # image, marked describable, and flagged forever as missing a comment it can never have.
         # A NUL in the first block is the cheap, reliable signal, and no text source contains one.
-        try:
-            with path.open("rb") as fh:
-                if b"\x00" in fh.read(8192):
-                    SKIPPED_BINARY.append(path)
-                    continue
-        except OSError:
-            continue
-        yield path, lang
+        if with_text:
+            # One open, one read -- `_scan()` was about to `read_text()` the same bytes this sniff
+            # already holds. `.decode()` skips `TextIOWrapper`'s universal-newline translation that
+            # `read_text()` performs by default, so it is replicated here explicitly: without it, a
+            # CRLF-authored file changes its own line count between this path and the sniff-only one.
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw[:8192]:
+                SKIPPED_BINARY.append(path)
+                continue
+            text = raw.decode("utf-8-sig", errors="replace")
+            if "\r" in text:
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+            yield path, lang, text
+        else:
+            try:
+                with path.open("rb") as fh:
+                    if b"\x00" in fh.read(8192):
+                        SKIPPED_BINARY.append(path)
+                        continue
+            except OSError:
+                continue
+            yield path, lang
 
 
 def _scan(root):
@@ -1132,11 +1158,7 @@ def _scan(root):
     SKIPPED_GENERATED.clear()
     files = []
     nested = _nested_repo_dirs(root)
-    for path, lang in indexable(root, nested):
-        try:
-            source = path.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
-            continue
+    for path, lang, source in indexable(root, nested, with_text=True):
         # One try around everything this file touches, not around each call. Two separate crashes
         # were found the same way — ast.parse raising ValueError on a .py file whose contents were
         # binary — because each new call site had to remember to guard itself. A map missing one
@@ -1176,6 +1198,13 @@ def _scan(root):
             # sees.
             "lines": len(source.splitlines()), "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
+            # Not rendered anywhere -- carried so render()'s later scanners (catalogs.scan_routes,
+            # catalogs._django_mounts, catalogs.scan_env) can reuse the read this loop already paid
+            # for instead of opening the same 281 files again apiece. Measured on this repository:
+            # scan()+render() opened 989 times for 281 files before this field existed. A caller
+            # that builds its own `files` list without this key still works -- every reader below
+            # falls back to `path.read_text()` when it is absent.
+            "_source": source,
         })
     return files
 
