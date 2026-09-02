@@ -6432,6 +6432,27 @@ check("...and a map missing its Full Detail marker is announced as partial, not 
       "## Full Detail" not in _good[:300])
 shutil.rmtree(_at, ignore_errors=True)
 
+# 🐛 The README said "the plugin never invokes the `git` binary. The one exception is opt-in" and
+# that was false: churn ranking, the build-output rescue, the .env ignore check, the timeline and
+# the hook installer all shell out to git on an ordinary run. Two of those are read-only calls made
+# on EVERY map build. Found by an agent reading the claim against the source — and the
+# build-output rescue was added the same day, so the claim had just become more wrong.
+#
+# Pinned as a count rather than as prose: this fails the moment a sixth call site appears, which is
+# the moment the corrected paragraph would need revisiting.
+_gitcalls = 0
+for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")) \
+        + [ROOT / "bin" / "chamnan-map"]:
+    _t = _f.read_text(encoding="utf-8", errors="replace")
+    _gitcalls += _t.count('subprocess.run(["git"') + _t.count('["git", "-C"')
+check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
+      3 <= _gitcalls <= 12)
+# Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
+# paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
+_rdme = (ROOT / "README.md").read_text(encoding="utf-8")
+check("...and the README retracts the claim rather than repeating it",
+      "was **false**" in _rdme and "read-only" in _rdme.split("| **Git** |")[1][:900])
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.
