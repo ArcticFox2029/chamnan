@@ -4626,6 +4626,17 @@ check("the total is named alongside the count, so 1-of-2 and 2-of-2 read differe
 check("a map with no Quick Index reports no dead entries",
       _ss2.dead_entries(_st, "# Map\n\nno index here\n") == (0, 0, []))
 
+# Both files are read whole, redacted, and only then cut to budget -- so an oversized committed one
+# pays the redaction pass before the budget that would have thrown it away. Measured: 8 MB of
+# ordinary text with no secrets in it costs redact.scrub 11.0s on its own.
+_big = Path(tempfile.mkdtemp()) / "big.md"
+_big.write_text("x" * 50_000, encoding="utf-8")
+check("the bounded read stops at its ceiling",
+      len(_ss2._read_bounded(_big, 1_000)) == 1_000)
+check("and returns a short file whole", len(_ss2._read_bounded(_big, 10_000_000)) == 50_000)
+check("the ceilings sit far above anything real — STATE.md is tens of KB, MAP.md ~320,000 chars",
+      _ss2.STATE_READ_CEILING >= 1_000_000 and _ss2.MAP_READ_CEILING > _ss2.STATE_READ_CEILING)
+
 # The two callers must agree on what counts, or they will drift apart again.
 import tree as _tree, mapper as _mapper  # noqa: E402
 with _tree.session():
