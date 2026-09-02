@@ -687,6 +687,12 @@ def main():
             # what was left and what was in the way. Empty when the last session finished cleanly, which
             # is the right outcome — nothing is injected to say "nothing outstanding".
             carried = redact.scrub(sessions.carry_forward(root))
+            # A written record wins outright. When there is none — measured at 17 of 18 real
+            # sessions on this machine — the working tree is asked instead, because an
+            # uncommitted change IS where the last session stopped and it costs nobody a
+            # command. Weaker on purpose: it reports what is unfinished, never why.
+            if not carried:
+                carried = redact.scrub(sessions.where_git_says_you_stopped(root))
             if carried:
                 out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
 
