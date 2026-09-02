@@ -6529,6 +6529,40 @@ check("...and reports whether the two periods were even the same kind of work",
 # answer one question.
 check("...in a verdict short enough to act on",
       _rsrc.count("print(") < 80 and "could not show the effect either way" in _rsrc)
+
+# 🐛 The bulk-read notice priced BINARY bytes through a text tokenizer and then advised grepping
+# the result. Replayed over a real 2,431-Read session it fired 28 times, and all 28 were the
+# user's own pasted screenshots — each told "~431,195 tokens … a grep or a line range costs a
+# fraction of that", about a JPEG that costs roughly 1,500 image tokens and cannot be grepped at
+# all. Zero true positives, 28 false. And the directory branch had no size floor, so a 62-byte
+# hand-written build/release.sh was answered with advice longer than the file.
+_bnr = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q", "."], cwd=str(_bnr), capture_output=True)
+(_bnr / ".chamnan").mkdir()
+(_bnr / "build").mkdir()
+(_bnr / "autogen").mkdir()
+(_bnr / "shot.jpg").write_bytes(b"\xff\xd8\xff\xe0" + bytes(range(256)) * 3000)
+(_bnr / "build" / "release.sh").write_text("#!/bin/sh\nmake release\n")
+(_bnr / "big.py").write_text("x = 1\n" * 60000)
+(_bnr / "autogen" / "bindings.py").write_text("BINDING = 1\n" * 40000)
+(_bnr / "package-lock.json").write_text('{"a":1}')
+_bh = ROOT / "hooks" / "chamnan_bulk_read_notice.py"
+def _fires(rel):
+    pay = json.dumps({"tool_name": "Read",
+                      "tool_input": {"file_path": str(_bnr / rel)}, "cwd": str(_bnr)})
+    r = subprocess.run([sys.executable, str(_bh)], input=pay, capture_output=True, text=True)
+    return bool(r.stdout.strip())
+check("A PASTED SCREENSHOT IS NOT PRICED AS TEXT AND TOLD TO BE GREPPED",
+      not _fires("shot.jpg"))
+check("...and a 25-byte script in build/ is not answered with advice longer than the file",
+      not _fires("build/release.sh"))
+# The half that must not move: the branch is right about a genuinely large file, about a generated
+# tree, and about a lock file at ANY size — a lock file is named for what it IS, not for its size.
+check("...while a genuinely large source file still gets the warning", _fires("big.py"))
+check("...and a big file under autogen/ is still named as generated", _fires("autogen/bindings.py"))
+check("...and a tiny lock file is still named, because size is not why it is named",
+      _fires("package-lock.json"))
+shutil.rmtree(_bnr, ignore_errors=True)
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 
