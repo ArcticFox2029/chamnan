@@ -245,6 +245,7 @@ ROCKET_SECRET = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I)
 # A YAML block scalar puts `|` or `>-` where the value would be and the value on the next line, so
 # there was nothing on the key's own line to capture. Helm values.yaml is full of them.
+_YAML_BLOCK_OPENER = re.compile(r":\s*[|>][-+]?[ \t]*\n")
 YAML_BLOCK_SECRET = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>][-+]?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I)
 # Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
@@ -463,9 +464,14 @@ def scrub(text):
         text = ROCKET_SECRET.sub(
             lambda m: m.group(0) if _names_a_mechanism(m.group(1))
             else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
-    # Same argument: a YAML block scalar opens with `|` or `>` after the colon, so a document
-    # containing neither character cannot match.
-    if "|" in text or ">" in text:
+    # 🐛 The first version of this gate tested `"|" in text or ">" in text`, which is TRUE on any
+    # markdown document — a table uses `|` and a blockquote uses `>` — so it skipped nothing and the
+    # commit that introduced it claimed a saving it did not deliver: 67 ms still spent per render on
+    # the real map. A gate has to test the STRUCTURE the pattern needs, not one character out of it.
+    #
+    # What YAML_BLOCK_SECRET actually requires is a colon, then a block scalar indicator, then a
+    # newline. That cannot be faked by a table row.
+    if _YAML_BLOCK_OPENER.search(text):
         text = YAML_BLOCK_SECRET.sub(
             lambda m: m.group(0) if _names_a_mechanism(m.group(1))
             else f"{m.group(1)}  {PLACEHOLDER}\n", text)
