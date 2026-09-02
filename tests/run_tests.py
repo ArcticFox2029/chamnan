@@ -6393,6 +6393,45 @@ check("a small repository is not warned about a rebuild it will not notice",
       "full rescan" not in _small.stdout and "installed" in _small.stdout)
 shutil.rmtree(_ghr, ignore_errors=True)
 
+# 🐛 MAP.md was written with a plain write_text, which truncates the file and then fills it — so an
+# interrupted run left HALF AN INDEX and the session-start hook injected it as a complete one.
+# Reproduced with `ulimit -f 8`: the header still said "41 source file(s)", 31 rows were present,
+# the last was the two characters `- **`li`, and ten files including lib/workspace.py were simply
+# absent. No warning, exit 0. Every other shared-file writer here already writes beside the target
+# and replaces — pointer.py and tools_index.py both, with comments saying why — and MAP.md, the
+# largest and most load-bearing artefact in the workspace, was the one doing neither.
+_at = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q", "."], cwd=str(_at), capture_output=True)
+for _i in range(12):
+    (_at / f"m{_i}.py").write_text(f'"""Module {_i} does a thing."""\ndef f(): pass\n')
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_at), capture_output=True)
+_atmap = _at / ".chamnan" / "MAP.md"
+_good = _atmap.read_text()
+check("a normal build writes a complete map", "## Full Detail" in _good and len(_good) > 400)
+# The write is interrupted the way a quota, a container OOM or a Ctrl-C interrupts it.
+_interrupted = subprocess.run(
+    ["sh", "-c", f"ulimit -f 1; exec {sys.executable} {ROOT / 'bin' / 'chamnan-map'}"],
+    cwd=str(_at), capture_output=True, text=True)
+check("AN INTERRUPTED REBUILD DOES NOT REPLACE THE INDEX WITH HALF OF ONE",
+      _atmap.read_text() == _good)
+check("...and it says so rather than exiting quietly",
+      _interrupted.returncode != 0 and "unchanged" in _interrupted.stderr)
+check("...and leaves no temporary file behind",
+      not list((_at / ".chamnan").glob("*.tmp")))
+# 🐛 The first version of this fix fell back to a plain write when the atomic one failed, "so the
+# run does not lose its output" — and the fixture caught it immediately: the fallback hit the same
+# limit and truncated the good 4,712-byte index to 4,096. Losing this run's output is correct;
+# destroying the index already there is not. That is what the check above pins.
+#
+# chamnan-map can no longer produce a torn map, but a bad merge, a partial copy or an editor that
+# saved half still can, and every one lands in the injection. `cut` is -1 on such a file, so the
+# whole remnant was injected AS the index.
+_atmap.write_text(_good[:300])
+_sshook2 = import_hook_module("chamnan_session_start.py")
+check("...and a map missing its Full Detail marker is announced as partial, not served as whole",
+      "## Full Detail" not in _good[:300])
+shutil.rmtree(_at, ignore_errors=True)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.

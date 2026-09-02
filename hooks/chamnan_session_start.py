@@ -497,6 +497,21 @@ def main():
             if mp.is_file():
                 text = mp.read_text(encoding="utf-8", errors="replace")
                 cut = text.find("## Full Detail")
+                # 🐛 A MAP.md that is HALF AN INDEX was injected as a complete one. chamnan-map
+                # writes atomically now, so it can no longer produce this itself — but a bad merge
+                # resolution, a partial copy, an editor that saved half, or a truncating filesystem
+                # all still can, and every one of them lands here. `cut` is -1 on a truncated file,
+                # so the whole remnant was injected AS the index, ending mid-row on `- **`li`, with
+                # the header above it still stating a file count the rows do not reach.
+                #
+                # The marker is the check. Every map this tool writes carries `## Full Detail`
+                # (verified across five real repositories), so a non-empty map without it is not a
+                # map — and saying so is cheaper than any count comparison, which the roll-up would
+                # break anyway by design.
+                if text.strip() and cut < 0:
+                    out.append("_⚠ `" + display(mp, root) + "` is missing its `## Full Detail` "
+                               "section, so it is truncated or hand-edited — what follows is a "
+                               "PART of the index, not all of it. Rebuild it with `chamnan-map`._\n")
                 index = text[:cut] if cut > 0 else text
                 budget = cfg.get("index_token_budget", 3000)
                 # Held before folding. collapse() recognises rows by their `- **\`path\`**` shape, and a

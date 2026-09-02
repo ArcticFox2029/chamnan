@@ -252,7 +252,37 @@ def main(argv):
     except ws.NotAWorkspace as err:
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
-    out.write_text(text, encoding="utf-8")
+    # 🐛 Was a plain write_text, which truncates the file and then fills it — so an interrupted run
+    # leaves a MAP.md that is HALF AN INDEX, and the session-start hook injects it as a complete
+    # one. Reproduced with `ulimit -f 8`: the header still said "41 source file(s)", 31 rows were
+    # present, the last was the two characters `- **`li`, and ten files including lib/workspace.py
+    # were simply absent. No warning, exit 0. A reader looping on the file during a rebuild also
+    # caught 8 zero-byte reads in 85,934, because the truncation is a window of its own.
+    #
+    # Every other shared-file writer in this project already does this — pointer.py writes beside
+    # the target and replaces, tools_index.py does the same under a lock, and their comments say
+    # why. MAP.md is the largest and most load-bearing artefact in the workspace and was the one
+    # doing neither.
+    #
+    # Beside the target, never in the system temp directory: os.replace fails with EXDEV across
+    # mount points, and a copy-and-delete fallback would give up the atomicity this exists for.
+    tmp = out.with_suffix(".md.tmp")
+    try:
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(out)
+    except OSError as err:
+        # 🐛 The first version of this fix fell back to `out.write_text(text)` here, "so a failed
+        # run does not lose its output" — and the fixture caught it in one run: the fallback hit
+        # the same limit and truncated the GOOD index from 4,712 bytes to 4,096. Losing this run's
+        # output is the correct outcome; destroying the index that was already there is not.
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        print(f"chamnan: could not write the index ({err.__class__.__name__}: {err}).",
+              file=sys.stderr)
+        print(f"  The existing {out.name} is unchanged.", file=sys.stderr)
+        return 1
 
     src = sum(f["tokens"] for f in files)
     index_chars = text.index("## Full Detail")
