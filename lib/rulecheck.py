@@ -25,6 +25,7 @@ cannot run (bad pattern, glob matching nothing) is reported as UNVERIFIABLE rath
 because "I could not check" and "this is violated" are different facts and collapsing them is how a
 check becomes noise that gets ignored.
 """
+import mdblock
 import re
 
 import redact
@@ -210,7 +211,11 @@ def line(results):
     broken = [r for r in results if r[1] == "BROKEN"]
     if not broken:
         return ""
-    named = "; ".join(f"**{t}** — {d}" for t, _, d in broken[:3])
+    # Rule titles and their `**Check:**` trailers are written by whoever wrote the repository, and
+    # this line prints them in chamnan's own voice, outside the fence. Made inert first; the caller
+    # scrubs the assembled block.
+    named = "; ".join(f"**{mdblock.as_quoted(t)}** — {mdblock.as_quoted(d, 120)}"
+                      for t, _, d in broken[:3])
     more = f" _(+{len(broken) - 3} more)_" if len(broken) > 3 else ""
     return (f"\n_⚠ {len(broken)} recorded rule(s) no longer hold against the tree: "
             f"{named}{more}. Verified mechanically, not remembered._\n")
