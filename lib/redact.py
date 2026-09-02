@@ -263,7 +263,13 @@ BLOCKED_SUFFIXES = (
     ".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der", ".jks", ".keystore",
     ".db", ".sqlite", ".sqlite3", ".mdb", ".bak", ".dump",
 )
-BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc",
+# 🐛 `.netrc` was here and its siblings were not, so the same class of file was refused or read
+# depending on which platform's spelling it used. `_netrc` is the Windows name for exactly `.netrc`;
+# `.pgpass` and `pgpass.conf` are libpq's password file in its two spellings, and every line in one
+# ends with the password in clear. All four are credential stores whose whole content is the secret,
+# which is the property this list is for — not "a file that might contain one".
+BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc", "_netrc",
+                 ".pgpass", "pgpass.conf",
                  "credentials", "secrets.yml", "secrets.yaml")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
