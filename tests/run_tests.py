@@ -8255,6 +8255,27 @@ check("an ordinary document is still scrubbed by the rules that do apply",
 #
 # It was luck that it was not worse: `token: Token` survived only because `Token,` is six characters.
 # Every typed language writes `name: Type` in the shape the assignment rules read as `name = value`.
+# 🐛 The first version of this exemption asked whether the VALUE looked like a type name —
+# alphabetic, capitalised, no digits — and was wrong in both directions. It let
+# `password: Correcthorsebatterystaple` out unredacted, which is an ordinary passphrase and a hole
+# this rule opened; and it still mangled `password: string, page: Page`, because TypeScript and Go
+# spell types in lower case, so the original defect survived in the languages that write it most.
+#
+# What separates them is position, not spelling: a type annotation sits inside a parameter list and
+# is followed by a separator. Both are required now.
+check("a capitalised alphabetic PASSPHRASE is still a secret",
+      "Correcthorsebatterystaple" not in _rd.scrub("password: Correcthorsebatterystaple"))
+check("...and one inside a dict is too, because `{` is not a parameter list",
+      "secretvaluehere" not in _rd.scrub('{"password": secretvaluehere, "x": 1}'))
+check("a lower-case type annotation survives, which is TypeScript and Go",
+      _rd.scrub("function f(password: string, page: Page) {}")
+      == "function f(password: string, page: Page) {}")
+check("a bracketed generic survives",
+      "<REDACTED>" not in _rd.scrub("def f(secret: Optional[Token], x: int)"))
+# A prefixed token name used to be exempted as a "type" by the old spelling rule. It is not.
+check("api_token: and access-token: values are redacted",
+      "<REDACTED>" in _rd.scrub("api_token: Iamarealsecrettoken")
+      and "<REDACTED>" in _rd.scrub("access-token: Iamarealsecret"))
 check("a type annotation after a secret-shaped name is not a secret",
       _rd.scrub("logIn(user: String, password: String, page: Page)")
       == "logIn(user: String, password: String, page: Page)")
