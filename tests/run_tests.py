@@ -7902,6 +7902,19 @@ for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.
 check("an escaped paren is not a group", not _would_refuse(r"\(a\)+"))
 check("...and a character class of quantifier characters is not one either",
       not _would_refuse(r"([+*])"))
+# ------------------------------ every bin/ command guards what it prints
+# Five findings running had the same shape: one store, several readers, and only some guarded. The
+# case-by-case judgement about which commands "only print numbers" was wrong every time, so the
+# rule is uniform — a command has to opt IN to being the unguarded one, and none does.
+for _cmd in sorted((ROOT / "bin").glob("chamnan-*")):
+    _src = _cmd.read_text(encoding="utf-8")
+    check(f"EVERY COMMAND SCRUBS WHAT IT PRINTS: {_cmd.name}",
+          "print = redact.emit" in _src and "import redact" in _src)
+
+check("redact.emit scrubs a string argument", "AKIA" not in redact.scrub("k AKIAIOSFODNN7EXAMPLE"))
+check("...and leaves a non-string alone — a caller printing an int means it",
+      redact.emit.__doc__ is not None and "Non-string" in redact.emit.__doc__)
+
 check("a class packed with quantifier characters is still not a chain of quantifiers",
       not _would_refuse(r"[*+*+*+*+*+]"))
 check("...nor are escaped ones", not _would_refuse(r"a\*a\*a\*a\*a\*a\*"))
