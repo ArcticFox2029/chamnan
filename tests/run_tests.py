@@ -8663,6 +8663,43 @@ check("rulecheck does not import redact at module scope",
 check("...but still imports it where it is used", "import redact" in _rcsrc)
 
 
+# ------------------------------ each route pattern is gated on a literal it cannot match without
+# `str.find` over a few hundred KB is a memchr; an unanchored alternation over the same bytes is
+# not, and most files cannot match most patterns. Each literal is read off the pattern's OWN
+# required syntax rather than guessed, so changing one without the other would make the gate skip a
+# file the pattern would have matched — which is why they sit next to each other.
+_pcat2 = _pcat
+check("every gated kind names a literal its pattern actually requires",
+      _pcat2._ROUTE_NEEDS["flask"] == (".route",)
+      and "path(" in _pcat2._ROUTE_NEEDS["django"]
+      and "Mapping" in _pcat2._ROUTE_NEEDS["spring"])
+check("every gated kind is a kind ROUTE_PATTERNS emits",
+      set(_pcat2._ROUTE_NEEDS) <= {k for _, k in _pcat2.ROUTE_PATTERNS})
+# The gate must not change a single route on a file that DOES carry the syntax.
+_rsrc = ('from flask import Blueprint\n'
+         'bp = Blueprint("orders", __name__)\n\n'
+         '@bp.route("/orders", methods=["GET"])\n'
+         'def orders():\n    pass\n')
+_rtmp = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-routes-"))
+(_rtmp / "api.py").write_text(_rsrc, encoding="utf-8")
+_rfiles = [{"path": "api.py", "lang": "py"}]
+_rwith = _pcat2.scan_routes(_rtmp, _rfiles)
+_keep = dict(_pcat2._ROUTE_NEEDS)
+_pcat2._ROUTE_NEEDS = {}
+_rwithout = _pcat2.scan_routes(_rtmp, _rfiles)
+_pcat2._ROUTE_NEEDS = _keep
+# scan_routes returns ((method, path), source) — the first assertion here read the SOURCE
+# and asked whether it contained the route, which it never does.
+check("a real flask route is found with the gate on",
+      any(k[1] == "/orders" and k[0] == "GET" for k, _ in _rwith))
+check("...and the gate changes nothing about what is found", _rwith == _rwithout)
+shutil.rmtree(_rtmp, ignore_errors=True)
+# 🐛 `_django_mounts` read every .py file and ran its regex with no gate at all; DJANGO_INCLUDE
+# cannot match without the word `include`.
+check("the django mount scan is gated too",
+      '"include" not in text' in (ROOT / "lib" / "catalogs.py").read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
