@@ -8017,11 +8017,23 @@ _nested = {_ppl.Path("/nowhere/nested").resolve()}
 _probe = _ppl.Path("/nowhere/a/b/c/file.py")
 check("the nested check answers no for a path outside every nested checkout",
       not _pm2._under_nested(_probe, _nested))
-check("...and the ancestors it walked are memoised", len(_pm2._RESOLVED) > 0)
-_before = len(_pm2._RESOLVED)
-_pm2._under_nested(_ppl.Path("/nowhere/a/b/c/other.py"), _nested)
-check("a second file under the same directories adds no new resolves",
-      len(_pm2._RESOLVED) == _before)
+# 🐛 This asserted the memo populates unconditionally, which is how it was written and was the
+# defect: `tree.py`'s sibling cache is explicitly scoped, because a caller that scans, changes the
+# tree and scans again would otherwise get the first answer back. A directory created, deleted or
+# re-symlinked between two scans in one process kept resolving to what it used to be — and that
+# answer decides whether a whole checkout counts as this repository's source.
+import tree as _ptree  # noqa: E402
+_pm2._RESOLVED.clear()
+_pm2._under_nested(_probe, _nested)
+check("outside a tree session nothing is memoised, so a changed tree is seen",
+      len(_pm2._RESOLVED) == 0)
+with _ptree.session():
+    _pm2._under_nested(_probe, _nested)
+    check("...inside one, the ancestors it walked are memoised", len(_pm2._RESOLVED) > 0)
+    _before = len(_pm2._RESOLVED)
+    _pm2._under_nested(_ppl.Path("/nowhere/a/b/c/other.py"), _nested)
+    check("...and a second file under the same directories adds no new resolves",
+          len(_pm2._RESOLVED) == _before)
 check("a path inside a nested checkout is still caught",
       _pm2._under_nested(_ppl.Path("/nowhere/nested/deep/x.py"), _nested))
 # A directory that cannot be resolved must not take the scan down; it did not before either, and
