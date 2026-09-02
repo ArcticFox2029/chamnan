@@ -33,7 +33,7 @@ is plain markdown committed beside the code.
 
 | what people actually ask | the short answer |
 |---|---|
-| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 26× on the published corpus**, which omits 20 MB of binary attachments — of which about **3,000 reach each session**. |
+| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 26× on the published corpus**, which omits 20 MB of binary attachments — of which **269 to 1,389 reach each session**, measured across four real repositories. |
 | *"my agent keeps re-reading the same files"* | Measured across 12,332 re-read events in six working sessions: the injected roll-up named **22.7%** of them by alphabet, **35.6%** once ranked by git churn. |
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
@@ -1677,9 +1677,22 @@ window. So the question is what reaches a session instead.
 |---|---|
 | Every source file | **11,560,484** |
 | The index chamnan writes | 51,937 |
-| **What reaches each session** | **~3,000** |
+| **What reaches each session** | **269 – 1,389** |
 
-That last number is the one that matters, and it is roughly constant. Each part of it replaces
+That last number is the one that matters, and it is the one to check first, because it is the only
+one measured on *your* repository rather than on a corpus. Measured on 2026-09-02 across the four
+real workspaces this build runs in: 269 tokens (a small infrastructure repository), 794 (a 4-project
+monorepo), 1,169 (chamnan's own repository), 1,389 (a Kubernetes/Terraform repository). Reproduce it
+on yours by firing the hook and measuring what it emits:
+
+```sh
+echo '{"cwd":"'"$PWD"'","hook_event_name":"SessionStart","session_id":"probe"}' \
+  | python3 ~/.claude/plugins/*/chamnan/hooks/chamnan_session_start.py \
+  | awk '/### Architecture index/,/\[\/repo:/' | wc -c
+```
+
+It used to say ~3,000 here. That was `index_token_budget`, which is the ceiling the index is rolled
+up to fit — a budget, not a delivery — and no workspace measured has ever reached it. Each part of it replaces
 something an agent would otherwise have to go and read:
 
 | Instead of reading | tokens | chamnan says it in | |
@@ -1691,7 +1704,7 @@ something an agent would otherwise have to go and read:
 | 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** |
 | …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **26×** |
 
-<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which roughly 3,000 reach each session." width="100%">
+<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which 269 to 1,389 reach each session." width="100%">
 
 <sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
 its source. The published corpus omits them, so the ratio you will measure by following the
