@@ -8163,6 +8163,35 @@ check("...and it names BOTH git and this interpreter, which is what the AST walk
       "git" in _srow and ("interpreter" in _srow or "sys.executable" in _srow))
 
 
+# ------------------------------ the last-resort cut has to say what it removed, and why
+# `_enforce`'s note said "the roll-up could not group this map's rows" whatever had been cut. That
+# wording fits one case — ungroupable Quick Index rows — and the function also fires when whole
+# catalog sections go, which are prose, were never row-shaped, and were never offered to the
+# grouping logic at all. Measured on the published corpus: 3,474 tokens, 46.3% of the catalog
+# payload, gone with no heading, no count, and a note naming a mechanism that had not run on them.
+import tokens as tokens_mod  # noqa: E402
+_edoc = "## Quick Index\n" + "\n".join("- **`f%02d.py`** (10L) — Entry %d" % (i, i) for i in range(30))
+for _en in ("Data model", "API surface", "Configuration", "Deployment", "Stored material"):
+    _edoc += "\n\n## %s\n\n" % _en + "\n".join("- row %d of %s with some text" % (j, _en) for j in range(12))
+_eout = _gr.collapse(_edoc, ".chamnan/MAP.md", 260, None)
+_enote = next((l for l in _eout.split("\n") if "Cut to fit" in l), "")
+_ekept = [l[3:] for l in _eout.split("\n") if l.startswith("## ")]
+check("the cut note names the sections it removed", "Removed whole:" in _enote)
+check("...naming every one of them", all(("`%s`" % n) in _enote
+      for n in ("API surface", "Configuration", "Deployment", "Stored material")))
+check("...and not naming one that survived", "`Quick Index`" not in _enote)
+check("...and it no longer blames the roll-up for prose it never touched",
+      "could not group this map's rows" not in _enote)
+check("the result still fits the budget it was given, note included",
+      tokens_mod.fits(_eout, 260))
+# When only a tail is lost rather than whole sections, the older wording is still the honest one.
+_etail = "## Quick Index\n" + "\n".join("- **`g%02d.py`** (10L) — Entry %d" % (i, i) for i in range(200))
+_etout = _gr.collapse(_etail, ".chamnan/MAP.md", 90, None)
+_etnote = next((l for l in _etout.split("\n") if "Cut to fit" in l), "")
+check("a cut that loses no whole section says that instead of naming none",
+      "Removed whole:" not in _etnote and "did not fit" in _etnote)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

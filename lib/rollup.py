@@ -307,8 +307,42 @@ def _enforce(out, map_rel, budget):
     """
     if tokens.fits(out, budget):
         return out
-    note = (f"\n\n_Cut to fit the session budget — the roll-up could not group this map's rows."
-            f" Read `{map_rel}` for anything missing here._")
-    keep = tokens.cut_at(out, budget - tokens.estimate(note))
+    # 🐛 The note said "the roll-up could not group this map's rows" whatever had actually been cut.
+    # That wording is calibrated for one case — ungroupable Quick Index rows — and this function
+    # also fires when the thing removed is a whole catalog section, which is prose and was never
+    # row-shaped and was never offered to the grouping logic at all. Measured on the published
+    # corpus: 3,474 tokens, 46.3% of the catalog payload — Configuration, Deployment and Stored
+    # material — vanished with no heading, no count, and a note blaming a mechanism that had not
+    # run on them. A reader who followed it would go looking at the Quick Index.
+    #
+    # So say what went, by name. A section that is named is one grep away in MAP.md; a section
+    # that is gone with no trace is the "looks complete and is not" this module exists to stop,
+    # and it is the same defect that let the architecture index disappear from 59% of firings.
+    def _headings(text):
+        return [l[3:].strip() for l in text.split("\n") if l.startswith("## ")]
+
+    # The note's own length changes where the cut lands, and where the cut lands changes which
+    # headings are lost, which changes the note. So settle it rather than guess once: a first pass
+    # naming nothing produced a note that claimed `Quick Index` had been removed whole while it was
+    # still in the output, because "lost" had been read off a provisional cut the final one did not
+    # match. Three passes is enough for it to stop moving; the last one is authoritative.
+    def _note_for(lost):
+        if lost:
+            named = ", ".join(f"`{h}`" for h in lost)
+            return (f"\n\n_Cut to fit the session budget. Removed whole: {named}."
+                    f" Read `{map_rel}` for them._")
+        return (f"\n\n_Cut to fit the session budget — the tail did not fit."
+                f" Read `{map_rel}` for anything missing here._")
+
+    note, cut = _note_for([]), ""
+    for _ in range(3):
+        keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
+        cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
+        fresh = _note_for([h for h in _headings(out) if h not in _headings(cut)])
+        if fresh == note:
+            break
+        note = fresh
+    # One last cut against the note that is actually going out, so the total never exceeds budget.
+    keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
     cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
     return cut + note
