@@ -6595,6 +6595,47 @@ _bccfg.write_text('{"reply_style": "terse"}')
 check("...and a valid one is still merged and rewritten as before",
       not ws.config_is_malformed(_bc))
 shutil.rmtree(_bc, ignore_errors=True)
+
+# 🐛 The version compare scraped digits out of each dotted part, so a PRERELEASE sorted above its
+# own release: `1.14.0-rc1` became (1, 14, 1) against `1.14.0`'s (1, 14, 0). Anyone who tried a
+# release candidate stamped their workspace as newer than the release that followed it and got a
+# permanent downgrade banner — and `.chamnan/.version` is COMMITTED, so one teammate did it to the
+# whole team, on every session, with no documented way to clear it.
+for _a, _b, _want in (("1.14.0", "1.14.0-rc1", False),
+                      ("1.14.0", "1.14.0+build9", False),
+                      ("1.14.0", "1.14", False),
+                      ("1.14.0", "1.13.9", False),
+                      ("1.13.0", "1.14.0", True),
+                      ("1.14.0", "1.14.1", True)):
+    check(f"running {_a} against a workspace stamped {_b} is a downgrade: {_want}",
+          (ws._as_tuple(_a) < ws._as_tuple(_b)) is _want)
+# A warning nobody can act on is one they learn to skip, which is the standard the rest of that
+# hook sets for its own notices.
+check("...and the banner now says how to clear it",
+      "> .chamnan/.version" in (ROOT / "hooks" / "chamnan_session_start.py").read_text())
+
+# 🐛 `relative_to(root)` raised ValueError on exactly the paths _hooks_dir goes out of its way to
+# resolve OUTSIDE the root — a git worktree, where hooks live in the main checkout, and any repo
+# with core.hooksPath set (husky, lefthook, pre-commit). The install had already written the file;
+# the user got a traceback and exit 1, and the second run crashed on the already-installed path
+# too. Claude Code's own isolated agents run in worktrees.
+_wt = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q", "main"], cwd=str(_wt), capture_output=True)
+(_wt / "main" / "m.py").write_text('"""M."""\ndef f(): pass\n')
+for _c in (["git", "add", "-A"],
+           ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"],
+           ["git", "worktree", "add", "-q", "../tree"]):
+    subprocess.run(_c, cwd=str(_wt / "main"), capture_output=True)
+if (_wt / "tree").is_dir():
+    _r1 = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+                         cwd=str(_wt / "tree"), capture_output=True, text=True)
+    check("INSTALLING THE GIT HOOK IN A WORKTREE REPORTS SUCCESS, NOT A TRACEBACK",
+          _r1.returncode == 0 and "Traceback" not in _r1.stderr and "installed" in _r1.stdout)
+    _r2 = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+                         cwd=str(_wt / "tree"), capture_output=True, text=True)
+    check("...and running it again says already installed, also without a traceback",
+          _r2.returncode == 0 and "already installed" in _r2.stdout)
+shutil.rmtree(_wt, ignore_errors=True)
 shutil.rmtree(_sil, ignore_errors=True)
 shutil.rmtree(_clean, ignore_errors=True)
 

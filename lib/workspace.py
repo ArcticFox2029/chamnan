@@ -451,11 +451,30 @@ def plugin_version(plugin_root):
 
 
 def _as_tuple(version):
+    """A version as a comparable tuple, prerelease-aware.
+
+    🐛 Digits were scraped out of each dotted part, so a prerelease sorted ABOVE its own release:
+    `1.14.0-rc1` became (1, 14, 1) and `1.14.0` (1, 14, 0). Anyone who tried a release candidate
+    stamped their workspace as newer than the release that followed it, and got a permanent
+    downgrade banner they could not clear — on every session, on a `.version` file that is
+    COMMITTED, so one teammate on a prerelease did it to the whole team.
+    `1.14.0+build9` had the same shape, and a plain `1.14` sorted below `1.14.0`.
+
+    Everything from the first `-` or `+` is a prerelease or build tag: dropped, and the release it
+    belongs to is then ranked BELOW the same release without one, which is what semver says and
+    what the banner needs to stop firing. Missing trailing parts are padded so `1.14` and `1.14.0`
+    compare equal rather than as a downgrade.
+    """
+    text = str(version).strip()
+    pre = 0 if not (set("-+") & set(text)) else -1
+    core = text.split("-", 1)[0].split("+", 1)[0]
     out = []
-    for part in str(version).split("."):
+    for part in core.split("."):
         digits = "".join(c for c in part if c.isdigit())
         out.append(int(digits) if digits else 0)
-    return tuple(out)
+    while len(out) < 3:
+        out.append(0)
+    return tuple(out[:3]) + (pre,)
 
 
 def reconcile_version(root, running):

@@ -138,6 +138,26 @@ def _ends_unreachable(script):
     return False
 
 
+def _show(path, root):
+    """A path to print. Relative when it is inside the repository, absolute when it is not.
+
+    🐛 `relative_to(root)` raised ValueError on exactly the paths _hooks_dir goes out of its way to
+    resolve OUTSIDE the root — a `git worktree` checkout, where hooks live in the main checkout,
+    and any repository with `core.hooksPath` set (husky, lefthook, pre-commit). The install had
+    already succeeded and written the file; the user got a traceback and exit 1, and the second
+    run crashed on the "already installed" path too.
+    #
+    And the same call hid a different bug in the map line: printing the output path relative made
+    `chamnan-map` look like it had rebuilt the repository the session was told about, when run from
+    inside a nested checkout it had rebuilt that checkout's own map instead — so the staleness
+    warning never cleared and the advice looked broken.
+    """
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
@@ -150,7 +170,7 @@ def install_git_hook(root):
     if target.exists():
         existing = target.read_text(encoding="utf-8", errors="replace")
         if HOOK_MARKER in existing:
-            print(f"chamnan: already installed in {target.relative_to(root)}")
+            print(f"chamnan: already installed in {_show(target, root)}")
             return 0
         # A hook that ends in `exit 0` -- a common way to write one -- makes everything appended
         # after it dead shell code. The install said "the index now refreshes on every commit"
@@ -158,18 +178,18 @@ def install_git_hook(root):
         # Refused rather than worked around: prepending would change when the user's own hook
         # runs, and editing their script is not this tool's call to make.
         if _ends_unreachable(existing):
-            print(f"chamnan: {target.relative_to(root)} ends in an unconditional `exit`, so "
+            print(f"chamnan: {_show(target, root)} ends in an unconditional `exit`, so "
                   f"anything appended after it would never run.", file=sys.stderr)
             print("  Add this line yourself, above that exit:", file=sys.stderr)
             print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
                   file=sys.stderr)
             return 1
         target.write_text(existing.rstrip() + "\n\n" + body, encoding="utf-8")
-        print(f"chamnan: appended to your existing {target.relative_to(root)}")
+        print(f"chamnan: appended to your existing {_show(target, root)}")
     else:
         target.write_text("#!/bin/sh\n\n" + body, encoding="utf-8")
         target.chmod(0o755)
-        print(f"chamnan: installed {target.relative_to(root)}")
+        print(f"chamnan: installed {_show(target, root)}")
     print("  The index now refreshes on every commit that touches tracked files.")
     # 🎯 Said at install time because it is the only moment the user is making this choice, and
     # because the rebuild is a FULL rescan with no incremental path — on tinygrad, 1,032 source
@@ -309,7 +329,7 @@ def main(argv):
             print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
         except ValueError:
             print(f"chamnan: scanning {root}")
-    print(f"chamnan-map -> {out.relative_to(root)}{scope}")
+    print(f"chamnan-map -> {_show(out, root)}{scope}")
     # len(files), not `total`. `total` is the DESCRIBABLE subset -- the denominator of the coverage
     # bar two lines down -- and printing it here labelled "source file(s)" put two different
     # populations on one line: a file count that excluded the undescribable files beside a token

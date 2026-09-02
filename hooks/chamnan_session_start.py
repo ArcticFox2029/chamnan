@@ -485,7 +485,17 @@ def main():
                        f"this repository has already been set up by {newer}.** An older build is live "
                        f"— usually a plugin upgraded mid-session (its `bin/` stays on PATH until you "
                        f"restart), or a second install under another config directory. Restart the "
-                       f"session, and `claude plugin update chamnan` if it is genuinely behind.\n")
+                       f"session, and `claude plugin update chamnan` if it is genuinely behind.\n"
+                       # 🐛 There was no way out, and the banner is permanent by design: the record
+                       # only ever moves forward, so restarting does not change it and
+                       # `claude plugin update` does not help someone already on the newest
+                       # release. `.chamnan/.version` is COMMITTED, so one teammate who tried a
+                       # newer build left every other teammate a ⚠ on every session with nothing
+                       # they could do about it. Saying how to clear it costs one sentence, and a
+                       # warning nobody can act on is a warning they learn to skip — which is the
+                       # standard this file sets for every other notice in it.
+                       f"If that newer install is gone for good, clear it with "
+                       f"`echo {ws.plugin_version(HERE.parent)} > .chamnan/.version`.\n")
 
         if cfg.get("ledger", True):
             # Always the first thing in the injection, and gated on nothing but the flag itself --
