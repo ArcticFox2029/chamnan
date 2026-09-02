@@ -1420,6 +1420,18 @@ check("the fallback is capped the same as the frontmatter path",
 
 check("a missing file returns empty rather than raising",
       session_start_mod.describe(describe_dir / "does-not-exist.md") == "")
+# The markdown cleanup runs a `^[>*\-\s]+` strip over the line, which eats the leading dashes
+# the private-key pattern keys on. Redaction has to happen before the cleanup, or the section's
+# own scrub downstream is handed a header it can no longer recognise.
+key_first = describe_dir / "key-first.md"
+key_first.write_text("# Title\n\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n")
+_desc = session_start_mod.describe(key_first)
+check("a private-key header as the first body line is redacted, not de-dashed",
+      "PRIVATE KEY" not in _desc and "BEGIN OPENSSH" not in _desc)
+check("and what replaces it is the redaction marker", "<REDACTED>" in _desc)
+check("ordinary markdown still cleans up as before",
+      session_start_mod.describe(no_frontmatter) != "" and
+      "what this covers" in session_start_mod.describe(no_frontmatter))
 shutil.rmtree(describe_dir, ignore_errors=True)
 
 ws.ensure(fixture)
