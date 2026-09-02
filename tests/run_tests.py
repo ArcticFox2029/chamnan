@@ -8208,6 +8208,17 @@ check("...and the guard is what the pattern itself requires, so a document witho
       _rd.scrub("password = nothing_here\n") == _rd.scrub("password = nothing_here\n"))
 _ry = "secret: |\n  aaaaaaaaaaaa\n  bbbbbbbbbbbb\n"
 check("the YAML block rule still redacts a block scalar", "aaaaaaaaaaaa" not in _rd.scrub(_ry))
+# 🐛 The first gate here was `"|" in text or ">" in text`, which is TRUE of any markdown document —
+# a table uses `|`, a blockquote uses `>` — so it skipped nothing and the commit that added it
+# claimed a saving it did not deliver: 67 ms still spent per render on the real map, found by a
+# later round profiling the same function again. A gate must test the STRUCTURE the pattern needs.
+check("a markdown table does not look like a YAML block scalar",
+      not _rd._YAML_BLOCK_OPENER.search("| col | col |\n|---|---|\n"))
+check("...nor does a blockquote", not _rd._YAML_BLOCK_OPENER.search("> quoted line\n"))
+check("...but a real block scalar opener does", bool(_rd._YAML_BLOCK_OPENER.search("secret: |\n  x\n")))
+check("...including the stripped and kept-newline forms",
+      bool(_rd._YAML_BLOCK_OPENER.search("k: >-\n  x\n"))
+      and bool(_rd._YAML_BLOCK_OPENER.search("k: |+  \n  x\n")))
 # The real guarantee: on a document carrying neither trigger, scrubbing is unchanged from what the
 # other rules alone produce — the pre-filters remove work, never coverage.
 _plain = "def f():\n    return 1\n\nAPI_KEY = 'sk_live_0123456789abcdef'\n"
