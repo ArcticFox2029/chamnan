@@ -8239,6 +8239,35 @@ check("the exemption does not reach `=` assignments",
       "<REDACTED>" in _rd.scrub("password = Str1ngy"))
 
 
+# ------------------------------ `# Author: Jane Roe <jane@example.com>` was the file's summary
+# The second authorship convention, and the one that carries an address as well as a name.
+# Reproduced in five shapes, each harvested as the description: MAP.md published a person and an
+# email while the sentence that actually described the file, one line below, was never reached.
+#
+# Stepped over as a LINE, not rejected as a block — that is the whole design point and it was got
+# wrong first. Xcode's header is its own block with a blank line under it, so rejecting the block
+# reaches the real doc comment. An `# Author:` line sits immediately above the summary inside ONE
+# block, and rejecting that block stopped the leak by throwing the summary away too: "Parses dock
+# manifests." became "". A blank index row is not a fix.
+for _al, _asrc in [
+    ("py", "# Author: Jane Roe <jane.roe@example.com>\n# Parses dock manifests.\ndef f(): pass\n"),
+    ("js", "// Author: Jane Roe <jane.roe@example.com>\n// Renders the cargo grid.\nfunction f(){}\n"),
+    ("rb", "# Author:: Jane Roe\n# Loads the schedule.\ndef f; end\n"),
+    ("py", "# Maintainer: Jane Roe <jane@example.com>\n# Reconciles slots.\ndef f(): pass\n"),
+    ("py", "# Written by Jane Roe\n# Reconciles slots.\ndef f(): pass\n"),
+]:
+    _asum = mapper.leading_comment(_asrc, _al)
+    check(f"no name or address reaches the index ({_al}, {_asrc.splitlines()[0][:24]!r})",
+          "Jane Roe" not in _asum and "@example.com" not in _asum)
+    check("...and the real summary one line below IS reached", bool(_asum))
+# Anchored on the punctuation rather than the word: these are real summaries of real files.
+for _keep in ("# Author model for the blog, with slug generation.\ndef f(): pass\n",
+              "# Authoritative list of dock slots.\ndef f(): pass\n",
+              "# Contributor scoring for the leaderboard.\ndef f(): pass\n"):
+    check(f"a real summary opening with that word survives ({_keep[2:26]!r})",
+          mapper.leading_comment(_keep, "py").startswith(_keep[2:12]))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

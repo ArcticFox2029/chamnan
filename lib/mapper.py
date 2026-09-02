@@ -382,6 +382,20 @@ SELF_NAME_SEPARATOR = re.compile(r"^\s*[—–\-:|]+\s*")
 # with no verb" — a real one-line summary is often exactly that shape, and "Created on demand by
 # the scheduler" is a real description that must survive.
 XCODE_ATTRIBUTION = re.compile(r"\bcreated\s+by\b.{0,80}?\bon\b\s*\d", re.I | re.S)
+# The other attribution convention, and the one that carries an address as well as a name:
+# `# Author: Jane Roe <jane@example.com>` sitting above the real summary. Reproduced in four
+# shapes — `Author:`, `Author::` (RDoc), `Maintainer:` and `Written by` — each harvested as the
+# file's description, so MAP.md published a person and an email while the sentence that actually
+# described the file, one line below, was never reached.
+#
+# Same reasoning as XCODE_ATTRIBUTION above: chamnan commits MAP.md and injects it at session
+# start, so this republishes a contact detail nobody chose to put there.
+#
+# Anchored on the punctuation, not on the word. `# Author model for the blog` is a real summary
+# of a real file and has no colon; `# Authors: see AUTHORS` is a pointer and has one.
+AUTHORSHIP_HEADER = re.compile(
+    r"^\s*(?:@?authors?|maintainers?|contributors?|copyright\s+holder)\s*::?"
+    r"|^\s*written\s+by\b", re.I)
 # Lines that open a file without saying anything about it — including the import block, which on a
 # Java or TypeScript file sits between the licence header and the class doc. Leaving imports out
 # meant the reader stopped there: 250 of 268 gson files and 401 of 455 type-fest files came back
@@ -463,6 +477,20 @@ FILE_DOC_MARKER = {"rs": "//!", "zig": "//!"}
 FILE_DOC = re.compile(r"^[ \t]*//!(.*)$", re.M)
 
 
+def _is_authorship_line(line):
+    """True for `# Author: Jane Roe <jane@example.com>` and its siblings.
+
+    Stepped over as a LINE rather than rejected as a block, which is the difference between this
+    and XCODE_ATTRIBUTION. Xcode's header is its own comment block with a blank line under it, so
+    rejecting the block reaches the real doc comment below. An `# Author:` line usually sits
+    immediately above the summary inside ONE block, and rejecting that block threw the summary
+    away with it — measured while writing this: the leak stopped and "Parses dock manifests."
+    became nothing, which trades a leak for a blank index row rather than fixing anything.
+    """
+    body = re.sub(r"^\s*(?:#+|//+|/\*+|\*+|--+|;+|%+)\s?", "", line)
+    return bool(AUTHORSHIP_HEADER.match(body))
+
+
 def _skip_continuation(lines, i):
     """Index just past the directive at `lines[i]`, following it across lines if it is unclosed."""
     depth = lines[i].count("(") - lines[i].count(")") + lines[i].count("[") - lines[i].count("]")
@@ -508,7 +536,7 @@ def leading_comment(source, lang=None):
     for _ in range(6):          # at most six boilerplate blocks before giving up on the file
         while i < len(lines):
             line = lines[i]
-            if not line.strip() or SKIP_OPENERS.match(line) or (
+            if not line.strip() or SKIP_OPENERS.match(line) or _is_authorship_line(line) or (
                     lang in HASH_IS_DIRECTIVE and line.lstrip().startswith("#")):
                 # A directive or attribute can span lines, and only its FIRST line looked like one.
                 # Rust's crate root opens `#![allow(\n    clippy::…,\n)]`, so line two fell through
