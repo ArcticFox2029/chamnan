@@ -1700,6 +1700,34 @@ check("credentials.ini is blocked by stem, not just by exact name",
       redact.is_blocked(Path("credentials.ini")))
 check("an ordinary config file is not blocked", not redact.is_blocked(Path("settings.ini")))
 
+# 🐛 ...and the stem rule caught credentials.py, .ts, .rb and .go with it — the commonest filename
+# in any authentication library. google-auth-library-python indexed 201 files and left out the FOUR
+# most central, google/auth/credentials.py among them: the abstract base class every credential
+# type in the package subclasses, 667 lines and ten classes, absent with no notice. chamnan-peek
+# refused the same file with "its contents are credentials or a key" — about 23.8KB of
+# `class Credentials:` definitions.
+#
+# The discriminator is the EXTENSION, not the stem. Dropping "credentials" from BLOCKED_NAMES would
+# re-open ~/.aws/credentials, which is the file the entry was written for and really is nothing but
+# secrets, so the rule is switched off only where the name ends in a source extension.
+for _cn in ("credentials.py", "credentials.ts", "credentials.rb", "credentials.go",
+            "credentials.java", "credentials.rs"):
+    check(f"a source module named {_cn} is source, not a credential store",
+          not redact.is_blocked(Path("/x") / _cn) and not redact.is_never_opened(Path("/x") / _cn))
+# The half that must not move. An extensionless `credentials` IS ~/.aws/credentials.
+for _cs in ("credentials", "credentials.ini", "credentials.cfg", "credentials.json",
+            "credentials.yaml", "credentials.yml", "secrets.yaml"):
+    check(f"...while {_cs} is still refused outright",
+          redact.is_blocked(Path("/x") / _cs) and redact.is_never_opened(Path("/x") / _cs))
+# 🪤 The trap in the fix, pinned deliberately. The gate asks mapper.EXT_LANG, so the day anyone
+# adds ".json" or ".yaml" to it — both are plausible additions, they are structured text — a GCP
+# service-account credentials.json silently becomes a file chamnan opens and summarises. This
+# assertion is what fails first if that happens, and it is here rather than in a comment because a
+# comment does not fail.
+import mapper as _rm  # noqa: E402
+check("EXT_LANG MUST NOT LEARN .json/.yaml WITHOUT REVISITING THE CREDENTIAL GATE",
+      not ({".json", ".yaml", ".yml", ".ini", ".cfg", ".conf", ".env"} & set(_rm.EXT_LANG)))
+
 shutil.rmtree(leak, ignore_errors=True)
 
 # ---------------------------------------------------------------- deployment classification

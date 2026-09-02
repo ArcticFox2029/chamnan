@@ -201,6 +201,36 @@ NEVER_OPENED_SUFFIXES = (".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der",
                          ".jks", ".keystore", ".asc", ".gpg")
 
 
+def _has_source_extension(name):
+    """True when the extension names a language the index extracts symbols from.
+
+    🐛 Used only to switch OFF the stem rule below, and nothing else. The stem rule exists so that
+    `credentials.ini` is caught by a deny-list entry spelled `credentials` -- and it caught
+    `credentials.py`, `credentials.ts`, `credentials.rb` and `credentials.go` with it, which is the
+    commonest filename in any authentication library. google-auth-library-python lost FOUR files
+    this way, including google/auth/credentials.py, the abstract base class every credential type
+    in the package subclasses; 201 files indexed and the four most central absent, with no notice.
+    chamnan-peek refused the same file with "its contents are credentials or a key", about 23.8KB
+    of `class Credentials:` definitions.
+
+    The discriminator is the extension, not the stem. An EXTENSIONLESS `credentials` -- which is
+    what ~/.aws/credentials is, and the file the entry was written for -- or credentials.ini,
+    .cfg, .json, .yaml is a credential store. `credentials.<source extension>` is a module.
+
+    Asked of mapper rather than of a second list kept here, because a list would drift and the
+    drift would be silent in the unsafe direction. Imported inside the function: mapper imports
+    this module, so a top-level import would be a cycle. If it cannot be answered at all the answer
+    is False, which leaves the old over-cautious behaviour exactly as it was.
+    """
+    if "." not in name:
+        return False
+    try:
+        import mapper
+        return ("." + name.rsplit(".", 1)[-1]) in mapper.EXT_LANG
+    except Exception:
+        return False
+
+
 def is_blocked(path):
     name = path.name.lower()
     # The same four is_never_opened checks. These two lists had drifted apart, so a renamed
@@ -214,7 +244,8 @@ def is_blocked(path):
     # key gets copied aside, and an endswith() check lets both through while catching the bare file.
     if any(f".{seg}" in BLOCKED_SUFFIXES for seg in name.split(".")[1:]):
         return True
-    return name.endswith(BLOCKED_SUFFIXES) or name in BLOCKED_NAMES or stem in BLOCKED_NAMES
+    return (name.endswith(BLOCKED_SUFFIXES) or name in BLOCKED_NAMES
+            or (stem in BLOCKED_NAMES and not _has_source_extension(name)))
 
 
 def is_never_opened(path):
@@ -238,7 +269,7 @@ def is_never_opened(path):
     if any(f".{seg}" in NEVER_OPENED_SUFFIXES for seg in name.split(".")[1:]):
         return True
     return (name.endswith(NEVER_OPENED_SUFFIXES) or name in BLOCKED_NAMES
-            or stem in BLOCKED_NAMES)
+            or (stem in BLOCKED_NAMES and not _has_source_extension(name)))
 
 
 # A key can carry a secret word and still be naming a mechanism rather than holding a credential:
