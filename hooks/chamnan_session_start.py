@@ -42,6 +42,31 @@ import workspace as ws  # noqa: E402
 REPLY_STYLES = {'concise': 'Answer without preamble, without restating the question, and without a closing offer of further help. Lead with the result, then the reasoning only where it changes what the reader would do. Keep full sentences and normal courtesy — this is about removing filler, not about sounding curt.', 'terse': 'Lead with the result. Drop preamble, restatement and closing offers. Prefer a table or a list wherever one carries the content, and sentence fragments where a full sentence adds nothing. Never pad to seem thorough. Say uncertain things once, plainly, and move on.'}
 MAX_TOOLS = 12
 
+# STATE.md and MAP.md are both read whole, redacted, and only THEN cut to their token budget -- so a
+# large committed file pays a full ~27-pattern redaction pass before the budget that would have
+# discarded it ever runs. Measured on ordinary word-structured text with no secrets in it at all:
+# 8 MB costs `redact.scrub` 11.0s by itself, which is where the 78 seconds per session found on a
+# 54 MB STATE.md went. Bounding the READ, ahead of scrub, means the shape cannot recur whichever of
+# the patterns turns out to be the slow one next.
+#
+# Sized far above anything a person writes: a real STATE.md is tens of KB, and the largest MAP.md
+# this plugin has produced against any repository is ~320,000 characters. Nothing normal is
+# truncated, and what falls past the cap was going to be dropped by the token budget regardless.
+# MAP.md gets the larger ceiling because it legitimately scales with the repository; STATE.md is
+# hand-written and does not.
+STATE_READ_CEILING = 2_000_000    # bytes
+MAP_READ_CEILING = 8_000_000      # bytes
+
+
+def _read_bounded(path, ceiling):
+    """`path`'s text, cut at `ceiling` bytes, without ever reading past it.
+
+    `Path.read_text()` takes no size argument, so it loads the whole file before any caller-side
+    budget can say no. Reading through a file object means the OS never hands back more than asked.
+    """
+    with path.open("r", encoding="utf-8", errors="replace") as f:
+        return f.read(ceiling)
+
 # The plugin's own write skills, in the order they should be named. `note` is the description
 # fragment used only when the skill is present -- kept here rather than read from each SKILL.md so
 # the sentence stays a single planned read, not five. Checked against skills/ at runtime (see
@@ -626,7 +651,7 @@ def main():
         if cfg.get("map", True):
             mp = wsdir / "MAP.md"
             if mp.is_file():
-                text = mp.read_text(encoding="utf-8", errors="replace")
+                text = _read_bounded(mp, MAP_READ_CEILING)
                 cut = text.find("## Full Detail")
                 # 🐛 A MAP.md that is HALF AN INDEX was injected as a complete one. chamnan-map
                 # writes atomically now, so it can no longer produce this itself — but a bad merge
@@ -806,7 +831,7 @@ def main():
                 # free text written about the repository, which makes them the likeliest place for a
                 # hostname or a pasted connection string to end up, and scrubbing after truncation
                 # would miss anything sensitive that fell inside a pinned section.
-                raw = sp.read_text(encoding="utf-8", errors="replace")
+                raw = _read_bounded(sp, STATE_READ_CEILING)
                 # Aged BEFORE scrubbing, on the raw text. Redaction rewrites substrings, so a section
                 # holding a hostname would hash differently every session, look freshly edited every
                 # time, and never age at all.
