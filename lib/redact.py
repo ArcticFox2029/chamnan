@@ -61,31 +61,29 @@ def _is_a_plain_word(value):
     return bool(_PLAIN_WORD.match(value)) or value[:1] in "([{"
 
 
-def _is_a_type_annotation(value):
-    """True when what follows `password:` is a TYPE, not a value.
+def _is_a_type_annotation(match):
+    """True when what follows `password:` is a TYPE in a parameter list, not a value.
 
-    🐛 Found live in this repository's own MAP.md: a Swift signature
-    `logIn(user: String, password: String, page: Page)` came out as
-    `logIn(user: String, password: <REDACTED> page: Page)`. `\\S{6,}` had taken `String,` — seven
-    characters of type name — and with it the comma that separated the next parameter, so the
-    published signature was both censored and malformed.
+    🐛 The first version of this asked whether the value looked like a type name — alphabetic,
+    capitalised, no digits — and it was wrong in BOTH directions. `password: Correcthorsebatterystaple`
+    is a perfectly ordinary passphrase and walked out unredacted, which is a hole this rule opened.
+    And `password: string, page: Page` still came out mangled, because TypeScript and Go spell their
+    types in lower case, so the original defect survived in the languages that write it most.
 
-    It was luck rather than design that it did not happen more: `token: Token` survives only
-    because `Token,` is six characters and the rule wants six or more. Every language with type
-    annotations writes `name: Type` in exactly the shape the assignment rules read as `name = value`.
-
-    A type name is alphabetic and capitalised and carries no digits; a credential in this position
-    essentially always carries digits, punctuation or case mixing that a type does not. Optional
-    generics and a trailing separator are allowed, because that is how the annotation appears inside
-    a parameter list.
+    The distinguishing fact is not how the word is spelled. It is WHERE it sits: a type annotation
+    lives inside a parameter list and is followed by a separator. So both must hold — an unclosed
+    `(` before it on the same line, and a `,` or `)` immediately after it. A value at the end of a
+    line has neither, and a dict entry has `{` rather than `(` as its nearest opener.
     """
-    v = (value or "").rstrip(",);")
-    if v.endswith(">") and "<" in v:          # Dict<String, Int>, Optional<Token>
-        v = v[:v.index("<")]
-    return bool(_TYPE_ANNOTATION.match(v))
-
-
-_TYPE_ANNOTATION = re.compile(r"[A-Z][A-Za-z]*\??\]?$")
+    value = match.group(2) or ""
+    if not value.rstrip().endswith((",", ")")):
+        return False
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    before = match.string[line_start:match.start()]
+    depth_paren = before.count("(") - before.count(")")
+    depth_brace = before.count("{") - before.count("}")
+    depth_brack = before.count("[") - before.count("]")
+    return depth_paren > 0 and depth_brace <= 0 and depth_brack <= 0
 
 
 # `Authorization: Bearer <jwt>` and `Basic <base64>` — but "Basic Authentication" is a phrase, and
@@ -498,6 +496,6 @@ def scrub(text):
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
-        or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m.group(2)))
+        or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     return text
