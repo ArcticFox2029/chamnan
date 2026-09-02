@@ -155,10 +155,74 @@ def _ambiguous(pattern):
     return False
 
 
+# 🐛 The third shape, and the one all three guards above are blind to by construction: they every
+# one require a literal `(` before they will look at a pattern, and a flat chain of quantifiers over
+# the same atom needs no brackets at all. `a*a*a*a*a*a*a*a*a*a*a*a*b` is 25 characters, passes all
+# three, and Python's `re` takes 0.8s on sixteen `a`s -- doubling with each further character, so a
+# line of ordinary length never returns. A `**Check:**` trailer arrives with a clone and is compiled
+# and run at every session start.
+#
+# Measured, `('a*' * k) + 'b'` against inputs up to 80 characters:
+#
+#     k = 3   0.004s        k = 6    2.99s
+#     k = 4   0.081s        k = 7   27.43s
+#     k = 5   1.311s        k = 8   12.24s (at only 40 characters)
+#
+# So the cap is on the COUNT of unbounded quantifiers, which is what turns the curve, and it is set
+# at 4 -- the last value whose worst case is a rounding error. That is generous against real use:
+# every `**Check:**` pattern found in the wild is a literal grep with ZERO quantifiers, which is the
+# module's own docstring restated ("most rules are about judgement and cannot be reduced to a grep").
+#
+# `?` is deliberately not counted. The classic `a?a?a?…aaa` blowup does not reproduce on CPython --
+# measured flat at 0.000s out to twenty -- and counting it would refuse ordinary patterns to defend
+# against a hazard this engine does not have.
+#
+# This narrows the hole; it does not prove it closed. Enumerating pathological shapes by reading the
+# pattern text is reasoning about the engine's own runtime, so a fifth family nobody has found yet
+# is likely. A wall-clock ceiling was the obvious backstop and was measured before being rejected:
+# `re` cannot be interrupted in-process, `signal.alarm` is POSIX-only, main-thread-only and holds a
+# single global slot, and a subprocess costs 139 ms per spawn against a hook that runs in 750 ms and
+# fires up to 82 times a session -- up to 23 seconds a session, on every repository that uses the
+# feature, to defend against a regex somebody would have to commit on purpose. Refusing the shape is
+# free and is what this module already does with the other three.
+MAX_QUANTIFIERS = 4
+
+
+def _too_many_quantifiers(pattern):
+    r"""True when `pattern` carries more unbounded quantifiers than backtracking can be trusted with.
+
+    Scanned rather than counted with a regex, for the same reason as the group scanner above: an
+    escaped `\*` is a literal asterisk and a `[+*]` is a class of two characters, and neither is a
+    quantifier. `{` counts, because `{2,}` repeats without an upper bound just as `+` does.
+    """
+    n, i, end = 0, 0, len(pattern)
+    while i < end:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":                      # a character class: quantifier characters are literal
+            i += 1
+            if i < end and pattern[i] == "^":
+                i += 1
+            if i < end and pattern[i] == "]":
+                i += 1
+            while i < end and pattern[i] != "]":
+                i += 2 if pattern[i] == "\\" else 1
+            i += 1
+            continue
+        if ch in "*+{":
+            n += 1
+            if n > MAX_QUANTIFIERS:
+                return True
+        i += 1
+    return False
+
+
 def _matches(root, pattern, glob):
     """(files_scanned, files_matching) or None when the check cannot be run at all."""
     if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
-            or _ambiguous(pattern)):
+            or _ambiguous(pattern) or _too_many_quantifiers(pattern)):
         return None
     try:
         rx = re.compile(pattern)

@@ -7830,11 +7830,16 @@ import tools_index as _ti2  # noqa: E402
 def _would_refuse(pat):
     return bool(_rc2._NESTED_QUANTIFIER.search(pat)
                 or _rc2._quantified_group_over_quantifier(pat)
-                or _rc2._ambiguous(pat))
+                or _rc2._ambiguous(pat)
+                or _rc2._too_many_quantifiers(pat))
 
 
+# All three of the guards above require a literal `(` before they will look at a pattern, so a flat
+# chain over one atom walked past every one of them. Measured `('a*' * k) + 'b'` up to 80 characters:
+# k=4 is 0.081s and k=5 is 1.311s, k=7 is 27s — which is where MAX_QUANTIFIERS = 4 comes from.
 for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(x*)*$",
-             "((ab)*)+$"):
+             "((ab)*)+$", "a*a*a*a*a*a*a*a*a*a*a*a*b", "a*a*a*a*a*b",
+             "x{2,}y{2,}z{2,}w{2,}v{2,}"):
     check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
 # ...and the guard must not refuse the patterns a rule would actually be written with.
 for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
@@ -7844,6 +7849,13 @@ for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.
 check("an escaped paren is not a group", not _would_refuse(r"\(a\)+"))
 check("...and a character class of quantifier characters is not one either",
       not _would_refuse(r"([+*])"))
+check("a class packed with quantifier characters is still not a chain of quantifiers",
+      not _would_refuse(r"[*+*+*+*+*+]"))
+check("...nor are escaped ones", not _would_refuse(r"a\*a\*a\*a\*a\*a\*"))
+check("four unbounded quantifiers still run — the last value measured at 0.081s",
+      not _would_refuse(("a*" * 4) + "b"))
+check("`?` is not counted: the a?a?a?…aaa blowup does not reproduce on CPython",
+      not _would_refuse("a?" * 12 + "a" * 12))
 
 # `ws.exclusive` yields False after two seconds, and the rewrite sat outside the guard — so on
 # contention the log was truncated and rewritten from a stale snapshot, discarding every append
