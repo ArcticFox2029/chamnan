@@ -368,6 +368,20 @@ FILENAME_LINE = re.compile(r"^[\w.-]+\.[a-z]{1,5}\s*$", re.I)
 # applied immediately after that filename was removed, so a summary that legitimately opens
 # with a dash is untouched.
 SELF_NAME_SEPARATOR = re.compile(r"^\s*[—–\-:|]+\s*")
+# The rest of the Xcode file header, once FILENAME_LINE above has taken the restated filename off
+# the front. What remains is the project name and then `Created by <person> on <date>.`, and both
+# get harvested as the file's summary: 17 rows of one corpus read `— OrbitalFreightDriver`, the
+# app's own name, while the real `///` doc comment two lines below was never reached.
+#
+# It is not only noise. The attribution line carries a named human being and a date, and chamnan
+# writes MAP.md into the repository and injects it at session start — so an Xcode default nobody
+# wrote deliberately ends up committed and put in front of a model. That moves this from a density
+# defect to one worth fixing on its own.
+#
+# Anchored on the attribution wording AND on a digit where the date goes, not on "a short line
+# with no verb" — a real one-line summary is often exactly that shape, and "Created on demand by
+# the scheduler" is a real description that must survive.
+XCODE_ATTRIBUTION = re.compile(r"\bcreated\s+by\b.{0,80}?\bon\b\s*\d", re.I | re.S)
 # Lines that open a file without saying anything about it — including the import block, which on a
 # Java or TypeScript file sits between the licence header and the class doc. Leaving imports out
 # meant the reader stopped there: 250 of 268 gson files and 401 of 455 type-fest files came back
@@ -542,7 +556,8 @@ def leading_comment(source, lang=None):
         # what the file is.
         bare = ANY_DOC_TAG_TAIL.sub("", text).strip()
         if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]) \
-                and not IMPORT_LABEL.match(bare):
+                and not IMPORT_LABEL.match(bare) \
+                and not XCODE_ATTRIBUTION.search(text[:BOILERPLATE_WINDOW]):
             return _clip(text)
     return ""
 

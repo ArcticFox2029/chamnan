@@ -8065,6 +8065,37 @@ check("...and nothing lands under (root), which is what reading a basename as a 
       not any("(root)" in l for l in _gdirlines))
 
 
+# ------------------------------ Xcode's default file header is not a description, and it names a person
+# FILENAME_LINE already took the restated filename off the front of the Swift/ObjC house style. What
+# was left was the project name and `Created by <person> on <date>.`, and both were harvested as the
+# file's summary — 17 rows of one corpus read as the app's own name while the real `///` doc comment
+# two lines below was never reached.
+#
+# The attribution half is the reason this is not merely a density fix: chamnan writes MAP.md into the
+# repository and injects it at session start, so a named human being and a date that an Xcode
+# template inserted end up committed and placed in front of a model.
+_xh = ("//\n//  OrbitalFreightDriver.swift\n//  OrbitalFreightDriver\n//\n"
+       "//  Created by A Developer on 12/3/24.\n//\n\nimport SwiftUI\n\n"
+       "/// Drives the freight scheduling loop and reconciles manifests against dock slots.\n"
+       "struct OrbitalFreightDriver: View {}\n")
+_xs = mapper.leading_comment(_xh, "swift")
+check("the Xcode header is stepped over and the real doc comment is reached",
+      "Drives the freight scheduling loop" in _xs)
+check("...so the project name is not the summary", "OrbitalFreightDriver" not in _xs)
+check("...and no person's name reaches the index", "A Developer" not in _xs and "Created by" not in _xs)
+# The pattern must not be a blunt "short line with no verb" rule: a real summary is often that shape.
+check("a genuine short summary is untouched",
+      mapper.leading_comment("// Parses dock manifests.\nstruct A {}\n", "swift") == "Parses dock manifests.")
+# `on` followed by a date is what makes it an attribution. A description that happens to say
+# "created ... on demand" is a description.
+check("'Created on demand by the scheduler' is a description, not an attribution",
+      "on demand" in mapper.leading_comment(
+          "// Created on demand by the scheduler when a dock frees up.\nstruct A {}\n", "swift"))
+check("a file that is ONLY the Xcode header is left undescribed rather than wrongly described",
+      mapper.leading_comment("//\n//  A.swift\n//  Proj\n//\n//  Created by Someone on 1/2/25.\n//\n"
+                             "struct A {}\n", "swift") == "")
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
