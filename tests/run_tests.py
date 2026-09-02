@@ -7972,6 +7972,43 @@ check("the explain splitter sees exactly the sections the body carries",
 check("...and a section left out of the body cannot appear in it",
       "Dropped" not in _ex_delivered)
 
+# `config.json` arrives with a clone like every other committed file, and it had no size ceiling
+# while MAP.md and STATE.md both do. Worse, the PostToolUse hook calls `enabled()` four times per
+# tool call and each one re-read and re-parsed it. Measured with a 50 MB (valid) config: the hook
+# went 0.28s -> 0.56s, and that is linear.
+_cfgd = Path(tempfile.mkdtemp()) / "repo"
+(_cfgd / ".git").mkdir(parents=True)
+ws.ensure(_cfgd)
+_cfgf = _cfgd / ".chamnan" / "config.json"
+_cfgf.write_text(json.dumps({"agents": False}), encoding="utf-8")
+check("a config value is read", ws.load_config(_cfgd).get("agents") is False)
+time.sleep(0.01)
+_cfgf.write_text(json.dumps({"agents": True}), encoding="utf-8")
+check("A CHANGED CONFIG IS NOT PINNED BY THE MEMO", ws.load_config(_cfgd).get("agents") is True)
+_bigj = _cfgd / ".chamnan" / "big.json"
+_bigj.write_text('{"a":"' + "x" * (ws.JSON_READ_CEILING + 1000) + '"}', encoding="utf-8")
+check("a JSON store past the ceiling degrades to empty, like a missing file",
+      ws.load_json(_bigj, dict) == {})
+check("...and one under it still parses", ws.load_json(_cfgf, dict) == {"agents": True})
+check("the ceiling is far above anything chamnan writes", ws.JSON_READ_CEILING >= 1_000_000)
+shutil.rmtree(_cfgd.parent, ignore_errors=True)
+
+# `ws.workspace(root) / "tools" / name` returns `name` itself when it is absolute, so demote
+# renamed a file anywhere on disk. The name comes from tools/index.json, which arrives with a clone.
+_demd = Path(tempfile.mkdtemp()) / "repo"
+(_demd / ".chamnan" / "tools").mkdir(parents=True)
+(_demd / ".git").mkdir()
+_outside = _demd.parent / "OUTSIDE.txt"
+_outside.write_text("precious\n", encoding="utf-8")
+(_demd / ".chamnan" / "tools" / "index.json").write_text(
+    json.dumps([{"name": str(_outside), "desc": "planted"}]), encoding="utf-8")
+_dem = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), "demote",
+                       str(_outside)], capture_output=True, text=True, cwd=str(_demd))
+check("AN ABSOLUTE PATH IS REFUSED AS A TOOL NAME", _dem.returncode == 1)
+check("...and the file outside the workspace is untouched", _outside.is_file())
+check("...and the refusal says what a tool name is", "plain filename" in _dem.stderr)
+shutil.rmtree(_demd.parent, ignore_errors=True)
+
 check("redact.emit scrubs a string argument", "AKIA" not in redact.scrub("k AKIAIOSFODNN7EXAMPLE"))
 check("...and leaves a non-string alone — a caller printing an int means it",
       redact.emit.__doc__ is not None and "Non-string" in redact.emit.__doc__)
