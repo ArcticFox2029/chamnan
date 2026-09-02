@@ -20,12 +20,48 @@ time it did without it.
 """
 import os
 import re
+import sys
 from pathlib import Path
 
 # One pattern per language family. Group 1 is the imported thing. These are deliberately loose:
 # a missed import costs one line of output, while a wrong one sends a reader to the wrong file.
+# Single-segment names that are the standard library, so a bare `from types import TracebackType`
+# is never drawn as an edge to whatever repository file happens to carry that stem.
+#
+# Narrow on purpose. Refusing EVERY single-segment absolute import was the first attempt and the
+# suite caught it: `from core import x` against a repository's own src/core.py is a real edge, and
+# _only_suffix_match does not answer a bare stem with no separator in it. So the test is the NAME,
+# not the shape.
+#
+# sys.stdlib_module_names is 3.10+ and the floor here is 3.8, so the literal set below is the
+# fallback: not the whole standard library, only the names that actually collide with what people
+# call their own modules. A missing name costs one wrong edge, which is the behaviour being fixed
+# rather than a new failure.
+_STDLIB = getattr(sys, "stdlib_module_names", None) or frozenset({
+    "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "bisect", "builtins",
+    "calendar", "cmd", "code", "codecs", "collections", "colorsys", "config", "configparser",
+    "contextlib", "copy", "csv", "ctypes", "dataclasses", "datetime", "decimal", "difflib",
+    "email", "enum", "errno", "filecmp", "fileinput", "fnmatch", "functools", "gc", "getopt",
+    "getpass", "gettext", "glob", "gzip", "hashlib", "heapq", "hmac", "html", "http", "imp",
+    "importlib", "inspect", "io", "ipaddress", "itertools", "json", "keyword", "linecache",
+    "locale", "logging", "mailbox", "math", "mimetypes", "numbers", "operator", "os", "parser", "pathlib", "pickle", "pkgutil", "platform", "plistlib", "pprint", "profile",
+    "queue", "quopri", "random", "re", "reprlib", "resource", "runpy", "sched", "secrets",
+    "select", "selectors", "shelve", "shlex", "shutil", "signal", "site", "smtplib", "socket",
+    "socketserver", "sqlite3", "ssl", "stat", "statistics", "string", "struct", "subprocess",
+    "symtable", "sys", "sysconfig", "tarfile", "tempfile", "termios", "textwrap", "threading",
+    "time", "timeit", "token", "tokenize", "trace", "traceback", "tracemalloc", "types", "typing",
+    "unicodedata", "unittest", "urllib", "uuid", "warnings", "wave", "weakref", "webbrowser",
+    "xml", "zipfile", "zlib",
+})
+
 IMPORT_PATTERNS = {
-    "py": [r"^\s*from\s+([\w.]+)\s+import\b", r"^\s*import\s+([\w.]+)"],
+    # The third pattern is `from . import types`, where the dots and the name are NOT contiguous, so
+    # a single group cannot carry both. Group 1 takes the dots and the named group takes the
+    # submodule; the reader below joins them back into `.types`. Without it click's core.py, which
+    # imports its own types module exactly this way, produced no edge at all — and before relative
+    # imports resolved properly the bare-stem guess had been getting it right by coincidence.
+    "py": [r"^\s*from\s+([\w.]+)\s+import\b", r"^\s*import\s+([\w.]+)",
+           r"^\s*from\s+(\.+)\s+import\s+(?P<sub>\w+)"],
     "js": [r"""(?:from|import)\s+['"]([^'"]+)['"]""", r"""require\(\s*['"]([^'"]+)['"]"""],
     "go": [r'^\s*"([\w./-]+)"\s*$', r'^\s*\w+\s+"([\w./-]+)"\s*$'],
     "java": [r"^\s*import\s+(?:static\s+)?([\w.]+)"],
@@ -77,6 +113,8 @@ def extract_imports(source, lang):
     for pattern in patterns:
         for m in re.finditer(pattern, head, re.M):
             name = m.group(1).strip()
+            if m.re.groupindex.get("sub"):
+                name += m.group("sub")          # `from . import types` -> `.types`
             if name and len(name) < 200:
                 found.append(name)
     return found
@@ -146,6 +184,30 @@ def resolve(name, importer, by_noext, by_stem):
             if hit:
                 return hit
 
+    # 🐛 Python's relative imports are dotted, not slashed, and nothing here understood them. A
+    # leading dot sent `.types` into the path branch above, where `.types` is not `./` or `../` and
+    # resolves to nothing, and it fell all the way through to the bare-stem guess at the bottom —
+    # the same guess that `from types import TracebackType`, the STANDARD LIBRARY, also landed on.
+    # Both produced an edge to src/click/types.py, so click's map claimed seven users for that file
+    # and four of them had never imported it.
+    #
+    # More dots mean higher, and only the first dot means "this package": `.types` from
+    # src/click/termui.py is src/click/types, `...plugins` from httpie/output/formatters/colors.py
+    # is httpie/plugins. The old code could not express either, so `from ...plugins import
+    # FormatterPlugin` resolved to httpie/manager/tasks/plugins.py — a real file, wrong one, five
+    # times in that repository.
+    if name.startswith(".") and not name.startswith(("./", "../")):
+        up = len(name) - len(name.lstrip("."))
+        rest = name[up:].replace(".", "/")
+        here = Path(importer).parent
+        for _ in range(up - 1):
+            here = here.parent
+        key = str(here / rest if rest else here).replace("\\", "/").lstrip("./")
+        if key in by_noext:
+            return by_noext[key]
+        if f"{key}/__init__" in by_noext:
+            return by_noext[f"{key}/__init__"]
+
     # Dotted module names, as Python, Java, Kotlin and C# write them.
     dotted = name.replace("::", ".").replace("\\", ".")
     as_path = dotted.replace(".", "/")
@@ -163,6 +225,24 @@ def resolve(name, importer, by_noext, by_stem):
         return hit
 
     # Last resort: the final segment, and only when exactly one file in the repository has it.
+    #
+    # 🐛 ...and never for a single-segment ABSOLUTE import, which is the shape of nearly every
+    # standard-library line in a Python file. `from types import TracebackType`, `from json import
+    # dumps`, `from logging import getLogger` were each drawn as an edge to whatever repository
+    # file happened to carry that stem. Measured before the fix: 22% of coveragepy's python edges
+    # were wrong, 11% of requests', 8% of httpie's, 3% of click's.
+    #
+    # The order of the two changes above matters and is the whole reason this branch survives.
+    # Deleting it outright is the obvious fix and it would gut the section — before the relative
+    # resolution above existed, this branch is what resolved `from .models import HTTPResponse`
+    # (11 in requests) and `.core` (34 in click), so removing it first would have cost click about
+    # 170 of its 231 edges. Fix the real resolution, then narrow the guess.
+    #
+    # A single-segment import that IS in this repository does not need this branch: `import utils`
+    # against src/utils.py is already answered by _only_suffix_match above, which refuses when more
+    # than one file matches.
+    if "." not in dotted and not name.startswith(".") and dotted in _STDLIB:
+        return None
     tail = dotted.rsplit(".", 1)[-1]
     return by_stem.get(tail)
 
