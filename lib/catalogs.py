@@ -283,13 +283,22 @@ def scan_routes(root, files):
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
+        # `APIRouter` and `Blueprint` are FastAPI and Flask, so these two patterns can only ever
+        # match Python — and both are unanchored scans with a 400-character bounded body, which is
+        # the expensive shape. Running them over every JavaScript and Go file in a repository is
+        # work whose result is known in advance: measured on a four-project tree they cost 1,503 ms
+        # of ~1,900 ms of total findall time, roughly half of it spent inside large `.js` files that
+        # cannot contain either name. Gated to Python, checked for misses across three repositories
+        # with route-carrying files in six languages: none.
+        py = f["lang"] == "py"
         # Mount points declared in this file, by the variable the decorator will name.
-        prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)}
+        prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)} if py else {}
         # Every router/blueprint variable in the file, prefix or not. A decorator is only trusted
         # when its object is one of these or one of the conventional names -- which is what keeps
         # an unrelated `@retry.route(...)` out of the API surface.
-        routers = set(ROUTER_ANY.findall(text)) | set(prefixes)
-        spring = SPRING_CLASS_PREFIX.search(text)
+        routers = (set(ROUTER_ANY.findall(text)) if py else set()) | set(prefixes)
+        # Same argument, one language over: @RequestMapping on a class is Spring, so Java only.
+        spring = SPRING_CLASS_PREFIX.search(text) if f["lang"] == "java" else None
         class_prefix = spring.group(1) if spring else ""
 
         for pattern, kind in ROUTE_PATTERNS:

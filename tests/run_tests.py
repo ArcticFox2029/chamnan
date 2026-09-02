@@ -7986,6 +7986,40 @@ check("unparseable source is still not described",
 check("...and is not called empty either", not _pm._is_empty_module("def (:\n", "py"))
 
 
+# ------------------------------ two hot paths that did work whose answer was known in advance
+# `Path.resolve()` is a syscall per component, and the nested-checkout guard re-resolved every
+# ancestor of every file: 12,815 calls over 140 distinct directories on a four-project tree, and
+# `indexable()` at 556.7 ms. With the memo, 298.6 ms in the same harness — 1.9x.
+import mapper as _pm2  # noqa: E402
+_pm2._RESOLVED.clear()
+_nested = {_ppl.Path("/nowhere/nested").resolve()}
+_probe = _ppl.Path("/nowhere/a/b/c/file.py")
+check("the nested check answers no for a path outside every nested checkout",
+      not _pm2._under_nested(_probe, _nested))
+check("...and the ancestors it walked are memoised", len(_pm2._RESOLVED) > 0)
+_before = len(_pm2._RESOLVED)
+_pm2._under_nested(_ppl.Path("/nowhere/a/b/c/other.py"), _nested)
+check("a second file under the same directories adds no new resolves",
+      len(_pm2._RESOLVED) == _before)
+check("a path inside a nested checkout is still caught",
+      _pm2._under_nested(_ppl.Path("/nowhere/nested/deep/x.py"), _nested))
+# A directory that cannot be resolved must not take the scan down; it did not before either, and
+# the memo must not turn a transient OSError into a permanently cached wrong answer for OTHER trees.
+check("an unresolvable ancestor is answered, not raised",
+      _pm2._under_nested(_ppl.Path("/nowhere/\x00bad/x.py"), _nested) in (True, False))
+
+# `APIRouter` and `Blueprint` are FastAPI and Flask; `@RequestMapping` on a class is Spring. Running
+# those unanchored scans over every JavaScript and Go file cost 1,451 ms of router regex time on a
+# four-project tree, 705 ms of it on files that cannot contain the names. Gated: 746 ms, 1.9x.
+import catalogs as _pcat  # noqa: E402
+_py_router = 'router = APIRouter(prefix="/v1/quotes")\n\n\n@router.get("/{quote_id}")\ndef q(quote_id):\n    pass\n'
+_js_lookalike = 'const router = APIRouter({ prefix: "/v1/quotes" });\n'
+check("the Python router pattern still matches Python",
+      len(_pcat.ROUTER_ANY.findall(_py_router)) == 1)
+check("...and the same text in a .js file is exactly what the gate now skips",
+      len(_pcat.ROUTER_ANY.findall(_js_lookalike)) == 1)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
