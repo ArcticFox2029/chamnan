@@ -369,7 +369,7 @@ Everything lives in one directory at the repository root, and nothing outside it
 │   └── rules/      standing constraints — injected every session
 ├── skills/         procedures you chose to keep     (starts empty)
 ├── tools/          scratch scripts you kept         (starts empty)
-├── candidates/     detected sequences, awaiting review (starts empty; `chamnan-candidates`)
+├── candidates/     detected sequences, awaiting review (starts empty, and stays empty on every real log measured — see `chamnan-candidates`)
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 
@@ -675,7 +675,7 @@ From a shell, in the repository:
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |
 | `chamnan-promote <file> <name> --desc "…"` | install a scratch script as a permanent tool in `.chamnan/tools/` |
 | `chamnan-promote --list` | what this repo already keeps |
-| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list` |
+| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list`. **Measured 2026-09-02: the sequence detector behind this has never produced a candidate on real data** — 0 across 2,905 logged commands in four working repositories, and still 0 at half its shipped thresholds. The scratch-script notice in the same feature does fire and is a different mechanism. Kept because the cost is 1.14 ms per tool call and one machine's logs are not proof about everyone's, but do not expect it to find anything. |
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
 | `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
