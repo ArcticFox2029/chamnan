@@ -123,6 +123,24 @@ DEFAULT_CONFIG = {
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 
+def inside(path, root):
+    """True when `path` really lives under `root`, following symlinks before deciding.
+
+    🐛 chamnan reads whatever is at a workspace path. A committed symlink at
+    `.chamnan/skills/x.md` or `.chamnan/STATE.md` pointing to `~/.ssh/id_rsa` put that file's
+    content into the injected block — reproduced end to end. A workspace travels with a clone, so
+    the symlink is chosen by whoever wrote the repository, not by the person reading it.
+
+    `resolve()` on BOTH sides, because a repository reached through a symlinked parent — /tmp on a
+    Mac, a home directory on a network mount — would otherwise fail this test for every file it
+    contains.
+    """
+    try:
+        return Path(root).resolve() in Path(path).resolve().parents
+    except (OSError, ValueError, RuntimeError):
+        return False          # a broken or looping link is not inside anything
+
+
 def find_root(start=None):
     """Repo root: the nearest ancestor holding either a workspace or a VCS marker.
 

@@ -25,6 +25,7 @@ characters, titles are capped by count, and the store itself is allowed to grow 
 files are small and each one was written on purpose.
 """
 import re
+import workspace as ws
 import mdblock
 import state
 
@@ -50,7 +51,10 @@ def entries(root, category):
     d = directory(root, category)
     if not d.is_dir():
         return []
-    return sorted(p for p in d.glob("*.md") if p.is_file())
+    # A symlink out of the repository is refused: the workspace travels with a clone, so the
+    # link is chosen by whoever wrote the repo. `~/.ssh/id_rsa` behind a `.md` name reached the
+    # injected block before this. See `workspace.inside`.
+    return sorted(p for p in d.glob("*.md") if p.is_file() and ws.inside(p, root))
 
 
 def case_collisions(paths):
