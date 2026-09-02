@@ -6375,6 +6375,24 @@ for _bn in ("justfile", "dockerfile", "taskfile.yml", "procfile", "jenkinsfile",
 check("...while a licence file is neither, and stays where it was",
       "license" not in _as.BUILD_NAMES)
 
+# 🎯 The pre-commit hook runs a FULL rescan in the foreground — there is no incremental path — so
+# on tinygrad, 1,032 source files, every commit that adds, deletes or renames a file waited 107
+# seconds. Nobody discovers that until their first commit hangs, three steps from the cause. The
+# install is the one moment the user is making this choice, so the size of the tree is said there.
+#
+# A count and a measured comparison, never an estimate in seconds: extrapolating a duration from a
+# file count would be a guess presented as a fact, which is the error this project keeps catching
+# in its own output.
+_ghr = Path(tempfile.mkdtemp())
+subprocess.run(["git", "init", "-q", "."], cwd=str(_ghr), capture_output=True)
+for _i in range(4):
+    (_ghr / f"m{_i}.py").write_text('"""M."""\ndef f(): pass\n')
+_small = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+                        cwd=str(_ghr), capture_output=True, text=True)
+check("a small repository is not warned about a rebuild it will not notice",
+      "full rescan" not in _small.stdout and "installed" in _small.stdout)
+shutil.rmtree(_ghr, ignore_errors=True)
+
 
 # `//!` is Rust's own way of saying "this comment is about the FILE". Without preferring it the
 # first ordinary `//` won, and tokio's crate root was described by an aside about a build flag.

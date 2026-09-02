@@ -169,6 +169,26 @@ def install_git_hook(root):
         target.chmod(0o755)
         print(f"chamnan: installed {target.relative_to(root)}")
     print("  The index now refreshes on every commit that touches tracked files.")
+    # 🎯 Said at install time because it is the only moment the user is making this choice, and
+    # because the rebuild is a FULL rescan with no incremental path — on tinygrad, 1,032 source
+    # files, it measured 107 seconds, and this hook runs it in the foreground, so every commit that
+    # adds, deletes or renames a file waits for it. Nobody discovers that until their first commit
+    # hangs, by which point the cause is three steps away from the symptom.
+    #
+    # A count and a measured comparison, not an estimate in seconds: extrapolating a duration from
+    # a file count would be a guess presented as a fact, which is the failure this project keeps
+    # finding in its own output. The walk costs about 0.04s on 1,478 files, so saying it is free.
+    try:
+        import tree as _tree
+        with _tree.session():
+            n = sum(1 for _ in mapper.indexable(root))
+        if n >= 300:
+            print(f"  Note: rebuilding is a full rescan of all {n:,} source files, and this hook "
+                  f"runs it in the FOREGROUND — every commit that adds, deletes or renames a file "
+                  f"waits for it. For scale: a 1,032-file tree measured 107 seconds.")
+            print("  On a tree this size you may prefer to run `chamnan-map` by hand instead.")
+    except Exception:
+        pass          # a nicety; never the reason an install fails
     print(f"  Remove it by deleting the block marked '{HOOK_MARKER}'.")
     return 0
 
