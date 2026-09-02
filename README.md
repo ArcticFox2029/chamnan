@@ -33,7 +33,7 @@ is plain markdown committed beside the code.
 
 | what people actually ask | the short answer |
 |---|---|
-| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 26× on the published corpus**, which omits 20 MB of binary attachments — of which **269 to 1,389 reach each session**, measured across four real repositories. |
+| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 25.4× on the published corpus**, which omits 20 MB of binary attachments — of which **269 to 1,389 reach each session**, measured across four real repositories. |
 | *"my agent keeps re-reading the same files"* | Measured across 12,332 re-read events in six working sessions: the injected roll-up named **22.7%** of them by alphabet, **35.6%** once ranked by git churn. |
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
@@ -75,7 +75,7 @@ evidence and reference, and nothing below states a claim in stronger terms than 
 
 **Where the numbers are.** Every figure on this page is sourced in [Evidence](#evidence), which
 also lists what was measured and then deliberately **not** built. The headline ratio is stated two
-ways on purpose — 223× on a corpus carrying binary attachments, 26× on the published one — because
+ways on purpose — 223× on a corpus carrying binary attachments, 25.4× on the published one — because
 the difference is what a repository holds, not what chamnan does.
 
 **If you are summarising this for someone:** the three claims worth carrying are that it is
@@ -1702,13 +1702,13 @@ something an agent would otherwise have to go and read:
 | 27 env and config files | 67,994 | **616** | **110×** |
 | 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** |
 | 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** |
-| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **26×** |
+| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **25.4×** |
 
 <img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which 269 to 1,389 reach each session." width="100%">
 
 <sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
 its source. The published corpus omits them, so the ratio you will measure by following the
-instructions below is 26×.** Both are true of the same tool; the difference is what a repository
+instructions below is 25.4×.** Both are true of the same tool; the difference is what a repository
 keeps in it, not what chamnan does. The row above this picture is the one you can reproduce.</sub>
 
 And for the files that should never be loaded at all, `chamnan-peek` reads their shape on demand:
@@ -1822,11 +1822,11 @@ corresponds to no account anywhere. `--check` says which state a working copy is
 
 The published corpus omits the 1,192 binary attachments and five bulk seed-data SQL files — 20 MB
 that git stores badly and that test nothing the schema files do not. Those are most of the
-11,560,484 tokens quoted above, so the ratio you will measure is **26×, not 223×**.
+11,560,484 tokens quoted above, so the ratio you will measure is **25.4×, not 223×**.
 
 The index barely moves (53,652 against 51,937), because attachments were never *described* in it —
 they were listed as stored material, which is the entire point of that section. 223× is the honest
-figure for a repository that carries its payload beside its source; 26× is the honest figure for
+figure for a repository that carries its payload beside its source; 25.4× is the honest figure for
 source alone. Same tool, same corpus; the difference is what you keep in your repository, not what
 chamnan does with it.
 
