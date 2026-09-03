@@ -10,6 +10,7 @@ the same block with the harness taken out of the way -- one pipe anything can re
     chamnan-context --profile small-window          the same, by name
     chamnan-context --ceiling 9000       for a harness that truncates, like Claude Code's hook
     chamnan-context --detect             what chamnan thinks this machine is, and nothing else
+    chamnan-context --write cursor       write it where that agent reads, instead of stdout
 
 **Why the ceiling defaults to non-binding rather than to 9,000.** That number is Claude Code
 truncating a hook's stdout, and it is the tightest limit chamnan has ever worked under. A tool that
@@ -38,6 +39,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
+import adapters  # noqa: E402
 import host  # noqa: E402
 import profiles  # noqa: E402
 import redact  # noqa: E402
@@ -104,6 +106,8 @@ def main():
     parser.add_argument("root", nargs="?", default=".")
     parser.add_argument("--json", action="store_true", help="the block plus what was detected")
     parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
+    parser.add_argument("--write", default=None, choices=adapters.names(),
+                        help="write the block where this agent reads it, instead of to stdout")
     parser.add_argument("--window", type=int, default=None,
                         help="context window in tokens; picks the profile for you")
     parser.add_argument("--profile", default=None, choices=profiles.names(),
@@ -137,7 +141,24 @@ def main():
         print(json.dumps(detected, indent=2))
         return 0
 
+    # An adapter that declares its own ceiling knows something this caller does not -- what the
+    # agent it writes for will truncate. It wins over the default, and loses to an explicit
+    # --ceiling, because a caller who typed a number meant it.
+    if args.write:
+        declared = getattr(adapters.for_agent(args.write), "CEILING", None)
+        if declared and args.ceiling == NON_BINDING:
+            args.ceiling = declared
+            detected["ceiling"] = declared
+
     body = build(root, profile, args.ceiling)
+
+    if args.write:
+        written = adapters.install(root, args.write, body)
+        print(f"chamnan-context -> {written}")
+        print(f"  generated and per-developer. Add this to .gitignore if it is not there already:")
+        print(f"    {adapters.ignore_line(args.write)}")
+        return 0
+
     if args.json:
         detected["context"] = body
         detected["bytes"] = len(body.encode("utf-8"))
