@@ -4475,8 +4475,11 @@ _spec = importlib.util.spec_from_loader(
 _cm = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_cm)
 
+# Compared in POSIX form: `_hooks_dir` returns a Path, and `str()` of it is `.git\\hooks` on
+# Windows. The property is which DIRECTORY it resolved to, not which separator the platform spells
+# it with.
 check("a plain repo resolves to .git/hooks",
-      str(_cm._hooks_dir(_main)).replace(str(_main) + "/", "").endswith(".git/hooks"))
+      _cm._hooks_dir(_main).as_posix().endswith(".git/hooks"))
 
 _git("config", "core.hooksPath", "../myhooks", cwd=_main)
 check("core.hooksPath is honoured, so the hook is not written where git will never look",
@@ -11024,6 +11027,24 @@ check("NO SHIM APPEARS IN THE USAGE TABLE AS A COMMAND",
       not any(n.endswith(".cmd") for n in _usage_names))
 check("...and every real command still does",
       {p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix} <= _usage_names)
+
+# --- INVARIANT 10: the process writes UTF-8, and decides that in ONE place -------------------
+# 🐛 Every command writes em dashes and this repository's corpus is largely Thai. Python encodes
+# text output with the machine's preferred encoding -- UTF-8 on POSIX, the ANSI code page on
+# Windows -- so `chamnan-report`'s usage table lost every ` — ` separator there and the checks
+# counting them failed on Windows and nowhere else.
+#
+# Fixed once, in `redact`, because that is already the single print every command routes through.
+# Fixing it per command is the shape this project has had to un-forget eight times.
+_redact_src = (ROOT / "lib" / "redact.py").read_text(encoding="utf-8")
+check("the process is told to speak UTF-8", "reconfigure(encoding=" in _redact_src)
+check("...in redact, which every command already imports for its print",
+      "_speak_utf8()" in _redact_src)
+check("...and nowhere else, so there is one place to change it",
+      sum("reconfigure(encoding=" in src for _p, src in _runtime_sources()) == 1)
+# It must not be strict: a command that cannot render one character still has to deliver the rest.
+check("...with errors=replace, so one character cannot cost the whole output",
+      'errors="replace"' in _redact_src.split("_speak_utf8")[1][:900])
 
 # --- INVARIANT 5: a read-only HOME must not stop the plugin -----------------------------------
 # Lambda and most containers give a read-only HOME and a writable temp dir. Anything chamnan writes
