@@ -12,6 +12,7 @@ redactor that replaces everything passes a "did it hide the secret" test perfect
 No dependencies, no pytest — a plain check(name, condition) counter, so this runs anywhere python3
 does, which is the same bar the plugin itself has to clear.
 """
+import ast
 import datetime
 import importlib.util
 import json
@@ -9920,6 +9921,80 @@ check("...while the profile still supplies what config did not set",
 # still enforces, and the block would be cut with no explanation.
 check("no profile carries output_byte_ceiling, which belongs to the harness",
       not any("output_byte_ceiling" in spec for spec in profiles_mod.PROFILES.values()))
+
+
+# ---------------------------------------------------------------- the universal pipe
+# `chamnan-context` is the whole multi-harness story: one command, stdout, no hook. Everything
+# below runs it as a real subprocess against a real workspace, because the failure mode that
+# matters is "another tool got nothing", and only running it can show that.
+_ctxbin = str(ROOT / "bin" / "chamnan-context")
+
+
+def _ctx(*args, cwd=None):
+    return subprocess.run([sys.executable, _ctxbin, *args], capture_output=True, text=True,
+                          cwd=str(cwd) if cwd else None)
+
+
+_ctxroot = make_workspace("chamnan-ctx-")
+_plain = _ctx(str(_ctxroot))
+check("the pipe exits clean on a real workspace", _plain.returncode == 0)
+check("...and writes a block, not an empty string", len(_plain.stdout.strip()) > 200)
+check("...that is chamnan's own block", _plain.stdout.lstrip().startswith("## chamnan"))
+
+# A repository with no workspace is a user error with a fix, not a traceback.
+_bare = Path(tempfile.mkdtemp())
+_nows = _ctx(str(_bare))
+check("no workspace is refused with a non-zero exit", _nows.returncode != 0)
+check("...and the message names what to run", "bootstrap" in _nows.stderr)
+check("...and nothing is written to stdout, so a pipe gets nothing rather than half a block",
+      _nows.stdout == "")
+shutil.rmtree(_bare, ignore_errors=True)
+
+# --detect must be usable by a wrapper, which means valid JSON with the three axes in it.
+_det = json.loads(_ctx("--detect", str(_ctxroot)).stdout)
+check("--detect reports the OS family", _det["os"] in ("macos", "linux", "windows", "unknown"))
+check("--detect reports agents as a list, never collapsed to one",
+      isinstance(_det["agents"], list))
+check("--detect reports the profile and the ceiling it would use",
+      _det["profile"] in profiles_mod.names() and isinstance(_det["ceiling"], int))
+
+# --json is the wrapper's form: the block plus what it was built with.
+_js = json.loads(_ctx("--json", str(_ctxroot)).stdout)
+check("--json carries the block itself", _js["context"].lstrip().startswith("## chamnan"))
+check("--json's byte count matches the block it carries",
+      _js["bytes"] == len(_js["context"].encode("utf-8")))
+
+# The two axes, measured rather than asserted: a harness ceiling BINDS and must shrink the block;
+# a larger window must not shrink it. Both compared against the same default run.
+_default_len = len(_plain.stdout)
+_tight = _ctx("--ceiling", "4000", str(_ctxroot))
+check("a harness ceiling actually binds", len(_tight.stdout) < _default_len)
+_small = _ctx("--window", "32000", str(_ctxroot))
+_large = _ctx("--window", "1000000", str(_ctxroot))
+check("a larger window never returns less than a smaller one",
+      len(_large.stdout) >= len(_small.stdout))
+
+# Passing both --window and --profile is a wrong belief about what is being asked. Saying so is
+# the only thing that fixes it; silently preferring one leaves the caller wrong.
+_both = _ctx("--window", "32000", "--profile", "large-window", str(_ctxroot))
+check("--window and --profile together produce a warning rather than a silent choice",
+      "both set" in _both.stderr)
+
+# Windows: the hook is an extensionless shebang script and cannot be executed by path there.
+# Asserted on the source rather than the output, because this machine cannot run Windows -- an
+# output check here would pass on macOS forever and never test the thing it names.
+_ctxsrc = Path(_ctxbin).read_text(encoding="utf-8")
+# 🐛 This asked whether the string "subprocess" appears anywhere in the file, and the docstring
+# explains at length why the command does NOT use one -- so the check failed on prose describing
+# its own absence. Ask the parser instead: an import is a node, a mention is not.
+_ctx_imports = {n.names[0].name.split(".")[0]
+                for n in ast.walk(ast.parse(_ctxsrc)) if isinstance(n, ast.Import)}
+check("the pipe imports the hook rather than executing it by path",
+      "spec_from_file_location" in _ctxsrc and "subprocess" not in _ctx_imports)
+check("...and encodes its own stdout explicitly, for a Windows pipe on a legacy code page",
+      "UnicodeEncodeError" in _ctxsrc)
+
+shutil.rmtree(_ctxroot, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup

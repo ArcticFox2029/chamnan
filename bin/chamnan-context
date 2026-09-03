@@ -1,0 +1,160 @@
+#!/usr/bin/env python3
+"""chamnan-context — this repository's context block on stdout, for any tool on any OS.
+
+chamnan's block has only ever reached one place: Claude Code's SessionStart hook. This command is
+the same block with the harness taken out of the way -- one pipe anything can read.
+
+    chamnan-context                      the block, as text
+    chamnan-context --json               the block plus what was detected, for a wrapper
+    chamnan-context --window 32000       size it for the window the model actually has
+    chamnan-context --profile small-window          the same, by name
+    chamnan-context --ceiling 9000       for a harness that truncates, like Claude Code's hook
+    chamnan-context --detect             what chamnan thinks this machine is, and nothing else
+
+**Why the ceiling defaults to non-binding rather than to 9,000.** That number is Claude Code
+truncating a hook's stdout, and it is the tightest limit chamnan has ever worked under. A tool that
+reads a file off disk has no such limit, and inheriting it would throw away material that tool
+could have taken whole -- measured on the repository this was written in, the same block is 8,878
+bytes under the hook ceiling and 19,801 without it. The budgets are the lever here; the ceiling
+stays out of the way until a caller says otherwise.
+
+**The hook is imported and called, not spawned.** A subprocess would cost a process start on every
+invocation, and this repository holds one rule about `subprocess` that is worth more than the
+convenience: it is used only ever to run git. A command that shells out to a Python interpreter
+makes that rule a judgement call, and the rule's value is that it is not one.
+
+Nothing here calls a model and nothing reaches the network. The block is built from files in this
+repository and written to stdout; what reads it is the caller's business.
+"""
+import argparse
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import host  # noqa: E402
+import profiles  # noqa: E402
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# Shadows the builtin for the whole module, so a print added later is scrubbed without its author
+# having to know this line exists. See `redact.emit`.
+print = redact.emit  # noqa: A001
+
+HOOK = HERE.parent / "hooks" / "chamnan_session_start.py"
+
+# High enough not to bind on any repository measured, and still finite: an unbounded ceiling would
+# make a runaway MAP.md the caller's problem to discover at the far end of a pipe.
+NON_BINDING = 1_000_000
+
+
+def _load_hook():
+    """The SessionStart hook as an imported module.
+
+    Loadable by `spec_from_file_location` without a loader spelled out because it carries a `.py`
+    extension -- the `bin/` commands do not, which is a different problem and not this one's.
+    Imported under its own name rather than `__main__`, so its `if __name__` guard does not fire
+    and the module is inert until `main()` is called.
+    """
+    spec = importlib.util.spec_from_file_location("chamnan_session_start", HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build(root, profile, ceiling):
+    """The block, as text. Runs the hook's own `main()` rather than reimplementing any of it.
+
+    The hook reads its root from the working directory and its payload from stdin, so both are
+    swapped for the duration and put back in a `finally` -- a command that leaves the process in
+    another directory is a bug that surfaces somewhere else entirely.
+    """
+    was_cwd, was_stdin = os.getcwd(), sys.stdin
+    was_profile = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
+    was_ceiling = os.environ.get("CHAMNAN_OUTPUT_CEILING")
+    buffer = io.StringIO()
+    try:
+        if profile:
+            os.environ["CHAMNAN_CONTEXT_PROFILE"] = profile
+        os.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling)
+        os.chdir(str(root))
+        sys.stdin = io.StringIO("{}")
+        with contextlib.redirect_stdout(buffer):
+            _load_hook().main()
+    finally:
+        os.chdir(was_cwd)
+        sys.stdin = was_stdin
+        for name, previous in (("CHAMNAN_CONTEXT_PROFILE", was_profile),
+                               ("CHAMNAN_OUTPUT_CEILING", was_ceiling)):
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+    return buffer.getvalue().rstrip("\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=True, description=__doc__.splitlines()[0])
+    parser.add_argument("root", nargs="?", default=".")
+    parser.add_argument("--json", action="store_true", help="the block plus what was detected")
+    parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
+    parser.add_argument("--window", type=int, default=None,
+                        help="context window in tokens; picks the profile for you")
+    parser.add_argument("--profile", default=None, choices=profiles.names(),
+                        help="pick the profile by name instead")
+    parser.add_argument("--ceiling", type=int, default=NON_BINDING,
+                        help=f"byte ceiling for a harness that truncates "
+                             f"(default {NON_BINDING:,}, which does not bind)")
+    args = parser.parse_args()
+
+    root = Path(args.root).resolve()
+    if not ws.workspace(root).is_dir():
+        sys.stderr.write(f"chamnan: no .chamnan/ workspace at {root}. "
+                         f"Run /chamnan:bootstrap there first.\n")
+        return 1
+
+    # --window and --profile answer the same question. Rather than silently preferring one, say so:
+    # a caller passing both has a wrong belief about what it is asking for, and only a message fixes
+    # that. --window wins because it is the more specific statement of the same fact.
+    if args.window is not None and args.profile is not None:
+        sys.stderr.write("chamnan-context: --window and --profile both set; using --window "
+                         f"({profiles.by_window(args.window)}).\n")
+    profile = profiles.by_window(args.window) if args.window is not None else args.profile
+
+    detected = {
+        "os": host.os_family(),
+        "agents": [{"name": n, "evidence": e} for n, e in host.agents(root=root)],
+        "profile": profile or profiles.DEFAULT,
+        "ceiling": args.ceiling,
+    }
+    if args.detect:
+        print(json.dumps(detected, indent=2))
+        return 0
+
+    body = build(root, profile, args.ceiling)
+    if args.json:
+        detected["context"] = body
+        detected["bytes"] = len(body.encode("utf-8"))
+        print(json.dumps(detected, indent=2))
+        return 0
+
+    # Through the module-level `print`, so the same scrub every other command applies covers this
+    # one -- the hook redacts each section as it builds it, and this is the second layer rather
+    # than the only one. Windows: text-mode stdout falls back to the process's ANSI code page when
+    # it is a pipe, and one character out of somebody's comment raises UnicodeEncodeError, which
+    # here would mean the caller gets nothing at all.
+    try:
+        print(body)
+    except UnicodeEncodeError:
+        sys.stdout.buffer.write(redact.scrub(body).encode("utf-8", "replace") + b"\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
