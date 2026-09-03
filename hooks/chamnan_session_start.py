@@ -313,7 +313,11 @@ def _indexable(root):
     """
     import tree, mapper
     with tree.session():
-        for path, _lang in mapper.indexable(root):
+        # `sniff=False`: this walk wants mtimes, not content. Reading 8 KB of every file to decide
+        # whether it is binary cost 16-39 seconds per firing on a 6,000-file repository whose index
+        # was already CURRENT, on a hook that fires up to 82 times a session. Callers that care
+        # whether a specific file is really text call `mapper.is_text_file` on that file alone.
+        for path, _lang in mapper.indexable(root, sniff=False):
             yield path
 
 
@@ -357,8 +361,15 @@ def index_is_behind(root, map_path):
             return 0, []
         # Seconds, not days. Rounding a two-hour gap up to "1 day behind" is a small lie, and this
         # line exists to be trusted -- the caller decides how to say it.
-        newer = sorted((f for mt, f in changed if mt > built),
+        # The sniff the walk skipped, applied to the few files that are actually newer than the
+        # map — which is none of them on the ordinary session where nothing has changed. A binary
+        # file counted here would report the index as stale for a file it was never going to
+        # contain, which is the defect `_indexable`'s docstring already describes.
+        import mapper as _mapper
+        newer = sorted((f for mt, f in changed if mt > built and _mapper.is_text_file(f)),
                        key=lambda f: -f.stat().st_mtime)
+        if not newer:
+            return 0, []
         return newest - built, [str(f.relative_to(root)) for f in newer]
     except Exception:
         return 0, []      # never let a nicety break a session
@@ -500,6 +511,14 @@ def unindexed(root, map_text):
             except OSError:
                 return 0
         missing.sort(key=_mtime)
+        # 🐛 The walk above no longer sniffs for binary content — that read of every file in the
+        # repository was costing 16-39s a firing on a 6,000-file tree. The sniff still has to
+        # happen, just not on everything: apply it HERE, to the handful of files about to be
+        # reported as absent from the index, because a binary file named as "not indexed" is a file
+        # the index was never going to contain. Reproduced when the walk first went sniff-free: a
+        # NUL-filled `blob.py` was reported as missing source.
+        import mapper as _mapper
+        missing = [r for r in missing if _mapper.is_text_file(root / r)]
         return len(missing), missing[:3]
     except Exception:
         return 0, []

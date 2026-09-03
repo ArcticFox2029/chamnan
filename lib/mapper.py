@@ -78,6 +78,9 @@ AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env",
 # SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
 # those do" would have been another write-only list.
 SKIPPED_BUILD_DIR = set()
+
+# {".svelte": 4540, …} — files whose extension chamnan has no reader for. See indexable().
+SKIPPED_UNKNOWN_EXT = __import__("collections").Counter()
 _TRACKED_AMBIGUOUS = {}
 _GENERATED_GLOBS = {}
 SKIPPED_GENERATED = set()
@@ -416,6 +419,11 @@ SKIP_OPENERS = re.compile(
     r"import\s|from\s+[\'\"\w.]+\s+import\b|require[\s(]|require_relative\s|using\s\w|"
     r"extern\s+crate|part\s+of\s|library\s\w|@?import\b|open\s+\w+\s*$|"
     r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|import|pragma|ifndef|if\s|endif)|"
+    # A Go build constraint is a switch spelled as a comment, like `#!` and SPDX above it. Skipped
+    # at the line level because it cannot be bounded inside the joined block: `go:build ignore` and
+    # `Package tools pins build dependencies.` are the same shape to any regex. It was the
+    # description of 12 of gin's ~44 "described" files, putting real coverage at ~31% against 44%.
+    r"//\s*(?:go:build|\+build)\b|"
     # 🐛 A prologue is an opener too, and leaving these three out cost more coverage than every
     # other gap in this file put together. `leading_comment` abandons the whole file on the first
     # line that is neither blank, an opener, nor a comment -- so ONE line of prologue between the
@@ -443,6 +451,30 @@ MAGIC_COMMENT = re.compile(
     r"^(?:frozen_string_literal\s*:\s*\w+|encoding\s*[:=]\s*[\w-]+|-\*-.*?-\*-|"
     r"coding[:=]\s*[\w.-]+|warn_indent\s*:\s*\w+|shareable_constant_value\s*:\s*\w+|"
     r"@ts-\w+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
+    # 🐛 Two more families, both found by running chamnan on repositories this author did not
+    # write. A Go BUILD CONSTRAINT is a switch spelled as a comment, exactly like the Ruby magic
+    # comments above it: `//go:build linux && !windows` became the description of 12 of gin's ~44
+    # "described" files, putting its real coverage at ~31% against the 44% reported. A JSDoc
+    # type-only import is the same shape in JavaScript: `@import { Foo } from "./types.js"` was the
+    # description of 289 of svelte's 440 "described" files — 66% of them — so 13% coverage was
+    # really 4.3%.
+    #
+    # Both matter more than a bad sentence. A file with a directive as its summary counts as
+    # DESCRIBED, so the coverage bar reports work that was never done, and every file in the
+    # project ends up sharing one meaningless line. Stripping the directive lets the real comment
+    # behind it through, which is what `tools.go` in the fixture demonstrates.
+    # A JSDoc type-only import, and it is bounded rather than `.*` on purpose: the comment block
+    # reaches here already JOINED, so a greedy tail would eat the real description sitting on the
+    # next line. `@import { Foo } from "./types.js"` was the description of 289 of svelte's 440
+    # "described" files — 66% of them — putting its real coverage at 4.3% against the 13% reported.
+    # A file with a directive as its summary counts as DESCRIBED, so the coverage bar reports work
+    # nobody did.
+    #
+    # Go build constraints are the same defect and are NOT here: they are word-shaped
+    # (`go:build ignore`), indistinguishable from a sentence by any character class, so bounding
+    # them failed and ate `// Package tools pins build dependencies.` on the line below. They are
+    # skipped at the LINE level in SKIP_OPENERS instead, which is where `#!` and SPDX already are.
+    r"@import\s*\{[^}]*\}(?:\s*from\s*['\"][^'\"]*['\"])?|"
     r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
 # How far into the opening comment to look for a licence. See the use site.
 BOILERPLATE_WINDOW = 240
@@ -1052,7 +1084,18 @@ def _under_nested(path, nested):
     return False
 
 
-def indexable(root, nested=None, with_text=False):
+def is_text_file(path):
+    """A NUL in the first block means binary, and no text source contains one. Split out of
+    `indexable` so a caller that skipped the sniff for speed can apply it to the few files it
+    actually cares about."""
+    try:
+        with path.open("rb") as fh:
+            return b"\x00" not in fh.read(8192)
+    except OSError:
+        return False
+
+
+def indexable(root, nested=None, with_text=False, sniff=True):
     """Yield (path, lang) for exactly the files that belong in this repository's index, or
     (path, lang, text) when `with_text` asks for the content too.
 
@@ -1109,6 +1152,20 @@ def indexable(root, nested=None, with_text=False):
             continue          # private keys, certificates, local databases — never opened at all
         lang = EXT_LANG.get(path.suffix.lower())
         if not lang:
+            # 🐛 Silently dropped, and that is the one skip reason with no record. Large, binary,
+            # generated and build-directory files are all tracked and reported, on the stated
+            # grounds that a file vanishing unannounced is "false confidence rather than degraded
+            # confidence, which is the worse kind" — an unreadable EXTENSION got no such treatment.
+            #
+            # Measured on Svelte's own monorepo: 4,540 `.svelte` files absent from MAP.md, more
+            # than the 3,480 files it did index, with nothing anywhere saying so. A three-file
+            # fixture reproduces it exactly: `.svelte` + `.vue` + `.js` reports "1 source file(s)"
+            # and "100% described".
+            #
+            # Counted by extension rather than by path: the useful sentence is "4,540 .svelte files
+            # were not read", not a list of names, and a repository is full of `.json`, `.lock` and
+            # `.png` that nobody expects an index to cover. The caller decides what is worth saying.
+            SKIPPED_UNKNOWN_EXT[path.suffix.lower() or "(no extension)"] += 1
             continue
         try:
             size = path.stat().st_size
@@ -1140,7 +1197,7 @@ def indexable(root, nested=None, with_text=False):
             if "\r" in text:
                 text = text.replace("\r\n", "\n").replace("\r", "\n")
             yield path, lang, text
-        else:
+        elif sniff:
             try:
                 with path.open("rb") as fh:
                     if b"\x00" in fh.read(8192):
@@ -1148,6 +1205,14 @@ def indexable(root, nested=None, with_text=False):
                         continue
             except OSError:
                 continue
+            yield path, lang
+        else:
+            # 🐛 `sniff=False` exists for the staleness check, which asks only "is anything NEWER
+            # than the map" and needs an mtime, not a byte of content. It was opening and reading
+            # 8 KB of every file in the repository on EVERY session start — a hook that fires up to
+            # 82 times a session. Measured on a 6,000-file repository with a CURRENT index:
+            # 16-39 seconds per firing, against the docstring's own claim of "0.04s on a 1,478-file
+            # repository". The caller re-checks the handful of files that are actually newer.
             yield path, lang
 
 
@@ -1173,6 +1238,7 @@ def reset_skips():
     SKIPPED_BINARY.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
+    SKIPPED_UNKNOWN_EXT.clear()
     PARSE_WARNINGS.clear()
 
 
