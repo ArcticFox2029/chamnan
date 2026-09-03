@@ -2125,7 +2125,7 @@ sc = Path(tempfile.mkdtemp(prefix="chamnan-sc-"))
 (sc / "domain" / "Driver.java").write_text(
     '@Entity\npublic class Driver {\n    private String id;\n}\n', encoding="utf-8")
 
-sfiles = [{"path": str(f.relative_to(sc)),
+sfiles = [{"path": str(f.relative_to(sc).as_posix()),
            "lang": {"kt": "kotlin", "java": "java", "sql": "sql"}[f.suffix[1:]]}
           for f in sorted(sc.rglob("*")) if f.is_file()]
 found = {x["name"].lower(): x for x in schema.scan(sc, sfiles)}
@@ -3866,7 +3866,7 @@ walkdir = Path(tempfile.mkdtemp()) / "repo"
 (walkdir / "inner" / ".git").mkdir()
 (walkdir / "inner" / ".git" / "HEAD").write_text("ref\n", encoding="utf-8")
 
-rels = {str(p.relative_to(walkdir)) for p in tree.files(walkdir)}
+rels = {str(p.relative_to(walkdir).as_posix()) for p in tree.files(walkdir)}
 check("the walk finds ordinary source", "src/app.py" in rels)
 check("the walk never descends into .venv", not any(r.startswith(".venv/") for r in rels))
 check("the walk never descends into node_modules", not any(r.startswith("node_modules/") for r in rels))
@@ -3875,7 +3875,7 @@ check("the walk never descends into .git", not any("/.git/" in r or r.startswith
 # pruning the union instead of the intersection changed the stored-material count on a real repo.
 check("the walk leaves build/ for each scanner's own filter to decide", "build/out.py" in rels)
 
-gits = {str(p.relative_to(walkdir)) for p in tree.git_dirs(walkdir)}
+gits = {str(p.relative_to(walkdir).as_posix()) for p in tree.git_dirs(walkdir)}
 check("a nested .git is reported even though it is never entered", "inner/.git" in gits)
 
 # Paths must come back joined onto the root AS GIVEN. Callers do path.relative_to(root), which
@@ -3907,7 +3907,7 @@ check("the cache does not outlive the session",
 check("by_suffix filters without walking again", 
       {p.name for p in tree.by_suffix(walkdir, ".py")} >= {"app.py", "out.py"})
 check("matching() globs on the filename at any depth",
-      {str(p.relative_to(walkdir)) for p in tree.matching(walkdir, "*.js")} == set())
+      {str(p.relative_to(walkdir).as_posix()) for p in tree.matching(walkdir, "*.js")} == set())
 shutil.rmtree(walkdir.parent, ignore_errors=True)
 
 # ------------------------------------------- .env exposure: is it really unignored?
@@ -4407,7 +4407,7 @@ try:
     os.symlink("../outside.py", _repo / "escapes.py")
     os.symlink("../real.py", _repo / "sub" / "stays.py")
     os.symlink("/nonexistent-target", _repo / "broken.py")
-    _found = {str(f.relative_to(_repo)) for f in _tree.files(_repo)}
+    _found = {str(f.relative_to(_repo).as_posix()) for f in _tree.files(_repo)}
     check("a symlink escaping the repository root is not indexed", "escapes.py" not in _found)
     check("...while a symlink staying inside it is kept", "sub/stays.py" in _found)
     check("a broken symlink is dropped rather than raising", "broken.py" not in _found)
@@ -4854,7 +4854,7 @@ check("a real tool is still listed with its description", "present" in _list)
 # The two callers must agree on what counts, or they will drift apart again.
 import tree as _tree, mapper as _mapper  # noqa: E402
 with _tree.session():
-    _direct = {str(p.relative_to(_st)) for p, _ in _mapper.indexable(_st)}
+    _direct = {str(p.relative_to(_st).as_posix()) for p, _ in _mapper.indexable(_st)}
 check("mapper.indexable is the single definition both use",
       _direct == {"src/kept.py", "src/added.py"})
 check("...and it is what _scan itself walks",
@@ -5561,7 +5561,7 @@ _cat = Path(tempfile.mkdtemp()) / "cat"
 (_cat / "models" / "s.sql").write_text(
     'CREATE TABLE IF NOT EXISTS "invoices" (\n  id INT,\n  status ENUM(\'a\',\'b\'),\n'
     "  region TINYINT,\n  notes NVARCHAR(255)\n);\n", encoding="utf-8")
-_cfiles = [{"path": str(q.relative_to(_cat)), "lang": q.suffix.lstrip(".")}
+_cfiles = [{"path": str(q.relative_to(_cat).as_posix()), "lang": q.suffix.lstrip(".")}
            for q in _cat.rglob("*") if q.is_file()]
 _tnames = {t["name"] for t in _schema.scan(_cat, _cfiles)}
 check("AN ABSTRACT DJANGO MIXIN IS NOT INDEXED AS A TABLE", "TimestampedMixin" not in _tnames)
@@ -5584,7 +5584,7 @@ check("a dialect column type does not silently shorten the column list",
 (_cat / "openapi.yaml").write_text(
     "openapi: 3.0.0\nservers:\n  - url: https://api.example.com/v1\npaths:\n"
     "  /orders:\n    get:\n      summary: list\n", encoding="utf-8")
-_cfiles = [{"path": str(q.relative_to(_cat)), "lang": q.suffix.lstrip(".")}
+_cfiles = [{"path": str(q.relative_to(_cat).as_posix()), "lang": q.suffix.lstrip(".")}
            for q in _cat.rglob("*") if q.is_file()]
 _paths = {p for (_m, p), _src in catalogs.scan_routes(_cat, _cfiles)}
 check("A BLUEPRINT NAMED AFTER ITS FEATURE STILL YIELDS ITS ROUTES", "/orders" in _paths)
@@ -6654,7 +6654,7 @@ for _bc in (["git", "init", "-q", "."], ["git", "add", "-A"],
 mapper.SKIPPED_BUILD_DIR.clear()
 mapper._TRACKED_AMBIGUOUS.clear()
 with tree.session():
-    _bgot = sorted(str(_p.relative_to(_bdr)) for _p, _ in mapper.indexable(_bdr))
+    _bgot = sorted(str(_p.relative_to(_bdr).as_posix()) for _p, _ in mapper.indexable(_bdr))
 check("A GIT-TRACKED DIRECTORY IS SOURCE EVEN WHEN IT IS NAMED LIKE BUILD OUTPUT",
       any(g.startswith("src/build/") for g in _bgot))
 check("...while the untracked directory of the same name is still left out",
@@ -6666,7 +6666,7 @@ check("...and what was left out is recorded, because the silence was the worse h
 shutil.rmtree(_bdr / ".git")
 mapper._TRACKED_AMBIGUOUS.clear()
 with tree.session():
-    _bnogit = sorted(str(_p.relative_to(_bdr)) for _p, _ in mapper.indexable(_bdr))
+    _bnogit = sorted(str(_p.relative_to(_bdr).as_posix()) for _p, _ in mapper.indexable(_bdr))
 check("...and with no git at all the old name list still decides, unchanged",
       _bnogit == [])
 shutil.rmtree(_bd, ignore_errors=True)
@@ -6691,7 +6691,7 @@ mapper.SKIPPED_GENERATED.clear()
 mapper._GENERATED_GLOBS.clear()
 mapper._TRACKED_AMBIGUOUS.clear()
 with tree.session():
-    _gg = sorted(str(_p.relative_to(_ga)) for _p, _ in mapper.indexable(_ga))
+    _gg = sorted(str(_p.relative_to(_ga).as_posix()) for _p, _ in mapper.indexable(_ga))
 check("A FILE THE REPOSITORY DECLARES GENERATED IS NOT INDEXED AS SOURCE",
       not any("zz_generated" in g for g in _gg))
 check("...while the hand-written files beside it are",
@@ -6714,7 +6714,7 @@ for _rel, _want in (("pkg/apis/core/v1/zz_generated.deepcopy.go", True),
 mapper._GENERATED_GLOBS.clear()
 (_ga / ".gitattributes").unlink()
 with tree.session():
-    _gnone = sorted(str(_p.relative_to(_ga)) for _p, _ in mapper.indexable(_ga))
+    _gnone = sorted(str(_p.relative_to(_ga).as_posix()) for _p, _ in mapper.indexable(_ga))
 check("...and a repository with no .gitattributes indexes exactly what it did before",
       len(_gnone) == 8)
 shutil.rmtree(_ga, ignore_errors=True)
@@ -7587,7 +7587,7 @@ for _parent in ("plain", "vendor", "node_modules", ".venv", "build", "dist"):
         "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: order-api\n", encoding="utf-8")
     (_r / ".env").write_text("DB_URL=postgres://x\nAPI_KEY=y\n", encoding="utf-8")
     (_r / "app.py").write_text("# The order service.\ndef main(): pass\n", encoding="utf-8")
-    _files = [{"path": str(q.relative_to(_r))} for q in _tr.files(_r)]
+    _files = [{"path": str(q.relative_to(_r).as_posix())} for q in _tr.files(_r)]
     _envs, _unsafe = _cat2.scan_env(_r, _files)
     _anc_seen[_parent] = (tuple(sorted(t["name"] for t in _schm.scan(_r, _files))),
                           len(_envs), bool(_unsafe), bool(_dep.scan(_r)))
@@ -7708,7 +7708,7 @@ subprocess.run(["git", "-C", str(_sqd), "init", "-q"], capture_output=True)
     "currency varchar(3), status varchar(20));\n"
     "INSERT INTO audit (note) VALUES ('-- CREATE TABLE not_a_table (x int);');\n",
     encoding="utf-8")
-_sqfiles = [{"path": str(q.relative_to(_sqd))} for q in _tr.files(_sqd)]
+_sqfiles = [{"path": str(q.relative_to(_sqd).as_posix())} for q in _tr.files(_sqd)]
 _sqtables = {t["name"]: t for t in _schm.scan(_sqd, _sqfiles)}
 check("COMMENTED-OUT DDL IS NOT A TABLE: " + str(sorted(_sqtables)),
       sorted(_sqtables) == ["payments"])
@@ -7734,7 +7734,7 @@ check("A ONE-LINE CREATE TABLE STILL LISTS EVERY COLUMN: " + str(_sqtables["paym
 (_sqd / "domain" / "Trip.java").write_text(
     '@Entity\n@Table(uniqueConstraints = @UniqueConstraint(name = "uk_leg"))\n'
     'public class Trip { }\n', encoding="utf-8")
-_jpa = sorted(t["name"] for t in _schm.scan(_sqd, [{"path": str(q.relative_to(_sqd))}
+_jpa = sorted(t["name"] for t in _schm.scan(_sqd, [{"path": str(q.relative_to(_sqd).as_posix())}
                                                    for q in _tr.files(_sqd)]))
 check("A NAMED QUERY IS NOT A TABLE, AND THE REAL ONE IS NOT LOST: " + str(_jpa),
       _jpa == ["Driver", "Trip", "fleet_vehicles", "payments"])
@@ -10948,14 +10948,23 @@ shutil.rmtree(_pathrepo.parent, ignore_errors=True)
 # in the plugin uses. chamnan's own published convention is forward slashes everywhere -- MAP.md,
 # the injected block, every catalogue -- so `.as_posix()` is what makes the output the same
 # artefact regardless of who built it.
+# 🐛 The first version read the single line the call STARTS on. On Python 3.8 a multi-line
+# expression puts `.as_posix()` on a later line, so the check reported a violation that was
+# already fixed -- green on 3.13 and red on the declared floor. It asks what actually FOLLOWS the
+# call now, by byte offset. `ast` reports col_offset in UTF-8 bytes, not characters, which matters
+# in a file this full of Thai.
 _unposixed = []
 for _path, _src in _runtime_sources():
+    _raw = _src.encode("utf-8")
+    _starts = [0]
+    for _line in _raw.splitlines(keepends=True):
+        _starts.append(_starts[-1] + len(_line))
     _lines = _src.splitlines()
     for _node in _calls(_src, {"relative_to"}):
-        _line = _lines[_node.lineno - 1]
-        if ".as_posix()" in _line:
+        _after = _raw[_starts[_node.end_lineno - 1] + _node.end_col_offset:][:11]
+        if _after == b".as_posix()":
             continue
-        if any(k in _line for k in ("print(", 'f"', "f'", "str(", ".join(")):
+        if any(k in _lines[_node.lineno - 1] for k in ("print(", 'f"', "f'", "str(", ".join(")):
             _unposixed.append(f"{_path.name}:{_node.lineno}")
 check("A RELATIVE PATH RENDERED AS TEXT IS POSIX-SHAPED", not _unposixed)
 for _u in _unposixed[:6]:
