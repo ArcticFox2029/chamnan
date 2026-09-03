@@ -8157,6 +8157,29 @@ _catd = Path(tempfile.mkdtemp()) / "repo"
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                capture_output=True, text=True, cwd=str(_catd))
 _catmap = (_catd / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+# The env catalogue knew Python and Node only, so a Go or Rust service contributed nothing and the
+# section still read as complete. Both patterns were measured on real clones before being added —
+# Go 58 true / 0 false across four repositories, Rust 12 / 0 — because this is the MISSING
+# direction, and a pattern that over-matches turns it into the INVENTED one, which is worse.
+_envd = Path(tempfile.mkdtemp()) / "repo"
+(_envd / ".git").mkdir(parents=True)
+(_envd / "main.go").write_text(
+    'package main\nimport "os"\nfunc main(){ _ = os.Getenv("PRODUCT_CATALOG_ADDR"); '
+    '_, _ = os.LookupEnv("LISTEN_ADDR") }\n', encoding="utf-8")
+(_envd / "main.rs").write_text(
+    'use std::env;\nfn main(){ let _ = env::var("RIPGREP_CONFIG_PATH"); }\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+               capture_output=True, text=True, cwd=str(_envd))
+_envmap = (_envd / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+for _v in ("PRODUCT_CATALOG_ADDR", "LISTEN_ADDR", "RIPGREP_CONFIG_PATH"):
+    check(f"A GO OR RUST ENVIRONMENT VARIABLE IS FOUND: {_v}", _v in _envmap)
+check("...and the section names the call shapes it matches, since 'N of M' is not knowable",
+      "Found by matching" in _envmap and "not counted as absent either" in _envmap)
+shutil.rmtree(_envd.parent, ignore_errors=True)
+# A variable argument is not a name, and a mention in a comment is not a read.
+check("a non-literal argument is not harvested as a variable name",
+      not [g for m in catalogs.ENV_IN_CODE.finditer("os.Getenv(someVar)") for g in m.groups() if g])
+
 check("A ROUTE THAT EXISTS ONLY IN A TEST IS NOT AN API SURFACE",
       "/only/in/a/test" not in _catmap)
 check("AN ENV VAR READ ONLY BY A TEST IS NOT THIS REPO'S CONFIGURATION",

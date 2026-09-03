@@ -136,7 +136,24 @@ ENV_IN_CODE = re.compile(
     r"""|os\.getenv\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
     r"""|process\.env\.([A-Z][A-Z0-9_]{2,})"""
     r"""|process\.env\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
-    r"""|ENV\[\s*["']([A-Z][A-Z0-9_]{2,})["'])""")
+    r"""|ENV\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
+    # Go and Rust. Measured on real clones before being added, and both numbers reported, because
+    # this is the MISSING direction and a pattern that over-matches would turn it into the
+    # INVENTED one, which is strictly worse: Go `os.Getenv`/`os.LookupEnv` found 58 true variables
+    # and 0 false across four repositories (Caddy, node_exporter, alertmanager,
+    # microservices-demo); Rust `env::var`/`env::var_os` found 12 true and 0 false. A real
+    # polyglot service repository had 12 Go variables in one service alone, all invisible before.
+    #
+    # NOT added, and each for its own reason. Java/Kotlin `System.getenv` is the right shape but
+    # turned up only two or three call sites on real repositories — too thin to claim. C#
+    # `Environment.GetEnvironmentVariable` is correct in principle and had ZERO literal-argument
+    # call sites in two real C# repositories, so it is a hypothesis rather than a measurement. And
+    # C#'s `Configuration["X"]` scored 14 of 14 true positives and is still refused: `IConfiguration`
+    # merges environment variables with JSON, command-line arguments and Key Vault, so the call
+    # shape cannot structurally promise an environment read. Clean numbers on one sample are not
+    # the same as a rule that holds.
+    r"""|os\.(?:Getenv|LookupEnv)\s*\(\s*["`]([A-Z][A-Z0-9_]{2,})["`]"""
+    r"""|env::var(?:_os)?\s*\(\s*["]([A-Z][A-Z0-9_]{2,})["])""")
 ENV_FILE_KEY = re.compile(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=", re.M)
 
 
@@ -586,6 +603,20 @@ def render_env(pairs, unsafe):
                    f"Grep the repository for the rest.")
     out.append("")
     out.append(", ".join(f"`{n}`" for n, _ in pairs[:MAX_ENV_LISTED]))
+    # 🐛 The list read as complete and is not. It is built from call shapes chamnan knows, and a
+    # language whose shape is missing contributes nothing with no sign that anything is absent —
+    # measured on a real polyglot service repository, twelve Go variables in one service were
+    # invisible while the section printed a short list and said nothing.
+    #
+    # A numeric "showing N of M" is NOT available and claiming one would be the same mistake in a
+    # new place: chamnan cannot know M without a reader for every language, and some real idioms
+    # never appear in code at all — Spring's `${VAR}` in a YAML file is a live example. What it can
+    # state is its own boundary, which is checkable and does not pretend to a denominator.
+    out.append("")
+    out.append("_Found by matching `os.environ`/`os.getenv`, `process.env`, `ENV[…]`, Go's "
+               "`os.Getenv`/`os.LookupEnv`, and Rust's `env::var`. A variable read some other way "
+               "— a config framework, a YAML placeholder, a language with no pattern here — is not "
+               "in this list and is not counted as absent either._")
     if unsafe:
         out.append("")
         out.append(f"> ⚠️ `{', '.join(unsafe)}` is not matched by .gitignore. That file usually "
