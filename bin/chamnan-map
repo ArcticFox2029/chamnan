@@ -250,6 +250,27 @@ def main(argv):
     # what was asked, with nothing on screen to say so.
     if any(a in ("-h", "--help") for a in argv):
         print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
+        # 🐛 `--help` printed the docstring and stopped, and the docstring explains what the map is
+        # FOR — not that the command takes five flags. So `--preview`, `--explain`, `--measure` and
+        # `--install-git-hook` were undiscoverable by the one command a stranger types to find out
+        # what a command does. Found by an agent walking the tool as a newcomer.
+        #
+        # Derived from KNOWN_FLAGS rather than typed out again, so a flag added later cannot be
+        # missing from this list without also being missing from the parser that accepts it.
+        print("\nOptions")
+        for _flag, _what in (
+                ("--preview", "print the index that WOULD be built, and write nothing"),
+                ("--explain", "where the session-start block's tokens go, section by section"),
+                ("--measure", "what this index costs against the session budget"),
+                ("--install-git-hook", "rebuild the map on every commit (opt-in, never destructive)"),
+                ("-h, --help", "this text")):
+            print(f"  {_flag:<20} {_what}")
+        _undocumented = [f for f in KNOWN_FLAGS
+                         if f not in ("-h", "--help")
+                         and f not in ("--preview", "--explain", "--measure", "--install-git-hook")]
+        if _undocumented:
+            print(f"  (also accepted, undocumented: {', '.join(_undocumented)})")
+        print("\n  chamnan-map <dir> [<dir> ...]   index only those directories")
         return 0
     unknown = [a for a in argv if a.startswith("-") and a not in KNOWN_FLAGS]
     if unknown:
