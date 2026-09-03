@@ -7,6 +7,7 @@ code also means it can be committed, so a team shares one accumulated memory ins
 rebuilding their own — and a machine move carries it along with the clone.
 """
 import re
+import hashlib
 import json
 import time
 import contextlib
@@ -212,7 +213,7 @@ def _in_range(key, value):
     return True
 
 
-# Keyed on (path, mtime_ns, size); see load_config. Bounded because a process could in principle
+# Keyed on (path, digest of the bytes); see load_config. Bounded because a process could in principle
 # resolve several roots, and an unbounded memo in a library is a leak waiting to be found.
 _CONFIG_MEMO = {}
 
@@ -233,11 +234,23 @@ def load_config(root=None):
     # unchanged file per Edit. Keyed on (mtime_ns, size) rather than held outright, so a config
     # edited mid-session is still picked up; every entry point here is a short-lived process, so the
     # memo never outlives the run that made it.
+    #
+    # 🐛 The key was `(path, mtime_ns, size)`, and that is not enough to identify a file's
+    # CONTENT. `{"index_token_budget": true}` and `{"index_token_budget": 5000}` are both 28
+    # bytes, so two writes close enough together to share an mtime produced one stamp for two
+    # different configs -- and the second edit was silently ignored for the rest of the process.
+    # Found on Windows, where NTFS's mtime resolution makes "close enough together" wide; POSIX
+    # gives nanoseconds and hides it, which is why this survived until a second platform ran the
+    # suite.
+    #
+    # Keyed on a digest of the bytes now. The memo exists to skip the PARSE and the per-key type
+    # validation below, not the read -- a config file is a few hundred bytes and reading it is
+    # what `load_json` was about to do anyway.
     try:
-        st = path.stat()
-        stamp = (str(path), st.st_mtime_ns, st.st_size)
+        raw = path.read_bytes()
+        stamp = (str(path), hashlib.blake2s(raw, digest_size=16).hexdigest())
     except OSError:
-        stamp = (str(path), None, None)
+        stamp = (str(path), None)
     hit = _CONFIG_MEMO.get(stamp)
     if hit is not None:
         return dict(hit)
