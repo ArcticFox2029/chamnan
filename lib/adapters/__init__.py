@@ -31,6 +31,7 @@ from . import cursor
 from . import gemini
 from . import generic
 from . import kiro
+from . import windsurf
 
 # Registry, by the name `host.agents()` uses. `claude` is deliberately absent: its delivery is the
 # SessionStart hook, which writes no file, and inventing a file for it would create a second copy
@@ -42,6 +43,7 @@ ADAPTERS = {
     gemini.NAME: gemini,
     generic.NAME: generic,
     kiro.NAME: kiro,
+    windsurf.NAME: windsurf,
 }
 
 
