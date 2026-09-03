@@ -10210,6 +10210,47 @@ for _d in (_genroot, _approot, _badgen):
     shutil.rmtree(_d, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- ceilings that are real limits
+# A declared CEILING is a claim about what that agent truncates, and a wrong one is worse than
+# none: the block is cut where nobody chose, and the agent says so only to its own log.
+_ceil = {n: adapters_mod.for_agent(n).CEILING for n in adapters_mod.names()}
+check("AGENTS.md declares Codex's documented budget, not None",
+      _ceil["generic"] == 32_768)
+check("windsurf declares its documented per-file cap", _ceil["windsurf"] == 12_000)
+check("adapters that read a file with no documented limit declare None",
+      _ceil["cursor"] is None and _ceil["kiro"] is None)
+check("every ceiling is either None or a positive int, never 0 or a string",
+      all(c is None or (isinstance(c, int) and c > 0) for c in _ceil.values()))
+
+# Windsurf's cap is documented in CHARACTERS and enforced here in BYTES. That is conservative in
+# the only direction that is safe: for Thai or Japanese one character is three bytes, so a byte
+# ceiling can only ever deliver less than the documented limit allows, never more.
+check("windsurf's byte ceiling cannot exceed its documented character cap",
+      _ceil["windsurf"] <= 12_000)
+
+# The block must actually shrink when a ceiling binds -- a declared limit nothing enforces is
+# decoration. Built through the real pipe against a real workspace.
+_ceilroot = make_workspace("chamnan-ceil-")
+_wide = _ctx("--ceiling", "1000000", str(_ceilroot)).stdout
+_tightw = _ctx("--ceiling", str(_ceil["windsurf"]), str(_ceilroot)).stdout
+check("a bound ceiling produces no more than it allows",
+      len(_tightw.encode("utf-8")) <= _ceil["windsurf"])
+check("...and an unbound one is never smaller than a bound one",
+      len(_wide) >= len(_tightw))
+shutil.rmtree(_ceilroot, ignore_errors=True)
+
+# Windsurf's frontmatter, from Cascade's own docs: `trigger`, one of always_on / manual /
+# model_decision / glob. always_on for the same reason cursor uses alwaysApply and kiro uses
+# inclusion: always -- orientation held before work starts, not a rule fired by a glob.
+_win = adapters_mod.for_agent("windsurf")
+_wr = _win.render("## chamnan\n\nbefore\n\n---\n\nafter\n")
+check("windsurf renders trigger: always_on", "trigger: always_on" in _wr)
+check("...its frontmatter opens and closes exactly once",
+      [i for i, l in enumerate(_wr.splitlines()) if l.strip() == "---"] == [0, 2])
+check("...and a horizontal rule in the body cannot close it early",
+      "***" in _wr and "after" in _wr)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

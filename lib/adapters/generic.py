@@ -19,7 +19,17 @@ next person who opens the file.
 
 NAME = "generic"
 TARGET = "AGENTS.md"
-CEILING = None
+
+# 32,768 bytes, and it is not a guess. OpenAI's Codex CLI reads AGENTS.md natively and its compiled
+# binary carries `project_doc_max_bytes = 32768` among its TOML defaults, alongside the string
+# `"project doc exceeds remaining budget; truncating"` -- so past that point it truncates, and says
+# so only to its own log. Read out of
+# /opt/homebrew/lib/node_modules/@openai/codex/.../bin/codex on 2026-09-03.
+#
+# The budget is for the COMBINED AGENTS.md content Codex assembles, so what the user wrote counts
+# against it too. That is why the ceiling is declared here and ALSO checked against the finished
+# file after writing -- bounding chamnan's own share cannot bound a total it does not control.
+CEILING = 32_768
 
 START = "<!-- chamnan:start -->"
 END = "<!-- chamnan:end -->"

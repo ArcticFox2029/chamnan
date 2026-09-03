@@ -181,6 +181,16 @@ def main():
             sys.stderr.write(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
             return 1
         print(f"chamnan-context -> {written}")
+        # Declaring a ceiling bounds chamnan's own share; it cannot bound a file that also holds
+        # what the user wrote. Measured against the finished file, which is the thing the agent
+        # will actually read and truncate.
+        limit = getattr(adapters.for_agent(args.write), "CEILING", None)
+        if limit and written.is_file():
+            size = written.stat().st_size
+            if size > limit:
+                print(f"  ⚠ {size:,} bytes, over {args.write}'s {limit:,}-byte limit by "
+                      f"{size - limit:,}. That agent truncates silently past it — lower "
+                      f"index_token_budget in .chamnan/config.json, or pass --window smaller.")
         line = adapters.ignore_line(args.write)
         if line:
             print("  generated and per-developer. Add this to .gitignore if it is not there yet:")
