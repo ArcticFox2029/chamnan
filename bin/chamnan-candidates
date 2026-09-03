@@ -225,7 +225,13 @@ def cmd_demote(root, tool_name):
         print(f"chamnan: {tool_name!r} is not a tool name — it must be a plain filename under "
               f"{ws.workspace(root).name}/tools/", file=sys.stderr)
         return 1
-    entry = tools_index.remove(root, tool_name)
+    try:
+        entry = tools_index.remove(root, tool_name)
+    except TimeoutError as err:
+        # Distinct from "no such tool", which is what a None means. A demote that lost a race used
+        # to write back a pre-race snapshot and resurrect the tool it had just removed.
+        print(f"chamnan: {err} — try again in a moment", file=sys.stderr)
+        return 1
     if entry is None:
         print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan-promote --list`",
               file=sys.stderr)
