@@ -188,7 +188,11 @@ def carry_forward(root):
     for name in CARRIED:
         body = found.get(name, "").strip()
         if body and not _is_nothing(body):
-            parts.append(f"**{name}**\n{body}")
+            # Demoted the same way a rule's body is: this text is free prose someone wrote in a
+            # `## Remaining` / `## Blockers` section, dropped here under the hook's own `###`
+            # heading, and an untouched `#` in it reads as a NEW section of the injected block
+            # rather than a line inside this one.
+            parts.append(f"**{name}**\n{mdblock.demote_headings(body)}")
     if not parts:
         return ""
 

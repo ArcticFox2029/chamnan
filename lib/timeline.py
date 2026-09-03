@@ -317,7 +317,7 @@ def open_titles(root, count=INJECT_OPEN):
     for last, path, n in rows[:count]:
         when = f", last {last}" if last else ""
         lines.append(f"- **{title_of(path)}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
-                     f"(`{path.name}`)")
+                     f"(`{mdblock.as_quoted(path.name)}`)")
     if len(rows) > count:
         lines.append(f"- _…and {len(rows) - count} more open in `.chamnan/{DIRNAME}/`_")
     return "\n".join(lines)
