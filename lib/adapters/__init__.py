@@ -25,16 +25,22 @@ pull-request author the one thing it exists to withhold.
 """
 import workspace as ws
 
+from . import amazonq
+from . import cline
 from . import cursor
 from . import gemini
+from . import generic
 from . import kiro
 
 # Registry, by the name `host.agents()` uses. `claude` is deliberately absent: its delivery is the
 # SessionStart hook, which writes no file, and inventing a file for it would create a second copy
 # of the block that nothing reads and nobody updates.
 ADAPTERS = {
+    amazonq.NAME: amazonq,
+    cline.NAME: cline,
     cursor.NAME: cursor,
     gemini.NAME: gemini,
+    generic.NAME: generic,
     kiro.NAME: kiro,
 }
 

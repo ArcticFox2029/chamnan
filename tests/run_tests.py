@@ -10143,6 +10143,73 @@ check("cursor and kiro each own their fence guard rather than sharing one",
       and "import cursor" not in Path(_kir.__file__).read_text(encoding="utf-8"))
 
 
+# ------------------------------------------------- amazonq, cline, and AGENTS.md
+# Amazon Q and Cline take plain markdown in a rules directory. Kiro's importer table gives Cursor
+# a frontmatter schema and a parser and gives these two neither, which is the evidence for writing
+# nothing at the top of the file. Plain is also the safer half of the uncertainty: frontmatter an
+# agent does not parse becomes stray dashes in its context; prose it does not recognise as
+# frontmatter is still prose.
+for _plain in ("amazonq", "cline"):
+    _mod = adapters_mod.for_agent(_plain)
+    check(f"{_plain} writes the block with nothing wrapped around it",
+          _mod.render("## chamnan\nbody") == "## chamnan\nbody\n")
+    check(f"...into a rules directory rather than a root file: {_plain}",
+          "/" in _mod.TARGET)
+
+# `.clinerules` is a DIRECTORY here and a FILE in some repositories. Writing over the file form
+# would destroy rules somebody wrote, so failing loudly is the correct outcome -- pinned, because
+# a later "helpful" mkdir(exist_ok) on the parent would turn this into silent data loss.
+_clroot = Path(tempfile.mkdtemp())
+(_clroot / ".clinerules").write_text("their own rules\n", encoding="utf-8")
+_raised = False
+try:
+    adapters_mod.install(_clroot, "cline", "block")
+except OSError:
+    _raised = True
+check("a .clinerules FILE stops the install rather than being replaced", _raised)
+check("...and their file is byte for byte what it was",
+      (_clroot / ".clinerules").read_text(encoding="utf-8") == "their own rules\n")
+shutil.rmtree(_clroot, ignore_errors=True)
+
+# AGENTS.md is the target a person is most likely to have written themselves, so it is edited
+# between markers and never written over.
+_gen = adapters_mod.for_agent("generic")
+_genroot = Path(tempfile.mkdtemp())
+(_genroot / "AGENTS.md").write_text(
+    "# Mine\n\nbefore text\n\n" + _gen.render("## chamnan\nOLD\n") + "\n## After\n\ntail text\n",
+    encoding="utf-8")
+adapters_mod.install(_genroot, "generic", "## chamnan\nNEW\n")
+_gtext = (_genroot / "AGENTS.md").read_text(encoding="utf-8")
+check("text before chamnan's region survives", "before text" in _gtext)
+check("text after chamnan's region survives", "tail text" in _gtext and "## After" in _gtext)
+check("the region's contents are replaced", "NEW" in _gtext and "OLD" not in _gtext)
+check("...leaving exactly one region rather than nesting a second",
+      _gtext.count(_gen.START) == 1 and _gtext.count(_gen.END) == 1)
+
+# No markers at all: append once, AFTER their text, because what they wrote is the more specific
+# instruction and should be read last.
+_approot = Path(tempfile.mkdtemp())
+(_approot / "AGENTS.md").write_text("# Theirs\n\nuse tabs\n", encoding="utf-8")
+adapters_mod.install(_approot, "generic", "## chamnan\nblock\n")
+_atext = (_approot / "AGENTS.md").read_text(encoding="utf-8")
+check("an AGENTS.md with no markers keeps everything it had", "use tabs" in _atext)
+check("...and chamnan's region is appended after it, not before",
+      _atext.index("use tabs") < _atext.index(_gen.START))
+
+# An opened region with no close is refused. Both available guesses -- delete the rest of the file,
+# or insert an end somewhere -- can destroy text somebody wrote.
+_badgen = Path(tempfile.mkdtemp())
+(_badgen / "AGENTS.md").write_text("x\n" + _gen.START + "\nno end marker\n", encoding="utf-8")
+_genrefused = False
+try:
+    adapters_mod.install(_badgen, "generic", "block")
+except ValueError:
+    _genrefused = True
+check("an unclosed chamnan region is refused rather than guessed at", _genrefused)
+for _d in (_genroot, _approot, _badgen):
+    shutil.rmtree(_d, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
