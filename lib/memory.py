@@ -57,6 +57,74 @@ def entries(root, category):
     return sorted(p for p in d.glob("*.md") if p.is_file() and ws.inside(p, root))
 
 
+# `see memory `slug``, `memory: `slug``, or a bare ``slug`` next to the word memory. Written by
+# people and by the write skills, in STATE.md, session records, threads and dated logs.
+CITATION = re.compile(r"memory[:\s]+`([a-z0-9][a-z0-9._-]*)`", re.I)
+
+
+def dangling_citations(root):
+    r"""[(slug, [(file, line), …]), …] for every ``memory `slug``` reference that names no entry.
+
+    🐛 Nothing detected this class. Found on a real work repository: STATE.md and a dated log both
+    cite entries whose files were never created, and all three memory directories there are empty —
+    the lesson was described, pointed at, and never written. Someone follows the pointer, finds
+    nothing, and the reason it was worth recording is gone.
+
+    Same shape as a MAP.md entry naming a file that no longer exists, and it earns the same
+    treatment: reported where a person looks at workspace health rather than injected into every
+    session. `chamnan-report` costs nothing on the hot path and already says what the workspace
+    holds.
+
+    **Grouped by slug and carrying line numbers on purpose.** One missing entry is usually cited in
+    several places, and a report that lists the same slug three times reads as three problems. The
+    line number is what makes a false positive cheap: the pattern is deliberately broad — anything
+    backticked after the word "memory" — because a missed citation is the failure this exists to
+    catch, while a wrong one costs a single glance at the line it names.
+
+    A slug is an entry's FILENAME without `.md`, which is what the write skills produce and what a
+    citation is written from. Prose without backticks ("see memory for details") does not match.
+
+    Measured across the four real workspaces on this machine: 3 matches, all 3 genuinely dangling,
+    no false positives.
+    """
+    known = set()
+    for category in ("decisions", "incidents", "lessons", "rules"):
+        known.update(e.stem for e in entries(root, category))
+
+    from workspace import workspace
+    wsdir = workspace(root)
+    sources = []
+    for pattern in ("STATE.md", "milestones.md", "sessions/*.md", "threads/*.md",
+                    "logs/*.md", "memory/*/*.md"):
+        for f in wsdir.glob(pattern):
+            try:
+                if f.is_file() and ws.inside(f, root):
+                    sources.append((-f.stat().st_mtime, f))
+            except OSError:
+                continue
+
+    found = {}
+    for _, f in sorted(sources, key=lambda r: r[0]):
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Scanned over the WHOLE text, with the line derived from the match offset. Matching
+        # line by line looked equivalent and was not: `memory[:\s]+` admits a newline, so a
+        # citation wrapped across two lines is a real and common shape. It cost a detection the
+        # moment it was introduced — rancher went from two dangling slugs to one — which is why
+        # this is written the slower way on purpose.
+        for m in CITATION.finditer(text):
+            slug = m.group(1)
+            if slug in known:
+                continue
+            where = (f"{f.relative_to(wsdir)}", text.count("\n", 0, m.start()) + 1)
+            found.setdefault(slug, [])
+            if where not in found[slug]:
+                found[slug].append(where)
+    return [(slug, places) for slug, places in found.items()]
+
+
 def case_collisions(paths):
     """Group `paths` whose filename stems are identical except for case.
 
