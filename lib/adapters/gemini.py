@@ -85,39 +85,46 @@ def install(root, body, command):
     Raises ValueError when the file exists and does not parse. Merging into a file whose contents
     could not be read means writing a fresh one, which silently discards a user's IDE settings and
     security policy -- and they would have no reason to look here for them.
+
+    The read, the merge and the write all happen inside one `held_target` block, through the one
+    directory handle it checked. This is the adapter that READS what it is about to replace, so a
+    second resolution of the same path is not a tidier way to spell the first one -- it is the
+    window that let a symlink swapped in after the check hand this function an outside settings
+    file to merge a secret out of. One function on purpose, too: splitting the merge into a helper
+    put the write somewhere that no longer named the guard, and the structural check says so.
     """
-    import workspace as ws
+    from . import held_target, read_target, write_target
 
-    from . import safe_target
+    with held_target(root, TARGET) as target:
+        path = target.path
+        settings = {}
+        existing = read_target(target)
+        if existing is not None:
+            try:
+                settings = json.loads(existing)
+            except ValueError as exc:
+                raise ValueError(f"{path} does not parse ({exc}); refusing to replace it") from exc
+            if not isinstance(settings, dict):
+                raise ValueError(f"{path} is not a JSON object; refusing to replace it")
 
-    path = safe_target(root, TARGET)
-    settings = {}
-    if path.exists():
-        try:
-            settings = json.loads(path.read_text(encoding="utf-8"))
-        except (ValueError, OSError) as exc:
-            raise ValueError(f"{path} does not parse ({exc}); refusing to replace it") from exc
-        if not isinstance(settings, dict):
-            raise ValueError(f"{path} is not a JSON object; refusing to replace it")
+        hooks = settings.setdefault("hooks", {})
+        if not isinstance(hooks, dict):
+            raise ValueError(
+                f"{path} has a `hooks` key that is not an object; refusing to change it")
+        groups = hooks.setdefault("SessionStart", [])
+        if not isinstance(groups, list):
+            raise ValueError(f"{path} has a `hooks.SessionStart` that is not a list")
 
-    hooks = settings.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise ValueError(f"{path} has a `hooks` key that is not an object; refusing to change it")
-    groups = hooks.setdefault("SessionStart", [])
-    if not isinstance(groups, list):
-        raise ValueError(f"{path} has a `hooks.SessionStart` that is not a list")
+        # Replace ours in place rather than appending, so re-running install is idempotent and an
+        # upgraded plugin path is corrected instead of duplicated.
+        replaced = False
+        for i, group in enumerate(groups):
+            if _is_ours(group):
+                groups[i] = _entry(command)
+                replaced = True
+                break
+        if not replaced:
+            groups.append(_entry(command))
 
-    # Replace ours in place rather than appending, so re-running install is idempotent and an
-    # upgraded plugin path is corrected instead of duplicated.
-    replaced = False
-    for i, group in enumerate(groups):
-        if _is_ours(group):
-            groups[i] = _entry(command)
-            replaced = True
-            break
-    if not replaced:
-        groups.append(_entry(command))
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    ws.atomic_write_text(path, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
-    return path
+        write_target(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+        return path
