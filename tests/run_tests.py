@@ -79,7 +79,39 @@ def _probe_symlink():
         _rmtree(box, ignore_errors=True)
 
 
+def _probe_deny_read():
+    """Can this process make a directory it owns unreadable to itself? Probed, not assumed.
+
+    POSIX honours `chmod 000` against the owner. Windows does not -- the owner keeps read access
+    regardless, and NTFS ACLs are not what `os.chmod` writes. So the checks that prove chamnan
+    NAMES an unreadable directory instead of silently skipping it cannot be run there, and
+    pretending they passed would be claiming coverage this project does not have.
+    """
+    box = Path(tempfile.mkdtemp())
+    try:
+        (box / "wall").mkdir()
+        (box / "wall" / "f.txt").write_text("x", encoding="utf-8")
+        os.chmod(box / "wall", 0o000)
+        try:
+            list((box / "wall").iterdir())
+            return False
+        except PermissionError:
+            return True
+    except OSError:
+        return False
+    finally:
+        try:
+            os.chmod(box / "wall", 0o755)
+        except OSError:
+            pass
+        _rmtree(box, ignore_errors=True)
+
+
 _CAN_SYMLINK = _probe_symlink()
+_CAN_DENY_READ = _probe_deny_read()
+if not _CAN_DENY_READ:
+    print("  [SKIP] unreadable-directory checks — this platform does not honour chmod 000 "
+          "against the owner")
 if not _CAN_SYMLINK:
     print("  [SKIP] symlink checks — this process cannot create symlinks here "
           "(Windows without Developer Mode, or a restricted container)")
@@ -6944,12 +6976,14 @@ subprocess.run(["git", "init", "-q", "."], cwd=str(_sil), capture_output=True)
 for _i in range(5):
     (_sil / "app" / "private" / f"m{_i}.py").write_text(f'"""Private {_i}."""\ndef p(): pass\n', encoding="utf-8")
 (_sil / "asset.py").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 50)
-os.chmod(_sil / "app" / "private", 0o000)
+if _CAN_DENY_READ:
+    os.chmod(_sil / "app" / "private", 0o000)
 _silout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                          cwd=str(_sil), capture_output=True, text=True, encoding="utf-8", errors="replace")
-os.chmod(_sil / "app" / "private", 0o755)
-check("A DIRECTORY THAT COULD NOT BE READ IS NAMED, NOT SILENTLY TREATED AS ABSENT",
-      "COULD NOT BE READ" in _silout.stdout and "app/private" in _silout.stdout)
+if _CAN_DENY_READ:
+    os.chmod(_sil / "app" / "private", 0o755)
+    check("A DIRECTORY THAT COULD NOT BE READ IS NAMED, NOT SILENTLY TREATED AS ABSENT",
+          "COULD NOT BE READ" in _silout.stdout and "app/private" in _silout.stdout)
 check("...and a binary hiding behind a source extension is counted out loud",
       "binary content behind a source extension" in _silout.stdout)
 # The skip stays a skip — printing it is the whole fix, per the report that found it. What must not
@@ -8521,8 +8555,16 @@ check("...and leaves no staging file behind",
       [x.name for x in _aw.parent.iterdir()] == ["f.json"])
 check("...and the staging name carries this process's pid, not a shared one",
       str(os.getpid()) in ws.atomic_write_text.__doc__ or True)
+# 🐛 The destination was `/does/not/exist/anywhere/f.json`, chosen because it cannot exist. On
+# Windows that is `C:\does\not\exist\anywhere\`, which the runner has permission to CREATE --
+# so `atomic_write_text` succeeded, returned True, and the check failed for the one reason it was
+# not testing. A path UNDER AN EXISTING FILE cannot be created on any platform, which is the
+# property the check actually wants.
+_blocked = Path(tempfile.mkdtemp()) / "iam-a-file"
+_blocked.write_text("not a directory\n", encoding="utf-8")
 check("...and it reports failure rather than raising, so a read-only checkout still starts",
-      ws.atomic_write_text(Path("/does/not/exist/anywhere/f.json"), "x") is False)
+      ws.atomic_write_text(_blocked / "sub" / "f.json", "x") is False)
+_rmtree(_blocked.parent, ignore_errors=True)
 _rmtree(_aw.parent.parent, ignore_errors=True)
 check("...and the policy is unchanged: the expired one is still gone",
       not (_expl / "old.md").is_file() and (_expl / "2026-08-27.md").is_file())
@@ -8664,8 +8706,14 @@ check("A SYMLINK TO A SIBLING DIRECTORY IS NOT INSIDE THE REPOSITORY: " + str(_w
 (_esc / "app" / "shared").mkdir()
 (_esc / "app" / "shared" / "util.py").write_text("# Shared helper.\n", encoding="utf-8")
 os.symlink("../shared/util.py", _esc / "app" / "src" / "inside.py")
-check("...while a symlink to a file genuinely inside it is still followed",
-      "inside.py" in {q.name for q in _tree2.files(_esc / "app")})
+# Same reason as the other relative-symlink check: Windows creates the link but does not resolve
+# a relative target from the link's own directory, so the file is unreadable there and the walker
+# is right to omit it. Asserted where the link actually resolved.
+if (_esc / "app" / "src" / "inside.py").is_file():
+    check("...while a symlink to a file genuinely inside it is still followed",
+          "inside.py" in {q.name for q in _tree2.files(_esc / "app")})
+else:
+    print("  [SKIP] relative symlink did not resolve — inside-the-repo follow check skipped")
 _rmtree(_esc, ignore_errors=True)
 
 # ------------------------------ the first thing a new user sees, on a repository unlike this one
