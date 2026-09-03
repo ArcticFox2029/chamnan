@@ -153,6 +153,21 @@ def where_git_says_you_stopped(root, limit=6):
                             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
                             timeout=5)
         branch = br.stdout.strip() if br.returncode == 0 else ""
+        # 🐛 `--abbrev-ref HEAD` returns the literal string "HEAD" when the checkout is DETACHED,
+        # so the block said "on `HEAD`" as though that were a branch — in every CI checkout, every
+        # `git bisect`, and every checkout of a tag. A reader has no way to tell that from a branch
+        # somebody really named HEAD, and the whole point of this line is that it is git's answer
+        # rather than a guess.
+        #
+        # The short sha is what is actually true there, and it is also the thing you would type to
+        # come back to it. Best-effort: if that call fails too, the line simply says nothing about
+        # where you are, which is better than saying something false.
+        if branch == "HEAD":
+            sha = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=5)
+            short = sha.stdout.strip() if sha.returncode == 0 else ""
+            branch = f"a detached HEAD at {short}" if short else ""
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -162,7 +177,13 @@ def where_git_says_you_stopped(root, limit=6):
     for line in lines[:limit]:
         names.append(f"`{mdblock.as_quoted(line[3:].strip(), 60)}`")
     tail = f" _+{more} more_" if more else ""
-    where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
+    # A detached HEAD is described in words rather than quoted as a name -- backticks around
+    # "a detached HEAD at 1a2b3c4" would read as a branch with that name, which is the same
+    # mistake one level down.
+    if branch.startswith("a detached HEAD"):
+        where = f" on {mdblock.as_quoted(branch, 40)}"
+    else:
+        where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
     return (f"**Where the last session stopped**, as the working tree has it{where} — "
             f"nobody recorded it, so this is git's answer rather than anyone's:\n"
             f"{len(lines)} uncommitted file(s): " + ", ".join(names) + tail + "\n")

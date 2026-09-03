@@ -11214,6 +11214,50 @@ check("...and all of them are looked for, not a subset",
       all(f"command -v {m}" in _sh_src for m in _managers))
 
 
+# ------------------------------------------- git shapes that CI produces by default
+# 🐛 `git rev-parse --abbrev-ref HEAD` returns the literal string "HEAD" on a DETACHED checkout,
+# and the block published that as though it were a branch — "as the working tree has it on
+# `HEAD`". Every CI checkout, every `git bisect`, and every checkout of a tag is detached, so this
+# was the normal case in exactly the environments a plugin gets run in unattended. A reader has no
+# way to tell it from a branch somebody really named HEAD.
+_gs = Path(tempfile.mkdtemp()) / "shapes"
+_gs.mkdir(parents=True)
+# Its own runner: `_git` is defined twice in this file and the later one is a lambda bound to a
+# different repository, so calling it here would have operated on somebody else's fixture.
+def _gsgit(*args):
+    return subprocess.run(["git", "-C", str(_gs), *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+
+
+_gsgit("init", "-q", ".")
+(_gs / "a.txt").write_text("a\n", encoding="utf-8")
+_gsgit("add", "-A")
+_gsgit("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one")
+(_gs / "b.txt").write_text("b\n", encoding="utf-8")
+_gsgit("add", "-A")
+_gsgit("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "two")
+(_gs / "dirty.txt").write_text("uncommitted\n", encoding="utf-8")
+
+import sessions as _sess_gs  # noqa: E402
+
+_on_branch = _sess_gs.where_git_says_you_stopped(_gs)
+check("on a branch, the line names the branch",
+      "`main`" in _on_branch or "`master`" in _on_branch)
+
+_gsgit("checkout", "-q", "HEAD~1")
+_detached = _sess_gs.where_git_says_you_stopped(_gs)
+check("A DETACHED HEAD IS NOT PUBLISHED AS A BRANCH NAMED HEAD",
+      "`HEAD`" not in _detached)
+check("...it says what it actually is", "detached HEAD" in _detached)
+# The short sha is the useful part: it is what you would type to come back to this commit.
+check("...and names the commit, not nothing",
+      any(c in "0123456789abcdef" for c in _detached.split("detached HEAD at ")[1][:7])
+      if "detached HEAD at " in _detached else False)
+check("...and the rest of the line still works",
+      "dirty.txt" in _detached and "uncommitted file" in _detached)
+_rmtree(_gs.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
