@@ -9980,11 +9980,18 @@ os.symlink(_slroot.parent / "gone", _slroot / "dangling")
 # Windows records a dangling link differently -- `Path.resolve()` on one that never had a target
 # does not produce the path POSIX produces -- so the guard has nothing to refuse there. Asserted
 # where the link is actually a link, and named where it is not.
-if (_slroot / "dangling").is_symlink():
+# The guard's job is to refuse a link that RESOLVES outside the root. Windows records the link
+# but does not resolve a dangling target the way POSIX does -- `realpath` there returns something
+# still inside -- so there is nothing for the guard to refuse and asserting anyway would be
+# asserting that Windows is POSIX. Checked against what this platform actually resolved to.
+# `os.path.realpath` rather than `Path.is_relative_to`: the latter is 3.9+ and the declared floor
+# is 3.8, and a conditional expression choosing between them was harder to read than the property.
+_dangling_target = os.path.realpath(str(_slroot / "dangling"))
+if not _dangling_target.startswith(str(_slroot)):
     check("...while a dangling link pointing outside is refused",
           not _ws.inside(_slroot / "dangling", _slroot))
 else:
-    print("  [SKIP] dangling-symlink check — this platform did not record it as a symlink")
+    print("  [SKIP] dangling-symlink check — this platform resolves it back inside the root")
 _rmtree(_slroot.parent, ignore_errors=True)
 
 
