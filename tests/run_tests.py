@@ -10441,6 +10441,39 @@ check("--window overrides --model", _won["profile"] == "small-window")
 shutil.rmtree(_ctxroot2, ignore_errors=True)
 
 
+# ------------------------------------------- the vendors' own harnesses, and the name collision
+# `qwen` is now BOTH a harness (--write qwen writes QWEN.md) and a model family (--model qwen
+# picks a budget). They are different axes and different flags, and this pins that neither
+# swallowed the other -- the failure would be silent, and the user would get the wrong one.
+check("qwen is a writable harness", adapters_mod.for_agent("qwen").TARGET == "QWEN.md")
+check("...and also a model family, on the other axis",
+      "qwen" in profiles_mod.AMBIGUOUS)
+check("...and the harness is not an alias to the root AGENTS.md",
+      adapters_mod.for_agent("qwen") is not adapters_mod.for_agent("generic"))
+
+# Forks rename their context file, which is the whole reason each one had to be checked rather
+# than inherited. Qwen Code forked Gemini CLI and reads QWEN.md, not GEMINI.md.
+check("a fork's renamed file is what gets written, not its parent's",
+      adapters_mod.for_agent("qwen").TARGET != ".gemini/settings.json")
+for _renamed, _file in (("iflow", "IFLOW.md"), ("codebuddy", "CODEBUDDY.md")):
+    check(f"{_renamed} writes its own renamed file", adapters_mod.for_agent(_renamed).TARGET == _file)
+
+# Mistral's Vibe CLI reads AGENTS.md from inside .vibe/, not the root. A repository set up for the
+# eight root-AGENTS.md agents gives it nothing, which is why it is a module and not a ninth alias.
+check("mistral reads AGENTS.md from its own directory, not the root",
+      adapters_mod.for_agent("mistral").TARGET == ".vibe/AGENTS.md"
+      and adapters_mod.for_agent("mistral") is not adapters_mod.for_agent("generic"))
+
+# Three vendor harnesses DO read the root file, verified one by one -- including Meta's Muse Code,
+# where several secondary sources claim a proprietary MUSE_CODE.md and Meta's own docs do not.
+for _vendor in ("deepseek", "kimi", "muse"):
+    check(f"{_vendor} is an alias to the root AGENTS.md its docs say it reads",
+          adapters_mod.for_agent(_vendor) is adapters_mod.for_agent("generic"))
+check("...and no adapter writes the file the secondary sources invented",
+      not any(adapters_mod.for_agent(n).TARGET.upper().startswith("MUSE")
+              for n in adapters_mod.ADAPTERS))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
