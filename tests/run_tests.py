@@ -1044,8 +1044,24 @@ check("touched_by_week still keeps the has_usage condition the prefilter used to
       "has_usage" in _guard and _guard.lstrip().startswith("if "))
 check("...and it now also requires the file to be under the repository being reported on",
       "_root_prefix" in _guard)
-check("...while the pointer set does not, since that is why the line was let through",
-      "if want_opened and \".chamnan\" in _fp:" in _rep_src)
+# 🐛 This test used to assert the OPPOSITE of the line below — "the pointer set does not
+# [require root-scoping], since that is why the line was let through" — which pinned the exact
+# contamination `touched_by_week` was fixed for as a passing test for `opened`. Reproduced live:
+# of this project's own transcripts, a subagent-touched file under a DIFFERENT repository's
+# `.chamnan/memory/rules/` folded onto this repo's `opened` set, and a minimal fixture (session
+# that never opens repoA's own named file but opens repoB's file of the same relative name) made
+# chamnan-report print "later opened 1 of those 1" for a pointer nobody followed. `want_opened`
+# is still the reason a usage-less line is let through the prefilter — that condition is
+# unrelated to and does not replace the root check, which `opened` now shares with
+# `touched_by_week`.
+_opn = next(l for l in _rep_src.splitlines() if 'opened.add(_fp.split(".chamnan/")[-1])' in l)
+_opn_guard_lines = _rep_src.splitlines()[_rep_src.splitlines().index(_opn) - 2:
+                                          _rep_src.splitlines().index(_opn)]
+_opn_guard = " ".join(_opn_guard_lines)
+check("the pointer set still does not require has_usage, since that is why the line was let through",
+      "want_opened" in _opn_guard and "has_usage" not in _opn_guard)
+check("...but it now requires the file to be under the repository being reported on, same as touched_by_week",
+      "_root_prefix" in _opn_guard)
 # Compared at the CALL sites, not by a bare substring: `def collect(project_dir,` sits at the top
 # of the file and `def _read_pointer_log(root):` below it, so searching for either name alone
 # compares the definitions and fails while the code is right. That is the second time this session

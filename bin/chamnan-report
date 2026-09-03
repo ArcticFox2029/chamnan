@@ -224,7 +224,21 @@ def collect(project_dir, want_opened=False, root=None):
                         # repository's transcript, and they are not work on this repository.
                         if has_usage and ts and (root is None or _fp.startswith(_root_prefix)):
                             touched_by_week[ts[:10]].add(_fp)
-                        if want_opened and ".chamnan" in _fp:
+                        # 🐛 Same contamination as touched_by_week above, one screen down, missed
+                        # by that fix: `opened` stripped everything up to the LAST ".chamnan/" in
+                        # the path with no root check at all, so a subagent sent to a DIFFERENT
+                        # chamnan-enabled repository (or a fixture copy of one — this project keeps
+                        # several under a scratchpad while researching itself) folds its relative
+                        # path onto this repo's set. Reproduced on this machine's own transcripts:
+                        # of 11 distinct outside-root `.chamnan` paths opened, one — a rules file —
+                        # already lands inside `memory/rules/`, the exact namespace `pointer.named`
+                        # draws from. A minimal fixture makes the effect concrete: a session that
+                        # never opens repoA's own named file, but opens repoB's file of the same
+                        # relative name, was reported as "later opened 1 of those 1" — a perfect
+                        # pointer-follow rate for a pointer nobody followed. Root-scoped the same
+                        # way touched_by_week is, so both consumers of this block share the guard.
+                        if (want_opened and ".chamnan" in _fp
+                                and (root is None or _fp.startswith(_root_prefix))):
                             opened.add(_fp.split(".chamnan/")[-1])
                 if not has_usage or not (isinstance(usage, dict) and rid and model and ts):
                     continue
