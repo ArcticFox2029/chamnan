@@ -23,11 +23,61 @@ import mdblock
 import impact  # for is_test — see the guard in the file loops below
 
 import redact
+import tokens
 import tree
 
+# PROTOTYPE (R8 agent A, .../scratchpad/R8A_work/R8_agentA.md): count caps and mdblock.as_quoted's
+# per-entry length cap bound quantity and size separately, and nothing bounds their product — 32-60
+# ordinary deep REST paths on a real repo (measured: go-gitea/gitea) cost more tokens than the
+# entire 3,000-token index budget on their own, while the count cap said 60 was fine. A per-section
+# TOKEN budget replaces the count cap as the primary limit; the count cap stays as a floor against a
+# wall of very short entries. See R8_agentA.md for the measurements this is based on.
 MAX_ROUTES_LISTED = 60
 MAX_ENV_LISTED = 50
+# 🐛 The prototype used fixed constants, and the agent that wrote it said so. A user who raises
+# `index_token_budget` to 6,000 has asked for a bigger index and would still get 1,200 tokens of
+# routes; one who lowers it to 1,500 would get a routes section costing most of their whole budget.
+# Fractions of the configured budget instead — the constants below are what those fractions come to
+# at the 3,000-token default, so the measured behaviour is unchanged where it was measured.
+#
+# Two fifths and two fifteenths. Routes are the section people go looking for; configuration is a
+# list of names. Together they leave more than half the budget for the Quick Index, which is the
+# section every other one is a supplement to.
+ROUTES_BUDGET_SHARE = 0.40
+ENV_BUDGET_SHARE = 2 / 15
+
+
+def _section_budget(share, configured=None):
+    """A section's token budget as a share of the index budget the user actually configured."""
+    if configured is None:
+        try:
+            import workspace as _ws
+            configured = _ws.load_config().get("index_token_budget", 3000)
+        except Exception:
+            configured = 3000
+    return max(int(configured * share), 120)
 SKIP_PARTS = (".git", "node_modules", "vendor", "__pycache__", ".venv", "dist", "build")
+
+
+def _fill_by_budget(entries, render_one, token_budget, count_cap):
+    """Keep `entries` in order until either the token budget or the count cap is spent.
+
+    Returns (kept_render_lines, kept_count). At least one entry is always kept when the list is
+    non-empty, even if it alone exceeds the budget — a budget of zero rows is not a summary, and
+    `mdblock.as_quoted`'s own per-entry cap already bounds how bad the single worst case can be.
+    """
+    lines = []
+    spent = 0.0
+    for e in entries:
+        if len(lines) >= count_cap:
+            break
+        line = render_one(e)
+        cost = tokens.estimate(line)
+        if lines and spent + cost > token_budget:
+            break
+        lines.append(line)
+        spent += cost
+    return lines, len(lines)
 
 def _nested(root):
     """Nested checkouts, shared with mapper so both halves of the map agree on what this repo is.
@@ -470,30 +520,40 @@ def render_routes(routes):
     out = ["## API surface", "", f"{len(routes)} route(s)."
            + (f" {len(http)} HTTP, {len(grpc)} gRPC." if grpc and http else "")]
 
+    def _render_one(route):
+        (method, path_), source = route
+        # 🐛 Written straight into MAP.md, which the pre-commit hook commits and the hook
+        # injects into every session — from a string the repository chose. Several route
+        # patterns capture with `[^"']*`, and that class INCLUDES a newline, so a quoted path
+        # containing one carried the rest of the file's text into the index as markdown.
+        # Reproduced in ordinary, valid JavaScript — a template literal spanning two lines —
+        # which put a real `## Injected heading` and a paragraph of an attacker's prose above
+        # `## Full Detail`, where an agent reads it as something chamnan published.
+        #
+        # `mdblock.as_quoted` is the helper this codebase already uses for exactly this, on
+        # Quick Index filenames and milestone titles: it folds newlines away, neutralises the
+        # backticks that would close the span it sits in, and bounds the length. These four
+        # modules extract repository substrings and none of them imported it.
+        return (f"- `{mdblock.as_quoted(method, 12):<6} {mdblock.as_quoted(path_, 200)}`"
+                f"  _({mdblock.as_quoted(source, 120)})_")
+
     for label, group, cap in (("", http, MAX_ROUTES_LISTED),
                               ("gRPC", grpc, MAX_ROUTES_LISTED)):
         if not group:
             continue
         if label:
             out += ["", f"**{label}**"]
-        if len(group) > cap:
-            out.append(f"Showing {cap} of {len(group)}; grep the source files for the rest.")
+        # Token-budgeted, not count-capped: `cap` alone used to decide what was "shown", and on a
+        # repository whose routes run long (deep REST paths, verbose source annotations) 60 of them
+        # cost more tokens than the WHOLE index budget by themselves — count and size are bounded
+        # separately and nothing bounded their product. Filling by token cost until the section's
+        # own sub-budget is spent makes the count that gets shown depend on how big the entries
+        # actually are, the way the number in "Showing K of N" always claimed it did.
+        lines, kept = _fill_by_budget(group, _render_one, _section_budget(ROUTES_BUDGET_SHARE), cap)
+        if len(group) > kept:
+            out.append(f"Showing {kept} of {len(group)}; grep the source files for the rest.")
         out.append("")
-        for (method, path_), source in group[:cap]:
-            # 🐛 Written straight into MAP.md, which the pre-commit hook commits and the hook
-            # injects into every session — from a string the repository chose. Several route
-            # patterns capture with `[^"']*`, and that class INCLUDES a newline, so a quoted path
-            # containing one carried the rest of the file's text into the index as markdown.
-            # Reproduced in ordinary, valid JavaScript — a template literal spanning two lines —
-            # which put a real `## Injected heading` and a paragraph of an attacker's prose above
-            # `## Full Detail`, where an agent reads it as something chamnan published.
-            #
-            # `mdblock.as_quoted` is the helper this codebase already uses for exactly this, on
-            # Quick Index filenames and milestone titles: it folds newlines away, neutralises the
-            # backticks that would close the span it sits in, and bounds the length. These four
-            # modules extract repository substrings and none of them imported it.
-            out.append(f"- `{mdblock.as_quoted(method, 12):<6} {mdblock.as_quoted(path_, 200)}`"
-                       f"  _({mdblock.as_quoted(source, 120)})_")
+        out += lines
     out.append("")
     return "\n".join(out)
 
@@ -612,11 +672,16 @@ def render_env(pairs, unsafe):
     out = ["## Configuration", "",
            f"{len(pairs)} environment variable(s) this repo reads. **Names only — no values are "
            f"ever recorded here.**"]
-    if len(pairs) > MAX_ENV_LISTED:
-        out.append(f"Showing the {MAX_ENV_LISTED} referenced in the most places, of {len(pairs)}. "
+    # Token-budgeted, not count-capped — see _section_budget(ROUTES_BUDGET_SHARE)'s comment in render_routes for why:
+    # the same product-of-count-and-size gap applies here, just less often, because a variable NAME
+    # is short enough that MAX_ENV_LISTED rarely dominates on its own the way route paths do.
+    names, kept = _fill_by_budget(pairs, lambda pair: f"`{mdblock.as_quoted(pair[0], 80)}`",
+                                  _section_budget(ENV_BUDGET_SHARE), MAX_ENV_LISTED)
+    if len(pairs) > kept:
+        out.append(f"Showing the {kept} referenced in the most places, of {len(pairs)}. "
                    f"Grep the repository for the rest.")
     out.append("")
-    out.append(", ".join(f"`{mdblock.as_quoted(n, 80)}`" for n, _ in pairs[:MAX_ENV_LISTED]))
+    out.append(", ".join(names))
     # 🐛 The list read as complete and is not. It is built from call shapes chamnan knows, and a
     # language whose shape is missing contributes nothing with no sign that anything is absent —
     # measured on a real polyglot service repository, twelve Go variables in one service were
