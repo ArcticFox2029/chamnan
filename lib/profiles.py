@@ -127,10 +127,17 @@ def resolve(config):
 
 # ---------------------------------------------------------------------------------------------
 # A convenience, and it is dated on purpose. `by_window()` above is the authority; this table only
-# saves someone looking up a number they may not have to hand. Snapshot taken 2026-09-03 from each
-# family's published context window. Vendors ship several sizes under one family name and the
-# numbers move, so a wrong entry here must be cheap: it selects a budget, never a code path, and
-# `--window` overrides it.
+# saves someone looking up a number they may not have to hand. Vendors ship several sizes under
+# one family name and the numbers move, so a wrong entry here must be cheap: it selects a budget,
+# never a code path, and `--window` overrides it.
+#
+# 🐛 [2026-09-03] "codestral" had carried its family's May-2024 launch number, 32K, through a
+# January-2025 refresh that moved it to 256K -- eight months stale by the time anyone checked, and
+# silently sending every codestral user's index to small-window's budget instead of standard's.
+# Caught by re-deriving each entry from what is actually known about it rather than trusting the
+# table was still current because nothing had touched the file. No network access was available to
+# re-verify the rest of this table against live vendor docs from where this check was run; treat
+# every entry below as no fresher than that limitation allows, and re-check before trusting one.
 #
 # AMBIGUOUS is the honest half of the table. Qwen is the case that forced it -- the same family
 # name covers an 8K-class build people run on Ollama and a long-context hosted one, and the two
@@ -144,16 +151,25 @@ MODEL_WINDOWS = {
     "grok": 256_000,
     "deepseek": 128_000,
     "glm": 200_000,
-    "llama": 128_000,
     "gemma": 128_000,
     "mistral": 128_000,
-    "codestral": 32_000,
+    # 32K was this family's window at its May-2024 launch. The January-2025 refresh moved it to
+    # 256K, and the entry was never updated -- it was still 32K when this table's own comment
+    # claimed a 2026-09-03 snapshot, silently sending every codestral user to small-window instead
+    # of standard.
+    "codestral": 256_000,
 }
 
 AMBIGUOUS = {
     # family: (what the small deployment looks like, what the large one looks like)
     "qwen": ("a 7B-14B build served locally, around 32K",
              "the hosted long-context build, around 256K"),
+    # The same shape as Qwen, and for the same reason: "llama" alone no longer names one window.
+    # A Llama 3.x build served locally is still the common case, at 8K-128K depending on which
+    # 3.x -- and it now sits beside a Llama 4 whose headline number is 1M (Maverick) to 10M
+    # (Scout). A single flat entry picked one of those silently; this says which two exist.
+    "llama": ("a Llama 3.x build served locally, 8K-128K depending on version",
+              "Llama 4 (Scout/Maverick), 1M and up"),
 }
 
 

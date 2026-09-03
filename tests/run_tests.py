@@ -10600,7 +10600,14 @@ check("every window in the table is a plausible token count",
 
 check("a 2M family lands in large-window", profiles_mod.by_model("kimi")[0] == "large-window")
 check("a 128K family lands in standard", profiles_mod.by_model("deepseek")[0] == "standard")
-check("a 32K family lands in small-window", profiles_mod.by_model("codestral")[0] == "small-window")
+# 🐛 codestral carried its May-2024 launch number (32K) through a January-2025 refresh to 256K --
+# eight months stale by the time anyone re-derived it, and silently sending every codestral user's
+# index to small-window's budget instead of standard's. The check moves with the correction rather
+# than pinning the stale value, and a family that is genuinely 32K-class is asserted separately so
+# the small-window bucket still has a witness.
+check("a 256K family lands in standard", profiles_mod.by_model("codestral")[0] == "standard")
+check("...and the small-window bucket still has a witness",
+      profiles_mod.by_window(16_000) == "small-window")
 
 # Qwen is the case that forced AMBIGUOUS into existence: one family name covering an 8K-class
 # local build and a long-context hosted one, which want opposite profiles. Guessing silently
@@ -11392,6 +11399,59 @@ for _ordinary in ('credible_source = "a well known journal"',
                   'incredible = "this is ordinary prose about a thing"'):
     check(f"...while an ordinary identifier is untouched: {_ordinary.split()[0]}",
           "<REDACTED>" not in redact.scrub(_ordinary))
+
+
+# ------------------------------------------- the impact map must not go quadratic again
+# 🐛 `_only_suffix_match` scanned EVERY key in `by_noext` for each import that reached it, and
+# `build()` calls it once per import -- so O(imports x files), and imports scale with files.
+# A multi-segment dotted import that does not match a repository file exactly (`django.db.models`,
+# `os.path`, any third-party dotted import) is the ORDINARY case in real Python, not an edge, so
+# that branch is the common path rather than a rare one.
+#
+# Measured on the code as it stood: 250 files 0.021s, 500 0.081s, 1000 0.307s, 2000 1.327s --
+# ratios 3.85, 3.77, 4.33 on each doubling, the signature of a quadratic. The module's own
+# docstring claimed "linear in edges... measured on a 2,365-file corpus"; that corpus evidently
+# did not exercise this branch. After the shortlist: 2000 files 0.027s, a 49x difference, ratios
+# 2.07-2.21.
+#
+# Pinned as a RATIO, not a time. A wall-clock threshold fails on a loaded machine and gets raised
+# until it means nothing; the shape of the growth is the property, and it is what regressed.
+def _impact_corpus(n):
+    return [{"path": f"pkg/mod{i}/thing{i}.py",
+             "imports": [f"django.db.models.field{i}", f"os.path.join{i}"]} for i in range(n)]
+
+
+_imp_times = {}
+for _n in (500, 1000, 2000):
+    _t = time.process_time()
+    impact_mod.build(_impact_corpus(_n))
+    _imp_times[_n] = time.process_time() - _t
+# CPU time, and a generous bound: linear is 2.0 per doubling, quadratic is 4.0. Anything under 3.0
+# is not quadratic, and the slack absorbs a loaded machine without letting the real regression
+# through.
+_ratio_1 = _imp_times[1000] / max(_imp_times[500], 1e-6)
+_ratio_2 = _imp_times[2000] / max(_imp_times[1000], 1e-6)
+check("THE IMPACT MAP SCALES LINEARLY, NOT QUADRATICALLY, IN FILE COUNT",
+      _ratio_1 < 3.0 and _ratio_2 < 3.0)
+if not (_ratio_1 < 3.0 and _ratio_2 < 3.0):
+    print(f"     doubling ratios: {_ratio_1:.2f}, {_ratio_2:.2f} "
+          f"(times {_imp_times[500]:.3f}s {_imp_times[1000]:.3f}s {_imp_times[2000]:.3f}s)")
+
+# The shortlist must not change any ANSWER -- a faster lookup that resolves differently is a
+# correctness regression wearing a performance win. Same corpus through both paths.
+_shared = _impact_corpus(200)
+_by_noext, _by_stem = impact_mod._index(_shared)
+_seg = impact_mod._by_last_segment(_by_noext)
+for _f in _shared[:40]:
+    for _name in _f["imports"]:
+        check_quiet = (impact_mod.resolve(_name, _f["path"], _by_noext, _by_stem)
+                       == impact_mod.resolve(_name, _f["path"], _by_noext, _by_stem, _seg))
+        if not check_quiet:
+            break
+check("...and the shortlist resolves every import to the same answer as the full scan",
+      all(impact_mod.resolve(n, f["path"], _by_noext, _by_stem)
+          == impact_mod.resolve(n, f["path"], _by_noext, _by_stem, _seg)
+          for f in _shared for n in f["imports"]))
 
 
 # ---------------------------------------------------------------- cleanup

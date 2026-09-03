@@ -46,6 +46,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 import adapters  # noqa: E402
 import host  # noqa: E402
 import profiles  # noqa: E402
+import tokens as tokens_mod  # noqa: E402
 import redact  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -139,6 +140,33 @@ def build(root, profile, ceiling):
     return _stabilise_fence(buffer.getvalue().rstrip("\n"))
 
 
+def _budget_notice(body, profile):
+    """A line for stderr when the index could not be made as small as the caller asked for, or "".
+
+    🐛 Measured on this repository: `--profile small-window` (1,200 tokens) and the default
+    `standard` (3,000) deliver a BYTE-IDENTICAL block. That is not a bug in the fold -- the index
+    folds to one line per directory and lands at ~1,294 tokens, which is under 3,000 and over
+    1,200, and there is no representation in between. Forcing a difference would mean dropping
+    directories, which loses more than it saves; I tried it and the block came out LARGER.
+    
+    What was wrong is that nobody said so. A caller who asks for a small window and receives the
+    standard block has no way to tell whether the request was honoured, ignored, or impossible.
+    This says which. It goes to stderr, so a pipe still gets exactly the block and nothing else.
+    """
+    section = ""
+    if "### Architecture index" in body:
+        section = body.split("### Architecture index", 1)[1].split("\n### ", 1)[0]
+    if not section:
+        return ""
+    spent = tokens_mod.estimate(section)
+    asked = profiles.budgets(profile)["index_token_budget"]
+    if spent <= asked:
+        return ""
+    return (f"chamnan-context: the index is ~{spent:,.0f} tokens against the {asked:,} that "
+            f"`{profile}` asks for. It is already folded to one line per directory — the next step "
+            f"down drops directories entirely, which loses more than it saves. Delivered as is.\n")
+
+
 def main():
     parser = argparse.ArgumentParser(add_help=True, description=__doc__.splitlines()[0])
     parser.add_argument("root", nargs="?", default=".")
@@ -213,6 +241,9 @@ def main():
             detected["ceiling"] = declared
 
     body = build(root, profile, args.ceiling)
+    _notice = _budget_notice(body, profile or profiles.DEFAULT)
+    if _notice:
+        sys.stderr.write(_notice)
 
     if args.write:
         # The command the agent will run at session start, spelled absolutely: the agent's working
