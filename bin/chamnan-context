@@ -191,6 +191,12 @@ def main():
                 print(f"  ⚠ {size:,} bytes, over {args.write}'s {limit:,}-byte limit by "
                       f"{size - limit:,}. That agent truncates silently past it — lower "
                       f"index_token_budget in .chamnan/config.json, or pass --window smaller.")
+        # An agent that does not auto-discover its own context file is only half installed by
+        # writing it. Saying so is the difference between a working setup and a file nobody opens.
+        manual = getattr(adapters.for_agent(args.write), "MANUAL_STEP", "")
+        if manual:
+            print(f"  ⚠ {manual}")
+
         line = adapters.ignore_line(args.write)
         if line:
             print("  generated and per-developer. Add this to .gitignore if it is not there yet:")

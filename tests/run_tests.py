@@ -10007,7 +10007,10 @@ shutil.rmtree(_ctxroot, ignore_errors=True)
 # No shared base class on purpose, so the thing to pin is the CONTRACT: every adapter carries the
 # same four names. A new agent added without one of them would otherwise fail at the call site,
 # in a command, on somebody else's machine.
-for _aname in adapters_mod.names():
+# Over ADAPTERS rather than names(): names() also carries aliases, and an alias resolves to
+# another adapter whose NAME is deliberately its own. Checking the contract through an alias
+# asserted that `codex` is called `codex`, which is the one thing an alias means it is not.
+for _aname in sorted(adapters_mod.ADAPTERS):
     _ad = adapters_mod.for_agent(_aname)
     check(f"ADAPTER DECLARES ITS CONTRACT: {_aname}",
           all(hasattr(_ad, attr) for attr in ("NAME", "TARGET", "CEILING", "render")))
@@ -10315,6 +10318,79 @@ check("...and survives byte for byte",
 
 for _d in (_zclean, _zbusy, _ztheirs):
     shutil.rmtree(_d, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- roo, aider, and the alias
+# Roo MERGES its rules directories, unlike Zed which takes the first match -- so writing here adds
+# to what the repository has rather than hiding it, and no precedence has to be reasoned about.
+_roo = adapters_mod.for_agent("roo")
+check("roo writes the modern directory tier, not the legacy .clinerules fallback",
+      _roo.TARGET == ".roo/rules/chamnan.md")
+check("...and roo is its own module rather than an alias to cline",
+      _roo is not adapters_mod.for_agent("cline"))
+
+# Aider auto-discovers NOTHING. Writing the file is half of being installed, and an adapter that
+# stops there produces exactly the failure this package exists to avoid: a file on disk, a success
+# message, and an agent that never opens it.
+_aid = adapters_mod.for_agent("aider")
+check("aider declares the manual step it cannot perform", bool(getattr(_aid, "MANUAL_STEP", "")))
+check("...naming the config key the user has to add", "read:" in _aid.MANUAL_STEP)
+check("...and it is the only adapter that needs one",
+      [n for n in adapters_mod.names()
+       if getattr(adapters_mod.for_agent(n), "MANUAL_STEP", "")] == ["aider"])
+# .aider.conf.yml is not written: it is the user's file, it is YAML, and chamnan depends on
+# nothing outside the standard library -- a property worth more than this one convenience.
+_aidroot = Path(tempfile.mkdtemp())
+adapters_mod.install(_aidroot, "aider", "block")
+check("installing aider writes no YAML config of its own",
+      not list(_aidroot.glob(".aider*")))
+shutil.rmtree(_aidroot, ignore_errors=True)
+
+# An alias, because `--write codex` has to do something and what Codex reads is AGENTS.md -- the
+# same file generic writes. Two modules writing one path would give it two owners.
+check("codex resolves to the adapter that writes what it actually reads",
+      adapters_mod.for_agent("codex") is adapters_mod.for_agent("generic"))
+check("...and appears in names(), or nobody could pass it to --write",
+      "codex" in adapters_mod.names())
+check("every alias points at a real adapter",
+      all(target in adapters_mod.ADAPTERS for target in adapters_mod.ALIASES.values()))
+check("...and no alias shadows a real adapter name",
+      not (set(adapters_mod.ALIASES) & set(adapters_mod.ADAPTERS)))
+
+
+# ------------------------------------------------- AGENTS.md turned out to be the standard
+# Eight agents read the root AGENTS.md as their project file. They are ALIASES rather than
+# modules: eight modules would write eight copies of one file into one repository, and the last
+# one to run would be the only one anybody read.
+_agents_md_readers = {"amp", "codex", "crush", "devin", "kilo", "opencode", "openhands", "warp"}
+check("every agent that reads AGENTS.md is an alias, not a module",
+      _agents_md_readers.isdisjoint(adapters_mod.ADAPTERS))
+check("...and every one of them resolves to the adapter that writes it",
+      all(adapters_mod.for_agent(a) is adapters_mod.for_agent("generic")
+          for a in _agents_md_readers))
+check("...so no two writable names claim the same target",
+      len({adapters_mod.for_agent(n).TARGET for n in adapters_mod.ADAPTERS})
+      == len(adapters_mod.ADAPTERS))
+
+# Junie is a module rather than a ninth alias because it does NOT read the root file: it reads
+# AGENTS.md inside its own directory, so a repository with only the root one gives Junie nothing.
+check("junie reads its own directory, not the root AGENTS.md",
+      adapters_mod.for_agent("junie").TARGET == ".junie/AGENTS.md")
+check("...which is a different file from the one generic writes",
+      adapters_mod.for_agent("junie").TARGET != adapters_mod.for_agent("generic").TARGET)
+
+# `.goosehints` has no suffix. An ignore rule written as `*.goosehints` never matches it, which is
+# the kind of thing that is only found after the file is committed.
+_goose_line = adapters_mod.ignore_line("goose")
+check("the goose ignore line matches a file with no extension",
+      _goose_line == "/.goosehints" and not _goose_line.startswith("*"))
+
+# Every module must be reachable and every alias must land somewhere real -- a typo in either
+# table produces a name that accepts --write and then does nothing.
+check("every writable name resolves to an adapter",
+      all(adapters_mod.for_agent(n) is not None for n in adapters_mod.names()))
+check("every module's target is unique and relative",
+      all(not Path(adapters_mod.for_agent(n).TARGET).is_absolute() for n in adapters_mod.ADAPTERS))
 
 
 # ---------------------------------------------------------------- cleanup
