@@ -10821,6 +10821,162 @@ check("NO TEST LAUNCHES A CHAMNAN SCRIPT BY BARE PATH — Windows cannot run one
 for _ln, _txt in _bare_launches[:5]:
     print(f"     line {_ln}: {_txt}")
 
+# =============================================================== OS-axis invariants
+# The OS axis is not "macOS vs Linux vs Windows". It is a spectrum of runtimes, and every one of
+# these rules exists because a defect of that shape has already been found here or is one line
+# away. Each is checked with the PARSER or by RUNNING something -- never by grepping for a string,
+# which has produced eleven assertions in this project that matched something other than what they
+# named.
+#
+#   native POSIX          macOS, Debian/Ubuntu/Fedora/Arch/openSUSE
+#   container POSIX       Alpine: musl, busybox coreutils, apk
+#   specialised POSIX     Termux: no /tmp, no /usr/bin, everything under the app's own prefix
+#   read-only runtimes    Lambda, containers: HOME is not writable, only the temp dir is
+#   BSD                   binaries under /usr/local/bin, no GNU-only CLI flags
+#   POSIX-on-Windows      Git Bash, MSYS2, Cygwin: /c/Users vs C:\Users vs /cygdrive/c
+#   native Windows        cmd.exe and PowerShell: shims, CRLF, file locking on replace
+
+
+def _runtime_sources():
+    """Every runtime file, INCLUDING the extensionless commands in bin/.
+
+    A `.py`-only sweep reported "everything compiles" while `bin/chamnan-map` was broken, in this
+    same session. Suffix is the wrong way to find source in a repository whose commands have none.
+    """
+    for folder in ("lib", "hooks", "bin"):
+        for path in sorted((ROOT / folder).rglob("*")):
+            if path.is_dir() or "__pycache__" in str(path) or path.suffix in (".cmd", ".sh", ".json"):
+                continue
+            try:
+                yield path, path.read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+
+
+def _calls(src, names, attr_of=None):
+    """Every call node in `src` whose function is one of `names`."""
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        if isinstance(node.func, ast.Attribute) and node.func.attr in names:
+            if attr_of is None or getattr(node.func.value, "id", "") == attr_of:
+                yield node
+        elif isinstance(node.func, ast.Name) and node.func.id in names and attr_of is None:
+            yield node
+
+
+# --- INVARIANT 1: every decoded subprocess names its encoding --------------------------------
+# `text=True` alone decodes with the machine's preferred encoding: UTF-8 on POSIX, the ANSI code
+# page on Windows. A Thai comment or an em dash then raises UnicodeDecodeError there and nowhere
+# else. This is the defect that failed CI three runs in a row.
+_unencoded = []
+for _path, _src in _runtime_sources():
+    for _node in _calls(_src, {"run", "check_output", "Popen"}, attr_of="subprocess"):
+        _kw = {k.arg for k in _node.keywords}
+        if ("text" in _kw or "universal_newlines" in _kw) and "encoding" not in _kw:
+            _unencoded.append(f"{_path.name}:{_node.lineno}")
+check("EVERY DECODED SUBPROCESS NAMES ITS ENCODING", not _unencoded)
+for _u in _unencoded[:5]:
+    print("     ", _u)
+
+# --- INVARIANT 2: every text file read and write names its encoding ---------------------------
+_unencoded_io = []
+for _path, _src in _runtime_sources():
+    for _node in _calls(_src, {"read_text", "write_text"}):
+        if "encoding" not in {k.arg for k in _node.keywords}:
+            _unencoded_io.append(f"{_path.name}:{_node.lineno}")
+check("EVERY TEXT FILE READ AND WRITE NAMES ITS ENCODING", not _unencoded_io)
+for _u in _unencoded_io[:5]:
+    print("     ", _u)
+
+# --- INVARIANT 3: no hardcoded absolute POSIX path -------------------------------------------
+# Termux has no `/tmp` and no `/usr/bin`; BSD puts tools in `/usr/local/bin`; Windows has none of
+# them. A literal path is a claim about a filesystem layout that four of the seven runtimes above
+# do not have. String CONSTANTS only -- a path inside a comment or a docstring is documentation.
+_HARDCODED = ("/tmp/", "/usr/bin/", "/usr/local/bin/", "/home/", "/var/tmp/", "C:\\")
+_literal_paths = []
+for _path, _src in _runtime_sources():
+    for _node in ast.walk(ast.parse(_src)):
+        if not (isinstance(_node, ast.Constant) and isinstance(_node.value, str)):
+            continue
+        # A docstring is an Expr statement's value; those are prose, not paths in use.
+        if any(_node.value.startswith(h) for h in _HARDCODED) and len(_node.value) > 5:
+            _literal_paths.append(f"{_path.name}:{_node.lineno}  {_node.value[:40]}")
+check("NO RUNTIME FILE HARDCODES AN ABSOLUTE POSIX PATH", not _literal_paths)
+for _lp in _literal_paths[:6]:
+    print("     ", _lp)
+
+# --- INVARIANT 4: every path chamnan PUBLISHES is POSIX-shaped and resolves ------------------
+# Two structural versions of this were written and both were wrong. The first banned splitting on
+# a separator and flagged six correct sites, including the two in `pointer.py` that exist to make
+# Windows work. The second demanded a normalisation inside every function that splits -- but
+# normalisation happens at the BOUNDARY (`"/".join(path.relative_to(root).parts)`), and the
+# functions downstream legitimately assume it has already happened.
+#
+# The property is not expressible as a rule about source text, so it is checked by RUNNING the
+# indexer on a nested tree and reading what it wrote. On Windows this is the check that matters:
+# `.parts` joined with "/" is POSIX-shaped everywhere, and a `str(Path)` that slipped through
+# would show up here as a backslash and nowhere else.
+_pathrepo = Path(tempfile.mkdtemp()) / "nested"
+(_pathrepo / ".git").mkdir(parents=True)
+(_pathrepo / "src" / "deep" / "deeper").mkdir(parents=True)
+(_pathrepo / "src" / "top.py").write_text("# the top module\ndef a():\n    return 1\n", encoding="utf-8")
+(_pathrepo / "src" / "deep" / "mid.py").write_text("# the middle one\ndef b():\n    return 2\n", encoding="utf-8")
+(_pathrepo / "src" / "deep" / "deeper" / "low.py").write_text("# the deep one\ndef c():\n    return 3\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True,
+               encoding="utf-8", errors="replace", cwd=_pathrepo)
+_mapped = (_pathrepo / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("the indexer reached every depth of a nested tree",
+      all(name in _mapped for name in ("top.py", "mid.py", "low.py")))
+check("NO PUBLISHED PATH CARRIES A BACKSLASH SEPARATOR",
+      "src\\deep" not in _mapped and "\\deeper" not in _mapped)
+# And the paths must RESOLVE from the root, which is the thing a reader will try to do with them.
+_published = [ln.split("`")[1] for ln in _mapped.splitlines()
+              if ln.startswith("- **`") and ln.count("`") >= 2]
+_dead = [q for q in _published if "/" in q and not (_pathrepo / q).exists()]
+check("...and every published path resolves from the repository root", not _dead)
+for _d in _dead[:4]:
+    print("     ", _d)
+shutil.rmtree(_pathrepo.parent, ignore_errors=True)
+
+# --- INVARIANT 5: a read-only HOME must not stop the plugin -----------------------------------
+# Lambda and most containers give a read-only HOME and a writable temp dir. Anything chamnan writes
+# outside the repository has to survive that. RUN, not read: the check makes HOME unwritable and
+# calls the code.
+_ro_home = Path(tempfile.mkdtemp())
+_ro_repo = make_workspace("chamnan-rohome-")
+try:
+    os.chmod(_ro_home, 0o500)
+    _ro = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", cwd=_ro_repo,
+                         env={**os.environ, "HOME": str(_ro_home), "USERPROFILE": str(_ro_home)})
+    check("THE HOOK SURVIVES A READ-ONLY HOME", _ro.returncode == 0)
+    check("...and still delivers its block rather than an empty string",
+          "chamnan" in _ro.stdout)
+finally:
+    os.chmod(_ro_home, 0o700)
+    shutil.rmtree(_ro_home, ignore_errors=True)
+    shutil.rmtree(_ro_repo, ignore_errors=True)
+
+# --- INVARIANT 6: a shim for every entry point ------------------------------------------------
+# Already asserted above by the generator's own --check. Restated here as a property of the tree
+# rather than of the generator, so removing the generator cannot remove the guarantee.
+_entry_points = {p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix}
+_shims = {p.stem for p in (ROOT / "bin").glob("*.cmd")}
+check("EVERY bin/ ENTRY POINT HAS A WINDOWS SHIM", _entry_points <= _shims)
+check("...and no shim points at a command that no longer exists", _shims <= _entry_points)
+
+# --- INVARIANT 7: package managers are discovered, never assumed ------------------------------
+# Checked on the preflight's source because it is shell rather than Python: every manager must be
+# reached through `command -v`, which is `shutil.which` for sh. A hardcoded `/usr/bin/apt-get`
+# would be wrong on Termux, on BSD, and inside a container with a different prefix.
+_managers = ("apt-get", "dnf", "yum", "pacman", "apk", "zypper", "brew", "winget", "choco")
+_assumed = [m for m in _managers if f"command -v {m}" not in _sh_src and f"/{m}" in _sh_src]
+check("EVERY PACKAGE MANAGER IS DISCOVERED WITH command -v, NOT ASSUMED BY PATH", not _assumed)
+check("...and all of them are looked for, not a subset",
+      all(f"command -v {m}" in _sh_src for m in _managers))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
