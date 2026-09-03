@@ -173,6 +173,13 @@ def main():
         except ValueError as exc:
             sys.stderr.write(f"chamnan-context: {exc}\n")
             return 1
+        except OSError as exc:
+            # `.clinerules` is the live case: Cline accepts it as a FILE or as a DIRECTORY, and a
+            # repository using the file form makes `mkdir` fail. Refusing is right -- the file
+            # holds rules somebody wrote -- but a traceback is not a message, and this is what a
+            # user sees at the moment it happens.
+            sys.stderr.write(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
+            return 1
         print(f"chamnan-context -> {written}")
         line = adapters.ignore_line(args.write)
         if line:
