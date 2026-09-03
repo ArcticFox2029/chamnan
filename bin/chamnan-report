@@ -317,6 +317,32 @@ def known_commands():
     return sorted(p.name for p in HERE.iterdir() if p.is_file() and p.name.startswith("chamnan-"))
 
 
+def command_summaries():
+    """{name: what it does} — the half of its own docstring each command writes after the dash.
+
+    🐛 The Usage table printed nine names and nine counts and explained none of them. Every other
+    section of this report justifies its own numbers and says what to do next; this one asked the
+    reader to already know what `chamnan-age` and `chamnan-peek` are. That matters most on the rows
+    it exists to show — a zero beside a name you have never heard of is noise, and a zero beside
+    "which stored knowledge names a version no environment declares" is a suggestion.
+
+    Read from each script's own docstring rather than a table kept here, for the same reason
+    `known_commands` reads the directory: a new command explains itself the day it is added.
+    """
+    out = {}
+    for name in known_commands():
+        try:
+            head = (HERE / name).read_text(encoding="utf-8", errors="replace")[:400]
+        except OSError:
+            continue
+        for line in head.splitlines():
+            line = line.strip().lstrip('"')
+            if line.startswith(name) and "—" in line:
+                out[name] = line.split("—", 1)[1].strip().rstrip(".")
+                break
+    return out
+
+
 def print_usage(root):
     """Counts, never a savings figure — a tokens-saved number would be invented, and this project
     already retired an "Engineer Scoreboard" for measuring what is easy instead of what matters.
@@ -329,9 +355,15 @@ def print_usage(root):
     counts, oldest, newest = workflows.usage_counts(log, known_commands())
     print("Usage")
     width = max(len(name) for name in counts)
+    summaries = command_summaries()
     for name in sorted(counts):
         n = counts[name]
-        print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}")
+        # The description is what turns an unfamiliar zero into something the reader can act on.
+        # Truncated rather than wrapped: this is a table, and a row that wraps stops being one.
+        what = summaries.get(name, "")
+        if what:
+            what = f"  — {what[:58]}" + ("…" if len(what) > 58 else "")
+        print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}{what}")
     if oldest and newest:
         print(f"  (from the calls currently logged, {oldest[:10]} to {newest[:10]} — "
               f"commands.jsonl keeps {workflows.KEEP_DAYS} days; chamnan's own commands are never "

@@ -1023,6 +1023,25 @@ shutil.rmtree(_dgd.parent, ignore_errors=True)
 check("a healthy workspace reports none", _mem.dangling_citations(ROOT) == [])
 
 check("chamnan-report prints the Usage heading", "Usage" in report_out)
+# 🐛 Nine names and nine counts, explaining none of them, in a report where every other section
+# justifies its own numbers. A zero beside a command the reader has never heard of is noise; the
+# same zero beside what the command does is a suggestion — and the unused rows are the ones this
+# section exists to show. Read from each script's own docstring, so a new command explains itself
+# the day it is added rather than the day somebody remembers a table here.
+check("EVERY COMMAND IN THE USAGE TABLE SAYS WHAT IT DOES",
+      "read the shape of one file instead of the whole thing" in report_out)
+check("...for every command, not just the ones that were run",
+      report_out.count(" — ") >= 8)
+# Checked through the OUTPUT rather than by importing the script. `bin/chamnan-report` has no `.py`
+# extension, so `importlib.util.spec_from_file_location` needs a loader spelled out — and the
+# attempt to do that reached for `importlib.util.machinery`, which does not exist. Reading the
+# printed table is what a user sees anyway, and it catches a command whose docstring lacks the dash.
+_usage_block = report_out.split("Usage", 1)[1].split("\n\n", 1)[0]
+_described = {l.split()[0] for l in _usage_block.splitlines()
+              if l.startswith("  chamnan-") and " — " in l}
+_all_cmds = {p.name for p in (ROOT / "bin").glob("chamnan-*") if p.is_file()}
+check("...and every command actually has one — a new one without a dash line would be missed",
+      _described == _all_cmds)
 check("a command never logged reads as 0, not absent", "chamnan-map" in report_out and "0 times" in report_out)
 check("no promoted tools yet -> no Promoted tools section", "Promoted tools" not in report_out)
 
