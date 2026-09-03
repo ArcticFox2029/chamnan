@@ -3644,6 +3644,49 @@ for lang, (_src, minimum) in sorted(MIN_YIELD.items()):
         got = len(ff) + len(cc)
     check(f"{lang} extracts at least {minimum} symbols from ordinary code", got >= minimum)
 
+# ------------------------------------------------------------ non-ASCII names survive byte-exact
+# CPython's parser NFKC-normalises non-ASCII identifiers before `ast` ever sees them (PEP 3131).
+# Thai's SARA AM (U+0E33) is the common case: it normalises to NIKHAHIT (U+0E4D) + SARA AA
+# (U+0E32), one codepoint becoming two. Rendered, both spellings look identical -- which is exactly
+# why this must be asserted on CODEPOINTS, not on the string a human reads. A test that compared
+# the glyphs would pass whether or not `node.name` had been silently rewritten, and that is the
+# whole reason the bug survived until someone grepped MAP.md for a name copied out of the source
+# and got nothing back.
+_thai_src_name = "คำนวณราคา"     # 9 codepoints, as written
+_thai_normalized = "คํานวณราคา"  # 10, what ast.parse gives
+check("the fixture's own SARA AM name really does differ from its NFKC form",
+      _thai_src_name != _thai_normalized and len(_thai_src_name) == 9 and len(_thai_normalized) == 10)
+_thai_src = f"def {_thai_src_name}():\n    pass\n"
+_thai_funcs = mapper.extract_python(_thai_src, Path("thai.py"))[1]
+_thai_got = _thai_funcs[0][0].split("(")[0]
+check("a Thai function name with SARA AM is reported with the SOURCE's codepoints, not ast's NFKC form",
+      _thai_got == _thai_src_name)
+check("...and specifically NOT with the normalized codepoints a naive `node.name` read would give",
+      _thai_got != _thai_normalized)
+
+# A class name and a method name that BOTH carry SARA AM (so both would fail on the pre-fix
+# `node.name` read, same as the function case above), and the method name ALSO carries two more
+# combining marks (tone/vowel signs, Unicode category Mn) beyond the SARA AM one -- category Mn is
+# legal inside a Python identifier but is NOT matched by `\w` in Python's `re` module, which follows
+# `str.isalnum()` and excludes combining marks. A regex-based `\w+` re-read of the source line --
+# the tempting fix for the ast-normalization bug -- truncates "คำสั่งซื้อ" after "คำส" (stopping at
+# the first mark `\w` cannot see), trading one silent corruption for another.
+_thai_cls_name = "ทำงาน"        # 5 codepoints; NFKC gives 6 (SARA AM splits)
+_thai_method_name = "คำสั่งซื้อ"  # 10 codepoints, SARA AM plus two other combining marks; NFKC gives 11
+import unicodedata as _unicodedata_thai  # local: the module-level `import unicodedata` lives later in this file
+check("the class/method fixture names really do differ from their NFKC form too",
+      _thai_cls_name != _unicodedata_thai.normalize("NFKC", _thai_cls_name)
+      and _thai_method_name != _unicodedata_thai.normalize("NFKC", _thai_method_name))
+_thai_cls_src = (f"class {_thai_cls_name}:\n"
+                 f"    def {_thai_method_name}(self):\n"
+                 f"        pass\n")
+_thai_classes = mapper.extract_python(_thai_cls_src, Path("thai2.py"))[2]
+check("a Thai class name with SARA AM round-trips byte-exact, not ast's NFKC form",
+      _thai_classes[0][0] == _thai_cls_name)
+check("a Thai method name with SARA AM plus other combining marks round-trips byte-exact, "
+      "not ast's NFKC form and not truncated at the first mark",
+      _thai_classes[0][2][0] == _thai_method_name)
+
 # ---------------------------------------------------------------- a restated filename's separator
 # Found by rebuilding a real repository's map and reading the diff, not by a test. A header that
 # opens `# cve.sh — ตรวจ CVE ชุดนี้` had the filename stripped (the row already shows it) and the

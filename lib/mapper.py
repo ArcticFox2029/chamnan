@@ -718,6 +718,56 @@ def _one_comment(lines, i, prefix=COMMENT_PREFIX):
 
 _PARSE_MEMO = (None, None)
 
+# The keyword(s) in front of the name, on the ONE line a def/class node's col_offset points to.
+# Only the keyword -- the name itself is walked off character by character below, NOT captured
+# with `\w+`: Thai tone marks and vowel signs (U+0E48 MAI EK, U+0E39 SARA UU, ...) are legal
+# inside a Python identifier (PEP 3131 allows Unicode category Mn/Mc after the first character)
+# but `\w` in Python's `re` follows `str.isalnum()`, which excludes combining marks. `\w+` on
+# "ลูกค้า" stops after the first letter -- it matches Lo but not the Mn tone mark right after it --
+# so a regex "fix" here would have replaced one silent truncation with another.
+_DEF_KEYWORD = re.compile(r"^(?:async\s+)?(?:def|class)\s+")
+
+
+def _verbatim_name(source_lines, node):
+    """`node.name` re-read from the source line instead of trusted as `ast` reports it.
+
+    CPython's parser NFKC-normalises non-ASCII identifiers before `ast` ever sees them (PEP 3131),
+    so `node.name` is not always what the file spells. Thai's SARA AM (U+0E33) is the common case:
+    it normalises to NIKHAHIT + SARA AA, two codepoints for one, so a name that is 9 codepoints in
+    the source comes back 10 codepoints long from `ast` -- visually identical, and a literal `grep`
+    for either spelling misses the other. MAP.md's own header tells the reader to grep it, so this
+    silently broke the documented workflow.
+
+    `node.lineno`/`node.col_offset` name the exact `def`/`class` keyword regardless -- normalisation
+    only touches the identifier text, not where the parser says it starts. `col_offset` is a UTF-8
+    BYTE offset, not a character offset, so the line is encoded before slicing and decoded after;
+    slicing the `str` directly would cut mid-character on any line with non-ASCII text before the
+    keyword (a preceding decorator never applies -- it is always a separate node on its own line).
+
+    The name is then walked off one character at a time, using `str.isidentifier()` -- the same
+    XID_Start/XID_Continue rule the parser itself used to accept it -- rather than a regex class,
+    because no fixed regex character class matches exactly what CPython accepts as an identifier.
+
+    Falls back to `node.name` if the source line cannot be re-read (should not happen for a node
+    `ast` just produced from this exact `source`, but a fallback beats a crash on a well-formed
+    file for something that is a display nicety, not correctness-critical).
+    """
+    try:
+        line = source_lines[node.lineno - 1]
+        after = line.encode("utf-8")[node.col_offset:].decode("utf-8")
+    except (IndexError, UnicodeDecodeError):
+        return node.name
+    m = _DEF_KEYWORD.match(after)
+    if not m:
+        return node.name
+    name = ""
+    for c in after[m.end():]:
+        candidate = name + c
+        if not candidate.isidentifier():
+            break
+        name = candidate
+    return name or node.name
+
 
 def _parse_py(source, path):
     """Parse a Python file once, not twice.
@@ -770,14 +820,17 @@ def extract_python(source, path, lang='py'):
         # coverage figure the whole design leans on.
         doc = leading_comment(source, lang)
     funcs, classes, consts = [], [], []
+    source_lines = source.splitlines()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             args = ", ".join(a.arg for a in node.args.args)
-            funcs.append((f"{node.name}({args})", _clip(ast.get_docstring(node) or "", 90)))
+            name = _verbatim_name(source_lines, node)
+            funcs.append((f"{name}({args})", _clip(ast.get_docstring(node) or "", 90)))
         elif isinstance(node, ast.ClassDef):
-            methods = [n.name for n in node.body
+            methods = [_verbatim_name(source_lines, n) for n in node.body
                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-            classes.append((node.name, _clip(ast.get_docstring(node) or "", 90), methods))
+            classes.append((_verbatim_name(source_lines, node),
+                             _clip(ast.get_docstring(node) or "", 90), methods))
         elif isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Name) and t.id.isupper() and len(t.id) > 2:
