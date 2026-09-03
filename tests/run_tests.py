@@ -125,6 +125,30 @@ check("marketplace lists this plugin", any(p["name"] == manifest["name"] for p i
 # nobody — the marketplace updates and the cached plugin stays exactly as it was.
 check("marketplace has a description", bool(market.get("description")))
 
+# 🐛 The version string is what an installed copy compares itself against, and it is the ONLY
+# trigger for the "you are running a stale build" banner. At the time this was written the working
+# tree carried 76 commits past tag v1.15.0 while `plugin.json` still read "1.15.0" — so the entire
+# safety net was dark, silently, and would have shipped that way if the release had gone out
+# unbumped: the marketplace updates, every cached plugin stays exactly as it was, and nothing says
+# a word.
+#
+# Reported, not failed. A version equal to the newest tag is the CORRECT state for most of a
+# repository's life — it means nothing has been released since — and a check that fails on that
+# would be red between every pair of releases, which is how a check stops being read. What is worth
+# saying out loud is the DRIFT, at the moment somebody runs the suite before releasing.
+_tag = subprocess.run(["git", "describe", "--tags", "--abbrev=0"], capture_output=True,
+                      text=True, cwd=str(ROOT)).stdout.strip()
+if _tag:
+    _ahead = subprocess.run(["git", "log", "--oneline", f"{_tag}..HEAD"], capture_output=True,
+                            text=True, cwd=str(ROOT)).stdout.split("\n")
+    _ahead = len([l for l in _ahead if l.strip()])
+    if _ahead and _tag.lstrip("v") == manifest.get("version"):
+        print(f"  NOTE  {_ahead} commit(s) past {_tag} and plugin.json still says "
+              f"{manifest['version']} — bump it before releasing, or installed copies never "
+              f"refresh and the stale-build banner stays dark.")
+    check("the version is semver and the tag it matches is a real one",
+          bool(re.fullmatch(r"v?\d+\.\d+\.\d+", _tag)))
+
 # ---------------------------------------------------------------- fixture repo
 fixture = Path(tempfile.mkdtemp(prefix="chamnan-test-")).resolve()
 (fixture / "migrations").mkdir()
