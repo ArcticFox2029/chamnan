@@ -35,6 +35,7 @@ import deploy as deploy_mod  # noqa: E402
 import impact as impact_mod  # noqa: E402
 import workflows  # noqa: E402
 import candidates  # noqa: E402
+import host as host_mod  # noqa: E402
 import ledger  # noqa: E402
 import tools_index  # noqa: E402
 import memory as memory_mod  # noqa: E402
@@ -9816,6 +9817,65 @@ os.symlink(_slroot.parent / "gone", _slroot / "dangling")
 check("...while a dangling link pointing outside is refused",
       not _ws.inside(_slroot / "dangling", _slroot))
 shutil.rmtree(_slroot.parent, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- host detection
+# Detection is the seam every multi-agent and multi-OS path hangs off, so it is tested against
+# machines this suite is NOT running on. Every input is injected -- no test here may depend on
+# what happens to be installed on the machine running it, or it passes for the wrong reason on
+# the author's laptop and fails in CI for a reason that is not a defect.
+check("this machine's OS resolves to a known family",
+      host_mod.os_family() in ("macos", "linux", "windows"))
+check("is_windows agrees with os_family", host_mod.is_windows() == (host_mod.os_family() == "windows"))
+
+_hroot = Path(tempfile.mkdtemp())
+_hhome = Path(tempfile.mkdtemp())
+
+# Nothing set up anywhere. The answer is "generic", and it is a real answer rather than a guess.
+check("an empty repository on a bare machine detects nothing",
+      host_mod.agents(root=_hroot, env={}, home=_hhome) == [])
+check("...and its primary is generic, with no strength claimed",
+      host_mod.primary(root=_hroot, env={}, home=_hhome) == ("generic", ""))
+
+# The case this module exists for: three agents installed at once, which is what the machine it
+# was written on actually looks like. A detector that collapses this to one winner hides two.
+(_hhome / ".claude").mkdir()
+(_hhome / ".gemini").mkdir()
+(_hhome / ".kiro").mkdir()
+_three = host_mod.agents(root=_hroot, env={}, home=_hhome)
+check("three agents installed side by side are all reported",
+      [n for n, _ in _three] == ["claude", "gemini", "kiro"])
+check("...all of them on home evidence, the weakest strength",
+      {st for _, st in _three} == {host_mod.HOME})
+
+# A running agent outranks an installed one, even when the installed one is listed first.
+_running = host_mod.agents(root=_hroot, env={"CLAUDECODE": "1"}, home=_hhome)
+check("a RUNNING agent sorts above every merely-installed one", _running[0] == ("claude", host_mod.RUNNING))
+
+# And a repository set up for Cursor beats Claude being merely installed -- the strength ordering
+# has to hold across agents, not only within one.
+(_hroot / ".cursor").mkdir()
+_mixed = host_mod.agents(root=_hroot, env={}, home=_hhome)
+check("repository evidence outranks home evidence from a different agent",
+      _mixed[0] == ("cursor", host_mod.REPO))
+check("...and the home-only agents are still listed, not dropped",
+      {n for n, _ in _mixed} >= {"claude", "gemini", "kiro"})
+
+# A marker written with a trailing slash must be a DIRECTORY. `.cursorrules` is a file and
+# `.cursor/` a directory; treating one as the other is how a detector fires on the wrong thing.
+_hroot2 = Path(tempfile.mkdtemp())
+(_hroot2 / ".cursor").write_text("not a directory\n", encoding="utf-8")
+check("a directory marker does not match a plain file of the same name",
+      host_mod.agents(root=_hroot2, env={}, home=_hhome / "nothing-here") == [])
+
+# Unreadable or missing inputs are answers, not exceptions: this runs at session start on
+# somebody else's machine, and an exception there costs them the whole block.
+check("a root that does not exist is survivable",
+      host_mod.agents(root=_hroot / "no" / "such" / "dir", env={}, home=_hhome / "gone") == [])
+
+shutil.rmtree(_hroot, ignore_errors=True)
+shutil.rmtree(_hroot2, ignore_errors=True)
+shutil.rmtree(_hhome, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup
