@@ -10000,8 +10000,19 @@ os.symlink(_slroot.parent / "gone", _slroot / "dangling")
 # `C:\Users\runneradmin\...`, so the prefix test failed and the check ran where it should have
 # been skipped. Both sides go through realpath now, which is the only way to compare two names for
 # the same directory on a filesystem that has more than one name for it.
-_dangling_target = os.path.realpath(str(_slroot / "dangling"))
-if not _dangling_target.startswith(os.path.realpath(str(_slroot))):
+# 🐛 And the guard used `os.path.realpath` while `inside()` uses `Path.resolve()`. The two
+# disagree on Windows/3.8 for a DANGLING link: `resolve()` there returns the link's own path
+# rather than its target, so `inside()` sees something under the root and correctly says so, while
+# realpath said the target was outside and the guard let the check run. Windows 3.13 resolves it
+# and passes; 3.8 does not and failed.
+#
+# A precondition has to be measured with the SAME mechanism as the code under test, or it is
+# answering a different question. This asks `Path.resolve()`, which is what `inside()` asks.
+try:
+    _dangling_resolved = (_slroot / "dangling").resolve()
+except (OSError, ValueError, RuntimeError):
+    _dangling_resolved = _slroot / "dangling"
+if _slroot.resolve() not in _dangling_resolved.parents:
     check("...while a dangling link pointing outside is refused",
           not _ws.inside(_slroot / "dangling", _slroot))
 else:
