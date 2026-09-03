@@ -11755,6 +11755,98 @@ _rmtree(_hoist.parent, ignore_errors=True)
 _rmtree(_hoist_out.parent, ignore_errors=True)
 
 
+# ================= a hard link is not a symlink, and one adapter reads before it writes
+# 🐛 `safe_target` refuses a symlink anywhere in the chain. A HARD LINK is not one: `is_symlink()`
+# is False and `resolve()` returns the path itself, so a hardlinked target passed every check.
+#
+# For a write-only adapter that is harmless — `atomic_write_text` replaces the name rather than
+# writing through it. `gemini` READS THE TARGET FIRST and merges. Rendered end to end:
+# `.gemini/settings.json` hardlinked to a settings file outside the repository, `--write gemini`,
+# and that file's `apiKey` landed in a new repository-local file — the secret now in something
+# committable.
+if _POSIX:
+    _hl = Path(tempfile.mkdtemp()) / "repo"
+    (_hl / ".gemini").mkdir(parents=True)
+    (_hl / ".chamnan").mkdir()
+    _hl_victim = Path(tempfile.mkdtemp()) / "settings.json"
+    _hl_victim.write_text('{"apiKey":"sk-live-VICTIM-abcdefghijklmnop","hooks":{}}', encoding="utf-8")
+    os.link(_hl_victim, _hl / ".gemini" / "settings.json")
+    _hl_refused = ""
+    try:
+        adapters_mod.install(_hl, "gemini", "block", "cmd")
+    except ValueError as _exc:
+        _hl_refused = str(_exc)
+    check("A HARDLINKED TARGET IS REFUSED, NOT MERGED INTO", "hard link" in _hl_refused)
+    check("...and the file outside the repository is untouched",
+          "sk-live-VICTIM-abcdefghijklmnop" in _hl_victim.read_text(encoding="utf-8"))
+    check("...and no repository-local copy of its contents was made",
+          (_hl / ".gemini" / "settings.json").stat().st_ino == _hl_victim.stat().st_ino)
+    # An ordinary target must still be written, or the guard has closed the door on everyone.
+    _hl_ok = Path(tempfile.mkdtemp()) / "repo"
+    (_hl_ok / ".chamnan").mkdir(parents=True)
+    check("...while an ordinary target still writes",
+          adapters_mod.install(_hl_ok, "cursor", "## chamnan\nblock\n", "").is_file())
+    _rmtree(_hl.parent, ignore_errors=True)
+    _rmtree(_hl_victim.parent, ignore_errors=True)
+    _rmtree(_hl_ok.parent, ignore_errors=True)
+else:
+    print("  [SKIP] hardlink checks — os.link is not available the same way here")
+
+# ------------------------------------------- a zip member's claimed size is written by the zip
+# 🐛 Every `zf.read(name)` in peek read a whole member unbounded. A 59 KB crafted `.xlsx` drove
+# 521 MB of resident memory and 0.91s through one call; with the bound, 30 MB and 0.24s — 17x less
+# memory. `chamnan-peek` runs on a file somebody asked about, which is often a file they did not
+# write.
+_peek_src = (ROOT / "lib" / "peek.py").read_text(encoding="utf-8")
+# 🐛 Written as `"zf.read(" not in _peek_src` — and the comment above the fix SPELLS OUT the old
+# call to explain what was wrong, so the check matched its own documentation. Fourteenth time in
+# this project. Asked of the parser: an attribute call named `read` on a name `zf` is code; a
+# mention of it in a comment is not.
+_zip_unbounded = [n.lineno for n in ast.walk(ast.parse(_peek_src))
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+                  and n.func.attr == "read" and getattr(n.func.value, "id", "") == "zf"]
+check("no zip member is read without a bound", not _zip_unbounded)
+check("...and the bound is applied to the DECOMPRESSED stream, not a claimed size",
+      "zf.open(name)" in _peek_src and "member.read(limit)" in _peek_src)
+
+_bomb = Path(tempfile.mkdtemp()) / "bomb.xlsx"
+import zipfile as _zf
+with _zf.ZipFile(_bomb, "w", _zf.ZIP_DEFLATED, compresslevel=9) as _z:
+    _z.writestr("[Content_Types].xml", "<Types/>")
+    _z.writestr("xl/workbook.xml",
+                "<workbook><sheets><sheet name='S' r:id='rId1'/></sheets></workbook>")
+    _z.writestr("xl/worksheets/sheet1.xml", "<x>" + ("A" * 40_000_000) + "</x>")
+check("a decompression bomb is small on disk, as the attack requires",
+      _bomb.stat().st_size < 200_000)
+_bombout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-peek"), str(_bomb)],
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=60)
+check("A DECOMPRESSION BOMB DOES NOT HANG OR EXHAUST MEMORY", _bombout.returncode == 0)
+check("...and peek still says what the file is", ".xlsx" in _bombout.stdout)
+_rmtree(_bomb.parent, ignore_errors=True)
+
+# --------------------------- the scratch log kept the opening line of every throwaway script
+# 🐛 `redact` was imported by the scratch watcher and used ONLY on the notice printed to the user.
+# What was WRITTEN to `logs/scratch.jsonl` went to disk verbatim. The workspace's own .gitignore
+# says in its comment that "a credential typed into a one-off script lands in these files intact" —
+# that was a description of a defect, not a design.
+_sw_src = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8")
+check("the scratch log scrubs the line it keeps", "redact.scrub(headline(text))" in _sw_src)
+# The fingerprint is FILTERED rather than scrubbed: it is a set of tokens, and a placeholder token
+# would be a fingerprint of nothing.
+check("...and drops any fingerprint token the redactor would have removed",
+      "redact.scrub(t) == t" in _sw_src)
+_sw_spec = importlib.util.spec_from_file_location(
+    "sw_probe", str(ROOT / "hooks" / "chamnan_scratch_watch.py"))
+_sw = importlib.util.module_from_spec(_sw_spec)
+_sw_spec.loader.exec_module(_sw)
+_planted = 'AWS_SECRET_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\nimport boto3\n'
+check("A KEY ON A SCRATCH SCRIPT'S FIRST LINE DOES NOT REACH THE LOG VERBATIM",
+      "AKIAIOSFODNN7EXAMPLE" not in redact.scrub(_sw.headline(_planted)))
+check("...while the line still says what the script was doing",
+      "AWS_SECRET_ACCESS_KEY" in redact.scrub(_sw.headline(_planted)))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

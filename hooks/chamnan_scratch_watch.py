@@ -476,12 +476,27 @@ def main():
     # was not written for.
     matches = [p for p in prior
                if p.get("kind", "scratch") == "scratch" and jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
+    # 🐛 `redact` was imported here and used only on the notice PRINTED to the user. What was
+    # WRITTEN to `logs/scratch.jsonl` — the opening line of every throwaway script, and a token
+    # fingerprint of its body — went to disk verbatim. Rendered: a key planted in a scratch script
+    # came back out of the log in `head` and again as a token in `fp`.
+    #
+    # The workspace's own `.gitignore` names this file and says in its comment that "a credential
+    # typed into a one-off script lands in these files intact". That was a description of a defect,
+    # not a design: the redactor is right there, the cost is one pass over one line, and a file
+    # being gitignored is not a reason to keep a secret in it — it still sits in the clone, in
+    # plain text, for as long as the retention window.
+    #
+    # `fp` is filtered rather than scrubbed: it is a set of tokens, and a placeholder token would
+    # be a fingerprint of nothing. A token that the redactor would have removed is simply dropped.
+    _head = redact.scrub(headline(text))
+    _fp = [t for t in sorted(fp)[:120] if redact.scrub(t) == t]
     entry = {
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "kind": "scratch",
         "tool": tool_name,
-        "fp": sorted(fp)[:120],
-        "head": headline(text),
+        "fp": _fp,
+        "head": _head,
     }
     if file_path:
         entry["file"] = file_path
