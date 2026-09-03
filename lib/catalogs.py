@@ -19,6 +19,7 @@ import re
 import subprocess
 from pathlib import Path
 
+import mdblock
 import impact  # for is_test — see the guard in the file loops below
 
 import redact
@@ -479,7 +480,20 @@ def render_routes(routes):
             out.append(f"Showing {cap} of {len(group)}; grep the source files for the rest.")
         out.append("")
         for (method, path_), source in group[:cap]:
-            out.append(f"- `{method:<6} {path_}`  _({source})_")
+            # 🐛 Written straight into MAP.md, which the pre-commit hook commits and the hook
+            # injects into every session — from a string the repository chose. Several route
+            # patterns capture with `[^"']*`, and that class INCLUDES a newline, so a quoted path
+            # containing one carried the rest of the file's text into the index as markdown.
+            # Reproduced in ordinary, valid JavaScript — a template literal spanning two lines —
+            # which put a real `## Injected heading` and a paragraph of an attacker's prose above
+            # `## Full Detail`, where an agent reads it as something chamnan published.
+            #
+            # `mdblock.as_quoted` is the helper this codebase already uses for exactly this, on
+            # Quick Index filenames and milestone titles: it folds newlines away, neutralises the
+            # backticks that would close the span it sits in, and bounds the length. These four
+            # modules extract repository substrings and none of them imported it.
+            out.append(f"- `{mdblock.as_quoted(method, 12):<6} {mdblock.as_quoted(path_, 200)}`"
+                       f"  _({mdblock.as_quoted(source, 120)})_")
     out.append("")
     return "\n".join(out)
 
@@ -602,7 +616,7 @@ def render_env(pairs, unsafe):
         out.append(f"Showing the {MAX_ENV_LISTED} referenced in the most places, of {len(pairs)}. "
                    f"Grep the repository for the rest.")
     out.append("")
-    out.append(", ".join(f"`{n}`" for n, _ in pairs[:MAX_ENV_LISTED]))
+    out.append(", ".join(f"`{mdblock.as_quoted(n, 80)}`" for n, _ in pairs[:MAX_ENV_LISTED]))
     # 🐛 The list read as complete and is not. It is built from call shapes chamnan knows, and a
     # language whose shape is missing contributes nothing with no sign that anything is absent —
     # measured on a real polyglot service repository, twelve Go variables in one service were
@@ -619,7 +633,11 @@ def render_env(pairs, unsafe):
                "in this list and is not counted as absent either._")
     if unsafe:
         out.append("")
-        out.append(f"> ⚠️ `{', '.join(unsafe)}` is not matched by .gitignore. That file usually "
-                   f"holds live credentials; committing it publishes them.")
+        # Only the LEAF has to be `.env`; every parent directory in the path is a name somebody
+        # chose, and it needs no code at all — a `mkdir` is enough. Reproduced breaking out of this
+        # blockquote and adding a second, fabricated alert line beneath it.
+        out.append(f"> ⚠️ `{mdblock.as_quoted(', '.join(unsafe), 200)}` is not matched by "
+                   f".gitignore. That file usually holds live credentials; committing it "
+                   f"publishes them.")
     out.append("")
     return "\n".join(out)

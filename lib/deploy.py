@@ -14,6 +14,7 @@ YAML is matched with regexes rather than parsed. There is no YAML parser in the 
 and shipping one to read four fields would trade the plugin's only real deployment advantage — no
 dependencies — for a marginal gain in precision.
 """
+import mdblock
 import pathlib
 import re
 from collections import defaultdict
@@ -225,18 +226,22 @@ def render(found):
         lines.append(f"{total} Kubernetes object(s):")
         for kind in sorted(k8s, key=lambda k: (-len(k8s[k]), k)):
             names = sorted(k8s[kind])
-            shown = ", ".join(f"`{n}`" for n in names[:MAX_PER_GROUP])
+            # Kubernetes names, compose service names and image references are all read out
+            # of repository YAML and written into MAP.md, which is committed and injected. Same
+            # neutralisation the route, env and schema catalogues take: folded onto one line, with
+            # the backticks that would close this span removed. See lib/mdblock.as_quoted.
+            shown = ", ".join(f"`{mdblock.as_quoted(n, 80)}`" for n in names[:MAX_PER_GROUP])
             more = f" _+{len(names)-MAX_PER_GROUP}_" if len(names) > MAX_PER_GROUP else ""
             note = "  _(names only — never their contents)_" if kind in NEVER_EXPAND else ""
             lines.append(f"- **{kind}** ({len(names)}) — {shown}{more}{note}")
     if found["compose"]:
         svc = sorted(found["compose"])
         lines.append(f"- **Compose services** ({len(svc)}) — "
-                     + ", ".join(f"`{s}`" for s in svc[:MAX_PER_GROUP]))
+                     + ", ".join(f"`{mdblock.as_quoted(s, 80)}`" for s in svc[:MAX_PER_GROUP]))
     if found["images"]:
         img = sorted(found["images"])
         lines.append(f"- **Images** ({len(img)}) — "
-                     + ", ".join(f"`{i}`" for i in img[:8])
+                     + ", ".join(f"`{mdblock.as_quoted(i, 80)}`" for i in img[:8])
                      + (f" _+{len(img)-8}_" if len(img) > 8 else ""))
     for key, label in (("ansible", "Ansible"), ("helm", "Helm charts"), ("ci", "Pipelines")):
         items = sorted(found[key])

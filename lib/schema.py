@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 import redact
+import mdblock
 import impact  # for is_test — see the guard in the file loop below
 import tree
 
@@ -357,12 +358,17 @@ def render(tables):
         out.append(f"Names only — this schema is large. Grep `### <table>` below for one table's"
                    f" columns rather than reading them all.")
         out.append("")
-        out.append(", ".join(f"`{t['name']}`" for t in tables))
+        out.append(", ".join(f"`{mdblock.as_quoted(t['name'], 80)}`" for t in tables))
     else:
         out.append("")
         for t in tables:
-            desc = f" — {t['summary']}" if t["summary"] else ""
-            out.append(f"- **`{t['name']}`**{desc}  _({t['source']})_")
+            # Same treatment as the route and env catalogues: these are substrings lifted out of
+            # repository source and written into MAP.md, which is committed and injected. A table
+            # NAME is charset-bounded by the SQL patterns, but a summary is free prose lifted from
+            # a comment above the statement, and `source` is a path somebody chose.
+            desc = f" — {mdblock.as_quoted(t['summary'], 200)}" if t["summary"] else ""
+            out.append(f"- **`{mdblock.as_quoted(t['name'], 80)}`**{desc}"
+                       f"  _({mdblock.as_quoted(t['source'], 120)})_")
     out.append("")
     return "\n".join(out)
 
