@@ -11668,8 +11668,15 @@ check("...and the index is well inside the default budget",
       tokens_mod.estimate(_foldidx) < 3000)
 # The point is that it does BOTH. A block that fit by naming fewer directories would pass the
 # budget check alone, which is how the old behaviour passed everything for months.
+# 🐛 This asserted "under 2,500 tokens and 40 directories", which the WORST acceptable option also
+# satisfies: `per_dir=0` names all 40 directories in 446 tokens and lists not one file inside any
+# of them. A selector that regressed to always choosing the barest step would have passed. The
+# property is that full coverage is reached WITHOUT throwing away every file name — that is the
+# whole reason the step-down is graduated rather than a switch.
+_kept_names = len(re.findall(r"`[^`]+\.py`", _foldidx))
 check("...so it is smaller AND more complete than folding once at the default",
-      tokens_mod.estimate(_foldidx) < 2500 and _named == 40)
+      tokens_mod.estimate(_foldidx) < 3000 and _named == 40)
+check("...and it did NOT get there by dropping every file name", _kept_names > 40)
 _rmtree(_fold.parent, ignore_errors=True)
 
 # A repository whose index already fits must be untouched — the stepping is a response to not
