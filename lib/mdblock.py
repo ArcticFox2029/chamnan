@@ -18,6 +18,8 @@ parser is not being added to a plugin whose whole deployment story is the standa
 """
 import re
 
+import md
+
 # ``` or ~~~, at least three, optionally indented and optionally carrying an info string.
 _FENCE = re.compile(r"^(`{3,}|~{3,})")
 
@@ -77,6 +79,46 @@ def as_quoted(value, limit=80):
     """
     text = one_line(value).replace("`", "'")
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def demote_headings(text):
+    """`text` with every non-fenced ATX heading turned into inert text.
+
+    A rule, a session record or any other entry is written as a standalone file, so it opens with
+    its own `# Title` and may use `##`/`###` freely in its body. The caller drops it inside ITS
+    OWN `### Section` heading -- and a `#` that survives that trip does not read as a line inside
+    that section, it reads as a NEW one: `### Recorded decisions and lessons` typed into a rule's
+    body, uncaught, renders as if chamnan itself had opened that heading, with whatever text
+    follows it looking like the start of a fresh, legitimate part of the injected block.
+
+    This is the multi-line sibling of what `mdblock.as_quoted` does for a single-line value: make
+    repository-authored text incapable of opening a heading before it is embedded in chamnan's own
+    structure. A `#` inside a fenced code block is left alone -- it is a comment in the example,
+    not a heading of the entry.
+    """
+    out = []
+    for line, in_fence in fenced_lines(text):
+        if in_fence or not line.startswith("#"):
+            out.append(line)
+        elif line.startswith("# "):
+            out.append(f"**{line[2:].strip()}**")
+        else:
+            out.append(re.sub(r"^#+\s*", "", line))
+    return "\n".join(out)
+
+
+def close_dangling_fence(text):
+    """`text`, with a closing fence appended if it ends still inside one left open.
+
+    A body that opens a ``` or ~~~ block and never closes it swallows everything injected after
+    it -- for `section()`'s callers, that includes the marker that closes the surrounding
+    `[repo:nonce]` fence itself and every section that follows -- into what a renderer treats as
+    one unterminated code block. A no-op when the fence was already balanced.
+    """
+    marker = md.unclosed_fence_marker(text)
+    if not marker:
+        return text
+    return text.rstrip("\n") + "\n" + marker + "\n"
 
 
 def masked(text):

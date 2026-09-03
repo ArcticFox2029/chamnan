@@ -267,6 +267,12 @@ def section(title, body, source=""):
     if not body.strip():
         return ""
     fenced = body.rstrip().replace(CLOSE_MARK, f"[/repo:escaped]")
+    # A body that opens a ``` or ~~~ block and never closes it -- whether that is how the file was
+    # written, or how a budget cut left it -- swallows everything after it into what a renderer
+    # treats as one unterminated code block: the `[/repo:nonce]` mark below, and every section
+    # injected after this one. Closing it here is a no-op on an already-balanced body, so this
+    # runs for every section rather than only the ones known to need it.
+    fenced = mdblock.close_dangling_fence(fenced)
     text = f"\n### {title}\n{OPEN_MARK}\n{fenced}\n{CLOSE_MARK}\n"
     # Priced with the real estimator on the real text. Counting characters and pricing them as if
     # they were ASCII is wrong on a repository whose STATE.md is half Thai, and the error would
@@ -962,7 +968,8 @@ def main():
                 # from a filename. A registry of bare filenames spends the injection and buys nothing.
                 lines = []
                 for s in skills[:MAX_TOOLS]:
-                    lines.append(f"- `{s.name}` — {describe(s) or 'no description — add one'}")
+                    lines.append(f"- `{mdblock.as_quoted(s.name)}` — "
+                                 f"{describe(s) or 'no description — add one'}")
                 if len(skills) > MAX_TOOLS:
                     lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
                 out.append(section(
