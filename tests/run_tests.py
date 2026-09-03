@@ -11528,7 +11528,17 @@ def _writes_without_guard(extra_src=None):
             if name == "__init__.py" and node.name in _GUARD_ITSELF:
                 continue
             called = _calls_in(node)
-            if _WRITE_VERBS & called and not ({"safe_target", "held_target"} & called):
+            # 🐛 This accepted `safe_target` on its own, which is the PRE-FIX property: check a
+            # path, then act on it. `84f78bc` moved the shared writer and `gemini` onto
+            # `held_target` and left `generic` and `zed` -- both of which define their own
+            # `install` -- on the old two-step, and this check stayed green over both. `generic`
+            # backs eleven aliases, the largest blast radius in the registry, and it reads before
+            # it writes. Live-raced: an outside `AGENTS.md` written to, from inside the repository.
+            #
+            # Tenth occurrence of the same shape, inside the commit that fixed the ninth and whose
+            # message said `safe_target` was still the only way in. The guard is `held_target` now,
+            # and `safe_target` alone no longer satisfies this.
+            if _WRITE_VERBS & called and "held_target" not in called:
                 out.append(f"{name}:{node.lineno} {node.name}")
     return out
 
@@ -11543,6 +11553,11 @@ for _u in _unguarded[:5]:
 check("...and the check itself fails on an adapter that writes without opening the guarded handle",
       _writes_without_guard("def install(root, body, command=''):\n"
                             "    write_target(target, body)\n") == ["MUTANT.py:1 install"])
+# The exact hole this check had: `safe_target` and then a write, with no handle held between them.
+check("...and on one that checks the path and then writes to it, which is the window itself",
+      _writes_without_guard("def install(root, body, command=''):\n"
+                            "    p = safe_target(root, TARGET)\n"
+                            "    ws.atomic_write_text(p, body)\n") == ["MUTANT.py:1 install"])
 
 # The exemption is only safe while the entry point it points at still runs the check.
 _held_src = [n for n in ast.walk(ast.parse((ROOT / "lib" / "adapters" / "__init__.py")
