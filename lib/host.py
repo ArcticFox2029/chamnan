@@ -87,6 +87,34 @@ _AGENTS = {
         "repo": (".kiro/",),
         "home": (".kiro/",),
     },
+    # 🐛 Five agents were detected while twenty-three had adapters, so `--detect` reported "nothing
+    # found" on a repository plainly set up for Roo, Windsurf or Copilot. The entries below are
+    # REPO markers only — a directory the agent itself created, which is evidence rather than a
+    # guess — and deliberately no HOME markers: this module's own docstring calls HOME the weakest
+    # and stalest signal, and a machine carrying six agents' config directories would then report
+    # six agents for every repository.
+    #
+    # Detection still writes nothing. Its only consumers are `--detect` and a printed suggestion.
+    "windsurf": {"env": (), "repo": (".windsurf/",), "home": ()},
+    "roo": {"env": (), "repo": (".roo/",), "home": ()},
+    "cline": {"env": (), "repo": (".clinerules",), "home": ()},
+    "continue": {"env": (), "repo": (".continue/",), "home": ()},
+    "copilot": {"env": (), "repo": (".github/copilot-instructions.md",
+                                    ".github/instructions/"), "home": ()},
+    "amazonq": {"env": (), "repo": (".amazonq/",), "home": ()},
+    "augment": {"env": (), "repo": (".augment/", ".augment-guidelines"), "home": ()},
+    "trae": {"env": (), "repo": (".trae/",), "home": ()},
+    "junie": {"env": (), "repo": (".junie/",), "home": ()},
+    "goose": {"env": (), "repo": (".goosehints",), "home": ()},
+    "grok": {"env": (), "repo": (".grok/",), "home": ()},
+    "antigravity": {"env": (), "repo": (".agents/",), "home": ()},
+    "zed": {"env": (), "repo": (".rules",), "home": ()},
+    "replit": {"env": (), "repo": ("replit.md",), "home": ()},
+    "qwen": {"env": (), "repo": ("QWEN.md",), "home": ()},
+    "iflow": {"env": (), "repo": ("IFLOW.md",), "home": ()},
+    "codebuddy": {"env": (), "repo": ("CODEBUDDY.md",), "home": ()},
+    "mistral": {"env": (), "repo": (".vibe/",), "home": ()},
+    "aider": {"env": (), "repo": (".aider.conf.yml", "CONVENTIONS.md"), "home": ()},
     "generic": {
         # `AGENTS.md` is the cross-tool convention several agents now read, and it is what an agent
         # with no adapter of its own gets. Never detected from home: it is a repository convention,
@@ -98,7 +126,12 @@ _AGENTS = {
 }
 
 # The order a tie is broken in, and the order `agents()` lists equal-strength matches in.
-ORDER = ("claude", "cursor", "gemini", "kiro", "generic")
+# Most specific first, with `generic` last: `AGENTS.md` is read by eleven agents, so finding it
+# says less than finding a directory only one of them creates. A tie inside a strength is broken
+# by this order.
+ORDER = ("claude", "cursor", "gemini", "kiro", "windsurf", "roo", "cline", "continue", "copilot",
+         "amazonq", "augment", "trae", "junie", "goose", "grok", "antigravity", "zed", "replit",
+         "qwen", "iflow", "codebuddy", "mistral", "aider", "generic")
 
 
 def _marker_present(base, marker):

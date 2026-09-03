@@ -240,6 +240,28 @@ def main():
             args.ceiling = declared
             detected["ceiling"] = declared
 
+    # Detection was inert: `host.agents()` had one consumer, `--detect`'s JSON dump, and nothing
+    # acted on it. Turned into a SUGGESTION rather than an action, deliberately.
+    #
+    # Never auto-write. Writing a file into another tool's configuration directory on a guess is
+    # the same class of mistake `safe_target` exists to prevent, and a machine can carry several
+    # agents' directories at once — this repository's own `--detect` reports three. Only REPO and
+    # RUNNING evidence counts; HOME is what the detection module's own docstring calls the weakest
+    # and stalest signal, and a suggestion built on it would fire on every repository on the
+    # machine. stderr, so a pipe still receives exactly the block.
+    if not args.write and not args.json and not args.detect:
+        # 🐛 Written as `for _name, _strength in detected["agents"]` — and those are DICTS, so the
+        # unpack silently bound the two KEY NAMES instead of the values. No exception, no match, no
+        # output: the suggestion never fired and nothing said why.
+        for _found in detected["agents"]:
+            _name, _strength = _found["name"], _found["evidence"]
+            if _strength in (host.RUNNING, host.REPO) and adapters.for_agent(_name) is not None:
+                sys.stderr.write(
+                    f"chamnan-context: this repository looks set up for `{_name}` "
+                    f"({_strength}). `chamnan-context --write {_name}` puts the block where it "
+                    f"reads it.\n")
+                break
+
     body = build(root, profile, args.ceiling)
     _notice = _budget_notice(body, profile or profiles.DEFAULT)
     if _notice:
