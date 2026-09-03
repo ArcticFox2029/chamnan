@@ -246,7 +246,7 @@ def scan(root, files):
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        rel = str(path.relative_to(root))
+        rel = str(path.relative_to(root).as_posix())
         for m in PRISMA_MODEL.finditer(text):
             add(m.group(1), rel, _summary_above(text, m.start()))
         # Matched against the masked text, but the SUMMARY is read from the original at the same

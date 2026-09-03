@@ -196,7 +196,7 @@ def main(argv):
           if dest.suffix == ".py" else f"  run it with:  {rel}")
     if not desc:
         print("  no description given — add one so a future session knows when to reach for it:")
-        print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root)})")
+        print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root).as_posix()})")
     return 0
 
 

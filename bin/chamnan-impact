@@ -122,9 +122,9 @@ def main(argv):
             print(f"  tested by {shown}{more}")
         elif edges["used_by"]:
             print(f"  tested by nothing the index can see — a change here is unguarded")
-        print(f"  (from `{map_path.relative_to(root)}`, {_index_age(map_path)})")
+        print(f"  (from `{map_path.relative_to(root).as_posix()}`, {_index_age(map_path)})")
     elif map_path.is_file():
-        print(f"  nothing imports it, per `{map_path.relative_to(root)}` ({_index_age(map_path)})")
+        print(f"  nothing imports it, per `{map_path.relative_to(root).as_posix()}` ({_index_age(map_path)})")
 
     if history:
         print(f"\n  {len(history)} thread entr{'y' if len(history) == 1 else 'ies'} name this file:")

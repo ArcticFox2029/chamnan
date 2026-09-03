@@ -94,7 +94,7 @@ def cmd_set(root, name, platform, versions, constraints, checked):
     entry = env.render_entry(name, platform, versions, constraints, checked)
     path, replaced = env.upsert(root, name, entry)
     verb = "updated" if replaced else "declared"
-    print(f"chamnan: {verb} {name} — {path.relative_to(root)}")
+    print(f"chamnan: {verb} {name} — {path.relative_to(root).as_posix()}")
     if not constraints:
         print("  no constraints recorded. The constraints are the part nobody else can "
               "reconstruct — `--constraint \"...\"` is worth the minute.")

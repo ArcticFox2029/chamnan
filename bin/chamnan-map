@@ -161,7 +161,7 @@ def _show(path, root):
     warning never cleared and the advice looked broken.
     """
     try:
-        return str(path.relative_to(root))
+        return str(path.relative_to(root).as_posix())
     except ValueError:
         return str(path)
 
@@ -288,7 +288,7 @@ def main(argv):
         for f in mapper.scan(one):
             # Paths are made relative to the repo root so several scanned directories share one
             # namespace instead of each restarting from its own root.
-            rel = str((one / f["path"]).relative_to(root))
+            rel = str((one / f["path"]).relative_to(root).as_posix())
             if rel in seen_paths:
                 continue
             seen_paths.add(rel)
@@ -349,7 +349,7 @@ def main(argv):
     if targets == [root]:
         scope = ""
     else:
-        names = ", ".join(str(x.relative_to(root)) for x in targets)
+        names = ", ".join(str(x.relative_to(root).as_posix()) for x in targets)
         scope = f"  (scanned {names})"
     # Say which repository was measured whenever that is not the directory the command was run in.
     # Silent is the dangerous default here: find_root walks up for a VCS marker, so running this

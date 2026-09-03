@@ -172,7 +172,7 @@ def scan(root):
              # understand the system" about the Ansible tree is the opposite of true.
              "claimed": set()}
     for path, text in _read(root):
-        rel = str(path.relative_to(root))
+        rel = str(path.relative_to(root).as_posix())
         low = rel.lower()
         claimed_before = _claim_count(found)
 
@@ -206,7 +206,7 @@ def scan(root):
                         ("Makefile", "ci"), ("ansible.cfg", "ansible")):
         for path in tree.matching(root, name):
             if not any(p in SKIP for p in _rel_parts(path, root)):
-                rel = str(path.relative_to(root))
+                rel = str(path.relative_to(root).as_posix())
                 found[group].add(rel)
                 found["claimed"].add(rel)
     return found

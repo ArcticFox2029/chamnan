@@ -115,7 +115,7 @@ def cmd_edit(root, ident):
     p = _find_or_complain(root, ident)
     if p is None:
         return 1
-    print(p.relative_to(root))
+    print(p.relative_to(root).as_posix())
     return 0
 
 
@@ -260,9 +260,9 @@ def cmd_demote(root, tool_name):
     today = datetime.now().astimezone().strftime("%Y-%m-%d")
     new_path, _is_new = candidates.upsert(root, sequence, 1, today, provenance="ai-inferred")
     print(f"chamnan: demoted {tool_name} — removed as a tool, back for review at "
-          f"{new_path.relative_to(root)}")
+          f"{new_path.relative_to(root).as_posix()}")
     if archived:
-        print(f"  the file itself is kept at {archived.relative_to(root)} — the candidate above is "
+        print(f"  the file itself is kept at {archived.relative_to(root).as_posix()} — the candidate above is "
               f"one line of description, not the commands you wrote")
     return 0
 
