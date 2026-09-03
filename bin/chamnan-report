@@ -81,7 +81,15 @@ def encoded_dir(repo_root):
 
     The encoding is lossy — a directory whose own name contains a dash is indistinguishable from a
     separator — so an exact match is tried first and a suffix match is the fallback."""
-    want = str(repo_root).replace("/", "-")
+    # 🐛 `str(repo_root).replace("/", "-")` did nothing on Windows, where `str(Path)` yields
+    # backslashes -- so the exact match never fired there and every lookup fell through to the
+    # suffix fallback below. Both separators are handled now, and the drive colon is dropped
+    # because a colon cannot appear in a directory name on that platform.
+    #
+    # UNVERIFIED, and stated as such: no Windows install of Claude Code was available to confirm
+    # the exact name it writes. What IS certain is that the old form could not have been right,
+    # and that the fallback below is what carries the answer when this guess is wrong.
+    want = str(repo_root).replace("\\", "-").replace("/", "-").replace(":", "")
     for root in _project_roots():
         exact = root / want
         if exact.is_dir():
