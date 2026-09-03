@@ -15,6 +15,8 @@ does, which is the same bar the plugin itself has to clear.
 import ast
 import datetime
 import importlib.util
+import contextlib
+import io
 import json
 import os
 import re
@@ -2826,13 +2828,19 @@ def _counting_entries(root, *a, **k):
     _parses[0] += 1
     return _real_entries(root, *a, **k)
 _sw2.environments.entries = _counting_entries
+# The notice is delivered by PRINTING a hook JSON envelope, so calling it here writes that envelope
+# into the suite's own output. Captured rather than let through: this file's output is read to see
+# which checks ran, and a hook payload in the middle of it reads as something having gone wrong.
+_env_out = io.StringIO()
 try:
-    _fired = _sw2._environment_notice(
-        {"tool_name": "Bash", "session_id": "s-env-1",
-         "tool_input": {"command": "kubectl --context prod-cluster get pods"}},
-        ws.workspace(_envroot), str(_envroot))
+    with contextlib.redirect_stdout(_env_out):
+        _fired = _sw2._environment_notice(
+            {"tool_name": "Bash", "session_id": "s-env-1",
+             "tool_input": {"command": "kubectl --context prod-cluster get pods"}},
+            ws.workspace(_envroot), str(_envroot))
 finally:
     _sw2.environments.entries = _real_entries
+check("...and the notice it emitted names the environment", "prod-cluster" in _env_out.getvalue())
 
 check("the environment notice fires on a command that matches a declared environment", _fired)
 check("...and environments.md IS PARSED ONCE for it, not once per lookup", _parses[0] == 1)
@@ -12314,6 +12322,35 @@ for _label, _src, _want in (("ASCII", "def calculate_total\n  1\nend\n", "calcul
     _f = mapper._extract_one(_src, "x.rb", "rb")[1]
     check(f"...and ordinary Ruby still works: {_label}",
           bool(_f) and _f[0][0].startswith(_want))
+
+
+# ------------------------------------------------- the concurrency suite, which nothing ran
+# 🐛 `tests/test_concurrent_writers.py` was added by the commit that found 53% of a counter and
+# 55% of a log lost to concurrency, and then never wired into anything: `run_tests.py` does not
+# reference it and neither does `.github/workflows/tests.yml`, which runs `compile_all.py` and
+# this file and nothing else. So every check in it -- the guards on the bug class this project has
+# hit more times than any other -- had been dormant since the day it was written.
+#
+# Run as a subprocess rather than imported: it launches sixty hooks and forks worker processes,
+# and it has its own `__main__` and its own counters. 6.6s against this file's 145s.
+_conc = ROOT / "tests" / "test_concurrent_writers.py"
+if _conc.is_file():
+    _cr = subprocess.run([sys.executable, str(_conc)], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", cwd=str(ROOT), timeout=600)
+    check("THE CONCURRENCY SUITE RUNS AND PASSES", _cr.returncode == 0)
+    if _cr.returncode != 0:
+        for _ln in (_cr.stdout + _cr.stderr).splitlines():
+            if _ln.startswith("[FAIL]") or "Traceback" in _ln:
+                print("     ", _ln)
+    # Its own count, surfaced here so a file that silently stopped running its checks is visible
+    # rather than passing on an empty run.
+    _m = re.search(r"(\d+)/(\d+) checks passed", _cr.stdout)
+    check("...and it actually ran its checks rather than reporting an empty pass",
+          bool(_m) and int(_m.group(2)) >= 10)
+    if _m:
+        print(f"      concurrency suite: {_m.group(0)}")
+else:
+    check("THE CONCURRENCY SUITE IS PRESENT", False)
 
 
 # ---------------------------------------------------------------- cleanup
