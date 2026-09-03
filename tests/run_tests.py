@@ -11376,11 +11376,35 @@ else:
 # `safe_target` must be the only way to a write target, or the next adapter reintroduces the hole.
 _adapter_src = "".join(
     p.read_text(encoding="utf-8") for p in sorted((ROOT / "lib" / "adapters").glob("*.py")))
-check("NO ADAPTER BUILDS A TARGET PATH WITHOUT THE CONTAINMENT CHECK",
-      "ws.Path(root) / TARGET" not in _adapter_src
-      and "Path(root) / adapter.TARGET" not in _adapter_src)
-check("...and safe_target refuses a plain traversal too",
-      not _adapter_src.count("safe_target") < 4)
+# 🐛 This was two string checks — `"ws.Path(root) / TARGET" not in source` and a count of the
+# word `safe_target`. Mutation-tested: an adapter given its own `install` that builds the target as
+# `base.joinpath(TARGET)` bypasses the guard completely and BOTH checks stayed green. They matched
+# one spelling of one expression; `joinpath`, `/`-with-different-spacing, or a helper of its own
+# all walk past. The behavioural check above did catch it, which is the one that matters — these
+# two were adding false confidence, which is worse than adding nothing.
+#
+# Asked of the parser instead: any function under `lib/adapters/` that WRITES must also call
+# `safe_target`. That is the property, and it holds however the path is spelled.
+def _writes_without_guard():
+    out = []
+    for path in sorted((ROOT / "lib" / "adapters").glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            called = {c.func.attr for c in ast.walk(node)
+                      if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+            called |= {c.func.id for c in ast.walk(node)
+                       if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+            if {"atomic_write_text", "mkdir"} & called and "safe_target" not in called:
+                out.append(f"{path.name}:{node.lineno} {node.name}")
+    return out
+
+
+_unguarded = _writes_without_guard()
+check("EVERY WRITE UNDER lib/adapters/ GOES THROUGH THE CONTAINMENT CHECK", not _unguarded)
+for _u in _unguarded[:5]:
+    print("     ", _u)
 
 # ------------------------------------------- two credential words the redactor did not know
 # `GPG_PASSPHRASE` and `db_creds` came back unredacted. Both are ordinary in real repositories.
