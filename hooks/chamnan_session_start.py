@@ -14,6 +14,7 @@ partial index) rather than silent.
 """
 import json
 import hashlib
+import os
 import secrets
 import re
 import sys
@@ -27,6 +28,7 @@ import fit  # noqa: E402
 import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
+import profiles  # noqa: E402
 import mdblock  # noqa: E402
 import redact  # noqa: E402
 import rollup  # noqa: E402
@@ -530,6 +532,53 @@ def unindexed(root, map_text):
         return 0, []
 
 
+def _with_profile(cfg):
+    """`cfg` with the context profile's budgets folded in, resolved ONCE.
+
+    Six separate places read `cfg.get("index_token_budget", 3000)`. Applying a profile at each of
+    them is the exact failure this project has now hit eight times -- a correct change made to some
+    members of a set and forgotten in the others -- so the profile is applied to the config object
+    itself and every one of those six reads sees it without knowing profiles exist.
+
+    `CHAMNAN_CONTEXT_PROFILE` overrides the file, so a caller can ask for the block at a different
+    size without editing a config that belongs to the repository and is committed. An explicit
+    budget in the file still wins over the profile: someone who tuned a number by hand measured
+    something, and a profile added later must not quietly undo it -- `profiles.resolve` owns that
+    precedence rather than it being restated here.
+    """
+    asked = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
+    if asked:
+        cfg = dict(cfg)
+        cfg["context_profile"] = asked.strip()
+        # An override is an instruction to change the size, so it also displaces a hand-tuned
+        # number -- otherwise asking for a small window silently returns the standard block.
+        for key in ("index_token_budget", "state_token_budget"):
+            cfg.pop(key, None)
+    _name, budgets = profiles.resolve(cfg)
+    out = dict(cfg)
+    out.update(budgets)
+    return out
+
+
+def _ceiling_from_env(cfg):
+    """The output byte ceiling: environment, then config, then the built-in default.
+
+    Kept out of `main()` so the hook path and `chamnan-context` resolve it the same way rather than
+    each carrying its own copy of the rule. A value that is not a positive integer is IGNORED
+    rather than raising -- this runs at session start, and an exception here costs the session its
+    whole block over a typo in a shell export.
+    """
+    raw = os.environ.get("CHAMNAN_OUTPUT_CEILING")
+    if raw:
+        try:
+            asked = int(str(raw).strip())
+            if asked > 0:
+                return asked
+        except (TypeError, ValueError):
+            pass
+    return cfg.get("output_byte_ceiling", fit.CEILING)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -617,7 +666,7 @@ def main():
             return 0
     except OSError:
         return 0                      # read-only checkout, or no permission — never fail a session
-    cfg = ws.load_config(root)
+    cfg = _with_profile(ws.load_config(root))
     # Said once, plainly. A config that does not parse is running on defaults, and every value the
     # user set is being ignored — silently, that is a settings file that appears not to work.
     _bad_cfg = ws.config_is_malformed(root)
@@ -1059,7 +1108,13 @@ def main():
         # sits late in the block no matter how carefully it was budgeted or pinned. Choosing what to
         # lose here — whole sections, named, lowest value first — beats a positional cut that keeps a
         # directory listing and silently throws away the repository's own rules.
-        ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
+        # The environment wins over the config file, and both over the default, because the
+        # ~10,000-byte cut this defends against is a property of the HARNESS rather than of
+        # this repository. Claude Code truncates a hook's stdout; a tool that reads a file
+        # off disk has no such limit, and forcing that tool down to 9,000 bytes would throw
+        # away material it could have taken whole. `chamnan-context` sets this so one caller
+        # can ask for the block at its own ceiling without editing anyone's config.
+        ceiling = _ceiling_from_env(cfg)
 
         # Spend the index's resolution before spending the index. A directory line with four names
         # still orients a reader and one with none still says the directory exists, so stepping the
