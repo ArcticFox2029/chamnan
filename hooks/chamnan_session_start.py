@@ -560,6 +560,16 @@ def _with_profile(cfg):
     return out
 
 
+def _folded_dirs(text):
+    """How many directories a folded index names.
+
+    A folded row is `- **pkg/sub/** (15) — `a.py`, `b.py` _+13 more_`: the directory is bold and
+    bare, the backticks belong to the files listed after the dash. Matching a quoted name found
+    nothing, which is what made the step-down selector blind to the only thing it was choosing on.
+    """
+    return len(re.findall(r"^- \*\*([^*`]+/)\*\*", text, re.M))
+
+
 def _ceiling_from_env(cfg):
     """The output byte ceiling: environment, then config, then the built-in default.
 
@@ -791,18 +801,39 @@ def main():
                     # orients a reader where a missing directory cannot. Take the FIRST step that
                     # names every directory the previous step named -- so an index that already
                     # fits at 8 is untouched, and one that does not steps until nothing is lost.
+                    # 🐛 The directory count used `\*\*`([^`]+/)`\*\*` — a directory name wrapped
+                    # in BACKTICKS inside bold. A folded line is `- **pkg0/** (15) — `a.py`, ...`:
+                    # the directory is bold and NOT quoted, the backticks are around the FILES. So
+                    # the count was 0 at every step, `_try_named > _named` was never true, and the
+                    # whole selection fell through to the token tiebreak.
+                    #
+                    # It happened to pick well on the fixture I measured — fewest tokens was also
+                    # most directories there — so the end-to-end numbers were real and the reason I
+                    # gave for them was not. Found by an agent reading the selector rather than its
+                    # output, which is the check I skipped: I measured the result and assumed the
+                    # mechanism.
+                    # Coverage first, and among equal coverage the EARLIEST step — not the
+                    # cheapest. Fixing the counter above exposed a second wrong rule underneath it:
+                    # breaking a coverage tie on token count picks `per_dir=0`, which names every
+                    # directory and not one file inside any of them. This file's own comment says
+                    # why that is the wrong end to optimise — "a directory line with four names
+                    # still orients a reader and one with none still says the directory exists" —
+                    # so the tie goes to the step that keeps the most names while fitting.
+                    #
+                    # Measured on 600 files in 40 directories at a 2,000-token budget:
+                    #     per_dir=8  22/40 dirs  1,938 tokens
+                    #     per_dir=4  38/40       1,976
+                    #     per_dir=2  40/40       1,325   <- chosen: full coverage, still has names
+                    #     per_dir=0  40/40         446      full coverage, no names at all
                     _rel = display(mp, root)
-                    _best = rollup.collapse(index, _rel, budget, root)
-                    _named = len(re.findall(r"\*\*`([^`]+/)`\*\*", _best))
-                    for _step in (4, 2, 0):
+                    _steps = []
+                    for _step in (8, 4, 2, 0):
                         _try = rollup.collapse(index, _rel, budget, root, _step)
-                        _try_named = len(re.findall(r"\*\*`([^`]+/)`\*\*", _try))
-                        if _try_named > _named or (_try_named == _named
-                                                   and tokens.estimate(_try) < tokens.estimate(_best)):
-                            _best, _named = _try, _try_named
-                        if _try_named >= _named and tokens.fits(_try, budget) and _step <= 2:
-                            break
-                    index = _best
+                        _steps.append((_folded_dirs(_try), -_step, _try))
+                    _reach = max(n for n, _s, _t in _steps)
+                    # Highest coverage; then the largest per_dir among those, which is the earliest
+                    # step and the one that keeps the most file names. `-_step` sorts that way.
+                    _named, _neg, index = min((n, s, t) for n, s, t in _steps if n == _reach)
                 index_slot = len(out)
                 # 🐛 The largest section injected every session, and the one that never went
                 # through the redactor. Every sibling section is scrubbed; this one was read
