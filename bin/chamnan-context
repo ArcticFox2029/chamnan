@@ -31,10 +31,12 @@ repository and written to stdout; what reads it is the caller's business.
 """
 import argparse
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -56,6 +58,40 @@ HOOK = HERE.parent / "hooks" / "chamnan_session_start.py"
 # High enough not to bind on any repository measured, and still finite: an unbounded ceiling would
 # make a runaway MAP.md the caller's problem to discover at the far end of a pipe.
 NON_BINDING = 1_000_000
+
+
+_FENCE = re.compile(r"\[/?repo:([0-9a-f]{6})\]")
+
+
+def _stabilise_fence(body):
+    """Re-derive the block's fence marker from the block's own content.
+
+    🐛 The hook picks a RANDOM marker when there is no session id, which is correct for a hook —
+    it fires many times in one session and the id keeps it constant. Through this command there is
+    no session, so every regeneration produced a different marker and the file changed by 46 bytes
+    with nothing in the repository having changed. Measured on a one-file fixture.
+    
+    That costs the target agent its prompt cache. A rules file sits near the head of the prompt,
+    and cache reuse is an exact-prefix match — so a repository nobody touched still paid full
+    price for its context on the next run. It also makes the file impossible to diff: a reader
+    cannot tell "the repository changed" from "chamnan ran again".
+
+    Derived from a digest of the block with the marker masked out, so identical content gives an
+    identical file and any real change moves it.
+
+    **What this trades away, stated plainly.** The marker becomes predictable, where in a session
+    it cannot be guessed in advance. The nonce was always the SECOND layer: `section()` escapes any
+    literal occurrence of the closing mark inside a body before wrapping it, and that escape is
+    what actually holds. Predictability costs the defence in depth, not the defence — and a file on
+    disk is a different threat model from a live session anyway, since whoever can edit the file
+    does not need to forge a marker inside it.
+    """
+    found = _FENCE.search(body)
+    if not found:
+        return body
+    masked = body.replace(found.group(1), "0" * 6)
+    stable = hashlib.blake2s(masked.encode("utf-8"), digest_size=3).hexdigest()
+    return masked.replace("0" * 6, stable)
 
 
 def _load_hook():
@@ -100,7 +136,7 @@ def build(root, profile, ceiling):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = previous
-    return buffer.getvalue().rstrip("\n")
+    return _stabilise_fence(buffer.getvalue().rstrip("\n"))
 
 
 def main():
