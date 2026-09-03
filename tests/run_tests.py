@@ -1067,7 +1067,9 @@ check("...for every command, not just the ones that were run",
 _usage_block = report_out.split("Usage", 1)[1].split("\n\n", 1)[0]
 _described = {l.split()[0] for l in _usage_block.splitlines()
               if l.startswith("  chamnan-") and " — " in l}
-_all_cmds = {p.name for p in (ROOT / "bin").glob("chamnan-*") if p.is_file()}
+# Same reason as the scrub loop above: a `.cmd` shim is not a command with a usage line, it is
+# the Windows spelling of one that already has one.
+_all_cmds = {p.name for p in (ROOT / "bin").glob("chamnan-*") if p.is_file() and not p.suffix}
 check("...and every command actually has one — a new one without a dash line would be missed",
       _described == _all_cmds)
 check("a command never logged reads as 0, not absent", "chamnan-map" in report_out and "0 times" in report_out)
@@ -8127,7 +8129,11 @@ check("...and a character class of quantifier characters is not one either",
 # Five findings running had the same shape: one store, several readers, and only some guarded. The
 # case-by-case judgement about which commands "only print numbers" was wrong every time, so the
 # rule is uniform — a command has to opt IN to being the unguarded one, and none does.
-for _cmd in sorted((ROOT / "bin").glob("chamnan-*")):
+# Extensionless only. `.cmd` shims live here too since Windows support landed, and they are
+# eight lines of batch that hand the real script to an interpreter -- they print nothing of
+# their own, so demanding `print = redact.emit` of them asked a batch file for a Python
+# statement. The rule still covers every file that actually prints.
+for _cmd in sorted(p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix):
     _src = _cmd.read_text(encoding="utf-8")
     check(f"EVERY COMMAND SCRUBS WHAT IT PRINTS: {_cmd.name}",
           "print = redact.emit" in _src and "import redact" in _src)
@@ -10473,6 +10479,290 @@ check("...and no adapter writes the file the secondary sources invented",
       not any(adapters_mod.for_agent(n).TARGET.upper().startswith("MUSE")
               for n in adapters_mod.ADAPTERS))
 
+
+# ---------------------------------------------------------------- running where Python is not
+# The one check in this plugin that cannot be written in Python: a machine with no Python cannot
+# run the script that reports it has no Python. `install/chamnan-check.sh` is POSIX sh, and these
+# checks RUN it -- with a doctored PATH, so the failure paths are exercised rather than described.
+_check_sh = ROOT / "install" / "chamnan-check.sh"
+# Native Windows has no `sh` and no symlink permission by default, and this script is not for it --
+# `install/chamnan-check.cmd` is. So the file-shape checks run everywhere and the ones that EXECUTE
+# it are skipped there, loudly: a silent skip is how a platform stops being tested without anyone
+# noticing, so the count of what was skipped is printed.
+_POSIX_SHELL = shutil.which("sh") is not None and os.name != "nt"
+# Stated so the skip line can say how many, rather than "some".
+_SH_CHECKS = 9
+check("the no-Python preflight exists", _check_sh.is_file())
+_sh_src = _check_sh.read_text(encoding="utf-8")
+# POSIX sh, not bash: Alpine's /bin/sh is ash and Debian's is dash. A `[[` here would work on the
+# author's macOS and fail in a container, which is the worst place to find out.
+for _bashism in ("[[", "function ", "$(( ", "local ", "declare "):
+    check(f"the preflight avoids the bashism {_bashism.strip()!r}", _bashism not in _sh_src)
+check("...and says sh rather than bash in its shebang", _sh_src.startswith("#!/bin/sh"))
+
+
+def _run_check(path_value):
+    """Run the preflight with a controlled PATH. Returns (exit code, stdout)."""
+    done = subprocess.run(["sh", str(_check_sh)], capture_output=True, text=True,
+                          env={"PATH": path_value, "HOME": os.environ.get("HOME", "/tmp")})
+    return done.returncode, done.stdout
+
+
+# 🐛 An earlier version of this guard substituted fabricated values on a platform with no `sh`, so
+# every check below PASSED on Windows without running anything. A check that cannot run must be
+# skipped and SAID to be skipped -- a fake pass is worse than a gap, because a gap is visible.
+if not _POSIX_SHELL:
+    print(f"  [SKIP] {_SH_CHECKS} preflight checks — this platform has no POSIX shell to run "
+          f"install/chamnan-check.sh with. install/chamnan-check.cmd is its counterpart here.")
+else:
+    # A machine that has everything: exit 0, and it says there is nothing to install.
+    _ok_code, _ok_out = _run_check(os.environ.get("PATH", "/usr/bin:/bin"))
+    check("on a machine that has what it needs, the preflight exits 0", _ok_code == 0)
+    check("...and says nothing needs installing", "Nothing to install" in _ok_out)
+    check("...and reports the OS family it detected",
+          any(f in _ok_out for f in ("macos", "linux", "windows")))
+
+    # A Python below the floor must be REPORTED as too old, not accepted. This is the case a naive
+    # `command -v python3` check passes and a user then hits as a syntax error inside the plugin.
+    _fakebin = Path(tempfile.mkdtemp())
+    (_fakebin / "python3").write_text("#!/bin/sh\necho 'Python 3.6.9'\n", encoding="utf-8")
+    (_fakebin / "python3").chmod(0o755)
+    for _tool in ("sh", "uname", "awk", "cut", "grep", "git"):
+        _real = shutil.which(_tool)
+        if _real:
+            os.symlink(_real, _fakebin / _tool)
+    _old_code, _old_out = _run_check(str(_fakebin))
+    check("a Python below the floor is refused rather than accepted", _old_code == 1)
+    check("...naming the version it found and the floor it needs",
+          "3.6.9" in _old_out and "3.8" in _old_out)
+    check("...and printing a command that would fix it", "install" in _old_out)
+
+    # No Python at all, with a shell that still works. The whole reason this file is sh.
+    _nopy = Path(tempfile.mkdtemp())
+    for _tool in ("sh", "uname", "awk", "cut", "grep", "git"):
+        _real = shutil.which(_tool)
+        if _real:
+            os.symlink(_real, _nopy / _tool)
+    _none_code, _none_out = _run_check(str(_nopy))
+    check("no Python at all is reported rather than crashing", _none_code == 1)
+    check("...as NOT FOUND, in the report body", "NOT FOUND" in _none_out)
+    # It must not install anything unless asked. A plugin that runs a package manager the first
+    # time it is used is a plugin nobody should trust with a machine.
+    check("the preflight installs nothing without --install",
+          "Re-run with --install" in _none_out)
+    shutil.rmtree(_fakebin, ignore_errors=True)
+    shutil.rmtree(_nopy, ignore_errors=True)
+
+# ---------------------------------------------------------------- the Windows shims
+# Eleven near-identical files are exactly the set where one gets forgotten, and the failure would
+# be a command that works everywhere except the platform the shims exist for.
+_shimgen = ROOT / "install" / "make_windows_shims.py"
+check("the shim generator exists", _shimgen.is_file())
+_drift = subprocess.run([sys.executable, str(_shimgen), "--check"], capture_output=True, text=True)
+check("EVERY COMMAND AND HOOK HAS A CURRENT WINDOWS SHIM", _drift.returncode == 0)
+if _drift.returncode != 0:
+    print("   ", _drift.stdout.strip().replace("\n", "\n    "))
+
+_bin_cmds = {p.stem for p in (ROOT / "bin").glob("*.cmd")}
+_bin_real = {p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix}
+check("...one per bin/ command, none missing", _bin_real <= _bin_cmds)
+check("...and none orphaned", _bin_cmds <= _bin_real)
+# The shim must hand the script to an interpreter rather than trying to execute it: that is the
+# entire reason it exists, and a shim that just calls the bare name would loop.
+_sample = (ROOT / "bin" / "chamnan-map.cmd").read_text(encoding="utf-8")
+check("a shim invokes the Python launcher, not the script directly",
+      "py -3" in _sample and "python " in _sample)
+check("...and passes arguments and the exit code through",
+      "%*" in _sample and "exit /b %errorlevel%" in _sample)
+
+
+# ------------------------------------------- every OS branch, run for real, on a fake machine
+# The preflight's whole job is to be right on a machine that is NOT this one. Describing that in a
+# comment is not a test, and no container runtime is available here -- so the machine is faked in
+# a temp directory instead: a `uname` that reports Linux, a package manager that exists only as an
+# empty executable, and PATH pointing at nothing else. The real script runs, takes the real branch,
+# and prints the real command. Nothing is installed and nothing outside the temp directory is read.
+#
+# Reproduce or revert any row below by hand:
+#     mkdir /tmp/fake && printf '#!/bin/sh\necho Linux\n' > /tmp/fake/uname && chmod +x /tmp/fake/*
+#     touch /tmp/fake/apt-get && chmod +x /tmp/fake/apt-get
+#     env -i PATH=/tmp/fake sh install/chamnan-check.sh
+def _fake_machine(system, tools=(), python_version=None):
+    """A directory that behaves like another machine when placed alone on PATH."""
+    box = Path(tempfile.mkdtemp(prefix="chamnan-fakeos-"))
+    (box / "uname").write_text(f"#!/bin/sh\necho {system}\n", encoding="utf-8")
+    (box / "uname").chmod(0o755)
+    # The coreutils the script itself calls. Symlinked to the real ones: faking `awk` would be
+    # testing the fake rather than the script.
+    for tool in ("sh", "awk", "cut", "grep", "printf"):
+        real = shutil.which(tool)
+        if real and not (box / tool).exists():
+            os.symlink(real, box / tool)
+    for tool in tools:
+        (box / tool).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (box / tool).chmod(0o755)
+    if python_version:
+        (box / "python3").write_text(f"#!/bin/sh\necho 'Python {python_version}'\n", encoding="utf-8")
+        (box / "python3").chmod(0o755)
+    return box
+
+
+def _on_fake(system, tools=(), python_version=None):
+    box = _fake_machine(system, tools, python_version)
+    try:
+        done = subprocess.run(["sh", str(_check_sh)], capture_output=True, text=True,
+                              env={"PATH": str(box), "HOME": str(box)})
+        return done.returncode, done.stdout
+    finally:
+        shutil.rmtree(box, ignore_errors=True)
+
+
+# Same honest skip as above: these RUN the script, so a platform with no POSIX shell cannot check
+# them and must SAY it did not rather than count them as passed.
+_OS_ROWS = (
+    ("Linux", ("apt-get",), "apt-get install -y python3 git", "Debian/Ubuntu"),
+    ("Linux", ("dnf",), "dnf install -y python3 git", "Fedora"),
+    ("Linux", ("yum",), "yum install -y python3 git", "RHEL/CentOS"),
+    ("Linux", ("pacman",), "pacman -S --noconfirm python git", "Arch"),
+    ("Linux", ("apk",), "apk add --no-cache python3 git", "Alpine"),
+    ("Linux", ("zypper",), "zypper install -y python3 git", "openSUSE"),
+    ("Darwin", ("brew",), "brew install python git", "macOS with Homebrew"),
+    ("MINGW64_NT-10.0", ("winget",), "winget install --id Python.Python.3.13", "Windows/Git Bash"),
+)
+
+if not _POSIX_SHELL:
+    print(f"  [SKIP] {len(_OS_ROWS) * 2 + 5} faked-OS checks — no POSIX shell here to run "
+          f"install/chamnan-check.sh with")
+else:
+    for _system, _tools, _expect, _label in _OS_ROWS:
+        _code, _out = _on_fake(_system, _tools)
+        check(f"OS BRANCH RUNS AND PRINTS THE RIGHT FIX: {_label}", _expect in _out)
+        check(f"...and exits non-zero, because Python really is absent there: {_label}", _code == 1)
+
+    # Ordering matters where two managers coexist: a Debian box with both apt-get and a stray
+    # `dnf` must still be told apt. Asserted by giving it both rather than by reading the chain.
+    _both_code, _both_out = _on_fake("Linux", ("apt-get", "dnf"))
+    check("apt wins over dnf when a machine somehow has both", "apt-get install" in _both_out)
+
+    # A Linux box with NO recognised package manager must say so plainly rather than printing a
+    # command for a manager it did not find.
+    _bare_code, _bare_out = _on_fake("Linux", ())
+    check("an unrecognised Linux says so instead of guessing a package manager",
+          "no package manager was recognised" in _bare_out and _bare_code == 1)
+
+    # A machine that already has a new enough Python must pass even on a distro with no package
+    # manager -- nothing to install is the point, and failing there sends people installing
+    # packages they already have.
+    _fine_code, _fine_out = _on_fake("Linux", ("git",), python_version="3.11.9")
+    check("a Linux box with Python 3.11 and git needs nothing installed",
+          _fine_code == 0 and "Nothing to install" in _fine_out)
+
+# WSL reports Linux and is handled as Linux. Structural, so it runs on every platform.
+# 🐛 This asked whether the string "FAMILY = linux" was absent. The script writes `FAMILY=linux`
+# with no spaces, so the check was true no matter what the script did -- the ninth vacuous
+# assertion found in this project. The property is that WSL is a LABEL and not a BRANCH: the
+# variable must appear only in the line that reports the system, never in the chain that chooses
+# a package manager, or a WSL box would be sent somewhere a plain Linux box is not.
+_wsl_uses = [ln for ln in _sh_src.splitlines() if "$WSL" in ln]
+check("the preflight detects WSL at all", "microsoft /proc/version" in _sh_src)
+check("...and uses it only to label the report, never to pick a package manager",
+      len(_wsl_uses) == 1 and "say" in _wsl_uses[0])
+
+# ---------------------------------------------------------------- the Windows shims
+# Eleven near-identical files are exactly the set where one gets forgotten, and the failure would
+# be a command that works everywhere except the platform the shims exist for.
+_shimgen = ROOT / "install" / "make_windows_shims.py"
+check("the shim generator exists", _shimgen.is_file())
+_drift = subprocess.run([sys.executable, str(_shimgen), "--check"], capture_output=True, text=True)
+check("EVERY COMMAND AND HOOK HAS A CURRENT WINDOWS SHIM", _drift.returncode == 0)
+if _drift.returncode != 0:
+    print("   ", _drift.stdout.strip().replace("\n", "\n    "))
+
+_bin_cmds = {p.stem for p in (ROOT / "bin").glob("*.cmd")}
+_bin_real = {p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix}
+check("...one per bin/ command, none missing", _bin_real <= _bin_cmds)
+check("...and none orphaned", _bin_cmds <= _bin_real)
+# The shim must hand the script to an interpreter rather than trying to execute it: that is the
+# entire reason it exists, and a shim that just calls the bare name would loop.
+_sample = (ROOT / "bin" / "chamnan-map.cmd").read_text(encoding="utf-8")
+check("a shim invokes the Python launcher, not the script directly",
+      "py -3" in _sample and "python " in _sample)
+check("...and passes arguments and the exit code through",
+      "%*" in _sample and "exit /b %errorlevel%" in _sample)
+
+
+# ------------------------------------------- every OS branch, run for real, on a fake machine
+# The preflight's whole job is to be right on a machine that is NOT this one. Describing that in a
+# comment is not a test, and no container runtime is available here -- so the machine is faked in
+# a temp directory instead: a `uname` that reports Linux, a package manager that exists only as an
+# empty executable, and PATH pointing at nothing else. The real script runs, takes the real branch,
+# and prints the real command. Nothing is installed and nothing outside the temp directory is read.
+#
+# Reproduce or revert any row below by hand:
+#     mkdir /tmp/fake && printf '#!/bin/sh\necho Linux\n' > /tmp/fake/uname && chmod +x /tmp/fake/*
+#     touch /tmp/fake/apt-get && chmod +x /tmp/fake/apt-get
+#     env -i PATH=/tmp/fake sh install/chamnan-check.sh
+def _fake_machine(system, tools=(), python_version=None):
+    """A directory that behaves like another machine when placed alone on PATH."""
+    box = Path(tempfile.mkdtemp(prefix="chamnan-fakeos-"))
+    (box / "uname").write_text(f"#!/bin/sh\necho {system}\n", encoding="utf-8")
+    (box / "uname").chmod(0o755)
+    # The coreutils the script itself calls. Symlinked to the real ones: faking `awk` would be
+    # testing the fake rather than the script.
+    for tool in ("sh", "awk", "cut", "grep", "printf"):
+        real = shutil.which(tool)
+        if real and not (box / tool).exists():
+            os.symlink(real, box / tool)
+    for tool in tools:
+        (box / tool).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (box / tool).chmod(0o755)
+    if python_version:
+        (box / "python3").write_text(f"#!/bin/sh\necho 'Python {python_version}'\n", encoding="utf-8")
+        (box / "python3").chmod(0o755)
+    return box
+
+
+def _on_fake(system, tools=(), python_version=None):
+    box = _fake_machine(system, tools, python_version)
+    try:
+        done = subprocess.run(["sh", str(_check_sh)], capture_output=True, text=True,
+                              env={"PATH": str(box), "HOME": str(box)})
+        return done.returncode, done.stdout
+    finally:
+        shutil.rmtree(box, ignore_errors=True)
+
+
+# Same honest skip as above: these RUN the script, so a platform with no POSIX shell cannot check
+# them and must say so rather than count them as passed.
+if not _POSIX_SHELL:
+    print("  [SKIP] 19 faked-OS branch checks — no POSIX shell to run install/chamnan-check.sh")
+
+# Each row: the faked system, what is installed on it, and the command the script must print.
+for _system, _tools, _expect, _label in (() if not _POSIX_SHELL else (
+        ("Linux", ("apt-get",), "apt-get install -y python3 git", "Debian/Ubuntu"),
+        ("Linux", ("dnf",), "dnf install -y python3 git", "Fedora"),
+        ("Linux", ("yum",), "yum install -y python3 git", "RHEL/CentOS"),
+        ("Linux", ("pacman",), "pacman -S --noconfirm python git", "Arch"),
+        ("Linux", ("apk",), "apk add --no-cache python3 git", "Alpine"),
+        ("Linux", ("zypper",), "zypper install -y python3 git", "openSUSE"),
+        ("Darwin", ("brew",), "brew install python git", "macOS with Homebrew"),
+        ("MINGW64_NT-10.0", ("winget",), "winget install --id Python.Python.3.13", "Windows/Git Bash"),
+)):
+    _code, _out = _on_fake(_system, _tools)
+    check(f"OS BRANCH RUNS AND PRINTS THE RIGHT FIX: {_label}", _expect in _out)
+    check(f"...and exits non-zero, because Python really is absent there: {_label}", _code == 1)
+
+# Ordering matters where two managers coexist: a Debian box with both apt-get and a stray `dnf`
+# must still be told apt. Asserted by giving it both rather than by reading the if-chain.
+if _POSIX_SHELL:
+    _both_code, _both_out = _on_fake("Linux", ("apt-get", "dnf"))
+    check("apt wins over dnf when a machine somehow has both", "apt-get install" in _both_out)
+
+# A Linux box with NO recognised package manager must say so plainly rather than printing a
+# command for a manager it did not find.
+    _bare_code, _bare_out = _on_fake("Linux", ())
+    check("an unrecognised Linux says so instead of guessing a package manager",
+          "no package manager was recognised" in _bare_out and _bare_code == 1)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
