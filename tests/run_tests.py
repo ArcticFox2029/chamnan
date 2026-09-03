@@ -36,6 +36,7 @@ import impact as impact_mod  # noqa: E402
 import workflows  # noqa: E402
 import candidates  # noqa: E402
 import host as host_mod  # noqa: E402
+import profiles as profiles_mod  # noqa: E402
 import ledger  # noqa: E402
 import tools_index  # noqa: E402
 import memory as memory_mod  # noqa: E402
@@ -9876,6 +9877,49 @@ check("a root that does not exist is survivable",
 shutil.rmtree(_hroot, ignore_errors=True)
 shutil.rmtree(_hroot2, ignore_errors=True)
 shutil.rmtree(_hhome, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- context profiles
+# The third axis, and the one that must NOT become a code path: a profile is two numbers.
+check("the default profile is unchanged from what every measurement was taken against",
+      profiles_mod.budgets("standard") == {"index_token_budget": 3000, "state_token_budget": 1700})
+check("profiles are ordered by how much they send",
+      [profiles_mod.budgets(n)["index_token_budget"] for n in profiles_mod.names()]
+      == sorted(profiles_mod.budgets(n)["index_token_budget"] for n in profiles_mod.names()))
+
+# 🐛 `budgets()` returned the whole PROFILES entry, so `resolve()` handed its caller a dict with
+# `for` and `why` sitting beside two integers -- a config value nobody can safely pass on.
+check("budgets returns only the numbers, never the prose beside them",
+      set(profiles_mod.budgets("standard")) == {"index_token_budget", "state_token_budget"})
+
+# The window, not the vendor. Qwen ships an 8K-class local build AND a long-context hosted one
+# under one name, so a profile picked from the word "Qwen" is wrong for one of them. This is the
+# check that pins the axis.
+check("a 32K local build lands in small-window", profiles_mod.by_window(32_000) == "small-window")
+check("...and the same vendor's 256K hosted build lands in standard",
+      profiles_mod.by_window(262_144) == "standard")
+check("a 1M window lands in large-window", profiles_mod.by_window(1_000_000) == "large-window")
+check("a window size that is not a number falls back rather than raising",
+      profiles_mod.by_window("who knows") == profiles_mod.DEFAULT)
+
+# A typo in a hand-edited config must cost a notice, never the block.
+check("an unknown profile name falls back to the default",
+      profiles_mod.budgets("gemini-pro") == profiles_mod.budgets(profiles_mod.DEFAULT))
+check("...and explain() says the name did not match rather than pretending it did",
+      "is not one of" in profiles_mod.explain("gemini-pro"))
+
+# Someone who tuned a number by hand measured something on their own repository. A profile added
+# later must not quietly undo it.
+_pname, _pbud = profiles_mod.resolve({"context_profile": "small-window", "index_token_budget": 2500})
+check("an explicit budget in config wins over the profile", _pbud["index_token_budget"] == 2500)
+check("...while the profile still supplies what config did not set",
+      _pbud["state_token_budget"] == 700 and _pname == "small-window")
+
+# output_byte_ceiling is the HOST truncating a hook's stdout -- a harness property. If it ever
+# appears in a profile, choosing a large-window model would silently raise a ceiling the harness
+# still enforces, and the block would be cut with no explanation.
+check("no profile carries output_byte_ceiling, which belongs to the harness",
+      not any("output_byte_ceiling" in spec for spec in profiles_mod.PROFILES.values()))
 
 
 # ---------------------------------------------------------------- cleanup
