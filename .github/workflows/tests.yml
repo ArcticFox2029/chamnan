@@ -54,7 +54,12 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Every file compiles
-        run: python -m compileall -q lib bin hooks tests
+        # NOT `compileall`: it finds source by SUFFIX, and every chamnan command is an
+        # extensionless file with a shebang. That blind spot let a broken `bin/chamnan-map` — a
+        # duplicated keyword argument from an automated edit — pass this step and reach a commit.
+        # `tests/compile_all.py` reads and compiles each file instead, which is the only way to
+        # cover the ten commands. Reading rather than importing, because several run work on import.
+        run: python tests/compile_all.py
 
       - name: Regression suite
         run: python tests/run_tests.py
