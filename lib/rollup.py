@@ -407,22 +407,56 @@ def _enforce(out, map_rel, budget):
     # because a truncated explanation is worse than a general one.
     NAMED = 4
 
-    def _note_for(lost):
+    # 🐛 Sections removed WHOLE were named; a section cut in half was not. This is a prefix cut, so
+    # the last heading it keeps is a section that kept its title and lost most of its body — and
+    # said nothing about it. Measured: sixty routes selected, twenty-nine delivered, heading intact,
+    # no notice, and the section's own "Showing 60 of 5,000" line left standing as a claim about
+    # content that is not there.
+    #
+    # That is quieter than the whole-section drop this note already reports, and worse for the same
+    # reason `fit.py` drops sections whole rather than cutting them: a reader can act on "this is
+    # missing, go and grep it", and cannot act on a list that looks complete and is not.
+    def _trimmed_in(cut_text):
+        heads = _headings(cut_text)
+        if not heads:
+            return None
+        # A cut landing exactly on the next heading's line leaves the previous section intact.
+        return None if cut_text.rstrip().endswith(f"## {heads[-1]}") else heads[-1]
+
+    def _note_for(lost, trimmed):
+        # Three tiers, longest first, because the note has to fit inside the budget it is enforcing
+        # — a 20-token budget once produced a 1,052-token note, 1,050 of it this sentence. Adding
+        # the "cut short" clause made the full form overflow on tight budgets and fall all the way
+        # back to naming nothing, which lost MORE than the clause added. So the explanation is what
+        # goes first, then the names, and only then the bare form.
         short = (f"\n\n_Cut to fit the session budget — the tail did not fit."
                  f" Read `{map_rel}` for anything missing here._")
-        if not lost:
+        if not lost and not trimmed:
             return short
-        named = ", ".join(f"`{h}`" for h in lost[:NAMED])
-        more = f" _+{len(lost) - NAMED} more_" if len(lost) > NAMED else ""
-        full = (f"\n\n_Cut to fit the session budget. Removed whole: {named}{more}."
-                f" Read `{map_rel}` for them._")
-        return full if tokens.estimate(full) < budget else short
+        named = ""
+        if lost:
+            named = (f"Removed whole: {', '.join(f'`{h}`' for h in lost[:NAMED])}"
+                     + (f" _+{len(lost) - NAMED} more_" if len(lost) > NAMED else "") + ".")
+        for clause in ((f"`{trimmed}` is cut short — its own counts describe what was selected, "
+                        f"not what is here.") if trimmed else "",
+                       f"`{trimmed}` is cut short." if trimmed else ""):
+            body = " ".join(x for x in (named, clause) if x)
+            cand = f"\n\n_Cut to fit the session budget. {body} Read `{map_rel}` for the rest._"
+            if tokens.estimate(cand) < budget:
+                return cand
+        if named:
+            cand = (f"\n\n_Cut to fit the session budget. {named}"
+                    f" Read `{map_rel}` for the rest._")
+            if tokens.estimate(cand) < budget:
+                return cand
+        return short
 
-    note, cut = _note_for([]), ""
+    note, cut = _note_for([], None), ""
     for _ in range(3):
         keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
         cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
-        fresh = _note_for([h for h in _headings(out) if h not in _headings(cut)])
+        fresh = _note_for([h for h in _headings(out) if h not in _headings(cut)],
+                          _trimmed_in(cut))
         if fresh == note:
             break
         note = fresh

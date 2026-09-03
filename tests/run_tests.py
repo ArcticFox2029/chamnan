@@ -8810,7 +8810,11 @@ _ekept = [l[3:] for l in _eout.split("\n") if l.startswith("## ")]
 check("the cut note names the sections it removed", "Removed whole:" in _enote)
 check("...naming every one of them", all(("`%s`" % n) in _enote
       for n in ("API surface", "Configuration", "Deployment", "Stored material")))
-check("...and not naming one that survived", "`Quick Index`" not in _enote)
+# Precise about WHICH claim. `Quick Index` survives, so it must not appear in the removed-whole
+# list — but it is cut short, and naming that is the point of the change this check used to
+# contradict. A bare "not in the note" assertion could not tell the two claims apart.
+_eremoved = _enote.split("Removed whole:", 1)[1].split(".")[0] if "Removed whole:" in _enote else ""
+check("...and not listing one that survived as removed", "`Quick Index`" not in _eremoved)
 check("...and it no longer blames the roll-up for prose it never touched",
       "could not group this map's rows" not in _enote)
 check("the result still fits the budget it was given, note included",
@@ -8819,8 +8823,21 @@ check("the result still fits the budget it was given, note included",
 _etail = "## Quick Index\n" + "\n".join("- **`g%02d.py`** (10L) — Entry %d" % (i, i) for i in range(200))
 _etout = _gr.collapse(_etail, ".chamnan/MAP.md", 90, None)
 _etnote = next((l for l in _etout.split("\n") if "Cut to fit" in l), "")
-check("a cut that loses no whole section says that instead of naming none",
-      "Removed whole:" not in _etnote and "did not fit" in _etnote)
+check("a cut that loses no whole section does not claim one was removed",
+      "Removed whole:" not in _etnote)
+# 🐛 A section that keeps its heading and loses most of its body said NOTHING. Measured: sixty
+# routes selected, twenty-nine delivered, heading intact, and the section's own "Showing 60 of
+# 5,000" left standing as a claim about content that is not there. Quieter than a whole-section
+# drop, and worse for the same reason fit.py drops whole rather than trimming: a reader can act on
+# "this is missing", and cannot act on a list that looks complete and is not.
+#
+# Asserted on the multi-section document above, which genuinely reaches `_enforce`'s cut. My first
+# version used the 200-row single-section fixture and was wrong about its own premise: at that
+# budget the roll-up GROUPS those rows successfully, comes in at 52 tokens against 90, and
+# `_enforce` returns early without cutting anything at all. The note that appears there is a
+# different one, from a different path.
+check("...and it DOES name the section that was cut short, warning its counts are stale",
+      "is cut short" in _enote and "not what is here" in _enote)
 
 
 # ------------------------------ two redactor rules were scanned against documents they cannot match
@@ -9183,8 +9200,11 @@ check("...and at a workable budget there is no overrun at all",
       tokens_mod.estimate(_gr.collapse(_bdoc, ".chamnan/MAP.md", 500, None)) <= 500)
 _bnote = next((l for l in _gr.collapse(_bdoc, ".chamnan/MAP.md", 2000, None).split("\n")
                if "Cut to fit" in l), "")
+# Counted inside the removed-whole list only. The note also names the section that was CUT SHORT,
+# which is a different claim about a different section and must not be charged to this cap.
+_bremoved = _bnote.split("Removed whole:", 1)[1].split(".")[0] if "Removed whole:" in _bnote else ""
 check("many removed sections become four names and a count, not a list",
-      "_+" in _bnote and _bnote.count("`Section") <= 4)
+      "_+" in _bnote and _bremoved.count("`Section") <= 4)
 
 # 🐛 `_in_range` enforced only `>= 0`, so a config shipped WITH a repository could set
 # `output_byte_ceiling` past the ~10,000 bytes Claude Code truncates hook output at — positionally
