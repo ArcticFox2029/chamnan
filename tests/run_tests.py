@@ -38,6 +38,7 @@ import workflows  # noqa: E402
 import candidates  # noqa: E402
 import host as host_mod  # noqa: E402
 import profiles as profiles_mod  # noqa: E402
+import adapters as adapters_mod  # noqa: E402
 import ledger  # noqa: E402
 import tools_index  # noqa: E402
 import memory as memory_mod  # noqa: E402
@@ -4608,7 +4609,12 @@ _STDLIB = _stdlib_names()
 # Fail loudly rather than pass vacuously: an empty set would make the two checks below trivially
 # true, which is exactly how this defect hid.
 check("the standard library of this interpreter can be enumerated at all", len(_STDLIB) > 100)
-_OWN = {f.stem for f in (ROOT / "lib").glob("*.py")}
+# A package under lib/ is chamnan's own too. `glob("*.py")` alone sees only the flat modules,
+# so the first sub-package added reported itself as an undeclared third-party dependency --
+# the check firing correctly on a list that had not kept up with the tree.
+_OWN = ({f.stem for f in (ROOT / "lib").glob("*.py")}
+        | {d.name for d in (ROOT / "lib").iterdir()
+           if d.is_dir() and (d / "__init__.py").exists()})
 
 def _runtime_files():
     for d in ("lib", "hooks", "bin"):
@@ -9995,6 +10001,55 @@ check("...and encodes its own stdout explicitly, for a Windows pipe on a legacy 
       "UnicodeEncodeError" in _ctxsrc)
 
 shutil.rmtree(_ctxroot, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- adapters, one agent at a time
+# No shared base class on purpose, so the thing to pin is the CONTRACT: every adapter carries the
+# same four names. A new agent added without one of them would otherwise fail at the call site,
+# in a command, on somebody else's machine.
+for _aname in adapters_mod.names():
+    _ad = adapters_mod.for_agent(_aname)
+    check(f"ADAPTER DECLARES ITS CONTRACT: {_aname}",
+          all(hasattr(_ad, attr) for attr in ("NAME", "TARGET", "CEILING", "render")))
+    check(f"...and its target is a relative path, never absolute: {_aname}",
+          not Path(_ad.TARGET).is_absolute())
+    check(f"...and it names itself the way host.agents() does: {_aname}", _ad.NAME == _aname)
+
+# Claude Code has no adapter and must not acquire one by accident: its delivery is the hook, and
+# a file would be a second copy of the block that nothing reads and nobody updates.
+check("claude has no adapter, deliberately", adapters_mod.for_agent("claude") is None)
+check("...and installing for it is a None rather than a traceback",
+      adapters_mod.install(Path(tempfile.mkdtemp()), "claude", "x") is None)
+
+# Cursor's frontmatter ends at the first line that is exactly `---`, and this block carries
+# repository-authored prose where a horizontal rule is ordinary markdown. Left alone it ends the
+# frontmatter early and every line after it reads as body starting mid-sentence.
+_cur = adapters_mod.for_agent("cursor")
+_rendered = _cur.render("## chamnan\n\nbefore\n\n---\n\nafter\n")
+_dashes = [i for i, l in enumerate(_rendered.splitlines()) if l.strip() == "---"]
+check("the frontmatter opens and closes exactly once", _dashes == [0, 3])
+check("...and a horizontal rule in the body cannot close it early",
+      "***" in _rendered and "after" in _rendered)
+check("alwaysApply is set, which is what makes it orientation rather than a glob rule",
+      "alwaysApply: true" in _rendered)
+
+# install() writes atomically and reports where. A half-written context file is worse than none:
+# the agent reads whatever is there and the block ends mid-sentence with nothing saying it was cut.
+_adroot = Path(tempfile.mkdtemp())
+_written = adapters_mod.install(_adroot, "cursor", "## chamnan\n\nreal block\n")
+check("install writes the adapter's declared target",
+      _written == _adroot / _cur.TARGET and _written.is_file())
+check("...creating the directories it needs", _written.parent.is_dir())
+check("...and the file round-trips the block", "real block" in _written.read_text(encoding="utf-8"))
+
+# It must NOT touch a .gitignore. The target sits outside `.chamnan/`, git applies a .gitignore to
+# its own directory and below, so ignoring it would mean writing the repository's ROOT .gitignore
+# -- the user's file, and the README promises chamnan writes nothing there but an opt-in hook.
+check("install writes no .gitignore anywhere",
+      not list(_adroot.rglob(".gitignore")))
+check("...and hands the caller the line to print instead",
+      adapters_mod.ignore_line("cursor") == "/" + _cur.TARGET)
+shutil.rmtree(_adroot, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup
