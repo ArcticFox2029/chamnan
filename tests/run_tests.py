@@ -10251,6 +10251,72 @@ check("...and a horizontal rule in the body cannot close it early",
       "***" in _wr and "after" in _wr)
 
 
+# ---------------------------------------------------------------- continue, copilot, zed
+_con = adapters_mod.for_agent("continue")
+_conr = _con.render("## chamnan\nbody")
+check("continue writes into .continue/rules, where Continue looks",
+      _con.TARGET == ".continue/rules/chamnan.md")
+check("...with alwaysApply: true, its always-on form", "alwaysApply: true" in _conr)
+# `globs` is omitted rather than set to `**`: with alwaysApply it is not consulted, and a pattern
+# nothing reads invites the next person to change it and wonder why nothing happened.
+check("...and no globs key, which alwaysApply makes dead weight", "globs:" not in _conr)
+
+# Copilot: the chamnan-owned instructions file, NOT the user's copilot-instructions.md. Coverage
+# lost quietly is bad; somebody's own instructions deleted is worse.
+_cop = adapters_mod.for_agent("copilot")
+check("copilot writes its own instructions file, not the user's",
+      _cop.TARGET.endswith(".instructions.md") and "copilot-instructions.md" not in _cop.TARGET)
+check("...with applyTo ** , the always-on form", 'applyTo: "**"' in _cop.render("x"))
+# No ceiling: the 4,000-character code-review cap was removed, and what remains is GitHub's advice
+# about length rather than a limit anything enforces. A ceiling invented to look careful would cut
+# the block for no measured reason.
+check("copilot declares no ceiling, because none is enforced", _cop.CEILING is None)
+
+# Zed reads the FIRST of nine filenames and does not merge. Writing .rules always works and always
+# shadows -- silently, because Zed stops at the first match.
+_zed = adapters_mod.for_agent("zed")
+check("zed knows the whole precedence list, not just its own file",
+      len(_zed.PRECEDENCE) == 9 and _zed.PRECEDENCE[0] == ".rules")
+
+_zclean = Path(tempfile.mkdtemp())
+_zwrote = adapters_mod.install(_zclean, "zed", "## chamnan\nx\n")
+check("with none of the nine present, zed writes .rules", _zwrote.name == ".rules")
+check("...marked, so a later run can tell its own file from somebody else's",
+      _zwrote.read_text(encoding="utf-8").startswith(_zed.MARKER))
+adapters_mod.install(_zclean, "zed", "## chamnan\nSECOND\n")
+check("...and re-running replaces its own file rather than refusing",
+      "SECOND" in _zwrote.read_text(encoding="utf-8"))
+
+# The case that matters: a repository already using one of the other eight.
+_zbusy = Path(tempfile.mkdtemp())
+(_zbusy / ".cursorrules").write_text("their conventions\n", encoding="utf-8")
+_zrefused = False
+try:
+    adapters_mod.install(_zbusy, "zed", "block")
+except ValueError as exc:
+    _zrefused = ".cursorrules" in str(exc)
+check("zed refuses rather than shadowing a file the repository is already using", _zrefused)
+check("...naming the file Zed reads today, so the message is actionable", _zrefused)
+check("...and writing nothing at all", not (_zbusy / ".rules").exists())
+check("...leaving their file untouched",
+      (_zbusy / ".cursorrules").read_text(encoding="utf-8") == "their conventions\n")
+
+# A .rules somebody else wrote is not chamnan's to replace.
+_ztheirs = Path(tempfile.mkdtemp())
+(_ztheirs / ".rules").write_text("hand written rules\n", encoding="utf-8")
+_zt = False
+try:
+    adapters_mod.install(_ztheirs, "zed", "block")
+except ValueError:
+    _zt = True
+check("a .rules that is not chamnan's is refused, not overwritten", _zt)
+check("...and survives byte for byte",
+      (_ztheirs / ".rules").read_text(encoding="utf-8") == "hand written rules\n")
+
+for _d in (_zclean, _zbusy, _ztheirs):
+    shutil.rmtree(_d, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

@@ -27,11 +27,14 @@ import workspace as ws
 
 from . import amazonq
 from . import cline
+from . import continuedev
+from . import copilot
 from . import cursor
 from . import gemini
 from . import generic
 from . import kiro
 from . import windsurf
+from . import zed
 
 # Registry, by the name `host.agents()` uses. `claude` is deliberately absent: its delivery is the
 # SessionStart hook, which writes no file, and inventing a file for it would create a second copy
@@ -39,11 +42,14 @@ from . import windsurf
 ADAPTERS = {
     amazonq.NAME: amazonq,
     cline.NAME: cline,
+    continuedev.NAME: continuedev,
+    copilot.NAME: copilot,
     cursor.NAME: cursor,
     gemini.NAME: gemini,
     generic.NAME: generic,
     kiro.NAME: kiro,
     windsurf.NAME: windsurf,
+    zed.NAME: zed,
 }
 
 
