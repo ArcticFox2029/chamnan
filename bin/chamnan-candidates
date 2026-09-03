@@ -43,6 +43,14 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
 import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
+import redact  # noqa: E402
+
+# Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
+# like it could carry a secret today. Five findings running came from one store having a guarded
+# reader and an unguarded one, and the case-by-case judgement about which commands "only print
+# numbers" is exactly the judgement that was wrong each time. Uniform is cheaper to keep true than
+# correct-per-file. See redact.emit.
+print = redact.emit  # noqa: A001
 
 # A candidate must have passed through `confirm` (or been written by a human in the first place)
 # before `promote` will touch it -- the pipeline is evidence -> candidate -> human confirm ->
@@ -204,7 +212,26 @@ def cmd_demote(root, tool_name):
     candidate's "sequence" is the tool's own description, not a reconstruction of the original
     detected steps — precise replay is not recoverable from what the index stores, and a record
     that reminds a reviewer what the tool was for is more honest than pretending otherwise."""
-    entry = tools_index.remove(root, tool_name)
+    # 🐛 `ws.workspace(root) / "tools" / tool_name` returns tool_name ITSELF when it is absolute --
+    # that is what `/` does with an absolute right-hand side -- so an absolute path here escaped the
+    # workspace and the archive step below renamed a file anywhere on disk, then crashed on the
+    # `relative_to` that follows. The name reaches this command from `tools/index.json`, which
+    # arrives with a clone, and `--list` prints it verbatim for somebody to paste.
+    #
+    # `safe_tool_name` is the same guard `chamnan-promote` applies on the way IN. Refusing rather
+    # than sanitising is deliberate there and here: quietly turning `../../x` into `x` acts on a
+    # file the user did not name.
+    if ws.safe_tool_name(tool_name) is None:
+        print(f"chamnan: {tool_name!r} is not a tool name — it must be a plain filename under "
+              f"{ws.workspace(root).name}/tools/", file=sys.stderr)
+        return 1
+    try:
+        entry = tools_index.remove(root, tool_name)
+    except TimeoutError as err:
+        # Distinct from "no such tool", which is what a None means. A demote that lost a race used
+        # to write back a pre-race snapshot and resurrect the tool it had just removed.
+        print(f"chamnan: {err} — try again in a moment", file=sys.stderr)
+        return 1
     if entry is None:
         print(f"chamnan: no promoted tool named {tool_name!r} — see `chamnan-promote --list`",
               file=sys.stderr)

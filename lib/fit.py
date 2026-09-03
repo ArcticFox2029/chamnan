@@ -39,7 +39,6 @@ CEILING = 9000
 # already gone. Ranked by what the loss actually costs: how big the section is, and whether the
 # reader can get it back from a file the block still names.
 DROP_ORDER = [
-    "Architecture index",
     "This repo's own tools — prefer these over writing a new script",
     "Recent milestones",
     "Recorded procedures",
@@ -51,6 +50,24 @@ DROP_ORDER = [
     # dropped ahead of everything but the index. It is the section that stops a wrong action being
     # proposed at all, which puts it above what is merely useful to know.
     "Environment constraints",
+    # Was FIRST to drop, and the list above says it is ranked by "how big the section is, and
+    # whether the reader can get it back from a file the block still names". Measured on this
+    # repository the index is 794 bytes — the SMALLEST droppable section — so the rank contradicted
+    # its own stated criterion, and recoverability does not separate it: every memory section here
+    # is equally one grep away from a file the block names.
+    #
+    # What that cost: dropping the index did not bring the block under the ceiling, so `Work in
+    # flight` went too, and dropping THAT alone would have sufficed. The index was spent for
+    # nothing. Delivery fell from 100% on 2026-08-29 to 41% on 2026-09-02 across 126 real firings,
+    # and the block measured while writing this carried none of it — while the README says
+    # "Nothing is silently dropped".
+    #
+    # It sits here rather than at the very end on purpose. The hook fires 17 to 82 times a session
+    # and most of those are resumes and compactions, not fresh starts: at that moment the model has
+    # just lost the conversation, and the handoff is the section written for exactly that moment.
+    # The index is one grep of a file the block still names. So it outranks the memory sections it
+    # used to be sacrificed for, and yields to the handoff and the rules.
+    "Architecture index",
     "Work in flight (from the last session)",
     "Rules this repository works under",
 ]
@@ -156,6 +173,21 @@ def _followers(order, i):
 _oversize = []
 
 
+def _oversize_note():
+    """The refusal notice, as a function so `shrink` can MEASURE it instead of only appending it.
+
+    🐛 It was built inline after the last `size()` call, so its ~250 bytes were outside every budget
+    decision in the function. A block that fitted exactly then shipped over the ceiling — measured at
+    9,398 bytes against 9,000 while restoring the architecture index, which is the host truncating
+    the tail of a block this module exists to keep whole.
+    """
+    if not _oversize:
+        return ""
+    return ("\n_A dropped section could not be brought back: its pinned lines alone exceed the "
+            "room left. Pins are never cut, so it stays out rather than push the block past "
+            "the host's limit. Shorten a 📌 heading, or raise `output_byte_ceiling`._\n")
+
+
 def shrink(header, parts, ceiling=CEILING, sources=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
@@ -175,7 +207,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     # The notice is part of what gets emitted, so it has to be inside the measurement. Sizing the
     # body without it is how a block lands three lines over the limit and is truncated anyway.
     def size():
-        return len((header + "".join(parts) + notice(dropped, ceiling)).encode())
+        return len((header + "".join(parts) + notice(dropped, ceiling) + _oversize_note()).encode())
 
     droppable = sorted(
         ((_rank(p), i) for i, p in enumerate(parts) if _rank(p) is not None),
@@ -204,7 +236,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     # bytes. So if there is real room left, the best thing that was dropped comes back trimmed.
     # Half a session handoff beats none of one, and the room was going to be wasted either way.
     if dropped:
-        used = len((header + "".join(parts) + notice(dropped, ceiling)).encode())
+        used = len((header + "".join(parts) + notice(dropped, ceiling) + _oversize_note()).encode())
         room = ceiling - used
         # Reversed: droppable is ordered cheapest-first for dropping, so the most valuable thing
         # that was dropped is at the END of it. Walking it forwards brings back the least valuable
@@ -218,7 +250,24 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
             # The followers come back with it, so they have to be paid for out of the same room.
             foll = _followers(order, i)
             room_here = room - len("".join(order[j] for j in foll).encode())
-            trimmed = _trim(order[i], room_here, sources)
+            # 🐛 Everything went through `_trim`, which always rebuilds the frame and always appends
+            # "… cut to fit" — so a section SMALLER than the room available was still cut, and paid a
+            # fence and a note for the privilege. Under `_trim`'s 300-byte floor the result was "",
+            # and a section that fitted comfortably was left out entirely.
+            #
+            # Measured on this repository: the Architecture index is 794 bytes. It is rank 0 in
+            # DROP_ORDER so it goes first, dropping it did NOT bring the block under the ceiling —
+            # `Work in flight` had to go as well, and dropping that alone would have sufficed — and
+            # then the restore refused to put 794 bytes back into 1,300 bytes of room. Delivery of
+            # the index fell from 100% on 2026-08-29 to 41% on 2026-09-02, measured over 126 real
+            # firings, with the block written while fixing this carrying none of it.
+            #
+            # If it fits whole it goes back whole. Trimming is for what does not fit.
+            _whole = order[i]
+            if len(_whole.encode()) <= room_here:
+                trimmed = _whole
+            else:
+                trimmed = _trim(_whole, room_here, sources)
             # 🐛 `_trim` is allowed to return MORE than the room it was given: `_fit_lines` reserves
             # every pinned line before it starts filling, and if the pins alone exceed the budget it
             # keeps them anyway — which is the promise the pin exists for. This branch accepted the
@@ -253,7 +302,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                 # take is real — measured on this repository, 5,308 of 9,000 bytes sat unused with
                 # five sections still dropped. Recompute and keep going; the loop is already
                 # ordered most-valuable-first, so it fills with the best of what is left.
-                used = len((header + "".join(parts) + notice(dropped, ceiling)).encode())
+                used = len((header + "".join(parts) + notice(dropped, ceiling) + _oversize_note()).encode())
                 room = ceiling - used
                 if room <= 0:
                     break
@@ -261,9 +310,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
 
     body = header + "".join(parts) + notice(dropped, ceiling)
     if _oversize:
-        body += ("\n_A dropped section could not be brought back: its pinned lines alone exceed the "
-                 "room left. Pins are never cut, so it stays out rather than push the block past "
-                 "the host's limit. Shorten a 📌 heading, or raise `output_byte_ceiling`._\n")
+        body += _oversize_note()
     # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
     # the header itself -- can exceed the ceiling on its own, and both loops above then run out of
     # moves and return anyway. `dropped` still names what it removed, which reads as "handled".

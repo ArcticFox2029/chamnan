@@ -123,6 +123,24 @@ DEFAULT_CONFIG = {
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 
+def inside(path, root):
+    """True when `path` really lives under `root`, following symlinks before deciding.
+
+    🐛 chamnan reads whatever is at a workspace path. A committed symlink at
+    `.chamnan/skills/x.md` or `.chamnan/STATE.md` pointing to `~/.ssh/id_rsa` put that file's
+    content into the injected block — reproduced end to end. A workspace travels with a clone, so
+    the symlink is chosen by whoever wrote the repository, not by the person reading it.
+
+    `resolve()` on BOTH sides, because a repository reached through a symlinked parent — /tmp on a
+    Mac, a home directory on a network mount — would otherwise fail this test for every file it
+    contains.
+    """
+    try:
+        return Path(root).resolve() in Path(path).resolve().parents
+    except (OSError, ValueError, RuntimeError):
+        return False          # a broken or looping link is not inside anything
+
+
 def find_root(start=None):
     """Repo root: the nearest ancestor holding either a workspace or a VCS marker.
 
@@ -161,11 +179,42 @@ _NON_NEGATIVE = ("log_retention_days", "session_retention_days", "index_token_bu
                  "state_token_budget", "output_byte_ceiling")
 
 
+# 🐛 `_in_range` enforced only `>= 0`, so a config that ships WITH a repository could set
+# `output_byte_ceiling` to any number it liked. `fit.CEILING` is 9,000 for one reason — Claude Code
+# truncates hook output at roughly 10,000 bytes, positionally and without saying so — and a cloned
+# repository could raise it past that and reopen the exact "block ends mid-sentence and nothing
+# reports it" failure `fit.py` exists to prevent. Reproduced: a 31,916-byte block, fence closing at
+# byte 31,822, far past what the host delivers.
+#
+# The upper bounds are generous — several times any real value — because the point is not to
+# second-guess a user who wants a bigger index. It is that a number from an untrusted clone cannot
+# push the block past what the host will carry. Out of range falls back to the default, which is
+# what an out-of-type value already did.
+_UPPER_BOUND = {
+    "output_byte_ceiling": 9_500,        # the host's own cut is around 10,000 and is positional
+    "index_token_budget": 100_000,
+    "state_token_budget": 100_000,
+    "log_retention_days": 3_650,
+    "session_retention_days": 3_650,
+}
+
+
+# 🐛 A `.chamnan/config.json` nested past JSON's recursion limit raises RecursionError, which is a
+# RuntimeError and NOT a ValueError — so every `except ValueError` around a `json.loads` here let
+# it through and the SessionStart hook died with zero output. A 20 KB file of 10,000 nested `[`
+# silently killed every session in that repository, and the file arrives with a clone.
+
+
 def _in_range(key, value):
     """False for a value whose TYPE is right and whose meaning is not."""
     if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):
-        return value >= 0
+        return 0 <= value <= _UPPER_BOUND.get(key, value)
     return True
+
+
+# Keyed on (path, mtime_ns, size); see load_config. Bounded because a process could in principle
+# resolve several roots, and an unbounded memo in a library is a leak waiting to be found.
+_CONFIG_MEMO = {}
 
 
 def load_config(root=None):
@@ -178,8 +227,22 @@ def load_config(root=None):
     before numbers because `isinstance(True, int)` is True in Python and `"agents": 1` should not
     quietly become a truthy switch.
     """
+    path = workspace(root) / "config.json"
+    # 🐛 Re-read and re-parsed on every call, and the PostToolUse hook alone calls `enabled()` four
+    # times per tool call, with one more from each PreToolUse hook. Six full parses of the same
+    # unchanged file per Edit. Keyed on (mtime_ns, size) rather than held outright, so a config
+    # edited mid-session is still picked up; every entry point here is a short-lived process, so the
+    # memo never outlives the run that made it.
+    try:
+        st = path.stat()
+        stamp = (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        stamp = (str(path), None, None)
+    hit = _CONFIG_MEMO.get(stamp)
+    if hit is not None:
+        return dict(hit)
     cfg = dict(DEFAULT_CONFIG)
-    for k, v in load_json(workspace(root) / "config.json", dict).items():
+    for k, v in load_json(path, dict).items():
         if k not in DEFAULT_CONFIG:
             continue
         want = type(DEFAULT_CONFIG[k])
@@ -195,6 +258,7 @@ def load_config(root=None):
         # both deleted. Session records are committed work.
         if isinstance(v, want) and _in_range(k, v):
             cfg[k] = v
+    _CONFIG_MEMO[stamp] = dict(cfg)
     return cfg
 
 
@@ -212,7 +276,51 @@ def enabled(part, root=None):
 # Data nobody can reconstruct, destroyed by an unrelated command, and a wrong number presented as
 # an exact one. A log that prunes its own records is not stale because nobody appended to it
 # lately; that is the retention working.
-SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl")
+# 🐛 `edits.jsonl` was added by the co-edit ledger and not listed here, so `prune_logs()` would
+# have deleted the whole feature after seven quiet days — the identical failure the comment
+# below describes being fixed for its two siblings. A log that bounds itself by record must
+# say so here, or the directory sweep bounds it by date instead.
+SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl")
+
+
+def expiring_logs(root=None, within_days=1.0):
+    """Human-written log files about to be deleted by `prune_logs`, newest first.
+
+    🐛 Logs are scratch BY DESIGN, and `prune_logs` deletes them silently at the retention window —
+    which is correct for the `.jsonl` machine scratch it was written for, and quietly destructive
+    for a dated `.md` note somebody typed. Found on a real work repository: `logs/2026-08-27.md`,
+    8.1 KB documenting a root cause and a push-mirror gotcha, sitting 6.5 days into a 7-day window,
+    due to vanish on the next session opened there with nothing said before or after.
+
+    The repository's own CLAUDE.md was telling people to put durable knowledge in `logs/` — it
+    predates the write skills and never mentions them — so this is not one person's slip. Where the
+    instructions and the retention disagree, the retention wins in silence.
+
+    Not a change to the policy: a `.md` under `logs/` is still scratch and still goes. What changes
+    is that it is named once before it does, so the choice to keep it is available. `.jsonl` and
+    `.json` are excluded — machine scratch is what the window was designed for and naming it is
+    noise. So is anything in SELF_PRUNING_LOGS, which is not on this clock at all.
+    """
+    import time
+    logs = workspace(root) / "logs"
+    if not logs.is_dir():
+        return []
+    window = load_config(root).get("log_retention_days", 7) * 86400
+    cutoff = time.time() - window
+    soon = cutoff + within_days * 86400
+    out = []
+    for path in logs.iterdir():
+        try:
+            if not path.is_file() or path.suffix.lower() != ".md":
+                continue
+            if path.name in SELF_PRUNING_LOGS:
+                continue
+            mt = path.stat().st_mtime
+            if cutoff <= mt < soon:
+                out.append((path.name, (mt - cutoff) / 86400))
+        except OSError:
+            continue
+    return sorted(out, key=lambda r: r[1])
 
 
 def prune_logs(root=None):
@@ -289,6 +397,16 @@ def hook_root(payload=None):
     return find_root()
 
 
+# Every JSON store this package keeps is a handful of keys or a short list. A ceiling here is not a
+# guess at what is reasonable; it is far above anything chamnan itself writes, and it exists because
+# `config.json` and `tools/index.json` arrive with a clone like every other committed file. Measured
+# on a 50 MB (valid, ordinary) config.json: the PostToolUse hook, which reads it several times per
+# tool call, went from 0.28s to 0.56s — and that scales linearly, so the 300 MB an agent tried took
+# it past 3s of silent latency on every Edit. MAP.md and STATE.md already have ceilings for exactly
+# this shape; the JSON stores did not.
+JSON_READ_CEILING = 4_000_000    # bytes
+
+
 def load_json(path, want=dict):
     """A JSON store read back, or an empty one of the right type. Never raises, never wrong-typed.
 
@@ -302,8 +420,13 @@ def load_json(path, want=dict):
     inside a SessionStart hook takes the whole injection with it.
     """
     try:
-        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, ValueError):
+        # Read bounded, then parse. Reading it whole and rejecting afterwards would still have paid
+        # for the read, which is the cost being avoided. A file over the ceiling is not truncated
+        # into a parse -- `read(n)` of a bigger file yields invalid JSON and lands in the `except`
+        # below, which returns the empty store, the same degraded answer as a missing file.
+        with pathlib.Path(path).open(encoding="utf-8") as fh:
+            data = json.loads(fh.read(JSON_READ_CEILING))
+    except (OSError, json.JSONDecodeError, ValueError, RecursionError, UnicodeDecodeError):
         return want()
     return data if isinstance(data, want) else want()
 
@@ -352,7 +475,7 @@ def ensure(root=None):
     try:
         if cfg.is_file() and cfg.read_text(encoding="utf-8", errors="replace").strip():
             json.loads(cfg.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         malformed = True
     current = load_json(cfg, dict)
     merged = dict(DEFAULT_CONFIG)
@@ -594,6 +717,11 @@ IGNORE_LINES = [
     "logs/pointer_seen*.json",
     "logs/*.lock",
     "logs/repeat_digest.json",
+    "",
+    "# Derived, not recorded: rebuilt from git history whenever HEAD moves. Committing it would put",
+    "# a 40 KB file that changes on every commit into every diff, and merge it for no reason — the",
+    "# answer is a function of the commit, so any clone can recompute it in a second.",
+    "state/churn-*.json",
 ]
 
 
@@ -663,6 +791,51 @@ LOCK_TIMEOUT = 2.0
 LOCK_STALE = 30.0
 
 
+def atomic_write_text(dest, text, encoding="utf-8"):
+    """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
+
+    🐛 Two halves, and having only one is worse than having neither, because it looks correct.
+    `os.replace` is atomic and was never the problem; a STAGING NAME SHARED BETWEEN PROCESSES is.
+    Two writers put their content into the same `x.tmp` and then each replaced `x` with whatever
+    that file held at its own moment. `state.py` documented this and fixed itself; `coedit.py` and
+    `rollup.py` copied the fix; `pointer.py`, `chamnan-map` and `chamnan_scratch_watch.py` did not,
+    and each was reproduced losing data. Two of three concurrent `chamnan-map` runs produced a
+    MAP.md with content from BOTH builds interleaved, and the losing process exited 0.
+
+    So it is one function now rather than a rule every writer has to remember — the same reasoning
+    that put `redact.emit` behind every command's `print`. `test_no_writer_builds_its_own_tmp_name`
+    fails if a new one starts hand-rolling this again.
+
+    Returns True on success. Best-effort by default: a workspace on a read-only checkout must still
+    let a session start, so the caller decides whether a failed write is worth reporting.
+    """
+    tmp = None
+    try:
+        dest = pathlib.Path(dest)
+        # 🐛 An atomic replace does not need write permission on the TARGET — `os.replace` only
+        # needs a writable directory — so switching to it silently defeated a read-only file. A
+        # user who `chmod 444`s a store means it, and `chamnan-promote` relies on the refusal to
+        # roll back the file it already copied rather than leave an unregistered executable behind.
+        # Checked explicitly, because the filesystem will not check it for us any more.
+        if dest.exists() and not os.access(dest, os.W_OK):
+            return False
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Per-process, and `.tmp` last so a suffix-matching reader never mistakes it for the real
+        # file. os.getpid() is enough here: two threads of one process writing the same workspace
+        # file is what `exclusive()` below is for, and every entry point is a separate process.
+        tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
+        tmp.write_text(text, encoding=encoding)
+        os.replace(tmp, dest)
+        return True
+    except Exception:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        return False
+
+
 @contextlib.contextmanager
 def exclusive(path):
     """Hold a lock beside `path` for the duration of the block. Yields True when it was acquired."""
@@ -711,6 +884,6 @@ def config_is_malformed(root):
         return False
     try:
         json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):
         return True
     return False

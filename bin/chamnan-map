@@ -23,6 +23,14 @@ import tree  # noqa: E402
 import rollup  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
+import redact  # noqa: E402
+
+# Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
+# like it could carry a secret today. Five findings running came from one store having a guarded
+# reader and an unguarded one, and the case-by-case judgement about which commands "only print
+# numbers" is exactly the judgement that was wrong each time. Uniform is cheaper to keep true than
+# correct-per-file. See redact.emit.
+print = redact.emit  # noqa: A001
 
 
 def coverage(files):
@@ -215,7 +223,26 @@ def install_git_hook(root):
     return 0
 
 
+KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure", "-h", "--help")
+
+
 def main(argv):
+    # 🐛 There was no `--help`, and this command treats any non-flag argument as a directory to
+    # scan — so `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the
+    # most cautious thing a new user can type performed a write. Found by an agent that typed it
+    # by reflex in the wrong directory and rewrote a real repository's index.
+    #
+    # An unknown flag is refused rather than ignored for the same reason the README already warns
+    # about: a misspelt flag used to be dropped in silence and the command did something other than
+    # what was asked, with nothing on screen to say so.
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
+        return 0
+    unknown = [a for a in argv if a.startswith("-") and a not in KNOWN_FLAGS]
+    if unknown:
+        print(f"chamnan-map: unknown flag {unknown[0]} — try --help", file=sys.stderr)
+        return 2
+
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
@@ -254,6 +281,9 @@ def main(argv):
     ws.prune_sessions(root)
     files = []
     seen_paths = set()
+    # Once per run, not once per target — scan() no longer clears these itself, because doing so
+    # made `chamnan-map <a> <b>` report only the last target's skipped files. See mapper.reset_skips.
+    mapper.reset_skips()
     for one in targets:
         for f in mapper.scan(one):
             # Paths are made relative to the repo root so several scanned directories share one
@@ -288,19 +318,23 @@ def main(argv):
     #
     # Beside the target, never in the system temp directory: os.replace fails with EXDEV across
     # mount points, and a copy-and-delete fallback would give up the atomicity this exists for.
-    tmp = out.with_suffix(".md.tmp")
+    # 🐛 `out.with_suffix(".md.tmp")` is the same path in every process. Reproduced with two
+    # concurrent rebuilds: two of three runs produced a MAP.md carrying content from BOTH builds
+    # interleaved, and the losing process exited 0 having installed the corrupted file. The
+    # `os.replace` was never the problem; the shared staging name is.
     try:
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(out)
+        if not ws.atomic_write_text(out, text):
+            raise OSError(f"could not write {out}")
     except OSError as err:
         # 🐛 The first version of this fix fell back to `out.write_text(text)` here, "so a failed
         # run does not lose its output" — and the fixture caught it in one run: the fallback hit
         # the same limit and truncated the GOOD index from 4,712 bytes to 4,096. Losing this run's
         # output is the correct outcome; destroying the index that was already there is not.
-        try:
-            tmp.unlink()
-        except OSError:
-            pass
+        #
+        # No `tmp.unlink()` here any more: the staging file belongs to `ws.atomic_write_text`, which
+        # removes its own on failure. Leaving the old cleanup behind raised NameError from inside an
+        # `except OSError`, so an interrupted rebuild died with a traceback instead of the sentence
+        # this branch exists to print — the failure path's own failure path.
         print(f"chamnan: could not write the index ({err.__class__.__name__}: {err}).",
               file=sys.stderr)
         print(f"  The existing {out.name} is unchanged.", file=sys.stderr)
@@ -369,6 +403,28 @@ def main(argv):
         named = ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6])
         more = len(mapper.SKIPPED_BUILD_DIR) - 6
         print(f"  not indexed, read as build output: {named}" + (f" +{more} more" if more > 0 else ""))
+    # 🐛 An extension chamnan cannot read was the one skip reason that said nothing. Measured on
+    # Svelte's own monorepo: 4,540 `.svelte` files missing from the index — more than the 3,480 it
+    # did index — and the run reported full coverage of what it saw.
+    #
+    # 🐛 This used to fire on any unknown extension past a count threshold — `max(50, files//10)` —
+    # and that number was doing two jobs badly. It silenced the case it was written for: chamnan's
+    # own nine `bin/` commands were invisible to its own index and nine files never crossed fifty,
+    # so the gap was silent by construction on exactly the small repositories where nine files are
+    # most of the tool. And it produced noise the moment the count moved: 53 `.md` files reported as
+    # "no reader", which is true and useless — markdown was never anybody's source language.
+    #
+    # `assets.UNEXTRACTED_SOURCE` already answers the real question. It is the set of extensions
+    # that ARE source and that chamnan has no extractor for — Perl, Haskell, Clojure, Elixir and
+    # forty more — and it deliberately excludes `.md`, `.json`, `.png` and every other format nobody
+    # expects an index to cover. A classification that exists beats a threshold nobody measured.
+    import assets as _assets
+    _unknown = [(ext, n) for ext, n in mapper.SKIPPED_UNKNOWN_EXT.most_common()
+                if ext in _assets.UNEXTRACTED_SOURCE]
+    if _unknown:
+        _named = ", ".join(f"{n:,} {ext}" for ext, n in _unknown[:3])
+        print(f"  not indexed, no reader for the extension: {_named}")
+        print("    chamnan reads the languages in mapper.EXT_LANG; these are not among them.")
         print("  (git-tracked directories with these names ARE indexed; these are not tracked)")
     # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
     # `__init__.py`, or any tree whose files are all empty. It crashed at this line, which is
@@ -412,7 +468,15 @@ def main(argv):
     # warning the user had to act on.
     budget = ws.load_config(root).get("index_token_budget", 3000)
     if index_tokens > budget:
-        rolled = tokens.estimate(rollup.collapse(text[:index_chars], out.name, budget, root))
+        # `root=None` deliberately, and it is the difference between 1,203 ms and 1 ms here.
+        # Passing the root makes `collapse` rank filenames by git churn, which costs one
+        # `git log --name-status -M -n 600` — 1.2 s cold on this repository, and it is the ONLY
+        # thing in this command that runs git. The ranking decides WHICH filenames survive each
+        # directory line, which matters for the index a session receives; this call produces a
+        # token count printed to a terminal, and the count is the same either way. Measured:
+        # 1,361 tokens churn-ranked against 1,385 alphabetical, a difference of 1.77% in a figure
+        # already shown with a `~`.
+        rolled = tokens.estimate(rollup.collapse(text[:index_chars], out.name, budget, None))
         print(f"\n  Over the {budget:,}-token session budget, so session start will roll this up by")
         print(f"  directory: ~{rolled:,.0f} tokens injected per session instead of {index_tokens:,.0f},")
         print(f"  with every directory still named and the full entry a grep away in MAP.md.")
@@ -422,7 +486,16 @@ def main(argv):
         print(f"\n  Under the {budget:,}-token session budget — injected per session as-is,"
               f" one line per file.")
     if pct < 70:
-        missing = [f["path"] for f in files if not f["doc"] and f.get("describable", True)][:8]
+        # 🐛 A new user with one real file was told to add a comment to a file chamnan itself had
+        # installed under `.chamnan/tools/`. Suggesting somebody comment the tool's own
+        # scaffolding is advice they cannot act on and would be wrong to.
+        #
+        # Only the SUGGESTION is filtered, never the index: on a repository that uses
+        # `.chamnan/` as a real working directory — which this project's own CLAUDE.md
+        # instructs — those files are the owner's work and belong in the map.
+        missing = [f["path"] for f in files
+                   if not f["doc"] and f.get("describable", True)
+                   and not str(f["path"]).startswith(".chamnan/")][:8]
         print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
         print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")
         for m in missing:

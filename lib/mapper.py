@@ -34,7 +34,7 @@ import re
 import mdblock
 import unicodedata
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import assets as assets_mod
 import catalogs as catalogs_mod
@@ -78,6 +78,9 @@ AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env",
 # SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
 # those do" would have been another write-only list.
 SKIPPED_BUILD_DIR = set()
+
+# {".svelte": 4540, …} — files whose extension chamnan has no reader for. See indexable().
+SKIPPED_UNKNOWN_EXT = __import__("collections").Counter()
 _TRACKED_AMBIGUOUS = {}
 _GENERATED_GLOBS = {}
 SKIPPED_GENERATED = set()
@@ -368,6 +371,42 @@ FILENAME_LINE = re.compile(r"^[\w.-]+\.[a-z]{1,5}\s*$", re.I)
 # applied immediately after that filename was removed, so a summary that legitimately opens
 # with a dash is untouched.
 SELF_NAME_SEPARATOR = re.compile(r"^\s*[—–\-:|]+\s*")
+# The rest of the Xcode file header, once FILENAME_LINE above has taken the restated filename off
+# the front. What remains is the project name and then `Created by <person> on <date>.`, and both
+# get harvested as the file's summary: 17 rows of one corpus read `— OrbitalFreightDriver`, the
+# app's own name, while the real `///` doc comment two lines below was never reached.
+#
+# It is not only noise. The attribution line carries a named human being and a date, and chamnan
+# writes MAP.md into the repository and injects it at session start — so an Xcode default nobody
+# wrote deliberately ends up committed and put in front of a model. That moves this from a density
+# defect to one worth fixing on its own.
+#
+# Anchored on the attribution wording AND on a digit where the date goes, not on "a short line
+# with no verb" — a real one-line summary is often exactly that shape, and "Created on demand by
+# the scheduler" is a real description that must survive.
+XCODE_ATTRIBUTION = re.compile(r"\bcreated\s+by\b.{0,80}?\bon\b\s*\d", re.I | re.S)
+# The other attribution convention, and the one that carries an address as well as a name:
+# `# Author: Jane Roe <jane@example.com>` sitting above the real summary. Reproduced in four
+# shapes — `Author:`, `Author::` (RDoc), `Maintainer:` and `Written by` — each harvested as the
+# file's description, so MAP.md published a person and an email while the sentence that actually
+# described the file, one line below, was never reached.
+#
+# Same reasoning as XCODE_ATTRIBUTION above: chamnan commits MAP.md and injects it at session
+# start, so this republishes a contact detail nobody chose to put there.
+#
+# Anchored on the punctuation, not on the word. `# Author model for the blog` is a real summary
+# of a real file and has no colon; `# Authors: see AUTHORS` is a pointer and has one.
+AUTHORSHIP_HEADER = re.compile(
+    r"^\s*(?:@?authors?|maintainers?|contributors?|copyright\s+holder"
+    # 🐛 Stepping over `Author:` alone was not enough, and the realistic header is the one that got
+    # through: `# Author: Jane Roe` followed by `# Email: jane@example.com` published the address on
+    # the next line instead. Contact fields carry exactly what the author line does.
+    r"|e-?mails?|contacts?)\s*::?"
+    r"|^\s*written\s+by\b", re.I)
+# A line that is essentially just an address is a contact line without the label — some headers
+# write the address alone under the name. Anchored on the whole line being one address so a summary
+# that happens to MENTION an address ("Validates an email address before sending") is untouched.
+BARE_EMAIL_LINE = re.compile(r"^\s*<?[\w.+-]+@[\w-]+\.[\w.]+>?\s*$")
 # Lines that open a file without saying anything about it — including the import block, which on a
 # Java or TypeScript file sits between the licence header and the class doc. Leaving imports out
 # meant the reader stopped there: 250 of 268 gson files and 401 of 455 type-fest files came back
@@ -380,6 +419,11 @@ SKIP_OPENERS = re.compile(
     r"import\s|from\s+[\'\"\w.]+\s+import\b|require[\s(]|require_relative\s|using\s\w|"
     r"extern\s+crate|part\s+of\s|library\s\w|@?import\b|open\s+\w+\s*$|"
     r"//\s*SPDX|/\*\s*SPDX|syntax\s*=|option\s+\w+|#\s*(?:include|import|pragma|ifndef|if\s|endif)|"
+    # A Go build constraint is a switch spelled as a comment, like `#!` and SPDX above it. Skipped
+    # at the line level because it cannot be bounded inside the joined block: `go:build ignore` and
+    # `Package tools pins build dependencies.` are the same shape to any regex. It was the
+    # description of 12 of gin's ~44 "described" files, putting real coverage at ~31% against 44%.
+    r"//\s*(?:go:build|\+build)\b|"
     # 🐛 A prologue is an opener too, and leaving these three out cost more coverage than every
     # other gap in this file put together. `leading_comment` abandons the whole file on the first
     # line that is neither blank, an opener, nor a comment -- so ONE line of prologue between the
@@ -406,7 +450,39 @@ BLOCK_CLOSE = "*/"
 MAGIC_COMMENT = re.compile(
     r"^(?:frozen_string_literal\s*:\s*\w+|encoding\s*[:=]\s*[\w-]+|-\*-.*?-\*-|"
     r"coding[:=]\s*[\w.-]+|warn_indent\s*:\s*\w+|shareable_constant_value\s*:\s*\w+|"
-    r"@ts-\w+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
+    # `\w+` does not match a hyphen, so `@ts-expect-error` — the compiler-recognised spelling, not
+    # `@ts-ignore`/`@ts-nocheck`'s single word — only matched up through `@ts-expect`, leaving
+    # `-error` behind as the "description". Found while testing the Svelte/Vue/Astro reader below:
+    # `// @ts-expect-error` right above an import is common in real `<script setup>` code, and
+    # `Marquee.vue` (vuetifyjs/vuetify) came back described as "error". Pre-existing on any plain
+    # .ts/.js file with the same opening line — not introduced by the SFC reader, only surfaced by
+    # it, since a two-directive stack (`@ts-expect-error` + import) sits far more often at the very
+    # TOP of a <script> block than at the top of a whole standalone module.
+    r"@ts-[\w-]+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
+    # 🐛 Two more families, both found by running chamnan on repositories this author did not
+    # write. A Go BUILD CONSTRAINT is a switch spelled as a comment, exactly like the Ruby magic
+    # comments above it: `//go:build linux && !windows` became the description of 12 of gin's ~44
+    # "described" files, putting its real coverage at ~31% against the 44% reported. A JSDoc
+    # type-only import is the same shape in JavaScript: `@import { Foo } from "./types.js"` was the
+    # description of 289 of svelte's 440 "described" files — 66% of them — so 13% coverage was
+    # really 4.3%.
+    #
+    # Both matter more than a bad sentence. A file with a directive as its summary counts as
+    # DESCRIBED, so the coverage bar reports work that was never done, and every file in the
+    # project ends up sharing one meaningless line. Stripping the directive lets the real comment
+    # behind it through, which is what `tools.go` in the fixture demonstrates.
+    # A JSDoc type-only import, and it is bounded rather than `.*` on purpose: the comment block
+    # reaches here already JOINED, so a greedy tail would eat the real description sitting on the
+    # next line. `@import { Foo } from "./types.js"` was the description of 289 of svelte's 440
+    # "described" files — 66% of them — putting its real coverage at 4.3% against the 13% reported.
+    # A file with a directive as its summary counts as DESCRIBED, so the coverage bar reports work
+    # nobody did.
+    #
+    # Go build constraints are the same defect and are NOT here: they are word-shaped
+    # (`go:build ignore`), indistinguishable from a sentence by any character class, so bounding
+    # them failed and ate `// Package tools pins build dependencies.` on the line below. They are
+    # skipped at the LINE level in SKIP_OPENERS instead, which is where `#!` and SPDX already are.
+    r"@import\s*\{[^}]*\}(?:\s*from\s*['\"][^'\"]*['\"])?|"
     r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
 # How far into the opening comment to look for a licence. See the use site.
 BOILERPLATE_WINDOW = 240
@@ -447,6 +523,20 @@ MODULEDOC = re.compile(r'^\s*@(?:module)?doc\s+"""\s*$', re.M)
 # describing what the crate is. The one file a newcomer opens first.
 FILE_DOC_MARKER = {"rs": "//!", "zig": "//!"}
 FILE_DOC = re.compile(r"^[ \t]*//!(.*)$", re.M)
+
+
+def _is_authorship_line(line):
+    """True for `# Author: Jane Roe <jane@example.com>` and its siblings.
+
+    Stepped over as a LINE rather than rejected as a block, which is the difference between this
+    and XCODE_ATTRIBUTION. Xcode's header is its own comment block with a blank line under it, so
+    rejecting the block reaches the real doc comment below. An `# Author:` line usually sits
+    immediately above the summary inside ONE block, and rejecting that block threw the summary
+    away with it — measured while writing this: the leak stopped and "Parses dock manifests."
+    became nothing, which trades a leak for a blank index row rather than fixing anything.
+    """
+    body = re.sub(r"^\s*(?:#+|//+|/\*+|\*+|--+|;+|%+)\s?", "", line)
+    return bool(AUTHORSHIP_HEADER.match(body)) or bool(BARE_EMAIL_LINE.match(body))
 
 
 def _skip_continuation(lines, i):
@@ -494,7 +584,7 @@ def leading_comment(source, lang=None):
     for _ in range(6):          # at most six boilerplate blocks before giving up on the file
         while i < len(lines):
             line = lines[i]
-            if not line.strip() or SKIP_OPENERS.match(line) or (
+            if not line.strip() or SKIP_OPENERS.match(line) or _is_authorship_line(line) or (
                     lang in HASH_IS_DIRECTIVE and line.lstrip().startswith("#")):
                 # A directive or attribute can span lines, and only its FIRST line looked like one.
                 # Rust's crate root opens `#![allow(\n    clippy::…,\n)]`, so line two fell through
@@ -542,7 +632,8 @@ def leading_comment(source, lang=None):
         # what the file is.
         bare = ANY_DOC_TAG_TAIL.sub("", text).strip()
         if text and not BOILERPLATE.search(text[:BOILERPLATE_WINDOW]) \
-                and not IMPORT_LABEL.match(bare):
+                and not IMPORT_LABEL.match(bare) \
+                and not XCODE_ATTRIBUTION.search(text[:BOILERPLATE_WINDOW]):
             return _clip(text)
     return ""
 
@@ -607,6 +698,33 @@ def _one_comment(lines, i, prefix=COMMENT_PREFIX):
     return " ".join(out), j
 
 
+_PARSE_MEMO = (None, None)
+
+
+def _parse_py(source, path):
+    """Parse a Python file once, not twice.
+
+    `extract_python` parsed the source, and then `_is_empty_module` parsed the same string again a
+    few lines later in `scan`'s loop — measured at 5.38 ms per file over a 399-file corpus, with
+    roughly half of it redundant. The memo holds one entry because `scan` handles one file at a
+    time, and it is keyed by object identity rather than equality: an identity check can only ever
+    miss the cache, never hit it for a different string, so the worst case is the behaviour that
+    existed before.
+    """
+    global _PARSE_MEMO
+    key, cached = _PARSE_MEMO
+    if key is source:
+        return cached
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = (ast.parse(source, filename=str(path)), list(caught))
+    except (SyntaxError, ValueError, RecursionError, MemoryError):
+        result = (None, [])
+    _PARSE_MEMO = (source, result)
+    return result
+
+
 def extract_python(source, path, lang='py'):
     """Parses one file. Warnings raised BY THE FILE are captured, not printed.
 
@@ -616,13 +734,10 @@ def extract_python(source, path, lang='py'):
     sequence in a 3,000-line file had gone unnoticed here because py_compile stays silent about it,
     and it becomes a hard SyntaxError in a future Python.
     """
-    try:
-        with warnings.catch_warnings(record=True) as caught:
-            warnings.simplefilter("always")
-            tree = ast.parse(source, filename=str(path))
-        if caught:
-            PARSE_WARNINGS.append((str(path), len(caught), str(caught[0].message)))
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
+    tree, caught = _parse_py(source, path)
+    if caught:
+        PARSE_WARNINGS.append((str(path), len(caught), str(caught[0].message)))
+    if tree is None:
         # SyntaxError is the expected one. ValueError is a file with a .py extension whose contents
         # are not text at all — a null byte makes ast.parse raise it, and catching only SyntaxError
         # meant one vendored binary blob aborted the scan of an entire repository with a traceback.
@@ -819,6 +934,12 @@ EXT_LANG = {
     # Interface definitions rather than code, and that is the point: on a service repo the question
     # "what does this expose" is answered by the .proto or the schema, not by the handlers.
     ".proto": "proto", ".graphql": "graphql", ".gql": "graphql",
+    # R6 experiment: single-file components. Each is mostly markup (a <template>, plain HTML, or a
+    # `---` frontmatter fence) wrapped around one real JS/TS block, so the WHOLE FILE is never fed
+    # to the "js" extractor — see _sfc_extraction_source, which pulls just that block out first.
+    # Mapped to "js" rather than a new lang because that block IS JavaScript or TypeScript, and the
+    # existing REGEX_RULES/LINE_COMMENT/FILE_DOC_MARKER entries for "js" already cover TS syntax.
+    ".svelte": "js", ".vue": "js", ".astro": "js",
 }
 # Leading comment markers stripped when harvesting a file's opening comment as its summary.
 # Control flow reads exactly like a call, and the per-language rules cannot tell them apart: Dart's
@@ -886,10 +1007,9 @@ def _is_empty_module(source, lang):
     """True when the file declares nothing. Python is checked properly; other languages fall back to
     "is there anything that is not blank or a comment", which is all a regex can honestly claim."""
     if lang == "py":
-        try:
-            return not ast.parse(source).body
-        except (SyntaxError, ValueError, RecursionError, MemoryError):
-            return False
+        # Reuses the tree `extract_python` just built for this same string; see `_parse_py`.
+        tree, _ = _parse_py(source, "<empty-check>")
+        return False if tree is None else not tree.body
     # The comment markers come from LINE_COMMENT, not from one list for every language. A fixed
     # list said `#` is a comment everywhere -- so `#![no_std]` and `#![allow(unused_imports)]`, a
     # real Rust crate header, read as an empty file and the whole module was marked as having
@@ -913,6 +1033,49 @@ def _is_empty_module(source, lang):
     return True
 
 
+# Single-file-component fences. Non-greedy and DOTALL: a Vue/Svelte file can carry a <style> block
+# after the <script>, and greedy would swallow past the first </script> it should stop at. Matches
+# the FIRST block only — a second <script context="module"> in Svelte is real but rare enough that
+# reading module context above instance context would need SFC-aware parsing this regex reader
+# deliberately does not attempt (see mapper.py's own docstring: "approximate on purpose").
+_SFC_SCRIPT = re.compile(r"<script\b[^>]*>(.*?)</script>", re.S | re.I)
+# Astro's frontmatter fence: JS/TS between the file's opening `---` line and the next one. Anchored
+# at the start of the file (`\A`) because `---` is also valid Markdown (a horizontal rule / YAML-ish
+# separator) and can appear again later, inside the template half of the file.
+_ASTRO_FRONTMATTER = re.compile(r"\A\s*---\r?\n(.*?)\r?\n---", re.S)
+
+
+def _sfc_extraction_source(source, path):
+    """What a Svelte/Vue/Astro single-file component actually has to offer a JS/TS reader: the one
+    fenced block that is real code, not the markup around it.
+
+    Without this, EXT_LANG mapping these three straight to "js" would run the JS extractor over the
+    WHOLE file — template markup included — which is wrong in both directions at once. Vue's own
+    convention opens with `<template>`, so `leading_comment` never reaches the doc comment sitting
+    later inside `<script>` and every describable file reads as having no comment. And an HTML
+    comment inside the template (`<!-- accessibility note -->`, common right after `<template>`)
+    matches this reader's own comment-prefix regex, so a fair number of files would get a WRONG
+    description instead of a missing one — a component's job, not the file's.
+
+    A component with no <script> block (pure markup, common in real Vue/Svelte trees) returns "":
+    genuinely nothing to describe, not a reader failure.
+    """
+    # 🐛 [found running the real suite] `path` was assumed to be a Path, but `_extract_one` never
+    # touched it for a non-Python lang before this function existed, so nothing enforced that —
+    # test_run_tests.py calls `mapper._extract_one(_hdr, "b.h", "c")` with a bare string, and
+    # `"b.h".suffix` doesn't exist. `PurePosixPath(str(path))` accepts either without caring which
+    # one the caller had, at the cost of doing that indifferently on every call, not only the three
+    # SFC extensions that need it.
+    ext = PurePosixPath(str(path)).suffix.lower()
+    if ext in (".svelte", ".vue"):
+        m = _SFC_SCRIPT.search(source)
+        return m.group(1) if m else ""
+    if ext == ".astro":
+        m = _ASTRO_FRONTMATTER.match(source)
+        return m.group(1) if m else ""
+    return source
+
+
 def _extract_one(source, path, lang):
     """Dispatch to the right extractor. Separated from scan() so the caller can wrap exactly this
     in one try and keep a bad file from taking the run down with it."""
@@ -921,7 +1084,7 @@ def _extract_one(source, path, lang):
         if parsed[0] is None and not parsed[1]:
             return leading_comment(source, lang), [], [], []
         return parsed
-    return extract_regex(source, lang)
+    return extract_regex(_sfc_extraction_source(source, path), lang)
 
 
 def scan(root):
@@ -931,8 +1094,104 @@ def scan(root):
         return _scan(root)
 
 
-def indexable(root, nested=None):
-    """Yield (path, lang) for exactly the files that belong in this repository's index.
+_RESOLVED = {}
+
+
+def _under_nested(path, nested):
+    """True when `path` sits inside one of the nested checkouts, without resolving the same
+    directory once per file.
+
+    Every file re-resolved every one of its own ancestors, and `Path.resolve()` is a syscall per
+    component. Measured on a four-project tree: 12,815 resolve calls over 140 distinct directories,
+    91.5x redundant, and `indexable()` at 566.5 ms median.
+
+    Two properties keep the memo honest. It is keyed on the ancestor's own string, so two paths that
+    reach the same directory by different routes share one entry rather than disagreeing — which is
+    the case symlinks and a repository mounted twice both produce. And it walks upward and stops at
+    the first ancestor already known NOT to be nested: everything above that one was checked when
+    that entry was made, so the walk gets shorter as the scan proceeds rather than longer.
+
+    A resolve that raises is cached as its own unresolved path rather than re-raised, which is what
+    the unguarded comprehension did anyway when a parent vanished mid-scan.
+    """
+    # 🐛 The memo was unconditional and never cleared, unlike the sibling cache in `tree.py` which
+    # is explicitly scoped and says why: a caller that scans, changes the tree, and scans again gets
+    # the first answer back for the second scan. A directory created, deleted or re-symlinked
+    # between two scans in one process would keep resolving to what it used to be, and a stale
+    # answer here decides whether a whole checkout counts as this repository's source.
+    #
+    # Same rule as `tree._entries`: cache only inside a `tree.session()`, which is the scope the
+    # caller has already declared it will not mutate the tree within. Outside one, resolve fresh.
+    import tree as _tree
+    cache = _RESOLVED if _tree._DEPTH else {}
+    for parent in path.parents:
+        key = str(parent)
+        r = cache.get(key)
+        if r is None:
+            try:
+                r = parent.resolve()
+            except (OSError, ValueError):
+                # ValueError, not only OSError: a path carrying a null byte raises it out of
+                # posixpath.realpath. The unguarded comprehension this replaced raised there too,
+                # so this is not a regression it introduces — it is one it closes while passing.
+                r = parent
+            cache[key] = r
+        if r in nested:
+            return True
+    return False
+
+
+# `python3`, `python3.12`, `node`, `bash`, `zsh`, `sh`, `ruby`, `perl` — the interpreter's own name,
+# with a version suffix stripped. Matched against EXT_LANG's own vocabulary so a language chamnan
+# cannot read stays unreadable rather than being smuggled in by its shebang.
+_SHEBANG_LANG = {"python": "py", "python2": "py", "python3": "py", "node": "js", "nodejs": "js",
+                 "bash": "sh", "sh": "sh", "zsh": "sh", "dash": "sh", "ksh": "sh",
+                 "ruby": "rb", "perl": "pl", "php": "php"}
+
+
+def _lang_from_shebang(path):
+    """The language of an extensionless executable, from its first line, or None.
+
+    Only the first 200 bytes are read: a shebang is the first line or it is not a shebang, and this
+    runs on every extensionless file in the tree.
+    """
+    try:
+        with path.open("rb") as fh:
+            first = fh.read(200).split(b"\n", 1)[0]
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    line = first.decode("utf-8", errors="replace")
+    # `#!/usr/bin/env python3` and `#!/bin/bash` both end in the interpreter; `env` is skipped
+    # because it is the launcher, not the language.
+    words = [w for w in line[2:].replace("\t", " ").split(" ") if w]
+    for word in words:
+        name = word.rsplit("/", 1)[-1]
+        if name in ("env", "-S"):
+            continue
+        # `python3.12` -> `python3`; a trailing minor version is not a different language.
+        base = name.split(".")[0]
+        if base in _SHEBANG_LANG:
+            return _SHEBANG_LANG[base]
+        return None
+    return None
+
+
+def is_text_file(path):
+    """A NUL in the first block means binary, and no text source contains one. Split out of
+    `indexable` so a caller that skipped the sniff for speed can apply it to the few files it
+    actually cares about."""
+    try:
+        with path.open("rb") as fh:
+            return b"\x00" not in fh.read(8192)
+    except OSError:
+        return False
+
+
+def indexable(root, nested=None, with_text=False, sniff=True):
+    """Yield (path, lang) for exactly the files that belong in this repository's index, or
+    (path, lang, text) when `with_text` asks for the content too.
 
     Factored out of _scan because a second caller needed the same answer and got it wrong. The
     session-start staleness check walked the tree with only the extension filter, so it counted a
@@ -942,6 +1201,13 @@ def indexable(root, nested=None):
 
     One definition, two callers. A filter this specific will drift the moment it is written twice.
     Must be called inside a tree.session().
+
+    `with_text=True` exists because `_scan()` re-opened and re-read every file `read_text()` had
+    just been sniffed for a NUL byte -- 564 opens for 281 files, measured on this repository, the
+    second read discarding nothing the first one hadn't already paid for. The staleness caller
+    (`_indexable` in the session-start hook) never wants content, only the path, so it keeps the
+    cheap 8 KB sniff and default `with_text=False` -- this does not add a whole-file read to a path
+    that used to sniff a prefix.
     """
     import tree
     if nested is None:
@@ -949,7 +1215,7 @@ def indexable(root, nested=None):
     for path in tree.files(root):
         if not path.is_file():
             continue
-        if nested and any(parent.resolve() in nested for parent in path.parents):
+        if nested and _under_nested(path, nested):
             continue          # a checkout inside this checkout is not this repository's source
         # Only the parts BELOW the scan root. Checking path.parts would test the absolute path, so
         # a repository that happens to live under /tmp, ~/build, or any directory named env/out/
@@ -979,14 +1245,41 @@ def indexable(root, nested=None):
         if redact.is_blocked(path):
             continue          # private keys, certificates, local databases — never opened at all
         lang = EXT_LANG.get(path.suffix.lower())
+        if not lang and not path.suffix:
+            # 🐛 chamnan's own `bin/` was invisible to chamnan's own index, from the first commit.
+            # Nine extensionless shebang scripts — every command-line entry point it has — 2,382
+            # lines, and the dependency graph was wrong for every `lib/` module because of it:
+            # `lib/redact.py` was published as having 7 consumers when it has 16, and all nine
+            # missing ones are the CLI tools that print output for a living, which is the exact
+            # thing redaction exists to protect.
+            #
+            # A shebang names the interpreter as reliably as a suffix does, and this is what `file`
+            # and every linter use for the same reason. Read only when there is NO extension at all,
+            # so nothing that already has an answer is re-decided, and only the first line.
+            lang = _lang_from_shebang(path)
         if not lang:
+            # 🐛 Silently dropped, and that is the one skip reason with no record. Large, binary,
+            # generated and build-directory files are all tracked and reported, on the stated
+            # grounds that a file vanishing unannounced is "false confidence rather than degraded
+            # confidence, which is the worse kind" — an unreadable EXTENSION got no such treatment.
+            #
+            # Measured on Svelte's own monorepo: 4,540 `.svelte` files absent from MAP.md, more
+            # than the 3,480 files it did index, with nothing anywhere saying so. A three-file
+            # fixture reproduces it exactly: `.svelte` + `.vue` + `.js` reports "1 source file(s)"
+            # and "100% described".
+            #
+            # Counted by extension rather than by path: the useful sentence is "4,540 .svelte files
+            # were not read", not a list of names, and a repository is full of `.json`, `.lock` and
+            # `.png` that nobody expects an index to cover. The caller decides what is worth saying.
+            SKIPPED_UNKNOWN_EXT[path.suffix.lower() or "(no extension)"] += 1
             continue
         try:
-            if path.stat().st_size > MAX_FILE_BYTES:
+            size = path.stat().st_size
+            if size > MAX_FILE_BYTES:
                 # Recorded, not merely skipped. A 2.2MB generated file used to disappear from the
                 # index while the run reported "1 source file(s)" and 100% coverage of what it saw
                 # — false confidence rather than degraded confidence, which is the worse kind.
-                SKIPPED_TOO_LARGE.append((path, path.stat().st_size))
+                SKIPPED_TOO_LARGE.append((path, size))
                 continue
         except OSError:
             continue
@@ -994,35 +1287,84 @@ def indexable(root, nested=None):
         # errors="replace" and indexed as code: 351 "lines" counted from newline bytes inside the
         # image, marked describable, and flagged forever as missing a comment it can never have.
         # A NUL in the first block is the cheap, reliable signal, and no text source contains one.
-        try:
-            with path.open("rb") as fh:
-                if b"\x00" in fh.read(8192):
-                    SKIPPED_BINARY.append(path)
-                    continue
-        except OSError:
-            continue
-        yield path, lang
+        if with_text:
+            # One open, one read -- `_scan()` was about to `read_text()` the same bytes this sniff
+            # already holds. `.decode()` skips `TextIOWrapper`'s universal-newline translation that
+            # `read_text()` performs by default, so it is replicated here explicitly: without it, a
+            # CRLF-authored file changes its own line count between this path and the sniff-only one.
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if b"\x00" in raw[:8192]:
+                SKIPPED_BINARY.append(path)
+                continue
+            text = raw.decode("utf-8-sig", errors="replace")
+            if "\r" in text:
+                text = text.replace("\r\n", "\n").replace("\r", "\n")
+            yield path, lang, text
+        elif sniff:
+            try:
+                with path.open("rb") as fh:
+                    if b"\x00" in fh.read(8192):
+                        SKIPPED_BINARY.append(path)
+                        continue
+            except OSError:
+                continue
+            yield path, lang
+        else:
+            # 🐛 `sniff=False` exists for the staleness check, which asks only "is anything NEWER
+            # than the map" and needs an mtime, not a byte of content. It was opening and reading
+            # 8 KB of every file in the repository on EVERY session start — a hook that fires up to
+            # 82 times a session. Measured on a 6,000-file repository with a CURRENT index:
+            # 16-39 seconds per firing, against the docstring's own claim of "0.04s on a 1,478-file
+            # repository". The caller re-checks the handful of files that are actually newer.
+            yield path, lang
 
 
-def _scan(root):
+def reset_skips():
+    """Empty the five "what did not make it into the index" lists. Call once per REPORT, not per scan.
+
+    🐛 `_scan` used to clear four of them on entry, which is wrong the moment a run scans more than
+    one directory: `chamnan-map <a> <b>` calls scan() per target, so the second call wiped the first
+    target's skips and the report named only the last one's. Reproduced with a 2.3 MB file under `a`
+    — `chamnan-map a` says "not indexed, over the size limit: big.py (2.3MB)", `chamnan-map a b` says
+    nothing at all, and the coverage bar still reads 100%. These lists exist because, in this file's
+    own words, a silently missing file is "false confidence rather than degraded confidence, which is
+    the worse kind"; a multi-directory run had exactly that.
+
+    PARSE_WARNINGS had the mirror bug — cleared by nobody, so warnings leaked from one scan into an
+    unrelated later one in the same process. Same list, same lifetime, so it is reset here too.
+
+    Accumulating within a run and resetting between runs is the safe direction for both: the failure
+    of over-reporting is a reader seeing a file named twice, and the failure of under-reporting is a
+    file vanishing from a report that claims to be complete.
+    """
     SKIPPED_TOO_LARGE.clear()
     SKIPPED_BINARY.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
+    SKIPPED_UNKNOWN_EXT.clear()
+    PARSE_WARNINGS.clear()
+
+
+def _scan(root):
     files = []
     nested = _nested_repo_dirs(root)
-    for path, lang in indexable(root, nested):
-        try:
-            source = path.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
-            continue
+    for path, lang, source in indexable(root, nested, with_text=True):
         # One try around everything this file touches, not around each call. Two separate crashes
         # were found the same way — ast.parse raising ValueError on a .py file whose contents were
         # binary — because each new call site had to remember to guard itself. A map missing one
         # line is useful; a traceback is not, and it takes the other 195 files with it.
         try:
             doc, funcs, classes, consts = _extract_one(source, path, lang)
-            describable = bool(source.strip()) and not _is_empty_module(source, lang)
+            # _sfc_extraction_source is a no-op for every extension but .svelte/.vue/.astro, so this
+            # stays the plain `_is_empty_module(source, lang)` everywhere else. For those three, an
+            # empty extraction (no <script>, no frontmatter) must count as nothing-to-describe here
+            # too, or a markup-only component inflates the "described" denominator with a file
+            # _extract_one already gave up on.
+            describable = bool(source.strip()) and not _is_empty_module(
+                _sfc_extraction_source(source, path), lang)
         except Exception:
             doc, funcs, classes, consts, describable = "", [], [], [], False
         files.append({
@@ -1055,6 +1397,13 @@ def _scan(root):
             # sees.
             "lines": len(source.splitlines()), "doc": doc,
             "funcs": funcs, "classes": classes, "consts": consts,
+            # Not rendered anywhere -- carried so render()'s later scanners (catalogs.scan_routes,
+            # catalogs._django_mounts, catalogs.scan_env) can reuse the read this loop already paid
+            # for instead of opening the same 281 files again apiece. Measured on this repository:
+            # scan()+render() opened 989 times for 281 files before this field existed. A caller
+            # that builds its own `files` list without this key still works -- every reader below
+            # falls back to `path.read_text()` when it is absent.
+            "_source": source,
         })
     return files
 
@@ -1080,6 +1429,11 @@ def _render(files, root):
         "## Quick Index",
         "",
     ]
+    _dir_counts = {}
+    for _f in files:
+        _d = str(PurePosixPath(_f["path"]).parent)
+        _dir_counts[_d] = _dir_counts.get(_d, 0) + 1
+    cur_dir = None
     for f in files:
         counts = []
         if f["funcs"]:
@@ -1097,7 +1451,33 @@ def _render(files, root):
         # "safe\n- **INJECTED** (999L) -- ....py" rendered as TWO bullets, the second of which a
         # reader has no way to tell from a real entry, inside the one section every session reads
         # in full. Same class as the milestone-title bug, on a surface the fix had not reached.
-        lines.append(f"- **`{mdblock.one_line(f['path'])}`**"
+        # The directory is stated once per directory rather than once per file. Measured: the
+        # repeated prefix was 30.6% of Quick Index tokens on the published corpus, and grouping
+        # takes the index down 9.9% on a 283-file monorepo, 2.5% and 1.2% on two flat repositories
+        # — the gain scales with how deep the tree is, so a flat repo is barely touched and is not
+        # made worse either.
+        #
+        # This is safe to do to the Quick Index specifically, and NOT to Full Detail, because of
+        # what the map tells its reader four lines above: read the Quick Index in full, and grep
+        # Full Detail for `## \`path\``. Grepping by full path is a Full Detail workflow and its
+        # headings are untouched. A directory with a single file keeps its inline path, since a
+        # heading plus one row costs more than the prefix it removes.
+        # 🐛 A heading was emitted only for directories holding more than one file, so a root file
+        # or a lone file in its own directory kept its full path and rendered UNDERNEATH the
+        # previous directory's heading. `root.py` sat under `**`a/`**` and reads as `a/root.py`,
+        # which does not exist — the same "names a path that is not there" class as the roll-up bug
+        # fixed this morning, reintroduced by the grouping that replaced it.
+        #
+        # Every directory transition gets a heading now, root included, and every row is a basename.
+        # It costs a heading on a single-file directory, which is roughly what the full path cost
+        # anyway, and it removes the case where a row cannot be resolved at all.
+        here = str(PurePosixPath(f["path"]).parent)
+        if here != cur_dir:
+            cur_dir = here
+            lines.append("")
+            lines.append(f"**`{mdblock.one_line(here if here != '.' else '.')}/`**")
+        shown = PurePosixPath(f["path"]).name
+        lines.append(f"- **`{mdblock.one_line(shown)}`**"
                      f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {summary}")
 
     # Optional sections, in one file rather than several: a repo of plain scripts should end up
@@ -1169,6 +1549,7 @@ def main():
     if not root.is_dir():
         print(f"not a directory: {root}", file=sys.stderr)
         return 1
+    reset_skips()
     files = scan(root)
     if not files:
         print(f"no recognised source files under {root}", file=sys.stderr)

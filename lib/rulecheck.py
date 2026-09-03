@@ -25,12 +25,22 @@ cannot run (bad pattern, glob matching nothing) is reported as UNVERIFIABLE rath
 because "I could not check" and "this is violated" are different facts and collapsing them is how a
 check becomes noise that gets ignored.
 """
+import mdblock
 import re
 
-import redact
 from pathlib import Path
 
 CHECK = re.compile(r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+`(.+?)`\s*$", re.M)
+
+# 🐛 CHECK's grammar is exact: wrong case (`**check:**`), the wrong keyword ("for" instead of
+# "in"), a missing backtick -- any of it makes `CHECK.finditer()` find nothing, and `parse()`
+# returns [] exactly as it would for a rule that never had a Check trailer at all. A typo and "not
+# meant to be checked" were indistinguishable in the one line a session ever sees (`line()`),
+# which is worse than the check simply failing: a failing check says the rule is broken, a typo'd
+# one says nothing and looks like a check that passed. `_CHECK_LIKE` is deliberately loose --
+# case-insensitive, no keyword or backtick requirements -- so it catches an attempted trailer that
+# CHECK's strict grammar rejects, without trying to guess what was meant.
+_CHECK_LIKE = re.compile(r"^\*\*check:\*\*.*$", re.M | re.I)
 
 # Bounded on purpose: a rule check runs at session start, and a glob that matches the whole tree
 # would turn a health report into a reason to uninstall.
@@ -41,6 +51,19 @@ MAX_BYTES = 400_000
 def parse(text):
     """Every Check trailer in one rule's text, as (mode, pattern, glob)."""
     return [(m.group(1), m.group(2), m.group(3)) for m in CHECK.finditer(text)]
+
+
+def malformed(text):
+    """Lines that look like an attempted `**Check:**` trailer but do not match CHECK's grammar.
+
+    Stripped on both sides before comparing: `CHECK`'s trailing `\\s*$` can match right up to (but
+    not past) the line's own newline, and comparing an unstripped `_CHECK_LIKE` match against an
+    unstripped `CHECK` match must not report a well-formed trailer as malformed just because the
+    two patterns consumed a different amount of trailing whitespace on the same line.
+    """
+    well_formed = {m.group(0).strip() for m in CHECK.finditer(text)}
+    return [m.group(0).strip() for m in _CHECK_LIKE.finditer(text)
+            if m.group(0).strip() not in well_formed]
 
 
 # A quantified group that is itself quantified -- (a+)+, (\w*)*, (x|y+)* -- is the classic shape
@@ -132,10 +155,74 @@ def _ambiguous(pattern):
     return False
 
 
+# 🐛 The third shape, and the one all three guards above are blind to by construction: they every
+# one require a literal `(` before they will look at a pattern, and a flat chain of quantifiers over
+# the same atom needs no brackets at all. `a*a*a*a*a*a*a*a*a*a*a*a*b` is 25 characters, passes all
+# three, and Python's `re` takes 0.8s on sixteen `a`s -- doubling with each further character, so a
+# line of ordinary length never returns. A `**Check:**` trailer arrives with a clone and is compiled
+# and run at every session start.
+#
+# Measured, `('a*' * k) + 'b'` against inputs up to 80 characters:
+#
+#     k = 3   0.004s        k = 6    2.99s
+#     k = 4   0.081s        k = 7   27.43s
+#     k = 5   1.311s        k = 8   12.24s (at only 40 characters)
+#
+# So the cap is on the COUNT of unbounded quantifiers, which is what turns the curve, and it is set
+# at 4 -- the last value whose worst case is a rounding error. That is generous against real use:
+# every `**Check:**` pattern found in the wild is a literal grep with ZERO quantifiers, which is the
+# module's own docstring restated ("most rules are about judgement and cannot be reduced to a grep").
+#
+# `?` is deliberately not counted. The classic `a?a?a?…aaa` blowup does not reproduce on CPython --
+# measured flat at 0.000s out to twenty -- and counting it would refuse ordinary patterns to defend
+# against a hazard this engine does not have.
+#
+# This narrows the hole; it does not prove it closed. Enumerating pathological shapes by reading the
+# pattern text is reasoning about the engine's own runtime, so a fifth family nobody has found yet
+# is likely. A wall-clock ceiling was the obvious backstop and was measured before being rejected:
+# `re` cannot be interrupted in-process, `signal.alarm` is POSIX-only, main-thread-only and holds a
+# single global slot, and a subprocess costs 139 ms per spawn against a hook that runs in 750 ms and
+# fires up to 82 times a session -- up to 23 seconds a session, on every repository that uses the
+# feature, to defend against a regex somebody would have to commit on purpose. Refusing the shape is
+# free and is what this module already does with the other three.
+MAX_QUANTIFIERS = 4
+
+
+def _too_many_quantifiers(pattern):
+    r"""True when `pattern` carries more unbounded quantifiers than backtracking can be trusted with.
+
+    Scanned rather than counted with a regex, for the same reason as the group scanner above: an
+    escaped `\*` is a literal asterisk and a `[+*]` is a class of two characters, and neither is a
+    quantifier. `{` counts, because `{2,}` repeats without an upper bound just as `+` does.
+    """
+    n, i, end = 0, 0, len(pattern)
+    while i < end:
+        ch = pattern[i]
+        if ch == "\\":
+            i += 2
+            continue
+        if ch == "[":                      # a character class: quantifier characters are literal
+            i += 1
+            if i < end and pattern[i] == "^":
+                i += 1
+            if i < end and pattern[i] == "]":
+                i += 1
+            while i < end and pattern[i] != "]":
+                i += 2 if pattern[i] == "\\" else 1
+            i += 1
+            continue
+        if ch in "*+{":
+            n += 1
+            if n > MAX_QUANTIFIERS:
+                return True
+        i += 1
+    return False
+
+
 def _matches(root, pattern, glob):
     """(files_scanned, files_matching) or None when the check cannot be run at all."""
     if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
-            or _ambiguous(pattern)):
+            or _ambiguous(pattern) or _too_many_quantifiers(pattern)):
         return None
     try:
         rx = re.compile(pattern)
@@ -156,6 +243,10 @@ def _matches(root, pattern, glob):
     for q in paths:
         try:
             if q.resolve().parent == base or base in q.resolve().parents:
+                # Imported here, not at module scope. `pointer._governs()` reaches `parse()`
+                # on every Read, Edit and Write and never comes near this branch, and
+                # `import redact` measured 15 ms of that hot path for nothing.
+                import redact
                 if not redact.is_never_opened(q):
                     inside.append(q)
         except (OSError, RuntimeError):
@@ -178,7 +269,8 @@ def _matches(root, pattern, glob):
 def run(root, rules):
     """Evaluate every rule's checks. `rules` is [(title, text), ...].
 
-    Returns [(title, status, detail)] with status in {"holds", "BROKEN", "unverifiable"}.
+    Returns [(title, status, detail)] with status in
+    {"holds", "BROKEN", "unverifiable", "malformed"}.
     """
     out = []
     for title, text in rules:
@@ -198,6 +290,14 @@ def run(root, rules):
                 out.append((title, "BROKEN",
                             f"expected {mode} `{pattern}` in `{glob}`, "
                             f"found {hits} match(es) across {scanned} file(s)"))
+        # A distinct status from "unverifiable": that one means "the grammar is fine, the check
+        # just can't run right now" (a glob matching nothing yet). This means the grammar itself
+        # never parsed, so the check has NEVER run -- closer in spirit to BROKEN, but reported
+        # separately so it isn't confused with a rule the tree actually violates.
+        for bad_line in malformed(text):
+            out.append((title, "malformed",
+                        f"looks like an attempted **Check:** trailer but does not match the "
+                        f"required form (present|absent `PATTERN` in `GLOB`): `{bad_line}`"))
     return out
 
 
@@ -208,9 +308,28 @@ def line(results):
     and then does not read it on the day it says something else.
     """
     broken = [r for r in results if r[1] == "BROKEN"]
-    if not broken:
+    # 🐛 A typo in a `**Check:**` trailer (wrong case, "for" instead of "in", a missing backtick)
+    # made `parse()` find nothing, which is exactly what a rule with no Check trailer at all also
+    # produces -- so the typo silently never ran, forever, and looked identical to "this rule isn't
+    # meant to be mechanically checked." Reported here under its own line so it can't be confused
+    # with either "holds" or "not meant to be checked."
+    malformed_ = [r for r in results if r[1] == "malformed"]
+    if not broken and not malformed_:
         return ""
-    named = "; ".join(f"**{t}** — {d}" for t, _, d in broken[:3])
-    more = f" _(+{len(broken) - 3} more)_" if len(broken) > 3 else ""
-    return (f"\n_⚠ {len(broken)} recorded rule(s) no longer hold against the tree: "
-            f"{named}{more}. Verified mechanically, not remembered._\n")
+    # Rule titles and their `**Check:**` trailers are written by whoever wrote the repository, and
+    # this line prints them in chamnan's own voice, outside the fence. Made inert first; the caller
+    # scrubs the assembled block.
+    parts = []
+    if broken:
+        named = "; ".join(f"**{mdblock.as_quoted(t)}** — {mdblock.as_quoted(d, 120)}"
+                          for t, _, d in broken[:3])
+        more = f" _(+{len(broken) - 3} more)_" if len(broken) > 3 else ""
+        parts.append(f"⚠ {len(broken)} recorded rule(s) no longer hold against the tree: "
+                     f"{named}{more}. Verified mechanically, not remembered.")
+    if malformed_:
+        named = "; ".join(f"**{mdblock.as_quoted(t)}** — {mdblock.as_quoted(d, 120)}"
+                          for t, _, d in malformed_[:3])
+        more = f" _(+{len(malformed_) - 3} more)_" if len(malformed_) > 3 else ""
+        parts.append(f"⚠ {len(malformed_)} **Check:** trailer(s) do not parse and have never run: "
+                     f"{named}{more}. Fix the syntax or the rule is not actually verified.")
+    return "\n_" + "_\n\n_".join(parts) + "_\n"

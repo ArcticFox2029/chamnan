@@ -22,6 +22,8 @@ import re
 from pathlib import Path
 
 import redact
+import mdblock
+import impact  # for is_test — see the guard in the file loop below
 import tree
 
 # Above this many tables, only names are injected and columns are left to be grepped.
@@ -274,6 +276,22 @@ def scan(root, files):
             partitions[m.group(1).lower()] = partitions.get(m.group(1).lower(), 0) + 1
 
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         path = root / f["path"]
         if not _looks_relevant(path):
             continue
@@ -340,12 +358,17 @@ def render(tables):
         out.append(f"Names only — this schema is large. Grep `### <table>` below for one table's"
                    f" columns rather than reading them all.")
         out.append("")
-        out.append(", ".join(f"`{t['name']}`" for t in tables))
+        out.append(", ".join(f"`{mdblock.as_quoted(t['name'], 80)}`" for t in tables))
     else:
         out.append("")
         for t in tables:
-            desc = f" — {t['summary']}" if t["summary"] else ""
-            out.append(f"- **`{t['name']}`**{desc}  _({t['source']})_")
+            # Same treatment as the route and env catalogues: these are substrings lifted out of
+            # repository source and written into MAP.md, which is committed and injected. A table
+            # NAME is charset-bounded by the SQL patterns, but a summary is free prose lifted from
+            # a comment above the statement, and `source` is a path somebody chose.
+            desc = f" — {mdblock.as_quoted(t['summary'], 200)}" if t["summary"] else ""
+            out.append(f"- **`{mdblock.as_quoted(t['name'], 80)}`**{desc}"
+                       f"  _({mdblock.as_quoted(t['source'], 120)})_")
     out.append("")
     return "\n".join(out)
 
