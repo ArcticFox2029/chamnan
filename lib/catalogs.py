@@ -466,8 +466,16 @@ def scan_routes(root, files):
                 elif len(g) >= 2:
                     add(g[0], g[1], f["path"])
 
+    # _grpc_source(root, svc) re-walks and re-reads every .proto file to find which one declares
+    # `svc` -- and _grpc(root) yields one (svc, method) pair per RPC, so a service with several
+    # methods called it that many times for an answer that cannot change within this loop: the
+    # service a given name belongs to is fixed by the .proto tree scan_routes() was called with.
+    # Memoized per svc, not across calls -- this cache dies with scan_routes()'s call frame.
+    _grpc_src_cache = {}
     for svc, method in _grpc(root):
-        routes[("gRPC", f"{svc}/{method}")] = _grpc_source(root, svc)
+        if svc not in _grpc_src_cache:
+            _grpc_src_cache[svc] = _grpc_source(root, svc)
+        routes[("gRPC", f"{svc}/{method}")] = _grpc_src_cache[svc]
 
     for path, text in _spec_files(root):
         rel = str(path.relative_to(root).as_posix())

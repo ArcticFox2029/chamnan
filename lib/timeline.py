@@ -111,25 +111,38 @@ def resolve(root, ident):
     return None
 
 
-def title_of(path):
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return path.stem.replace("-", " ")
+def title_of(path, text=None):
+    """The thread's `# ` heading, falling back to a readable form of the filename.
+
+    `text` lets a caller that already has the file's contents in hand (`open_titles()`, reading
+    one thread for status, entries AND title) skip a second and third `read_text` of the same
+    path. Passing `text` must produce exactly what re-reading `path` would have -- this is not a
+    cache of a value that could go stale, it is the same read done once instead of three times
+    inside one call.
+    """
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return path.stem.replace("-", " ")
     for line in text.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
     return path.stem.replace("-", " ")
 
 
-def status_of(path):
+def status_of(path, text=None):
     """`open` or `closed`. A thread with no Status line at all reads as OPEN — the field is
     additive, and a file written by hand without it should behave like the common case rather
-    than disappear from the listing."""
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return OPEN
+    than disappear from the listing.
+
+    `text`, see `title_of`.
+    """
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return OPEN
     # Masked, because this searches the WHOLE file for the first match. A thread whose body quotes
     # an example containing `**Status:** closed` inside a fence read as closed -- and open_titles()
     # then dropped it from the "Open threads" the next session is handed. Unfinished work vanishing
@@ -139,17 +152,20 @@ def status_of(path):
     return CLOSED if (m and m.group(1).lower() == CLOSED) else OPEN
 
 
-def entries_of(path):
+def entries_of(path, text=None):
     """(date, note, files) oldest first — the order they were appended in.
 
     `files` is the list from that entry's `**Files:**` line, or [] when it has none. Nothing here
     checks whether those paths exist; that is `for_path()`'s business, and an entry naming a file
     that has since been deleted is still a true record of what happened.
+
+    `text`, see `title_of`.
     """
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
+    if text is None:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []
     # Scanned over a copy with fenced lines blanked; offsets are preserved, so every slice below
     # still indexes the real text. A real entry that quoted a bad example -- `## 2099-01-01 — FAKE`
     # with its own `**Files:**` line -- parsed as a second, indistinguishable entry, and for_path()
@@ -303,11 +319,21 @@ def for_path(root, target):
 def open_titles(root, count=INJECT_OPEN):
     """The open threads, one line each, newest activity first. Empty string when there are none,
     so the hook injects no heading rather than an empty one."""
+    # Each thread file is read from disk exactly once here and handed to status_of/entries_of/
+    # title_of as `text`, rather than each of those doing its own read_text() of the same path.
+    # Safe because it is the SAME call, on the SAME files, top to bottom -- nothing between the
+    # read and the third use of it could make a second read answer differently.
     rows = []
+    texts = {}
     for path in threads(root):
-        if status_of(path) != OPEN:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        texts[path] = text
+        if status_of(path, text) != OPEN:
             continue
-        found = entries_of(path)
+        found = entries_of(path, text)
         last = found[-1][0] if found else ""
         rows.append((last, path, len(found)))
     if not rows:
@@ -316,7 +342,7 @@ def open_titles(root, count=INJECT_OPEN):
     lines = []
     for last, path, n in rows[:count]:
         when = f", last {last}" if last else ""
-        lines.append(f"- **{title_of(path)}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
+        lines.append(f"- **{title_of(path, texts[path])}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
                      f"(`{mdblock.as_quoted(path.name)}`)")
     if len(rows) > count:
         lines.append(f"- _…and {len(rows) - count} more open in `.chamnan/{DIRNAME}/`_")
