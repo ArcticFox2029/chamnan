@@ -11258,6 +11258,57 @@ check("...and the rest of the line still works",
 _rmtree(_gs.parent, ignore_errors=True)
 
 
+# ------------------------------- the file path must be byte-stable, or it costs a prompt cache
+# 🐛 The hook picks a RANDOM fence marker when the payload carries no session id -- correct for a
+# hook, which gets one and keeps it for the session. Through `chamnan-context` there is no session,
+# so every regeneration moved the file by 46 bytes with nothing in the repository changed.
+#
+# That costs the target agent its prompt cache: a rules file sits near the head of the prompt and
+# cache reuse is an exact-prefix match, so a repository nobody touched still paid full price on the
+# next run. It also makes the file undiffable -- a reader cannot tell "the repository changed" from
+# "chamnan ran again".
+_stab = Path(tempfile.mkdtemp()) / "repo"
+(_stab / "src").mkdir(parents=True)
+(_stab / ".git").mkdir()
+(_stab / ".chamnan").mkdir()
+(_stab / ".chamnan" / "config.json").write_text(
+    '{"map":true,"state":true,"memory":true,"index_token_budget":3000}', encoding="utf-8")
+(_stab / "src" / "only.py").write_text("# the only module\ndef go():\n    return 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_stab),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_runs = [_ctx(str(_stab)).stdout for _ in range(3)]
+check("THREE REGENERATIONS OF AN UNCHANGED REPOSITORY ARE BYTE-IDENTICAL",
+      _runs[0] == _runs[1] == _runs[2] and len(_runs[0]) > 200)
+
+# ...and it must still MOVE when something real changes, or it has become a constant.
+(_stab / "src" / "two.py").write_text("# a second module\ndef two():\n    return 2\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_stab),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("...and a real change still moves it", _ctx(str(_stab)).stdout != _runs[0])
+
+# The marker is derived from the content, so it must still be a well-formed fence and still
+# balanced -- a stable marker that no longer closes anything would be worse than a random one.
+_marks = re.findall(r"\[/?repo:([0-9a-f]{6})\]", _runs[0])
+check("the derived marker is still a six-hex-digit fence", bool(_marks))
+check("...and one value is used throughout, not several", len(set(_marks)) == 1)
+check("...opened and closed the same number of times",
+      _runs[0].count(f"[repo:{_marks[0]}]") == _runs[0].count(f"[/repo:{_marks[0]}]"))
+
+# The HOOK path must be untouched: it gets a session id and derives the marker from that, which is
+# what keeps the block identical across the many firings of one session. Two different session ids
+# must still give two different markers, or the fix has flattened the thing it was protecting.
+_h1 = run_hook("chamnan_session_start.py", {"session_id": "aaaaaaaa"})
+_h2 = run_hook("chamnan_session_start.py", {"session_id": "bbbbbbbb"})
+_m1 = re.findall(r"\[repo:([0-9a-f]{6})\]", _h1)
+_m2 = re.findall(r"\[repo:([0-9a-f]{6})\]", _h2)
+check("the hook still derives its marker from the session id",
+      bool(_m1) and bool(_m2) and _m1[0] != _m2[0])
+check("...and the same session id gives the same marker, which is what the cache needs",
+      re.findall(r"\[repo:([0-9a-f]{6})\]",
+                 run_hook("chamnan_session_start.py", {"session_id": "aaaaaaaa"}))[0] == _m1[0])
+_rmtree(_stab.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
