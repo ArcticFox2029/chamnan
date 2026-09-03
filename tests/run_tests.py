@@ -11679,6 +11679,46 @@ check("an index that already fits is not folded further",
       if (ROOT / ".chamnan" / "MAP.md").is_file() else True)
 
 
+# ---------------------------------------- detection was inert, and blind to eighteen agents
+# 🐛 `host.py` knew five agents while twenty-three had adapters, so `--detect` reported nothing
+# found on a repository plainly set up for Roo, Windsurf or Copilot. And its only consumer was
+# `--detect`'s own JSON dump — nothing acted on it at all.
+check("detection covers the agents that have adapters",
+      len(host_mod.ORDER) >= 20)
+check("...and every detected name can actually be written, except claude whose delivery is a hook",
+      all(n == "claude" or adapters_mod.for_agent(n) is not None for n in host_mod.ORDER))
+# REPO markers only for the ones added. HOME is what host.py's own docstring calls the weakest and
+# stalest signal, and a machine carrying six agents' config directories would otherwise report six
+# agents for every repository on it.
+_home_markers = {n for n in host_mod.ORDER if host_mod._AGENTS[n]["home"]}
+check("the newly detected agents carry no HOME marker",
+      _home_markers <= {"claude", "cursor", "gemini", "kiro"})
+
+_sugroot = Path(tempfile.mkdtemp()) / "repo"
+(_sugroot / ".roo" / "rules").mkdir(parents=True)
+(_sugroot / ".chamnan").mkdir()
+(_sugroot / ".chamnan" / "config.json").write_text('{"map":true}', encoding="utf-8")
+(_sugroot / "src").mkdir()
+(_sugroot / "src" / "only.py").write_text("# only\ndef go():\n    return 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_sugroot),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_sug = _ctx(str(_sugroot))
+check("A REPOSITORY SET UP FOR AN AGENT IS TOLD WHICH COMMAND SETS IT UP",
+      "--write roo" in _sug.stderr)
+# 🐛 The loop was written as `for name, strength in detected["agents"]` and those are DICTS, so
+# the unpack silently bound the two KEY NAMES instead of the values — no exception, no match, no
+# output. The check below is on stderr CONTENT for that reason: "it did not crash" would have
+# passed the broken version.
+check("...on stderr, so a pipe still receives exactly the block",
+      _sug.stdout.lstrip().startswith("## chamnan") and "--write" not in _sug.stdout)
+check("...and it suggests, never writes", not (_sugroot / ".roo" / "rules" / "chamnan.md").exists())
+
+# Naming an agent explicitly means the user already decided; a suggestion then is noise.
+_sug2 = _ctx("--write", "roo", str(_sugroot))
+check("no suggestion when --write already says which agent", "looks set up for" not in _sug2.stderr)
+_rmtree(_sugroot.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
