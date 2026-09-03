@@ -58,6 +58,27 @@ def one_line(value):
     return " ".join(str(value).split())
 
 
+def as_quoted(value, limit=80):
+    """Repository-authored text, made safe to print inside chamnan's OWN sentence.
+
+    🐛 Two warning lines built themselves from repository-controlled strings with raw f-strings —
+    the stale-index notice interpolates filenames, and the broken-rule notice interpolates rule
+    titles and their `**Check:**` trailers. Both land OUTSIDE the `[repo:nonce]` fence, in chamnan's
+    voice rather than the repository's, and neither passed through the redactor. A filename is
+    chosen by whoever wrote the clone.
+
+    Backticks are the specific hazard: the caller wraps these in `…`, and a value containing one
+    closes the span early and lets everything after it render as chamnan speaking. Newlines are the
+    other, for the reason `one_line` exists. Both are removed rather than escaped — a filename that
+    contains a backtick is already unusual enough that showing it inert is the right trade.
+
+    The caller still has to scrub the finished line. This makes the value inert; it does not make
+    it non-secret.
+    """
+    text = one_line(value).replace("`", "'")
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
 def masked(text):
     """`text` with every fenced line blanked to spaces, same length, same offsets.
 

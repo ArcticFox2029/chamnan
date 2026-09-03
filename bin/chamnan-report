@@ -26,9 +26,18 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import ledger  # noqa: E402
+import memory  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
+import redact  # noqa: E402
+
+# Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
+# like it could carry a secret today. Five findings running came from one store having a guarded
+# reader and an unguarded one, and the case-by-case judgement about which commands "only print
+# numbers" is exactly the judgement that was wrong each time. Uniform is cheaper to keep true than
+# correct-per-file. See redact.emit.
+print = redact.emit  # noqa: A001
 
 PROJECT_ROOT = Path.home() / ".claude" / "projects"
 
@@ -87,12 +96,28 @@ def encoded_dir(repo_root):
     for cand in sorted(c for root in _project_roots() for c in root.glob("*")):
         if not cand.is_dir():
             continue
+        # 🐛 Any shared trailing word was enough. `/Users/alice/Documents/rancher` — a path with no
+        # transcript directory of its own — resolved to this machine's real
+        # `-Users-wasuplao-Documents-itscon-rancher` on one word, and every figure the command
+        # prints would then be somebody else's usage presented as yours: call counts, context per
+        # turn, the before/after table the README points at.
+        #
+        # A fuzzy match has to agree on the repository's WHOLE leaf name, not a fragment of it. Two
+        # components minimum, so a single generic word can never carry a match on its own.
         score = _shared_tail(want, cand.name)
+        if score < min(max(2, len(_leaf_tokens(repo_root))), len(want.split("-"))):
+            continue
         if score > best_score:
             best, best_score, tied = cand, score, False
         elif score and score == best_score:
             tied = True
     return None if tied else best
+
+
+def _leaf_tokens(repo_root):
+    """The encoded components of the repository's own directory name — what a fuzzy match must
+    agree on in full before it is allowed to stand in for an exact one."""
+    return [t for t in str(Path(repo_root).name).replace("_", "-").split("-") if t]
 
 
 def _shared_tail(want, have):
@@ -106,19 +131,58 @@ def _shared_tail(want, have):
     return n
 
 
-def collect(project_dir):
+def collect(project_dir, want_opened=False, root=None):
+    """Read every transcript line once.
+
+    🐛 `root` is not optional in spirit. A transcript records every file a session touched, and a
+    session rooted here routinely dispatches subagents into other directories — measured on this
+    repository's own transcripts, 902 of 7,801 counted touches were files OUTSIDE it, including
+    `~/.claude/settings.json` and paths under another repository entirely. They were all being
+    counted as work done on this repository.
+
+    That contaminates the headline: scoping the touches to the root moves "repeat work" from 13.5%
+    to 23.4% overall, and the most recent week from 7% to 35%. The comment below claiming recent
+    weeks are "the least repetitive in the whole corpus" was reading the contaminated number.
+
+    🎯 [perf] This used to be read twice — once here for usage stats, once more in
+    print_pointer() for which `.chamnan` files got opened. Both scans open the same 300+ files
+    and decode the same lines; on a repo with hundreds of MB of transcripts that is the whole
+    cost of `chamnan-report` twice over for no reason. `want_opened` lets the caller ask this
+    single pass to also build the pointer's "opened" set, so the second scan is never needed at
+    all — it costs nothing extra in file I/O, only a couple of cheap string checks per line that
+    was already being read.
+    """
     best = {}
+    opened = set() if want_opened else None
+    _root_prefix = f"{root}/" if root is not None else ""
     for path in project_dir.rglob("*.jsonl"):
         try:
-            fh = path.open(errors="replace")
+            # 🎯 [perf] Binary, not text. 62% of these lines fail the prefilter below and are
+            # thrown away, and in text mode every one of them was decoded first. Measured
+            # end-to-end over the real 332-file corpus, six interleaved pairs: −4.0%, with the
+            # printed report byte-identical across twelve full runs.
+            #
+            # Two alternatives were measured and are NOT here: `str.find() != -1` instead of `in`
+            # is 3% SLOWER, and a bulk `read_bytes().split(b"\n")` instead of streaming is 12%
+            # slower on allocation. Skipping whole files is a dead end — only 9 of 332 files
+            # (0.16% of bytes) contain no matching line at all, and finding them needs reading them.
+            fh = path.open("rb")
         except OSError:
             continue
         with fh:
             for line in fh:
-                if '"usage"' not in line:
+                has_usage = b'"usage"' in line
+                # Same prefilter print_pointer() used to apply in its own separate pass.
+                is_pointer_candidate = (want_opened and b'"tool_use"' in line
+                                        and b".chamnan" in line)
+                if not has_usage and not is_pointer_candidate:
                     continue
                 try:
-                    rec = json.loads(line)
+                    # Only the lines that passed the prefilter pay for a decode. `errors="replace"`
+                    # is what `path.open(errors="replace")` gave before: invalid bytes become
+                    # U+FFFD rather than raising UnicodeDecodeError, which the `except ValueError`
+                    # below would not have caught.
+                    rec = json.loads(line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     continue
                 msg = rec.get("message") or {}
@@ -127,13 +191,56 @@ def collect(project_dir):
                 # 🎯 Which FILES a week touched, gathered in the pass that is already reading every
                 # line. It answers the question the before/after cannot answer on its own: was this
                 # week the same work as last week, or new work? See _confound() below.
-                if ts:
-                    for _c in (msg.get("content") or []):
-                        if isinstance(_c, dict) and _c.get("type") == "tool_use":
-                            _fp = (_c.get("input") or {}).get("file_path")
-                            if _fp:
-                                touched_by_week[ts[:10]].add(_fp)
-                if not (isinstance(usage, dict) and rid and model and ts):
+                content = msg.get("content")
+                # `has_usage` here, not just `ts`. Before the merge this block was unreachable
+                # unless the line contained `"usage"`, because the prefilter above had already
+                # skipped it; a line now also reaches here for being a pointer candidate. Measured
+                # on a 60-file sample: every line carrying `tool_use` AND `.chamnan` also carried
+                # `"usage"`, none carried it without — so on today's format the two conditions
+                # coincide, which is why the before/after was byte-identical. Keeping the condition
+                # explicit means that stays true if the format ever stops coinciding, rather than
+                # `touched_by_week` silently gaining rows and moving _confound().
+                #
+                # That sample says nothing about the prefilter's selectivity, and an earlier
+                # version of this comment quoted its raw count in a way that read as if it did.
+                # Profiled over the whole corpus — 330 files, 770 MB, 238K lines — the prefilter
+                # admits **38.1%** of lines, because it is an OR of two conditions rather than the
+                # AND that sample measured. It costs ~25% of the scan's 4.78s and is the one part
+                # of it with headroom left; the read itself is ~40% and is a floor.
+                if isinstance(content, list):
+                    for _c in content:
+                        if not (isinstance(_c, dict) and _c.get("type") == "tool_use"):
+                            continue
+                        _fp = (_c.get("input") or {}).get("file_path")
+                        if not _fp:
+                            continue
+                        # Two consumers of the same block, and they do NOT share a condition.
+                        # `touched_by_week` keeps `has_usage`, which is what gated it before the
+                        # merge — the prefilter above used to skip a usage-less line outright, so
+                        # widening the prefilter must not widen this. `opened` is the reason the
+                        # line was let through at all, so it takes no such gate.
+                        # Only files under the repository being reported on. See collect()'s
+                        # docstring: a subagent sent elsewhere writes its paths into this
+                        # repository's transcript, and they are not work on this repository.
+                        if has_usage and ts and (root is None or _fp.startswith(_root_prefix)):
+                            touched_by_week[ts[:10]].add(_fp)
+                        # 🐛 Same contamination as touched_by_week above, one screen down, missed
+                        # by that fix: `opened` stripped everything up to the LAST ".chamnan/" in
+                        # the path with no root check at all, so a subagent sent to a DIFFERENT
+                        # chamnan-enabled repository (or a fixture copy of one — this project keeps
+                        # several under a scratchpad while researching itself) folds its relative
+                        # path onto this repo's set. Reproduced on this machine's own transcripts:
+                        # of 11 distinct outside-root `.chamnan` paths opened, one — a rules file —
+                        # already lands inside `memory/rules/`, the exact namespace `pointer.named`
+                        # draws from. A minimal fixture makes the effect concrete: a session that
+                        # never opens repoA's own named file, but opens repoB's file of the same
+                        # relative name, was reported as "later opened 1 of those 1" — a perfect
+                        # pointer-follow rate for a pointer nobody followed. Root-scoped the same
+                        # way touched_by_week is, so both consumers of this block share the guard.
+                        if (want_opened and ".chamnan" in _fp
+                                and (root is None or _fp.startswith(_root_prefix))):
+                            opened.add(_fp.split(".chamnan/")[-1])
+                if not has_usage or not (isinstance(usage, dict) and rid and model and ts):
                     continue
                 try:
                     when = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
@@ -147,11 +254,19 @@ def collect(project_dir):
                     # 🐛 A subagent step and a conversation turn were averaged together, and the
                     # headline was the artefact. See the split in main().
                     bool(rec.get("isSidechain")),
+                    # 🎯 Which transcript this call came from — one file is one session. The
+                    # before/after comparison is only meaningful across MANY sessions; see
+                    # `_one_session_warning` in main().
+                    path.stem,
                 )
                 prior = best.get(rid)
-                if prior is None or sum(entry[2:]) > sum(prior[2:]):
+                # 🐛 `entry[2:]` summed the whole tail, so adding a non-numeric field to the tuple
+                # raised TypeError on the first duplicate requestId. Bounded to the four usage
+                # counters it was always meant to compare, so the tuple can grow again without this
+                # breaking a second time.
+                if prior is None or sum(entry[2:6]) > sum(prior[2:6]):
                     best[rid] = entry
-    return list(best.values())
+    return list(best.values()), opened
 
 
 def print_inventory(root):
@@ -176,6 +291,22 @@ def print_inventory(root):
     if decisions_total:
         plural = "decision has" if without == 1 else "decisions have"
         print(f"  {without} of {decisions_total} {plural} no `Rejected:` — a trade-off nobody wrote down")
+
+    # A pointer to knowledge that was never written. Same shape as a MAP.md entry naming a file that
+    # is gone, and reported in the same spirit: here, where a person looks at workspace health,
+    # rather than injected into every session. Measured on the four real workspaces: 3 on one work
+    # repository whose memory directories are all empty, 0 on the other three.
+    dangling = memory.dangling_citations(root)
+    if dangling:
+        noun = "entry" if len(dangling) == 1 else "entries"
+        print(f"\n  {len(dangling)} memory {noun} cited but never written:")
+        for slug, places in dangling[:5]:
+            at = ", ".join(f"{f}:{n}" for f, n in places[:3])
+            more = f" +{len(places) - 3}" if len(places) > 3 else ""
+            print(f"    `{slug}`  at {at}{more}")
+        if len(dangling) > 5:
+            print(f"    …and {len(dangling) - 5} more")
+        print("    `/chamnan:remember` writes it, or drop the reference.")
     print()
 
 
@@ -184,6 +315,32 @@ def known_commands():
     rather than a hand-kept list, so a new CLI command is picked up here the day it is added,
     with nothing else to update."""
     return sorted(p.name for p in HERE.iterdir() if p.is_file() and p.name.startswith("chamnan-"))
+
+
+def command_summaries():
+    """{name: what it does} — the half of its own docstring each command writes after the dash.
+
+    🐛 The Usage table printed nine names and nine counts and explained none of them. Every other
+    section of this report justifies its own numbers and says what to do next; this one asked the
+    reader to already know what `chamnan-age` and `chamnan-peek` are. That matters most on the rows
+    it exists to show — a zero beside a name you have never heard of is noise, and a zero beside
+    "which stored knowledge names a version no environment declares" is a suggestion.
+
+    Read from each script's own docstring rather than a table kept here, for the same reason
+    `known_commands` reads the directory: a new command explains itself the day it is added.
+    """
+    out = {}
+    for name in known_commands():
+        try:
+            head = (HERE / name).read_text(encoding="utf-8", errors="replace")[:400]
+        except OSError:
+            continue
+        for line in head.splitlines():
+            line = line.strip().lstrip('"')
+            if line.startswith(name) and "—" in line:
+                out[name] = line.split("—", 1)[1].strip().rstrip(".")
+                break
+    return out
 
 
 def print_usage(root):
@@ -198,9 +355,15 @@ def print_usage(root):
     counts, oldest, newest = workflows.usage_counts(log, known_commands())
     print("Usage")
     width = max(len(name) for name in counts)
+    summaries = command_summaries()
     for name in sorted(counts):
         n = counts[name]
-        print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}")
+        # The description is what turns an unfamiliar zero into something the reader can act on.
+        # Truncated rather than wrapped: this is a table, and a row that wraps stops being one.
+        what = summaries.get(name, "")
+        if what:
+            what = f"  — {what[:58]}" + ("…" if len(what) > 58 else "")
+        print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}{what}")
     if oldest and newest:
         print(f"  (from the calls currently logged, {oldest[:10]} to {newest[:10]} — "
               f"commands.jsonl keeps {workflows.KEEP_DAYS} days; chamnan's own commands are never "
@@ -250,22 +413,12 @@ def _workspace_created(wsdir):
     return datetime.fromtimestamp(min(candidates)).astimezone() if candidates else None
 
 
-def print_pointer(root, project_dir):
-    """Did the session open what it was pointed at?
-
-    The measurement `hooks/chamnan_file_pointer.py` was built to allow, and it is deliberately NOT "how
-    often did it match". A pointer that fires on 39 of 42 files and names the wrong entry scores
-    identically to one that names the right entry, so a match rate measures the pointer's
-    enthusiasm, not its usefulness. What can be checked is whether the thing it named was then
-    opened — and both halves of that are already written down: logs/pointer.jsonl records what was
-    named, and Claude Code's own transcripts record every file the session read.
-
-    Still an observation, not proof. A session may act on knowledge without opening the file, and a
-    file may be opened for an unrelated reason. Reported as a count, never as a score.
-    """
+def _read_pointer_log(root):
+    """logs/pointer.jsonl only — cheap regardless of transcript size, so read it before deciding
+    whether the (potentially hundreds-of-MB) transcript scan for `opened` is even worth doing."""
     log = ws.workspace(root) / "logs" / "pointer.jsonl"
     if not log.is_file():
-        return
+        return 0, {}
     fired, named = 0, {}
     try:
         for line in log.read_text(encoding="utf-8").splitlines():
@@ -277,32 +430,29 @@ def print_pointer(root, project_dir):
             for path in rec.get("named") or []:
                 named.setdefault(path, set()).add(rec.get("session"))
     except OSError:
-        return
+        return 0, {}
+    return fired, named
+
+
+def print_pointer(fired, named, opened):
+    """Did the session open what it was pointed at?
+
+    The measurement `hooks/chamnan_file_pointer.py` was built to allow, and it is deliberately NOT "how
+    often did it match". A pointer that fires on 39 of 42 files and names the wrong entry scores
+    identically to one that names the right entry, so a match rate measures the pointer's
+    enthusiasm, not its usefulness. What can be checked is whether the thing it named was then
+    opened — and both halves of that are already written down: logs/pointer.jsonl records what was
+    named, and Claude Code's own transcripts record every file the session read.
+
+    Still an observation, not proof. A session may act on knowledge without opening the file, and a
+    file may be opened for an unrelated reason. Reported as a count, never as a score.
+
+    🎯 [perf] `opened` now arrives precomputed from collect()'s single pass over the transcripts —
+    this function used to do its OWN full rglob-and-read of every transcript file, duplicating the
+    exact same I/O and JSON decoding collect() was already doing. See collect()'s docstring.
+    """
     if not fired:
         return
-
-    # Every path this repo's sessions have READ, from the transcripts rather than from a new log.
-    opened = set()
-    for f in project_dir.rglob("*.jsonl"):
-        try:
-            with f.open(encoding="utf-8", errors="replace") as fh:
-                for line in fh:
-                    if '"tool_use"' not in line or ".chamnan" not in line:
-                        continue          # cheap prefilter; these files run to hundreds of MB
-                    try:
-                        d = json.loads(line)
-                    except ValueError:
-                        continue
-                    content = (d.get("message") or {}).get("content")
-                    if not isinstance(content, list):
-                        continue
-                    for b in content:
-                        if isinstance(b, dict) and b.get("type") == "tool_use":
-                            fp = (b.get("input") or {}).get("file_path") or ""
-                            if ".chamnan" in fp:
-                                opened.add(fp.split(".chamnan/")[-1])
-        except OSError:
-            continue
 
     followed = sorted(p for p in named if p in opened)
     print("Pointer — knowledge named when a file was opened")
@@ -332,8 +482,17 @@ def main(argv):
     print_inventory(root)
     print_usage(root)
     project_dir = encoded_dir(root)
+    entries = []
     if project_dir:
-        print_pointer(root, project_dir)
+        # 🎯 [perf] One pass over the transcripts serves both the pointer report and the weekly
+        # table below — collect() used to be called a second time, later in this function, and
+        # print_pointer() used to run its own independent scan before that. Both re-read every
+        # transcript file this repo has (300+ files, hundreds of MB on a well-used repo); reading
+        # logs/pointer.jsonl first (cheap) tells us whether the `opened` set is worth building at
+        # all before paying for the scan.
+        fired, named = _read_pointer_log(root)
+        entries, opened = collect(project_dir, want_opened=bool(fired), root=root)
+        print_pointer(fired, named, opened)
     if not project_dir:
         # 🐛 [2026-08-28] Returned 1. A repository nobody has worked on in Claude Code yet has no
         # transcripts, which is the ordinary state on the day the plugin is installed — not a
@@ -352,7 +511,6 @@ def main(argv):
     marker_early = _workspace_created(ws.workspace(root))
     ws.prune_logs(root)
     ws.prune_sessions(root)
-    entries = collect(project_dir)
     if not entries:
         print("chamnan: transcripts found but no usage records yet")
         return 0
@@ -361,7 +519,7 @@ def main(argv):
 
     weeks = defaultdict(lambda: {"calls": 0, "cread": 0, "cwrite": 0, "out": 0})
     per_model = defaultdict(lambda: {"calls": 0, "cread": 0})
-    for when, model, inp, out, cread, cwrite, sidechain in entries:
+    for when, model, inp, out, cread, cwrite, sidechain, _sess in entries:
         key = when.isocalendar()[:2]
         w = weeks[key]
         # `inp` is input the model read that was NOT served from cache -- the whole prompt on a
@@ -418,12 +576,19 @@ def main(argv):
         amc, amr, _ = side(lambda k: k > marker_week, main_only=True)
         # 🎯 The confound the before/after cannot see, and the owner named it before this measured
         # it: the comparison assumes the two sides are the SAME KIND of work. On this repository
-        # they are not — the weeks after the workspace was created are the least repetitive in the
-        # whole corpus (8%, 7%, 12% of files revisited from an earlier week, against 27% and 36%
-        # before). Returning to code you already know is where an index pays; opening new code
-        # every week is not. So a flat result is not evidence the tool does not help, and a falling
-        # one would not have been evidence that it does. Saying which of those applies is worth
-        # more than the percentage above it.
+        # they are not — the weeks after the workspace was created revisit less code than the weeks
+        # before. Returning to code you already know is where an index pays; opening new code every
+        # week is not. So a flat result is not evidence the tool does not help, and a falling one
+        # would not have been evidence that it does. Saying which of those applies is worth more
+        # than the percentage above it.
+        #
+        # 🐛 The figures this comment used to quote — "8%, 7%, 12% against 27% and 36%" — were
+        # read off the contaminated count, before `collect()` scoped touches to the repository.
+        # Measured again with the scoping in place, the whole report reads 28% before / 20% after
+        # rather than 20% / 7%: the gap is real but a third of what it looked like. The direction
+        # of the confound is unchanged, which is why the reasoning above stands; the numbers are
+        # left out rather than restated, because a figure quoted in a comment is the thing this
+        # project keeps finding stale.
         def _revisit(pred):
             weeks_seen, cur, prior = {}, set(), set()
             for day in sorted(touched_by_week):
@@ -463,6 +628,28 @@ def main(argv):
             if _a + 8 < _b:
                 print("  An index pays when you come back to the same code. Most of the work since")
                 print("  then was new files, so this period could not show the effect either way.")
+        # 🐛 The confound that mattered most, and it was not named at all. On one work repository
+        # this command reported +114.1% context per turn after the workspace was created. The whole
+        # four-week window turned out to be ONE continuously-resumed session — one transcript, no
+        # restart in nineteen days — with the creation marker seven days into it. "Before" was that
+        # session's only genuinely fresh hours; "after" was seven post-compaction cycles, whose
+        # floor is structurally higher whatever plugin is installed.
+        #
+        # The arithmetic settles it independently: chamnan's whole injected payload on that repo is
+        # about 3,200-4,300 tokens, 60 to 80 times too small to account for the +265,203 per call it
+        # was being blamed for. And the repository that uses chamnan an order of magnitude more, with
+        # eighteen separate sessions, reads +0.7%.
+        #
+        # So the number is reported either way — hiding it would be its own dishonesty — but a
+        # window that is one session on either side gets told what it is looking at.
+        _bs = {e[7] for e in entries if e[0].isocalendar()[:2] < marker_week}
+        _as = {e[7] for e in entries if e[0].isocalendar()[:2] > marker_week}
+        if len(_bs) <= 1 or len(_as) <= 1:
+            print(f"\n  ⚠ {len(_bs)} session(s) before and {len(_as)} after. A window that is one"
+                  f" resumed session is\n    comparing its own fresh hours against its own"
+                  f" post-compaction ones, and the difference\n    above is mostly that, not this"
+                  f" workspace. Compare again once there are several\n    separate sessions on"
+                  f" both sides.")
         print("\n  Read this as an observation, not an experiment: your model, your task mix and")
         print("  Claude Code itself all changed over the same period. It is your repo's number,")
         print("  which is the point — but it is not a controlled trial.")

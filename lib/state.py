@@ -54,6 +54,7 @@ malformed JSON, an exception mid-walk — injects everything rather than nothing
 """
 import hashlib
 import json
+import os
 import re
 import mdblock
 import time
@@ -259,13 +260,21 @@ def _load_ages(wsdir):
 
 
 def _save_ages(wsdir, ages):
-    """Best-effort and silent. A workspace on a read-only checkout must still start a session."""
+    """Best-effort and silent. A workspace on a read-only checkout must still start a session.
+
+    🐛 `dest.with_suffix(".tmp")` is the SAME path for every process, so two sessions starting at
+    once wrote `state-ages.tmp` on top of each other and then each replaced `state-ages.json` with
+    whatever the file held at its own moment. The `os.replace` is atomic and was never the problem;
+    the shared staging name is. `os.getpid()` makes it per-process, which is what the atomicity was
+    assuming all along.
+    """
     try:
-        dest = wsdir / AGES_PATH
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmp = dest.with_suffix(".tmp")
-        tmp.write_text(json.dumps(ages, indent=1, sort_keys=True), encoding="utf-8")
-        tmp.replace(dest)
+        # The per-pid fix this docstring describes now lives in one place, so it cannot be right
+        # here and missing three files away — which is exactly what happened. Imported inside the
+        # function, which is this file's existing convention for reaching workspace.
+        import workspace as ws_mod
+        ws_mod.atomic_write_text(wsdir / AGES_PATH,
+                                 json.dumps(ages, indent=1, sort_keys=True))
     except Exception:
         pass
 
@@ -293,6 +302,23 @@ def age_out(text, wsdir, days, now=None):
     if not sections:
         return text, ""
 
+    # 🐛 Read, decide, write — with nothing holding the file across the three. Every session start
+    # runs this, so two sessions opening together each read the ages file, each computed a fresh map
+    # from their own view, and the second write erased the first. Forced-overlap measurement: 26 of
+    # 40 concurrent updates lost, 65%.
+    #
+    # The write was already atomic, and CLAUDE.md's own note on the identical defect in the vector
+    # index says why that was never enough: atomic alone does not stop a lost update, and a lock
+    # alone does not stop a torn file. `ws.exclusive` is the same helper `tools_index` uses for the
+    # same shape. It yields False rather than raising when the lock cannot be taken, and the block
+    # still runs then — an ages file is a staleness hint, and refusing to start a session over one
+    # would be a worse failure than the race it prevents.
+    import workspace as ws_mod
+    with ws_mod.exclusive(wsdir / AGES_PATH):
+        return _age_out_locked(text, wsdir, sections, now, cutoff, days)
+
+
+def _age_out_locked(text, wsdir, sections, now, cutoff, days):
     ages = _load_ages(wsdir)
     fresh_ages, drop = {}, []
     for sec in sections:

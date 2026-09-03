@@ -61,6 +61,31 @@ def _is_a_plain_word(value):
     return bool(_PLAIN_WORD.match(value)) or value[:1] in "([{"
 
 
+def _is_a_type_annotation(match):
+    """True when what follows `password:` is a TYPE in a parameter list, not a value.
+
+    🐛 The first version of this asked whether the value looked like a type name — alphabetic,
+    capitalised, no digits — and it was wrong in BOTH directions. `password: Correcthorsebatterystaple`
+    is a perfectly ordinary passphrase and walked out unredacted, which is a hole this rule opened.
+    And `password: string, page: Page` still came out mangled, because TypeScript and Go spell their
+    types in lower case, so the original defect survived in the languages that write it most.
+
+    The distinguishing fact is not how the word is spelled. It is WHERE it sits: a type annotation
+    lives inside a parameter list and is followed by a separator. So both must hold — an unclosed
+    `(` before it on the same line, and a `,` or `)` immediately after it. A value at the end of a
+    line has neither, and a dict entry has `{` rather than `(` as its nearest opener.
+    """
+    value = match.group(2) or ""
+    if not value.rstrip().endswith((",", ")")):
+        return False
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    before = match.string[line_start:match.start()]
+    depth_paren = before.count("(") - before.count(")")
+    depth_brace = before.count("{") - before.count("}")
+    depth_brack = before.count("[") - before.count("]")
+    return depth_paren > 0 and depth_brace <= 0 and depth_brack <= 0
+
+
 # `Authorization: Bearer <jwt>` and `Basic <base64>` — but "Basic Authentication" is a phrase, and
 # this rule matched it for years because twelve letters is twelve characters.
 AUTH_SCHEME_SECRET = re.compile(
@@ -218,6 +243,7 @@ ROCKET_SECRET = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I)
 # A YAML block scalar puts `|` or `>-` where the value would be and the value on the next line, so
 # there was nothing on the key's own line to capture. Helm values.yaml is full of them.
+_YAML_BLOCK_OPENER = re.compile(r":\s*[|>][-+]?[ \t]*\n")
 YAML_BLOCK_SECRET = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>][-+]?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I)
 # Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
@@ -237,7 +263,13 @@ BLOCKED_SUFFIXES = (
     ".pem", ".key", ".pfx", ".p12", ".crt", ".cer", ".der", ".jks", ".keystore",
     ".db", ".sqlite", ".sqlite3", ".mdb", ".bak", ".dump",
 )
-BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc",
+# 🐛 `.netrc` was here and its siblings were not, so the same class of file was refused or read
+# depending on which platform's spelling it used. `_netrc` is the Windows name for exactly `.netrc`;
+# `.pgpass` and `pgpass.conf` are libpq's password file in its two spellings, and every line in one
+# ends with the password in clear. All four are credential stores whose whole content is the secret,
+# which is the property this list is for — not "a file that might contain one".
+BLOCKED_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", ".htpasswd", ".netrc", "_netrc",
+                 ".pgpass", "pgpass.conf",
                  "credentials", "secrets.yml", "secrets.yaml")
 
 # The scanner's list above and this one answer different questions. The scanner should not open a
@@ -423,12 +455,30 @@ def scrub(text):
     text = XML_SECRET.sub(
         lambda m: m.group(0) if _names_a_mechanism(m.group(1))
         else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
-    text = ROCKET_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
-        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
-    text = YAML_BLOCK_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
-        else f"{m.group(1)}  {PLACEHOLDER}\n", text)
+    # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
+    # pattern cannot match a document that does not contain those two characters. The word list in
+    # front of it is large, so the engine walks the whole document looking for a hit that is
+    # impossible. `scrub` runs once over the entire map — 273 KB on a four-project tree — so the
+    # literal test is one scan against many.
+    #
+    # This is a pre-filter, never a narrowing: the guard is implied by the pattern itself, so no
+    # input that used to be redacted stops being redacted. Verified against the recall corpus
+    # (38 secrets, 30 decoys) before and after — identical results, not merely a similar score.
+    if "=>" in text:
+        text = ROCKET_SECRET.sub(
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+    # 🐛 The first version of this gate tested `"|" in text or ">" in text`, which is TRUE on any
+    # markdown document — a table uses `|` and a blockquote uses `>` — so it skipped nothing and the
+    # commit that introduced it claimed a saving it did not deliver: 67 ms still spent per render on
+    # the real map. A gate has to test the STRUCTURE the pattern needs, not one character out of it.
+    #
+    # What YAML_BLOCK_SECRET actually requires is a colon, then a block scalar indicator, then a
+    # newline. That cannot be faked by a table row.
+    if _YAML_BLOCK_OPENER.search(text):
+        text = YAML_BLOCK_SECRET.sub(
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            else f"{m.group(1)}  {PLACEHOLDER}\n", text)
     text = SPACED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
@@ -452,5 +502,30 @@ def scrub(text):
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
+        or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     return text
+
+
+def emit(*args, **kwargs):
+    """`print`, with every string argument scrubbed first. Meant to SHADOW the builtin.
+
+    🐛 Three commands — `chamnan-env`, `chamnan-timeline`, `chamnan-impact` — printed the bodies of
+    committed files straight to stdout with no redaction, while the SessionStart hook scrubbed the
+    same stores. That is the shape that has produced five findings running: one store, several
+    readers, and only some of them guarded. An agent runs these commands, so their stdout lands in
+    a session's context exactly like the injected block does.
+
+    Scrubbing at each `print` call was the obvious fix and is the wrong one: it is a rule every
+    future print has to remember, and the misses are silent. A module-level `print = redact.emit`
+    makes the guarded path the DEFAULT one, so a print added next year is safe without its author
+    knowing this note exists.
+
+    Non-string arguments are left alone — a caller printing an int or a Path means it, and coercing
+    everything to str here would change what those commands output.
+    """
+    return _print(*(scrub(a) if isinstance(a, str) else a for a in args), **kwargs)
+
+
+# Captured before any module shadows the name, so `emit` still reaches the real builtin.
+_print = print

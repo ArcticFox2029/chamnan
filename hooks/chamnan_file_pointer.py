@@ -30,6 +30,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import impact as impact_mod  # noqa: E402
 import pointer  # noqa: E402
+import redact  # noqa: E402
 import workspace as ws  # noqa: E402
 
 TOOLS = {"Read", "Edit", "Write", "NotebookEdit"}
@@ -81,6 +82,22 @@ def main():
             edges = None
 
     block = pointer.render(rel, hits, edges)
+
+    # What this repository has learned about the file WITHOUT anyone recording anything: which file
+    # gets edited right after it. Appended rather than folded into `render`, so a file with no
+    # recorded knowledge at all can still say something useful — which on a repository where nobody
+    # runs the write commands is every file.
+    #
+    # Last, and only when the budget above was not already spent: it is the cheapest of the three
+    # lookups but it is also the weakest claim, and the impact edges deserve the room first.
+    if (time.time() - started) * 1000 < MAX_MS:
+        try:
+            import coedit
+            nxt = coedit.line(wsdir, rel)
+        except Exception:
+            nxt = ""
+        if nxt:
+            block = (block + "\n" + nxt) if block else nxt
     # Marked as seen even when nothing matched. Otherwise a file with no knowledge behind it pays
     # the whole scan again on every one of the session's edits to it, which is the case where the
     # cost is least deserved.
@@ -89,8 +106,16 @@ def main():
         return 0
 
     pointer.note(wsdir, session_id, rel, hits, (time.time() - started) * 1000)
+    # 🐛 Every title in this block is the first line of a committed file, and none of it went
+    # through the redactor. That made this the cheapest leak in the plugin to trigger: no command
+    # to run and nothing to opt into, just an ordinary `Read` of any file a stored lesson happens
+    # to mention. Reproduced with an AWS key in a lesson's own heading, which arrived in
+    # `additionalContext` on the first Read of the file that lesson names.
+    #
+    # Scrubbed here rather than in `pointer.render`, because this is the one place the text leaves
+    # the process, and it also covers the `coedit.line` tail appended above it.
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "additionalContext": block}}))
+        "hookEventName": "PreToolUse", "additionalContext": redact.scrub(block)}}))
     return 0
 
 

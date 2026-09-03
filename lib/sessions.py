@@ -21,6 +21,7 @@ between the skill that writes and the hook that reads.
 """
 import calendar
 import datetime
+import subprocess
 import re
 import mdblock
 import time
@@ -49,7 +50,8 @@ _SESSION_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
 
 def records(root):
-    """Every session record, newest first. Sorted by filename, which begins with the date."""
+    """Every session record, newest first. Sorted by filename date, mtime tiebreaking two records
+    that share the same date."""
     d = directory(root)
     if not d.is_dir():
         return []
@@ -58,8 +60,23 @@ def records(root):
     # session", and the header still said so, which is how it read as real. `prune()` already
     # treats the filename date as the authority; this did not. Dated records first, newest first;
     # anything undated sorts behind all of them rather than in front.
-    return sorted((p for p in d.glob("*.md") if p.is_file()),
-                  key=lambda p: (bool(_SESSION_DATE.match(p.name)), p.name), reverse=True)
+    #
+    # 🐛 Two records filed the SAME day still sorted by the rest of the filename as plain text --
+    # `2026-09-02-morning-cleanup.md` beat `2026-09-02-evening-fix-the-thing.md` because "morning"
+    # > "evening" alphabetically, regardless of which was actually written later. `latest()` then
+    # handed the next session a stale "all done" instead of the real blocker written that evening.
+    # mtime only breaks a tie between two records whose filename DATE is identical -- different
+    # days are still ordered purely by the date in the name, unaffected by a clone or checkout
+    # resetting mtimes, which is the failure mode the rest of this file already treats as real
+    # (see `prune()`'s own fallback below).
+    def _key(p):
+        m = _SESSION_DATE.match(p.name)
+        try:
+            mtime = p.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        return (bool(m), m.group(0) if m else "", mtime)
+    return sorted((p for p in d.glob("*.md") if p.is_file()), key=_key, reverse=True)
 
 
 def latest(root):
@@ -105,6 +122,50 @@ def title_of(path, text=None):
         if line.startswith("# "):
             return line[2:].strip()
     return path.stem
+
+
+def where_git_says_you_stopped(root, limit=6):
+    """What the repository itself says about the last session, when nobody wrote a record.
+
+    `carry_forward` returns "" unless somebody ran `/chamnan:resume`, and measured across 18 real
+    sessions on this machine exactly one did — 5.6%. So the section a session most wants, "where did
+    I stop", is absent from nineteen sessions in twenty, and the reason is a command nobody
+    remembers rather than an absence of anything to say.
+
+    git already knows. An uncommitted working tree IS where the last session stopped, it needs
+    nothing from the user, and it cannot go stale — it is read fresh every time.
+
+    Deliberately weaker than a written record and says so in its own wording: it reports what is
+    unfinished, never why, and a real record supersedes it entirely. This is the floor, not a
+    replacement.
+    """
+    try:
+        st = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
+                             "status", "--porcelain"],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            errors="replace", timeout=5)
+        if st.returncode != 0:
+            return ""
+        lines = [l for l in st.stdout.splitlines() if l.strip()]
+        if not lines:
+            return ""          # a clean tree has nothing to carry forward, which is the good case
+        br = subprocess.run(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                            errors="replace", timeout=5)
+        branch = br.stdout.strip() if br.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+    # Paths come from the repository, so they are made inert the way every other repository-authored
+    # string in the injected block is. The caller scrubs.
+    names, more = [], max(0, len(lines) - limit)
+    for line in lines[:limit]:
+        names.append(f"`{mdblock.as_quoted(line[3:].strip(), 60)}`")
+    tail = f" _+{more} more_" if more else ""
+    where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
+    return (f"**Where the last session stopped**, as the working tree has it{where} — "
+            f"nobody recorded it, so this is git's answer rather than anyone's:\n"
+            f"{len(lines)} uncommitted file(s): " + ", ".join(names) + tail + "\n")
 
 
 def carry_forward(root):

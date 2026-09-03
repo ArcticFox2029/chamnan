@@ -5,6 +5,8 @@ the folding at session start, and chamnan-map, which has to tell the user what t
 separate estimate in the reporting path was wrong by 2.4x the first time it was tried — close enough
 to look plausible, far enough to make the decision on bad numbers. One implementation, called twice.
 """
+import json
+import os
 import subprocess
 
 import tokens
@@ -31,6 +33,52 @@ def forget_churn():
     _CHURN_CACHE.clear()
 
 
+def _head(root):
+    """The commit the churn answer belongs to, or "" when git cannot say."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    return out.stdout.strip() if out.returncode == 0 else ""
+
+
+def _disk_cache_path(root, window):
+    try:
+        import workspace as ws_mod
+        d = ws_mod.workspace(root) / "state"
+        return d / f"churn-{window}.json" if d.parent.is_dir() else None
+    except Exception:
+        return None
+
+
+def _read_disk_cache(path, head):
+    """The stored counts when they belong to this commit, else None. Never raises."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(data, dict) or data.get("head") != head:
+        return None
+    counts = data.get("counts")
+    return counts if isinstance(counts, dict) else None
+
+
+def _remember(path, head, key, counts):
+    """Store in both caches and return the counts, so a caller can `return _remember(...)`.
+
+    Best-effort on disk: a read-only checkout, a full disk or a racing writer all fall back to the
+    in-process cache, which is exactly the behaviour that existed before.
+    """
+    if path and head:
+        try:
+            import workspace as ws_mod
+            ws_mod.atomic_write_text(path, json.dumps({"head": head, "counts": counts}))
+        except Exception:
+            pass
+    return _CHURN_CACHE.setdefault(key, counts)
+
+
 def _churn(root, window=CHURN_WINDOW):
     """Commits touching each tracked path over the last `window` commits, or {} if git cannot say.
 
@@ -42,6 +90,19 @@ def _churn(root, window=CHURN_WINDOW):
     key = (str(root), window)
     if key in _CHURN_CACHE:
         return _CHURN_CACHE[key]
+    # 🐛 That cache is per PROCESS, and the process it most needs to serve is the SessionStart hook,
+    # which is a fresh interpreter every session and every compaction. Profiled: this one
+    # `git log --name-status -M -n 600` is 1.263 s of the hook's 2.387 s — 53% of the thing sitting
+    # on the critical path of every session start on a 1,209-commit repository, paid again each time
+    # for an answer that had not changed.
+    #
+    # HEAD is the exact key: churn is derived from commit history and nothing else, so an unchanged
+    # HEAD means an unchanged answer, and `git rev-parse HEAD` costs 44 ms against 1,263.
+    head, disk = _head(root), _disk_cache_path(root, window)
+    if head and disk:
+        cached = _read_disk_cache(disk, head)
+        if cached is not None:
+            return _CHURN_CACHE.setdefault(key, cached)
     try:
         out = subprocess.run(
             # --name-status -M, not --name-only. Without rename detection a file that has been
@@ -55,7 +116,17 @@ def _churn(root, window=CHURN_WINDOW):
             # path never matches -- every such file is credited zero churn, silently. That is the
             # whole ranking, disabled, for any repository whose filenames are not ASCII.
             ["git", "-C", str(root), "-c", "core.quotePath=false",
-             "log", "--name-status", "-M",
+             # 🐛 `--no-merges` is not tidiness, it is the difference between a 600-commit window and a
+             # 300-commit one. git does not diff a merge commit by default, so a merge contributes a
+             # header and zero file-status lines — and on a project that merges pull requests with
+             # --no-ff, which is most of them, half the window is merges. Measured on a repository
+             # with that ordinary shape: 49.9% of the 600 commits produced nothing, so the ranking
+             # was built from ~300 real edits while believing it had 600.
+             #
+             # It did not affect the figures this project has published: chamnan's own history is
+             # 2.1% merges in the window and the development monorepo is 0%. It affects the users
+             # whose repositories look like the ones this tool was written for.
+             "log", "--no-merges", "--name-status", "-M",
              "--pretty=format:", "-n", str(window)],
             # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
             # bytes the hook has not read yet, or block waiting on a prompt that will never come.
@@ -65,9 +136,9 @@ def _churn(root, window=CHURN_WINDOW):
             # so the except below would not catch it and the whole hook would die.
             errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
-        return _CHURN_CACHE.setdefault(key, {})
+        return _remember(disk, head, key, {})
     if out.returncode != 0:
-        return _CHURN_CACHE.setdefault(key, {})
+        return _remember(disk, head, key, {})
     counts = {}
     seen_commits = 0
     renamed_from = {}          # old path -> the name it ends up under
@@ -93,8 +164,8 @@ def _churn(root, window=CHURN_WINDOW):
         if old in counts and old != new:
             counts[new] = counts.get(new, 0) + counts.pop(old)
     if seen_commits < MIN_COMMITS_TO_RANK:
-        return _CHURN_CACHE.setdefault(key, {})
-    return _CHURN_CACHE.setdefault(key, counts)
+        return _remember(disk, head, key, {})
+    return _remember(disk, head, key, counts)
 
 
 def _disambiguate(path, name, top):
@@ -187,7 +258,24 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     # So: go deeper while the split is not telling anyone anything. The test is groups-per-file --
     # one directory holding almost everything means the depth is too shallow. It stops as soon as
     # the split is informative, so a repository that is already flat at depth 1 is untouched.
-    paths = [line.split("`")[1] for line in rows]
+    # The Quick Index states a directory once and then lists basenames under it, so a row's own
+    # backticks may hold only the filename. Reconstruct the full path from the nearest preceding
+    # `**\`dir/\`**` heading — reading the basename as a path would group every directory's files
+    # under "(root)" and produce a roll-up that names nothing.
+    paths = []
+    _dir = ""
+    _at = set(row_at)
+    for i, line in enumerate(lines):
+        if line.startswith("## "):
+            _dir = ""
+            continue
+        st = line.strip()
+        if st.startswith("**`") and st.endswith("/`**"):
+            _dir = st[3:-4]
+            continue
+        if i in _at:
+            name = line.split("`")[1]
+            paths.append(f"{_dir}/{name}" if _dir and "/" not in name else name)
 
     def at_depth(depth):
         out = {}
@@ -290,8 +378,89 @@ def _enforce(out, map_rel, budget):
     """
     if tokens.fits(out, budget):
         return out
-    note = (f"\n\n_Cut to fit the session budget — the roll-up could not group this map's rows."
-            f" Read `{map_rel}` for anything missing here._")
-    keep = tokens.cut_at(out, budget - tokens.estimate(note))
+    # 🐛 The note said "the roll-up could not group this map's rows" whatever had actually been cut.
+    # That wording is calibrated for one case — ungroupable Quick Index rows — and this function
+    # also fires when the thing removed is a whole catalog section, which is prose and was never
+    # row-shaped and was never offered to the grouping logic at all. Measured on the published
+    # corpus: 3,474 tokens, 46.3% of the catalog payload — Configuration, Deployment and Stored
+    # material — vanished with no heading, no count, and a note blaming a mechanism that had not
+    # run on them. A reader who followed it would go looking at the Quick Index.
+    #
+    # So say what went, by name. A section that is named is one grep away in MAP.md; a section
+    # that is gone with no trace is the "looks complete and is not" this module exists to stop,
+    # and it is the same defect that let the architecture index disappear from 59% of firings.
+    def _headings(text):
+        return [l[3:].strip() for l in text.split("\n") if l.startswith("## ")]
+
+    # The note's own length changes where the cut lands, and where the cut lands changes which
+    # headings are lost, which changes the note. So settle it rather than guess once: a first pass
+    # naming nothing produced a note that claimed `Quick Index` had been removed whole while it was
+    # still in the output, because "lost" had been read off a provisional cut the final one did not
+    # match. Three passes is enough for it to stop moving; the last one is authoritative.
+    # 🐛 The note had no bound of its own. Naming every removed section made the note itself the
+    # thing that blew the budget: a 20-token budget over a map with forty sections produced 1,052
+    # tokens of output, 1,050 of them the note. A budget enforcer that overruns by 53x is not one.
+    #
+    # Four names and a count. Four is what the sibling notices in `fit.py` and `impact.py` already
+    # use, and the reason is the same — past four, a reader is scanning a list rather than reading a
+    # sentence, and the count carries the rest. If even that does not fit, the short form does,
+    # because a truncated explanation is worse than a general one.
+    NAMED = 4
+
+    # 🐛 Sections removed WHOLE were named; a section cut in half was not. This is a prefix cut, so
+    # the last heading it keeps is a section that kept its title and lost most of its body — and
+    # said nothing about it. Measured: sixty routes selected, twenty-nine delivered, heading intact,
+    # no notice, and the section's own "Showing 60 of 5,000" line left standing as a claim about
+    # content that is not there.
+    #
+    # That is quieter than the whole-section drop this note already reports, and worse for the same
+    # reason `fit.py` drops sections whole rather than cutting them: a reader can act on "this is
+    # missing, go and grep it", and cannot act on a list that looks complete and is not.
+    def _trimmed_in(cut_text):
+        heads = _headings(cut_text)
+        if not heads:
+            return None
+        # A cut landing exactly on the next heading's line leaves the previous section intact.
+        return None if cut_text.rstrip().endswith(f"## {heads[-1]}") else heads[-1]
+
+    def _note_for(lost, trimmed):
+        # Three tiers, longest first, because the note has to fit inside the budget it is enforcing
+        # — a 20-token budget once produced a 1,052-token note, 1,050 of it this sentence. Adding
+        # the "cut short" clause made the full form overflow on tight budgets and fall all the way
+        # back to naming nothing, which lost MORE than the clause added. So the explanation is what
+        # goes first, then the names, and only then the bare form.
+        short = (f"\n\n_Cut to fit the session budget — the tail did not fit."
+                 f" Read `{map_rel}` for anything missing here._")
+        if not lost and not trimmed:
+            return short
+        named = ""
+        if lost:
+            named = (f"Removed whole: {', '.join(f'`{h}`' for h in lost[:NAMED])}"
+                     + (f" _+{len(lost) - NAMED} more_" if len(lost) > NAMED else "") + ".")
+        for clause in ((f"`{trimmed}` is cut short — its own counts describe what was selected, "
+                        f"not what is here.") if trimmed else "",
+                       f"`{trimmed}` is cut short." if trimmed else ""):
+            body = " ".join(x for x in (named, clause) if x)
+            cand = f"\n\n_Cut to fit the session budget. {body} Read `{map_rel}` for the rest._"
+            if tokens.estimate(cand) < budget:
+                return cand
+        if named:
+            cand = (f"\n\n_Cut to fit the session budget. {named}"
+                    f" Read `{map_rel}` for the rest._")
+            if tokens.estimate(cand) < budget:
+                return cand
+        return short
+
+    note, cut = _note_for([], None), ""
+    for _ in range(3):
+        keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
+        cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
+        fresh = _note_for([h for h in _headings(out) if h not in _headings(cut)],
+                          _trimmed_in(cut))
+        if fresh == note:
+            break
+        note = fresh
+    # One last cut against the note that is actually going out, so the total never exceeds budget.
+    keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
     cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
     return cut + note

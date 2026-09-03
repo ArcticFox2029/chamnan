@@ -33,7 +33,7 @@ is plain markdown committed beside the code.
 
 | what people actually ask | the short answer |
 |---|---|
-| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 26× on the published corpus**, which omits 20 MB of binary attachments — of which about **3,000 reach each session**. |
+| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223×, and 25.4× on the published corpus**, which omits 20 MB of binary attachments — of which **308 to 1,428 reach each session** — 537 to 3,711 counting the whole injected block — measured across four real repositories. |
 | *"my agent keeps re-reading the same files"* | Measured across 12,332 re-read events in six working sessions: the injected roll-up named **22.7%** of them by alphabet, **35.6%** once ranked by git churn. |
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
@@ -75,7 +75,7 @@ evidence and reference, and nothing below states a claim in stronger terms than 
 
 **Where the numbers are.** Every figure on this page is sourced in [Evidence](#evidence), which
 also lists what was measured and then deliberately **not** built. The headline ratio is stated two
-ways on purpose — 223× on a corpus carrying binary attachments, 26× on the published one — because
+ways on purpose — 223× on a corpus carrying binary attachments, 25.4× on the published one — because
 the difference is what a repository holds, not what chamnan does.
 
 **If you are summarising this for someone:** the three claims worth carrying are that it is
@@ -87,7 +87,7 @@ interesting thing about it.
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.15.0](#whats-new-in-1150) · [Commands](#commands)
+[What's new in 1.16.0](#whats-new-in-1160) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -314,7 +314,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses four hook events: `SessionStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
 | **Python 3.8 or newer** | Required, and it must be on `PATH` as `python3`. The hooks are launched by path, relying on their `#!/usr/bin/env python3` line and executable bit. 3.8 is the floor because the assignment expression (`:=`) is the newest syntax used; nothing later appears anywhere in the plugin. |
 | **Third-party packages** | None. Standard library only — `ast`, `pathlib`, `re`, `json`, `csv`, `sqlite3`, `zipfile`, `tarfile`, `zlib`, `struct`, `subprocess`. Nothing to install, nothing to keep updated, and no virtualenv. |
-| **Git** | Not required, and everything works without it — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Five paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
+| **Git** | Not required, and everything works without it — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Seven paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git rev-parse HEAD` to know whether that ranking is still current, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, `git status` to say where the last session stopped when nobody wrote it down, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
 | **Disk** | Whatever `.chamnan/` holds — an index, a state file, a config file, and logs pruned on a retention window. Nothing outside the repository. |
 
 ### Platforms
@@ -369,7 +369,7 @@ Everything lives in one directory at the repository root, and nothing outside it
 │   └── rules/      standing constraints — injected every session
 ├── skills/         procedures you chose to keep     (starts empty)
 ├── tools/          scratch scripts you kept         (starts empty)
-├── candidates/     detected sequences, awaiting review (starts empty; `chamnan-candidates`)
+├── candidates/     detected sequences, awaiting review (starts empty, and stays empty on every real log measured — see `chamnan-candidates`)
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 
@@ -396,76 +396,51 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.15.0
+## What's new in 1.16.0
 
-**Seventy findings from seven audits, and the two that mattered most were about numbers this
-project publishes about itself.** Thirty-three commits, 1,495 → 1,815 checks. Every defect was
-reproduced before it was believed and pinned by a test afterwards.
+**Seventy-nine commits, and the theme is uncomfortable: most of them are chamnan being wrong about
+chamnan.** Eight claims the tool made about itself did not survive being checked. Every one was
+reproduced before it was believed and pinned by a test afterwards; the suite is at 2,172 checks.
 
-### The command that answers "is this worth keeping" was answering it wrong
+### It could not see its own commands
 
-`chamnan-report` printed **−27.5% context per call**. Recomputed from the same transcripts,
-separating a conversation turn from a subagent step, the real figure is **+0.8%** — no improvement
-at all. A subagent carries roughly a fifth of a main-thread context, and subagents first appear in
-the very week the workspace was created, so the "after" side filled with cheap calls and the
-average fell on its own. The context a real turn carries never moved: 467k, 516k, 507k, 432k, 481k,
-495k, 470k across seven weeks.
+Nine command-line entry points — every command chamnan has — are extensionless shebang scripts, and
+the indexer decided language from the suffix alone. `lib/redact.py` was published as used by 7
+modules when it is used by 16, and all nine missing consumers were the CLI tools that print output
+for a living. Present since the first commit, with the index reporting full coverage the whole time.
 
-The two populations are now reported separately, and the report also says whether the two periods
-were even the same kind of work — 20% of files revisited from an earlier week before the workspace
-existed, 10% after. An index pays when you come back to code you already know, so on this
-repository the comparison cannot answer the question in either direction. Saying that is worth more
-than the percentage above it.
+### Numbers that were wrong
 
-### Every session on the repository this was built in started with one truncated rule
+The **"repeat work" headline** counted file paths from other repositories, because a session rooted
+here dispatches subagents elsewhere and their paths land in this repository's transcript: 20%→7%
+becomes 28%→20% once scoped. **`--explain` billed sections it had already dropped**, printing its own
+remainder as −3,396. The **coverage bar counted compiler directives as descriptions** — `//go:build`
+was the summary of 12 of gin's described files, a JSDoc `@import` of 289 of svelte's 440, putting
+real coverage at ~31% against 44% and 4.3% against 13%.
 
-`_trim` may return more bytes than the room it is given — `_fit_lines` reserves pinned lines before
-it starts filling, and keeps them even when they alone exceed the budget, which is the promise a
-📌 exists for. The restore branch accepted that on truthiness alone, so the block finished at
-**11,230 bytes against a 9,000 ceiling**, the host kept the first 2,048, and what arrived was 557
-bytes of framing and one rule cut mid-sentence. No index, no procedures, no decisions, no handoff.
-It now refuses an oversized restore, names the section it left out, and delivers 8,868 bytes whole.
+### Faster, measured with interleaved runs
 
-### chamnan-map is 22× faster, and it stopped losing files
+    SessionStart hook, 6,000-file repo    16-39 s  ->  1.2-2.7 s
+    chamnan-report                          7.14 s ->  5.20 s
+    file opens in one map                    2,259 ->  568
 
-96% of its runtime was the token estimator — a per-character loop measured at 0.35 MB/s, producing
-one headline number that no budget decision reads. Counting distinct characters is the same
-arithmetic with the same weights: 1.66s → 0.075s on a megabyte of Java, and eight samples including
-Thai, Japanese and emoji are pinned as exactly equal to the old result.
+The staleness check was reading 8 KB of every file to answer a question about mtimes; the symlink
+guard resolved every path when the short-circuit meant to stop it sat one line below.
 
-An interrupted rebuild used to leave half an index, and the next session was handed it as a whole
-one. `sqlite3.c` — 8.5 MB, 71% of its repository — was dropped for being too large under a green
-"3/3 files (100%)". A directory that could not be read was indistinguishable from one that is not
-there. All three are now written atomically, or named out loud.
+### Security
 
-### The index describes more, and mislabels less
+A **route path could open a heading in the index it was written into**, reproduced in ordinary valid
+JavaScript, putting an attacker's prose into the region injected into every session. Both automatic
+hooks were the two that never redacted. A committed symlink could read `~/.ssh/id_rsa` into the
+block. Every `bin/` command now scrubs what it prints rather than each deciding for itself.
 
-A file with no opening comment is now described by what is documented inside it: **flask 6% → 44%,
-requests 51% → 81%, coveragepy → 90%**. A repository's own `.gitattributes` is read, so
-kubernetes stops indexing 1,356 files it declares nobody wrote. `coverage/`, `build/` and `src/`
-are no longer dropped as build output when git says they are tracked. Perl, PowerShell and 67 other
-extensions stop being filed under "do not read these to understand the system", and a Justfile is a
-build manifest rather than payload.
+### It reads what it could not
 
-### Two more the audits found before this shipped
+`.svelte`, `.vue` and `.astro` — Svelte's own repository indexed 3,480 files with 4,540 invisible.
+Go and Rust environment variables too, added only after measuring 58 and 12 true positives with zero
+false ones on real clones.
 
-**35 of 101 paths the rolled-up index named did not exist.** Above the token budget the Quick Index
-folds by directory and printed basenames, so every sample naming a file in a subdirectory pointed
-nowhere — gum 6 of 6, execa 29 of 34. Paths are now relative to their group and re-measured at 0
-wrong.
-
-**A committed file was printed as chamnan's own speech.** `.chamnan/.version` is tracked, and its
-raw contents went into the ⚠ banner; a planted one produced three paragraphs of forged
-`_chamnan: …_` prose above the fence, on every session, permanently. Only a version-shaped string
-is quoted now. The fence itself was attacked directly and held — everything that escaped went
-around it, through lines emitted outside it.
-
-### Smaller, and mostly about not lying
-
-A `config.json` with a trailing comma is no longer overwritten with defaults. A pasted screenshot is
-no longer priced at 431,195 tokens and advised to be grepped. A prerelease no longer outranks its
-own release and leaves a downgrade banner nobody can clear. The README no longer claims the plugin
-never invokes git, because five paths do.
+[Every release is in the CHANGELOG](CHANGELOG.md).
 
 ## Bootstrap does not rewrite your code
 
@@ -675,7 +650,7 @@ From a shell, in the repository:
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |
 | `chamnan-promote <file> <name> --desc "…"` | install a scratch script as a permanent tool in `.chamnan/tools/` |
 | `chamnan-promote --list` | what this repo already keeps |
-| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list` |
+| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list`. **Measured 2026-09-02: the sequence detector behind this has never produced a candidate on real data** — 0 across 2,905 logged commands in four working repositories, and still 0 at half its shipped thresholds. The scratch-script notice in the same feature does fire and is a different mechanism. Kept because the cost is 1.14 ms per tool call and one machine's logs are not proof about everyone's, but do not expect it to find anything. |
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
 | `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
@@ -1393,10 +1368,17 @@ suite** rather than asserted in a sentence:
 | network calls at runtime | **none** — no runtime file imports `socket`, `urllib`, `http`, `requests` or any sibling |
 | third-party dependencies | **none** — every import is Python's standard library or chamnan's own `lib/` |
 | a manifest to install one from | **none** — no `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile` or lockfile |
-| `subprocess` | present, and only ever to run `git` |
+| `subprocess` | present, and only ever to run `git` or this same Python interpreter on a file that ships inside chamnan — `chamnan-map` re-runs the session-start hook so it shows you the real injection rather than a second model of it |
 
 There is nothing to fetch, so there is nothing to fetch *and execute*; and there is nothing beneath
 it to compromise. Those four rows are `check()`s that fail the build if they stop being true.
+
+That last row said "only ever to run `git`" until 2026-09-02, and it was wrong: `chamnan-map` spawns
+`sys.executable` on `hooks/chamnan_session_start.py`. Nothing caught it, because the row had no
+guard — so the fix is not only the wording. A check now parses every source file, finds every
+`subprocess` call, and reads the first element of the argv it is handed; a call site that executes
+anything but `git` or this interpreter fails the build, and a call site whose argv the check cannot
+resolve fails it too rather than being skipped.
 
 ### 9a. The exfiltration chain, and where chamnan breaks it
 
@@ -1677,25 +1659,48 @@ window. So the question is what reaches a session instead.
 |---|---|
 | Every source file | **11,560,484** |
 | The index chamnan writes | 51,937 |
-| **What reaches each session** | **~3,000** |
+| **The index that reaches each session** | **308 – 1,428** |
+| Everything chamnan injects, index included | 537 – 3,711 |
 
-That last number is the one that matters, and it is roughly constant. Each part of it replaces
+That last number is the one that matters, and it is the one to check first, because it is the only
+one measured on *your* repository rather than on a corpus. Measured on 2026-09-02 across the four
+real workspaces this build runs in: 308 tokens on a small infrastructure repository, 943 on a
+four-project monorepo, 1,251 on chamnan's own repository, 1,428 on a Kubernetes and Terraform one.
+
+The second row is the honest total, and it is the one to compare against another tool's figure: the
+index is what replaces reading files, but the block around it also carries this repository's rules,
+its recorded decisions, and where the last session stopped. Reproduce either on your own repository
+by firing the hook — drop the `awk` line to measure the whole block instead of the index:
+
+```sh
+echo '{"cwd":"'"$PWD"'","hook_event_name":"SessionStart","session_id":"probe"}' \
+  | python3 ~/.claude/plugins/*/chamnan/hooks/chamnan_session_start.py \
+  | awk '/### Architecture index/,/\[\/repo:/' | wc -c
+```
+
+It used to say ~3,000 here. That was `index_token_budget`, which is the ceiling the index is rolled
+up to fit — a budget, not a delivery — and no workspace measured has ever reached it. Each part of it replaces
 something an agent would otherwise have to go and read:
 
-| Instead of reading | tokens | chamnan says it in | |
-|---|---|---|---|
-| 53 migration and model files, to learn the schema | 154,680 | **889** | **174×** |
-| 109 Kubernetes, Ansible and Terraform manifests | 170,871 | **1,583** | **108×** |
-| 27 env and config files | 67,994 | **616** | **110×** |
-| 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** |
-| 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** |
-| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **26×** |
+| Instead of reading | tokens | chamnan says it in | | reduction |
+|---|---|---|---|---|
+| 53 migration and model files, to learn the schema | 154,680 | **889** | **174×** | 99.43% |
+| 109 Kubernetes, Ansible and Terraform manifests | 170,871 | **1,583** | **108×** | 99.07% |
+| 27 env and config files | 67,994 | **616** | **110×** | 99.09% |
+| 44 route files, `.proto` and OpenAPI documents | 148,322 | **2,550** | **58×** | 98.28% |
+| 2,365 files, to learn what lives where | 11,560,484 | **51,937** | **223×** | 99.55% |
+| …the same corpus as published, without its 20 MB of attachments | 1,445,328 | **56,892** | **25.4×** | **96.06%** |
 
-<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which roughly 3,000 reach each session." width="100%">
+The last column is the same arithmetic as the one before it, and it is here because the rest of this
+field publishes in percent while chamnan published in multiples. `25.4×` and `96.06%` are one
+measurement; the first reads smaller than tools reporting 60-95%, and the second does not. Both are
+printed so neither can be quoted without the other.
+
+<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which 308 to 1,428 reach each session." width="100%">
 
 <sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
 its source. The published corpus omits them, so the ratio you will measure by following the
-instructions below is 26×.** Both are true of the same tool; the difference is what a repository
+instructions below is 25.4×.** Both are true of the same tool; the difference is what a repository
 keeps in it, not what chamnan does. The row above this picture is the one you can reproduce.</sub>
 
 And for the files that should never be loaded at all, `chamnan-peek` reads their shape on demand:
@@ -1809,11 +1814,11 @@ corresponds to no account anywhere. `--check` says which state a working copy is
 
 The published corpus omits the 1,192 binary attachments and five bulk seed-data SQL files — 20 MB
 that git stores badly and that test nothing the schema files do not. Those are most of the
-11,560,484 tokens quoted above, so the ratio you will measure is **26×, not 223×**.
+11,560,484 tokens quoted above, so the ratio you will measure is **25.4×, not 223×**.
 
 The index barely moves (53,652 against 51,937), because attachments were never *described* in it —
 they were listed as stored material, which is the entire point of that section. 223× is the honest
-figure for a repository that carries its payload beside its source; 26× is the honest figure for
+figure for a repository that carries its payload beside its source; 25.4× is the honest figure for
 source alone. Same tool, same corpus; the difference is what you keep in your repository, not what
 chamnan does with it.
 

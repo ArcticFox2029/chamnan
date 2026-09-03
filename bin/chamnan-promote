@@ -18,8 +18,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import redact
 import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
+# Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
+# like it could carry a secret today. Five findings running came from one store having a guarded
+# reader and an unguarded one, and the case-by-case judgement about which commands "only print
+# numbers" is exactly the judgement that was wrong each time. Uniform is cheaper to keep true than
+# correct-per-file. See redact.emit.
+print = redact.emit  # noqa: A001
 
 
 def show(root):
@@ -29,14 +36,62 @@ def show(root):
         print("  When a script proves worth keeping: chamnan-promote <file> <name>")
         return 0
     print(f"chamnan tools — {len(entries)} in {ws.workspace(root).name}/tools/\n")
+    # 🐛 Two readers of `tools/index.json`, and only one of them was guarded. The SessionStart hook
+    # validates the name, checks the file is really there, and scrubs the description; this reader
+    # did none of the three, though it imports `redact` and never called it. The file is committed,
+    # so every field is somebody else's text -- and `chamnan-promote --list` is a command an agent
+    # runs, which puts its output in a session's context exactly like the block does.
+    #
+    # Where this DELIBERATELY differs from the hook: the hook drops a broken entry silently, because
+    # a session must not be pointed at a tool that is not there. The owner needs the opposite --
+    # this is the maintenance command, and an entry hidden here is a stale row they never learn to
+    # clean up. So it is reported, marked, and counted, with the name never printed raw.
+    broken = 0
     for e in entries:
+        # 🐛 A bare string in the array took the whole command down with an AttributeError on
+        # `.get`, mid-listing, exit code 1 -- so every entry after it was invisible AND the reader
+        # looked like it had crashed rather than found bad data. Found by a test fixture that
+        # included the shape the hook already guards against, which is the point of testing the two
+        # readers of a store against the same fixture.
+        if not isinstance(e, dict):
+            broken += 1
+            print(f"  {'(not an entry)':<24}   ← not an object; ignored by sessions")
+            continue
         used = e.get("runs", 0)
-        print(f"  {e['name']:<24} {e.get('desc','') or '(no description)'}")
-        print(f"  {'':24} added {e.get('added','?')[:10]}, run {used}x")
+        raw = e.get("name")
+        name = ws.safe_tool_name(raw) if isinstance(raw, str) else None
+        why = ""
+        if name is None:
+            # Never the raw field: a path-shaped name is the thing being reported, and printing it
+            # as if it were a filename is what makes it look legitimate.
+            name, why = "(unusable name)", "  ← not a filename; ignored by sessions"
+        else:
+            f = ws.workspace(root) / "tools" / name
+            if not (f.is_file() and ws.inside(f, root)):
+                why = "  ← no such file in tools/; ignored by sessions"
+        if why:
+            broken += 1
+        # A broken entry's description is not printed at all. It is text from a committed file
+        # that describes nothing real, so it carries no information the owner needs to find the
+        # row -- the name and the reason do that -- while an agent running this command would put
+        # it in a session's context. The hook drops such an entry whole for the same reason; this
+        # keeps the row visible and drops only the part with nothing to say.
+        desc = "" if why else redact.scrub(str(e.get("desc", "") or "(no description)"))
+        print(f"  {name:<24} {desc}{why}")
+        print(f"  {'':24} added {str(e.get('added','?'))[:10]}, run {used}x")
+    if broken:
+        print(f"\n  {broken} entr{'y' if broken == 1 else 'ies'} above name nothing this workspace "
+              f"has. Sessions skip them; remove them from tools/index.json.")
     return 0
 
 
 def main(argv):
+    if not argv or argv[0] in ("-h", "--help"):
+        # Same reason as chamnan-map: this command COPIES a file, so the flag a cautious
+        # user tries first must not be the one that does it.
+        print(__doc__.strip() if __doc__ else
+              "chamnan-promote <file> <name> --desc \"what it does\"")
+        return 0
     root = ws.find_root()
     if not ws.enabled("promote", root):
         print("chamnan: promote is disabled in .chamnan/config.json")
@@ -78,17 +133,67 @@ def main(argv):
         print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
               file=sys.stderr)
         return 1
+    # 🐛 `src` is any path on the machine, and what lands in `.chamnan/tools/` is committed by
+    # design — it is deliberately NOT in the workspace's ignore rules. So a private key, a
+    # credentials file or an `.env` sitting outside the repository could be copied straight into a
+    # git-tracked path, unscrubbed, by one mistyped argument. Reproduced with a test key.
+    #
+    # The same two gates `peek()` and `catalogs._readable()` already apply before reading a file are
+    # applied here before copying one. Refused rather than scrubbed: a tool is source, and silently
+    # rewriting somebody's file on the way in would be worse than declining it.
+    if redact.is_blocked(src) or redact.is_never_opened(src):
+        print(f"chamnan: {src.name} looks like a credential or key file — refusing to copy it into "
+              f"a committed directory. Promote a script, not a secret.", file=sys.stderr)
+        return 1
     shutil.copy2(src, dest)
     dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    # 🐛 The chmod above says "run this directly" and the line printed below says it too, but a
+    # scratch script usually has no shebang — nobody writes one for a file they are about to run
+    # with `python3 x.py`. So the promoted tool was marked executable, announced as runnable, and
+    # then handed to /bin/sh, which met `import json` and said "command not found". Found by
+    # promoting a script this tool had itself asked three times to have promoted.
+    #
+    # The interpreter is chosen from the SUFFIX rather than guessed from the content: a `.py` file
+    # gets `python3`, a `.sh` gets `sh`, and anything else is left exactly as it arrived, because a
+    # binary or a language this does not know is not something to prepend a line to.
+    _SHEBANG = {".py": "#!/usr/bin/env python3", ".sh": "#!/usr/bin/env sh"}
+    _line = _SHEBANG.get(dest.suffix)
+    if _line:
+        try:
+            _body = dest.read_text(encoding="utf-8")
+            if not _body.startswith("#!"):
+                dest.write_text(_line + "\n" + _body, encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            pass          # unreadable as text: leave it alone rather than corrupt it
 
-    tools_index.register(root, {
-        "name": dest.name, "desc": desc,
-        "added": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "origin": str(src),
-    })
+    # 🐛 `shutil.copy2` and `chmod` above always succeed before this runs, so a read-only
+    # `index.json` (permissions, a read-only mount, disk full) raised OSError HERE, uncaught --
+    # a traceback, and the file left on disk: copied, executable, but unregistered. Retrying under
+    # the same name then failed forever too, since `dest.exists()` above is checked before any of
+    # this runs. Rolled back on failure so the name is free to try again once the real problem
+    # (the index file's permissions) is fixed.
+    try:
+        tools_index.register(root, {
+            "name": dest.name, "desc": desc,
+            "added": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "origin": str(src),
+        })
+    except OSError as err:
+        try:
+            dest.unlink()
+        except OSError:
+            pass
+        print(f"chamnan: could not register {dest.name!r} in the tools index: {err}", file=sys.stderr)
+        print("  nothing was left behind -- fix the underlying issue (often the index file's "
+              "permissions) and run this again.", file=sys.stderr)
+        return 1
     rel = dest.relative_to(root)
     print(f"chamnan: promoted -> {rel}")
-    print(f"  run it with:  {rel}")
+    # Only claim direct execution when the file can actually be executed directly. A promoted file
+    # with no shebang and no known suffix is still useful; it is just not a command.
+    _runnable = dest.read_bytes()[:2] == b"#!" if dest.is_file() else False
+    print(f"  run it with:  {rel}" if _runnable else f"  run it with:  python3 {rel}"
+          if dest.suffix == ".py" else f"  run it with:  {rel}")
     if not desc:
         print("  no description given — add one so a future session knows when to reach for it:")
         print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root)})")

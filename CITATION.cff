@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: chamnan
+message: >-
+  If you use chamnan in work you publish, or cite a figure it reports, please cite it as
+  below — and please cite the version, because several of its published numbers have been
+  corrected downward after being measured properly.
+type: software
+authors:
+  - alias: wasuplao
+    affiliation: independent
+repository-code: https://github.com/ArcticFox2029/chamnan
+url: https://arcticfox2029.github.io/chamnan/
+abstract: >-
+  chamnan preserves a long-lived repository's engineering context — an architecture index,
+  an impact map, session records, and the decisions behind them — as markdown committed
+  beside the code, so an agent reads it at session start instead of rediscovering the same
+  structure every time. Repository-local, Python standard library only, no network calls at
+  runtime, no daemon.
+keywords:
+  - claude-code
+  - context-engineering
+  - repository-memory
+  - static-analysis
+  - developer-tools
+license: MIT
+version: "1.15.0"
+date-released: "2026-09-02"

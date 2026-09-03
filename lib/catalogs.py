@@ -19,12 +19,65 @@ import re
 import subprocess
 from pathlib import Path
 
+import mdblock
+import impact  # for is_test — see the guard in the file loops below
+
 import redact
+import tokens
 import tree
 
+# PROTOTYPE (R8 agent A, .../scratchpad/R8A_work/R8_agentA.md): count caps and mdblock.as_quoted's
+# per-entry length cap bound quantity and size separately, and nothing bounds their product — 32-60
+# ordinary deep REST paths on a real repo (measured: go-gitea/gitea) cost more tokens than the
+# entire 3,000-token index budget on their own, while the count cap said 60 was fine. A per-section
+# TOKEN budget replaces the count cap as the primary limit; the count cap stays as a floor against a
+# wall of very short entries. See R8_agentA.md for the measurements this is based on.
 MAX_ROUTES_LISTED = 60
 MAX_ENV_LISTED = 50
+# 🐛 The prototype used fixed constants, and the agent that wrote it said so. A user who raises
+# `index_token_budget` to 6,000 has asked for a bigger index and would still get 1,200 tokens of
+# routes; one who lowers it to 1,500 would get a routes section costing most of their whole budget.
+# Fractions of the configured budget instead — the constants below are what those fractions come to
+# at the 3,000-token default, so the measured behaviour is unchanged where it was measured.
+#
+# Two fifths and two fifteenths. Routes are the section people go looking for; configuration is a
+# list of names. Together they leave more than half the budget for the Quick Index, which is the
+# section every other one is a supplement to.
+ROUTES_BUDGET_SHARE = 0.40
+ENV_BUDGET_SHARE = 2 / 15
+
+
+def _section_budget(share, configured=None):
+    """A section's token budget as a share of the index budget the user actually configured."""
+    if configured is None:
+        try:
+            import workspace as _ws
+            configured = _ws.load_config().get("index_token_budget", 3000)
+        except Exception:
+            configured = 3000
+    return max(int(configured * share), 120)
 SKIP_PARTS = (".git", "node_modules", "vendor", "__pycache__", ".venv", "dist", "build")
+
+
+def _fill_by_budget(entries, render_one, token_budget, count_cap):
+    """Keep `entries` in order until either the token budget or the count cap is spent.
+
+    Returns (kept_render_lines, kept_count). At least one entry is always kept when the list is
+    non-empty, even if it alone exceeds the budget — a budget of zero rows is not a summary, and
+    `mdblock.as_quoted`'s own per-entry cap already bounds how bad the single worst case can be.
+    """
+    lines = []
+    spent = 0.0
+    for e in entries:
+        if len(lines) >= count_cap:
+            break
+        line = render_one(e)
+        cost = tokens.estimate(line)
+        if lines and spent + cost > token_budget:
+            break
+        lines.append(line)
+        spent += cost
+    return lines, len(lines)
 
 def _nested(root):
     """Nested checkouts, shared with mapper so both halves of the map agree on what this repo is.
@@ -99,6 +152,16 @@ SPRING_METHOD_MAPPING = re.compile(
     r"""@RequestMapping\s*\(\s*(?:value\s*=\s*|path\s*=\s*)?["']([^"']+)["']([^)]*)\)"""
     r"""(?![^\n]*\n(?:[ \t]*(?:@[^\n]*|//[^\n]*)?\n)*[ \t]*(?:public\s+|final\s+|abstract\s+)*class\b)""")
 
+# Literals each ROUTE_PATTERNS entry cannot match without, used as a pre-filter. Read off the
+# patterns above, not invented: changing a pattern without changing its entry here would make the
+# gate skip a file the pattern would have matched, so the two must be edited together.
+_ROUTE_NEEDS = {
+    "flask": (".route",),
+    "express": ("app.", "router."),
+    "spring": ("Mapping",),
+    "spring_any": ("RequestMapping",),
+    "django": ("path(",),
+}
 ROUTE_PATTERNS = [
     (re.compile(r"@(\w+)\.(get|post|put|patch|delete|head|options)\s*\(\s*[\"']([^\"']*)", re.I), "decorator"),
     (re.compile(r"@(\w+)\.route\s*\(\s*[\"']([^\"']+)[\"'](?:[^)]*methods\s*=\s*\[([^\]]*)\])?", re.I), "flask"),
@@ -124,7 +187,24 @@ ENV_IN_CODE = re.compile(
     r"""|os\.getenv\s*\(\s*["']([A-Z][A-Z0-9_]{2,})["']"""
     r"""|process\.env\.([A-Z][A-Z0-9_]{2,})"""
     r"""|process\.env\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
-    r"""|ENV\[\s*["']([A-Z][A-Z0-9_]{2,})["'])""")
+    r"""|ENV\[\s*["']([A-Z][A-Z0-9_]{2,})["']"""
+    # Go and Rust. Measured on real clones before being added, and both numbers reported, because
+    # this is the MISSING direction and a pattern that over-matches would turn it into the
+    # INVENTED one, which is strictly worse: Go `os.Getenv`/`os.LookupEnv` found 58 true variables
+    # and 0 false across four repositories (Caddy, node_exporter, alertmanager,
+    # microservices-demo); Rust `env::var`/`env::var_os` found 12 true and 0 false. A real
+    # polyglot service repository had 12 Go variables in one service alone, all invisible before.
+    #
+    # NOT added, and each for its own reason. Java/Kotlin `System.getenv` is the right shape but
+    # turned up only two or three call sites on real repositories — too thin to claim. C#
+    # `Environment.GetEnvironmentVariable` is correct in principle and had ZERO literal-argument
+    # call sites in two real C# repositories, so it is a hypothesis rather than a measurement. And
+    # C#'s `Configuration["X"]` scored 14 of 14 true positives and is still refused: `IConfiguration`
+    # merges environment variables with JSON, command-line arguments and Key Vault, so the call
+    # shape cannot structurally promise an environment read. Clean numbers on one sample are not
+    # the same as a rule that holds.
+    r"""|os\.(?:Getenv|LookupEnv)\s*\(\s*["`]([A-Z][A-Z0-9_]{2,})["`]"""
+    r"""|env::var(?:_os)?\s*\(\s*["]([A-Z][A-Z0-9_]{2,})["])""")
 ENV_FILE_KEY = re.compile(r"^\s*(?:export\s+)?([A-Z][A-Z0-9_]{2,})\s*=", re.M)
 
 
@@ -246,12 +326,35 @@ def _django_mounts(root, files):
     """{file path: url prefix} for every module mounted with include()."""
     by_module = {}
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         if f.get("lang") != "py":
             continue
-        try:
-            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        # `mapper._scan()` already read and decoded this file to build `f` -- reuse it rather than
+        # opening the file again. Falls back to a fresh read for a `files` list built without that
+        # field (a caller that assembled its own, a future test fixture).
+        text = f.get("_source")
+        if text is None:
+            try:
+                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        if "include" not in text:
+            continue          # DJANGO_INCLUDE requires `include(`; 86.6% of this loop was this file
         for m in DJANGO_INCLUDE.finditer(text):
             by_module[m.group(2)] = m.group(1)
     mounts = {}
@@ -276,23 +379,67 @@ def scan_routes(root, files):
         routes[(method.upper(), path_ or "/")] = source
 
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         if f["lang"] not in ("py", "js", "go", "rb", "java", "php"):
             continue
         path = root / f["path"]
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
+        # Same reuse as _django_mounts above -- `mapper._scan()` already holds this text.
+        text = f.get("_source")
+        if text is None:
+            try:
+                text = path.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        # `APIRouter` and `Blueprint` are FastAPI and Flask, so these two patterns can only ever
+        # match Python — and both are unanchored scans with a 400-character bounded body, which is
+        # the expensive shape. Running them over every JavaScript and Go file in a repository is
+        # work whose result is known in advance: measured on a four-project tree they cost 1,503 ms
+        # of ~1,900 ms of total findall time, roughly half of it spent inside large `.js` files that
+        # cannot contain either name. Gated to Python, checked for misses across three repositories
+        # with route-carrying files in six languages: none.
+        # 🐛 These two were gated by LANGUAGE while the sibling loop below got a literal
+        # pre-filter, in the same function, added the same day. Language is much too coarse here:
+        # on the real repository 188 `.py` files reach this line and exactly 2 contain either name.
+        # `APIRouter` and `Blueprint` are the literals the patterns cannot match without.
+        py = f["lang"] == "py" and ("APIRouter" in text or "Blueprint" in text)
         # Mount points declared in this file, by the variable the decorator will name.
-        prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)}
+        prefixes = {m.group(1): m.group(2) for m in ROUTER_PREFIX.finditer(text)} if py else {}
         # Every router/blueprint variable in the file, prefix or not. A decorator is only trusted
         # when its object is one of these or one of the conventional names -- which is what keeps
         # an unrelated `@retry.route(...)` out of the API surface.
-        routers = set(ROUTER_ANY.findall(text)) | set(prefixes)
-        spring = SPRING_CLASS_PREFIX.search(text)
+        routers = (set(ROUTER_ANY.findall(text)) if py else set()) | set(prefixes)
+        # Same argument, one language over: @RequestMapping on a class is Spring, so Java only.
+        spring = SPRING_CLASS_PREFIX.search(text) if f["lang"] == "java" else None
         class_prefix = spring.group(1) if spring else ""
 
         for pattern, kind in ROUTE_PATTERNS:
+            # A literal the pattern cannot match without. `str.find` over a few hundred KB is a
+            # memchr; an unanchored alternation over the same bytes is not, and most files cannot
+            # match most patterns. Measured across two independent verifications on this tree:
+            # render −39.7% and −41.3%, wall clock −21.5% and −24.5%, with the route set proven
+            # identical on every corpus checked.
+            #
+            # Each literal is taken from the pattern's OWN required syntax rather than guessed:
+            # flask needs `.route`, express needs `app.` or `router.`, Spring needs `Mapping`,
+            # Django needs `path(`. A pattern with no single required literal is not gated.
+            need = _ROUTE_NEEDS.get(kind)
+            if need and not any(lit in text for lit in need):
+                continue
             for m in pattern.finditer(text):
                 g = [x for x in m.groups() if x is not None]
                 if kind == "flask":
@@ -373,17 +520,40 @@ def render_routes(routes):
     out = ["## API surface", "", f"{len(routes)} route(s)."
            + (f" {len(http)} HTTP, {len(grpc)} gRPC." if grpc and http else "")]
 
+    def _render_one(route):
+        (method, path_), source = route
+        # 🐛 Written straight into MAP.md, which the pre-commit hook commits and the hook
+        # injects into every session — from a string the repository chose. Several route
+        # patterns capture with `[^"']*`, and that class INCLUDES a newline, so a quoted path
+        # containing one carried the rest of the file's text into the index as markdown.
+        # Reproduced in ordinary, valid JavaScript — a template literal spanning two lines —
+        # which put a real `## Injected heading` and a paragraph of an attacker's prose above
+        # `## Full Detail`, where an agent reads it as something chamnan published.
+        #
+        # `mdblock.as_quoted` is the helper this codebase already uses for exactly this, on
+        # Quick Index filenames and milestone titles: it folds newlines away, neutralises the
+        # backticks that would close the span it sits in, and bounds the length. These four
+        # modules extract repository substrings and none of them imported it.
+        return (f"- `{mdblock.as_quoted(method, 12):<6} {mdblock.as_quoted(path_, 200)}`"
+                f"  _({mdblock.as_quoted(source, 120)})_")
+
     for label, group, cap in (("", http, MAX_ROUTES_LISTED),
                               ("gRPC", grpc, MAX_ROUTES_LISTED)):
         if not group:
             continue
         if label:
             out += ["", f"**{label}**"]
-        if len(group) > cap:
-            out.append(f"Showing {cap} of {len(group)}; grep the source files for the rest.")
+        # Token-budgeted, not count-capped: `cap` alone used to decide what was "shown", and on a
+        # repository whose routes run long (deep REST paths, verbose source annotations) 60 of them
+        # cost more tokens than the WHOLE index budget by themselves — count and size are bounded
+        # separately and nothing bounded their product. Filling by token cost until the section's
+        # own sub-budget is spent makes the count that gets shown depend on how big the entries
+        # actually are, the way the number in "Showing K of N" always claimed it did.
+        lines, kept = _fill_by_budget(group, _render_one, _section_budget(ROUTES_BUDGET_SHARE), cap)
+        if len(group) > kept:
+            out.append(f"Showing {kept} of {len(group)}; grep the source files for the rest.")
         out.append("")
-        for (method, path_), source in group[:cap]:
-            out.append(f"- `{method:<6} {path_}`  _({source})_")
+        out += lines
     out.append("")
     return "\n".join(out)
 
@@ -462,10 +632,31 @@ def scan_env(root, files):
             if not _is_ignored(root, path):
                 unsafe.append(rel)
     for f in files:
-        try:
-            text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
             continue
+        # Same reuse as _django_mounts/scan_routes above -- every file in `files` was already read
+        # once by mapper._scan(). This loop has no language gate at all (env vars can be referenced
+        # from any source file), so before this it was the least selective of the three re-reads.
+        text = f.get("_source")
+        if text is None:
+            try:
+                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
         for m in ENV_IN_CODE.finditer(text):
             name = next(g for g in m.groups() if g)
             names.setdefault(name, f["path"])
@@ -481,14 +672,37 @@ def render_env(pairs, unsafe):
     out = ["## Configuration", "",
            f"{len(pairs)} environment variable(s) this repo reads. **Names only — no values are "
            f"ever recorded here.**"]
-    if len(pairs) > MAX_ENV_LISTED:
-        out.append(f"Showing the {MAX_ENV_LISTED} referenced in the most places, of {len(pairs)}. "
+    # Token-budgeted, not count-capped — see _section_budget(ROUTES_BUDGET_SHARE)'s comment in render_routes for why:
+    # the same product-of-count-and-size gap applies here, just less often, because a variable NAME
+    # is short enough that MAX_ENV_LISTED rarely dominates on its own the way route paths do.
+    names, kept = _fill_by_budget(pairs, lambda pair: f"`{mdblock.as_quoted(pair[0], 80)}`",
+                                  _section_budget(ENV_BUDGET_SHARE), MAX_ENV_LISTED)
+    if len(pairs) > kept:
+        out.append(f"Showing the {kept} referenced in the most places, of {len(pairs)}. "
                    f"Grep the repository for the rest.")
     out.append("")
-    out.append(", ".join(f"`{n}`" for n, _ in pairs[:MAX_ENV_LISTED]))
+    out.append(", ".join(names))
+    # 🐛 The list read as complete and is not. It is built from call shapes chamnan knows, and a
+    # language whose shape is missing contributes nothing with no sign that anything is absent —
+    # measured on a real polyglot service repository, twelve Go variables in one service were
+    # invisible while the section printed a short list and said nothing.
+    #
+    # A numeric "showing N of M" is NOT available and claiming one would be the same mistake in a
+    # new place: chamnan cannot know M without a reader for every language, and some real idioms
+    # never appear in code at all — Spring's `${VAR}` in a YAML file is a live example. What it can
+    # state is its own boundary, which is checkable and does not pretend to a denominator.
+    out.append("")
+    out.append("_Found by matching `os.environ`/`os.getenv`, `process.env`, `ENV[…]`, Go's "
+               "`os.Getenv`/`os.LookupEnv`, and Rust's `env::var`. A variable read some other way "
+               "— a config framework, a YAML placeholder, a language with no pattern here — is not "
+               "in this list and is not counted as absent either._")
     if unsafe:
         out.append("")
-        out.append(f"> ⚠️ `{', '.join(unsafe)}` is not matched by .gitignore. That file usually "
-                   f"holds live credentials; committing it publishes them.")
+        # Only the LEAF has to be `.env`; every parent directory in the path is a name somebody
+        # chose, and it needs no code at all — a `mkdir` is enough. Reproduced breaking out of this
+        # blockquote and adding a second, fabricated alert line beneath it.
+        out.append(f"> ⚠️ `{mdblock.as_quoted(', '.join(unsafe), 200)}` is not matched by "
+                   f".gitignore. That file usually holds live credentials; committing it "
+                   f"publishes them.")
     out.append("")
     return "\n".join(out)

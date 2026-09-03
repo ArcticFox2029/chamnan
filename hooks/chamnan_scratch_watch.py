@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
 import environments  # noqa: E402
+import redact  # noqa: E402
 import sessions  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -40,7 +41,18 @@ MIN_TOKENS = 8
 # How many PostToolUse calls (Bash, Write or Edit -- every tool this hook sees) a session has to
 # make before the resume nudge is even considered. Not the first thing a session sees before any
 # real work has happened; low enough to still fire well inside a normal working session.
+# 🐛 One ask per session, at call 10, and then silence. Measured on a real work repository: a
+# session ran 489 calls over three days, the nudge fired once near the very beginning, and the
+# workspace finished with zero sessions, decisions, lessons, rules and threads recorded — while
+# Claude Code's own memory tool captured six substantive lessons from the same work in the same
+# window. Asking once, early, before there is much to record, and never again is close to not
+# asking at all.
+#
+# Three points across a long session instead, and only ever while nothing is recorded for today.
+# Not more than three: the thing this protects against is a tool that nags, and a session that has
+# declined twice has answered.
 NUDGE_AT = 10
+NUDGE_AGAIN_AT = (150, 400)
 
 
 def body_of(payload):
@@ -111,12 +123,8 @@ def _nudge_read(wsdir, session_id):
 def _nudge_write(wsdir, session_id, entry):
     p = _nudge_path(wsdir, session_id)
     try:
-        p.parent.mkdir(parents=True, exist_ok=True)
-        # Beside the target: os.replace fails with EXDEV across mount points, and a copy-and-delete
-        # fallback would give up the atomicity this is here for.
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(entry), encoding="utf-8")
-        tmp.replace(p)
+        # Shared `.tmp` name, same bug as pointer.py and chamnan-map had. See ws.atomic_write_text.
+        ws.atomic_write_text(p, json.dumps(entry))
         for old in p.parent.glob("*.json"):
             if old != p and time.time() - old.stat().st_mtime > NUDGE_MAX_AGE:
                 old.unlink()
@@ -309,7 +317,11 @@ def _environment_notice(payload, wsdir, root):
         return False
     entry["envs_told"] = told + [name]
     _nudge_write(wsdir, session_id, entry)
-    say(notice)
+    # The constraint text comes straight out of a committed `environments.md`. The SessionStart
+    # block scrubs the same text; this second, automatic path did not, and it fires on any Bash
+    # command that matches a declared environment — so the guarded and unguarded readers of one
+    # store sat two hooks apart.
+    say(redact.scrub(notice))
     return True
 
 
@@ -335,14 +347,49 @@ def _resume_nudge(payload, wsdir, root):
     entry["calls"] = entry.get("calls", 0) + 1
     _nudge_write(wsdir, session_id, entry)
 
-    if entry.get("nudged") or entry["calls"] < NUDGE_AT or sessions.written_today(root):
+    if sessions.written_today(root):
+        return False
+    marks = [NUDGE_AT] + list(NUDGE_AGAIN_AT)
+    done = int(entry.get("nudges", 1 if entry.get("nudged") else 0))
+    if done >= len(marks) or entry["calls"] < marks[done]:
         return False
 
-    entry["nudged"] = True
+    entry["nudges"] = done + 1
+    entry["nudged"] = True          # kept so an older workspace's state still reads correctly
     _nudge_write(wsdir, session_id, entry)
-    say("chamnan: a fair bit has happened this session and nothing is recorded for today yet. "
-          "/chamnan:resume takes about 30 seconds and is what the next session reads first.")
+    # The later asks say something the first one cannot: that the session is long now, which is the
+    # actual argument for recording it.
+    if done == 0:
+        say("chamnan: a fair bit has happened this session and nothing is recorded for today yet. "
+            "/chamnan:resume takes about 30 seconds and is what the next session reads first.")
+    else:
+        say(f"chamnan: {entry['calls']} calls into this session and still nothing recorded for "
+            f"today. Whatever you worked out here is about to be the next session's problem to "
+            f"work out again — /chamnan:resume is 30 seconds.")
     return True
+
+
+def _record_edit(payload, root, wsdir):
+    """Append this edit to the ledger co-edit partners are counted from. Never prints, never fails.
+
+    chamnan's own files are excluded. A session that edits `.chamnan/STATE.md` after every third
+    source file would otherwise learn that every file in the repository is followed by STATE.md,
+    which is true and useless.
+    """
+    if (payload.get("tool_name") or "") not in ("Write", "Edit"):
+        return
+    file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
+    if not file_path:
+        return
+    try:
+        resolved = Path(file_path).resolve()
+        rel = resolved.relative_to(Path(root).resolve())
+    except (OSError, ValueError):
+        return
+    if rel.parts and rel.parts[0] == ".chamnan":
+        return
+    import coedit
+    coedit.record(wsdir, rel)
 
 
 def main():
@@ -367,6 +414,12 @@ def main():
     # skill documents, in both directions.
     if ws.enabled("memory", root):
         _stamp_memory_entry(payload, root)
+        # Silent, and the whole point: this is the one thing chamnan can learn without the user
+        # doing anything. Measured on a real work repository, three days and 764 commands produced
+        # zero recorded sessions, decisions, lessons, rules and threads, because every one of those
+        # needs a command somebody has to remember to run. An edit is a fact the hook already sees.
+        # `lib/coedit.py` carries the measurement behind it.
+        _record_edit(payload, root, wsdir)
 
     if not ws.enabled("promote", root):
         return 0
