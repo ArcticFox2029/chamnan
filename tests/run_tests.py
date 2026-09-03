@@ -11454,6 +11454,40 @@ check("...and the shortlist resolves every import to the same answer as the full
           for f in _shared for n in f["imports"]))
 
 
+# ------------------------------------------- the compile gate has to cover the commands
+# 🐛 CI ran `python -m compileall -q lib bin hooks tests`, which finds source by SUFFIX. Every
+# chamnan command is an extensionless file with a shebang, so all ten were invisible to it — and a
+# `bin/chamnan-map` broken by a duplicated keyword argument passed that step and reached a commit.
+# `tests/compile_all.py` reads and compiles each file instead. Shipped with the plugin rather than
+# kept in a maintainer's workspace, because a checker that protects one clone protects one clone.
+_ca = ROOT / "tests" / "compile_all.py"
+check("the compile checker ships with the plugin", _ca.is_file())
+_wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+check("CI RUNS IT, and no longer runs compileall",
+      "tests/compile_all.py" in _wf and "python -m compileall" not in _wf)
+
+# It must actually see the extensionless commands, or it is compileall with extra steps. Run it
+# and read its own count against the number of files it should have found.
+_ca_out = subprocess.run([sys.executable, str(_ca)], cwd=str(ROOT), capture_output=True,
+                         text=True, encoding="utf-8", errors="replace")
+_ca_seen = int(re.search(r"(\d+)/(\d+) script", _ca_out.stdout).group(2))
+_ca_expected = len([p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix])
+check("...and it counts more files than there are commands, so it is reaching all of them",
+      _ca_seen > _ca_expected > 0)
+check("...and it passes on a clean tree", _ca_out.returncode == 0)
+
+# And it must FAIL on a broken file, which is the whole point. Written into a temp copy of lib/
+# rather than the real tree, so a crash here cannot leave a broken file behind.
+_cabroken = Path(tempfile.mkdtemp())
+(_cabroken / "lib").mkdir()
+(_cabroken / "lib" / "broken.py").write_text("def f(:\n", encoding="utf-8")
+_ca_bad = subprocess.run([sys.executable, str(_ca), "lib"], cwd=str(_cabroken),
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("A BROKEN FILE MAKES THE COMPILE GATE FAIL", _ca_bad.returncode != 0)
+check("...and it names the file and the line", "broken.py:1" in _ca_bad.stdout)
+_rmtree(_cabroken, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
