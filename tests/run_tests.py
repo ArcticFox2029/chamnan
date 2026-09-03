@@ -5397,7 +5397,7 @@ check("an unranked section drops before the index and before the rules",
       and "Rules this repository works under" not in [t for t, _ in _udropped])
 
 check("every name in the drop order is one the hook actually emits",
-      all(any(n in open(ROOT / "hooks" / "chamnan_session_start.py").read() for n in [name])
+      all(any(n in open(ROOT / "hooks" / "chamnan_session_start.py", encoding="utf-8").read() for n in [name])
           for name in fit.DROP_ORDER))
 check("the default ceiling sits under the 10,000-byte cap that was measured",
       fit.CEILING < 10000)
@@ -10919,12 +10919,36 @@ for _u in _unencoded[:5]:
     print("     ", _u)
 
 # --- INVARIANT 2: every text file read and write names its encoding ---------------------------
-_unencoded_io = []
-for _path, _src in _runtime_sources():
-    for _node in _calls(_src, {"read_text", "write_text"}):
-        if "encoding" not in {k.arg for k in _node.keywords}:
-            _unencoded_io.append(f"{_path.name}:{_node.lineno}")
+# 🐛 The first version watched `read_text`/`write_text` only, and a bare `open(path).read()` in
+# the suite crashed Windows CI at line 5400 after every other encoding defect was fixed. `open` is
+# a Name, not an Attribute, which is why a check written around methods walked straight past it.
+# The suite is scanned as well as the runtime: a fixture that cannot be written is a red build on
+# one platform, which is the same cost as a bug.
+def _unencoded_io_in(pairs):
+    out = []
+    for path, src in pairs:
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                    and node.func.attr in ("read_text", "write_text"):
+                if "encoding" not in {k.arg for k in node.keywords}:
+                    out.append(f"{path.name}:{node.lineno}")
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) \
+                    and node.func.id == "open":
+                kw = {k.arg for k in node.keywords}
+                mode = node.args[1].value if len(node.args) > 1 and isinstance(node.args[1], ast.Constant) else ""
+                if "encoding" not in kw and "b" not in str(mode):
+                    out.append(f"{path.name}:{node.lineno}")
+    return out
+
+
+_unencoded_io = _unencoded_io_in(_runtime_sources())
 check("EVERY TEXT FILE READ AND WRITE NAMES ITS ENCODING", not _unencoded_io)
+_suite_io = _unencoded_io_in([(Path("run_tests.py"), _suite_src)])
+check("...in the suite too, where an unwritable fixture is a red build on one platform",
+      not _suite_io)
+for _u in _suite_io[:4]:
+    print("     ", _u)
 for _u in _unencoded_io[:5]:
     print("     ", _u)
 
