@@ -34,9 +34,22 @@ print = redact.emit  # noqa: A001
 
 
 def coverage(files):
-    """Counts only files that could carry a summary — see mapper.scan's `describable`."""
-    countable = [f for f in files if f.get("describable", True)]
+    """Counts only files that could carry a summary — see mapper.scan's `describable`.
+
+    🐛 A GENERATED file was counted as missing one. On twelve `.pb.go` files beside one
+    hand-written module this reported `1/13 (8%)` for a repository that is fully described
+    wherever description is possible -- and the nudge below then asked for a comment under a
+    DO NOT EDIT line, which the next `protoc` run discards. chamnan already recognised the header;
+    it just never let that recognition reach the count.
+    """
+    countable = [f for f in files
+                 if f.get("describable", True) and not f.get("generated")]
     return len([f for f in countable if f["doc"]]), len(countable)
+
+
+def generated_count(files):
+    """How many files a program wrote. Reported, not hidden — see `coverage`."""
+    return len([f for f in files if f.get("generated")])
 
 
 HOOK_MARKER = "# >>> chamnan"
@@ -445,9 +458,18 @@ def main(argv):
     print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({share})")
     print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
-    skipped = len(files) - total
+    # 🐛 `len(files) - total` swept the generated files into "no code to describe", which is not
+    # true of them -- they have code, it is just not anyone's to comment. Two lines then said
+    # different things about the same twelve files. Generated files are subtracted here and
+    # reported on their own line below.
+    _gen = generated_count(files)
+    skipped = len(files) - total - _gen
     note = f", {skipped} with no code to describe" if skipped else ""
     print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%{note})")
+    # Stated rather than silently dropped, the same way a .gitattributes-declared file is. A count
+    # that quietly excludes files is a count nobody can check.
+    if _gen:
+        print(f"  not counted, a program wrote them (\"do not edit\"): {_gen} file(s)")
 
     for label, marker in (("data model", "## Data model\n"), ("API surface", "## API surface"),
                           ("config", "## Configuration")):
@@ -495,6 +517,7 @@ def main(argv):
         # instructs — those files are the owner's work and belong in the map.
         missing = [f["path"] for f in files
                    if not f["doc"] and f.get("describable", True)
+                   and not f.get("generated")
                    and not str(f["path"]).startswith(".chamnan/")][:8]
         print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
         print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")
