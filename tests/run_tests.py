@@ -7990,6 +7990,41 @@ _bigj.write_text('{"a":"' + "x" * (ws.JSON_READ_CEILING + 1000) + '"}', encoding
 check("a JSON store past the ceiling degrades to empty, like a missing file",
       ws.load_json(_bigj, dict) == {})
 check("...and one under it still parses", ws.load_json(_cfgf, dict) == {"agents": True})
+
+# `tools_index._save` was a plain write_text — a SIGKILL between truncate and flush left a
+# truncated file, which `load()` degrades to `[]`, the same value it returns for a file that never
+# existed. It was MISSED when every other writer was routed through ws.atomic_write_text.
+_tisrc2 = (ROOT / "lib" / "tools_index.py").read_text(encoding="utf-8")
+check("THE TOOL REGISTRY IS WRITTEN ATOMICALLY LIKE EVERY OTHER STORE",
+      "ws.atomic_write_text(" in _tisrc2 and "p.write_text(" not in _tisrc2)
+
+# Three writers took the lock and only one looked at the answer. What each does when it cannot get
+# it is a different decision per caller, and none of them is "proceed silently".
+_tid = Path(tempfile.mkdtemp()) / "repo"
+(_tid / ".git").mkdir(parents=True)
+ws.ensure(_tid)
+for _n in ("a.sh", "b.sh", "c.sh"):
+    tools_index.register(_tid, {"name": _n, "desc": "x"})
+_tilock = Path(str(tools_index.path(_tid)) + ".lock")
+_tilock.write_text("", encoding="utf-8")
+check("a background counter DROPS its increment rather than write an unserialised snapshot",
+      tools_index.record_call(_tid, "a.sh") == (None, False))
+_raised = False
+try:
+    tools_index.remove(_tid, "a.sh")
+except TimeoutError:
+    _raised = True
+check("...while a destructive remove REFUSES, because losing that race resurrects the tool",
+      _raised)
+check("...and neither of them damaged the registry",
+      [e["name"] for e in tools_index.load(_tid)] == ["a.sh", "b.sh", "c.sh"])
+# missing_ok: `exclusive` removes a lock it judges stale, so a slow suite can clear this one
+# before the test does. The behaviour under test is what the three callers do when they cannot
+# take the lock, not who tidies it up afterwards.
+_tilock.unlink(missing_ok=True)
+check("...and with the lock free, remove works normally",
+      tools_index.remove(_tid, "a.sh") is not None)
+shutil.rmtree(_tid.parent, ignore_errors=True)
 check("the ceiling is far above anything chamnan writes", ws.JSON_READ_CEILING >= 1_000_000)
 
 # `prune_logs` deletes silently at the window — right for the `.jsonl` machine scratch it was

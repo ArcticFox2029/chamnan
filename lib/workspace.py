@@ -812,6 +812,13 @@ def atomic_write_text(dest, text, encoding="utf-8"):
     tmp = None
     try:
         dest = pathlib.Path(dest)
+        # 🐛 An atomic replace does not need write permission on the TARGET — `os.replace` only
+        # needs a writable directory — so switching to it silently defeated a read-only file. A
+        # user who `chmod 444`s a store means it, and `chamnan-promote` relies on the refusal to
+        # roll back the file it already copied rather than leave an unregistered executable behind.
+        # Checked explicitly, because the filesystem will not check it for us any more.
+        if dest.exists() and not os.access(dest, os.W_OK):
+            return False
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Per-process, and `.tmp` last so a suffix-matching reader never mistakes it for the real
         # file. os.getpid() is enough here: two threads of one process writing the same workspace

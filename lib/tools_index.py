@@ -47,9 +47,27 @@ def load(root):
 
 
 def _save(root, entries):
-    p = path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(entries, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    """🐛 A plain `write_text`, so a SIGKILL between truncate and flush left the registry a
+    truncated file — which `load()` degrades to `[]`, the same value it returns for a file that
+    never existed. Reproduced with a real SIGKILL mid-write: a healthy five-tool registry became
+    empty, silently and permanently, and the next registration wrote a one-entry file over it.
+
+    This module was MISSED when every other writer was routed through `ws.atomic_write_text`, and
+    the commit that did that work said the class was closed. It was not; `tools_index.py` is not in
+    `grep -rl atomic_write_text lib hooks bin`. Two rounds of the same disease — a fix applied to
+    the members of a set somebody enumerated, and not to the one they forgot.
+
+    It also makes `register`'s stated reasoning true. That function proceeds without the lock on the
+    grounds that "the file is written atomically either way", which was simply false until now.
+    """
+    # RAISES on failure, unlike most callers of atomic_write_text. That helper is best-effort by
+    # default because a workspace on a read-only checkout must still let a session start — but a
+    # registration is a thing the user asked for, and `chamnan-promote` rolls back the copied file
+    # when the index write fails. Swallowing it left the executable installed, announced, and
+    # unregistered. Caught by the read-only-index test, which exists for exactly that.
+    if not ws.atomic_write_text(path(root),
+                                json.dumps(entries, indent=1, ensure_ascii=False) + "\n"):
+        raise OSError(f"could not write {path(root)}")
 
 
 def register(root, entry):
@@ -124,7 +142,14 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
     #
     # This is a SHARED registry, so pointer.py's answer to the same problem -- one file per session,
     # no lock at all -- is not available: every session has to see the same list of tools.
-    with ws.exclusive(path(root)):
+    with ws.exclusive(path(root)) as held:
+        # A background counter, so a dropped increment is the cheap outcome and a lost update is
+        # not: this fires from a PostToolUse hook on every Bash call, and writing an unserialised
+        # snapshot back would revert whatever a concurrent `register` or `remove` had just done.
+        # Same choice `workflows.record()` makes, for the same reason. Measured under contention:
+        # 10-12.5% of increments were being lost every trial, which is what proceeding cost.
+        if not held:
+            return None, False
         entries = load(root)
         entry = next((e for e in entries if e["name"] == name), None)
         if entry is None:
@@ -165,7 +190,15 @@ def remove(root, name):
     such name. Used by `chamnan-candidates demote` to undo a promotion."""
     # The third writer of this file. `record_call` fires from a PostToolUse hook on every Bash
     # call, so a demotion racing it lost either the removal or the run counter, silently.
-    with ws.exclusive(path(root)):
+    with ws.exclusive(path(root)) as held:
+        # Refused, not attempted anyway, and this is the opposite call from `register`'s. Removing
+        # is destructive and the failure is not symmetric: an unserialised remove writes back a
+        # snapshot taken before a concurrent writer's change, so a tool the user had just DEMOTED
+        # comes back. Reproduced in 2 of 5 trials under contention — a command that reports success
+        # while undoing itself. Raised rather than returned as None, because None already means
+        # "no such tool" and a caller that cannot tell the two apart prints the wrong sentence.
+        if not held:
+            raise TimeoutError(f"could not lock {path(root).name}; another process is writing it")
         entries = load(root)
         entry = next((e for e in entries if e["name"] == name), None)
         if entry is None:
