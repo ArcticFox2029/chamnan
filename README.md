@@ -323,7 +323,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 |---|---|
 | **macOS** | **Supported and tested.** Developed and exercised on macOS (arm64) with Python 3.12; the test suite and the polyglot run below were both done there. |
 | **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else, since no arm64 macOS build of 3.8 exists. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
-| **Windows** | **Not tested, and not expected to work as-is.** The hooks are invoked as bare paths to `.py` files, which depends on the `#!/usr/bin/env python3` line and the executable bit; Windows honours neither. The optional Git hook is a `/bin/sh` script. Under WSL it is the Linux row above. |
+| **Windows** | **Tested in CI on every commit**, at Python 3.8 and 3.13, on `windows-latest`. The `bin/` commands are extensionless POSIX scripts that `cmd.exe` cannot resolve through `PATHEXT`, so a generated `.cmd` shim sits beside each one (and beside each hook script) and hands it to the Python launcher; CI runs the shims themselves through `cmd.exe`, not just the underlying scripts. The optional Git hook is still a `/bin/sh` script and needs a shell that can run one — Git for Windows ships `sh.exe`, so it works there. Under WSL it is the Linux row above. |
 
 ## Quick start
 
@@ -621,6 +621,81 @@ terse here" is enough, and Claude edits it for you.
 `config.json` is **merged**, not replaced: keys you set are kept, and keys the plugin no longer has
 are dropped. So an option that disappears after an upgrade was removed from the plugin — it is not
 a lost setting.
+
+## Any agent, not only Claude Code
+
+chamnan started as a Claude Code plugin and its index is not Claude's to keep. `chamnan-context`
+prints the same block Claude Code gets at session start, on stdout, for anything that can read a
+pipe:
+
+```
+chamnan-context                  the block, as text
+chamnan-context --detect         what this machine and this repository look like
+chamnan-context --json           the block plus what was detected, for a wrapper
+chamnan-context --write cursor   set that agent up to read it
+chamnan-context --model kimi     size it for the context window the model actually has
+```
+
+**34 agent names can be written**, from 23 adapters. Where an agent has a
+file of its own, chamnan writes that file; where several agents read the same one, they share it
+rather than each getting a copy that drifts.
+
+| agent | what gets written |
+|---|---|
+| `aider` | `CONVENTIONS.md` |
+| `amazonq` | `.amazonq/rules/chamnan.md` |
+| `antigravity` | `.agents/rules/chamnan.md` |
+| `augment` | `.augment/rules/chamnan.md` |
+| `cline` | `.clinerules/chamnan.md` |
+| `codebuddy` | `CODEBUDDY.md` |
+| `continue` | `.continue/rules/chamnan.md` |
+| `copilot` | `.github/instructions/chamnan.instructions.md` |
+| `cursor` | `.cursor/rules/chamnan.mdc` |
+| `generic` | `AGENTS.md` |
+| `goose` | `.goosehints` |
+| `grok` | `.grok/rules/chamnan.md` |
+| `iflow` | `IFLOW.md` |
+| `junie` | `.junie/AGENTS.md` |
+| `kiro` | `.kiro/steering/chamnan.md` |
+| `mistral` | `.vibe/AGENTS.md` |
+| `qwen` | `QWEN.md` |
+| `replit` | `replit.md` |
+| `roo` | `.roo/rules/chamnan.md` |
+| `trae` | `.trae/rules/project_rules.md` |
+| `windsurf` | `.windsurf/rules/chamnan.md` |
+| `zed` | `.rules` |
+| `gemini` | `.gemini/settings.json` — a real `SessionStart` hook, so its context is rebuilt every session rather than going stale |
+
+`amp`, `codex`, `crush`, `deepseek`, `devin`, `kilo`, `kimi`, `muse`, `opencode`, `openhands` and
+`warp` all read the root `AGENTS.md`, so they are names for the `generic` adapter rather than
+eleven copies of one file.
+
+**Claude Code has no adapter, deliberately.** Its delivery is the SessionStart hook, which writes
+nothing — inventing a file for it would give a repository a second copy of the block that nothing
+reads and nobody updates.
+
+### Three axes, kept apart
+
+| | what it decides | set by |
+|---|---|---|
+| **OS** | which file operations are legal | detected |
+| **agent** | where the block is delivered, and in what format | detected, or `--write <name>` |
+| **context window** | how much material is worth sending | `--model`, `--window` or `--profile` |
+
+The third is a number, never a code path. A model does not change where a file goes; it changes
+how much of the index is worth putting in front of it. `--window 32000` and `--window 1000000` are
+the same code and different budgets.
+
+### What it will not do
+
+It **never writes on a guess.** With no `--write`, it prints one line naming the agent it detected
+and the command that would set it up, and leaves the decision alone. Writing a file into another
+tool's configuration directory because a directory happened to exist is how a context tool becomes
+something people uninstall.
+
+It **refuses a target it cannot vouch for.** A symlink anywhere in the path, or a file with a
+second name on disk, and it stops and says why — one adapter merges into a file it reads first, and
+a link out of the repository would copy that file's contents in.
 
 ## Commands
 

@@ -6479,9 +6479,9 @@ _rmtree(_thr, ignore_errors=True)
 # string matching a GitLab personal-access-token pattern. It had not reached git — because that
 # user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
 #
-# These logs are not summaries: scratch.jsonl keeps the opening line of each throwaway script and
-# commands.jsonl keeps command signatures, both verbatim, and neither passes through the redactor,
-# which guards a different path (MAP.md and the injected block).
+# These logs are not summaries: scratch.jsonl keeps the opening line of each throwaway script,
+# scrubbed by the same redactor that guards MAP.md and the injected block. commands.jsonl keeps
+# command signatures verbatim — the program name only, never its arguments.
 _ig = Path(tempfile.mkdtemp()) / "ig"
 (_ig / ".git").mkdir(parents=True)
 ws.ensure(_ig)
@@ -11959,6 +11959,33 @@ check("...on stderr, leaving stdout to carry only the report",
       "indexing" not in _started.stdout)
 check("...and the command still succeeded", _started.returncode in (0, 1))
 _rmtree(_startrepo, ignore_errors=True)
+
+
+# ------------------- the biggest thing built this week was not in the README at all
+# `chamnan-context`, `lib/adapters/` and `lib/host.py` — a command, twenty-three adapters and
+# thirty-four writable agent names, all CI-tested on three operating systems — had zero mentions in
+# README.md, CONTRIBUTING.md or docs/. Found by an agent auditing documentation against code.
+_readme = (ROOT / "README.md").read_text(encoding="utf-8")
+check("the portable-context command is documented at all", "chamnan-context" in _readme)
+check("...with the flags a reader would look for",
+      all(f in _readme for f in ("--detect", "--write", "--model")))
+
+# Tied to the registry, not to a list typed into the README: an adapter added later and forgotten
+# in the docs is exactly the drift this section was written to close, and a hand-kept list repeats
+# it one file over. Every adapter's TARGET must appear.
+_undocumented = [n for n in sorted(adapters_mod.ADAPTERS)
+                 if adapters_mod.for_agent(n).TARGET not in _readme]
+check("EVERY ADAPTER'S TARGET IS NAMED IN THE README", not _undocumented)
+for _u in _undocumented[:6]:
+    print("     missing from README:", _u)
+# The aliases are named too, or eleven agents look unsupported.
+_alias_missing = [a for a in adapters_mod.ALIASES if f"`{a}`" not in _readme]
+check("...and every alias is named, so no agent looks unsupported", not _alias_missing)
+
+# Claude Code has no adapter on purpose, and the README has to say why or the absence reads as an
+# oversight — which is what a reader would reasonably conclude from a table of everything else.
+check("...and the README says why Claude Code has none",
+      "Claude Code has no adapter" in _readme)
 
 
 # ---------------------------------------------------------------- cleanup

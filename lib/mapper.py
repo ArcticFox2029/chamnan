@@ -20,8 +20,10 @@ actually saves the context, not the file existing.
 
   python3 lib/mapper.py <repo> [--out PATH] [--measure]
 
-That is this module's own entry point, and its flags are not the plugin command's:
-chamnan-map takes --preview and --install-git-hook, and does not accept --measure.
+That is this module's own entry point, and its flags are not the plugin command's: chamnan-map
+takes --preview, --explain and --install-git-hook. It also accepts --measure without erroring, but
+that is only so the name is not rejected as unknown — it is not wired to this module's --measure
+output above, and running it prints the same thing plain `chamnan-map` does.
 
 Never imports or executes the code it reads.
 """

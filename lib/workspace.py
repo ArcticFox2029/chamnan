@@ -716,9 +716,10 @@ def available_update(plugin_root):
 # user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
 #
 # These logs are not summaries. `scratch.jsonl` keeps the opening line of each throwaway script and
-# `commands.jsonl` keeps command signatures, both verbatim, and neither passes through the
-# redactor: redaction guards what goes into MAP.md and the injected block, which is a different
-# path. A credential typed into a one-off script lands here intact.
+# `commands.jsonl` keeps command signatures (the program name, not its arguments), and neither
+# passes through the redactor that guards MAP.md and the injected block, which is a different path.
+# `scratch.jsonl`'s opening line and token fingerprint are scrubbed with the same redactor before
+# they are written, so this file is the exception rather than a second gap.
 #
 # The README used to say "add .chamnan/logs/ to .gitignore if you would rather not carry it",
 # which reads as a preference about repository size. It is not one.
@@ -728,9 +729,9 @@ def available_update(plugin_root):
 # touched. Appended, never rewritten.
 IGNORE_LINES = [
     "# chamnan: runtime logs. NOT summaries — scratch.jsonl keeps the opening line of each",
-    "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither",
-    "# passes through the redactor (that guards MAP.md and the injected block, a different path).",
-    "# A credential typed into a one-off script lands in these files intact.",
+    "# throwaway script, scrubbed by the same redactor MAP.md uses. commands.jsonl keeps",
+    "# command signatures verbatim — the program name only, never its arguments, so a secret",
+    "# passed as an argument is not captured here in the first place.",
     "logs/*.jsonl",
     "logs/nudge/",
     "logs/nudge_state.json",
