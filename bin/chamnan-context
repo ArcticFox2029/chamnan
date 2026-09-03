@@ -8,6 +8,7 @@ the same block with the harness taken out of the way -- one pipe anything can re
     chamnan-context --json               the block plus what was detected, for a wrapper
     chamnan-context --window 32000       size it for the window the model actually has
     chamnan-context --profile small-window          the same, by name
+    chamnan-context --model kimi         size it by model family, if you know that instead
     chamnan-context --ceiling 9000       for a harness that truncates, like Claude Code's hook
     chamnan-context --detect             what chamnan thinks this machine is, and nothing else
     chamnan-context --write cursor       set that agent up to read it
@@ -115,6 +116,9 @@ def main():
                         help="context window in tokens; picks the profile for you")
     parser.add_argument("--profile", default=None, choices=profiles.names(),
                         help="pick the profile by name instead")
+    parser.add_argument("--model", default=None,
+                        help="model family (qwen, kimi, gemini, deepseek, glm, llama, ...); "
+                             "a dated convenience, --window is the authority")
     parser.add_argument("--ceiling", type=int, default=NON_BINDING,
                         help=f"byte ceiling for a harness that truncates "
                              f"(default {NON_BINDING:,}, which does not bind)")
@@ -132,7 +136,17 @@ def main():
     if args.window is not None and args.profile is not None:
         sys.stderr.write("chamnan-context: --window and --profile both set; using --window "
                          f"({profiles.by_window(args.window)}).\n")
-    profile = profiles.by_window(args.window) if args.window is not None else args.profile
+    # Three ways to say the same thing, and the more specific one wins: an exact window beats a
+    # profile name, and a profile name beats a model family -- because the family table is a dated
+    # snapshot and the other two are statements about this deployment.
+    profile = args.profile
+    if args.model is not None:
+        guessed, note = profiles.by_model(args.model)
+        if note:
+            sys.stderr.write(f"chamnan-context: {note}\n")
+        profile = profile or guessed
+    if args.window is not None:
+        profile = profiles.by_window(args.window)
 
     detected = {
         "os": host.os_family(),

@@ -123,3 +123,61 @@ def resolve(config):
         if key in config:
             chosen[key] = config[key]
     return name, chosen
+
+
+# ---------------------------------------------------------------------------------------------
+# A convenience, and it is dated on purpose. `by_window()` above is the authority; this table only
+# saves someone looking up a number they may not have to hand. Snapshot taken 2026-09-03 from each
+# family's published context window. Vendors ship several sizes under one family name and the
+# numbers move, so a wrong entry here must be cheap: it selects a budget, never a code path, and
+# `--window` overrides it.
+#
+# AMBIGUOUS is the honest half of the table. Qwen is the case that forced it -- the same family
+# name covers an 8K-class build people run on Ollama and a long-context hosted one, and the two
+# want opposite profiles. Guessing between them silently is worse than saying which two.
+MODEL_WINDOWS = {
+    "claude": 1_000_000,
+    "gpt": 400_000,
+    "openai": 400_000,
+    "gemini": 1_000_000,
+    "kimi": 2_000_000,
+    "grok": 256_000,
+    "deepseek": 128_000,
+    "glm": 200_000,
+    "llama": 128_000,
+    "gemma": 128_000,
+    "mistral": 128_000,
+    "codestral": 32_000,
+}
+
+AMBIGUOUS = {
+    # family: (what the small deployment looks like, what the large one looks like)
+    "qwen": ("a 7B-14B build served locally, around 32K",
+             "the hosted long-context build, around 256K"),
+}
+
+
+def by_model(family):
+    """`(profile_name, note)` for a model family name. The note is empty when it was unambiguous.
+
+    Case- and separator-insensitive on the first word, so "Qwen3-Coder", "qwen 3" and "QWEN" all
+    reach the same entry. Never raises: an unknown family returns the default and a note saying so,
+    because this is a convenience and the number is what actually decides.
+    """
+    # 🐛 The first token alone was not the family: "Qwen3-Coder" normalised to `qwen3`, which is
+    # in neither table, so the one family the AMBIGUOUS list exists for fell through to the
+    # unknown branch. A version number is part of how people write these names -- gpt-5, llama-3,
+    # gemma-3, kimi-k2 -- so the trailing digits come off after the first token is taken.
+    text = str(family).strip().lower().replace("_", "-")
+    if not text:
+        return DEFAULT, (f"no model family given. Using `{DEFAULT}` — pass --window to be exact.")
+    key = text.split("-")[0].split()[0].rstrip("0123456789.")
+    if key in AMBIGUOUS:
+        small, large = AMBIGUOUS[key]
+        return DEFAULT, (f"`{family}` ships in two sizes that want different profiles: {small} "
+                         f"and {large}. Using `{DEFAULT}` — pass --window with the number your "
+                         f"deployment actually has.")
+    if key in MODEL_WINDOWS:
+        return by_window(MODEL_WINDOWS[key]), ""
+    return DEFAULT, (f"`{family}` is not in the model table, which is a dated convenience rather "
+                     f"than an authority. Using `{DEFAULT}` — pass --window to be exact.")

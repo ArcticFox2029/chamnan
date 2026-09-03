@@ -10393,6 +10393,54 @@ check("every module's target is unique and relative",
       all(not Path(adapters_mod.for_agent(n).TARGET).is_absolute() for n in adapters_mod.ADAPTERS))
 
 
+# ---------------------------------------------------------------- the model family convenience
+# A dated snapshot, not an authority. It selects a budget and never a code path, so a stale entry
+# is cheap -- but it must never contradict itself or point at a profile that does not exist.
+check("every family in the table maps to a real profile",
+      all(profiles_mod.by_window(w) in profiles_mod.names()
+          for w in profiles_mod.MODEL_WINDOWS.values()))
+check("no family is listed as both a fixed window and ambiguous",
+      not (set(profiles_mod.MODEL_WINDOWS) & set(profiles_mod.AMBIGUOUS)))
+check("every window in the table is a plausible token count",
+      all(isinstance(w, int) and 1_000 <= w <= 10_000_000
+          for w in profiles_mod.MODEL_WINDOWS.values()))
+
+check("a 2M family lands in large-window", profiles_mod.by_model("kimi")[0] == "large-window")
+check("a 128K family lands in standard", profiles_mod.by_model("deepseek")[0] == "standard")
+check("a 32K family lands in small-window", profiles_mod.by_model("codestral")[0] == "small-window")
+
+# Qwen is the case that forced AMBIGUOUS into existence: one family name covering an 8K-class
+# local build and a long-context hosted one, which want opposite profiles. Guessing silently
+# between them is worse than naming both.
+_qprofile, _qnote = profiles_mod.by_model("Qwen3-Coder")
+check("an ambiguous family says so rather than guessing", _qnote != "")
+check("...naming both deployments, so the user can tell which they have",
+      "32K" in _qnote and "256K" in _qnote)
+check("...and still returns a usable profile rather than nothing",
+      _qprofile in profiles_mod.names())
+
+# Case and separators must not decide the answer -- "QWEN", "qwen 3" and "Qwen3-Coder" are one
+# family, and a user typing any of them means the same thing.
+check("family lookup ignores case and separators",
+      profiles_mod.by_model("KIMI")[0] == profiles_mod.by_model("kimi-k2")[0]
+      == profiles_mod.by_model("Kimi K2")[0] == "large-window")
+
+# Unknown is an answer with a reason attached, never an exception: this is read from a command
+# line, and a typo must cost a sentence rather than the run.
+_uprofile, _unote = profiles_mod.by_model("no-such-model")
+check("an unknown family falls back to the default", _uprofile == profiles_mod.DEFAULT)
+check("...and says the table is a dated convenience rather than pretending it matched",
+      "convenience" in _unote)
+check("an empty family name does not raise", profiles_mod.by_model("")[0] == profiles_mod.DEFAULT)
+
+# The more specific statement wins. An exact window is a fact about this deployment; a family name
+# is a lookup in a table that dates.
+_ctxroot2 = make_workspace("chamnan-model-")
+_won = json.loads(_ctx("--model", "kimi", "--window", "32000", "--detect", str(_ctxroot2)).stdout)
+check("--window overrides --model", _won["profile"] == "small-window")
+shutil.rmtree(_ctxroot2, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
