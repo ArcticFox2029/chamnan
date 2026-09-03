@@ -10,7 +10,8 @@ the same block with the harness taken out of the way -- one pipe anything can re
     chamnan-context --profile small-window          the same, by name
     chamnan-context --ceiling 9000       for a harness that truncates, like Claude Code's hook
     chamnan-context --detect             what chamnan thinks this machine is, and nothing else
-    chamnan-context --write cursor       write it where that agent reads, instead of stdout
+    chamnan-context --write cursor       set that agent up to read it
+    chamnan-context --emit gemini        the block in that agent's own wire format
 
 **Why the ceiling defaults to non-binding rather than to 9,000.** That number is Claude Code
 truncating a hook's stdout, and it is the tightest limit chamnan has ever worked under. A tool that
@@ -107,7 +108,9 @@ def main():
     parser.add_argument("--json", action="store_true", help="the block plus what was detected")
     parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
     parser.add_argument("--write", default=None, choices=adapters.names(),
-                        help="write the block where this agent reads it, instead of to stdout")
+                        help="set this agent up to read the block")
+    parser.add_argument("--emit", default=None, choices=adapters.names(),
+                        help="print the block in this agent's own wire format")
     parser.add_argument("--window", type=int, default=None,
                         help="context window in tokens; picks the profile for you")
     parser.add_argument("--profile", default=None, choices=profiles.names(),
@@ -141,6 +144,15 @@ def main():
         print(json.dumps(detected, indent=2))
         return 0
 
+    # --emit is what an agent's own hook runs: the block, in that agent's wire format, on stdout.
+    if args.emit:
+        emitter = adapters.for_agent(args.emit)
+        declared = getattr(emitter, "CEILING", None)
+        if declared and args.ceiling == NON_BINDING:
+            args.ceiling = declared
+        print(emitter.render(build(root, profile, args.ceiling)))
+        return 0
+
     # An adapter that declares its own ceiling knows something this caller does not -- what the
     # agent it writes for will truncate. It wins over the default, and loses to an explicit
     # --ceiling, because a caller who typed a number meant it.
@@ -153,10 +165,19 @@ def main():
     body = build(root, profile, args.ceiling)
 
     if args.write:
-        written = adapters.install(root, args.write, body)
+        # The command the agent will run at session start, spelled absolutely: the agent's working
+        # directory when it fires is its own business, and a relative path would resolve against it.
+        run = f"{Path(__file__).resolve()} --emit {args.write}"
+        try:
+            written = adapters.install(root, args.write, body, run)
+        except ValueError as exc:
+            sys.stderr.write(f"chamnan-context: {exc}\n")
+            return 1
         print(f"chamnan-context -> {written}")
-        print(f"  generated and per-developer. Add this to .gitignore if it is not there already:")
-        print(f"    {adapters.ignore_line(args.write)}")
+        line = adapters.ignore_line(args.write)
+        if line:
+            print("  generated and per-developer. Add this to .gitignore if it is not there yet:")
+            print(f"    {line}")
         return 0
 
     if args.json:

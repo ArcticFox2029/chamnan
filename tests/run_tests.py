@@ -10052,6 +10052,74 @@ check("...and hands the caller the line to print instead",
 shutil.rmtree(_adroot, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- gemini: a hook, not a file
+# Gemini CLI's answer is a SessionStart hook returning JSON, where Cursor's is a file of markdown.
+# Two agents, two shapes, and neither expressible as a flag on the other -- which is the whole
+# reason these are separate modules. The contract below is read from the docs shipped inside the
+# installed CLI bundle, not from memory.
+_gem = adapters_mod.for_agent("gemini")
+_env = json.loads(_gem.render("## chamnan\nbody text"))
+check("gemini renders the JSON envelope its hook runner reads",
+      _env["hookSpecificOutput"]["hookEventName"] == "SessionStart")
+check("...carrying the block in additionalContext",
+      _env["hookSpecificOutput"]["additionalContext"] == "## chamnan\nbody text")
+# ensure_ascii=False, or a Thai or Japanese repository pays three bytes per character for escapes
+# nobody can read while debugging the hook.
+check("non-Latin text stays as itself rather than as escapes",
+      "ไทย" in _gem.render("สวัสดี ไทย"))
+
+# settings.json is the USER's file: their IDE preferences, their security policy, their own hooks.
+_gemroot = Path(tempfile.mkdtemp())
+(_gemroot / ".gemini").mkdir()
+(_gemroot / ".gemini" / "settings.json").write_text(
+    json.dumps({"ide": {"enabled": True}, "security": {"folderTrust": True},
+                "hooks": {"SessionStart": [{"matcher": "startup", "hooks": [
+                    {"name": "theirs", "type": "command", "command": "echo hi"}]}]}}),
+    encoding="utf-8")
+_gempath = adapters_mod.install(_gemroot, "gemini", "body", "/plugin/bin/chamnan-context --emit gemini")
+_after = json.loads(_gempath.read_text(encoding="utf-8"))
+check("installing preserves every top-level key the user had",
+      _after["ide"] == {"enabled": True} and _after["security"] == {"folderTrust": True})
+check("...and the user's own SessionStart hook survives beside ours",
+      any(h["name"] == "theirs" for g in _after["hooks"]["SessionStart"] for h in g["hooks"]))
+check("...with ours added rather than replacing it",
+      any(h["name"] == "chamnan-context" for g in _after["hooks"]["SessionStart"] for h in g["hooks"]))
+
+# Re-running must not accumulate. Matched by hook NAME, not by command string -- the command holds
+# an absolute path that changes on every plugin upgrade, and matching on it would leave a stale
+# copy behind each time until the user had four.
+_before = len(_after["hooks"]["SessionStart"])
+adapters_mod.install(_gemroot, "gemini", "body", "/NEW/PATH/chamnan-context --emit gemini")
+_again = json.loads(_gempath.read_text(encoding="utf-8"))
+check("re-installing does not accumulate duplicate groups",
+      len(_again["hooks"]["SessionStart"]) == _before)
+check("...and an upgraded plugin path is corrected in place",
+      any(h.get("command", "").startswith("/NEW/PATH")
+          for g in _again["hooks"]["SessionStart"] for h in g["hooks"]))
+
+# A settings.json that will not parse must stop the install. Writing a fresh one would silently
+# discard the user's security policy, and they would have no reason to look here for it.
+_badroot = Path(tempfile.mkdtemp())
+(_badroot / ".gemini").mkdir()
+(_badroot / ".gemini" / "settings.json").write_text("{ not json", encoding="utf-8")
+_refused = False
+try:
+    adapters_mod.install(_badroot, "gemini", "body", "cmd")
+except ValueError:
+    _refused = True
+check("a settings.json that does not parse is refused, not replaced", _refused)
+check("...and the file it refused to touch is exactly as it was",
+      (_badroot / ".gemini" / "settings.json").read_text(encoding="utf-8") == "{ not json")
+
+# An adapter that merges into the user's own file has nothing to gitignore -- that file was theirs
+# before chamnan touched it and stays theirs after.
+check("gemini offers no gitignore line, unlike cursor",
+      adapters_mod.ignore_line("gemini") == "" and adapters_mod.ignore_line("cursor") != "")
+
+shutil.rmtree(_gemroot, ignore_errors=True)
+shutil.rmtree(_badroot, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
