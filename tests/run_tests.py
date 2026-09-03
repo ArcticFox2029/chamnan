@@ -8138,6 +8138,33 @@ _dird = Path(tempfile.mkdtemp()) / "repo"
 with _tree.session():
     _mp.reset_skips()
     _descs = {f["path"]: (f.get("doc") or "") for f in _mp.scan(_dird)}
+# A test fixture is not an API, a schema or a configuration. gin's entire "API surface" was 86
+# routes from eight `*_test.go` files — it is a router LIBRARY, so its only routes are the ones its
+# own tests build. `bat` produced 19 tables and 31 of 32 env vars from a syntax-highlighter fixture,
+# with a false "leaks live credentials" alarm on a file holding none. These render inside the
+# auto-injected Quick Index, where an agent reads them as fact and cannot check them.
+_catd = Path(tempfile.mkdtemp()) / "repo"
+(_catd / "tests").mkdir(parents=True)
+(_catd / ".git").mkdir()
+(_catd / "app.py").write_text(
+    '"""The real service."""\nimport os\nfrom fastapi import APIRouter\n\n'
+    'router = APIRouter()\nDB = os.environ["REAL_DATABASE_URL"]\n\n'
+    '@router.get("/healthz")\ndef health(): ...\n', encoding="utf-8")
+(_catd / "tests" / "test_app.py").write_text(
+    '"""Tests."""\nimport os\nfrom fastapi import APIRouter\n\n'
+    'router = APIRouter()\nFAKE = os.environ["FAKE_ONLY_IN_TESTS"]\n\n'
+    '@router.post("/only/in/a/test")\ndef fake(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+               capture_output=True, text=True, cwd=str(_catd))
+_catmap = (_catd / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("A ROUTE THAT EXISTS ONLY IN A TEST IS NOT AN API SURFACE",
+      "/only/in/a/test" not in _catmap)
+check("AN ENV VAR READ ONLY BY A TEST IS NOT THIS REPO'S CONFIGURATION",
+      "FAKE_ONLY_IN_TESTS" not in _catmap)
+check("...while the real route is still catalogued", "/healthz" in _catmap)
+check("...and the real environment variable still is", "REAL_DATABASE_URL" in _catmap)
+shutil.rmtree(_catd.parent, ignore_errors=True)
+
 check("A GO BUILD CONSTRAINT IS NOT A FILE'S DESCRIPTION", _descs.get("net.go", "") == "")
 check("...and the real comment BELOW one still gets through",
       "pins build dependencies" in _descs.get("tools.go", ""))

@@ -19,6 +19,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import impact  # for is_test — see the guard in the file loops below
+
 import redact
 import tree
 
@@ -256,6 +258,22 @@ def _django_mounts(root, files):
     """{file path: url prefix} for every module mounted with include()."""
     by_module = {}
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         if f.get("lang") != "py":
             continue
         # `mapper._scan()` already read and decoded this file to build `f` -- reuse it rather than
@@ -293,6 +311,22 @@ def scan_routes(root, files):
         routes[(method.upper(), path_ or "/")] = source
 
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         if f["lang"] not in ("py", "js", "go", "rb", "java", "php"):
             continue
         path = root / f["path"]
@@ -507,6 +541,22 @@ def scan_env(root, files):
             if not _is_ignored(root, path):
                 unsafe.append(rel)
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         # Same reuse as _django_mounts/scan_routes above -- every file in `files` was already read
         # once by mapper._scan(). This loop has no language gate at all (env vars can be referenced
         # from any source file), so before this it was the least selective of the three re-reads.
