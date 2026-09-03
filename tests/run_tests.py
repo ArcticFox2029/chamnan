@@ -987,6 +987,41 @@ check("the inventory shows every store, including empty ones",
       and "memory/lessons/" in report_out and "candidates/" in report_out)
 check("the inventory counts the one decision written above", "1 entry" in report_out)
 check("the inventory flags the decision with no Rejected:", "no `Rejected:`" in report_out)
+# A pointer to knowledge that was never written. Found on a real work repository: a dated log and
+# STATE.md both cite a memory slug, and all three memory directories there are empty. Nothing
+# detected this class — it is the same shape as a MAP.md entry naming a file that is gone.
+_dgd = Path(tempfile.mkdtemp()) / "repo"
+(_dgd / ".git").mkdir(parents=True)
+ws.ensure(_dgd)
+(_dgd / ".chamnan" / "memory" / "lessons").mkdir(parents=True, exist_ok=True)
+(_dgd / ".chamnan" / "memory" / "lessons" / "a-real-lesson.md").write_text(
+    "# A real lesson\n\nbody\n", encoding="utf-8")
+(_dgd / ".chamnan" / "STATE.md").write_text(
+    "# state\n\nSee memory `a-real-lesson` and memory `never-written`.\n", encoding="utf-8")
+import memory as _mem  # noqa: E402
+(_dgd / ".chamnan" / "logs").mkdir(parents=True, exist_ok=True)
+# Wrapped across a line break, which is what a real citation in prose looks like. Matching line by
+# line missed exactly this and cost a real detection on a work repository.
+(_dgd / ".chamnan" / "logs" / "2026-09-01.md").write_text(
+    "# a log\n\nthe reason is written up in memory\n`wrapped-across-lines`.\n", encoding="utf-8")
+_dang = _mem.dangling_citations(_dgd)
+check("A CITATION TO A MEMORY THAT DOES NOT EXIST IS REPORTED",
+      sorted(s for s, _ in _dang) == ["never-written", "wrapped-across-lines"])
+check("...INCLUDING ONE WRAPPED ACROSS A LINE BREAK",
+      "wrapped-across-lines" in [s for s, _ in _dang])
+check("...and one that does exist is not", "a-real-lesson" not in [s for s, _ in _dang])
+_places = dict(_dang)["never-written"]
+check("...and it says which file and line cited it",
+      _places[0][0] == "STATE.md" and isinstance(_places[0][1], int))
+_dgout = subprocess.run([str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
+                        cwd=_dgd).stdout
+check("...and chamnan-report prints it with what to do about it",
+      "never-written" in _dgout and "/chamnan:remember" in _dgout)
+check("prose without backticks is not a citation",
+      _mem.dangling_citations(_dgd) == _dang)
+shutil.rmtree(_dgd.parent, ignore_errors=True)
+check("a healthy workspace reports none", _mem.dangling_citations(ROOT) == [])
+
 check("chamnan-report prints the Usage heading", "Usage" in report_out)
 check("a command never logged reads as 0, not absent", "chamnan-map" in report_out and "0 times" in report_out)
 check("no promoted tools yet -> no Promoted tools section", "Promoted tools" not in report_out)
