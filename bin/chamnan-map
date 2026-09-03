@@ -313,6 +313,16 @@ def main(argv):
         return 0
     ws.prune_logs(root)
     ws.prune_sessions(root)
+    # 🐛 This command printed NOTHING until it finished. An agent walking the tool as a newcomer
+    # started it in the wrong directory, watched it produce no output for two minutes, and killed
+    # it — a run that is working and a run that is hung look exactly alike, and the only way to
+    # tell was to wait.
+    #
+    # One line, before the walk, naming what is about to be indexed. Someone who is in the wrong
+    # place sees it immediately; someone in the right place has one line of confirmation that it
+    # started. On STDERR because a dozen checks compare this command's stdout byte for byte, and
+    # because it is progress rather than result — a pipe still gets exactly the report.
+    print(f"chamnan-map: indexing {target}", file=sys.stderr)
     files = []
     seen_paths = set()
     # Once per run, not once per target — scan() no longer clears these itself, because doing so
