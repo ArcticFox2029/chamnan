@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 
 import redact
+import impact  # for is_test — see the guard in the file loop below
 import tree
 
 # Above this many tables, only names are injected and columns are left to be grepped.
@@ -274,6 +275,22 @@ def scan(root, files):
             partitions[m.group(1).lower()] = partitions.get(m.group(1).lower(), 0) + 1
 
     for f in files:
+        # 🐛 A test fixture is not an API, a schema or a configuration. Measured by running
+        # chamnan against repositories it was not tuned for: gin's entire "API surface" was 86
+        # routes, every one of them from eight `*_test.go` files — it is a router LIBRARY, so its
+        # only routes are the ones its tests build. `bat` produced 19 tables from a syntax
+        # highlighter's SQL fixture, and 31 of its 32 environment variables from the same corpus,
+        # including a false "this file leaks live credentials" alarm on a fixture that holds none.
+        #
+        # These sections render inside the auto-injected Quick Index, so an agent reads them as
+        # fact and cannot check them. An invented endpoint is worse than a missing one.
+        #
+        # `impact.is_test` is the signal the repository already trusts for its "tested by"
+        # annotations — nine markers covering directories, filename conventions and the .NET
+        # sibling-project shape. Neither this module nor schema.py imported it, so nothing new is
+        # needed and there is no circular import: impact does not import either of them.
+        if impact.is_test(f["path"]):
+            continue
         path = root / f["path"]
         if not _looks_relevant(path):
             continue
