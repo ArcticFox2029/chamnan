@@ -88,7 +88,9 @@ def install(root, body, command):
     """
     import workspace as ws
 
-    path = ws.Path(root) / TARGET
+    from . import safe_target
+
+    path = safe_target(root, TARGET)
     settings = {}
     if path.exists():
         try:

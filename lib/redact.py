@@ -153,7 +153,16 @@ SECRET_WORDS = (
     # came back as `self.tokenizer_config = <REDACTED>`, and so did `detokenize_output_text`,
     # `retokenized_batch`, `credentialing_deadline` and `secretariat_id`. Ordinary identifiers,
     # destroyed in the index the tool exists to write.
-    r"(?<![A-Za-z])(?:password|passwd|pwd|secret|credential)s?(?![A-Za-z])"
+    #
+    # `passphrase` and `cred` were added after a review found both missed: `GPG_PASSPHRASE = "..."`
+    # and `db_creds = "admin:..."` came back unredacted. Both are ordinary in real repositories --
+    # a GPG or SSH key passphrase, and `creds` as the everyday abbreviation. `ssh_key_passphrase`
+    # was caught already, but only incidentally through the `key` component beside it, which is
+    # the kind of accident that stops being one the moment somebody renames a variable.
+    #
+    # Bounded as components like the rest, so `passphraseless` and `credible` are untouched --
+    # the whole reason these are components and not substrings.
+    r"(?<![A-Za-z])(?:password|passwd|pwd|passphrase|secret|credential|cred)s?(?![A-Za-z])"
     # `token` needs a component beside it, for the same reason `key` does: a bare `token` in source
     # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
     # the identifier family this module's own docstring says was already fixed once. The credential

@@ -11309,6 +11309,91 @@ check("...and the same session id gives the same marker, which is what the cache
 _rmtree(_stab.parent, ignore_errors=True)
 
 
+# ================= a committed symlink turned an adapter write into a write anywhere
+# 🐛 The READ side has had `ws.inside()` since a committed symlink at `.chamnan/STATE.md` was shown
+# reading `~/.ssh/id_rsa` into the injected block. The WRITE side, added with the adapters, had no
+# equivalent — so a committed symlink named `.cursor`, `.gemini` or any of the other twelve nested
+# targets made `mkdir(parents=True)` and `os.replace` follow it. Reproduced: `.cursor -> /tmp/out`
+# put `rules/chamnan.mdc` outside the repository.
+#
+# The `gemini` case is worse than a stray file: its install MERGES a SessionStart hook
+# registration, so pointed at a settings file outside the repository it registers a command that
+# runs for every future session that config touches, with the user's own hooks left intact so
+# nothing looks wrong.
+#
+# Ninth time in this project a guard has been added to some members of a set and forgotten in the
+# others. Every adapter goes through `safe_target` now, and the checks below walk the registry
+# rather than naming the two that were found.
+if _CAN_SYMLINK:
+    _esc_out = Path(tempfile.mkdtemp())
+    for _agent in sorted(adapters_mod.ADAPTERS):
+        _mod = adapters_mod.for_agent(_agent)
+        _first = Path(_mod.TARGET).parts[0]
+        if _first == _mod.TARGET:
+            continue                    # a root file, not reachable through a directory symlink
+        _vic = Path(tempfile.mkdtemp()) / "victim"
+        (_vic / ".chamnan").mkdir(parents=True)
+        (_vic / ".git").mkdir()
+        os.symlink(_esc_out, _vic / _first)
+        _refused = False
+        try:
+            adapters_mod.install(_vic, _agent, "## chamnan\nblock\n", "cmd")
+        except ValueError as _exc:
+            _refused = "symlink" in str(_exc)
+        check(f"NO ADAPTER WRITES THROUGH A SYMLINKED DIRECTORY: {_agent}", _refused)
+        _rmtree(_vic.parent, ignore_errors=True)
+    check("...and nothing reached the directory outside the repository",
+          not list(_esc_out.rglob("*")))
+    _rmtree(_esc_out, ignore_errors=True)
+
+    # zed probed the other eight filenames with `.exists()`, which FOLLOWS a symlink, and then
+    # named the one it found — a boolean oracle for "does that absolute path exist on this
+    # machine", repeatable across nine names and across pull requests, landing wherever the run's
+    # output lands. A candidate that is a symlink is treated as present without asking where it
+    # goes: Zed would read whatever is there, which is the thing the loop is about.
+    _oracle = Path(tempfile.mkdtemp()) / "repo"
+    (_oracle / ".chamnan").mkdir(parents=True)
+    os.symlink(Path(tempfile.gettempdir()), _oracle / "AGENTS.md")
+    _zrefused = ""
+    try:
+        adapters_mod.install(_oracle, "zed", "block", "")
+    except ValueError as _exc:
+        _zrefused = str(_exc)
+    check("A SYMLINKED CANDIDATE IS NOT PROBED FOR EXISTENCE", "symlink" in _zrefused)
+    check("...and the message does not say whether the target exists",
+          "exists" not in _zrefused.lower() and "not found" not in _zrefused.lower())
+    _rmtree(_oracle.parent, ignore_errors=True)
+else:
+    print("  [SKIP] adapter symlink-escape checks — this process cannot create symlinks here")
+
+# `safe_target` must be the only way to a write target, or the next adapter reintroduces the hole.
+_adapter_src = "".join(
+    p.read_text(encoding="utf-8") for p in sorted((ROOT / "lib" / "adapters").glob("*.py")))
+check("NO ADAPTER BUILDS A TARGET PATH WITHOUT THE CONTAINMENT CHECK",
+      "ws.Path(root) / TARGET" not in _adapter_src
+      and "Path(root) / adapter.TARGET" not in _adapter_src)
+check("...and safe_target refuses a plain traversal too",
+      not _adapter_src.count("safe_target") < 4)
+
+# ------------------------------------------- two credential words the redactor did not know
+# `GPG_PASSPHRASE` and `db_creds` came back unredacted. Both are ordinary in real repositories.
+# `ssh_key_passphrase` was caught already, but only through the `key` component beside it — an
+# accident that stops being one the moment somebody renames a variable.
+for _text in ('GPG_PASSPHRASE = "CorrectHorseBatteryStaple9"',
+              'keystore_passphrase: "S3cur3Passphrase!!"',
+              'db_creds = "admin:Sup3rSecretValue123"',
+              'API_CRED = "9f8e7d6c5b4a3f2e1d0c"'):
+    check(f"A CREDENTIAL WORD IS NOT MISSED: {_text.split()[0]}",
+          "<REDACTED>" in redact.scrub(_text))
+# Bounded as components, so ordinary identifiers survive — the whole reason these are not
+# substrings. `credible`, `incredible` and `passphraseless` are the cases that would break.
+for _ordinary in ('credible_source = "a well known journal"',
+                  'passphraseless_login = "enabled for the runner"',
+                  'incredible = "this is ordinary prose about a thing"'):
+    check(f"...while an ordinary identifier is untouched: {_ordinary.split()[0]}",
+          "<REDACTED>" not in redact.scrub(_ordinary))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
