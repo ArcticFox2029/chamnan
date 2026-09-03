@@ -150,6 +150,28 @@ def safe_target(root, rel):
                 f"chamnan refuses rather than following it. Remove or replace the link.")
     if not str(walked.resolve()).startswith(str(base.resolve())):
         raise ValueError(f"{rel} resolves outside {root}; refusing to write there")
+
+    # 🐛 The check above is about SYMLINKS, and a hardlink is not one — `is_symlink()` is False and
+    # `resolve()` reports the path itself, so a hardlinked target passed every test here.
+    #
+    # For an adapter that only writes, that is harmless: `atomic_write_text` replaces the name
+    # rather than writing through it, so the other link keeps its old content. For an adapter that
+    # READS THE TARGET FIRST it is not. Rendered end to end: `.gemini/settings.json` hardlinked to
+    # a settings file outside the repository, and `--write gemini` merged that file's `apiKey` into
+    # a new repository-local file — the secret now sitting in something committable.
+    #
+    # A chamnan-owned target with a second name is never legitimate: these paths are written by
+    # this tool and read by one agent. Refused rather than followed, and refused for every adapter
+    # rather than only the ones that read — "this one only writes" is exactly the case-by-case
+    # judgement that has been wrong nine times in this repository.
+    try:
+        if walked.exists() and not walked.is_dir() and walked.stat().st_nlink > 1:
+            raise ValueError(
+                f"{walked} has more than one name on disk (a hard link). chamnan will not write "
+                f"through it: another of its names may be outside the repository, and an adapter "
+                f"that merges would copy that file's contents in. Replace it with a plain file.")
+    except OSError:
+        pass          # unreadable metadata is not a reason to refuse; the checks above still hold
     return walked
 
 
