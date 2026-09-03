@@ -54,30 +54,32 @@ def install(root, body, command=""):
     -- and both can destroy text somebody wrote. Saying so and stopping is the only option that
     cannot.
     """
-    import workspace as ws
+    from . import held_target, read_target, write_target
 
-    from . import safe_target
+    # Read-merge-write, so the read and the write must go through ONE checked handle. `safe_target`
+    # alone was what stood here, and the swap-after-the-check race walked straight past it into an
+    # outside AGENTS.md -- this adapter backs eleven aliases, the largest blast radius in the
+    # registry. See `held_target`.
+    with held_target(root, TARGET) as target:
+        path = target.path
+        region = render(body)
+        existing = read_target(target)
+        if existing is None:
+            write_target(target, region)
+            return path
 
-    path = safe_target(root, TARGET)
-    region = render(body)
-    if not path.exists():
-        ws.atomic_write_text(path, region)
+        head, marked, rest = existing.partition(START)
+        if not marked:
+            write_target(target, existing.rstrip() + "\n\n" + region)
+            return path
+
+        _ours, closed, tail = rest.partition(END)
+        if not closed:
+            raise ValueError(f"{path} opens a chamnan region and never closes it; "
+                             f"refusing to guess where it was meant to end")
+        # One blank line between the region and whatever they wrote after it. Without it their next
+        # heading butts against the end marker, which renders in most parsers but reads as damage
+        # in the diff -- and this file is one a person opens by hand.
+        after = tail.lstrip("\n")
+        write_target(target, head + region + ("\n" + after if after else ""))
         return path
-
-    existing = path.read_text(encoding="utf-8")
-    head, marked, rest = existing.partition(START)
-    if not marked:
-        joined = existing.rstrip() + "\n\n" + region
-        ws.atomic_write_text(path, joined)
-        return path
-
-    _ours, closed, tail = rest.partition(END)
-    if not closed:
-        raise ValueError(f"{path} opens a chamnan region and never closes it; "
-                         f"refusing to guess where it was meant to end")
-    # One blank line between the region and whatever they wrote after it. Without it their next
-    # heading butts against the end marker, which renders in most parsers but reads as damage in
-    # the diff -- and this file is one a person opens by hand.
-    after = tail.lstrip("\n")
-    ws.atomic_write_text(path, head + region + ("\n" + after if after else ""))
-    return path
