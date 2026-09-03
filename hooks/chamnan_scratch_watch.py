@@ -510,56 +510,73 @@ def main():
 
     log = wsdir / "logs" / "scratch.jsonl"
     log.parent.mkdir(parents=True, exist_ok=True)
-    prior = []
-    if log.is_file():
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                _rec = json.loads(line)
-                # A line that is valid JSON but not an object -- a stray number left by a
-                # half-written entry -- parsed fine and then raised AttributeError later.
-                if isinstance(_rec, dict):
-                    prior.append(_rec)
-            except json.JSONDecodeError:
-                continue
 
-    # A record with no `kind` predates this field and is a scratch fingerprint by construction --
-    # nothing else was ever written here before now -- so missing reads as "scratch". Anything
-    # tagged something else must not be treated as one, the same rule workflows._runs() applies to
-    # commands.jsonl: a future record shape sharing this log must not silently join a comparison it
-    # was not written for.
-    matches = [p for p in prior
-               if p.get("kind", "scratch") == "scratch" and jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
-    # 🐛 `redact` was imported here and used only on the notice PRINTED to the user. What was
-    # WRITTEN to `logs/scratch.jsonl` — the opening line of every throwaway script, and a token
-    # fingerprint of its body — went to disk verbatim. Rendered: a key planted in a scratch script
-    # came back out of the log in `head` and again as a token in `fp`.
-    #
-    # The workspace's own `.gitignore` names this file and says in its comment that "a credential
-    # typed into a one-off script lands in these files intact". That was a description of a defect,
-    # not a design: the redactor is right there, the cost is one pass over one line, and a file
-    # being gitignored is not a reason to keep a secret in it — it still sits in the clone, in
-    # plain text, for as long as the retention window.
-    #
-    # Both derive from the already-scrubbed `text` above, so neither re-scrubs. Keeping the two
-    # in one derivation is the point: the per-token filter that used to sit on this line looked
-    # like a second net and was a hole, because it ran on tokens the redactor could no longer read.
-    _head = headline(text)
-    _fp = sorted(fp)[:120]
-    entry = {
-        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "kind": "scratch",
-        "tool": tool_name,
-        "fp": _fp,
-        "head": _head,
-    }
-    if file_path:
-        entry["file"] = file_path
-    prior.append(entry)
-    log.write_text("\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n",
-                   encoding="utf-8")
+    # 🐛 This whole block used to read `prior`, then rewrite the file with `log.write_text(...)` --
+    # a full read-modify-write on EVERY qualifying Write/Edit, with no lock and no
+    # `ws.atomic_write_text`. That is the exact shape `commands.jsonl`'s trim had before it was put
+    # under `ws.exclusive` (see workflows.record()'s own comment: unlocked, 55% of concurrent
+    # appends lost), except wider -- this rewrites on every call, not just an occasional trim.
+    # Reproduced: 20 concurrent PostToolUse hook invocations survived clean, but 40 lost 1/40, 60
+    # lost 1/60, 80 lost 2/80 -- every losing process still exited 0. Locking the read AND the
+    # write, the same pattern `tools_index.record_call` and `coedit.record` already use for this
+    # shape of shared hot-path log: skip the whole write when the lock is busy (a dropped notice
+    # entry is the cheap outcome) rather than ever writing an unserialised snapshot.
+    matches = []
+    with ws.exclusive(log) as held:
+        if not held:
+            return 0
+        prior = []
+        if log.is_file():
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    _rec = json.loads(line)
+                    # A line that is valid JSON but not an object -- a stray number left by a
+                    # half-written entry -- parsed fine and then raised AttributeError later.
+                    if isinstance(_rec, dict):
+                        prior.append(_rec)
+                except json.JSONDecodeError:
+                    continue
+
+        # A record with no `kind` predates this field and is a scratch fingerprint by
+        # construction -- nothing else was ever written here before now -- so missing reads as
+        # "scratch". Anything tagged something else must not be treated as one, the same rule
+        # workflows._runs() applies to commands.jsonl: a future record shape sharing this log must
+        # not silently join a comparison it was not written for.
+        matches = [p for p in prior
+                   if p.get("kind", "scratch") == "scratch"
+                   and jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
+        # 🐛 `redact` was imported here and used only on the notice PRINTED to the user. What was
+        # WRITTEN to `logs/scratch.jsonl` — the opening line of every throwaway script, and a
+        # token fingerprint of its body — went to disk verbatim. Rendered: a key planted in a
+        # scratch script came back out of the log in `head` and again as a token in `fp`.
+        #
+        # The workspace's own `.gitignore` names this file and says in its comment that "a
+        # credential typed into a one-off script lands in these files intact". That was a
+        # description of a defect, not a design: the redactor is right there, the cost is one pass
+        # over one line, and a file being gitignored is not a reason to keep a secret in it — it
+        # still sits in the clone, in plain text, for as long as the retention window.
+        #
+        # Both derive from the already-scrubbed `text` above, so neither re-scrubs. Keeping the
+        # two in one derivation is the point: the per-token filter that used to sit on this line
+        # looked like a second net and was a hole, because it ran on tokens the redactor could no
+        # longer read.
+        _head = headline(text)
+        _fp = sorted(fp)[:120]
+        entry = {
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "kind": "scratch",
+            "tool": tool_name,
+            "fp": _fp,
+            "head": _head,
+        }
+        if file_path:
+            entry["file"] = file_path
+        prior.append(entry)
+        ws.atomic_write_text(
+            log, "\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n")
 
     # Only the exact threshold speaks. Firing on every later repeat would turn a useful nudge into
-    # noise the user learns to scroll past.
+    # noise the user learns to scroll past. Outside the lock: `say()` only writes to stdout.
     if len(matches) + 1 == REPEAT_AT:
         first = matches[0].get("at", "")[:10]
         say(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "
