@@ -87,7 +87,7 @@ interesting thing about it.
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.15.0](#whats-new-in-1150) · [Commands](#commands)
+[What's new in 1.16.0](#whats-new-in-1160) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -396,76 +396,51 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.15.0
+## What's new in 1.16.0
 
-**Seventy findings from seven audits, and the two that mattered most were about numbers this
-project publishes about itself.** Thirty-three commits, 1,495 → 1,815 checks. Every defect was
-reproduced before it was believed and pinned by a test afterwards.
+**Seventy-nine commits, and the theme is uncomfortable: most of them are chamnan being wrong about
+chamnan.** Eight claims the tool made about itself did not survive being checked. Every one was
+reproduced before it was believed and pinned by a test afterwards; the suite is at 2,172 checks.
 
-### The command that answers "is this worth keeping" was answering it wrong
+### It could not see its own commands
 
-`chamnan-report` printed **−27.5% context per call**. Recomputed from the same transcripts,
-separating a conversation turn from a subagent step, the real figure is **+0.8%** — no improvement
-at all. A subagent carries roughly a fifth of a main-thread context, and subagents first appear in
-the very week the workspace was created, so the "after" side filled with cheap calls and the
-average fell on its own. The context a real turn carries never moved: 467k, 516k, 507k, 432k, 481k,
-495k, 470k across seven weeks.
+Nine command-line entry points — every command chamnan has — are extensionless shebang scripts, and
+the indexer decided language from the suffix alone. `lib/redact.py` was published as used by 7
+modules when it is used by 16, and all nine missing consumers were the CLI tools that print output
+for a living. Present since the first commit, with the index reporting full coverage the whole time.
 
-The two populations are now reported separately, and the report also says whether the two periods
-were even the same kind of work — 20% of files revisited from an earlier week before the workspace
-existed, 10% after. An index pays when you come back to code you already know, so on this
-repository the comparison cannot answer the question in either direction. Saying that is worth more
-than the percentage above it.
+### Numbers that were wrong
 
-### Every session on the repository this was built in started with one truncated rule
+The **"repeat work" headline** counted file paths from other repositories, because a session rooted
+here dispatches subagents elsewhere and their paths land in this repository's transcript: 20%→7%
+becomes 28%→20% once scoped. **`--explain` billed sections it had already dropped**, printing its own
+remainder as −3,396. The **coverage bar counted compiler directives as descriptions** — `//go:build`
+was the summary of 12 of gin's described files, a JSDoc `@import` of 289 of svelte's 440, putting
+real coverage at ~31% against 44% and 4.3% against 13%.
 
-`_trim` may return more bytes than the room it is given — `_fit_lines` reserves pinned lines before
-it starts filling, and keeps them even when they alone exceed the budget, which is the promise a
-📌 exists for. The restore branch accepted that on truthiness alone, so the block finished at
-**11,230 bytes against a 9,000 ceiling**, the host kept the first 2,048, and what arrived was 557
-bytes of framing and one rule cut mid-sentence. No index, no procedures, no decisions, no handoff.
-It now refuses an oversized restore, names the section it left out, and delivers 8,868 bytes whole.
+### Faster, measured with interleaved runs
 
-### chamnan-map is 22× faster, and it stopped losing files
+    SessionStart hook, 6,000-file repo    16-39 s  ->  1.2-2.7 s
+    chamnan-report                          7.14 s ->  5.20 s
+    file opens in one map                    2,259 ->  568
 
-96% of its runtime was the token estimator — a per-character loop measured at 0.35 MB/s, producing
-one headline number that no budget decision reads. Counting distinct characters is the same
-arithmetic with the same weights: 1.66s → 0.075s on a megabyte of Java, and eight samples including
-Thai, Japanese and emoji are pinned as exactly equal to the old result.
+The staleness check was reading 8 KB of every file to answer a question about mtimes; the symlink
+guard resolved every path when the short-circuit meant to stop it sat one line below.
 
-An interrupted rebuild used to leave half an index, and the next session was handed it as a whole
-one. `sqlite3.c` — 8.5 MB, 71% of its repository — was dropped for being too large under a green
-"3/3 files (100%)". A directory that could not be read was indistinguishable from one that is not
-there. All three are now written atomically, or named out loud.
+### Security
 
-### The index describes more, and mislabels less
+A **route path could open a heading in the index it was written into**, reproduced in ordinary valid
+JavaScript, putting an attacker's prose into the region injected into every session. Both automatic
+hooks were the two that never redacted. A committed symlink could read `~/.ssh/id_rsa` into the
+block. Every `bin/` command now scrubs what it prints rather than each deciding for itself.
 
-A file with no opening comment is now described by what is documented inside it: **flask 6% → 44%,
-requests 51% → 81%, coveragepy → 90%**. A repository's own `.gitattributes` is read, so
-kubernetes stops indexing 1,356 files it declares nobody wrote. `coverage/`, `build/` and `src/`
-are no longer dropped as build output when git says they are tracked. Perl, PowerShell and 67 other
-extensions stop being filed under "do not read these to understand the system", and a Justfile is a
-build manifest rather than payload.
+### It reads what it could not
 
-### Two more the audits found before this shipped
+`.svelte`, `.vue` and `.astro` — Svelte's own repository indexed 3,480 files with 4,540 invisible.
+Go and Rust environment variables too, added only after measuring 58 and 12 true positives with zero
+false ones on real clones.
 
-**35 of 101 paths the rolled-up index named did not exist.** Above the token budget the Quick Index
-folds by directory and printed basenames, so every sample naming a file in a subdirectory pointed
-nowhere — gum 6 of 6, execa 29 of 34. Paths are now relative to their group and re-measured at 0
-wrong.
-
-**A committed file was printed as chamnan's own speech.** `.chamnan/.version` is tracked, and its
-raw contents went into the ⚠ banner; a planted one produced three paragraphs of forged
-`_chamnan: …_` prose above the fence, on every session, permanently. Only a version-shaped string
-is quoted now. The fence itself was attacked directly and held — everything that escaped went
-around it, through lines emitted outside it.
-
-### Smaller, and mostly about not lying
-
-A `config.json` with a trailing comma is no longer overwritten with defaults. A pasted screenshot is
-no longer priced at 431,195 tokens and advised to be grepped. A prerelease no longer outranks its
-own release and leaves a downgrade banner nobody can clear. The README no longer claims the plugin
-never invokes git, because five paths do.
+[Every release is in the CHANGELOG](CHANGELOG.md).
 
 ## Bootstrap does not rewrite your code
 
