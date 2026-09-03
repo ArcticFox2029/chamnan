@@ -10961,14 +10961,35 @@ for _path, _src in _runtime_sources():
         _starts.append(_starts[-1] + len(_line))
     _lines = _src.splitlines()
     for _node in _calls(_src, {"relative_to"}):
-        _after = _raw[_starts[_node.end_lineno - 1] + _node.end_col_offset:][:11]
-        if _after == b".as_posix()":
+        _pos = _starts[_node.end_lineno - 1] + _node.end_col_offset
+        # 🐛 Before PEP 701 (Python 3.12) `ast` gives nodes INSIDE an f-string the position of the
+        # whole f-string, so the offsets below land somewhere unrelated -- this check was green on
+        # 3.13 and red on the 3.8 floor for sites that were already correct. Where the parser
+        # cannot say where the call ended, the check abstains rather than guessing: the closing
+        # parenthesis has to actually be there for the answer to mean anything.
+        if _raw[_pos - 1:_pos] != b")":
+            continue
+        if _raw[_pos:_pos + 11] == b".as_posix()":
             continue
         if any(k in _lines[_node.lineno - 1] for k in ("print(", 'f"', "f'", "str(", ".join(")):
             _unposixed.append(f"{_path.name}:{_node.lineno}")
 check("A RELATIVE PATH RENDERED AS TEXT IS POSIX-SHAPED", not _unposixed)
 for _u in _unposixed[:6]:
     print("     ", _u)
+
+# --- INVARIANT 9: a shim is never mistaken for a command -------------------------------------
+# 🐛 `chamnan-report`'s Usage table listed `chamnan-map` and `chamnan-map.cmd` as two commands
+# once the Windows shims landed beside them, the second with no docstring to explain itself, on
+# every platform. Anything that enumerates `bin/` has to say what it means by "a command".
+_report_src = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+check("the command enumerator excludes suffixed files",
+      "not p.suffix" in _report_src.split("def known_commands")[1].split("def ")[0])
+_usage_names = {ln.split()[0] for ln in report_out.splitlines()
+                if ln.startswith("  chamnan-")}
+check("NO SHIM APPEARS IN THE USAGE TABLE AS A COMMAND",
+      not any(n.endswith(".cmd") for n in _usage_names))
+check("...and every real command still does",
+      {p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix} <= _usage_names)
 
 # --- INVARIANT 5: a read-only HOME must not stop the plugin -----------------------------------
 # Lambda and most containers give a read-only HOME and a writable temp dir. Anything chamnan writes

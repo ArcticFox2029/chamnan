@@ -313,8 +313,14 @@ def print_inventory(root):
 def known_commands():
     """Every `chamnan-*` script in `bin/` alongside this one, sorted. Read from the directory
     rather than a hand-kept list, so a new CLI command is picked up here the day it is added,
-    with nothing else to update."""
-    return sorted(p.name for p in HERE.iterdir() if p.is_file() and p.name.startswith("chamnan-"))
+    with nothing else to update.
+
+    🐛 Extensionless only. When the Windows `.cmd` shims landed beside the commands, every one of
+    them matched `startswith("chamnan-")` — so the Usage table listed `chamnan-map` and
+    `chamnan-map.cmd` as two commands, the second with no docstring to explain itself, on every
+    platform. A shim is the Windows spelling of a command, not a command."""
+    return sorted(p.name for p in HERE.iterdir()
+                  if p.is_file() and p.name.startswith("chamnan-") and not p.suffix)
 
 
 def command_summaries():
