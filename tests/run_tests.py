@@ -11847,6 +11847,38 @@ check("...while the line still says what the script was doing",
       "AWS_SECRET_ACCESS_KEY" in redact.scrub(_sw.headline(_planted)))
 
 
+# ------------------- half the signature was greppable and the other half was not
+# The function name was made verbatim yesterday and the ARGUMENTS were left on `ast`'s normalised
+# spelling — so `def คำนวณราคา(จำนวน)` published a name a reader could grep and a parameter they
+# could not, on the same line.
+#
+# 🐛 My first version of this check called `mapper._verbatim_arg` directly. Mutation-tested by
+# reverting the CALL SITE to `a.arg`: the suite stayed green, because the helper still existed and
+# the check never went near the code path that uses it. Fifteenth vacuous assertion in this
+# project, and the second I have written this week. It goes through the real indexer and reads
+# what actually landed in MAP.md.
+#
+# Asserted on CODEPOINTS: the two spellings render identically, so a check comparing glyphs passes
+# either way — the trap that let this survive the first fix.
+_argrepo = Path(tempfile.mkdtemp()) / "repo"
+(_argrepo / "src").mkdir(parents=True)
+(_argrepo / ".git").mkdir()
+(_argrepo / "src" / "billing.py").write_text(
+    "# a module about prices\ndef \u0e04\u0e33\u0e19\u0e27\u0e13(\u0e08\u0e33\u0e19\u0e27\u0e19):\n"
+    "    return \u0e08\u0e33\u0e19\u0e27\u0e19\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_argrepo),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_argmap = (_argrepo / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+_arg_source = "\u0e08\u0e33\u0e19\u0e27\u0e19"            # as the file spells it, with SARA AM
+_arg_normal = "\u0e08\u0e4d\u0e32\u0e19\u0e27\u0e19"     # as ast reports it, NIKHAHIT + SARA AA
+check("AN ARGUMENT NAME REACHES MAP.md AS THE SOURCE SPELLS IT", _arg_source in _argmap)
+check("...and not in ast's normalised form", _arg_normal not in _argmap)
+# The two must genuinely differ, or the pair above proves nothing about anything.
+check("...and those two spellings are not the same string",
+      [hex(ord(c)) for c in _arg_source] != [hex(ord(c)) for c in _arg_normal])
+_rmtree(_argrepo.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
