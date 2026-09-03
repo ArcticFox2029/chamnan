@@ -10120,6 +10120,29 @@ shutil.rmtree(_gemroot, ignore_errors=True)
 shutil.rmtree(_badroot, ignore_errors=True)
 
 
+# ---------------------------------------------------------------- kiro: steering, verified
+# `inclusion: always` is read from the installed Kiro agent extension, which also converts a
+# Cursor rule's `alwaysApply: true` into exactly this -- so the two adapters agree because the
+# product they target says they should, not because one was copied from the other.
+_kir = adapters_mod.for_agent("kiro")
+_krendered = _kir.render("## chamnan\n\nbefore\n\n---\n\nafter\n")
+check("kiro writes steering, where Kiro looks for it",
+      _kir.TARGET == ".kiro/steering/chamnan.md")
+check("...with inclusion: always, the mode that means orientation rather than a glob rule",
+      "inclusion: always" in _krendered)
+_kdashes = [i for i, l in enumerate(_krendered.splitlines()) if l.strip() == "---"]
+check("its frontmatter opens and closes exactly once", _kdashes == [0, 2])
+check("...and a horizontal rule in the body cannot close it early",
+      "***" in _krendered and "after" in _krendered)
+
+# The two frontmatter adapters keep their own copy of the fence guard on purpose. If one ever
+# imports the other's, a change made for one silently changes the other -- so assert they are
+# independent rather than that they are identical.
+check("cursor and kiro each own their fence guard rather than sharing one",
+      "_fence_safe" in Path(_kir.__file__).read_text(encoding="utf-8")
+      and "import cursor" not in Path(_kir.__file__).read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

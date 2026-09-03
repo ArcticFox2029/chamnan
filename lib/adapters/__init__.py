@@ -27,6 +27,7 @@ import workspace as ws
 
 from . import cursor
 from . import gemini
+from . import kiro
 
 # Registry, by the name `host.agents()` uses. `claude` is deliberately absent: its delivery is the
 # SessionStart hook, which writes no file, and inventing a file for it would create a second copy
@@ -34,6 +35,7 @@ from . import gemini
 ADAPTERS = {
     cursor.NAME: cursor,
     gemini.NAME: gemini,
+    kiro.NAME: kiro,
 }
 
 
