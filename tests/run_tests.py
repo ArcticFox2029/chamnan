@@ -10410,6 +10410,75 @@ check("...and their file is byte for byte what it was",
       (_clroot / ".clinerules").read_text(encoding="utf-8") == "their own rules\n")
 _rmtree(_clroot, ignore_errors=True)
 
+# 🐛 `safe_target` checked a PATH and the caller then acted on that path -- two resolutions of the
+# same name with a window between them. Staged deterministically below (a live race would be flaky
+# and prove less): the check runs and passes on a real directory, the attacker swaps that directory
+# for a symlink, and then the REAL, unmodified rest of `install()` runs. Before `held_target`, both
+# adapters below wrote through the link and landed outside the repository.
+#
+# One measurement correction worth keeping, because it was made twice here before it was right:
+# reading `root/.gemini/settings.json` after the swap reads the OUTSIDE file through the link, so
+# a naive check reports a leak that is really the fixture reading its own plant. What is actually
+# asked is whether chamnan created or CHANGED anything in the outside directory -- content before
+# against content after, not a listing of names.
+def _swap_after_the_check(agent, target_dir, plant=None):
+    repo = Path(tempfile.mkdtemp()) / "repo"
+    outside = Path(tempfile.mkdtemp()) / "outside"
+    outside.mkdir(parents=True)
+    if plant is not None:
+        (outside / plant[0]).write_text(plant[1], encoding="utf-8")
+    swap = repo / target_dir
+    swap.mkdir(parents=True)
+    before = {q.name: q.read_text(encoding="utf-8") for q in outside.iterdir()}
+
+    real = adapters_mod.safe_target
+
+    def racing(root, rel):
+        answer = real(root, rel)          # passes: `swap` is a real directory at this instant
+        _rmtree(swap)
+        swap.symlink_to(outside)          # ...and is a link by the time the caller acts on it
+        return answer
+
+    adapters_mod.safe_target = racing
+    refused = False
+    try:
+        adapters_mod.install(str(repo), agent, "BODY", "cmd")
+    except Exception:
+        refused = True
+    finally:
+        adapters_mod.safe_target = real
+    after = {q.name: q.read_text(encoding="utf-8") for q in outside.iterdir()}
+    escaped = sorted(n for n in after if before.get(n) != after[n])
+    _rmtree(repo.parent, ignore_errors=True)
+    _rmtree(outside.parent, ignore_errors=True)
+    return escaped, refused
+
+
+# Gated on the capability rather than on the OS name, and NOT given a passing check when it is
+# absent: `held_target` closes this with `openat`, Windows has no `openat`, and the race is
+# therefore still open there. Saying so out loud is the point -- a check that quietly passes on the
+# platform where the defence does not exist is the shape of guard this repository has deleted once
+# already. Mutating `_ANCHORED` to False is how the fallback branch gets exercised on this machine.
+if not adapters_mod._ANCHORED:
+    print("  NOTE  no openat on this platform: the swap-after-the-check race below is NOT closed "
+          "here, and these four checks are not run rather than passed")
+else:
+    _esc_cursor, _ref_cursor = _swap_after_the_check("cursor", ".cursor/rules")
+    check("a directory swapped for a symlink AFTER the check does not get written through",
+          _esc_cursor == [])
+    if _esc_cursor:
+        print("      chamnan wrote outside the repository:", _esc_cursor)
+    check("...and the install refuses rather than writing somewhere else instead", _ref_cursor)
+
+    # The merging adapter is the one that reads before it writes: the same window, twice.
+    _esc_gem, _ref_gem = _swap_after_the_check(
+        "gemini", ".gemini", ("settings.json", '{"mcpServers": {"b": {"env": {"T": "sk-live-X"}}}}'))
+    check("the adapter that READS its target first is closed against the same swap", _esc_gem == [])
+    if _esc_gem:
+        print("      chamnan wrote outside the repository:", _esc_gem)
+    check("...and it refuses too", _ref_gem)
+
+
 # AGENTS.md is the target a person is most likely to have written themselves, so it is edited
 # between markers and never written over.
 _gen = adapters_mod.for_agent("generic")
@@ -11428,19 +11497,37 @@ _adapter_src = "".join(
 #
 # Asked of the parser instead: any function under `lib/adapters/` that WRITES must also call
 # `safe_target`. That is the property, and it holds however the path is spelled.
-def _writes_without_guard():
+# `write_target`/`read_target`/`_step` ARE the guard, so they write without calling it -- they are
+# reachable only through `held_target`, which calls `safe_target` on the way in. That exemption is
+# named here rather than inferred, and it is checked below rather than trusted: if `held_target`
+# ever stops calling `safe_target`, exempting the three it hands its handle to would hide the hole
+# instead of finding it.
+_GUARD_ITSELF = {"safe_target", "held_target", "read_target", "write_target", "_step", "_exists_at"}
+_WRITE_VERBS = {"atomic_write_text", "mkdir", "write_target"}
+
+
+def _calls_in(node):
+    out = {c.func.attr for c in ast.walk(node)
+           if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
+    return out | {c.func.id for c in ast.walk(node)
+                  if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+
+
+def _writes_without_guard(extra_src=None):
     out = []
-    for path in sorted((ROOT / "lib" / "adapters").glob("*.py")):
-        src = path.read_text(encoding="utf-8")
+    sources = [(p.name, p.read_text(encoding="utf-8"))
+               for p in sorted((ROOT / "lib" / "adapters").glob("*.py"))]
+    if extra_src is not None:
+        sources.append(("MUTANT.py", extra_src))
+    for name, src in sources:
         for node in ast.walk(ast.parse(src)):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
-            called = {c.func.attr for c in ast.walk(node)
-                      if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)}
-            called |= {c.func.id for c in ast.walk(node)
-                       if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
-            if {"atomic_write_text", "mkdir"} & called and "safe_target" not in called:
-                out.append(f"{path.name}:{node.lineno} {node.name}")
+            if name == "__init__.py" and node.name in _GUARD_ITSELF:
+                continue
+            called = _calls_in(node)
+            if _WRITE_VERBS & called and not ({"safe_target", "held_target"} & called):
+                out.append(f"{name}:{node.lineno} {node.name}")
     return out
 
 
@@ -11448,6 +11535,19 @@ _unguarded = _writes_without_guard()
 check("EVERY WRITE UNDER lib/adapters/ GOES THROUGH THE CONTAINMENT CHECK", not _unguarded)
 for _u in _unguarded[:5]:
     print("     ", _u)
+
+# Mutation: an adapter that reaches for the fd-anchored writer WITHOUT opening the handle through
+# the guard has to be caught, or the exemption above is a hole rather than a fact.
+check("...and the check itself fails on an adapter that writes without opening the guarded handle",
+      _writes_without_guard("def install(root, body, command=''):\n"
+                            "    write_target(target, body)\n") == ["MUTANT.py:1 install"])
+
+# The exemption is only safe while the entry point it points at still runs the check.
+_held_src = [n for n in ast.walk(ast.parse((ROOT / "lib" / "adapters" / "__init__.py")
+                                           .read_text(encoding="utf-8")))
+             if isinstance(n, ast.FunctionDef) and n.name == "held_target"]
+check("held_target calls safe_target, which is what makes exempting its helpers legitimate",
+      len(_held_src) == 1 and "safe_target" in _calls_in(_held_src[0]))
 
 # ------------------------------------------- two credential words the redactor did not know
 # `GPG_PASSPHRASE` and `db_creds` came back unredacted. Both are ordinary in real repositories.

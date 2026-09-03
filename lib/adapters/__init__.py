@@ -23,6 +23,11 @@ committed adapter file would churn on every rebuild. That is a reason not to com
 to work around -- the marker is unguessable on purpose, and making it stable would hand a
 pull-request author the one thing it exists to withhold.
 """
+import contextlib
+import errno
+import os
+import stat
+
 import workspace as ws
 
 from . import aider
@@ -175,6 +180,191 @@ def safe_target(root, rel):
     return walked
 
 
+# `openat` and friends: every one of these takes the directory to work in as an OPEN HANDLE rather
+# than as a name, which is what makes the walk below race-free. Absent on Windows, where the
+# fallback is `safe_target`'s check on its own.
+#
+# `os.replace` is missing from `os.supports_dir_fd` on macOS and Linux both, while `os.rename` --
+# the same `renameat` underneath, same signature -- is present. Probed through `os.rename` for
+# that reason, and `os.replace(..., src_dir_fd=)` then works. Verified before relying on it; do
+# not "correct" this to probe `os.replace` and conclude the platform cannot do it.
+_ANCHORED = (
+    hasattr(os, "O_NOFOLLOW")
+    and hasattr(os, "O_DIRECTORY")
+    and {os.open, os.mkdir, os.rename, os.unlink, os.access} <= os.supports_dir_fd)
+
+_DIR_FLAGS = (os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_DIRECTORY", 0))
+
+
+class Target(object):
+    """Where an adapter writes: an open handle on the directory, and the name inside it.
+
+    `dir_fd` is None on a platform without `openat`, and then `path` is all a caller has.
+    """
+
+    __slots__ = ("dir_fd", "leaf", "path")
+
+    def __init__(self, dir_fd, leaf, path):
+        self.dir_fd, self.leaf, self.path = dir_fd, leaf, path
+
+
+def _is_link_at(dir_fd, name):
+    """Whether `name` inside the open directory is a symlink. Asked through the handle, so it is
+    the same directory the open just failed in rather than a second resolution of the path."""
+    try:
+        return stat.S_ISLNK(os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_mode)
+    except OSError:
+        return False
+
+
+def _step(dir_fd, name, rel):
+    """One component deeper, creating it if absent. Refuses a symlink at that component."""
+    for last in (False, True):
+        try:
+            return os.open(name, _DIR_FLAGS, dir_fd=dir_fd)
+        except FileNotFoundError:
+            if last:
+                raise
+            try:
+                os.mkdir(name, dir_fd=dir_fd)
+            except FileExistsError:
+                pass          # another process created it between our open and our mkdir
+        except OSError as exc:
+            # A symlink here arrives as one of two errnos and the difference is the PLATFORM's,
+            # not the attacker's: `O_NOFOLLOW` alone gives ELOOP, and `O_NOFOLLOW|O_DIRECTORY` on
+            # a link that points AT a directory gives ENOTDIR (measured on macOS 3.12). ENOTDIR is
+            # also what somebody's own file in the way gives -- `.clinerules` is a directory in
+            # some repositories and a plain file in others -- and those two must not get the same
+            # message: one is an escape, the other is a file we must not destroy. Asked of the
+            # component itself rather than guessed from the errno.
+            linked = False
+            if exc.errno in (errno.ELOOP, errno.EMLINK, errno.ENOTDIR):
+                linked = _is_link_at(dir_fd, name)
+            if linked:
+                raise ValueError(
+                    f"`{name}`, on the way to {rel}, is a symlink. Writing through it would "
+                    f"leave the repository; chamnan refuses rather than following it.") from exc
+            raise
+    raise AssertionError("unreachable")
+
+
+@contextlib.contextmanager
+def held_target(root, rel):
+    """`safe_target`'s answer, with the directory it checked HELD OPEN for the write that follows.
+
+    🐛 `safe_target` returns a path, and the caller then acts on that path -- two separate
+    resolutions of the same name, with a window between them. Rendered end to end, twice: with
+    `.cursor/rules` a real directory at check time and swapped for a symlink immediately after,
+    the unmodified rest of `install()` wrote `chamnan.mdc` outside the repository; with `.gemini`
+    swapped the same way, `gemini.install()` read an outside `settings.json` and merged its
+    `BILLING_API_TOKEN` into a committable file in the repository.
+
+    That second one is the hardlink leak this module already refuses, reached by a race instead of
+    by a link -- so the `st_nlink > 1` guard above closed the static half of it and left this half
+    open. A reader could reasonably have believed the whole thing was closed. It was not.
+
+    A name can be swapped; an open file descriptor cannot. Every component is opened with
+    `O_NOFOLLOW`, each from the handle on the one above it, and the read and the write both happen
+    through the final handle -- so a swap after the check reaches a directory nobody is writing to
+    any more. The check is no longer separate from the act.
+
+    Preconditions for the attack, stated honestly: it needs write access to the working tree
+    CONCURRENT with a run of `--write`, which is a higher bar than the committed symlink and the
+    committed hardlink this module already refuses. It is closed here because the outcome is the
+    same as those two, and because "narrow" has been the wrong reason nine times in this project.
+
+    Windows has no `openat`; there `dir_fd` is None and `safe_target`'s check is what there is.
+    """
+    parts = ws.Path(rel).parts
+    if not parts:
+        raise ValueError(f"{rel!r} names no file to write")
+    path = safe_target(root, rel)
+    if not _ANCHORED:
+        yield Target(None, parts[-1], path)
+        return
+    fd = os.open(str(ws.Path(root)), _DIR_FLAGS)
+    try:
+        for part in parts[:-1]:
+            deeper = _step(fd, part, rel)
+            os.close(fd)
+            fd = deeper
+        yield Target(fd, parts[-1], path)
+    finally:
+        os.close(fd)
+
+
+def read_target(target):
+    """The target's current text, or None when it is not there. Refuses to read through a symlink.
+
+    The adapter that merges (`gemini`) reads before it writes, and this is the read half of the
+    same window `held_target` closes -- reading by name would resolve the name a second time.
+    """
+    if target.dir_fd is None:
+        try:
+            return target.path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+    try:
+        fd = os.open(target.leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=target.dir_fd)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.EMLINK):
+            raise ValueError(
+                f"{target.path} is a symlink. chamnan will not read through it: it may point "
+                f"outside the repository, and this adapter merges what it reads into a file it "
+                f"then writes here.") from exc
+        raise
+    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+        return fh.read()
+
+
+def write_target(target, text):
+    """Replace the target atomically, through the held handle. Returns True on success.
+
+    Same two properties `ws.atomic_write_text` carries and for the same reasons -- a per-process
+    staging name so two writers never share one, and a refusal to replace a file the user has made
+    read-only -- expressed against a directory handle instead of a path.
+    """
+    if target.dir_fd is None:
+        # No `openat` here, so the path is all there is -- and the parent has to be created OUT of
+        # `atomic_write_text`, which returns False rather than raising. Without this, somebody's
+        # own `.clinerules` FILE where a directory belongs stopped the install with a clear error
+        # on POSIX and was swallowed into a silent no-op on Windows. Caught by mutating `_ANCHORED`
+        # to False, which is the only way to reach this branch on the machine the tests run on.
+        target.path.parent.mkdir(parents=True, exist_ok=True)
+        return ws.atomic_write_text(target.path, text)
+    tmp = f"{target.leaf}.{os.getpid()}.tmp"
+    try:
+        if os.access(target.leaf, os.W_OK, dir_fd=target.dir_fd, follow_symlinks=False):
+            pass
+        elif _exists_at(target):
+            return False
+    except OSError:
+        pass
+    try:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644,
+                     dir_fd=target.dir_fd)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(tmp, target.leaf, src_dir_fd=target.dir_fd, dst_dir_fd=target.dir_fd)
+        return True
+    except Exception:
+        try:
+            os.unlink(tmp, dir_fd=target.dir_fd)
+        except OSError:
+            pass
+        return False
+
+
+def _exists_at(target):
+    try:
+        os.stat(target.leaf, dir_fd=target.dir_fd, follow_symlinks=False)
+        return True
+    except OSError:
+        return False
+
+
 def install(root, agent, body, command=""):
     """Write `body` through `agent`'s adapter. Returns the path written, or None.
 
@@ -201,10 +391,9 @@ def install(root, agent, body, command=""):
     # single-structure failure this package exists to avoid.
     if hasattr(adapter, "install"):
         return adapter.install(root, body, command)
-    target = safe_target(root, adapter.TARGET)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    ws.atomic_write_text(target, adapter.render(body))
-    return target
+    with held_target(root, adapter.TARGET) as target:
+        write_target(target, adapter.render(body))
+    return target.path
 
 
 def ignore_line(agent):
