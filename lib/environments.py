@@ -140,7 +140,7 @@ def declared_versions(root):
     return out
 
 
-def stale_environments(root, now=None, window_days=STALE_AFTER_DAYS):
+def stale_environments(root, now=None, window_days=STALE_AFTER_DAYS, envs=None):
     """[(name, days_since_checked_or_None)] for entries whose `Checked:` date has gone cold, or
     that never had one. Empty when every entry is fresh.
 
@@ -148,12 +148,17 @@ def stale_environments(root, now=None, window_days=STALE_AFTER_DAYS):
     months is not evidence that the platform is unchanged; it is evidence that nobody looked. A
     caller that treats an unmaintained entry as an authority produces a false all-clear, which is
     worse than producing nothing — see `aging.py`, which refuses to report against these.
+
+    `envs`, when given, is the result of a caller's OWN `entries(root)` call — `aging.check()`
+    reads and parses `environments.md` once and reuses it here rather than this function parsing
+    the same file a second time for the same call. Left None, this reads and parses it itself,
+    same as before.
     """
     import time
     now = time.time() if now is None else now
     cutoff = now - window_days * 86400
     stale = []
-    for env in entries(root):
+    for env in (entries(root) if envs is None else envs):
         ts = env["checked_ts"]
         if ts is None:
             stale.append((env["name"], None))
@@ -231,15 +236,20 @@ _TARGET_FLAGS = ("--context", "--namespace", "-n", "--profile", "--env", "--envi
 _ASSIGNED = re.compile(r"\b(?:ENV|ENVIRONMENT|STAGE|TARGET|CONTEXT)=([\w.-]+)", re.I)
 
 
-def match_command(root, command):
+def match_command(root, command, envs=None):
     """The declared environment a shell command TARGETS, or None.
 
     Only a recognised targeting flag's value, or an `ENV=`-style assignment, counts. A bare
     mention of the word somewhere in the command does not — see `_TARGET_FLAGS` for why.
+
+    `envs`, see `stale_environments` — a caller that already parsed `environments.md` for this
+    same call (`chamnan_scratch_watch.py`'s `_environment_notice` calls this and
+    `constraints_notice` back to back on the same command) passes it through instead of paying
+    for a second parse of a file that cannot have changed in between.
     """
     if not command:
         return None
-    declared = {e["name"].lower(): e["name"] for e in entries(root)}
+    declared = {e["name"].lower(): e["name"] for e in (entries(root) if envs is None else envs)}
     if not declared:
         return None
     parts = str(command).split()
@@ -266,7 +276,7 @@ def match_command(root, command):
     return None
 
 
-def constraints_notice(root, name):
+def constraints_notice(root, name, envs=None):
     """The one-shot notice naming an environment's constraints, or "" when it declares none.
 
     Deliberately not a warning and not a block. It says what was declared and who declared it,
@@ -274,8 +284,10 @@ def constraints_notice(root, name):
     per-command guard: the PreToolUse `permissionDecision` such a guard would need has no
     documented behaviour under `defaultMode: "auto"`, and a guard that might silently not fire is
     worse than an honest notice that always does.
+
+    `envs`, see `stale_environments`.
     """
-    env = next((e for e in entries(root) if e["name"] == name), None)
+    env = next((e for e in (entries(root) if envs is None else envs) if e["name"] == name), None)
     if env is None or not env["constraints"]:
         return ""
     bullets = "; ".join(env["constraints"])
