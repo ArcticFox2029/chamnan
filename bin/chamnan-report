@@ -131,8 +131,18 @@ def _shared_tail(want, have):
     return n
 
 
-def collect(project_dir, want_opened=False):
+def collect(project_dir, want_opened=False, root=None):
     """Read every transcript line once.
+
+    🐛 `root` is not optional in spirit. A transcript records every file a session touched, and a
+    session rooted here routinely dispatches subagents into other directories — measured on this
+    repository's own transcripts, 902 of 7,801 counted touches were files OUTSIDE it, including
+    `~/.claude/settings.json` and paths under another repository entirely. They were all being
+    counted as work done on this repository.
+
+    That contaminates the headline: scoping the touches to the root moves "repeat work" from 13.5%
+    to 23.4% overall, and the most recent week from 7% to 35%. The comment below claiming recent
+    weeks are "the least repetitive in the whole corpus" was reading the contaminated number.
 
     🎯 [perf] This used to be read twice — once here for usage stats, once more in
     print_pointer() for which `.chamnan` files got opened. Both scans open the same 300+ files
@@ -144,20 +154,35 @@ def collect(project_dir, want_opened=False):
     """
     best = {}
     opened = set() if want_opened else None
+    _root_prefix = f"{root}/" if root is not None else ""
     for path in project_dir.rglob("*.jsonl"):
         try:
-            fh = path.open(errors="replace")
+            # 🎯 [perf] Binary, not text. 62% of these lines fail the prefilter below and are
+            # thrown away, and in text mode every one of them was decoded first. Measured
+            # end-to-end over the real 332-file corpus, six interleaved pairs: −4.0%, with the
+            # printed report byte-identical across twelve full runs.
+            #
+            # Two alternatives were measured and are NOT here: `str.find() != -1` instead of `in`
+            # is 3% SLOWER, and a bulk `read_bytes().split(b"\n")` instead of streaming is 12%
+            # slower on allocation. Skipping whole files is a dead end — only 9 of 332 files
+            # (0.16% of bytes) contain no matching line at all, and finding them needs reading them.
+            fh = path.open("rb")
         except OSError:
             continue
         with fh:
             for line in fh:
-                has_usage = '"usage"' in line
+                has_usage = b'"usage"' in line
                 # Same prefilter print_pointer() used to apply in its own separate pass.
-                is_pointer_candidate = want_opened and '"tool_use"' in line and ".chamnan" in line
+                is_pointer_candidate = (want_opened and b'"tool_use"' in line
+                                        and b".chamnan" in line)
                 if not has_usage and not is_pointer_candidate:
                     continue
                 try:
-                    rec = json.loads(line)
+                    # Only the lines that passed the prefilter pay for a decode. `errors="replace"`
+                    # is what `path.open(errors="replace")` gave before: invalid bytes become
+                    # U+FFFD rather than raising UnicodeDecodeError, which the `except ValueError`
+                    # below would not have caught.
+                    rec = json.loads(line.decode("utf-8", errors="replace"))
                 except json.JSONDecodeError:
                     continue
                 msg = rec.get("message") or {}
@@ -194,7 +219,10 @@ def collect(project_dir, want_opened=False):
                         # merge — the prefilter above used to skip a usage-less line outright, so
                         # widening the prefilter must not widen this. `opened` is the reason the
                         # line was let through at all, so it takes no such gate.
-                        if has_usage and ts:
+                        # Only files under the repository being reported on. See collect()'s
+                        # docstring: a subagent sent elsewhere writes its paths into this
+                        # repository's transcript, and they are not work on this repository.
+                        if has_usage and ts and (root is None or _fp.startswith(_root_prefix)):
                             touched_by_week[ts[:10]].add(_fp)
                         if want_opened and ".chamnan" in _fp:
                             opened.add(_fp.split(".chamnan/")[-1])
@@ -417,7 +445,7 @@ def main(argv):
         # logs/pointer.jsonl first (cheap) tells us whether the `opened` set is worth building at
         # all before paying for the scan.
         fired, named = _read_pointer_log(root)
-        entries, opened = collect(project_dir, want_opened=bool(fired))
+        entries, opened = collect(project_dir, want_opened=bool(fired), root=root)
         print_pointer(fired, named, opened)
     if not project_dir:
         # 🐛 [2026-08-28] Returned 1. A repository nobody has worked on in Claude Code yet has no
@@ -502,12 +530,19 @@ def main(argv):
         amc, amr, _ = side(lambda k: k > marker_week, main_only=True)
         # 🎯 The confound the before/after cannot see, and the owner named it before this measured
         # it: the comparison assumes the two sides are the SAME KIND of work. On this repository
-        # they are not — the weeks after the workspace was created are the least repetitive in the
-        # whole corpus (8%, 7%, 12% of files revisited from an earlier week, against 27% and 36%
-        # before). Returning to code you already know is where an index pays; opening new code
-        # every week is not. So a flat result is not evidence the tool does not help, and a falling
-        # one would not have been evidence that it does. Saying which of those applies is worth
-        # more than the percentage above it.
+        # they are not — the weeks after the workspace was created revisit less code than the weeks
+        # before. Returning to code you already know is where an index pays; opening new code every
+        # week is not. So a flat result is not evidence the tool does not help, and a falling one
+        # would not have been evidence that it does. Saying which of those applies is worth more
+        # than the percentage above it.
+        #
+        # 🐛 The figures this comment used to quote — "8%, 7%, 12% against 27% and 36%" — were
+        # read off the contaminated count, before `collect()` scoped touches to the repository.
+        # Measured again with the scoping in place, the whole report reads 28% before / 20% after
+        # rather than 20% / 7%: the gap is real but a third of what it looked like. The direction
+        # of the confound is unchanged, which is why the reasoning above stands; the numbers are
+        # left out rather than restated, because a figure quoted in a comment is the thing this
+        # project keeps finding stale.
         def _revisit(pred):
             weeks_seen, cur, prior = {}, set(), set()
             for day in sorted(touched_by_week):

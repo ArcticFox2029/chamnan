@@ -1034,8 +1034,16 @@ check("no promoted tools yet -> no Promoted tools section", "Promoted tools" not
 _rep_src = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
 check("the transcript scan is entered once, not once per consumer",
       _rep_src.count("rglob(\"*.jsonl\")") == 1)
+# Pinned to the PROPERTY, not the exact line. The line grew a second condition when touches were
+# scoped to the repository, and an exact-text assertion failed on a change that preserved
+# everything it was written to protect — the fourth time this session a literal match stood in for
+# the thing it meant.
+_tbw = next(l for l in _rep_src.splitlines() if "touched_by_week[ts[:10]].add" in l)
+_guard = _rep_src.splitlines()[_rep_src.splitlines().index(_tbw) - 1]
 check("touched_by_week still keeps the has_usage condition the prefilter used to give it",
-      "if has_usage and ts:" in _rep_src)
+      "has_usage" in _guard and _guard.lstrip().startswith("if "))
+check("...and it now also requires the file to be under the repository being reported on",
+      "_root_prefix" in _guard)
 check("...while the pointer set does not, since that is why the line was let through",
       "if want_opened and \".chamnan\" in _fp:" in _rep_src)
 # Compared at the CALL sites, not by a bare substring: `def collect(project_dir,` sits at the top
