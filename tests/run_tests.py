@@ -2798,6 +2798,48 @@ check("NOISE CONTROL: a name environments.md never declares is ignored entirely"
 check("even though the claim parser does see those pairs",
       ("issue", "13") in aging.claims_in("See issue 13, port 8080, and redis 4"))
 
+
+# 🐛 `environments.py`'s docstring for `envs=` names `chamnan_scratch_watch.py`'s
+# `_environment_notice` as the caller that "passes it through instead of paying" for a second
+# parse of environments.md. The argument was added and never wired up there, so the hook read and
+# re-parsed the file once per call, twice per Bash command. 0.795ms against 0.398ms on a
+# twelve-environment file, on a PostToolUse hook that fires on every Bash command.
+#
+# Counted rather than timed: a timing check on a sub-millisecond difference is a check that fails
+# on a loaded machine, and the property is "parses once", not "is fast".
+_envroot = Path(tempfile.mkdtemp()) / "repo"
+(_envroot / ".git").mkdir(parents=True)
+ws.ensure(_envroot)
+(_envroot / ".chamnan" / "environments.md").write_text(
+    "# Environments\n\n## prod-cluster\n\n"
+    "**Platform:** kubernetes\n**Versions:** kubectl v1.29.2\n**Checked:** 2026-09-01\n"
+    "**Constraints:**\n- Never scale below three replicas.\n", encoding="utf-8")
+
+_sw2_spec = importlib.util.spec_from_file_location(
+    "sw_env_probe", str(ROOT / "hooks" / "chamnan_scratch_watch.py"))
+_sw2 = importlib.util.module_from_spec(_sw2_spec)
+_sw2_spec.loader.exec_module(_sw2)
+
+_parses = [0]
+_real_entries = _sw2.environments.entries
+def _counting_entries(root, *a, **k):
+    _parses[0] += 1
+    return _real_entries(root, *a, **k)
+_sw2.environments.entries = _counting_entries
+try:
+    _fired = _sw2._environment_notice(
+        {"tool_name": "Bash", "session_id": "s-env-1",
+         "tool_input": {"command": "kubectl --context prod-cluster get pods"}},
+        ws.workspace(_envroot), str(_envroot))
+finally:
+    _sw2.environments.entries = _real_entries
+
+check("the environment notice fires on a command that matches a declared environment", _fired)
+check("...and environments.md IS PARSED ONCE for it, not once per lookup", _parses[0] == 1)
+if _parses[0] != 1:
+    print("      parsed", _parses[0], "times")
+_rmtree(_envroot.parent, ignore_errors=True)
+
 # The third outcome, and the honest one: matched only by an environment that has gone cold.
 _mem(ag_root, "rules", "pg.md", "# A rule\n\npostgres 13 needs the old upsert syntax.\n")
 envs.upsert(ag_root, "uat", envs.render_entry("uat", "K8s", "postgres 13", ["x"], "2020-01-01"))
@@ -11807,8 +11849,17 @@ check("an index that already fits is not folded further",
 # 🐛 `host.py` knew five agents while twenty-three had adapters, so `--detect` reported nothing
 # found on a repository plainly set up for Roo, Windsurf or Copilot. And its only consumer was
 # `--detect`'s own JSON dump — nothing acted on it at all.
-check("detection covers the agents that have adapters",
-      len(host_mod.ORDER) >= 20)
+# 🐛 This was `len(host_mod.ORDER) >= 20`, a floor rather than the property beside it. Deleting
+# `windsurf` from detection outright left 22 entries and the whole suite green -- the check names
+# "covers the agents that have adapters" and could not tell whether a single one was missing.
+# Asked as the set comparison it was describing: every adapter must be detectable, and the only
+# thing detectable without one is `claude`, whose delivery is a hook rather than a file.
+_undetected = sorted(set(adapters_mod.ADAPTERS) - set(host_mod.ORDER))
+check("detection covers EVERY agent that has an adapter", not _undetected)
+if _undetected:
+    print("      adapters with no detection entry:", _undetected)
+check("...and nothing is detectable without one, except claude",
+      sorted(set(host_mod.ORDER) - set(adapters_mod.ADAPTERS)) == ["claude"])
 check("...and every detected name can actually be written, except claude whose delivery is a hook",
       all(n == "claude" or adapters_mod.for_agent(n) is not None for n in host_mod.ORDER))
 # REPO markers only for the ones added. HOME is what host.py's own docstring calls the weakest and
