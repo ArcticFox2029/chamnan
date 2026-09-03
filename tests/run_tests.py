@@ -8260,20 +8260,34 @@ _extd = Path(tempfile.mkdtemp()) / "repo"
 # and reported, never dropped in silence. `.hbs` is the fixture now because it is genuinely
 # unreadable today, and the check below asserts that rather than trusting the choice — a fixture
 # that quietly becomes readable would otherwise turn this into a test of nothing.
+# `.hs` on both counts: chamnan has no Haskell reader, and Haskell is a real source language, so it
+# is in `assets.UNEXTRACTED_SOURCE` — which is what decides whether the run SAYS anything. Asserted
+# rather than assumed, because a fixture chosen for how the world is today becomes a test of nothing
+# when the world changes; `.svelte` was this fixture until a reader for it landed the same day.
+import assets as _assets  # noqa: E402
 check("the fixture extension is one chamnan really cannot read",
-      ".hbs" not in _mp.EXT_LANG)
-for _i in range(60):
-    (_extd / f"C{_i}.hbs").write_text("<div>{{name}}</div>\n", encoding="utf-8")
+      ".hs" not in _mp.EXT_LANG and ".hs" in _assets.UNEXTRACTED_SOURCE)
+for _i in range(6):
+    (_extd / f"M{_i}.hs").write_text("-- a module\nmain = return ()\n", encoding="utf-8")
+# Markdown beside it: real source chamnan cannot read is worth a line; documentation never was.
+(_extd / "README.md").write_text("# docs\n", encoding="utf-8")
 with _tree.session():
     _mp.reset_skips()
     _mp.scan(_extd)
 check("AN EXTENSION CHAMNAN CANNOT READ IS COUNTED, NOT DROPPED IN SILENCE",
-      _mp.SKIPPED_UNKNOWN_EXT.get(".hbs") == 60)
+      _mp.SKIPPED_UNKNOWN_EXT.get(".hs") == 6)
 check("...and reset_skips clears it with the others", True)
 _extout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                          capture_output=True, text=True, cwd=str(_extd)).stdout
-check("...and the run says so when the count rivals what was indexed",
-      "no reader for the extension" in _extout and ".hbs" in _extout)
+# 🐛 The old rule fired past a count threshold, `max(50, files//10)`, and that number did two jobs
+# badly: six files never crossed fifty, so it was silent on the small repositories where six files
+# are most of the tool — chamnan's own nine `bin/` commands were invisible to its own index for
+# exactly this reason — and it turned noisy the moment a count moved, reporting 53 `.md` files as
+# "no reader", which is true and useless.
+check("...and the run says so for as few as six, because a threshold was the wrong instrument",
+      "no reader for the extension" in _extout and ".hs" in _extout)
+check("...while documentation is never reported as an unreadable language",
+      ".md" not in _extout.split("no reader for the extension")[1].split("\n")[0])
 shutil.rmtree(_extd.parent, ignore_errors=True)
 
 check("A WRITTEN LOG ABOUT TO EXPIRE IS NAMED", [n for n, _ in _exp] == ["2026-08-27.md"])

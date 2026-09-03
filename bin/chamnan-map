@@ -407,13 +407,20 @@ def main(argv):
     # Svelte's own monorepo: 4,540 `.svelte` files missing from the index — more than the 3,480 it
     # did index — and the run reported full coverage of what it saw.
     #
-    # Reported only when the count is comparable to what WAS indexed: every repository is full of
-    # `.json`, `.lock` and `.png` that nobody expects an index to cover, and a line naming all of
-    # them is noise that teaches the reader to skip this whole block. A tenth of the indexed count,
-    # or fifty files, is the point at which "chamnan cannot read your main language" becomes the
-    # likelier reading.
+    # 🐛 This used to fire on any unknown extension past a count threshold — `max(50, files//10)` —
+    # and that number was doing two jobs badly. It silenced the case it was written for: chamnan's
+    # own nine `bin/` commands were invisible to its own index and nine files never crossed fifty,
+    # so the gap was silent by construction on exactly the small repositories where nine files are
+    # most of the tool. And it produced noise the moment the count moved: 53 `.md` files reported as
+    # "no reader", which is true and useless — markdown was never anybody's source language.
+    #
+    # `assets.UNEXTRACTED_SOURCE` already answers the real question. It is the set of extensions
+    # that ARE source and that chamnan has no extractor for — Perl, Haskell, Clojure, Elixir and
+    # forty more — and it deliberately excludes `.md`, `.json`, `.png` and every other format nobody
+    # expects an index to cover. A classification that exists beats a threshold nobody measured.
+    import assets as _assets
     _unknown = [(ext, n) for ext, n in mapper.SKIPPED_UNKNOWN_EXT.most_common()
-                if n >= max(50, len(files) // 10)]
+                if ext in _assets.UNEXTRACTED_SOURCE]
     if _unknown:
         _named = ", ".join(f"{n:,} {ext}" for ext, n in _unknown[:3])
         print(f"  not indexed, no reader for the extension: {_named}")

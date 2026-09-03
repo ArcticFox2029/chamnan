@@ -1141,6 +1141,43 @@ def _under_nested(path, nested):
     return False
 
 
+# `python3`, `python3.12`, `node`, `bash`, `zsh`, `sh`, `ruby`, `perl` — the interpreter's own name,
+# with a version suffix stripped. Matched against EXT_LANG's own vocabulary so a language chamnan
+# cannot read stays unreadable rather than being smuggled in by its shebang.
+_SHEBANG_LANG = {"python": "py", "python2": "py", "python3": "py", "node": "js", "nodejs": "js",
+                 "bash": "sh", "sh": "sh", "zsh": "sh", "dash": "sh", "ksh": "sh",
+                 "ruby": "rb", "perl": "pl", "php": "php"}
+
+
+def _lang_from_shebang(path):
+    """The language of an extensionless executable, from its first line, or None.
+
+    Only the first 200 bytes are read: a shebang is the first line or it is not a shebang, and this
+    runs on every extensionless file in the tree.
+    """
+    try:
+        with path.open("rb") as fh:
+            first = fh.read(200).split(b"\n", 1)[0]
+    except OSError:
+        return None
+    if not first.startswith(b"#!"):
+        return None
+    line = first.decode("utf-8", errors="replace")
+    # `#!/usr/bin/env python3` and `#!/bin/bash` both end in the interpreter; `env` is skipped
+    # because it is the launcher, not the language.
+    words = [w for w in line[2:].replace("\t", " ").split(" ") if w]
+    for word in words:
+        name = word.rsplit("/", 1)[-1]
+        if name in ("env", "-S"):
+            continue
+        # `python3.12` -> `python3`; a trailing minor version is not a different language.
+        base = name.split(".")[0]
+        if base in _SHEBANG_LANG:
+            return _SHEBANG_LANG[base]
+        return None
+    return None
+
+
 def is_text_file(path):
     """A NUL in the first block means binary, and no text source contains one. Split out of
     `indexable` so a caller that skipped the sniff for speed can apply it to the few files it
@@ -1208,6 +1245,18 @@ def indexable(root, nested=None, with_text=False, sniff=True):
         if redact.is_blocked(path):
             continue          # private keys, certificates, local databases — never opened at all
         lang = EXT_LANG.get(path.suffix.lower())
+        if not lang and not path.suffix:
+            # 🐛 chamnan's own `bin/` was invisible to chamnan's own index, from the first commit.
+            # Nine extensionless shebang scripts — every command-line entry point it has — 2,382
+            # lines, and the dependency graph was wrong for every `lib/` module because of it:
+            # `lib/redact.py` was published as having 7 consumers when it has 16, and all nine
+            # missing ones are the CLI tools that print output for a living, which is the exact
+            # thing redaction exists to protect.
+            #
+            # A shebang names the interpreter as reliably as a suffix does, and this is what `file`
+            # and every linter use for the same reason. Read only when there is NO extension at all,
+            # so nothing that already has an answer is re-decided, and only the first line.
+            lang = _lang_from_shebang(path)
         if not lang:
             # 🐛 Silently dropped, and that is the one skip reason with no record. Large, binary,
             # generated and build-directory files are all tracked and reported, on the stated
