@@ -1,11 +1,105 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1150), and every one of these is on the
+[README](README.md#whats-new-in-1160), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.16.0
+
+### 1.15.0 against 1.16.0, measured
+
+Both builds run on the same machine at the same moment, alternating, so a busy laptop cannot favour
+one of them. The 1.15.0 column is the released plugin as installed, not a reconstruction.
+
+| | 1.15.0 | 1.16.0 | |
+|---|---|---|---|
+| SessionStart hook, this repository | 3.23 s | **0.79 s** | 4.1× faster, six interleaved pairs |
+| SessionStart hook, 6,000-file repository | 16–39 s | **1.2–2.7 s** | it did not scale before |
+| `chamnan-map`, same 33-file corpus | 1.35 s | **0.79 s** | identical output, 537,606 tokens both |
+| `chamnan-report` | 7.14 s | **5.20 s** | byte-identical report |
+| file opens in one `chamnan-map` | 2,259 | **568** | four scanners re-read what the first had read |
+| files indexed in chamnan's own repo | 42 | **51** | its own `bin/` was invisible |
+| `lib/redact.py` consumers published | 7 | **16** | the nine missing were the CLI tools |
+| files indexed in sveltejs/svelte | 3,480 | **8,060** | 4,540 `.svelte` files were dropped silently |
+| regression checks | 1,815 | **2,172** | |
+
+And four numbers that did not get *better* — they got **true**:
+
+| | 1.15.0 said | actually |
+|---|---|---|
+| "repeat work" headline | 20% → 7% | **28% → 20%** (it counted other repositories' files) |
+| coverage on gin | 44% | **~31%** (`//go:build` counted as a description) |
+| coverage on svelte | 13% | **4.3%** (a JSDoc `@import` counted as one) |
+| `--explain`'s remainder | −3,396 | **positive, and it reconciles** |
+
+**Seventy-nine commits, and the theme is uncomfortable: most of them are chamnan being wrong about
+chamnan.** Eight separate claims the tool made about itself turned out not to survive being checked
+— a headline metric counting other repositories' files, a docstring promising 0.04s for something
+taking 39s, a coverage bar counting compiler directives as descriptions, and an index that could not
+see the plugin's own commands. Every one was reproduced before it was believed and pinned by a test
+afterwards. The suite is at 2,172 checks.
+
+### It could not see its own `bin/`
+
+Nine command-line entry points — every command chamnan has — are extensionless shebang scripts, and
+the indexer decided language from the suffix alone. So `lib/redact.py` was published as used by 7
+modules when it is used by 16, and all nine missing consumers were the CLI tools that print output
+for a living. Present since the first commit, with the index reporting full coverage the whole time.
+A shebang names the interpreter as reliably as a suffix names a language; 42 indexed files became 51.
+
+### Numbers that were wrong
+
+- The **"repeat work" headline** counted file paths from other repositories, because a session
+  rooted here dispatches subagents elsewhere and their paths land in this repository's transcript.
+  902 of 7,801 counted touches were outside the root. Scoped: 20%→7% becomes 28%→20%.
+- **`--explain` billed sections it had already dropped** and printed its own remainder as −3,396 —
+  the parts adding to more than the total they were subtracted from.
+- **The coverage bar counted directives as descriptions.** `//go:build linux && !windows` was the
+  summary of 12 of gin's described files; a JSDoc `@import` of 289 of svelte's 440. Real coverage
+  was ~31% against 44%, and 4.3% against 13%.
+- **The index warning said "281 file(s) are not in it"** on a repository where all 281 are in it,
+  having compared bare filenames against root-relative paths.
+
+### Faster, measured interleaved
+
+    SessionStart hook, 6,000-file repo    16-39 s  ->  1.2-2.7 s
+    chamnan-report                          7.14 s ->  5.20 s
+    chamnan-map                        3.45-5.15 s ->  3.29 s
+    file opens in one map                    2,259 ->  568
+
+The staleness check was reading 8 KB of every file in the tree to answer a question about mtimes.
+The symlink guard resolved every path when the short-circuit meant to stop it sat one line below.
+`chamnan-report` read 746 MB of transcripts, then read the same 746 MB again.
+
+### Security
+
+A **route path could open a heading in the index it was written into** — reproduced in ordinary,
+valid JavaScript, putting an attacker's prose into the region injected into every session. Four
+catalogue modules published repository substrings without the markdown neutralisation the codebase
+already had. Also: both automatic hooks were the two that never redacted, a committed symlink could
+read `~/.ssh/id_rsa` into the block, every `bin/` command now scrubs what it prints rather than
+each deciding for itself, and `chamnan-candidates demote` could rename a file anywhere on disk.
+
+### It now reads what it could not
+
+`.svelte`, `.vue` and `.astro` — Svelte's own repository indexed 3,480 files with 4,540 invisible.
+The script block is extracted first, because feeding the whole file to a JavaScript reader is wrong
+in both directions: it never reaches the doc comment, and an HTML comment in the template becomes a
+*wrong* description. Go and Rust environment variables are found now too, added only after measuring
+58 and 12 true positives with zero false ones on real clones.
+
+### Honesty about limits
+
+A catalogue's count cap and its per-entry size cap did not compose, so a section could sit inside
+both and still cost more than the whole index budget. Sections have a token budget now, proportional
+to the one configured. A section that keeps its heading and loses most of its body says so. An
+extension chamnan cannot read is named. And when the version string has not moved past the last tag,
+the test suite says so, because that string is the only thing that makes an installed copy refresh.
 
 ---
 
