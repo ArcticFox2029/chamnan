@@ -231,7 +231,7 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
                 if label == "rule" and _governs(text, rel_path):
                     found.append(((2, 0, rank, f.name), label, f, text))
     found.sort(key=lambda x: x[0])
-    return [(label, str(f.relative_to(wsdir)), _title(text, f.stem.replace("-", " ")))
+    return [(label, str(f.relative_to(wsdir).as_posix()), _title(text, f.stem.replace("-", " ")))
             for _, label, f, text in found[:max_hits]]
 
 

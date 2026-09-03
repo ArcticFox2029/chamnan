@@ -244,7 +244,7 @@ def _grpc_source(root, service):
         try:
             if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
                          path.read_text(encoding="utf-8", errors="replace"), re.M):
-                return str(path.relative_to(root))
+                return str(path.relative_to(root).as_posix())
         except OSError:
             continue
     return ""
@@ -470,7 +470,7 @@ def scan_routes(root, files):
         routes[("gRPC", f"{svc}/{method}")] = _grpc_source(root, svc)
 
     for path, text in _spec_files(root):
-        rel = str(path.relative_to(root))
+        rel = str(path.relative_to(root).as_posix())
         base = _spec_base(text)
         if path.suffix == ".json":
             try:
@@ -624,7 +624,7 @@ def scan_env(root, files):
     # list. This is a real measurement and it is what the cut is made on.
     refs = {}
     for path, text in _readable(root, (".env", ".env.*", "*.env", "env.example")):
-        rel = str(path.relative_to(root))
+        rel = str(path.relative_to(root).as_posix())
         for m in ENV_FILE_KEY.finditer(text):
             names.setdefault(m.group(1), rel)
             refs.setdefault(m.group(1), set()).add(rel)

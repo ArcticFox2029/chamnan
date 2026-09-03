@@ -118,7 +118,7 @@ def dangling_citations(root):
             slug = m.group(1)
             if slug in known:
                 continue
-            where = (f"{f.relative_to(wsdir)}", text.count("\n", 0, m.start()) + 1)
+            where = (f"{f.relative_to(wsdir).as_posix()}", text.count("\n", 0, m.start()) + 1)
             found.setdefault(slug, [])
             if where not in found[slug]:
                 found[slug].append(where)

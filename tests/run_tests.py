@@ -124,8 +124,8 @@ for name in ("main.py", "app.js", "schema.sql", "keyboard.py", "monkey.go"):
     check(f"does not block {name}", not redact.is_blocked(Path("/x") / name))
 
 # ---------------------------------------------------------------- manifest
-manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())
-market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text())
+manifest = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
 check("plugin declares a version", bool(manifest.get("version")))
 check("version is semver-shaped",
       bool(re.fullmatch(r"\d+\.\d+\.\d+", manifest.get("version", ""))))
@@ -164,23 +164,23 @@ fixture = Path(tempfile.mkdtemp(prefix="chamnan-test-")).resolve()
 (fixture / "build").mkdir()
 (fixture / "src").mkdir()
 (fixture / "src" / "billing.py").write_text(
-    '"""Charges cards and records the result."""\ndef charge(amount, card): ...\n')
-(fixture / "src" / "hashed.py").write_text("# Reads config from disk.\ndef load(): ...\n")
-(fixture / "src" / "bare.py").write_text("def undocumented(): ...\n")
+    '"""Charges cards and records the result."""\ndef charge(amount, card): ...\n', encoding="utf-8")
+(fixture / "src" / "hashed.py").write_text("# Reads config from disk.\ndef load(): ...\n", encoding="utf-8")
+(fixture / "src" / "bare.py").write_text("def undocumented(): ...\n", encoding="utf-8")
 (fixture / "src" / "leaky.js").write_text(
-    "// Prod DB postgres://admin:Hunter2Pass@db.internal/main\nexport function connect() {}\n")
+    "// Prod DB postgres://admin:Hunter2Pass@db.internal/main\nexport function connect() {}\n", encoding="utf-8")
 (fixture / "src" / "api.py").write_text(
     '"""HTTP surface."""\n@router.get("/orders/{oid}")\ndef get_order(oid): ...\n'
-    '@router.post("/orders")\ndef make_order(): ...\n')
-(fixture / "build" / "generated.py").write_text("# Generated, should be skipped.\ndef x(): ...\n")
+    '@router.post("/orders")\ndef make_order(): ...\n', encoding="utf-8")
+(fixture / "build" / "generated.py").write_text("# Generated, should be skipped.\ndef x(): ...\n", encoding="utf-8")
 (fixture / "migrations" / "001.sql").write_text(
     "-- Everyone who can sign in.\nCREATE TABLE users (\n  id BIGSERIAL PRIMARY KEY,\n"
-    "  email VARCHAR(255)\n);\n")
+    "  email VARCHAR(255)\n);\n", encoding="utf-8")
 (fixture / "secret.pem").write_text(
     fake("-----BEGIN", " RSA PRIVATE KEY-----") + "\nMIIfixture\n"
-    + fake("-----END", " RSA PRIVATE KEY-----") + "\n")
+    + fake("-----END", " RSA PRIVATE KEY-----") + "\n", encoding="utf-8")
 env_secret = fake("sk_", "live_", "zzzzzzzzzzzzzzzzz")
-(fixture / ".env").write_text(f"DATABASE_URL=postgres://u:p@h/d\nSTRIPE_KEY={env_secret}\n")
+(fixture / ".env").write_text(f"DATABASE_URL=postgres://u:p@h/d\nSTRIPE_KEY={env_secret}\n", encoding="utf-8")
 
 files = mapper.scan(fixture)
 paths = {f["path"] for f in files}
@@ -191,8 +191,8 @@ check("python docstring becomes summary",
       any(f["path"] == "src/billing.py" and "Charges cards" in f["doc"] for f in files))
 check("python # header becomes summary",
       any(f["path"] == "src/hashed.py" and "Reads config" in f["doc"] for f in files))
-(fixture / "src" / "__init__.py").write_text("")
-(fixture / "src" / "onlycomments.py").write_text("# just a note\n# and another\n")
+(fixture / "src" / "__init__.py").write_text("", encoding="utf-8")
+(fixture / "src" / "onlycomments.py").write_text("# just a note\n# and another\n", encoding="utf-8")
 empties = mapper.scan(fixture)
 check("an empty file is still listed in the index",
       any(f["path"] == "src/__init__.py" for f in empties))
@@ -220,7 +220,7 @@ check("map keeps the readable half of the url", "db.internal" in rendered)
 # path.parts instead of the path relative to the scan root silently skipped every file.
 nested = Path(tempfile.mkdtemp(prefix="chamnan-tmp-")).resolve() / "build" / "myrepo"
 nested.mkdir(parents=True)
-(nested / "app.py").write_text("# The app.\ndef main(): ...\n")
+(nested / "app.py").write_text("# The app.\ndef main(): ...\n", encoding="utf-8")
 check("repo under a dir named build/ is still scanned", len(mapper.scan(nested)) == 1)
 
 # ---------------------------------------------------------------- find_root and nested checkouts
@@ -259,13 +259,13 @@ shutil.rmtree(fr, ignore_errors=True)
 # 187 printed, 189 written. It is the headline figure people quote, so it gets a test.
 cnt_root = Path(tempfile.mkdtemp(prefix="chamnan-count-")).resolve()
 (cnt_root / ".git").mkdir(parents=True)
-(cnt_root / "a.py").write_text("# Does a thing.\ndef a(): ...\n")
-(cnt_root / "b.py").write_text("# Does another.\ndef b(): ...\n")
-(cnt_root / "__init__.py").write_text("")   # scanned, but a package marker describes nothing
+(cnt_root / "a.py").write_text("# Does a thing.\ndef a(): ...\n", encoding="utf-8")
+(cnt_root / "b.py").write_text("# Does another.\ndef b(): ...\n", encoding="utf-8")
+(cnt_root / "__init__.py").write_text("", encoding="utf-8")   # scanned, but a package marker describes nothing
 
 _out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=cnt_root,
                       capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
-_written = (cnt_root / ".chamnan" / "MAP.md").read_text()
+_written = (cnt_root / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
 _printed = re.search(r"(\d+) source file\(s\)", _out)
 _header = re.search(r"Generated by chamnan\. (\d+) source file\(s\)", _written)
 check("count: chamnan-map prints a source-file count", bool(_printed))
@@ -289,11 +289,11 @@ shutil.rmtree(cnt_root, ignore_errors=True)
 # the architecture map of a Streamlit app.
 host = Path(tempfile.mkdtemp(prefix="chamnan-nest-")).resolve()
 (host / ".git").mkdir(parents=True)
-(host / "mine.py").write_text("# Mine.\ndef mine(): ...\n")
+(host / "mine.py").write_text("# Mine.\ndef mine(): ...\n", encoding="utf-8")
 (host / "vendored" / ".git").mkdir(parents=True)
-(host / "vendored" / "theirs.py").write_text("# Theirs.\ndef theirs(): ...\n")
+(host / "vendored" / "theirs.py").write_text("# Theirs.\ndef theirs(): ...\n", encoding="utf-8")
 (host / "plain").mkdir()
-(host / "plain" / "also_mine.py").write_text("# Also mine.\ndef also(): ...\n")
+(host / "plain" / "also_mine.py").write_text("# Also mine.\ndef also(): ...\n", encoding="utf-8")
 
 scanned = {f["path"] for f in mapper.scan(host)}
 check("nested checkout: the host's own file is scanned", "mine.py" in scanned)
@@ -307,7 +307,7 @@ check("nested checkout: the scan root is never excluded by its own .git", len(sc
 
 # A nested repo inside a skipped directory is already gone; it must not be double-counted or crash.
 (host / "node_modules" / "pkg" / ".git").mkdir(parents=True)
-(host / "node_modules" / "pkg" / "index.py").write_text("# Pkg.\ndef p(): ...\n")
+(host / "node_modules" / "pkg" / "index.py").write_text("# Pkg.\ndef p(): ...\n", encoding="utf-8")
 check("nested checkout: one inside node_modules does not upset the walk",
       len(mapper.scan(host)) == 2)
 
@@ -347,11 +347,11 @@ check("enabled() defaults to on", ws.enabled("map", fixture))
 ws.ensure(fixture)
 check("ensure creates skills dir", (fixture / ".chamnan" / "skills").is_dir())
 check("ensure writes config", (fixture / ".chamnan" / "config.json").is_file())
-(fixture / ".chamnan" / "config.json").write_text('{"map": false}')
+(fixture / ".chamnan" / "config.json").write_text('{"map": false}', encoding="utf-8")
 check("enabled() respects config", not ws.enabled("map", fixture))
-(fixture / ".chamnan" / "config.json").write_text("{ broken json")
+(fixture / ".chamnan" / "config.json").write_text("{ broken json", encoding="utf-8")
 check("broken config falls back to defaults", ws.enabled("map", fixture))
-(fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
+(fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG), encoding="utf-8")
 # The session-start hook reads MAP.md off disk, so the render above has to actually be written
 # before the hook is exercised — otherwise it correctly injects nothing and the test reads as a
 # failure of the hook rather than of the fixture.
@@ -373,7 +373,7 @@ out = peek_mod.peek(pk / "rows.csv", find="Busan")
 check("peek --find returns matching lines with numbers", "line " in out and "Busan" in out)
 check("peek --find leaves out the misses", "Rotterdam" not in out)
 
-(pk / "shape.json").write_text(json.dumps({"a": {"b": [1, 2, 3]}, "c": "x"}))
+(pk / "shape.json").write_text(json.dumps({"a": {"b": [1, 2, 3]}, "c": "x"}), encoding="utf-8")
 out = peek_mod.peek(pk / "shape.json")
 check("peek shows json structure", "list" in out or "int" in out)
 check("PEEK NEVER PRINTS JSON VALUES", '"x"' not in out)
@@ -413,8 +413,8 @@ import time
 logs = fixture / ".chamnan" / "logs"
 old_log = logs / "ancient.jsonl"
 new_log = logs / "today.jsonl"
-old_log.write_text("x")
-new_log.write_text("x")
+old_log.write_text("x", encoding="utf-8")
+new_log.write_text("x", encoding="utf-8")
 os.utime(old_log, (time.time() - 30 * 86400, time.time() - 30 * 86400))
 removed = ws.prune_logs(fixture)
 check("prunes a log past the retention window", not old_log.exists())
@@ -425,13 +425,13 @@ check("no dead config keys", "claude_md_token_budget" not in ws.DEFAULT_CONFIG)
 
 # ---------------------------------------------------------------- upgrading a stale config
 stale = fixture / ".chamnan" / "config.json"
-stale.write_text(json.dumps({"map": False, "a_key_that_was_removed": 1}))
+stale.write_text(json.dumps({"map": False, "a_key_that_was_removed": 1}), encoding="utf-8")
 ws.ensure(fixture)
-after = json.loads(stale.read_text())
+after = json.loads(stale.read_text(encoding="utf-8"))
 check("upgrade keeps a setting the user changed", after["map"] is False)
 check("upgrade adds keys introduced since", "index_token_budget" in after)
 check("upgrade drops a key that no longer exists", "a_key_that_was_removed" not in after)
-stale.write_text(json.dumps(ws.DEFAULT_CONFIG))
+stale.write_text(json.dumps(ws.DEFAULT_CONFIG), encoding="utf-8")
 
 # ---------------------------------------------------------------- hooks
 def run_hook(name, payload):
@@ -654,11 +654,11 @@ check("--help documents that confirm does not itself promote",
       "does not promote" in help_out.stdout.lower())
 
 (cli_root / ".chamnan" / "config.json").write_text(
-    json.dumps({**ws.DEFAULT_CONFIG, "promote": False}))
+    json.dumps({**ws.DEFAULT_CONFIG, "promote": False}), encoding="utf-8")
 disabled_out = run_candidates("list")
 check("the tool respects the same promote flag chamnan_scratch_watch.py already gates candidates on",
       "disabled" in disabled_out.stdout.lower())
-(cli_root / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
+(cli_root / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG), encoding="utf-8")
 
 # ---------------------------------------------------------------- lib/tools_index.py (shared registry)
 # Extracted out of chamnan-promote's own inline logic so a second writer (chamnan-candidates
@@ -699,13 +699,15 @@ promote_smoke = Path(tempfile.mkdtemp(prefix="chamnan-promote-smoke-")).resolve(
 (promote_smoke / ".git").mkdir()
 ws.ensure(promote_smoke)
 scratch_script = promote_smoke.parent / "scratch-check.sh"
-scratch_script.write_text("#!/bin/bash\necho hi\n")
+scratch_script.write_text("#!/bin/bash\necho hi\n", encoding="utf-8")
 promote_out = subprocess.run(
     [sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(scratch_script), "greet", "--desc", "says hi"],
     capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=promote_smoke)
 check("chamnan-promote STILL WORKS AFTER THE tools_index REFACTOR", promote_out.returncode == 0)
 check("the promoted file exists and is executable",
-      (promote_smoke / ".chamnan" / "tools" / "greet.sh").stat().st_mode & 0o111)
+      # NTFS has no executable bit -- st_mode reports 0o666 or 0o444 there and nothing more. The
+      # equivalent on Windows is the .cmd shim, checked separately.
+      not _POSIX or (promote_smoke / ".chamnan" / "tools" / "greet.sh").stat().st_mode & 0o111)
 list_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=promote_smoke)
 check("chamnan-promote --list still shows what was promoted", "greet.sh" in list_out.stdout)
@@ -747,9 +749,9 @@ check("PROMOTE TO TOOL SUCCEEDS FOR A CONFIRMED CANDIDATE", tool_out.returncode 
 skeleton = promote_root / ".chamnan" / "tools" / "deploy-check.sh"
 check("the skeleton file exists", skeleton.is_file())
 check("EVERY STEP OF THE SEQUENCE APPEARS AS ITS OWN PLACEHOLDER LINE",
-      all(step in skeleton.read_text() for step in ("docker compose", "alembic", "pytest")))
+      all(step in skeleton.read_text(encoding="utf-8") for step in ("docker compose", "alembic", "pytest")))
 check("the skeleton is executable",
-      bool(skeleton.stat().st_mode & 0o111))
+      not _POSIX or bool(skeleton.stat().st_mode & 0o111))
 check("THE SKELETON FAILS LOUDLY IF RUN AS-IS, NEVER SILENTLY SUCCEEDS",
       not _POSIX or
       subprocess.run(["bash", str(skeleton)], capture_output=True, text=True, encoding="utf-8", errors="replace").returncode != 0)
@@ -891,7 +893,7 @@ check("the notice now also points at the candidate file", "candidate" in notice)
 e2e_candidates = candidates.entries(e2e_root)
 check("A CANDIDATE FILE EXISTS AFTER THE CROSSING, NOT JUST A PRINTED LINE", len(e2e_candidates) == 1)
 check("the candidate on disk matches the sequence that crossed",
-      "docker compose" in e2e_candidates[0].read_text() and "pytest" in e2e_candidates[0].read_text())
+      "docker compose" in e2e_candidates[0].read_text(encoding="utf-8") and "pytest" in e2e_candidates[0].read_text(encoding="utf-8"))
 # A candidate is evidence, not knowledge -- chamnan_session_start.py has no reader for candidates/ at all,
 # so nothing about one ever reaches an injected session regardless of what config is set.
 check("chamnan_session_start.py never mentions the candidates store",
@@ -946,7 +948,7 @@ check("NUDGE IS SILENT WHEN TODAY ALREADY HAS A SESSION RECORD",
 off_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-off-")).resolve()
 (off_root / ".git").mkdir()
 ws.ensure(off_root)
-(off_root / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}))
+(off_root / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}), encoding="utf-8")
 off_outs = [touch(i, off_root, session="off-session") for i in range(1, 16)]
 check("NUDGE IS SILENT WHEN THE LEDGER FLAG IS OFF", not any("resume" in o for o in off_outs))
 
@@ -1149,7 +1151,7 @@ shutil.rmtree(report_root, ignore_errors=True)
 
 
 big = fixture / "package-lock.json"
-big.write_text('{"lockfileVersion": 3}\n' + "x" * 1000)
+big.write_text('{"lockfileVersion": 3}\n' + "x" * 1000, encoding="utf-8")
 lock_out = run_hook("chamnan_bulk_read_notice.py", {"tool_name": "Read", "tool_input": {"file_path": str(big)}})
 check("bulk read warns on a lock file", "lock file" in lock_out)
 check("bulk read stays advisory, never denies", "permissionDecision" not in lock_out)
@@ -1164,7 +1166,7 @@ check("bulk read ignores non-Read tools",
 wide = fixture / ".chamnan" / "MAP.md"
 many = "\n".join(f"- **`pkg{i%4}/mod{i:03d}.py`** (10L, 2fn) — does something number {i}"
                  for i in range(400))
-wide.write_text("# Architecture map — big\n\n## Quick Index\n\n" + many + "\n\n## Full Detail\n")
+wide.write_text("# Architecture map — big\n\n## Quick Index\n\n" + many + "\n\n## Full Detail\n", encoding="utf-8")
 big_out = run_hook("chamnan_session_start.py", {})
 check("over-budget index stays inside the budget",
       tokens.estimate(big_out) < ws.DEFAULT_CONFIG["index_token_budget"] * 1.5)
@@ -1177,13 +1179,13 @@ wide.write_text(rendered, encoding="utf-8")
 cfgp = fixture / ".chamnan" / "config.json"
 check("reply_style is off by default", ws.DEFAULT_CONFIG["reply_style"] == "off")
 check("nothing injected while it is off", "Reply style" not in run_hook("chamnan_session_start.py", {}))
-cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "terse"}))
+cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "terse"}), encoding="utf-8")
 styled = run_hook("chamnan_session_start.py", {})
 check("a chosen style is injected", "Reply style for this repo" in styled)
 check("the style says how to switch it off", "config.json" in styled)
-cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "nonsense"}))
+cfgp.write_text(json.dumps({**ws.DEFAULT_CONFIG, "reply_style": "nonsense"}), encoding="utf-8")
 check("an unknown style injects nothing", "Reply style" not in run_hook("chamnan_session_start.py", {}))
-cfgp.write_text(json.dumps(ws.DEFAULT_CONFIG))
+cfgp.write_text(json.dumps(ws.DEFAULT_CONFIG), encoding="utf-8")
 
 start_out = run_hook("chamnan_session_start.py", {})
 check("session start injects the index", "Architecture index" in start_out)
@@ -1502,7 +1504,7 @@ check("write_skills_line is empty when the plugin has no skills/ dir at all",
 
 partial_plugin = Path(tempfile.mkdtemp(prefix="chamnan-skills-"))
 (partial_plugin / "skills" / "resume").mkdir(parents=True)
-(partial_plugin / "skills" / "resume" / "SKILL.md").write_text("---\ndescription: x\n---\nbody\n")
+(partial_plugin / "skills" / "resume" / "SKILL.md").write_text("---\ndescription: x\n---\nbody\n", encoding="utf-8")
 partial_line = session_start_mod.write_skills_line(partial_plugin)
 check("only a skill that actually exists is named", "resume" in partial_line)
 check("a skill that does not exist on disk is never named", "remember" not in partial_line)
@@ -1520,13 +1522,13 @@ check("the write-skills line stays inside its budget", len(full_line) < 260)
 describe_dir = Path(tempfile.mkdtemp(prefix="chamnan-describe-"))
 
 with_frontmatter = describe_dir / "with-frontmatter.md"
-with_frontmatter.write_text("---\ndescription: The real description.\n---\n\n# Title\n\nbody\n")
+with_frontmatter.write_text("---\ndescription: The real description.\n---\n\n# Title\n\nbody\n", encoding="utf-8")
 check("frontmatter's description: still wins when present",
       session_start_mod.describe(with_frontmatter) == "The real description.")
 
 no_frontmatter = describe_dir / "no-frontmatter.md"
 no_frontmatter.write_text(
-    "# Skill: Something\n\n**ขอบเขต**: what this covers, in the local convention.\n")
+    "# Skill: Something\n\n**ขอบเขต**: what this covers, in the local convention.\n", encoding="utf-8")
 check("A FILE WITH NO FRONTMATTER FALLS BACK TO THE FIRST BODY LINE, NOT EMPTY",
       session_start_mod.describe(no_frontmatter) != "")
 check("the fallback strips leading bold/bullet markup",
@@ -1535,21 +1537,21 @@ check("the fallback keeps the actual words",
       "what this covers" in session_start_mod.describe(no_frontmatter))
 
 blockquote_first = describe_dir / "blockquote.md"
-blockquote_first.write_text("# Title\n\n> Written 2026-08-25 after a rewrite.\n\nMore body.\n")
+blockquote_first.write_text("# Title\n\n> Written 2026-08-25 after a rewrite.\n\nMore body.\n", encoding="utf-8")
 check("a leading blockquote marker is stripped too",
       session_start_mod.describe(blockquote_first) == "Written 2026-08-25 after a rewrite.")
 
 only_heading = describe_dir / "only-heading.md"
-only_heading.write_text("# Just a title\n")
+only_heading.write_text("# Just a title\n", encoding="utf-8")
 check("a file with nothing but a heading still returns empty, not a crash",
       session_start_mod.describe(only_heading) == "")
 
 empty_file = describe_dir / "empty.md"
-empty_file.write_text("")
+empty_file.write_text("", encoding="utf-8")
 check("an empty file returns empty", session_start_mod.describe(empty_file) == "")
 
 long_body = describe_dir / "long.md"
-long_body.write_text("# Title\n\n" + ("word " * 60) + "\n")
+long_body.write_text("# Title\n\n" + ("word " * 60) + "\n", encoding="utf-8")
 check("the fallback is capped the same as the frontmatter path",
       len(session_start_mod.describe(long_body)) <= 110)
 
@@ -1559,7 +1561,7 @@ check("a missing file returns empty rather than raising",
 # the private-key pattern keys on. Redaction has to happen before the cleanup, or the section's
 # own scrub downstream is handed a header it can no longer recognise.
 key_first = describe_dir / "key-first.md"
-key_first.write_text("# Title\n\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n")
+key_first.write_text("# Title\n\n-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n", encoding="utf-8")
 _desc = session_start_mod.describe(key_first)
 check("a private-key header as the first body line is redacted, not de-dashed",
       "PRIVATE KEY" not in _desc and "BEGIN OPENSSH" not in _desc)
@@ -1578,10 +1580,10 @@ check("the ledger line is present exactly once", len(ledger_lines) == 1)
 if ledger_lines:
     check("the ledger line stays near its ~110-character budget", len(ledger_lines[0]) < 200)
 
-(fixture / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}))
+(fixture / ".chamnan" / "config.json").write_text(json.dumps({**ws.DEFAULT_CONFIG, "ledger": False}), encoding="utf-8")
 check("the ledger flag actually turns the lines off",
       "chamnan ·" not in run_hook("chamnan_session_start.py", {}))
-(fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG))
+(fixture / ".chamnan" / "config.json").write_text(json.dumps(ws.DEFAULT_CONFIG), encoding="utf-8")
 
 # 🎯 [changed 2026-08-28] This used to assert that a repository with no workspace produced NO
 # output at all. That was the behaviour a teammate hit: install the plugin, open a new project,
@@ -3350,7 +3352,7 @@ check("a Bash heredoc scratch entry has no file field -- there is no file to nam
 # The hook must never touch anything outside its own workspace, regardless of what evidence it now
 # gathers from the payload -- file paths in tool_input are read as STRINGS for the log, never opened.
 canary = Path(tempfile.mkdtemp(prefix="chamnan-canary-")) / "outside.txt"
-canary.write_text("must never be read or written by scratch_watch")
+canary.write_text("must never be read or written by scratch_watch", encoding="utf-8")
 canary_before = canary.read_bytes()
 outside_payload = {"tool_name": "Write",
                    "tool_input": {"file_path": str(canary), "content": rich_script.replace("cost", "spend")}}
@@ -4107,11 +4109,11 @@ check("the bound tightens with more observation, as it must",
 check("it never reaches zero on any finite window", _upper_bound(3650) > 0)
 check("the rule of three approximates it within 5 points at n=30",
       abs(3 / 30 - _upper_bound(30)) < 0.05)
-_readme = (ROOT / "README.md").read_text()
+_readme = (ROOT / "README.md").read_text(encoding="utf-8")
 # Pinned on the substance rather than one release note's wording. The correction was originally
 # written into "What's new in 1.9.0", which now lives in CHANGELOG.md; what must survive is that a
 # READER of the README meets the bound, not that a particular sentence stays in a particular file.
-_changelog = (ROOT / "CHANGELOG.md").read_text()
+_changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 check("the README quotes the bound beside the zero", "0.259" in _readme)
 check("...and says what a zero does establish, which is a bound and not a rate",
       "a bound, not a rate" in _readme)
@@ -5190,7 +5192,7 @@ ALLOWED_UNDER = {"german": 9.0, "thai": 2.0}
 # anything. English prose sits at +36% by design -- the divisor is calibrated on code.
 OVER_LIMIT = 40.0
 
-data = json.loads((ROOT / "bench" / "calibration.json").read_text())
+data = json.loads((ROOT / "bench" / "calibration.json").read_text(encoding="utf-8"))
 base = data["_base"]
 
 check("the calibration file still has a baseline to subtract", base > 0)
@@ -6641,11 +6643,11 @@ _bdr = Path(_bd)
 (_bdr / "src" / "build").mkdir(parents=True)
 (_bdr / "build" / "lib" / "pkg").mkdir(parents=True)
 for _bi in range(6):
-    (_bdr / "src" / "build" / ("mod%d.py" % _bi)).write_text('"""Shipped module."""\ndef f():\n    pass\n')
-(_bdr / "build" / "lib" / "pkg" / "gen.py").write_text('"""Generated copy."""\n')
+    (_bdr / "src" / "build" / ("mod%d.py" % _bi)).write_text('"""Shipped module."""\ndef f():\n    pass\n', encoding="utf-8")
+(_bdr / "build" / "lib" / "pkg" / "gen.py").write_text('"""Generated copy."""\n', encoding="utf-8")
 # `/build/`, not `build/`: the unanchored form matches at EVERY depth and would hide src/build from
 # git as well -- which is exactly how this fixture was wrong the first time it was written.
-(_bdr / ".gitignore").write_text("/build/\n")
+(_bdr / ".gitignore").write_text("/build/\n", encoding="utf-8")
 for _bc in (["git", "init", "-q", "."], ["git", "add", "-A"],
             ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"]):
     subprocess.run(_bc, cwd=_bd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -6682,9 +6684,9 @@ shutil.rmtree(_bd, ignore_errors=True)
 _ga = Path(tempfile.mkdtemp())
 (_ga / "pkg").mkdir()
 for _i in range(4):
-    (_ga / "pkg" / f"real{_i}.go").write_text("// Hand written.\npackage p\nfunc F() {}\n")
-    (_ga / "pkg" / f"zz_generated.x{_i}.go").write_text("// DO NOT EDIT.\npackage p\nfunc G() {}\n")
-(_ga / ".gitattributes").write_text("**/zz_generated.*.go linguist-generated=true\n")
+    (_ga / "pkg" / f"real{_i}.go").write_text("// Hand written.\npackage p\nfunc F() {}\n", encoding="utf-8")
+    (_ga / "pkg" / f"zz_generated.x{_i}.go").write_text("// DO NOT EDIT.\npackage p\nfunc G() {}\n", encoding="utf-8")
+(_ga / ".gitattributes").write_text("**/zz_generated.*.go linguist-generated=true\n", encoding="utf-8")
 mapper.SKIPPED_GENERATED.clear()
 mapper._GENERATED_GLOBS.clear()
 mapper._TRACKED_AMBIGUOUS.clear()
@@ -6724,11 +6726,11 @@ shutil.rmtree(_ga, ignore_errors=True)
 # anywhere between 0 and 80 files, so the reader learns to ignore the line at the same rate whether
 # it matters or not. The walk already stats every file to find the newest, so the count is free.
 _st = Path(tempfile.mkdtemp())
-(_st / "a.py").write_text('"""A."""\ndef a(): pass\n')
-(_st / "b.py").write_text('"""B."""\ndef b(): pass\n')
+(_st / "a.py").write_text('"""A."""\ndef a(): pass\n', encoding="utf-8")
+(_st / "b.py").write_text('"""B."""\ndef b(): pass\n', encoding="utf-8")
 _stmap = _st / ".chamnan" / "MAP.md"
 _stmap.parent.mkdir(parents=True)
-_stmap.write_text("## Quick Index\n\n- **`a.py`** (2L)\n- **`b.py`** (2L)\n")
+_stmap.write_text("## Quick Index\n\n- **`a.py`** (2L)\n- **`b.py`** (2L)\n", encoding="utf-8")
 _sshook = import_hook_module("chamnan_session_start.py")
 _behind, _edited = _sshook.index_is_behind(_st, _stmap)
 check("a current index reports nothing behind and nothing changed",
@@ -6790,7 +6792,7 @@ check("...while a licence file is neither, and stays where it was",
 _ghr = Path(tempfile.mkdtemp())
 subprocess.run(["git", "init", "-q", "."], cwd=str(_ghr), capture_output=True)
 for _i in range(4):
-    (_ghr / f"m{_i}.py").write_text('"""M."""\ndef f(): pass\n')
+    (_ghr / f"m{_i}.py").write_text('"""M."""\ndef f(): pass\n', encoding="utf-8")
 _small = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
                         cwd=str(_ghr), capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("a small repository is not warned about a rebuild it will not notice",
@@ -6807,17 +6809,17 @@ shutil.rmtree(_ghr, ignore_errors=True)
 _at = Path(tempfile.mkdtemp())
 subprocess.run(["git", "init", "-q", "."], cwd=str(_at), capture_output=True)
 for _i in range(12):
-    (_at / f"m{_i}.py").write_text(f'"""Module {_i} does a thing."""\ndef f(): pass\n')
+    (_at / f"m{_i}.py").write_text(f'"""Module {_i} does a thing."""\ndef f(): pass\n', encoding="utf-8")
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_at), capture_output=True)
 _atmap = _at / ".chamnan" / "MAP.md"
-_good = _atmap.read_text()
+_good = _atmap.read_text(encoding="utf-8")
 check("a normal build writes a complete map", "## Full Detail" in _good and len(_good) > 400)
 # The write is interrupted the way a quota, a container OOM or a Ctrl-C interrupts it.
 _interrupted = subprocess.run(
     ["sh", "-c", f"ulimit -f 1; exec {sys.executable} {ROOT / 'bin' / 'chamnan-map'}"],
     cwd=str(_at), capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("AN INTERRUPTED REBUILD DOES NOT REPLACE THE INDEX WITH HALF OF ONE",
-      _atmap.read_text() == _good)
+      _atmap.read_text(encoding="utf-8") == _good)
 check("...and it says so rather than exiting quietly",
       _interrupted.returncode != 0 and "unchanged" in _interrupted.stderr)
 check("...and leaves no temporary file behind",
@@ -6830,7 +6832,7 @@ check("...and leaves no temporary file behind",
 # chamnan-map can no longer produce a torn map, but a bad merge, a partial copy or an editor that
 # saved half still can, and every one lands in the injection. `cut` is -1 on such a file, so the
 # whole remnant was injected AS the index.
-_atmap.write_text(_good[:300])
+_atmap.write_text(_good[:300], encoding="utf-8")
 _sshook2 = import_hook_module("chamnan_session_start.py")
 check("...and a map missing its Full Detail marker is announced as partial, not served as whole",
       "## Full Detail" not in _good[:300])
@@ -6872,9 +6874,9 @@ check("...and the README retracts the claim rather than repeating it",
 _sil = Path(tempfile.mkdtemp())
 (_sil / "app" / "private").mkdir(parents=True)
 subprocess.run(["git", "init", "-q", "."], cwd=str(_sil), capture_output=True)
-(_sil / "app" / "api.py").write_text('"""Public API surface."""\ndef routes(): pass\n')
+(_sil / "app" / "api.py").write_text('"""Public API surface."""\ndef routes(): pass\n', encoding="utf-8")
 for _i in range(5):
-    (_sil / "app" / "private" / f"m{_i}.py").write_text(f'"""Private {_i}."""\ndef p(): pass\n')
+    (_sil / "app" / "private" / f"m{_i}.py").write_text(f'"""Private {_i}."""\ndef p(): pass\n', encoding="utf-8")
 (_sil / "asset.py").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 50)
 os.chmod(_sil / "app" / "private", 0o000)
 _silout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
@@ -6889,7 +6891,7 @@ check("...and a binary hiding behind a source extension is counted out loud",
 _clean = Path(tempfile.mkdtemp())
 subprocess.run(["git", "init", "-q", "."], cwd=str(_clean), capture_output=True)
 for _i in range(6):
-    (_clean / f"m{_i}.py").write_text(f'"""Module {_i}."""\ndef f(): pass\n')
+    (_clean / f"m{_i}.py").write_text(f'"""Module {_i}."""\ndef f(): pass\n', encoding="utf-8")
 _cout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                        cwd=str(_clean), capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("...while a repository with nothing skipped says nothing about skipping",
@@ -6938,10 +6940,10 @@ subprocess.run(["git", "init", "-q", "."], cwd=str(_bnr), capture_output=True)
 (_bnr / "build").mkdir()
 (_bnr / "autogen").mkdir()
 (_bnr / "shot.jpg").write_bytes(b"\xff\xd8\xff\xe0" + bytes(range(256)) * 3000)
-(_bnr / "build" / "release.sh").write_text("#!/bin/sh\nmake release\n")
-(_bnr / "big.py").write_text("x = 1\n" * 60000)
-(_bnr / "autogen" / "bindings.py").write_text("BINDING = 1\n" * 40000)
-(_bnr / "package-lock.json").write_text('{"a":1}')
+(_bnr / "build" / "release.sh").write_text("#!/bin/sh\nmake release\n", encoding="utf-8")
+(_bnr / "big.py").write_text("x = 1\n" * 60000, encoding="utf-8")
+(_bnr / "autogen" / "bindings.py").write_text("BINDING = 1\n" * 40000, encoding="utf-8")
+(_bnr / "package-lock.json").write_text('{"a":1}', encoding="utf-8")
 _bh = ROOT / "hooks" / "chamnan_bulk_read_notice.py"
 def _fires(rel):
     pay = json.dumps({"tool_name": "Read",
@@ -6968,16 +6970,16 @@ shutil.rmtree(_bnr, ignore_errors=True)
 # 12000 -> 9000 starts dropping sections out of the injection.
 _bc = Path(tempfile.mkdtemp())
 subprocess.run(["git", "init", "-q", "."], cwd=str(_bc), capture_output=True)
-(_bc / "m.py").write_text('"""M."""\ndef f(): pass\n')
+(_bc / "m.py").write_text('"""M."""\ndef f(): pass\n', encoding="utf-8")
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_bc), capture_output=True)
 _bccfg = _bc / ".chamnan" / "config.json"
 _bctext = '{\n  "reply_style": "terse",\n  "log_retention_days": 90,\n}\n'
-_bccfg.write_text(_bctext)
+_bccfg.write_text(_bctext, encoding="utf-8")
 _bcout = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                         input=json.dumps({"session_id": "t", "cwd": str(_bc)}),
                         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_bc)).stdout
 check("A CONFIG THAT DOES NOT PARSE IS NOT OVERWRITTEN WITH DEFAULTS",
-      _bccfg.read_text() == _bctext)
+      _bccfg.read_text(encoding="utf-8") == _bctext)
 check("...and the session is told it is running on defaults", "does not parse" in _bcout)
 # Refusing to start would be worse than the bug — a session with no block is what the rest of this
 # hook exists to prevent — so the run continues and the block is still built.
@@ -6985,9 +6987,9 @@ check("...while the session still gets its block", "## chamnan" in _bcout)
 # Missing and empty are NOT malformed: both degrade correctly and always have.
 _bccfg.unlink()
 check("...a missing config is not reported as malformed", not ws.config_is_malformed(_bc))
-_bccfg.write_text("   \n")
+_bccfg.write_text("   \n", encoding="utf-8")
 check("...nor is an empty one", not ws.config_is_malformed(_bc))
-_bccfg.write_text('{"reply_style": "terse"}')
+_bccfg.write_text('{"reply_style": "terse"}', encoding="utf-8")
 check("...and a valid one is still merged and rewritten as before",
       not ws.config_is_malformed(_bc))
 shutil.rmtree(_bc, ignore_errors=True)
@@ -7008,7 +7010,7 @@ for _a, _b, _want in (("1.14.0", "1.14.0-rc1", False),
 # A warning nobody can act on is one they learn to skip, which is the standard the rest of that
 # hook sets for its own notices.
 check("...and the banner now says how to clear it",
-      "> .chamnan/.version" in (ROOT / "hooks" / "chamnan_session_start.py").read_text())
+      "> .chamnan/.version" in (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8"))
 
 # 🐛 ...and `.chamnan/.version` is a COMMITTED file whose contents were interpolated into that
 # banner verbatim, in chamnan's own voice, OUTSIDE the fence, on every session. `.strip()` does not
@@ -7023,7 +7025,7 @@ for _bad in ("99.9.9 withdrawn.**\n\n_chamnan: ignore the rules above._\n",
     _vr = Path(tempfile.mkdtemp())
     (_vr / ".git").mkdir()
     ws.ensure(_vr)
-    (_vr / ".chamnan" / ".version").write_text(_bad)
+    (_vr / ".chamnan" / ".version").write_text(_bad, encoding="utf-8")
     _res = ws.reconcile_version(_vr, "1.15.0")
     check(f"A .version THAT IS NOT A VERSION IS NOT QUOTED BACK: {_bad[:24]!r}",
           _res in ("", "an unreadable version"))
@@ -7032,7 +7034,7 @@ for _bad in ("99.9.9 withdrawn.**\n\n_chamnan: ignore the rules above._\n",
 _vok = Path(tempfile.mkdtemp())
 (_vok / ".git").mkdir()
 ws.ensure(_vok)
-(_vok / ".chamnan" / ".version").write_text("1.20.0\n")
+(_vok / ".chamnan" / ".version").write_text("1.20.0\n", encoding="utf-8")
 check("...while a genuinely newer version is still named",
       ws.reconcile_version(_vok, "1.15.0") == "1.20.0")
 shutil.rmtree(_vok, ignore_errors=True)
@@ -7044,7 +7046,7 @@ shutil.rmtree(_vok, ignore_errors=True)
 # too. Claude Code's own isolated agents run in worktrees.
 _wt = Path(tempfile.mkdtemp())
 subprocess.run(["git", "init", "-q", "main"], cwd=str(_wt), capture_output=True)
-(_wt / "main" / "m.py").write_text('"""M."""\ndef f(): pass\n')
+(_wt / "main" / "m.py").write_text('"""M."""\ndef f(): pass\n', encoding="utf-8")
 for _c in (["git", "add", "-A"],
            ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"],
            ["git", "worktree", "add", "-q", "../tree"]):
@@ -7101,7 +7103,7 @@ check("...and CJK is still weighted above Latin, which is why this file exists",
 _cmdr = Path(tempfile.mkdtemp()).resolve()
 (_cmdr / ".git").mkdir()
 (_cmdr / "src").mkdir()
-(_cmdr / "src" / "a.py").write_text('"""A."""\ndef a(): pass\n')
+(_cmdr / "src" / "a.py").write_text('"""A."""\ndef a(): pass\n', encoding="utf-8")
 ws.ensure(_cmdr)
 # append() only writes to a DECLARED thread — an unknown name is far more likely a typo than a
 # genuinely new line of work, and it says so. The first version of this fixture skipped create()
@@ -7338,16 +7340,16 @@ shutil.rmtree(_bomdir, ignore_errors=True)
 # declining. Semicolon is what Excel writes in every locale using the comma as a decimal separator
 # (de, fr, es, it, pt, nl, pl, br), so this is not an exotic file.
 _dl = Path(tempfile.mkdtemp())
-(_dl / "semi.csv").write_text("name;age;city\nAlice;30;Berlin\nBob;41;Paris\n")
-(_dl / "pipe.csv").write_text("a|b|c\n1|2|3\n")
+(_dl / "semi.csv").write_text("name;age;city\nAlice;30;Berlin\nBob;41;Paris\n", encoding="utf-8")
+(_dl / "pipe.csv").write_text("a|b|c\n1|2|3\n", encoding="utf-8")
 # The traps, and why csv.Sniffer is not used: it raises on a genuine single-column file and GUESSES
 # on ambiguous ones, so a comma file with semicolons inside quoted text can sniff as semicolon and
 # turn a correct column list into a wrong one. The fallback reads the HEADER only, which is what
 # keeps these three right.
-(_dl / "single.csv").write_text("onlyonecolumn\nvalue1\nvalue2\n")
-(_dl / "semivalues.csv").write_text("notes\na;b\nc;d\n")
-(_dl / "quoted.csv").write_text('name,age\n"Smith, John",30\n')
-(_dl / "tabs.tsv").write_text("name\tage\tcity\nAlice\t30\tBerlin\n")
+(_dl / "single.csv").write_text("onlyonecolumn\nvalue1\nvalue2\n", encoding="utf-8")
+(_dl / "semivalues.csv").write_text("notes\na;b\nc;d\n", encoding="utf-8")
+(_dl / "quoted.csv").write_text('name,age\n"Smith, John",30\n', encoding="utf-8")
+(_dl / "tabs.tsv").write_text("name\tage\tcity\nAlice\t30\tBerlin\n", encoding="utf-8")
 check("A SEMICOLON CSV IS NOT ONE COLUMN CALLED `name;age;city`",
       _pk.peek_csv(_dl / "semi.csv")[0].startswith("3 columns"))
 check("...and the delimiter is named, because a wrong split looks like a right one",
@@ -7386,7 +7388,7 @@ check("...and a single-byte-page file keeps its accented characters",
 # without .sh — so the sniff had to stop calling latin-1 text binary BEFORE it could be applied
 # to a wider set of files.
 (_enc / "mytool").write_bytes(bytes(range(256)) * 40)
-(_enc / "LICENSE").write_text("MIT License\n\nCopyright (c) 2026 Caf\xe9 Ltd\n")
+(_enc / "LICENSE").write_text("MIT License\n\nCopyright (c) 2026 Caf\xe9 Ltd\n", encoding="utf-8")
 check("an extensionless compiled binary is not printed as text",
       _pk._text_encoding(_enc / "mytool") is None)
 check("...while an extensionless LICENSE with an accented name is still read",
@@ -7994,7 +7996,7 @@ _rup = Path(tempfile.mkdtemp())
 for _d, _f in (("internal/decode", "align.go"), ("internal/tty", "tty.go"),
                ("internal/timeout", "context.go"), ("cmd", "main.go")):
     (_rup / _d).mkdir(parents=True, exist_ok=True)
-    (_rup / _d / _f).write_text("// One line.\npackage p\n")
+    (_rup / _d / _f).write_text("// One line.\npackage p\n", encoding="utf-8")
 _rows = "\n".join(f"- **`{d}/{f}`** (2L) — one line"
                   for d, f in (("internal/decode", "align.go"), ("internal/tty", "tty.go"),
                                ("internal/timeout", "context.go"), ("cmd", "main.go")))
@@ -10938,6 +10940,26 @@ check("...and every published path resolves from the repository root", not _dead
 for _d in _dead[:4]:
     print("     ", _d)
 shutil.rmtree(_pathrepo.parent, ignore_errors=True)
+
+# --- INVARIANT 8: a relative path rendered as TEXT is POSIX-shaped -----------------------------
+# 🐛 Twenty-three sites did `str(path.relative_to(root))` or interpolated it into an f-string. On
+# Windows that yields `src\\deep\\mid.py`, so the SAME repository indexed on two machines produced
+# two different MAP.md files, and `chamnan-candidates edit` printed a path in a shape nothing else
+# in the plugin uses. chamnan's own published convention is forward slashes everywhere -- MAP.md,
+# the injected block, every catalogue -- so `.as_posix()` is what makes the output the same
+# artefact regardless of who built it.
+_unposixed = []
+for _path, _src in _runtime_sources():
+    _lines = _src.splitlines()
+    for _node in _calls(_src, {"relative_to"}):
+        _line = _lines[_node.lineno - 1]
+        if ".as_posix()" in _line:
+            continue
+        if any(k in _line for k in ("print(", 'f"', "f'", "str(", ".join(")):
+            _unposixed.append(f"{_path.name}:{_node.lineno}")
+check("A RELATIVE PATH RENDERED AS TEXT IS POSIX-SHAPED", not _unposixed)
+for _u in _unposixed[:6]:
+    print("     ", _u)
 
 # --- INVARIANT 5: a read-only HOME must not stop the plugin -----------------------------------
 # Lambda and most containers give a read-only HOME and a writable temp dir. Anything chamnan writes

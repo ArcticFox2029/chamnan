@@ -260,7 +260,7 @@ def display(path, root):
     print a path to the reader, and a label is never worth an exception: the one time this raised,
     it took the whole injection with it and the session started with nothing at all."""
     try:
-        return str(Path(path).relative_to(root))
+        return str(Path(path).relative_to(root).as_posix())
     except (ValueError, TypeError):
         return Path(path).name
 
@@ -378,7 +378,7 @@ def index_is_behind(root, map_path):
                        key=lambda f: -f.stat().st_mtime)
         if not newer:
             return 0, []
-        return newest - built, [str(f.relative_to(root)) for f in newer]
+        return newest - built, [str(f.relative_to(root).as_posix()) for f in newer]
     except Exception:
         return 0, []      # never let a nicety break a session
 
