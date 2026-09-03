@@ -25,6 +25,11 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+# Native Windows: no shebang resolution, no executable bit, no POSIX shell. Declared here rather
+# than near its first use because several checks far apart need it, and a second copy of the same
+# predicate is how two platforms end up disagreeing about what they are.
+_POSIX = os.name != "nt"
+
 sys.path.insert(0, str(ROOT / "lib"))
 
 import catalogs  # noqa: E402
@@ -430,7 +435,7 @@ stale.write_text(json.dumps(ws.DEFAULT_CONFIG))
 
 # ---------------------------------------------------------------- hooks
 def run_hook(name, payload):
-    return subprocess.run([str(ROOT / "hooks" / name)], input=json.dumps(payload),
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / name)], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=fixture).stdout
 
 
@@ -746,6 +751,7 @@ check("EVERY STEP OF THE SEQUENCE APPEARS AS ITS OWN PLACEHOLDER LINE",
 check("the skeleton is executable",
       bool(skeleton.stat().st_mode & 0o111))
 check("THE SKELETON FAILS LOUDLY IF RUN AS-IS, NEVER SILENTLY SUCCEEDS",
+      not _POSIX or
       subprocess.run(["bash", str(skeleton)], capture_output=True, text=True).returncode != 0)
 check("promotion registers the tool in the shared index",
       any(e["name"] == "deploy-check.sh" for e in tools_index.load(promote_root)))
@@ -794,7 +800,7 @@ check("match_call finds nothing when the index is empty",
 def call_flaky(stderr_text="", interrupted=False):
     payload = {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/flaky.sh"},
               "tool_response": {"stdout": "", "stderr": stderr_text, "interrupted": interrupted}}
-    return subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(payload),
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=th_root).stdout
 
 
@@ -818,7 +824,7 @@ check("runs and stderr_seen both kept incrementing while silent",
       and tools_index.load(th_root)[0]["stderr_seen"] == 4)
 
 unrelated_out = subprocess.run(
-    [str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
+    [sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
     input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"},
                       "tool_response": {"stdout": "", "stderr": "", "interrupted": False}}),
     capture_output=True, text=True, cwd=th_root)
@@ -828,7 +834,7 @@ check("a command that does not invoke a promoted tool never touches the index",
 # interrupted is tracked as its own signal, independent of stderr.
 tools_index.register(th_root, {"name": "other.sh"})
 for _ in range(3):
-    subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(
+    subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(
         {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/other.sh"},
          "tool_response": {"stdout": "", "stderr": "", "interrupted": True}}),
         capture_output=True, text=True, cwd=th_root)
@@ -872,7 +878,7 @@ workflows.record(e2e_log, e2e_seq, "2026-08-02T10:00:00+07:00", tool="Bash")
 
 
 def run_scratch_watch(payload, cwd):
-    return subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(payload),
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(payload),
                           capture_output=True, text=True, cwd=cwd).stdout
 
 
@@ -1584,7 +1590,7 @@ check("the ledger flag actually turns the lines off",
 # directory that is not a repository at all — is checked in the first-session section above.
 no_workspace = Path(tempfile.mkdtemp(prefix="chamnan-no-ws-"))
 (no_workspace / ".git").mkdir()
-no_ws_out = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
+no_ws_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                            capture_output=True, text=True, cwd=no_workspace).stdout
 check("a repository with no workspace is given one on its first session",
       (no_workspace / ".chamnan" / "memory" / "decisions").is_dir())
@@ -1598,7 +1604,7 @@ check("...and is told so rather than left to guess", "just been created" in no_w
 live_root = Path("/Users/wasuplao/Documents/Lumin-App")
 live_state = live_root / ".chamnan" / "STATE.md"
 if live_state.is_file():
-    live_out = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
+    live_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                               capture_output=True, text=True, cwd=live_root).stdout
     # 🐛 These two asserted that the strings appear in stdout, and they passed for weeks while the
     # property they describe was FALSE in delivery: the block was 11,230 bytes, both headings sat
@@ -3318,7 +3324,7 @@ rich_script = ("import json\nfrom pathlib import Path\n"
               "print(f'cost={total_cost} calls={call_count}')\n")
 write_payload = {"tool_name": "Write",
                  "tool_input": {"file_path": "/tmp/probe.py", "content": rich_script}}
-run1 = subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(write_payload),
+run1 = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(write_payload),
                       capture_output=True, text=True, cwd=scratch_fixture)
 scratch_log_path = scratch_fixture / ".chamnan" / "logs" / "scratch.jsonl"
 scratch_entries = [json.loads(l) for l in scratch_log_path.read_text(encoding="utf-8").splitlines()
@@ -3332,7 +3338,7 @@ if scratch_entries:
 
 bash_payload = {"tool_name": "Bash",
                "tool_input": {"command": f"python3 - <<'PY'\n{rich_script}print(2)\nPY"}}
-subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(bash_payload),
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(bash_payload),
                capture_output=True, text=True, cwd=scratch_fixture)
 scratch_entries2 = [json.loads(l) for l in scratch_log_path.read_text(encoding="utf-8").splitlines()
                     if l.strip()]
@@ -3348,7 +3354,7 @@ canary.write_text("must never be read or written by scratch_watch")
 canary_before = canary.read_bytes()
 outside_payload = {"tool_name": "Write",
                    "tool_input": {"file_path": str(canary), "content": rich_script.replace("cost", "spend")}}
-subprocess.run([str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(outside_payload),
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")], input=json.dumps(outside_payload),
                capture_output=True, text=True, cwd=scratch_fixture)
 check("a file path named in evidence is recorded, never opened",
       canary.read_bytes() == canary_before)
@@ -5979,7 +5985,7 @@ _rows += [json.dumps({"at": _when, "kind": "scratch",
           for i in range(20)]
 (_sedir / ".chamnan" / "logs" / "scratch.jsonl").write_text("\n".join(_rows) + "\n",
                                                             encoding="utf-8")
-subprocess.run([str(ROOT / "hooks" / "chamnan_session_end.py")], input="{}", capture_output=True,
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_end.py")], input="{}", capture_output=True,
                text=True, cwd=_sedir,
                env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_sedir)))
 _dg = _sedir / ".chamnan" / "logs" / "repeat_digest.json"
@@ -6032,7 +6038,7 @@ check("...and says nothing when the host did not supply the numbers",
                                                 "prompt_cache_likely_expired": True}))
 check("a payload of the wrong shape is survived, as everywhere else in this hook",
       _ws_src.why_this_session(None) == "" and _ws_src.why_this_session({}) == "")
-_realcompact = subprocess.run([str(ROOT / "hooks" / "chamnan_session_start.py")],
+_realcompact = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                               input=json.dumps({"source": "compact"}), capture_output=True,
                               text=True, cwd=fixture).stdout
 check("...and the line reaches the real injected block, not only the function",
@@ -9498,8 +9504,11 @@ subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(_prtm
 _prdest = _prtmp / ".chamnan" / "tools" / "s.py"
 check("a promoted python script starts with a shebang",
       _prdest.is_file() and _prdest.read_text(encoding="utf-8").startswith("#!"))
-check("...and actually runs as the command it was announced as",
-      subprocess.run([str(_prdest)], capture_output=True, text=True).stdout.strip() == "ok")
+# Runs the promoted file AS A COMMAND, by path -- which is the property being tested, and is
+# POSIX-only by nature. On Windows the equivalent is the .cmd shim, checked separately.
+if _POSIX:
+    check("...and actually runs as the command it was announced as",
+          subprocess.run([str(_prdest)], capture_output=True, text=True).stdout.strip() == "ok")
 # The body must survive intact — a shebang is prepended, not substituted.
 check("...with its original first line still there", "import json" in _prdest.read_text(encoding="utf-8"))
 shutil.rmtree(_prtmp, ignore_errors=True)
@@ -10786,18 +10795,31 @@ if _POSIX_SHELL:
 # the forbidden pattern out contains the forbidden pattern. Tenth time in this project an
 # assertion has matched something other than what it named. Scoped to lines that actually LAUNCH
 # something -- a mention is not a call.
-_suite_src = Path(__file__).read_text(encoding="utf-8")
-# ...and the second version matched the COMMENT that describes the bug, which also spells the
-# pattern out. Comments are skipped: this is a check about code that runs.
-_bare_launches = [ln.strip() for ln in _suite_src.splitlines()
-                  if not ln.strip().startswith("#")
-                  and "subprocess.run(" in ln
-                  and ('[str(ROOT / "bin"' in ln or "[str(HOOK)" in ln)]
-check("NO TEST LAUNCHES A COMMAND BY BARE PATH — Windows cannot run one",
+# 🐛 `Path(__file__)` is RELATIVE on Python 3.8 (absolute only from 3.9), and this suite
+# `os.chdir()`s into a fixture long before reaching here -- so on the declared floor it raised
+# FileNotFoundError and took the whole run with it. ROOT is absolute and was computed at import.
+_suite_src = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+# Scanned with the PARSER, not with string matching. Two string-matching attempts missed
+# `subprocess.run([str(ROOT / "hooks" / name)])` -- the shape that actually broke Windows -- and
+# two more matched their own source and their own comment. A call is a node; a mention is not.
+_bare_launches = []
+for _node in ast.walk(ast.parse(_suite_src)):
+    if not (isinstance(_node, ast.Call) and isinstance(_node.func, ast.Attribute)
+            and _node.func.attr == "run"
+            and getattr(_node.func.value, "id", "") == "subprocess"):
+        continue
+    if not _node.args or not isinstance(_node.args[0], (ast.List, ast.Tuple)) or not _node.args[0].elts:
+        continue
+    _first = ast.get_source_segment(_suite_src, _node.args[0].elts[0]) or ""
+    # Only chamnan's own scripts. `git`, `sh` and `bash` are real executables on PATH and are
+    # meant to be launched by name.
+    if 'ROOT / "bin"' in _first or 'ROOT / "hooks"' in _first:
+        if "sys.executable" not in _first:
+            _bare_launches.append((_node.lineno, _first[:70]))
+check("NO TEST LAUNCHES A CHAMNAN SCRIPT BY BARE PATH — Windows cannot run one",
       not _bare_launches)
-if _bare_launches:
-    for _bl in _bare_launches[:5]:
-        print("    ", _bl[:100])
+for _ln, _txt in _bare_launches[:5]:
+    print(f"     line {_ln}: {_txt}")
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
