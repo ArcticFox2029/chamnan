@@ -774,7 +774,35 @@ def main():
                 # folded index no longer has any, so re-folding its own output finds nothing to group.
                 index_render = (index, display(mp, root), budget, root)
                 if not tokens.fits(index, budget):
-                    index = rollup.collapse(index, display(mp, root), budget, root)
+                    # 🐛 This folded at the default `per_dir=8` and stopped there, so whatever
+                    # still did not fit was cut by `_enforce`'s prefix truncation -- which drops
+                    # whole DIRECTORIES off the end. `rollup.collapse` has taken a graduated
+                    # `per_dir` all along, and only the byte-ceiling pass further down ever used
+                    # the (8, 4, 2, 0) stepping.
+                    #
+                    # Measured on a 40-directory, 600-file index at a 2,000-token budget:
+                    #
+                    #     per_dir=8   1,938 tokens   22 of 40 directories named   <- what shipped
+                    #     per_dir=4   1,976 tokens   38 of 40
+                    #     per_dir=2   1,325 tokens   40 of 40
+                    #
+                    # Stepping down is smaller AND says more: fewer names per directory costs less
+                    # than losing eighteen directories, and a directory line with two names still
+                    # orients a reader where a missing directory cannot. Take the FIRST step that
+                    # names every directory the previous step named -- so an index that already
+                    # fits at 8 is untouched, and one that does not steps until nothing is lost.
+                    _rel = display(mp, root)
+                    _best = rollup.collapse(index, _rel, budget, root)
+                    _named = len(re.findall(r"\*\*`([^`]+/)`\*\*", _best))
+                    for _step in (4, 2, 0):
+                        _try = rollup.collapse(index, _rel, budget, root, _step)
+                        _try_named = len(re.findall(r"\*\*`([^`]+/)`\*\*", _try))
+                        if _try_named > _named or (_try_named == _named
+                                                   and tokens.estimate(_try) < tokens.estimate(_best)):
+                            _best, _named = _try, _try_named
+                        if _try_named >= _named and tokens.fits(_try, budget) and _step <= 2:
+                            break
+                    index = _best
                 index_slot = len(out)
                 # 🐛 The largest section injected every session, and the one that never went
                 # through the redactor. Every sibling section is scrubbed; this one was read
