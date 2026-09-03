@@ -11937,21 +11937,79 @@ _rmtree(_bomb.parent, ignore_errors=True)
 # What was WRITTEN to `logs/scratch.jsonl` went to disk verbatim. The workspace's own .gitignore
 # says in its comment that "a credential typed into a one-off script lands in these files intact" —
 # that was a description of a defect, not a design.
-_sw_src = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8")
-check("the scratch log scrubs the line it keeps", "redact.scrub(headline(text))" in _sw_src)
-# The fingerprint is FILTERED rather than scrubbed: it is a set of tokens, and a placeholder token
-# would be a fingerprint of nothing.
-check("...and drops any fingerprint token the redactor would have removed",
-      "redact.scrub(t) == t" in _sw_src)
+# 🐛 These two were string checks — `"redact.scrub(headline(text))" in source` and
+# `"redact.scrub(t) == t" in source`. The second one asserted the presence of the HOLE: filtering
+# the fingerprint one token at a time cannot work, because the tokeniser splits on `-` before the
+# filter runs, so `sk-ant-api03-SECRET...` arrives as `api03` and a bare suffix with the prefix the
+# redactor needs already gone. The check was green for the whole time the suffix was going to disk
+# in clear text. Sixteenth vacuous assertion here, and this one was pinning a defect in place.
+#
+# Asked of the log file instead: plant one of each delimiter shape, run the real hook, read what
+# landed. A string check on this file cannot tell the difference between the fix and the hole.
 _sw_spec = importlib.util.spec_from_file_location(
     "sw_probe", str(ROOT / "hooks" / "chamnan_scratch_watch.py"))
 _sw = importlib.util.module_from_spec(_sw_spec)
 _sw_spec.loader.exec_module(_sw)
-_planted = 'AWS_SECRET_ACCESS_KEY = "AKIAIOSFODNN7EXAMPLE"\nimport boto3\n'
-check("A KEY ON A SCRATCH SCRIPT'S FIRST LINE DOES NOT REACH THE LOG VERBATIM",
-      "AKIAIOSFODNN7EXAMPLE" not in redact.scrub(_sw.headline(_planted)))
-check("...while the line still says what the script was doing",
-      "AWS_SECRET_ACCESS_KEY" in redact.scrub(_sw.headline(_planted)))
+
+# One of each class agent 2 separated: hyphen-delimited provider prefixes (which the old per-token
+# filter could not see at all), an underscore-delimited one (which it could), and a bare blob with
+# no prefix of its own, caught only by the `key = value` SHAPE the tokeniser also destroys.
+_secrets = {
+    "anthropic": "sk-ant-api03-PLANTEDSECRETVALUEXYZ123456789ABCDEFGH",
+    "slack": "xoxb-1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUvWx",
+    "gitlab": "glpat-ABCDEFGHIJKLMNOPQRST",
+    "github": "ghp_PLANTEDSECRETVALUEXYZ123456789ABCD",
+    "bare-hex-by-shape": "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
+}
+# Real surrounding content, because MIN_TOKENS wants 8 distinct 4+ character identifiers and the
+# assignments alone scrub down to seven -- a fixture under that threshold makes the hook return
+# without writing anything, and every assertion below would then be about an empty file.
+_planted_body = ("import requests\n" + "".join(
+    f'{k.upper().replace("-", "_")}_SECRET_KEY = "{v}"\n' for k, v in _secrets.items()) +
+    "def call_endpoint(session_object, timeout_seconds):\n"
+    "    response_body = session_object.post(SLACK_SECRET_KEY, timeout=timeout_seconds)\n"
+    "    return response_body.json()\n")
+# 🐛 The first version of THIS check rebuilt the pipeline itself -- `scrubbable`, then
+# `fingerprint`, then `headline` -- and mutation-testing it by restoring the old per-token filter
+# left it green, because the test never went near `main()`. Seventeenth vacuous assertion here, and
+# written in the same edit that quotes the rule against it. The hook is RUN, as a subprocess, on a
+# real workspace, and the assertion reads the file that landed on disk.
+_swdir = Path(tempfile.mkdtemp(prefix="chamnan-scratch-secrets-")).resolve()
+(_swdir / ".git").mkdir()
+ws.ensure(_swdir)
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
+               input=json.dumps({"tool_name": "Write",
+                                 "tool_input": {"file_path": "/tmp/probe_secrets.py",
+                                                "content": _planted_body}}),
+               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=_swdir)
+_swlog = _swdir / ".chamnan" / "logs" / "scratch.jsonl"
+_landed = _swlog.read_text(encoding="utf-8") if _swlog.is_file() else ""
+check("the hook wrote the entry this check is about", bool(_landed.strip()))
+_stored_fp = sorted(json.loads(_landed.splitlines()[0])["fp"]) if _landed.strip() else []
+
+_leaked = sorted(n for n, v in _secrets.items() if v.lower() in _landed.lower())
+check("NO PLANTED SECRET REACHES THE SCRATCH LOG, WHOLE OR IN PART", not _leaked)
+if _leaked:
+    print("      leaked:", _leaked)
+# A secret's random tail is the part worth having; the old hole shipped exactly that.
+_tails = sorted(n for n, v in _secrets.items()
+                if v.rsplit("-", 1)[-1].rsplit("_", 1)[-1].lower() in _landed.lower())
+check("...and neither does the random tail left behind when the prefix is split off", not _tails)
+if _tails:
+    print("      tails leaked:", _tails)
+check("...while the variable names that make the fingerprint useful are still there",
+      "anthropic_secret_key" in _stored_fp and "requests" in _stored_fp)
+_rmtree(_swdir, ignore_errors=True)
+
+# The scrub is bounded, or a large scratch file makes a PostToolUse hook wait on it. Line-aligned,
+# so a secret is never cut in half into a fragment too short for the pattern that would catch it.
+check("the scrub is bounded so a big body cannot stall the hook",
+      len(_sw.scrubbable("x" * 200 + "\n" * 3)) <= _sw.SCRUB_CEILING
+      and len(_sw.scrubbable("line\n" * 100_000)) <= _sw.SCRUB_CEILING)
+check("...and cuts on a line boundary rather than mid-secret",
+      _sw.scrubbable("a\n" * 50_000).endswith("\n"))
+check("...and leaves a body under the ceiling exactly as it was",
+      _sw.scrubbable(_planted_body) == _planted_body)
 
 
 # ------------------- half the signature was greppable and the other half was not

@@ -69,8 +69,40 @@ def body_of(payload):
     return ""
 
 
+# The redactor's own placeholder tokenises to `redacted`, and a token every scrubbed script shares
+# is a fingerprint of nothing -- worse, it drags the Jaccard overlap between two unrelated scripts
+# up. Dropped, which is the same reasoning the old per-token filter used to justify dropping
+# rather than replacing.
+PLACEHOLDER_TOKENS = {"redacted"}
+
+# How much of a body is scrubbed before it is fingerprinted. `redact.scrub` is linear at about
+# 1.5ms/KB (measured: 2 KB 2.97ms, 8 KB 12.01ms, 64 KB 114.61ms), and this hook runs on a
+# PostToolUse, so an unbounded scrub of a large scratch file is a delay on somebody's editor.
+# 8 KB yields ~397 distinct tokens against the 120 the fingerprint keeps, so the bound costs
+# nothing the digest was going to use.
+SCRUB_CEILING = 8 * 1024
+
+
+def scrubbable(text):
+    """`text` cut to `SCRUB_CEILING`, on a LINE boundary.
+
+    Cutting mid-line could leave the first half of a secret in the part that gets scrubbed, too
+    short for the pattern that would have caught it whole -- so a secret is either entirely inside
+    the scrubbed part or entirely outside it, and what is outside is never tokenised at all.
+    """
+    if len(text) <= SCRUB_CEILING:
+        return text
+    kept, used = [], 0
+    for line in text.splitlines(True):
+        if used + len(line) > SCRUB_CEILING:
+            break
+        kept.append(line)
+        used += len(line)
+    return "".join(kept)
+
+
 def fingerprint(text):
-    return set(t.lower() for t in TOKEN.findall(text))
+    return set(t.lower() for t in TOKEN.findall(text)) - PLACEHOLDER_TOKENS
 
 
 SKIP_HEAD = re.compile(r"^\s*(#|//|/\*|\*|import\b|from\b|require\(|use\b|package\b|$)")
@@ -448,6 +480,21 @@ def main():
     text = body_of(payload)
     if not text.strip():
         return 0
+    # 🐛 Scrubbed HERE, before anything tokenises it, and not once per token further down.
+    # `fp` used to be filtered per token (`redact.scrub(t) == t`, drop what the redactor touches),
+    # and that filter is defeated by its own tokeniser: `TOKEN` splits on `-`, so
+    # `sk-ant-api03-PLANTED...` reaches the filter as `api03` and a bare suffix, with the `sk-ant-`
+    # prefix that `redact.PATTERNS` needs already thrown away. Rendered: the suffix went to
+    # `scratch.jsonl` in clear text. Every hyphen-delimited provider prefix is affected -- `sk-`,
+    # `xox[baprs]-`, `xapp-`, `glpat-`, `GOCSPX-`, `pypi-` -- and so is every pattern keyed to an
+    # assignment SHAPE (`key = value`, `key: value`, `key => value`), because the `=`/`:`/`=>` the
+    # shape depends on is exactly what a token excludes. That second class is the wider one: a bare
+    # hex blob assigned to `SECRET_KEY` has no prefix of its own and was only ever caught by shape.
+    #
+    # A whole-text scrub gives every pattern the delimiters it was written against, which is how
+    # `head` was already doing it. Two scripts differing only in their secret now fingerprint the
+    # same, and for a "you have written this throwaway three times" detector that is right.
+    text = redact.scrub(scrubbable(text))
     fp = fingerprint(text)
     if len(fp) < MIN_TOKENS:
         return 0
@@ -487,10 +534,11 @@ def main():
     # being gitignored is not a reason to keep a secret in it — it still sits in the clone, in
     # plain text, for as long as the retention window.
     #
-    # `fp` is filtered rather than scrubbed: it is a set of tokens, and a placeholder token would
-    # be a fingerprint of nothing. A token that the redactor would have removed is simply dropped.
-    _head = redact.scrub(headline(text))
-    _fp = [t for t in sorted(fp)[:120] if redact.scrub(t) == t]
+    # Both derive from the already-scrubbed `text` above, so neither re-scrubs. Keeping the two
+    # in one derivation is the point: the per-token filter that used to sit on this line looked
+    # like a second net and was a hole, because it ran on tokens the redactor could no longer read.
+    _head = headline(text)
+    _fp = sorted(fp)[:120]
     entry = {
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "kind": "scratch",
