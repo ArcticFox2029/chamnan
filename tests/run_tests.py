@@ -11938,6 +11938,23 @@ check("...and the memo lives inside the call, not across calls",
 _rmtree(_grpcrepo.parent, ignore_errors=True)
 
 
+# ------------------- a run that is working and a run that is hung looked exactly alike
+# 🐛 `chamnan-map` printed nothing until it finished. An agent walking the tool as a newcomer
+# started it in the wrong directory, saw no output for two minutes, and killed it. There was no way
+# to tell a long scan from a hang except by waiting.
+_startrepo = make_workspace("chamnan-start-")
+_started = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_startrepo),
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("THE MAP SAYS WHAT IT IS INDEXING BEFORE IT STARTS", "indexing" in _started.stderr)
+check("...naming the directory, so a run in the wrong place is obvious",
+      str(_startrepo) in _started.stderr)
+# On stderr because a dozen checks compare this command's stdout byte for byte, and because it is
+# progress rather than result — a pipe must still receive exactly the report.
+check("...on stderr, leaving stdout exactly the report",
+      "indexing" not in _started.stdout and "source file(s)" in _started.stdout)
+_rmtree(_startrepo, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
