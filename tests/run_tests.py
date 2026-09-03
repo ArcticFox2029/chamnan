@@ -124,6 +124,7 @@ sys.path.insert(0, str(ROOT / "lib"))
 
 import catalogs  # noqa: E402
 import mapper  # noqa: E402
+import unicode_marks  # noqa: E402
 import peek as peek_mod  # noqa: E402
 import redact  # noqa: E402
 import assets as assets_mod  # noqa: E402
@@ -5170,6 +5171,7 @@ _rmtree(_vb.parent, ignore_errors=True)
 # source file ends with one — so every entry in the index over-reported by exactly one. It is a claim
 # the map makes about the tree, and a claim that is reliably wrong is worse than one not made.
 import mapper  # noqa: E402
+import unicode_marks  # noqa: E402
 
 # Built through mapper's own scan, not by asserting on the arithmetic — the point is the number that
 # reaches MAP.md, and a test that recomputes the formula would agree with a wrong formula.
@@ -12042,6 +12044,71 @@ check("...and not in ast's normalised form", _arg_normal not in _argmap)
 check("...and those two spellings are not the same string",
       [hex(ord(c)) for c in _arg_source] != [hex(ord(c)) for c in _arg_normal])
 _rmtree(_argrepo.parent, ignore_errors=True)
+
+
+# 🐛 `\w` in Python's `re` does not match the Mn/Mc categories, and Thai vowel signs and tone marks
+# are Mn. `ชื่อ` is four codepoints of which two are marks, so it is not a `\w+` match — and every
+# language table spelled an identifier `\w`. Measured with one name in each: go c js ts rs php
+# kotlin java cs swift sh all found `ราคา` and found NOTHING for `ชื่อ`; Ruby returned `ช`, the
+# first codepoint alone, which is worse than nothing because the index then publishes a name that
+# is not the method's.
+#
+# The commit that fixed Ruby last round said the opposite — "only Ruby did not, so this is one gap
+# rather than the 'fixed in some members of a set' shape it looked like". That was an artefact of
+# the test name: `ราคา` has no marks. Which is why this check uses a name that does.
+#
+# Through `chamnan-map` and read out of MAP.md, not through `extract_regex`: a check that calls the
+# extractor directly does not exercise the table the rewrite is applied to, and this file has two
+# vacuous assertions from exactly that shortcut already.
+_mk = "\u0e0a\u0e37\u0e48\u0e2d"          # ชื่อ  — CH + SARA UEE (Mn) + MAI EK (Mn) + O ANG
+_markrepo = Path(tempfile.mkdtemp()) / "repo"
+(_markrepo / "src").mkdir(parents=True)
+(_markrepo / ".git").mkdir()
+_polyglot = {
+    "a.go": "package main\n\nfunc %s(a int) int {\n\treturn a\n}\n",
+    "b.js": "// prices\nfunction %s(a) {\n  return a;\n}\n",
+    "c.rb": "# prices\ndef %s\n  1\nend\n",
+    "d.rs": "// prices\nfn %s(a: i32) -> i32 {\n    a\n}\n",
+    "e.java": "// prices\npublic void %s(int a) {\n}\n",
+    "f.php": "<?php\n// prices\nfunction %s($a) {\n}\n",
+    "g.swift": "// prices\nfunc %s(a: Int) {\n}\n",
+    "h.c": "/* prices */\nint %s(int a) {\n  return a;\n}\n",
+}
+for _n, _tpl in _polyglot.items():
+    (_markrepo / "src" / _n).write_text(_tpl % _mk, encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_markrepo),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_markmap = (_markrepo / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+_missing = sorted(n for n in _polyglot if _mk not in _markmap.split(n)[-1][:400])
+check("A NAME WITH A COMBINING MARK IS INDEXED IN EVERY LANGUAGE, NOT JUST THE ASCII ONES",
+      _mk in _markmap and not _missing)
+if _missing:
+    print("      not found for:", _missing)
+# The truncation is the failure that looks like success: `ช` alone in the map means the pattern
+# stopped at the first mark, which is what Ruby did after its own fix.
+check("...and not truncated at the first mark, which reads as a real name and is not one",
+      "`\u0e0a`" not in _markmap and "`\u0e0a(" not in _markmap)
+_rmtree(_markrepo.parent, ignore_errors=True)
+
+# The constant is generated. If a Python release adds a mark, this fails rather than a name
+# quietly stopping being indexed.
+_marks_now = [_c for _c in range(sys.maxunicode + 1)
+              if unicodedata.category(chr(_c)) in ("Mn", "Mc")]
+_marks_in_class = [_c for _c in _marks_now
+                   if re.match("[" + unicode_marks.MARKS + "]", chr(_c))]
+check("the generated combining-mark constant still covers every Mn/Mc codepoint",
+      len(_marks_in_class) == len(_marks_now))
+check("...and it does not reach beyond them into punctuation",
+      not any(re.match("[" + unicode_marks.MARKS + "]", _c) for _c in "\u2014\u201c.+-/ "))
+
+# `[\w:]` has to become `[\w<marks>:]` and a bare `\w*` has to become `[\w<marks>]*` — the same
+# substitution in both places produces a nested bracket and a pattern that means something else.
+check("mark_aware keeps a class a class", unicode_marks.mark_aware(r"[\w:]+")
+      == "[\\w" + unicode_marks.MARKS + ":]+")
+check("...and brackets a bare one", unicode_marks.mark_aware(r"\w*")
+      == "[\\w" + unicode_marks.MARKS + "]*")
+check("...and leaves an escaped bracket alone rather than reading it as a class",
+      unicode_marks.mark_aware(r"\[\w\]") == "\\[[\\w" + unicode_marks.MARKS + "]\\]")
 
 
 # --------------------------- the one command a stranger types to learn what a command does

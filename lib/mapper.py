@@ -45,6 +45,7 @@ import impact as impact_mod
 import redact
 import schema as schema_mod
 import tokens
+from unicode_marks import mark_aware
 
 # Directories that are never source: dependency trees, build output, VCS internals, caches.
 # Wider than tree.PRUNE_DIRS on purpose — see that constant. This list is mapper's own filter,
@@ -1029,6 +1030,34 @@ REGEX_RULES = {
               ("func", r"^\s*rpc\s+(\w+)\s*\(([^)]*)\)")],
     "graphql": [("class", r"^\s*(?:type|input|interface|enum|union)\s+(\w+)")],
 }
+
+
+# 🐛 Every table above spelled an identifier `\w`, and `\w` in Python's `re` does not match the
+# Mn/Mc categories — combining marks. `ชื่อ` is four codepoints of which two are marks, so it is
+# not a `\w+` match, and an ordinary Thai method name was invisible in TWELVE languages. Measured
+# with one name in each, before and after:
+#
+#     go c js ts rs php kotlin java cs swift sh   ราคา found      ชื่อ NOTHING
+#     rb                                          ราคา found      ชื่อ -> `ช`   (truncated!)
+#
+# Ruby's is the worse outcome of the two: `[^\W\d]\w*` starts correctly and then stops at the
+# first mark, so the index published a one-character name that is not the method's name — a fix I
+# landed for Ruby last round that traded invisibility for a wrong answer.
+#
+# **And the commit that landed it said the opposite.** It recorded "measured across seven languages
+# with the same Thai method name: go, c, js, rs, php and kotlin all found it; only Ruby did not, so
+# this is one gap rather than the 'fixed in some members of a set' shape it looked like." That
+# conclusion was an artefact of the name chosen for the test: `ราคา` has no combining marks, and
+# with one that does, every language fails. Tenth occurrence of that shape here, ruled out by a
+# measurement that could not see it.
+#
+# Rewritten over the WHOLE table in one pass rather than pattern by pattern, which is the only
+# form of this fix that cannot be applied to some languages and forgotten in others. The scanner
+# tracks whether it is inside a character class, because `[\w:]` has to become `[\w<marks>:]` and
+# a bare `\w*` has to become `[\w<marks>]*` — substituting the same text in both places produces
+# a nested bracket and a pattern that means something else entirely.
+REGEX_RULES = {lang: [(kind, mark_aware(pat)) for kind, pat in rules]
+               for lang, rules in REGEX_RULES.items()}
 EXT_LANG = {
     ".py": "py", ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js", ".ts": "js", ".tsx": "js",
     ".go": "go", ".sh": "sh", ".bash": "sh", ".command": "sh", ".zsh": "sh",

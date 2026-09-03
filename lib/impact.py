@@ -20,6 +20,8 @@ time it did without it.
 """
 import os
 import re
+
+from unicode_marks import mark_aware
 import sys
 from pathlib import Path
 
@@ -77,6 +79,12 @@ IMPORT_PATTERNS = {
     "cs": [r"^\s*using\s+(?:static\s+)?([\w.]+)"],
     "lua": [r"""require\s*\(?\s*['"]([^'"]+)['"]"""],
 }
+
+# Same reason as the language tables in `mapper.py`: `\w` does not match a combining mark, so
+# `import ชื่อ` produced no edge. Most of these capture a quoted path and were already fine; the
+# `[\w.]+` ones were not. Rewritten over the whole table so no language is left behind.
+IMPORT_PATTERNS = {lang: [mark_aware(p) for p in pats]
+                   for lang, pats in IMPORT_PATTERNS.items()}
 
 # A file is a test if its path says so. Convention rather than content, because every ecosystem
 # announces this in the path and none of them agree on how.
