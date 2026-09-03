@@ -26,12 +26,14 @@ pull-request author the one thing it exists to withhold.
 import workspace as ws
 
 from . import cursor
+from . import gemini
 
 # Registry, by the name `host.agents()` uses. `claude` is deliberately absent: its delivery is the
 # SessionStart hook, which writes no file, and inventing a file for it would create a second copy
 # of the block that nothing reads and nobody updates.
 ADAPTERS = {
     cursor.NAME: cursor,
+    gemini.NAME: gemini,
 }
 
 
@@ -45,7 +47,7 @@ def names():
     return sorted(ADAPTERS)
 
 
-def install(root, agent, body):
+def install(root, agent, body, command=""):
     """Write `body` through `agent`'s adapter. Returns the path written, or None.
 
     Writing bytes to a path is the one thing that genuinely does not vary between agents, so it
@@ -65,6 +67,12 @@ def install(root, agent, body):
     adapter = for_agent(agent)
     if adapter is None:
         return None
+    # An adapter whose install is not "write render() to TARGET" says so by defining its own.
+    # Gemini's target is the user's settings.json and has to be MERGED, and forcing that through
+    # a shared writer would mean a flag in here that only one agent ever sets -- which is the
+    # single-structure failure this package exists to avoid.
+    if hasattr(adapter, "install"):
+        return adapter.install(root, body, command)
     target = ws.Path(root) / adapter.TARGET
     target.parent.mkdir(parents=True, exist_ok=True)
     ws.atomic_write_text(target, adapter.render(body))
@@ -78,4 +86,8 @@ def ignore_line(agent):
     neither wants the other's context file in their tree.
     """
     adapter = for_agent(agent)
-    return f"/{adapter.TARGET}" if adapter else ""
+    if adapter is None or hasattr(adapter, "install"):
+        # An adapter that merges into the user's own file has nothing to ignore -- that file was
+        # theirs before chamnan touched it and stays theirs after.
+        return ""
+    return f"/{adapter.TARGET}"
