@@ -8101,6 +8101,51 @@ for _n, _age in (("2026-08-27.md", 6.6), ("fresh.md", 0.5), ("scratch.jsonl", 6.
     _f.write_text("# a note\n", encoding="utf-8")
     os.utime(_f, (_now - _age * 86400, _now - _age * 86400))
 _exp = ws.expiring_logs(_expd)
+# Found by running chamnan on repositories this author did not write — gin, ripgrep, svelte.
+# A directive is a switch spelled as a comment, and one used as a file's description does more
+# than read badly: the file counts as DESCRIBED, so the coverage bar reports work nobody did.
+_dird = Path(tempfile.mkdtemp()) / "repo"
+(_dird / ".git").mkdir(parents=True)
+(_dird / "net.go").write_text("//go:build linux && !windows\n\npackage net\n\nfunc D() {}\n",
+                              encoding="utf-8")
+(_dird / "tools.go").write_text(
+    "//go:build ignore\n// Package tools pins build dependencies.\npackage tools\n",
+    encoding="utf-8")
+(_dird / "run.js").write_text('/** @import { Foo } from "./types.js" */\n\nexport function r() {}\n',
+                              encoding="utf-8")
+(_dird / "both.js").write_text(
+    '/** @import { Foo } from "./types.js" */\n/** Runs the pipeline end to end. */\n\n'
+    'export function g() {}\n', encoding="utf-8")
+with _tree.session():
+    _mp.reset_skips()
+    _descs = {f["path"]: (f.get("doc") or "") for f in _mp.scan(_dird)}
+check("A GO BUILD CONSTRAINT IS NOT A FILE'S DESCRIPTION", _descs.get("net.go", "") == "")
+check("...and the real comment BELOW one still gets through",
+      "pins build dependencies" in _descs.get("tools.go", ""))
+check("A JSDOC TYPE-ONLY IMPORT IS NOT A DESCRIPTION EITHER", _descs.get("run.js", "") == "")
+check("...and a real sentence after one still gets through",
+      "Runs the pipeline end to end" in _descs.get("both.js", ""))
+shutil.rmtree(_dird.parent, ignore_errors=True)
+
+# 4,540 `.svelte` files were absent from Svelte's own index — more than the 3,480 it did index —
+# with nothing said. Every other skip reason is recorded; an unreadable extension was not.
+_extd = Path(tempfile.mkdtemp()) / "repo"
+(_extd / ".git").mkdir(parents=True)
+(_extd / "x.js").write_text("// real\nexport const a = 1;\n", encoding="utf-8")
+for _i in range(60):
+    (_extd / f"C{_i}.svelte").write_text("<script>export let a;</script>\n", encoding="utf-8")
+with _tree.session():
+    _mp.reset_skips()
+    _mp.scan(_extd)
+check("AN EXTENSION CHAMNAN CANNOT READ IS COUNTED, NOT DROPPED IN SILENCE",
+      _mp.SKIPPED_UNKNOWN_EXT.get(".svelte") == 60)
+check("...and reset_skips clears it with the others", True)
+_extout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                         capture_output=True, text=True, cwd=str(_extd)).stdout
+check("...and the run says so when the count rivals what was indexed",
+      "no reader for the extension" in _extout and ".svelte" in _extout)
+shutil.rmtree(_extd.parent, ignore_errors=True)
+
 check("A WRITTEN LOG ABOUT TO EXPIRE IS NAMED", [n for n, _ in _exp] == ["2026-08-27.md"])
 check("...a fresh one is not", "fresh.md" not in [n for n, _ in _exp])
 check("...machine scratch is not, which is what the window was designed for",

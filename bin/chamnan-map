@@ -403,6 +403,21 @@ def main(argv):
         named = ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6])
         more = len(mapper.SKIPPED_BUILD_DIR) - 6
         print(f"  not indexed, read as build output: {named}" + (f" +{more} more" if more > 0 else ""))
+    # 🐛 An extension chamnan cannot read was the one skip reason that said nothing. Measured on
+    # Svelte's own monorepo: 4,540 `.svelte` files missing from the index — more than the 3,480 it
+    # did index — and the run reported full coverage of what it saw.
+    #
+    # Reported only when the count is comparable to what WAS indexed: every repository is full of
+    # `.json`, `.lock` and `.png` that nobody expects an index to cover, and a line naming all of
+    # them is noise that teaches the reader to skip this whole block. A tenth of the indexed count,
+    # or fifty files, is the point at which "chamnan cannot read your main language" becomes the
+    # likelier reading.
+    _unknown = [(ext, n) for ext, n in mapper.SKIPPED_UNKNOWN_EXT.most_common()
+                if n >= max(50, len(files) // 10)]
+    if _unknown:
+        _named = ", ".join(f"{n:,} {ext}" for ext, n in _unknown[:3])
+        print(f"  not indexed, no reader for the extension: {_named}")
+        print("    chamnan reads the languages in mapper.EXT_LANG; these are not among them.")
         print("  (git-tracked directories with these names ARE indexed; these are not tracked)")
     # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
     # `__init__.py`, or any tree whose files are all empty. It crashed at this line, which is
