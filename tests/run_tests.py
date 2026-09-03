@@ -4310,6 +4310,15 @@ check("a config value of the wrong type is dropped, not handed to a comparison",
 check("...and a bool is not accepted where an int belongs, despite isinstance(True, int)",
       _wsm.load_config(_dmg)["index_token_budget"] is not True)
 (_dmg / ".chamnan" / "config.json").write_text('{"index_token_budget": 5000}', encoding="utf-8")
+# 🐛 The memo behind `load_config` was keyed on (path, mtime_ns, size), and these two configs are
+# both exactly 28 bytes -- so on a filesystem whose mtime resolution is coarser than the gap
+# between two writes, the second was silently ignored for the rest of the process. Reproduced on
+# Windows and fixed by keying on a digest of the bytes. Asserted here explicitly so the property
+# is pinned rather than depending on this fixture's byte lengths staying equal by accident.
+(_dmg / ".chamnan" / "config.json").write_text('{"index_token_budget": 7000}', encoding="utf-8")
+check("A SAME-SIZE REWRITE IS PICKED UP, NOT SERVED FROM A STALE MEMO",
+      _wsm.load_config(_dmg)["index_token_budget"] == 7000)
+(_dmg / ".chamnan" / "config.json").write_text('{"index_token_budget": 5000}', encoding="utf-8")
 check("a correctly typed value is still honoured",
       _wsm.load_config(_dmg)["index_token_budget"] == 5000)
 
@@ -9986,8 +9995,13 @@ os.symlink(_slroot.parent / "gone", _slroot / "dangling")
 # asserting that Windows is POSIX. Checked against what this platform actually resolved to.
 # `os.path.realpath` rather than `Path.is_relative_to`: the latter is 3.9+ and the declared floor
 # is 3.8, and a conditional expression choosing between them was harder to read than the property.
+# 🐛 Compared against `str(_slroot)` raw, and Windows hands back a DIFFERENT SPELLING of the same
+# place: the temp path is `C:\Users\RUNNER~1\...` while realpath expands it to
+# `C:\Users\runneradmin\...`, so the prefix test failed and the check ran where it should have
+# been skipped. Both sides go through realpath now, which is the only way to compare two names for
+# the same directory on a filesystem that has more than one name for it.
 _dangling_target = os.path.realpath(str(_slroot / "dangling"))
-if not _dangling_target.startswith(str(_slroot)):
+if not _dangling_target.startswith(os.path.realpath(str(_slroot))):
     check("...while a dangling link pointing outside is refused",
           not _ws.inside(_slroot / "dangling", _slroot))
 else:
