@@ -258,7 +258,7 @@ cnt_root = Path(tempfile.mkdtemp(prefix="chamnan-count-")).resolve()
 (cnt_root / "b.py").write_text("# Does another.\ndef b(): ...\n")
 (cnt_root / "__init__.py").write_text("")   # scanned, but a package marker describes nothing
 
-_out = subprocess.run([str(ROOT / "bin" / "chamnan-map")], cwd=cnt_root,
+_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=cnt_root,
                       capture_output=True, text=True).stdout
 _written = (cnt_root / ".chamnan" / "MAP.md").read_text()
 _printed = re.search(r"(\d+) source file\(s\)", _out)
@@ -586,7 +586,7 @@ ws.ensure(cli_root)
 
 
 def run_candidates(*args, cwd=None):
-    return subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), *args],
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), *args],
                           capture_output=True, text=True, cwd=cwd or cli_root)
 
 
@@ -696,12 +696,12 @@ ws.ensure(promote_smoke)
 scratch_script = promote_smoke.parent / "scratch-check.sh"
 scratch_script.write_text("#!/bin/bash\necho hi\n")
 promote_out = subprocess.run(
-    [str(ROOT / "bin" / "chamnan-promote"), str(scratch_script), "greet", "--desc", "says hi"],
+    [sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(scratch_script), "greet", "--desc", "says hi"],
     capture_output=True, text=True, cwd=promote_smoke)
 check("chamnan-promote STILL WORKS AFTER THE tools_index REFACTOR", promote_out.returncode == 0)
 check("the promoted file exists and is executable",
       (promote_smoke / ".chamnan" / "tools" / "greet.sh").stat().st_mode & 0o111)
-list_out = subprocess.run([str(ROOT / "bin" / "chamnan-promote"), "--list"],
+list_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
                           capture_output=True, text=True, cwd=promote_smoke)
 check("chamnan-promote --list still shows what was promoted", "greet.sh" in list_out.stdout)
 shutil.rmtree(promote_smoke, ignore_errors=True)
@@ -714,7 +714,7 @@ ws.ensure(promote_root)
 
 
 def run_pcand(*args):
-    return subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), *args],
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), *args],
                           capture_output=True, text=True, cwd=promote_root)
 
 
@@ -836,7 +836,7 @@ other_entry = next(e for e in tools_index.load(th_root) if e["name"] == "other.s
 check("INTERRUPTED IS TRACKED SEPARATELY FROM STDERR",
       other_entry["interrupted"] == 3 and other_entry["stderr_seen"] == 0)
 
-demote_out = subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), "demote", "flaky.sh"],
+demote_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), "demote", "flaky.sh"],
                             capture_output=True, text=True, cwd=th_root)
 check("DEMOTE REMOVES THE TOOL FROM THE INDEX",
       not any(e["name"] == "flaky.sh" for e in tools_index.load(th_root)))
@@ -846,12 +846,12 @@ check("demote writes a fresh candidate carrying the tool's own description",
       any("sometimes noisy" in p.read_text(encoding="utf-8") for p in candidates.entries(th_root)))
 check("demote reports success", demote_out.returncode == 0)
 
-missing_demote = subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), "demote", "nope.sh"],
+missing_demote = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), "demote", "nope.sh"],
                                 capture_output=True, text=True, cwd=th_root)
 check("demoting a tool that does not exist fails cleanly, not with a traceback",
       missing_demote.returncode == 1 and "Traceback" not in missing_demote.stderr)
 
-no_arg_demote = subprocess.run([str(ROOT / "bin" / "chamnan-candidates"), "demote"],
+no_arg_demote = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), "demote"],
                                capture_output=True, text=True, cwd=th_root)
 check("demote with no name is a usage error, not an IndexError",
       no_arg_demote.returncode == 2 and "Traceback" not in no_arg_demote.stderr)
@@ -1007,7 +1007,7 @@ report_root = Path(tempfile.mkdtemp(prefix="chamnan-report-inv-")).resolve()
 ws.ensure(report_root)
 (report_root / ".chamnan" / "memory" / "decisions" / "d.md").write_text(
     "# A decision\n\nbody\n", encoding="utf-8")
-report_out = subprocess.run([str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
+report_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
                             cwd=report_root).stdout
 check("chamnan-report prints the knowledge inventory heading", "Knowledge inventory" in report_out)
 check("the inventory shows every store, including empty ones",
@@ -1041,7 +1041,7 @@ check("...and one that does exist is not", "a-real-lesson" not in [s for s, _ in
 _places = dict(_dang)["never-written"]
 check("...and it says which file and line cited it",
       _places[0][0] == "STATE.md" and isinstance(_places[0][1], int))
-_dgout = subprocess.run([str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
+_dgout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
                         cwd=_dgd).stdout
 check("...and chamnan-report prints it with what to do about it",
       "never-written" in _dgout and "/chamnan:remember" in _dgout)
@@ -1132,7 +1132,7 @@ report_log.write_text(
 tools_index.register(report_root, {"name": "deploy-check.sh", "desc": "x",
                                     "added": "2026-08-27T10:00:00+07:00", "origin": "y"})
 tools_index.record_call(report_root, "deploy-check.sh")
-usage_out = subprocess.run([str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
+usage_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True,
                            cwd=report_root).stdout
 check("logged calls are counted per command", "chamnan-map" in usage_out and "2 times" in usage_out)
 check("the usage span names the oldest and newest date logged",
@@ -2649,7 +2649,7 @@ def _mem(root, category, name, body):
     return p
 
 def run_age(root):
-    return subprocess.run([str(ROOT / "bin" / "chamnan-age")],
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-age")],
                           capture_output=True, text=True, cwd=root)
 
 ag_root = Path(tempfile.mkdtemp(prefix="chamnan-aging-")).resolve()
@@ -2802,7 +2802,7 @@ check("but the same name fully qualified still resolves",
 # The CLI, including the join that is the point of the stage: an import graph cannot say "last
 # time this changed it was rolled back", and that is the half that changes what somebody does.
 def run_impact(root, *args):
-    return subprocess.run([str(ROOT / "bin" / "chamnan-impact"), *args],
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-impact"), *args],
                           capture_output=True, text=True, cwd=root)
 
 im_root = Path(tempfile.mkdtemp(prefix="chamnan-impact-")).resolve()
@@ -2948,7 +2948,7 @@ check("and so does one after that", bounded["platform"] == "something")
 
 # The CLI.
 def run_env(root, *args):
-    return subprocess.run([str(ROOT / "bin" / "chamnan-env"), *args],
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-env"), *args],
                           capture_output=True, text=True, cwd=root)
 
 ev_cli = Path(tempfile.mkdtemp(prefix="chamnan-env-cli-")).resolve()
@@ -3082,7 +3082,7 @@ shutil.rmtree(led_root, ignore_errors=True)
 # The CLI's refusal is the design decision made visible: an unknown name prints the declared list
 # rather than quietly starting a second thread for the same subject.
 def run_timeline(root, *args):
-    return subprocess.run([str(ROOT / "bin" / "chamnan-timeline"), *args],
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), *args],
                           capture_output=True, text=True, cwd=root)
 
 cli_root = Path(tempfile.mkdtemp(prefix="chamnan-timeline-cli-")).resolve()
@@ -3742,7 +3742,7 @@ srepo = Path(tempfile.mkdtemp()) / "s"
 (srepo / ".git").mkdir(parents=True)
 (srepo / "app.py").write_text('"""Does a thing."""\n', encoding="utf-8")
 subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True, cwd=srepo)
-subprocess.run([str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True, cwd=srepo)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True, cwd=srepo)
 fresh = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
                        cwd=srepo).stdout
 check("a freshly built index is not called stale", "Source has changed since" not in fresh)
@@ -3756,7 +3756,7 @@ check("...and the notice names the command that fixes it", "chamnan-map" in stal
 check("the gap is not rounded up into a day", "1 day behind" not in stale)
 # A log line written overnight must not make the ARCHITECTURE look out of date.
 (srepo / ".chamnan" / "logs" / "noise.log").write_text("x\n", encoding="utf-8")
-subprocess.run([str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True, cwd=srepo)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True, cwd=srepo)
 _time.sleep(1.1)
 (srepo / ".chamnan" / "logs" / "noise.log").write_text("y\n", encoding="utf-8")
 quiet = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True,
@@ -6053,10 +6053,10 @@ check("a bin/ wrapper naming a hook file names one that exists",
       all((ROOT / "hooks" / _h).is_file() for _w, _h in _named_hooks))
 check("...and there is at least one such reference, so this is not passing on an empty set",
       len(_named_hooks) >= 1)
-_prev = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--preview"], capture_output=True,
+_prev = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--preview"], capture_output=True,
                        text=True, cwd=fixture)
 check("chamnan-map --preview actually runs", _prev.returncode == 0 and _prev.stdout.strip())
-_expl = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--explain"], capture_output=True,
+_expl = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--explain"], capture_output=True,
                        text=True, cwd=fixture)
 check("...and so does --explain, which the README cites by name", _expl.returncode == 0)
 
@@ -9493,7 +9493,7 @@ check("the printed command is checked against the file rather than assumed",
 _prtmp = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-promote-shebang-"))
 (_prtmp / ".chamnan" / "tools").mkdir(parents=True)
 (_prtmp / "s.py").write_text("import json\nprint('ok')\n", encoding="utf-8")
-subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_prtmp / "s.py"), "s",
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(_prtmp / "s.py"), "s",
                 "--desc", "d"], cwd=_prtmp, capture_output=True, text=True)
 _prdest = _prtmp / ".chamnan" / "tools" / "s.py"
 check("a promoted python script starts with a shebang",
@@ -9519,12 +9519,12 @@ _pkroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-key-"))
 (_pkroot / "id_rsa_x").write_text(
     "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----\n", encoding="utf-8")
 (_pkroot / "fine.py").write_text("print('hi')\n", encoding="utf-8")
-_pkr = subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "id_rsa_x"), "k",
+_pkr = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "id_rsa_x"), "k",
                        "--desc", "d"], cwd=_pkroot, capture_output=True, text=True)
 check("...and says so rather than failing silently", "refusing" in _pkr.stderr)
 check("...and the key does not land in the committed directory",
       not any(p.name.startswith("k") for p in (_pkroot / ".chamnan" / "tools").iterdir()))
-subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "fine.py"), "fine",
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(_pkroot / "fine.py"), "fine",
                 "--desc", "d"], cwd=_pkroot, capture_output=True, text=True)
 check("an ordinary script is still promoted", (_pkroot / ".chamnan" / "tools" / "fine.py").is_file())
 shutil.rmtree(_pkroot, ignore_errors=True)
@@ -9627,12 +9627,12 @@ for _on in ("notes.txt", "app.py", "netrc_helper.py", "pgpass_setup.md"):
 # wrong directory and rewrote a real repository's index.
 for _hc in ("chamnan-map", "chamnan-promote"):
     for _hf in ("--help", "-h"):
-        _hr = subprocess.run([str(ROOT / "bin" / _hc), _hf], capture_output=True, text=True,
+        _hr = subprocess.run([sys.executable, str(ROOT / "bin" / _hc), _hf], capture_output=True, text=True,
                              cwd=tempfile.mkdtemp())
         check(f"{_hc} {_hf} prints help and exits cleanly",
               _hr.returncode == 0 and _hc in _hr.stdout)
 # An unknown flag used to be dropped in silence and the command did something else.
-_hu = subprocess.run([str(ROOT / "bin" / "chamnan-map"), "--nonsense"], capture_output=True,
+_hu = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--nonsense"], capture_output=True,
                      text=True, cwd=tempfile.mkdtemp())
 check("an unknown flag is refused rather than ignored",
       _hu.returncode != 0 and "unknown flag" in _hu.stderr)
@@ -9660,7 +9660,7 @@ def _fire_nu(sid):
 _fire_nu("first")            # creates the workspace and says so once
 _said = [("no architecture index" in _fire_nu(f"s{i}")) for i in range(3)]
 check("a repository with no index is told so on EVERY session, not just the first", all(_said))
-subprocess.run([str(ROOT / "bin" / "chamnan-map")], cwd=_nuroot, capture_output=True, text=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_nuroot, capture_output=True, text=True)
 check("...and told nothing once it has one", "no architecture index" not in _fire_nu("after"))
 shutil.rmtree(_nuroot.parent, ignore_errors=True)
 
@@ -9717,7 +9717,7 @@ _ror = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-ro-"))
 (_ror / ".chamnan" / "tools" / "index.json").write_text("[]", encoding="utf-8")
 (_ror / ".chamnan" / "tools" / "index.json").chmod(0o444)
 (_ror / "s.py").write_text("print(1)\n", encoding="utf-8")
-_ropr = subprocess.run([str(ROOT / "bin" / "chamnan-promote"), str(_ror / "s.py"), "s",
+_ropr = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), str(_ror / "s.py"), "s",
                         "--desc", "d"], cwd=_ror, capture_output=True, text=True)
 check("promoting into a read-only index fails cleanly", _ropr.returncode != 0)
 check("...and leaves no orphaned executable behind, so the name can be retried",
@@ -10531,6 +10531,13 @@ else:
         _real = shutil.which(_tool)
         if _real:
             os.symlink(_real, _fakebin / _tool)
+    # 🐛 These two fixtures carried no package manager, so on Linux the script reached the
+    # "unrecognised system" branch and printed no fix command — and the checks below failed in CI
+    # while passing here, because macOS falls through to a Homebrew branch that does print one.
+    # Both managers are present so the fixture is right on whichever platform is running it.
+    for _mgr in ("apt-get", "brew"):
+        (_fakebin / _mgr).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (_fakebin / _mgr).chmod(0o755)
     _old_code, _old_out = _run_check(str(_fakebin))
     check("a Python below the floor is refused rather than accepted", _old_code == 1)
     check("...naming the version it found and the floor it needs",
@@ -10543,6 +10550,9 @@ else:
         _real = shutil.which(_tool)
         if _real:
             os.symlink(_real, _nopy / _tool)
+    for _mgr in ("apt-get", "brew"):
+        (_nopy / _mgr).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (_nopy / _mgr).chmod(0o755)
     _none_code, _none_out = _run_check(str(_nopy))
     check("no Python at all is reported rather than crashing", _none_code == 1)
     check("...as NOT FOUND, in the report body", "NOT FOUND" in _none_out)
@@ -10763,6 +10773,31 @@ if _POSIX_SHELL:
     _bare_code, _bare_out = _on_fake("Linux", ())
     check("an unrecognised Linux says so instead of guessing a package manager",
           "no package manager was recognised" in _bare_out and _bare_code == 1)
+
+# --------------------------------------- this suite must launch commands the way Windows can
+# 🐛 Twenty-six checks ran `subprocess.run([str(ROOT / "bin" / "chamnan-x")])`, launching an
+# extensionless script by path. POSIX resolves that through the shebang; Windows raises
+# `[WinError 193] %1 is not a valid Win32 application` and the whole suite dies at the first one.
+# Found by putting Windows in CI, which is the entire argument for having it there.
+#
+# The fix is uniform and this check keeps it uniform: every launch goes through `sys.executable`,
+# so it does not depend on a shebang, an executable bit, or a file association.
+# 🐛 And the first version of this check matched its OWN source line, because the line that spells
+# the forbidden pattern out contains the forbidden pattern. Tenth time in this project an
+# assertion has matched something other than what it named. Scoped to lines that actually LAUNCH
+# something -- a mention is not a call.
+_suite_src = Path(__file__).read_text(encoding="utf-8")
+# ...and the second version matched the COMMENT that describes the bug, which also spells the
+# pattern out. Comments are skipped: this is a check about code that runs.
+_bare_launches = [ln.strip() for ln in _suite_src.splitlines()
+                  if not ln.strip().startswith("#")
+                  and "subprocess.run(" in ln
+                  and ('[str(ROOT / "bin"' in ln or "[str(HOOK)" in ln)]
+check("NO TEST LAUNCHES A COMMAND BY BARE PATH — Windows cannot run one",
+      not _bare_launches)
+if _bare_launches:
+    for _bl in _bare_launches[:5]:
+        print("    ", _bl[:100])
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
