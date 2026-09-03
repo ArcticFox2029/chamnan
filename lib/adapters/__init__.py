@@ -30,14 +30,19 @@ from . import antigravity
 from . import augment
 from . import amazonq
 from . import cline
+from . import codebuddy
 from . import continuedev
 from . import copilot
 from . import cursor
 from . import gemini
 from . import goose
+from . import grok
 from . import generic
+from . import iflow
 from . import junie
 from . import kiro
+from . import mistral
+from . import qwen
 from . import replit
 from . import roo
 from . import trae
@@ -53,14 +58,19 @@ ADAPTERS = {
     augment.NAME: augment,
     amazonq.NAME: amazonq,
     cline.NAME: cline,
+    codebuddy.NAME: codebuddy,
     continuedev.NAME: continuedev,
     copilot.NAME: copilot,
     cursor.NAME: cursor,
     gemini.NAME: gemini,
     goose.NAME: goose,
+    grok.NAME: grok,
     generic.NAME: generic,
+    iflow.NAME: iflow,
     junie.NAME: junie,
     kiro.NAME: kiro,
+    mistral.NAME: mistral,
+    qwen.NAME: qwen,
     replit.NAME: replit,
     roo.NAME: roo,
     trae.NAME: trae,
@@ -87,6 +97,14 @@ ALIASES = {
     "opencode": generic.NAME,
     "openhands": generic.NAME,
     "warp": generic.NAME,
+
+    # Model vendors that ship a harness reading the root AGENTS.md rather than a file of their own.
+    # Verified one by one against each vendor's docs -- and one claim was verified FALSE on the way:
+    # several secondary blogs state that Meta's Muse Code reads `MUSE_CODE.md`, and Meta's own
+    # documentation says AGENTS.md. The alias below is the reason that mattered.
+    "deepseek": generic.NAME,
+    "kimi": generic.NAME,
+    "muse": generic.NAME,
 }
 
 
