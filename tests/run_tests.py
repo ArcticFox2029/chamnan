@@ -8180,6 +8180,35 @@ shutil.rmtree(_envd.parent, ignore_errors=True)
 check("a non-literal argument is not harvested as a variable name",
       not [g for m in catalogs.ENV_IN_CODE.finditer("os.Getenv(someVar)") for g in m.groups() if g])
 
+# 🐛 The catalogues lift substrings out of repository source and write them into MAP.md — which
+# the pre-commit hook commits and the SessionStart hook injects, above `## Full Detail`. Several
+# route patterns capture with `[^"\']*`, and that class includes a NEWLINE, so a quoted path
+# spanning two lines carried the rest of the file into the index as markdown. Reproduced in
+# ordinary valid JavaScript (a template literal), which put a real `## heading` and a paragraph of
+# somebody else's prose into the injected region.
+_injd = Path(tempfile.mkdtemp()) / "repo"
+(_injd / ".git").mkdir(parents=True)
+(_injd / "server.js").write_text(
+    "const router = require('express').Router();\n"
+    "router.get('/healthz', ok);\n"
+    "router.get(`/x\n## Injected heading\n\nprose an agent would read as fact\n`, handler);\n",
+    encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+               capture_output=True, text=True, cwd=str(_injd))
+_injmap = (_injd / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("A ROUTE PATH CANNOT OPEN A HEADING IN THE INDEX IT IS WRITTEN INTO",
+      "\n## Injected heading" not in _injmap)
+check("...and the injected text is still SHOWN, folded onto one line, not silently dropped",
+      "Injected heading" in _injmap)
+check("...while the real route beside it is untouched", "/healthz" in _injmap)
+shutil.rmtree(_injd.parent, ignore_errors=True)
+# Every module that writes repository substrings into MAP.md goes through the same helper. A new
+# catalogue that skips it is the shape this fixes, so the import is asserted rather than the output.
+for _mod in ("catalogs.py", "schema.py", "deploy.py"):
+    _msrc = (ROOT / "lib" / _mod).read_text(encoding="utf-8")
+    check(f"{_mod} neutralises markdown in what it publishes",
+          "mdblock.as_quoted(" in _msrc)
+
 check("A ROUTE THAT EXISTS ONLY IN A TEST IS NOT AN API SURFACE",
       "/only/in/a/test" not in _catmap)
 check("AN ENV VAR READ ONLY BY A TEST IS NOT THIS REPO'S CONFIGURATION",
