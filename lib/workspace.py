@@ -124,7 +124,7 @@ DEFAULT_CONFIG = {
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 
-def inside(path, root):
+def inside(path, root, _resolved_root=None):
     """True when `path` really lives under `root`, following symlinks before deciding.
 
     🐛 chamnan reads whatever is at a workspace path. A committed symlink at
@@ -135,9 +135,16 @@ def inside(path, root):
     `resolve()` on BOTH sides, because a repository reached through a symlinked parent — /tmp on a
     Mac, a home directory on a network mount — would otherwise fail this test for every file it
     contains.
+
+    `_resolved_root` is an internal fast path only: `root` never changes across one caller's own
+    loop, so a caller checking many paths against the same root in one call (`memory.entries`) may
+    resolve it once and pass that in, skipping a repeated `resolve()` of a value that cannot have
+    changed since the caller last resolved it. `path` is still resolved fresh every time -- THAT is
+    the half of the check a TOCTOU actually threatens, and it is never skipped or cached here.
     """
     try:
-        return Path(root).resolve() in Path(path).resolve().parents
+        root_resolved = _resolved_root if _resolved_root is not None else Path(root).resolve()
+        return root_resolved in Path(path).resolve().parents
     except (OSError, ValueError, RuntimeError):
         return False          # a broken or looping link is not inside anything
 

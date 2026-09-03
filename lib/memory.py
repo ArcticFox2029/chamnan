@@ -25,6 +25,7 @@ characters, titles are capped by count, and the store itself is allowed to grow 
 files are small and each one was written on purpose.
 """
 import re
+from pathlib import Path
 import workspace as ws
 import mdblock
 import state
@@ -54,7 +55,17 @@ def entries(root, category):
     # A symlink out of the repository is refused: the workspace travels with a clone, so the
     # link is chosen by whoever wrote the repo. `~/.ssh/id_rsa` behind a `.md` name reached the
     # injected block before this. See `workspace.inside`.
-    return sorted(p for p in d.glob("*.md") if p.is_file() and ws.inside(p, root))
+    #
+    # `root` is resolved once here rather than once per file inside `ws.inside` -- it is the same
+    # value on every iteration of this loop, so re-resolving it per file was pure repeated work,
+    # not a safety check. Each file's own path is still resolved fresh per file, which is the half
+    # of the check that actually guards against a symlink swapped in between calls.
+    try:
+        root_resolved = Path(root).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return []
+    return sorted(p for p in d.glob("*.md")
+                  if p.is_file() and ws.inside(p, root, _resolved_root=root_resolved))
 
 
 # `see memory `slug``, `memory: `slug``, or a bare ``slug`` next to the word memory. Written by

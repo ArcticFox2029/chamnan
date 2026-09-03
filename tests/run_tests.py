@@ -11719,6 +11719,42 @@ check("no suggestion when --write already says which agent", "looks set up for" 
 _rmtree(_sugroot.parent, ignore_errors=True)
 
 
+# ------------------- the containment check kept re-resolving a root that could not have changed
+# `memory.entries` calls `ws.inside(p, root)` once per file, and `inside` re-resolved `root` every
+# time — the same value, 400 times in one loop. Hoisted: the caller resolves it once and passes it
+# through an internal parameter. Measured 5 interleaved rounds, after < before in every one.
+#
+# The half that MATTERS is untouched, and this is the check that says so: `path` is still resolved
+# fresh on every call, because that is the half a TOCTOU actually threatens. A fast path that
+# skipped it would be the symlink bug this function exists to prevent, wearing a speed-up.
+_hoist = Path(tempfile.mkdtemp()) / "repo"
+(_hoist / ".chamnan" / "memory" / "decisions").mkdir(parents=True)
+_hoist_out = Path(tempfile.mkdtemp()) / "secret.md"
+_hoist_out.write_text("# a file outside the repository\n", encoding="utf-8")
+(_hoist / ".chamnan" / "memory" / "decisions" / "ok.md").write_text(
+    "# a real decision\n", encoding="utf-8")
+if _CAN_SYMLINK:
+    os.symlink(_hoist_out, _hoist / ".chamnan" / "memory" / "decisions" / "evil.md")
+    _names = [p.name for p in memory_mod.entries(_hoist, "decisions")]
+    check("A SYMLINK OUT OF THE REPOSITORY IS STILL REFUSED AFTER THE HOIST",
+          "evil.md" not in _names and "ok.md" in _names)
+    _evil = _hoist / ".chamnan" / "memory" / "decisions" / "evil.md"
+    check("...through the ordinary call", not _ws.inside(_evil, _hoist))
+    check("...and through the fast path, which must not weaken it",
+          not _ws.inside(_evil, _hoist, _resolved_root=_hoist.resolve()))
+else:
+    print("  [SKIP] inside()-hoist symlink checks — this process cannot create symlinks here")
+
+# The fast path is internal and optional: every existing caller passes two arguments and must get
+# exactly the old behaviour. Asserted by agreement, not by reading the signature.
+check("the fast path agrees with the slow one on a file that IS inside",
+      _ws.inside(_hoist / ".chamnan" / "memory" / "decisions" / "ok.md", _hoist)
+      == _ws.inside(_hoist / ".chamnan" / "memory" / "decisions" / "ok.md", _hoist,
+                    _resolved_root=_hoist.resolve()) is True)
+_rmtree(_hoist.parent, ignore_errors=True)
+_rmtree(_hoist_out.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
