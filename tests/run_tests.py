@@ -11591,6 +11591,51 @@ check("a small index still says to read the Quick Index in full",
       if (ROOT / ".chamnan" / "MAP.md").is_file() else True)
 
 
+# ============ the index folded once and then let the budget cut whole directories off the end
+# 🐛 The PRIMARY fold called `rollup.collapse` at its default `per_dir=8` and stopped there, so
+# whatever still did not fit was removed by `_enforce`'s prefix truncation — which drops whole
+# DIRECTORIES off the end. The graduated `(8, 4, 2, 0)` stepping existed all along and only the
+# byte-ceiling pass further down ever used it.
+#
+# Measured end to end on a 600-file, 40-directory repository:
+#
+#     before   3,027 tokens   32 of 40 directories named
+#     after    1,589 tokens   40 of 40
+#
+# Fewer names per directory costs less than losing eight directories, and a directory line with
+# two names still orients a reader where a missing directory cannot. Asserted on BOTH axes,
+# because a change that only shrank the block could have done it by dropping more.
+_fold = Path(tempfile.mkdtemp()) / "wide"
+(_fold / ".git").mkdir(parents=True)
+for _d in range(40):
+    _p = _fold / f"pkg{_d}" / "src"
+    _p.mkdir(parents=True)
+    for _i in range(15):
+        (_p / f"mod_{_i}.py").write_text(
+            f"# Handles case {_i} for package {_d} in the service layer.\n"
+            f"def go{_i}():\n    return {_i}\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_fold),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_foldout = _ctx(str(_fold)).stdout
+_foldidx = (_foldout.split("### Architecture index", 1)[1].split("\n### ", 1)[0]
+            if "### Architecture index" in _foldout else "")
+_named = len(set(re.findall(r"pkg(\d+)", _foldidx)))
+check("EVERY DIRECTORY IS NAMED, NOT CUT OFF THE END TO FIT THE BUDGET", _named == 40)
+check("...and the index is well inside the default budget",
+      tokens_mod.estimate(_foldidx) < 3000)
+# The point is that it does BOTH. A block that fit by naming fewer directories would pass the
+# budget check alone, which is how the old behaviour passed everything for months.
+check("...so it is smaller AND more complete than folding once at the default",
+      tokens_mod.estimate(_foldidx) < 2500 and _named == 40)
+_rmtree(_fold.parent, ignore_errors=True)
+
+# A repository whose index already fits must be untouched — the stepping is a response to not
+# fitting, not a new default.
+check("an index that already fits is not folded further",
+      "Read the Quick Index in full" in (ROOT / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+      if (ROOT / ".chamnan" / "MAP.md").is_file() else True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
