@@ -8230,18 +8230,26 @@ shutil.rmtree(_dird.parent, ignore_errors=True)
 _extd = Path(tempfile.mkdtemp()) / "repo"
 (_extd / ".git").mkdir(parents=True)
 (_extd / "x.js").write_text("// real\nexport const a = 1;\n", encoding="utf-8")
+# 🐛 This fixture used `.svelte`, and a reader for it landed later the same day — so the test
+# began asserting a limitation that no longer exists, and failed on the change that removed it. The
+# PROPERTY it checks is still exactly right: an extension chamnan has no reader for must be counted
+# and reported, never dropped in silence. `.hbs` is the fixture now because it is genuinely
+# unreadable today, and the check below asserts that rather than trusting the choice — a fixture
+# that quietly becomes readable would otherwise turn this into a test of nothing.
+check("the fixture extension is one chamnan really cannot read",
+      ".hbs" not in _mp.EXT_LANG)
 for _i in range(60):
-    (_extd / f"C{_i}.svelte").write_text("<script>export let a;</script>\n", encoding="utf-8")
+    (_extd / f"C{_i}.hbs").write_text("<div>{{name}}</div>\n", encoding="utf-8")
 with _tree.session():
     _mp.reset_skips()
     _mp.scan(_extd)
 check("AN EXTENSION CHAMNAN CANNOT READ IS COUNTED, NOT DROPPED IN SILENCE",
-      _mp.SKIPPED_UNKNOWN_EXT.get(".svelte") == 60)
+      _mp.SKIPPED_UNKNOWN_EXT.get(".hbs") == 60)
 check("...and reset_skips clears it with the others", True)
 _extout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                          capture_output=True, text=True, cwd=str(_extd)).stdout
 check("...and the run says so when the count rivals what was indexed",
-      "no reader for the extension" in _extout and ".svelte" in _extout)
+      "no reader for the extension" in _extout and ".hbs" in _extout)
 shutil.rmtree(_extd.parent, ignore_errors=True)
 
 check("A WRITTEN LOG ABOUT TO EXPIRE IS NAMED", [n for n, _ in _exp] == ["2026-08-27.md"])

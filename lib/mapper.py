@@ -450,7 +450,15 @@ BLOCK_CLOSE = "*/"
 MAGIC_COMMENT = re.compile(
     r"^(?:frozen_string_literal\s*:\s*\w+|encoding\s*[:=]\s*[\w-]+|-\*-.*?-\*-|"
     r"coding[:=]\s*[\w.-]+|warn_indent\s*:\s*\w+|shareable_constant_value\s*:\s*\w+|"
-    r"@ts-\w+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
+    # `\w+` does not match a hyphen, so `@ts-expect-error` — the compiler-recognised spelling, not
+    # `@ts-ignore`/`@ts-nocheck`'s single word — only matched up through `@ts-expect`, leaving
+    # `-error` behind as the "description". Found while testing the Svelte/Vue/Astro reader below:
+    # `// @ts-expect-error` right above an import is common in real `<script setup>` code, and
+    # `Marquee.vue` (vuetifyjs/vuetify) came back described as "error". Pre-existing on any plain
+    # .ts/.js file with the same opening line — not introduced by the SFC reader, only surfaced by
+    # it, since a two-directive stack (`@ts-expect-error` + import) sits far more often at the very
+    # TOP of a <script> block than at the top of a whole standalone module.
+    r"@ts-[\w-]+|eslint-disable[\w-]*|prettier-ignore|noqa(?::\s*[\w,]+)?|"
     # 🐛 Two more families, both found by running chamnan on repositories this author did not
     # write. A Go BUILD CONSTRAINT is a switch spelled as a comment, exactly like the Ruby magic
     # comments above it: `//go:build linux && !windows` became the description of 12 of gin's ~44
@@ -926,6 +934,12 @@ EXT_LANG = {
     # Interface definitions rather than code, and that is the point: on a service repo the question
     # "what does this expose" is answered by the .proto or the schema, not by the handlers.
     ".proto": "proto", ".graphql": "graphql", ".gql": "graphql",
+    # R6 experiment: single-file components. Each is mostly markup (a <template>, plain HTML, or a
+    # `---` frontmatter fence) wrapped around one real JS/TS block, so the WHOLE FILE is never fed
+    # to the "js" extractor — see _sfc_extraction_source, which pulls just that block out first.
+    # Mapped to "js" rather than a new lang because that block IS JavaScript or TypeScript, and the
+    # existing REGEX_RULES/LINE_COMMENT/FILE_DOC_MARKER entries for "js" already cover TS syntax.
+    ".svelte": "js", ".vue": "js", ".astro": "js",
 }
 # Leading comment markers stripped when harvesting a file's opening comment as its summary.
 # Control flow reads exactly like a call, and the per-language rules cannot tell them apart: Dart's
@@ -1019,6 +1033,49 @@ def _is_empty_module(source, lang):
     return True
 
 
+# Single-file-component fences. Non-greedy and DOTALL: a Vue/Svelte file can carry a <style> block
+# after the <script>, and greedy would swallow past the first </script> it should stop at. Matches
+# the FIRST block only — a second <script context="module"> in Svelte is real but rare enough that
+# reading module context above instance context would need SFC-aware parsing this regex reader
+# deliberately does not attempt (see mapper.py's own docstring: "approximate on purpose").
+_SFC_SCRIPT = re.compile(r"<script\b[^>]*>(.*?)</script>", re.S | re.I)
+# Astro's frontmatter fence: JS/TS between the file's opening `---` line and the next one. Anchored
+# at the start of the file (`\A`) because `---` is also valid Markdown (a horizontal rule / YAML-ish
+# separator) and can appear again later, inside the template half of the file.
+_ASTRO_FRONTMATTER = re.compile(r"\A\s*---\r?\n(.*?)\r?\n---", re.S)
+
+
+def _sfc_extraction_source(source, path):
+    """What a Svelte/Vue/Astro single-file component actually has to offer a JS/TS reader: the one
+    fenced block that is real code, not the markup around it.
+
+    Without this, EXT_LANG mapping these three straight to "js" would run the JS extractor over the
+    WHOLE file — template markup included — which is wrong in both directions at once. Vue's own
+    convention opens with `<template>`, so `leading_comment` never reaches the doc comment sitting
+    later inside `<script>` and every describable file reads as having no comment. And an HTML
+    comment inside the template (`<!-- accessibility note -->`, common right after `<template>`)
+    matches this reader's own comment-prefix regex, so a fair number of files would get a WRONG
+    description instead of a missing one — a component's job, not the file's.
+
+    A component with no <script> block (pure markup, common in real Vue/Svelte trees) returns "":
+    genuinely nothing to describe, not a reader failure.
+    """
+    # 🐛 [found running the real suite] `path` was assumed to be a Path, but `_extract_one` never
+    # touched it for a non-Python lang before this function existed, so nothing enforced that —
+    # test_run_tests.py calls `mapper._extract_one(_hdr, "b.h", "c")` with a bare string, and
+    # `"b.h".suffix` doesn't exist. `PurePosixPath(str(path))` accepts either without caring which
+    # one the caller had, at the cost of doing that indifferently on every call, not only the three
+    # SFC extensions that need it.
+    ext = PurePosixPath(str(path)).suffix.lower()
+    if ext in (".svelte", ".vue"):
+        m = _SFC_SCRIPT.search(source)
+        return m.group(1) if m else ""
+    if ext == ".astro":
+        m = _ASTRO_FRONTMATTER.match(source)
+        return m.group(1) if m else ""
+    return source
+
+
 def _extract_one(source, path, lang):
     """Dispatch to the right extractor. Separated from scan() so the caller can wrap exactly this
     in one try and keep a bad file from taking the run down with it."""
@@ -1027,7 +1084,7 @@ def _extract_one(source, path, lang):
         if parsed[0] is None and not parsed[1]:
             return leading_comment(source, lang), [], [], []
         return parsed
-    return extract_regex(source, lang)
+    return extract_regex(_sfc_extraction_source(source, path), lang)
 
 
 def scan(root):
@@ -1252,7 +1309,13 @@ def _scan(root):
         # line is useful; a traceback is not, and it takes the other 195 files with it.
         try:
             doc, funcs, classes, consts = _extract_one(source, path, lang)
-            describable = bool(source.strip()) and not _is_empty_module(source, lang)
+            # _sfc_extraction_source is a no-op for every extension but .svelte/.vue/.astro, so this
+            # stays the plain `_is_empty_module(source, lang)` everywhere else. For those three, an
+            # empty extraction (no <script>, no frontmatter) must count as nothing-to-describe here
+            # too, or a markup-only component inflates the "described" denominator with a file
+            # _extract_one already gave up on.
+            describable = bool(source.strip()) and not _is_empty_module(
+                _sfc_extraction_source(source, path), lang)
         except Exception:
             doc, funcs, classes, consts, describable = "", [], [], [], False
         files.append({
