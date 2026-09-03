@@ -249,8 +249,8 @@ def historical_names(root, target):
             # non-ASCII path by default, and the quoted form matches nothing.
             ["git", "-C", str(repo), "-c", "core.quotePath=false",
              "log", "--follow", "--name-only", "--pretty=format:", "-n", "200", "--", target],
-            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            errors="replace", timeout=10)
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=10)
         if out.returncode == 0:
             names = {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
     except (OSError, subprocess.SubprocessError):

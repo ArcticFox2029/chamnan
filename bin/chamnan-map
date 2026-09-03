@@ -74,8 +74,8 @@ def preview(root, explain=False):
     # produced "nothing to inject yet — run chamnan-map first", which is the wrong diagnosis and
     # sends a debugging reader in the wrong direction.
     try:
-        out = subprocess.run(args, input="{}", capture_output=True, text=True,
-                             errors="replace", cwd=root, timeout=120)
+        out = subprocess.run(args, input="{}", capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             cwd=root, timeout=120)
     except subprocess.TimeoutExpired:
         print("chamnan: the session-start hook did not finish within 120s", file=sys.stderr)
         return 1
@@ -119,7 +119,7 @@ def _hooks_dir(root):
     """
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
-                             capture_output=True, text=True, timeout=10)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         if out.returncode == 0 and out.stdout.strip():
             p = Path(out.stdout.strip())
             return p if p.is_absolute() else (root / p)
