@@ -11988,6 +11988,36 @@ check("...and the README says why Claude Code has none",
       "Claude Code has no adapter" in _readme)
 
 
+# ------------------- a Ruby method with a non-ASCII name was invisible, not mis-spelled
+# 🐛 `rb`'s pattern anchored on `[A-Za-z_]`, so `def คำนวณราคา` was not captured at all. Ruby has
+# accepted UTF-8 identifiers since 1.9. This is the sibling of the Python NFKC problem and the
+# worse half of it: there the name was reported with the wrong codepoints; here the method simply
+# did not appear in the index.
+#
+# Measured across seven languages with the SAME Thai method name before changing anything — go, c,
+# js, rs, php and kotlin all found it and only Ruby did not. That is what made this one gap rather
+# than the "fixed in some members of a set" shape it looked like, and the sweep is the reason to
+# believe it.
+for _lang, _src in (("go", "func \u0e04\u0e33\u0e19\u0e27\u0e13(x int) int {\n\treturn x\n}\n"),
+                    ("js", "function \u0e04\u0e33\u0e19\u0e27\u0e13(x) {\n  return x;\n}\n"),
+                    ("rs", "fn \u0e04\u0e33\u0e19\u0e27\u0e13(x: i32) -> i32 {\n    x\n}\n"),
+                    ("rb", "def \u0e04\u0e33\u0e19\u0e27\u0e13\n  1\nend\n")):
+    _f = mapper._extract_one(_src, f"x.{_lang}", _lang)[1]
+    check(f"A NON-ASCII FUNCTION NAME IS INDEXED: {_lang}",
+          any("\u0e04\u0e33\u0e19\u0e27\u0e13" in str(n[0]) for n in _f))
+
+# The class still has to REFUSE what Ruby itself refuses, or the fix has widened it into something
+# that matches things that are not identifiers.
+check("...and a Ruby name starting with a digit is still refused",
+      not mapper._extract_one("def 9lives\n  1\nend\n", "x.rb", "rb")[1])
+for _label, _src, _want in (("ASCII", "def calculate_total\n  1\nend\n", "calculate_total"),
+                            ("bang", "def save!\n  1\nend\n", "save!"),
+                            ("self.", "def self.build\n  1\nend\n", "build")):
+    _f = mapper._extract_one(_src, "x.rb", "rb")[1]
+    check(f"...and ordinary Ruby still works: {_label}",
+          bool(_f) and _f[0][0].startswith(_want))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

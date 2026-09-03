@@ -933,7 +933,15 @@ REGEX_RULES = {
     # method name may also be an OPERATOR, with no word character in it at all: `def ==(other)`,
     # `def <=>(other)`, `def [](key)` matched nothing and were invisible. And a module is Ruby's
     # actual namespacing keyword, with no rule at all -- every `module Portal` was unindexed.
-    "rb": [("func", r"^\s*def\s+(?:self\.)?([A-Za-z_]\w*[?!=]?)"),
+    # 🐛 The first character class was `[A-Za-z_]`, so a Ruby method with a non-ASCII name was not
+    # captured AT ALL — not mis-spelled, invisible. Ruby has accepted UTF-8 identifiers since 1.9.
+    # Measured across seven languages with the same Thai method name: go, c, js, rs, php and kotlin
+    # all found it; only Ruby did not, so this is one gap rather than the "fixed in some members of
+    # a set" shape it looked like.
+    #
+    # `[^\W\d]` is a word character that is not a digit — a Unicode letter or underscore, which is
+    # what the ASCII class was trying to say. A name starting with a digit is still refused.
+    "rb": [("func", r"^\s*def\s+(?:self\.)?([^\W\d]\w*[?!=]?)"),
            ("func", r"^\s*def\s+(?:self\.)?(\[\]=?|<=>|===?|!=|[<>]=?|[+\-*/%]|<<|>>|\*\*|=~|!)\s*\("),
            ("class", r"^\s*(?:class|module)\s+(\w+(?:::\w+)*)"),
            # attr_accessor and friends define real callable methods with no `def` anywhere. A
