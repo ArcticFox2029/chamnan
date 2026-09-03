@@ -769,6 +769,36 @@ def _verbatim_name(source_lines, node):
     return name or node.name
 
 
+
+def _verbatim_arg(source_lines, arg):
+    """An argument's name as the SOURCE spells it, not as `ast` normalised it.
+
+    The sibling of `_verbatim_name` for `ast.arg`, and simpler: an `arg` node's position points at
+    the identifier itself, so there is no keyword to skip past.
+
+    The same PEP 3131 normalisation applies here — `def คำนวณ(จำนวน)` came back with the parameter
+    spelled `จํานวน`, ten codepoints where the source has nine, so a reader grepping MAP.md for the
+    parameter as written found nothing. The function name was fixed first and the arguments were
+    left, which meant one line of the signature was greppable and the rest of it was not.
+
+    `col_offset` is a UTF-8 BYTE offset, so the line is encoded before slicing — a Thai parameter
+    is almost always preceded on its line by a Thai function name, which is exactly the case where
+    slicing the `str` directly cuts mid-character.
+    """
+    try:
+        line = source_lines[arg.lineno - 1]
+        after = line.encode("utf-8")[arg.col_offset:].decode("utf-8")
+    except (IndexError, UnicodeDecodeError, AttributeError):
+        return arg.arg
+    name = ""
+    for c in after:
+        candidate = name + c
+        if not candidate.isidentifier():
+            break
+        name = candidate
+    return name or arg.arg
+
+
 def _parse_py(source, path):
     """Parse a Python file once, not twice.
 
@@ -823,7 +853,7 @@ def extract_python(source, path, lang='py'):
     source_lines = source.splitlines()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = ", ".join(a.arg for a in node.args.args)
+            args = ", ".join(_verbatim_arg(source_lines, a) for a in node.args.args)
             name = _verbatim_name(source_lines, node)
             funcs.append((f"{name}({args})", _clip(ast.get_docstring(node) or "", 90)))
         elif isinstance(node, ast.ClassDef):
