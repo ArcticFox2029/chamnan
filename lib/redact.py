@@ -529,3 +529,31 @@ def emit(*args, **kwargs):
 
 # Captured before any module shadows the name, so `emit` still reaches the real builtin.
 _print = print
+
+
+def _speak_utf8():
+    """Make this process write UTF-8 on stdout and stderr, whatever the machine's code page says.
+
+    🐛 Every chamnan command writes em dashes, and this repository's own corpus is largely Thai.
+    Python encodes text output with `locale.getpreferredencoding()`, which is UTF-8 on macOS and
+    Linux and the machine's ANSI code page on Windows -- so on a Windows console or pipe an em
+    dash became `?` and Thai became a row of them. Measured in CI: `chamnan-report`'s usage table
+    lost every ` — ` separator, and the checks that count them failed there and nowhere else.
+
+    Done once, here, because `redact.emit` is already the single print every command routes
+    through -- putting it in each command is the shape of fix this project has had to un-forget
+    eight times. `errors="replace"` rather than strict: a command that cannot render one character
+    must still deliver the rest of its output.
+
+    Silent when the streams cannot be reconfigured (Python 3.6 and earlier, or a replaced stream
+    object): the fallback is the old behaviour, which is what happens today.
+    """
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
+_speak_utf8()
