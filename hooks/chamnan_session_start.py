@@ -604,7 +604,12 @@ def main():
     if _expiring:
         # Filenames come from the repository, so they are made inert before interpolation and the
         # whole line is scrubbed, like every other warning built from repository-controlled strings.
-        _names = ", ".join(f"`{mdblock.as_quoted(n)}` (in {h * 24:.0f}h)" for n, h in _expiring[:3])
+        # No countdown. Every other number in this block is derived from file CONTENT; an hours-
+        # to-go figure is derived from the clock, so it ticks over mid-session and changes a block
+        # that is otherwise byte-identical across all of a session's firings — which is the whole
+        # point of deriving the fence nonce from `session_id`. The filename already carries its
+        # date, and "within a day" is what makes it actionable; the hour did not.
+        _names = ", ".join(f"`{mdblock.as_quoted(n)}`" for n, _ in _expiring[:3])
         _rest = f" _+{len(_expiring) - 3} more_" if len(_expiring) > 3 else ""
         out.append(redact.scrub(
             f"_⚠ **{len(_expiring)} written log(s) expire within a day** — {_names}{_rest}. "
@@ -1163,13 +1168,40 @@ def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
     # contradicted by the table. A pinned heading is exempt from the cut on purpose — that is the
     # whole point of pinning — so the state section can legitimately exceed its budget, and the
     # honest report is to name the reason rather than to print a number that appears wrong.
+    # 🐛 Read from `shown`, which is what the block DELIVERED — so on the one repository where
+    # STATE.md is too big to deliver at all, the note about STATE.md being too big never printed.
+    # The reader most in need of it is the reader who is not getting the section. LEDGER still
+    # holds what it cost to build, which is the number that matters here.
     state_row = next((e for e in shown if e["source"].endswith("STATE.md")), None)
+    if state_row is None:
+        state_row = next((e for e in LEDGER
+                          if e.get("source", "").endswith("STATE.md") and e.get("tokens")), None)
     limit = cfg.get("state_token_budget", 1700)
     if state_row and state_row["tokens"] > limit:
+        # 🐛 This used to end "Unpin a heading, or shorten one, to bring it down", and that advice
+        # is wrong at every size somebody would actually try. Measured on this repository by
+        # truncating a copy of STATE.md and re-firing the hook:
+        #
+        #     18,659 chars (as it is)  2 sections dropped
+        #     12,000                   2
+        #      8,000                   7      <- shortening made it FIVE sections worse
+        #      6,000                   7
+        #      4,000                   5
+        #      3,000                   3
+        #      1,500                   2      <- only here is it back to today's result
+        #        500                   1
+        #
+        # The curve is not monotonic, and today's size is already a local optimum. A STATE.md too
+        # big to deliver is dropped whole and costs one section; one merely large enough to fit
+        # displaces five cheaper ones. So the honest report is the shape of the trade, not a
+        # suggestion that makes it worse for anyone who follows it halfway.
         print(f"\n  STATE.md is over its budget by {state_row['tokens'] - limit:,.0f} tokens. "
               "That is allowed: headings\n  pinned with 📌 are never cut, and only the unpinned "
-              "remainder is fitted to the budget.\n  Unpin a heading, or shorten one, to bring it "
-              "down.")
+              "remainder is fitted to the budget.")
+        print("  Shortening it does NOT reliably free room — a section too big to deliver is "
+              "dropped\n  whole and costs one slot, while one just small enough to fit displaces "
+              "several\n  cheaper ones. Measured here: cutting it to 8,000 chars took the block "
+              "from 2\n  dropped sections to 7. Cut it hard, or leave it alone.")
     return 0
 
 

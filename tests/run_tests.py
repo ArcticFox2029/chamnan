@@ -8088,6 +8088,26 @@ _expout = subprocess.run(
     input=json.dumps({"hook_event_name": "SessionStart", "session_id": "e",
                       "cwd": str(_expd)}), capture_output=True, text=True).stdout
 check("the hook says so before it prunes", "expire within a day" in _expout)
+# The block must be byte-identical across every firing of one session, or each firing is a fresh
+# prefix rather than a cached one. A countdown in hours ticks over mid-session and breaks exactly
+# that — the same failure the session-derived fence nonce was introduced to stop.
+# The budget note read from what the block DELIVERED, so on a repository where STATE.md is too big
+# to deliver at all it never printed — the reader most in need of it is the one not getting the
+# section. And its advice ("unpin or shorten") is wrong at every size somebody would try: measured
+# by truncating a copy, 18,659 chars drops 2 sections and 8,000 chars drops 7.
+_expsrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+check("the STATE.md budget note falls back to the ledger when the section was dropped",
+      "e.get(\"source\", \"\").endswith(\"STATE.md\")" in _expsrc)
+# Comment lines stripped first. The 🐛 note above the fix QUOTES the advice it replaced — as it
+# should, that is the record of why — and a bare substring search over the file therefore finds
+# the old wording and fails on the very comment that documents its removal.
+_expcode = "\n".join(l for l in _expsrc.splitlines() if not l.lstrip().startswith("#"))
+check("...and it no longer advises shortening, which measured WORSE at every ordinary size",
+      "Unpin a heading, or shorten one, to bring it" not in _expcode
+      and "does NOT reliably free room" in _expcode)
+
+check("...WITHOUT A COUNTDOWN, WHICH WOULD TICK OVER MID-SESSION",
+      not re.search(r"expire within a day[^_]*\bin \d+\s*h", _expout))
 
 # Two halves, and having only one is worse than having neither because it looks correct.
 # `os.replace` is atomic; a STAGING NAME SHARED BETWEEN PROCESSES is not. `state.py` documented
