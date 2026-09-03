@@ -118,6 +118,41 @@ def names():
     return sorted(set(ADAPTERS) | set(ALIASES))
 
 
+def safe_target(root, rel):
+    """The path `rel` names under `root` — refusing anything that would leave the repository.
+
+    🐛 The READ side has had `ws.inside()` since a committed symlink at `.chamnan/STATE.md` was
+    shown reading `~/.ssh/id_rsa` into the injected block. The WRITE side, added with the adapters,
+    had no equivalent — so a committed symlink named `.cursor`, `.gemini`, `.roo` or any of the
+    other twelve nested targets made `mkdir(parents=True)` and `os.replace` follow it and write
+    outside the root. Reproduced: `.cursor -> /tmp/outside` put `rules/chamnan.mdc` there.
+
+    The `gemini` case is worse than a stray file. Its install MERGES a `SessionStart` hook
+    registration into `settings.json`; pointed at a settings file outside the repository it
+    registers a command that then runs for every future session that config touches, with the
+    user's own hooks left intact so nothing looks wrong.
+
+    Checked BEFORE anything is created, by walking the components: `mkdir` through a symlink has
+    already written outside by the time a resolve could notice. A symlink ANYWHERE in the chain is
+    refused rather than resolved-and-compared, because "resolves inside today" is not a property
+    that stays true -- the link is the repository's to change and the write is not.
+
+    This is the ninth time in this project a guard has been added to some members of a set and
+    forgotten in the others. It is the only way to a target now, and a test asserts that.
+    """
+    base = ws.Path(root)
+    walked = base
+    for part in ws.Path(rel).parts:
+        walked = walked / part
+        if walked.is_symlink():
+            raise ValueError(
+                f"{walked} is a symlink, and writing through it would leave the repository. "
+                f"chamnan refuses rather than following it. Remove or replace the link.")
+    if not str(walked.resolve()).startswith(str(base.resolve())):
+        raise ValueError(f"{rel} resolves outside {root}; refusing to write there")
+    return walked
+
+
 def install(root, agent, body, command=""):
     """Write `body` through `agent`'s adapter. Returns the path written, or None.
 
@@ -144,7 +179,7 @@ def install(root, agent, body, command=""):
     # single-structure failure this package exists to avoid.
     if hasattr(adapter, "install"):
         return adapter.install(root, body, command)
-    target = ws.Path(root) / adapter.TARGET
+    target = safe_target(root, adapter.TARGET)
     target.parent.mkdir(parents=True, exist_ok=True)
     ws.atomic_write_text(target, adapter.render(body))
     return target

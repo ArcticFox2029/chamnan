@@ -43,8 +43,10 @@ def install(root, body, command=""):
     """
     import workspace as ws
 
+    from . import safe_target
+
     base = ws.Path(root)
-    target = base / TARGET
+    target = safe_target(root, TARGET)
 
     if target.exists():
         first = target.read_text(encoding="utf-8", errors="replace").lstrip()
@@ -55,7 +57,23 @@ def install(root, body, command=""):
                 f"or delete it if it is stale.")
     else:
         for candidate in PRECEDENCE[1:]:
-            if (base / candidate).exists():
+            # 🐛 `.exists()` FOLLOWS a symlink, and this loop then names the file it found. A
+            # committed `AGENTS.md -> /etc/hosts` made the refusal message a boolean oracle for
+            # "does that absolute path exist on this machine" -- repeatable across all nine
+            # candidate names and across pull requests, and landing wherever the run's output
+            # lands. It leaks existence only, never content, but the report it lands in is often
+            # somewhere the person who wrote the symlink can read.
+            #
+            # A candidate that is a symlink is treated as PRESENT without asking where it goes:
+            # Zed would read whatever is there, which is the thing this loop is about, and no
+            # question is put to the far side.
+            probe = base / candidate
+            if probe.is_symlink():
+                raise ValueError(
+                    f"{candidate} in this repository is a symlink. Zed reads the first of its "
+                    f"nine candidate files and stops, so what it would read is not this "
+                    f"repository's to say. Nothing written.")
+            if probe.exists():
                 raise ValueError(
                     f"Zed is reading {candidate} in this repository. Writing .rules would take "
                     f"precedence and hide it, and writing anything lower in Zed's list would be "
