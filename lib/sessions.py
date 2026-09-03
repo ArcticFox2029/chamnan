@@ -142,16 +142,16 @@ def where_git_says_you_stopped(root, limit=6):
     try:
         st = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
                              "status", "--porcelain"],
-                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                            errors="replace", timeout=5)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=5)
         if st.returncode != 0:
             return ""
         lines = [l for l in st.stdout.splitlines() if l.strip()]
         if not lines:
             return ""          # a clean tree has nothing to carry forward, which is the good case
         br = subprocess.run(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
-                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                            errors="replace", timeout=5)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=5)
         branch = br.stdout.strip() if br.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
