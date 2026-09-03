@@ -25,14 +25,22 @@ pull-request author the one thing it exists to withhold.
 """
 import workspace as ws
 
+from . import aider
+from . import antigravity
+from . import augment
 from . import amazonq
 from . import cline
 from . import continuedev
 from . import copilot
 from . import cursor
 from . import gemini
+from . import goose
 from . import generic
+from . import junie
 from . import kiro
+from . import replit
+from . import roo
+from . import trae
 from . import windsurf
 from . import zed
 
@@ -40,27 +48,56 @@ from . import zed
 # SessionStart hook, which writes no file, and inventing a file for it would create a second copy
 # of the block that nothing reads and nobody updates.
 ADAPTERS = {
+    aider.NAME: aider,
+    antigravity.NAME: antigravity,
+    augment.NAME: augment,
     amazonq.NAME: amazonq,
     cline.NAME: cline,
     continuedev.NAME: continuedev,
     copilot.NAME: copilot,
     cursor.NAME: cursor,
     gemini.NAME: gemini,
+    goose.NAME: goose,
     generic.NAME: generic,
+    junie.NAME: junie,
     kiro.NAME: kiro,
+    replit.NAME: replit,
+    roo.NAME: roo,
+    trae.NAME: trae,
     windsurf.NAME: windsurf,
     zed.NAME: zed,
 }
 
 
+# An agent whose context mechanism is ANOTHER agent's file. Not a convenience: `--write codex`
+# has to do something, and what Codex actually reads is AGENTS.md -- the same file the generic
+# adapter writes, verified in its compiled binary. An alias says that out loud, where a second
+# module writing the same path would give one repository two owners for one file.
+# `AGENTS.md` turned out to be the shared standard rather than one convention among several:
+# every agent below reads it as its project file, verified one by one against each product's own
+# documentation. They are aliases rather than modules because a module for each would write eight
+# copies of one file into one repository, and the second one to run would be the only one anybody
+# read. What they get is exactly what `generic` writes, which is what they actually read.
+ALIASES = {
+    "amp": generic.NAME,
+    "codex": generic.NAME,
+    "crush": generic.NAME,
+    "devin": generic.NAME,
+    "kilo": generic.NAME,
+    "opencode": generic.NAME,
+    "openhands": generic.NAME,
+    "warp": generic.NAME,
+}
+
+
 def for_agent(name):
     """The adapter for `name`, or None. None is an answer -- Claude Code has no file to write."""
-    return ADAPTERS.get(name)
+    return ADAPTERS.get(ALIASES.get(name, name))
 
 
 def names():
-    """Every agent that has an adapter, in a stable order."""
-    return sorted(ADAPTERS)
+    """Every agent name that can be written, aliases included, in a stable order."""
+    return sorted(set(ADAPTERS) | set(ALIASES))
 
 
 def install(root, agent, body, command=""):
