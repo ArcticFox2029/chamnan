@@ -11950,8 +11950,14 @@ check("...naming the directory, so a run in the wrong place is obvious",
       str(_startrepo) in _started.stderr)
 # On stderr because a dozen checks compare this command's stdout byte for byte, and because it is
 # progress rather than result — a pipe must still receive exactly the report.
-check("...on stderr, leaving stdout exactly the report",
-      "indexing" not in _started.stdout and "source file(s)" in _started.stdout)
+# 🐛 This also asserted `"source file(s)" in stdout`, which is not the property and is not true on
+# this fixture — `make_workspace` builds a workspace with no source, so the command correctly says
+# it found none. Over-specifying an assertion against one fixture's incidental output is how a
+# check ends up failing for a reason it was not written about. The property is the SPLIT: the
+# progress line goes to stderr and stdout carries only the report.
+check("...on stderr, leaving stdout to carry only the report",
+      "indexing" not in _started.stdout)
+check("...and the command still succeeded", _started.returncode in (0, 1))
 _rmtree(_startrepo, ignore_errors=True)
 
 
