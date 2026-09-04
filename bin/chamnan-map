@@ -211,7 +211,16 @@ def install_git_hook(root):
         target.write_text("#!/bin/sh\n\n" + body, encoding="utf-8")
         target.chmod(0o755)
         print(f"chamnan: installed {_show(target, root)}")
-    print("  The index now refreshes on every commit that touches tracked files.")
+    # 🐛 This said "on every commit that touches tracked files", which the hook has never done:
+    # `--diff-filter=ACDR` leaves out Modified, and measured on this repository 297 of 355
+    # non-merge commits (83.7%) touch only existing files. The filter is the right trade — the
+    # rebuild is a full rescan, 107s on 1,032 files, in the foreground of the commit — but a
+    # promise the tool cannot keep is not part of that trade. Editing a file still makes the index
+    # stale, and the session-start warning still says so; this line just no longer implies it will
+    # not happen.
+    print("  It rebuilds whenever a commit adds, deletes or renames a file.")
+    print("  Editing an existing file leaves the index behind — session start says so when it is,")
+    print("  and `chamnan-map` refreshes it.")
     # 🎯 Said at install time because it is the only moment the user is making this choice, and
     # because the rebuild is a FULL rescan with no incremental path — on tinygrad, 1,032 source
     # files, it measured 107 seconds, and this hook runs it in the foreground, so every commit that

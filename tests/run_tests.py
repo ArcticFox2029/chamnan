@@ -13127,6 +13127,138 @@ for _name, _value in (("mapper.MAX_FILE_BYTES", mapper.MAX_FILE_BYTES),
           256_000 <= _value <= 16_000_000)
 
 
+# ------------------------------------------------ two more constants nothing was reaching
+# Both were named in the suite nowhere, and neither had a fixture that could reach the branch they
+# control — the same shape as the two ceilings above. Written against the constants, so raising
+# either moves its fixture rather than leaving it behind.
+
+# WINDOW_HOURS decides what counts as "today" for the SessionEnd digest. Every existing fixture
+# stamped `now()`, so nothing was ever planted outside the window and the constant could have been
+# 0 or 100,000 with the suite green. The repeated script here is OLD and must NOT be digested.
+_wd = Path(tempfile.mkdtemp()) / "win"
+(_wd / ".chamnan" / "logs").mkdir(parents=True)
+(_wd / ".git").mkdir()
+_stale = (datetime.datetime.now().astimezone()
+          - datetime.timedelta(hours=_se.WINDOW_HOURS + 1)).isoformat(timespec="seconds")
+_stale_rows = [json.dumps({"at": _stale, "kind": "scratch",
+                           "fp": [f"tok{k}" for k in range(40)], "head": "the STALE repeat"})
+               for _ in range(6)]
+(_wd / ".chamnan" / "logs" / "scratch.jsonl").write_text("\n".join(_stale_rows) + "\n",
+                                                         encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_end.py")], input="{}",
+               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=_wd,
+               env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_wd)))
+_wdg = (_wd / ".chamnan" / "logs" / "repeat_digest.json")
+check("A REPEAT OLDER THAN WINDOW_HOURS IS NOT DIGESTED",
+      not _wdg.is_file() or "the STALE repeat" not in _wdg.read_text(encoding="utf-8"))
+# ...and the same fixture one hour INSIDE the window must be, or the check above would pass for a
+# hook that simply never digests anything.
+_fresh = (datetime.datetime.now().astimezone()
+          - datetime.timedelta(hours=max(_se.WINDOW_HOURS - 1, 0))).isoformat(timespec="seconds")
+(_wd / ".chamnan" / "logs" / "scratch.jsonl").write_text(
+    "\n".join(r.replace(_stale, _fresh).replace("STALE", "FRESH") for r in _stale_rows) + "\n",
+    encoding="utf-8")
+_wdg.unlink(missing_ok=True)
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_end.py")], input="{}",
+               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=_wd,
+               env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_wd)))
+check("...while the same repeat one hour inside the window IS",
+      _wdg.is_file() and "the FRESH repeat" in _wdg.read_text(encoding="utf-8"))
+_rmtree(_wd.parent, ignore_errors=True)
+
+# HUGE_BYTES picks the wording between "large" and "very large". The phrase it controls appeared
+# nowhere in this suite, so the constant could take any value and nothing would notice.
+# Its own directory: `_notice_for`'s was removed with the block that defined it, and reusing a
+# cleaned-up fixture is how a check starts failing for a reason that has nothing to do with it.
+_hb = Path(tempfile.mkdtemp(prefix="chamnan-hugebytes-"))
+
+
+def _wording_for(size):
+    _f = _hb / "f.py"
+    _f.write_bytes(b"x" * size)
+    _r = subprocess.run([sys.executable, str(_bh)], encoding="utf-8", errors="replace",
+                        input=json.dumps({"tool_name": "Read",
+                                          "tool_input": {"file_path": str(_f)}, "cwd": str(_hb)}),
+                        capture_output=True, text=True)
+    return json.loads(_r.stdout)["hookSpecificOutput"]["additionalContext"] if _r.stdout.strip() else ""
+
+
+check("a file at HUGE_BYTES is called VERY large",
+      "very large" in _wording_for(_brn.HUGE_BYTES + 1000))
+check("...and one above BIG_BYTES but below HUGE_BYTES is just large",
+      " large" in (_n := _wording_for((_brn.BIG_BYTES + _brn.HUGE_BYTES) // 2))
+      and "very large" not in _n)
+check("...and the two thresholds are ordered, so a wording can exist between them",
+      _brn.BIG_BYTES < _brn.HUGE_BYTES)
+_rmtree(_hb, ignore_errors=True)
+
+
+# ------------------------------------------------ what the git hook promises versus what it does
+# 🐛 Two lines told the reader the hook keeps the index current "on every commit". It never has:
+# `--diff-filter=ACDR` leaves out Modified, deliberately, because the rebuild is a full rescan
+# measured at 107s on 1,032 files and running it in the foreground of every commit would be worse.
+# Measured on this repository, 297 of 355 non-merge commits (83.7%) touch only existing files, so
+# the hook fires on about one commit in six. The filter is the right trade; the promise was not
+# part of it. The worse half is that one of the two lines was the STALENESS WARNING's own remedy —
+# offered in answer to a staleness the hook does not fix, so a reader who follows it sees the same
+# warning next session and learns to ignore the line.
+_hooksrc = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+_startsrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+
+
+def _uncommented(src):
+    """Source with whole-line comments removed.
+
+    The first version of the check below searched the raw file and failed — on the 🐛 comment
+    written to explain the very bug, which quotes the old wording. A check that cannot tell what
+    the program SAYS from what a comment says about it would be answered by rewording the comment,
+    which teaches exactly the wrong lesson.
+    """
+    return "\n".join(ln for ln in src.splitlines() if not ln.lstrip().startswith("#"))
+
+
+check("the rebuild hook really does filter on ACDR, so the wording has something to match",
+      "--diff-filter=ACDR" in _hooksrc)
+check("NEITHER LINE PROMISES A REBUILD ON EVERY COMMIT",
+      "on every commit that touches tracked files" not in _uncommented(_hooksrc)
+      and "to keep it current on every commit" not in _uncommented(_startsrc))
+# Tested on a synthetic pair rather than on the real comment's exact words: tying the meta-check to
+# a sentence somebody may reword is how a check starts failing for a reason nobody can find.
+check("...and the helper really does drop comments while keeping code",
+      _uncommented('# says "on every commit"\nprint("says nothing")\n')
+      == 'print("says nothing")')
+check("...the installer says which commits actually rebuild",
+      "adds, deletes or renames a file" in _hooksrc)
+check("...and says editing leaves the index behind, since that is the common case",
+      "Editing an existing file leaves the index behind" in _hooksrc)
+check("...and the staleness warning's remedy describes the same filter",
+      "adds, deletes or renames a file" in _startsrc)
+
+# The warning has to keep firing for an edit, or correcting its wording would have hidden the case
+# instead of describing it. Through the real hook, on a real modified file.
+_sd = Path(tempfile.mkdtemp(prefix="chamnan-stale-")) / "repo"
+(_sd / "src").mkdir(parents=True)
+(_sd / ".git").mkdir()
+(_sd / "src" / "a.py").write_text('def a():\n    """One."""\n    return 1\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sd,
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_before = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                         input=json.dumps({"cwd": str(_sd)}), capture_output=True, text=True,
+                         encoding="utf-8", errors="replace", cwd=_sd).stdout
+check("a freshly built index reports no staleness", "behind)" not in _before)
+# Two seconds, because the warning is an mtime comparison and MAP.md was written this second.
+time.sleep(2)
+(_sd / "src" / "a.py").write_text(
+    'def a():\n    """One."""\n    return 1\n\n\ndef b():\n    """Added by EDITING."""\n'
+    '    return 2\n', encoding="utf-8")
+_after = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input=json.dumps({"cwd": str(_sd)}), capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", cwd=_sd).stdout
+check("EDITING AN EXISTING FILE IS STILL REPORTED AS STALE — the case the hook skips",
+      "behind)" in _after and "a.py" in _after)
+_rmtree(_sd.parent, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
