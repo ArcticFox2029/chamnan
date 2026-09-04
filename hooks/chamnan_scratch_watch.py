@@ -145,7 +145,7 @@ def _nudge_path(wsdir, session_id):
 def _nudge_read(wsdir, session_id):
     try:
         d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         return {"calls": 0, "nudged": False}
     # Valid JSON of the wrong shape is not a missing file: a list here raised AttributeError on
     # every subsequent tool call in the session.
@@ -539,7 +539,7 @@ def main():
                     # half-written entry -- parsed fine and then raised AttributeError later.
                     if isinstance(_rec, dict):
                         prior.append(_rec)
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
                     continue
 
         # A record with no `kind` predates this field and is a scratch fingerprint by

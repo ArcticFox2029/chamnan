@@ -595,7 +595,7 @@ def plugin_version(plugin_root):
         data = json.loads((Path(plugin_root) / ".claude-plugin" / "plugin.json")
                           .read_text(encoding="utf-8"))
         return str(data.get("version", ""))
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return ""
 
 
@@ -707,7 +707,7 @@ def available_update(plugin_root):
                 if offered and _as_tuple(offered) > _as_tuple(running):
                     return offered
             break
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         pass
     return ""
 

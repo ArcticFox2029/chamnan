@@ -273,7 +273,10 @@ def _shape(value, depth=0):
 def peek_json(path, find=None):
     try:
         data = json.loads(path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace"))
-    except (json.JSONDecodeError, MemoryError) as err:
+    # RecursionError belongs beside MemoryError here: both mean the document is too much for the
+    # parser rather than malformed, and both should degrade to the text view instead of raising out
+    # of a tool whose entire purpose is reading files that are too big to read.
+    except (json.JSONDecodeError, MemoryError, RecursionError) as err:
         return [f"not valid JSON as a whole ({type(err).__name__}); may be JSON Lines",
                 *peek_text(path, find)]
     out = ["structure (keys and types only, no values):", "  " + _shape(data)]
@@ -307,7 +310,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
                 if len(rows) < sample:
                     try:
                         rows.append(json.loads(line))
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):
                         bad += 1
                 if find and len(hits) < HIT_CAP and find.lower() in line.lower():
                     hits.append((i + 1, line))

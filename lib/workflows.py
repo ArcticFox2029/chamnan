@@ -197,7 +197,7 @@ def read(log_path):
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             out.append(json.loads(line))
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, RecursionError):
             continue
     return out
 

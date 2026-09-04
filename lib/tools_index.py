@@ -63,7 +63,7 @@ def path(root):
 def load(root):
     try:
         return json.loads(path(root).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         return []
 
 

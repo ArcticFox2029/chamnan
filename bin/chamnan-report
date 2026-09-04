@@ -191,7 +191,7 @@ def collect(project_dir, want_opened=False, root=None):
                     # U+FFFD rather than raising UnicodeDecodeError, which the `except ValueError`
                     # below would not have caught.
                     rec = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
                     continue
                 msg = rec.get("message") or {}
                 usage, rid, model = msg.get("usage"), rec.get("requestId"), msg.get("model")
@@ -252,7 +252,7 @@ def collect(project_dir, want_opened=False, root=None):
                     continue
                 try:
                     when = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
                 entry = (
                     when, SNAPSHOT.sub("", model),
@@ -421,7 +421,7 @@ def _workspace_created(wsdir):
         if dates:
             try:
                 oldest = datetime.strptime(dates[0], "%Y-%m-%d").astimezone().timestamp()
-            except ValueError:
+            except (ValueError, RecursionError):
                 oldest = None
     candidates = [t for t in (born, oldest, stat.st_ctime) if t]
     return datetime.fromtimestamp(min(candidates)).astimezone() if candidates else None
@@ -438,7 +438,7 @@ def _read_pointer_log(root):
         for line in log.read_text(encoding="utf-8").splitlines():
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             fired += 1
             for path in rec.get("named") or []:
@@ -608,7 +608,7 @@ def main(argv):
             for day in sorted(touched_by_week):
                 try:
                     wk = datetime.fromisoformat(day).isocalendar()[:2]
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
                 weeks_seen.setdefault(wk, set()).update(touched_by_week[day])
             # The earliest week is skipped, not counted as 0%: it has no earlier week to revisit
