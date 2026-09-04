@@ -177,6 +177,16 @@ def check(name, condition):
         print(f"  FAIL  {name}")
 
 
+def tally():
+    """How many checks have run so far — passing or failing, because a failure still ran.
+
+    Used to make a "[SKIP] N checks" line prove its own N on the platform that CAN run the block.
+    A hand-counted N is invisible when it drifts: the number is only ever printed where the checks
+    do not run, so nobody sees it be wrong. One was measured wrong by 2 (see the faked-OS block).
+    """
+    return PASSED + len(FAILED)
+
+
 # ---------------------------------------------------------------- redaction: catches secrets
 SECRETS = [
     ("stripe live key", 'STRIPE="' + fake("sk_", "live_", "51H8xKLMNOPQRSTUVWXYZabcdef") + '"', fake("sk_", "live_", "51H8x")),
@@ -5346,7 +5356,7 @@ with _tree.session():
 check("mapper.indexable is the single definition both use",
       _direct == {"src/kept.py", "src/added.py"})
 check("...and it is what _scan itself walks",
-      {f["path"] for f in _mapper.scan(_st)} == _direct)
+      {f["path"] for f in mapper.scan(_st)} == _direct)
 _rmtree(_st.parent, ignore_errors=True)
 
 # ------------------ a rule reaches the file it governs, at the moment that file is opened
@@ -11246,7 +11256,8 @@ _check_sh = ROOT / "install" / "chamnan-check.sh"
 # `install/chamnan-check.cmd` is. So the file-shape checks run everywhere and the ones that EXECUTE
 # it are skipped there, loudly: a silent skip is how a platform stops being tested without anyone
 # noticing, so the count of what was skipped is printed.
-# Stated so the skip line can say how many, rather than "some".
+# Stated so the skip line can say how many, rather than "some" -- and asserted at the end of the
+# block, because a number only ever printed on the platform that cannot check it will drift.
 _SH_CHECKS = 9
 check("the no-Python preflight exists", _check_sh.is_file())
 _sh_src = _check_sh.read_text(encoding="utf-8")
@@ -11267,6 +11278,7 @@ def _run_check(path_value):
 # 🐛 An earlier version of this guard substituted fabricated values on a platform with no `sh`, so
 # every check below PASSED on Windows without running anything. A check that cannot run must be
 # skipped and SAID to be skipped -- a fake pass is worse than a gap, because a gap is visible.
+_sh_before = tally()
 if not _POSIX_SHELL:
     print(f"  [SKIP] {_SH_CHECKS} preflight checks — this platform has no POSIX shell to run "
           f"install/chamnan-check.sh with. install/chamnan-check.cmd is its counterpart here.")
@@ -11318,6 +11330,10 @@ else:
           "Re-run with --install" in _none_out)
     _rmtree(_fakebin, ignore_errors=True)
     _rmtree(_nopy, ignore_errors=True)
+    # Computed before the assertion so the assertion does not count itself. It is bookkeeping, not
+    # coverage, and a Windows run skips it along with the nine it describes.
+    _sh_ran = tally() - _sh_before
+    check("THE PREFLIGHT SKIP LINE ADVERTISES THE NUMBER IT REALLY SKIPS", _sh_ran == _SH_CHECKS)
 
 # ---------------------------------------------------------------- the Windows shims
 # Eleven near-identical files are exactly the set where one gets forgotten, and the failure would
@@ -11396,8 +11412,15 @@ _OS_ROWS = (
     ("MINGW64_NT-10.0", ("winget",), "winget install --id Python.Python.3.13", "Windows/Git Bash"),
 )
 
+# 🐛 This said `len(_OS_ROWS) * 2 + 5`. The loop contributes two checks per row and three more
+# follow it, so the real number is 19 and the line claimed 21. Nobody saw it: the line only prints
+# on a platform where the block does not run, which is precisely where the count cannot be checked.
+# The two WSL checks below sit OUTSIDE this branch and run everywhere, which is where the extra 2
+# came from -- they were counted as skipped while still running.
+_OS_SKIPPED = len(_OS_ROWS) * 2 + 3
+_os_before = tally()
 if not _POSIX_SHELL:
-    print(f"  [SKIP] {len(_OS_ROWS) * 2 + 5} faked-OS checks — no POSIX shell here to run "
+    print(f"  [SKIP] {_OS_SKIPPED} faked-OS checks — no POSIX shell here to run "
           f"install/chamnan-check.sh with")
 else:
     for _system, _tools, _expect, _label in _OS_ROWS:
@@ -11422,6 +11445,8 @@ else:
     _fine_code, _fine_out = _on_fake("Linux", ("git",), python_version="3.11.9")
     check("a Linux box with Python 3.11 and git needs nothing installed",
           _fine_code == 0 and "Nothing to install" in _fine_out)
+    _os_ran = tally() - _os_before
+    check("THE FAKED-OS SKIP LINE ADVERTISES THE NUMBER IT REALLY SKIPS", _os_ran == _OS_SKIPPED)
 
 # WSL reports Linux and is handled as Linux. Structural, so it runs on every platform.
 # 🐛 This asked whether the string "FAMILY = linux" was absent. The script writes `FAMILY=linux`
@@ -12812,6 +12837,57 @@ if _unguarded:
 # The exemption has to still exist, or it is silently policing nothing.
 check("...and the one documented exemption is still a real call site",
       all((f, fn) in {(a, b) for a, b, _ in _sites} for f, fn in _LOCK_EXEMPT))
+
+
+# ------------------------------------------------------------- git-lfs pointers are not the file
+# 🐛 A 41 MB file stored in LFS is checked out as a three-line pointer, and the Quick Index
+# described it as `(3L) — —`: a trivial, empty file. Reproduced end to end on a real git repo with
+# an LFS-tracked `.py` -- the index said something untrue about the repository, which is worse than
+# omitting the file. A reader who trusts it will not look; a reader who does look finds three lines
+# of metadata and concludes the file is broken.
+#
+# Skipping the file would only turn the lie into a silence. The pointer states the real size in its
+# own `size` line, so the honest answer costs nothing.
+_LFS_BODY = ("version https://git-lfs.github.com/spec/v1\n"
+             "oid sha256:9f2b1c8e4d3a5f7091b2c6d8e0a4f6b8c1d3e5f7a9b1c3d5e7f9a1b3c5d7e9f1\n"
+             "size 41943040\n")
+check("a git-lfs pointer is recognised, and reports the REAL size not the pointer's",
+      mapper.lfs_pointer_size(_LFS_BODY) == 41943040)
+check("...an ordinary source file is not a pointer",
+      mapper.lfs_pointer_size("def real():\n    return 1\n") is None)
+# The guard that stops the detector from eating real files: a module whose own docstring quotes the
+# spec URL is a plausible thing to exist inside a repository that uses LFS.
+_QUOTES_SPEC = (_LFS_MAGIC_LINE := "version https://git-lfs.github.com/spec/v1") + "\n" + "x = 1\n" * 400
+check("...and a real file that merely QUOTES the spec line is not mistaken for one, on size",
+      mapper.lfs_pointer_size(_QUOTES_SPEC) is None)
+check("...nor is a pointer-shaped file whose size line is not a number",
+      mapper.lfs_pointer_size(_LFS_MAGIC_LINE + "\nsize not-a-number\n") is None)
+
+# Rendered, not just detected -- the defect was in what the reader sees.
+_lfsd = Path(tempfile.mkdtemp(prefix="chamnan-lfs-"))
+(_lfsd / "src").mkdir()
+(_lfsd / "src" / "bindings.py").write_text(_LFS_BODY, encoding="utf-8")
+(_lfsd / "src" / "real.py").write_text('def real():\n    """Ordinary."""\n    return 1\n',
+                                       encoding="utf-8")
+_lfs_files = mapper.scan(_lfsd)
+_lfs_map = mapper.render(_lfs_files, _lfsd)
+_lfs_row = next((ln for ln in _lfs_map.splitlines() if "bindings.py" in ln and ln.startswith("- ")), "")
+check("THE INDEX SAYS AN LFS POINTER IS NOT THE FILE", "not checked out" in _lfs_row)
+check("...and states the real size a reader would otherwise have to go and find",
+      "40.0MB" in _lfs_row)
+check("...while an ordinary file beside it is described normally",
+      any("real.py" in ln and "Ordinary" in ln for ln in _lfs_map.splitlines()))
+_rmtree(_lfsd, ignore_errors=True)
+
+# One byte formatter for the codebase, not three. assets and peek had near-identical copies and
+# mapper was about to grow a third; peek's stopped at GB, so a terabyte rendered as a four-digit
+# GB figure -- the drift a duplicated formatter produces with nobody editing it.
+import assets as _assets_mod  # noqa: E402
+check("the byte formatter is public and shared", hasattr(_assets_mod, "human_bytes"))
+check("...and carries units past GB", _assets_mod.human_bytes(1024 ** 4 * 2) == "2.0TB")
+_peek_src = (ROOT / "lib" / "peek.py").read_text(encoding="utf-8")
+check("...and peek imports it rather than keeping a copy",
+      "from assets import human_bytes" in _peek_src and "def _human(" not in _peek_src)
 
 
 # ---------------------------------------------------------------- cleanup

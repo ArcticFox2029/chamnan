@@ -140,11 +140,9 @@ def _text_encoding(path):
     return "cp1252" if odd <= len(text) * 0.05 else None
 
 
-def _human(n):
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
-            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
-        n /= 1024
+# One definition, in assets. This module's own copy stopped at GB, so a terabyte member rendered
+# as a four-digit GB figure -- the drift a duplicated formatter produces without anyone editing it.
+from assets import human_bytes as _human
 
 
 def _identify(head):
