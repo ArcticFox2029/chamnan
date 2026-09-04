@@ -283,30 +283,27 @@ CLIP_BACKOFF = 18
 # indicator that most terminals draw as a boxed letter rather than a flag. The word-boundary
 # back-off does not help: from Python's side each half is already a valid, ordinary string.
 _ZWJ = "\u200d"
-_VARIATION = range(0xFE00, 0xFE10)
-_SKIN_TONE = range(0x1F3FB, 0x1F400)
-_REGIONAL = range(0x1F1E6, 0x1F200)
+# The grapheme guard lives in mdblock now, because `as_quoted` needed it too and mdblock cannot
+# import mapper. Same function, one definition.
+_whole_graphemes = mdblock.whole_graphemes
 
 
-def _whole_graphemes(text):
-    """`text` with any trailing fragment of an incomplete cluster removed."""
-    while text:
-        c = text[-1]
-        o = ord(c)
-        if (unicodedata.combining(c) or c == _ZWJ
-                or o in _VARIATION or o in _SKIN_TONE):
-            text = text[:-1]
-            continue
-        # A regional indicator is only a flag in a pair; an odd one left at the end is half of one.
-        if o in _REGIONAL:
-            run = 0
-            while run < len(text) and ord(text[-1 - run]) in _REGIONAL:
-                run += 1
-            if run % 2:
-                text = text[:-1]
-                continue
-        break
-    return text
+# CJK writes its full stop as U+3002 and its exclamation and question marks full-width, so a split
+# on ". " never fires on a Japanese or Chinese docstring and the WHOLE docstring became the file's
+# one-line summary. Reproduced with parallel-content docstrings: the English one was cut to its
+# first sentence and the Japanese one was not cut at all.
+#
+# Thai is a genuine dead end here and is left alone deliberately: it ends sentences with a space and
+# no terminal punctuation, so telling one from a word break needs segmentation, and every usable
+# segmenter is a dependency this project does not take. `_clip` still bounds the length, which is
+# the guarantee that actually matters — the summary is short, just not sentence-shaped.
+_SENTENCE_ENDS = (". ", "。", "！", "？", "।")
+
+
+def _first_sentence(text):
+    """The opening sentence, for the scripts where "sentence" is a thing you can find."""
+    cut = min((i for i in (text.find(e) for e in _SENTENCE_ENDS) if i > 0), default=-1)
+    return text[:cut] if cut > 0 else text
 
 
 def _clip(text, limit=110):
@@ -845,7 +842,7 @@ def extract_python(source, path, lang='py'):
         # RecursionError is deeply nested literals. None of these should cost more than one file.
         return None, [], []
     doc = _clip(ast.get_docstring(tree) or "")
-    doc = doc.split(". ")[0] if doc else ""
+    doc = _first_sentence(doc) if doc else ""
     if not doc:
         # A module docstring is the Python convention, but plenty of real files open with a `#`
         # header instead and mean exactly the same thing. Reading only docstrings scored a file

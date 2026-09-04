@@ -12918,6 +12918,55 @@ check("...and chamnan-report actually gates its tip on it",
       'notice_due(root, "report_language_tip")' in _rep_src)
 
 
+# --------------------------------------------------- a repository that is not written in English
+# chamnan describes every file from its comments, so a Japanese or Thai repository's index IS that
+# text. Nothing here was English-specific by design, which is exactly how these get missed.
+
+# 🐛 `mapper._clip` had a grapheme guard and `mdblock.as_quoted` did not — the same guard applied to
+# one member of a set and not the other, on two functions that both cut repository-authored text to
+# a length. A flag emoji is two regional indicators; cutting between them leaves a stray letter box
+# in the nine call sites that quote filenames, rule titles and branch names in chamnan's own
+# sentence. One definition now, in mdblock, because mapper imports mdblock and not the reverse.
+_FLAG = "\U0001F1EF\U0001F1F5"
+_cut = mdblock.as_quoted("a" * 78 + _FLAG + ".py")
+check("AS_QUOTED DOES NOT CUT INSIDE A GRAPHEME CLUSTER",
+      not _cut.rstrip("…").endswith("\U0001F1EF"))
+check("...and a whole flag inside the limit survives", _FLAG in mdblock.as_quoted("ok " + _FLAG))
+check("...and an ordinary name is untouched", mdblock.as_quoted("bundle.min.js") == "bundle.min.js")
+check("...and there is ONE definition, not one per module",
+      "def whole_graphemes" in (ROOT / "lib" / "mdblock.py").read_text(encoding="utf-8")
+      and "def _whole_graphemes" not in (ROOT / "lib" / "mapper.py").read_text(encoding="utf-8"))
+
+# 🐛 The file summary took `doc.split(". ")[0]`. CJK writes its full stop as U+3002, so that never
+# fired on a Japanese or Chinese docstring and the WHOLE docstring became the one-line summary.
+check("a summary is cut at the first sentence in English",
+      mapper._first_sentence("Does the thing. And then more.") == "Does the thing")
+check("...and at U+3002 in Japanese",
+      mapper._first_sentence("これは何かをする。そして続きがある。") == "これは何かをする")
+check("...and in Chinese", mapper._first_sentence("这个函数做事。然后还有。") == "这个函数做事")
+check("...and at the Devanagari danda",
+      mapper._first_sentence("यह कुछ करता है। और भी है।") == "यह कुछ करता है")
+# The two places it must NOT cut: a docstring with no terminal punctuation at all, and Thai, which
+# ends a sentence with a space and no mark. Guessing there would cut mid-phrase, which is worse than
+# not cutting — _clip still bounds the length either way.
+check("...and a docstring with no sentence end is returned whole",
+      mapper._first_sentence("just one clause") == "just one clause")
+check("...and Thai is left alone rather than cut at a word break",
+      mapper._first_sentence("ทำสิ่งหนึ่ง แล้วก็มีอีก") == "ทำสิ่งหนึ่ง แล้วก็มีอีก")
+
+# Through the real scan, not only against the helper. A first version of these checks called
+# `_first_sentence` directly and passed while the call site still used `split(". ")` — a helper
+# nobody calls fixes nothing, and the mutation that proved it was silent.
+_jad = Path(tempfile.mkdtemp(prefix="chamnan-ja-"))
+(_jad / "ja.py").write_text(
+    '"""これは何かをする。そして続きがある、これは要約に出てはいけない。"""\n\n\ndef f():\n    pass\n',
+    encoding="utf-8")
+_ja_doc = next((f["doc"] for f in mapper.scan(_jad) if f["path"].endswith("ja.py")), "")
+check("A JAPANESE DOCSTRING IS CUT AT ITS FIRST SENTENCE BY THE REAL SCAN",
+      _ja_doc == "これは何かをする")
+_rmtree(_jad, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
