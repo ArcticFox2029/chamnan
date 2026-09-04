@@ -15,6 +15,7 @@ size, the extensions that dominate — and never opens a file. Directories below
 out entirely, because a handful of images beside a README is not a mount and saying so is noise.
 """
 from collections import defaultdict
+import mdblock
 
 # Below this many non-source files a directory is not an asset store, it is a few loose files.
 MIN_FILES = 12
@@ -165,7 +166,7 @@ def render(groups):
             # skip.
             if readable:
                 tail += ("  _(**written to be read**: " + ", ".join(readable) + ")_")
-            out.append(f"- **`{name}/`** — {g['count']:,} files, {human_bytes(g['bytes'])} — {shown}{tail}")
+            out.append(f"- **`{mdblock.one_line(name)}/`** — {g['count']:,} files, {human_bytes(g['bytes'])} — {shown}{tail}")
         if len(ranked) > MAX_DIRS_LISTED:
             out.append(f"- _…and {len(ranked)-MAX_DIRS_LISTED} more directories_")
         out.append("")
@@ -180,7 +181,7 @@ def render(groups):
         for name, g in ranked[:MAX_DIRS_LISTED]:
             exts = sorted(g["exts"].items(), key=lambda kv: -kv[1])[:MAX_EXTS_SHOWN]
             shown = ", ".join(f"{e} ×{n:,}" for e, n in exts)
-            out.append(f"- **`{name}/`** — {g['count']:,} files — {shown}")
+            out.append(f"- **`{mdblock.one_line(name)}/`** — {g['count']:,} files — {shown}")
         if len(ranked) > MAX_DIRS_LISTED:
             out.append(f"- _…and {len(ranked)-MAX_DIRS_LISTED} more directories_")
         out.append("")

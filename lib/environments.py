@@ -310,7 +310,7 @@ def render_constraints(root, max_envs=4, max_bullets=4):
         return ""
     lines = []
     for env in found[:max_envs]:
-        head = f"- **{env['name']}**"
+        head = f"- **{mdblock.one_line(env['name'])}**"
         if env["platform"]:
             head += f" ({env['platform']})"
         lines.append(head)

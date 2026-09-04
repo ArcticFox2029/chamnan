@@ -375,7 +375,7 @@ def render_titles(found):
                 interleaved.append(by_cat[cat][i])
         i += 1
     shown = interleaved[:MAX_TITLES]
-    lines = [f"- **{cat[:-1]}** · `{mdblock.as_quoted(name)}` — {_cap(title)}"
+    lines = [f"- **{cat[:-1]}** · `{mdblock.as_quoted(name)}` — {mdblock.one_line(_cap(title))}"
              for cat, title, name in shown]
     if len(found) > MAX_TITLES:
         missing = sorted({c for c, _, _ in found} - {c for c, _, _ in shown})

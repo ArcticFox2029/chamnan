@@ -410,7 +410,7 @@ def render_detail(tables):
         return ""
     out = ["## Data model detail", ""]
     for t in tables:
-        out.append(f"### {t['name']}")
+        out.append(f"### {mdblock.as_quoted(t['name'], 80)}")
         if t["summary"]:
             out.append(t["summary"])
         if t["columns"]:

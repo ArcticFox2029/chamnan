@@ -190,7 +190,7 @@ def create(root, title, today):
     path = d / f"{_distinct_slug(d, title)}.md"
     if path.is_file():
         return path, False
-    path.write_text(f"# {title.strip()}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
+    path.write_text(f"# {mdblock.one_line(title)}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
                     encoding="utf-8")
     return path, True
 
@@ -342,7 +342,7 @@ def open_titles(root, count=INJECT_OPEN):
     lines = []
     for last, path, n in rows[:count]:
         when = f", last {last}" if last else ""
-        lines.append(f"- **{title_of(path, texts[path])}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
+        lines.append(f"- **{mdblock.one_line(title_of(path, texts[path]))}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
                      f"(`{mdblock.as_quoted(path.name)}`)")
     if len(rows) > count:
         lines.append(f"- _…and {len(rows) - count} more open in `.chamnan/{DIRNAME}/`_")
