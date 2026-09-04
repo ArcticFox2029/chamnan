@@ -4938,6 +4938,40 @@ check("...and it consumes nothing extra anywhere in this repository's own source
 check("notebooks are not indexed, which is why the redactor never sees their outputs",
       ".ipynb" not in getattr(__import__("mapper"), "EXT_LANG", {}))
 
+
+# ------------------- the paper's two comparisons are not one comparison
+# 🐛 [2026-09-04, R14 agent 4 finding 01, then checked against the paper itself] arXiv:2606.22417
+# ran THREE arms and reports TWO comparisons: a within-harness ablation (index on vs off, §6.2,
+# Table V) and a cross-harness validity check against an agentic-grep comparator (§6.1). This README
+# presented them as one. It called the cross-harness check "a causal ablation", quoted its
+# non-significant p-values as the strongest evidence against this tool, and took the turns row from
+# the ablation table — so the three rows of one table were not the same comparison.
+#
+# The paper's abstract says it plainly: "The within-harness ablation produces a large localization
+# gain and a statistically separated resolve gain ... The cross-harness check shows that the index
+# does not regress against an agentic-grep baseline." Non-significance in §6.1 is the intended
+# result of a non-regression check, not a finding against the index.
+#
+# Fetched and read rather than taken from the agent that reported it, which is the only reason the
+# fourth error — the mixed table — was found at all.
+_rd = (ROOT / "README.md").read_text(encoding="utf-8")
+check("the ablation's own numbers are quoted, not just the comparator's",
+      "+7.9pp" in _rd and "p = 0.003" in _rd)
+check("...including the localization gain, which is the paper's largest effect",
+      "+39.6pp" in _rd)
+check("...and the two comparisons are named separately",
+      "§6.2" in _rd and "§6.1" in _rd)
+check("...with the cross-harness arm described as a non-regression check rather than an ablation",
+      "does not\nregress the agent" in _rd or "does not regress" in _rd)
+# The claim that must NOT come back: calling the OpenCode comparison a causal ablation.
+_headline = [l for l in _rd.split("\n") if "2606.22417" in l and "Every number here" in l]
+check("the headline no longer calls the cross-harness comparison a causal ablation",
+      _headline and "causal ablation of a" not in _headline[0])
+# What stays true and must stay said: the paper's index is richer than this one, and the gain it
+# found lives in the shape MAP.md is NOT.
+check("...and the burden the paper creates for this tool is still stated",
+      "richer than this one" in _rd and "cross-file" in _rd)
+
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
 # regenerated file is the purest form of the noisy, unfocused diff that slows review down.
