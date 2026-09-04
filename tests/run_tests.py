@@ -13437,6 +13437,46 @@ finally:
 
 
 
+# ------------------------------------------- the ceilings vendors document, against what we declare
+# `CEILING = None` means two different things in this codebase and the file cannot tell them apart:
+# "this vendor documents no cap" and "nobody has checked". 21 of 23 adapters said None, and one of
+# them -- antigravity -- was a vendor that documents 12,000 characters. Measured before the fix: the
+# emitted file was 21,388 bytes on this repository at the large-window profile, 1.78x the limit,
+# silently. windsurf.py had carried the identical fix for two days; the sibling added the same day
+# did not get it.
+#
+# So the ones that HAVE been checked are written down here with their source. A future adapter for a
+# vendor already in this table cannot quietly declare None, and a ceiling edited to disagree with the
+# vendor's published number fails by name.
+_VENDOR_CEILINGS = {
+    # adapter        bytes    where the number comes from
+    "windsurf":     (12_000, "docs.devin.ai — 12,000 characters per workspace rule file"),
+    "antigravity":  (12_000, "antigravity.google/docs/rules-workflows/ — "
+                             '"Rules files are limited to 12,000 characters each"'),
+    "generic":      (32_768, "Codex truncates AGENTS.md at 32,768"),
+}
+_adapters_dir = ROOT / "lib" / "adapters"
+check("the adapter set is present to check", _adapters_dir.is_dir())
+for _name, (_want, _why) in sorted(_VENDOR_CEILINGS.items()):
+    _f = _adapters_dir / f"{_name}.py"
+    _txt = _f.read_text(encoding="utf-8") if _f.is_file() else ""
+    _m = re.search(r"^CEILING\s*=\s*(\S+)", _txt, re.M)
+    _got = _m.group(1).replace("_", "") if _m else None
+    check(f"{_name} keeps the ceiling its vendor documents ({_why})",
+          _got is not None and _got.isdigit() and int(_got) == _want)
+
+# ...and the emitted file for a capped adapter actually lands under its own ceiling on this
+# repository, at the profile that produces the most text. The declaration is not the guarantee.
+for _name in ("windsurf", "antigravity"):
+    _r = subprocess.run(
+        [sys.executable, str(ROOT / "bin" / "chamnan-context"), "--emit", _name,
+         "--profile", "large-window", str(ROOT.parent.parent)],
+        capture_output=True, text=True)
+    _size = len(_r.stdout.encode("utf-8"))
+    check(f"{_name}'s emitted file fits under its ceiling ({_size:,} bytes)",
+          _r.returncode == 0 and 0 < _size <= _VENDOR_CEILINGS[_name][0])
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
