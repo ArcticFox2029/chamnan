@@ -102,7 +102,10 @@ def install(root, body, command):
         if existing is not None:
             try:
                 settings = json.loads(existing)
-            except ValueError as exc:
+            # RecursionError is a RuntimeError, so `except ValueError` walks past it -- and a
+            # settings file nested past the limit is exactly "does not parse", which is the branch
+            # that refuses to overwrite somebody's file. Without it the adapter raises instead.
+            except (ValueError, RecursionError) as exc:
                 raise ValueError(f"{path} does not parse ({exc}); refusing to replace it") from exc
             if not isinstance(settings, dict):
                 raise ValueError(f"{path} is not a JSON object; refusing to replace it")

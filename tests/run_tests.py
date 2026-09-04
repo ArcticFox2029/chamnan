@@ -5086,6 +5086,76 @@ check("a schema file outside every hint directory stays invisible, by design",
       schema.scan(_dzout, [{"path": "lib/drizzle.ts"}]) == [])
 shutil.rmtree(_dzout.parent, ignore_errors=True)
 
+
+# ------------------- every json.loads, not the three somebody remembered
+# 🐛 [2026-09-04, R14 agent 2] `workspace.py` documents this in full: RecursionError is a
+# RuntimeError, so `except ValueError` and `except json.JSONDecodeError` both walk straight past it,
+# and a SessionStart hook dies with zero output. That fix reached 13 call sites of 28.
+#
+# Reproduced on one it missed. `catalogs._spec_files` only opens a file whose first 4 KB matches
+# SPEC_HEAD, so `[[[[…` is filtered out and the gap looked unreachable -- but a document that opens
+# `{\n"openapi": "3.0.0",\n"paths": {"/a": ` and then nests 300,000 deep passes that check and takes
+# `chamnan-map` down whole. Reachable, on a file a generator or an attacker can write.
+#
+# So the check WALKS every call site instead of naming the ones anybody thought of. That is the
+# shape this repository keeps needing: the fix that reaches two adapters out of four, eleven aliases
+# out of twelve, three json.loads out of twenty-eight, is the recurring defect here, and a check
+# that enumerates cannot catch the member nobody enumerated.
+_rec_bad = []
+for _rd in ("lib", "hooks", "bin"):
+    for _rp in sorted((ROOT / _rd).rglob("*")):
+        if not _rp.is_file() or _rp.suffix not in ("", ".py"):
+            continue
+        try:
+            _rtree = ast.parse(_rp.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        _rpar = {c: n for n in ast.walk(_rtree) for c in ast.iter_child_nodes(n)}
+        for _rn in ast.walk(_rtree):
+            if not (isinstance(_rn, ast.Call) and isinstance(_rn.func, ast.Attribute)
+                    and _rn.func.attr in ("loads", "load")
+                    and isinstance(_rn.func.value, ast.Name) and _rn.func.value.id == "json"):
+                continue
+            _cur, _h = _rn, None
+            while _cur in _rpar:
+                _cur = _rpar[_cur]
+                if isinstance(_cur, ast.Try):
+                    _h = []
+                    for _x in _cur.handlers:
+                        _t = _x.type
+                        if _t is None:
+                            _h.append("BARE")
+                            continue
+                        _h += [getattr(_e, "id", ast.dump(_e)) for _e in
+                               ([_t] if not isinstance(_t, ast.Tuple) else _t.elts)]
+                    break
+            # A bare except or `Exception` already covers it; anything else has to name it.
+            if not (_h and ("RecursionError" in _h or "BARE" in _h or "Exception" in _h)):
+                _rec_bad.append(f"{_rp.name}:{_rn.lineno} except {_h}")
+check("every json.loads in the package survives a document nested past the recursion limit",
+      not _rec_bad)
+if _rec_bad:
+    for _b in _rec_bad:
+        print(f"    unguarded: {_b}")
+check("...and the walk actually found call sites, so it is not passing on an empty list",
+      len([1 for _rd in ("lib", "hooks", "bin")
+           for _rp in (ROOT / _rd).rglob("*") if _rp.is_file()]) > 10)
+
+# The reachable reproduction, kept as a test rather than only as a claim in this comment.
+_recroot = Path(tempfile.mkdtemp(prefix="chamnan-rec-")) / "r"
+(_recroot / "contracts").mkdir(parents=True)
+(_recroot / "contracts" / "openapi.json").write_text(
+    '{\n"openapi": "3.0.0",\n"info": {"t": "x"},\n"paths": {"/a": '
+    + "[" * 300_000 + "]" * 300_000 + "}\n}", encoding="utf-8")
+try:
+    _recout = catalogs.scan_routes(_recroot, [{"path": "contracts/openapi.json", "lang": "json"}])
+    _recok = True
+except RecursionError:
+    _recok = False
+check("a spec that passes the head check and then nests 300,000 deep does not take the scan down",
+      _recok)
+shutil.rmtree(_recroot.parent, ignore_errors=True)
+
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
 # regenerated file is the purest form of the noisy, unfocused diff that slows review down.

@@ -1102,7 +1102,7 @@ def main():
                     data = json.loads(digest_path.read_text(encoding="utf-8"))
                     if isinstance(data, dict):
                         lines = [str(x) for x in (data.get("lines") or [])][:6]
-                except (OSError, json.JSONDecodeError):
+                except (OSError, json.JSONDecodeError, RecursionError):
                     lines = []
                 try:
                     digest_path.unlink()

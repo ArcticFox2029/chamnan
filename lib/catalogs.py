@@ -487,7 +487,7 @@ def scan_routes(root, files):
                     for meth in ops:
                         if meth.lower() in ("get", "post", "put", "patch", "delete"):
                             add(meth, p, rel, base)
-            except (json.JSONDecodeError, AttributeError):
+            except (json.JSONDecodeError, AttributeError, RecursionError):
                 continue
         else:
             # No yaml in the stdlib; the path keys are indented two spaces under `paths:` and that

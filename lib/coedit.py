@@ -129,7 +129,7 @@ def _sequence(wsdir):
             for line in fh:
                 try:
                     rec = json.loads(line)
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue          # a torn append is one lost edit, not a broken feature
                 if isinstance(rec, dict) and rec.get("fp") and (rec.get("at") or 0) >= cutoff:
                     out.append(rec["fp"])
