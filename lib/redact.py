@@ -441,6 +441,49 @@ def _names_a_mechanism(key):
     return tail in NAMING_SUFFIXES
 
 
+# 🐛 [2026-09-04, R14 agent 2 finding 02, verified before acting] A value that continued past a
+# space was redacted only up to that space, and the remainder was printed beside the placeholder:
+# `aws_secret_key: AKIA1234 EXTRA5678` came back as `aws_secret_key: <REDACTED> EXTRA5678`. That is
+# worse than a plain miss, and the module says so about the identical shape a few rules up — the
+# marker tells a reviewer the line was handled while half the credential is still on it.
+#
+# Extending the value across spaces is what the history already tried and reverted, because it ate
+# `password: ask the platform team for it`. So neither: the placeholder swallows FOLLOWING runs only
+# while they are credential-SHAPED, and stops at the first word-shaped one.
+#
+# Measured before landing, on 496 real lines in this repository that carry a secret word and an
+# assignment: zero would have anything additional consumed. The prose corpus the history was
+# protecting ("ask the platform team for it", "not set in this environment", "String, page Page")
+# is untouched, because none of those tokens carry a digit or the length that mixed case needs.
+_CREDENTIAL_SHAPED = re.compile(r"^[A-Za-z0-9+/=_\-]{8,}$")
+
+
+def _looks_like_more_credential(token):
+    """Is this whitespace-separated run more of the secret, or the start of a sentence?"""
+    if not _CREDENTIAL_SHAPED.match(token):
+        return False
+    has_digit = any(c.isdigit() for c in token)
+    has_upper = any(c.isupper() for c in token)
+    has_lower = any(c.islower() for c in token)
+    # A digit beside letters is the common credential alphabet. Mixed case with no digit needs
+    # length as well, or ordinary CamelCase identifiers in prose would qualify.
+    return (has_digit and (has_upper or has_lower)) or (has_upper and has_lower and len(token) >= 12)
+
+
+def _swallow_trailing_credential_runs(text, start):
+    """How many characters after `start` are more of the same credential. 0 when the next run is
+    prose, which is the common case and the one the space boundary exists to protect."""
+    end = start
+    while True:
+        gap = re.match(r"[ \t]+", text[end:])
+        if not gap:
+            return end - start
+        run = re.match(r"[^\s]+", text[end + gap.end():])
+        if not run or not _looks_like_more_credential(run.group(0)):
+            return end - start
+        end += gap.end() + run.end()
+
+
 def scrub(text):
     """Every string that leaves chamnan for a written file goes through this."""
     if not text:
@@ -512,8 +555,22 @@ def scrub(text):
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
-        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
-    return text
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
+        + " " * 0, text)
+    # Applied after the substitution above rather than inside it, because the amount to swallow is
+    # decided from the text FOLLOWING the match and a `sub` callback cannot consume beyond its own
+    # span. Walks the result, and at each placeholder removes any credential-shaped runs that
+    # follow it — see _swallow_trailing_credential_runs.
+    out, pos = [], 0
+    while True:
+        at = text.find(PLACEHOLDER, pos)
+        if at < 0:
+            out.append(text[pos:])
+            break
+        stop = at + len(PLACEHOLDER)
+        out.append(text[pos:stop])
+        pos = stop + _swallow_trailing_credential_runs(text, stop)
+    return "".join(out)
 
 
 def emit(*args, **kwargs):
