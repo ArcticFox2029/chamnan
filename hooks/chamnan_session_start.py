@@ -875,9 +875,19 @@ def main():
                             + ("…" if n > len(examples) else "") + ". ") if n else ""
                     # The offer to install the hook goes only to a repo that has not installed it.
                     # Repeating it to someone who has is how a warning stops being read.
+                    #
+                    # 🐛 And it used to say the hook keeps the index "current on every commit",
+                    # offered in answer to a staleness the hook does not fix. It rebuilds only when
+                    # a file is added, deleted or renamed (`--diff-filter=ACDR`), deliberately —
+                    # the rebuild is a full rescan measured at 107s on 1,032 files and running it
+                    # in the foreground of every commit would be worse. But measured on this
+                    # repository, 297 of 355 non-merge commits (83.7%) touch only existing files,
+                    # so the hook fires on about one commit in six. A reader who installs it
+                    # because this line told them to sees the same warning next session and learns
+                    # to ignore the line — which is the one thing a staleness warning cannot afford.
                     fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
-                           "`chamnan-map`, or `chamnan-map --install-git-hook` to keep it current on "
-                           "every commit")
+                           "`chamnan-map`, or `chamnan-map --install-git-hook` to rebuild it "
+                           "whenever a commit adds, deletes or renames a file")
                     # A count and up to three names, so the reader can judge whether it matters
                     # rather than guessing from a duration. Capped because on a two-week gap this
                     # would name most of the tree, which is noise wearing the costume of a signal.
