@@ -250,10 +250,11 @@ def carry_forward(root):
         body = carried[0][1]
     else:
         head = f"_Last session ({when}) — {len(carried)} records, all unfinished_"
-        body = "\n\n".join(f"**{title}**\n\n{text}" for title, text in carried)
+        body = "\n\n".join(f"**{mdblock.one_line(title)}**\n\n{text}"
+                           for title, text in carried)
     if len(body) > MAX_CARRY_CHARS:
         body = body[:MAX_CARRY_CHARS].rsplit("\n", 1)[0] + \
-            f"\n\n_…truncated — read `{group[0].name}` for the rest._"
+            f"\n\n_…truncated — read `{mdblock.one_line(group[0].name)}` for the rest._"
     return f"{head}\n\n{body}"
 
 

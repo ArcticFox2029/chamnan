@@ -232,7 +232,7 @@ def rules_text(root):
             # checkout the sibling file is real content nobody meant to inject as fact, and on the
             # case-insensitive machine that wrote it, it already silently ate the other one's body.
             others = ", ".join(f"`{mdblock.as_quoted(p.name)}`" for p in group if p != path)
-            out.append(f"**{title_of(path)}** — ⚠ this rule's filename collides with {others}, "
+            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule's filename collides with {others}, "
                        f"differing only by case. Filesystems disagree on whether these are one file "
                        f"or two, so it is NOT in force until the files are merged or renamed apart; "
                        f"do not act on either side.")
@@ -240,7 +240,7 @@ def rules_text(root):
         elif body and unresolved_conflict(body):
             # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
             # was never written, and the point is to get this file resolved.
-            out.append(f"**{title_of(path)}** — ⚠ this rule is mid-merge and both sides are still "
+            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule is mid-merge and both sides are still "
                        f"in `{mdblock.as_quoted(path.name)}`. It is NOT in force until someone "
                        f"resolves it; do not act on either side.")
             titles.append(title_of(path))
@@ -275,7 +275,7 @@ def rules_text(root):
                 trimmed.append(body)
             else:
                 trimmed.append(_cut_clean(body, share) +
-                               f"\n\n_…the rest of **{title}** is in `.chamnan/memory/rules/`._")
+                               f"\n\n_…the rest of **{mdblock.one_line(title)}** is in `.chamnan/memory/rules/`._")
         joined = "\n\n".join(trimmed)
         if len(joined) <= MAX_RULES_CHARS:
             return joined

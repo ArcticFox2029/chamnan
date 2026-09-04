@@ -1729,7 +1729,7 @@ def _render(files, root):
     for f in files:
         lines.append(f"## `{mdblock.one_line(f['path'])}`")
         if f["doc"]:
-            lines.append(f"{f['doc']}")
+            lines.append(mdblock.demote_headings(f["doc"]))
         lines.append("")
         if f["consts"]:
             lines.append(f"**Constants:** {', '.join(f['consts'][:40])}")

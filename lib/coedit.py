@@ -36,6 +36,7 @@ import workspace as ws
 import os
 import time
 from collections import Counter, defaultdict
+import mdblock
 
 LOG = "logs/edits.jsonl"
 # How many later edits count as "next". Five was not tuned: it is the window the measurement above
@@ -170,5 +171,6 @@ def line(wsdir, path, display=str):
     rows = partners(wsdir, path)
     if not rows:
         return ""
-    parts = ", ".join(f"`{display(b)}` ({p * 100:.0f}%)" for b, _, p in rows)
+    parts = ", ".join(f"`{mdblock.one_line(display(b))}` ({p * 100:.0f}%)"
+                     for b, _, p in rows)
     return f"_You usually change {parts} right after this one._"

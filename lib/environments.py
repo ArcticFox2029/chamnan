@@ -290,10 +290,13 @@ def constraints_notice(root, name, envs=None):
     env = next((e for e in (entries(root) if envs is None else envs) if e["name"] == name), None)
     if env is None or not env["constraints"]:
         return ""
-    bullets = "; ".join(env["constraints"])
-    checked = env["checked"] or "never confirmed"
-    return (f"chamnan: that command targets `{name}`, which declares — {bullets}. "
-            f"(from `.chamnan/{FILENAME}`, checked {checked})")
+    # All three fields come out of environments.md, which is a repository file like any other.
+    # This notice is emitted by a THIRD hook (chamnan_scratch_watch.py), which is why it sat outside
+    # every audit aimed at the session-start block.
+    bullets = mdblock.one_line("; ".join(env["constraints"]))
+    checked = mdblock.one_line(env["checked"] or "never confirmed")
+    return (f"chamnan: that command targets `{mdblock.one_line(name)}`, which declares — "
+            f"{bullets}. (from `.chamnan/{FILENAME}`, checked {checked})")
 
 
 def render_constraints(root, max_envs=4, max_bullets=4):
@@ -312,10 +315,10 @@ def render_constraints(root, max_envs=4, max_bullets=4):
     for env in found[:max_envs]:
         head = f"- **{mdblock.one_line(env['name'])}**"
         if env["platform"]:
-            head += f" ({env['platform']})"
+            head += f" ({mdblock.one_line(env['platform'])})"
         lines.append(head)
         for bullet in env["constraints"][:max_bullets]:
-            lines.append(f"  - {bullet}")
+            lines.append(f"  - {mdblock.one_line(bullet)}")
         if len(env["constraints"]) > max_bullets:
             lines.append(f"  - _…{len(env['constraints']) - max_bullets} more_")
     if len(found) > max_envs:
