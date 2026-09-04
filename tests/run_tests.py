@@ -5009,6 +5009,59 @@ check("...and one from outside keeps its filename rather than being blanked",
 shutil.rmtree(_prroot.parent, ignore_errors=True)
 shutil.rmtree(_proutdir, ignore_errors=True)
 
+
+# ------------------- Drizzle and Sequelize declared no tables at all
+# 🐛 [2026-09-04, R15 agent 4, reproduced before acting] `schema.scan` matched Prisma, Django,
+# SQLAlchemy, Rails, TypeORM, Room and JPA, and returned ZERO rows for Drizzle and Sequelize --
+# between them most of what a TypeScript or Node repository written since 2023 uses. A Drizzle
+# project's `## Data model` section came out empty, which is worse than absent: the section being
+# there implies the scanner looked and found nothing to report.
+#
+# Both name the table in a different place, and both are matched the way TypeORM already is: the
+# DECLARED name beats the binding name, and the binding name is only the fallback.
+_dzroot = Path(tempfile.mkdtemp(prefix="chamnan-dz-")) / "r"
+(_dzroot / "db").mkdir(parents=True)
+_dzcases = {
+    # Drizzle: the exported const is a JS binding, the first argument is the real table.
+    "db/drizzle.ts": ('import { pgTable, serial } from "drizzle-orm/pg-core";\n'
+                      'export const users = pgTable("app_users", { id: serial("id") });\n'
+                      'export const posts = pgTable("posts", { id: serial("id") });\n'),
+    # A dialect helper the pattern was not written against, because enumerating
+    # pgTable/mysqlTable/sqliteTable goes stale the moment a third-party dialect ships.
+    "db/drizzle_mysql.ts": ('import { mysqlTable, int } from "drizzle-orm/mysql-core";\n'
+                            'export const orders = mysqlTable("orders", { id: int("id") });\n'),
+    # Sequelize is the reverse of Drizzle: model name first, table name in the options object.
+    "db/sequelize.js": ('const Invoice = sequelize.define("Invoice", { n: 1 }, '
+                        '{ tableName: "invoices" });\n'
+                        'const Tag = sequelize.define("Tag", { l: 1 });\n'),
+    # The pattern the two above were modelled on, asserted so adding them did not break it.
+    "db/entity.ts": '@Entity({ name: "shipments" })\nexport class ShipmentEntity {}\n',
+}
+for _n, _t in _dzcases.items():
+    (_dzroot / _n).write_text(_t, encoding="utf-8")
+_dznames = {t["name"] for t in schema.scan(_dzroot, [{"path": n} for n in _dzcases])}
+check("Drizzle declares tables now, under the real name and not the binding's",
+      "app_users" in _dznames and "posts" in _dznames and "users" not in _dznames)
+check("...on a dialect helper the pattern was not written against", "orders" in _dznames)
+check("Sequelize's tableName beats the model name",
+      "invoices" in _dznames and "Invoice" not in _dznames)
+check("...and a define() without one records the model name rather than nothing",
+      "Tag" in _dznames)
+check("TypeORM still works -- adding two did not break the third", "shipments" in _dznames)
+shutil.rmtree(_dzroot.parent, ignore_errors=True)
+
+# The relevance filter is a PATH test by design -- see _looks_relevant's docstring: reading every
+# file to find out whether it happens to contain @Entity is the cost this plugin exists to avoid.
+# So a schema file outside every hint directory is invisible, for Drizzle exactly as for TypeORM.
+# Pinned so the limitation stays a documented property instead of being rediscovered as a bug.
+_dzout = Path(tempfile.mkdtemp(prefix="chamnan-dzout-")) / "r"
+(_dzout / "lib").mkdir(parents=True)
+(_dzout / "lib" / "drizzle.ts").write_text(
+    'export const users = pgTable("app_users", { id: 1 });\n', encoding="utf-8")
+check("a schema file outside every hint directory stays invisible, by design",
+      schema.scan(_dzout, [{"path": "lib/drizzle.ts"}]) == [])
+shutil.rmtree(_dzout.parent, ignore_errors=True)
+
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
 # regenerated file is the purest form of the noisy, unfocused diff that slows review down.
