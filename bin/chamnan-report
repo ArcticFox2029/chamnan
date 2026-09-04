@@ -671,8 +671,17 @@ def main(argv):
         print("\n  Not enough history on both sides of the workspace's creation date to compare yet.")
         print("  Run this again after a week or two of normal work.")
 
+    # 🐛 This tip printed on every single run, forever, whenever `language` was unset -- which is
+    # the default, so for most repositories that is every run there will ever be. Measured at 103
+    # tokens, and this repository's own command log shows seven reruns in one window. The token cost
+    # is the smaller half: a tip pinned to the end of the report trains a reader to stop reading the
+    # end of the report, and that is where the "read this as an observation, not an experiment"
+    # caveat directly above it lives.
+    #
+    # Every comparable notice in chamnan already stops itself -- pointer.already_pointed, the
+    # scratch-watch nudge's three strikes. This one did not because it had no state to stop against.
     lang = ws.load_config(root).get("language", "en")
-    if lang == "en":
+    if lang == "en" and ws.notice_due(root, "report_language_tip"):
         print("\n  Tip: chamnan writes generated comments and recorded procedures in English by")
         print("  default — they are re-read every session, and English carries the same meaning in")
         print("  fewer tokens. Set \"language\" in .chamnan/config.json if your team needs another.")

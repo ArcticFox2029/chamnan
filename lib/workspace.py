@@ -860,6 +860,41 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         return False
 
 
+NOTICE_TIMES = 3
+
+
+def notice_due(root, key, times=NOTICE_TIMES):
+    """True while a one-off piece of advice still has something to teach, and record the showing.
+
+    Advice that repeats forever is worse than advice shown once. It costs tokens every time an agent
+    runs the command, and it costs more than that from a reader's side: a tip pinned to the end of a
+    report trains people to stop reading the end of the report, which is where that report's real
+    caveats live. Three showings, then it stops.
+
+    Scoped to the WORKSPACE, not the session -- the sibling nudges in `chamnan_scratch_watch` are
+    per-session because they are about what this session just did, while advice about a config
+    setting is learned once and stays learned.
+
+    Both layers, as any new writer of a shared file in this codebase owes: the lock stops a lost
+    update and the atomic write stops a torn file, and neither substitutes for the other. Failing to
+    take the lock shows the notice rather than suppressing it -- the harmless direction, and it keeps
+    a contended counter from silencing advice that was never delivered.
+    """
+    store = workspace(root) / "state" / "notices.json"
+    with exclusive(store) as held:
+        seen = load_json(store)
+        seen = seen if isinstance(seen, dict) else {}
+        count = seen.get(key, 0)
+        if count >= times:
+            return False
+        if not held:
+            return True
+        seen[key] = count + 1
+        store.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(store, json.dumps(seen, ensure_ascii=False, indent=1))
+    return True
+
+
 @contextlib.contextmanager
 def exclusive(path):
     """Hold a lock beside `path` for the duration of the block. Yields True when it was acquired."""

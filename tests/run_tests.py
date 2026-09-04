@@ -12890,6 +12890,34 @@ check("...and peek imports it rather than keeping a copy",
       "from assets import human_bytes" in _peek_src and "def _human(" not in _peek_src)
 
 
+# ------------------------------------------------------- advice that stops giving itself
+# 🐛 chamnan-report's language tip printed on every run, forever, whenever `language` was unset --
+# which is the default, so for most repositories that is every run there will ever be. 103 tokens
+# measured, seven reruns in this repo's own log in one window. The token cost is the smaller half:
+# a tip pinned to the end of the report trains a reader to stop reading the end of the report, and
+# that is where the report's "an observation, not an experiment" caveat lives.
+_nd = Path(tempfile.mkdtemp(prefix="chamnan-notice-"))
+(_nd / ".chamnan" / "state").mkdir(parents=True)
+_shown = [ws.notice_due(_nd, "a_tip") for _ in range(6)]
+check("A ONE-OFF NOTICE STOPS AFTER ITS THIRD SHOWING", _shown == [True] * 3 + [False] * 3)
+check("...and two different notices do not share a counter", ws.notice_due(_nd, "another_tip"))
+check("...and the count survives on disk rather than in memory",
+      json.loads((_nd / ".chamnan" / "state" / "notices.json").read_text(encoding="utf-8"))["a_tip"] == 3)
+
+# A store that does not parse must not silence advice that was never delivered. Showing it again is
+# the harmless direction; suppressing it forever on a corrupt byte is not.
+(_nd / ".chamnan" / "state" / "notices.json").write_text("{ this is not json", encoding="utf-8")
+check("...and a corrupt store shows the notice rather than swallowing it",
+      ws.notice_due(_nd, "a_tip"))
+_rmtree(_nd, ignore_errors=True)
+
+# The gate has to be wired in, not merely available -- the defect was an ungated print, and a
+# helper nobody calls fixes nothing.
+_rep_src = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+check("...and chamnan-report actually gates its tip on it",
+      'notice_due(root, "report_language_tip")' in _rep_src)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
