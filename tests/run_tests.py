@@ -12967,6 +12967,49 @@ check("A JAPANESE DOCSTRING IS CUT AT ITS FIRST SENTENCE BY THE REAL SCAN",
 _rmtree(_jad, ignore_errors=True)
 
 
+# ------------------------------------------- a Secret's VALUE printed where its name should be
+# 🐛 A Kubernetes object's name is `metadata.name` and nothing else, but the name pattern was
+# matched against the whole document and the first hit after `kind:` was taken. Two orderings, both
+# legal YAML and both real, put a Secret's own value into MAP.md — under the caption "names only —
+# never their contents" and the line "a Secret contributes its name and nothing under it". A caption
+# that is false is worse than no caption: it is the reason a reader does not check.
+import deploy as _dep  # noqa: E402
+
+_SECRET_FIRST = ("apiVersion: v1\nkind: Secret\nstringData:\n  name: "
+                 + fake("AKIA", "IOSFODNN7EXAMPLE")
+                 + "\nmetadata:\n  name: db-credentials\n")
+# `generateName` is a real Kubernetes field, and it leaves no metadata.name to find at all.
+_NO_META_NAME = ("apiVersion: v1\nkind: Secret\nmetadata:\n  generateName: db-cred-\n"
+                 "stringData:\n  name: " + fake("sk-", "proj-", "AbCdEf1234567890XyZwVuTs") + "\n")
+_ORDINARY = ("apiVersion: v1\nkind: Secret\nmetadata:\n  name: db-credentials\n"
+             "stringData:\n  username: admin\n")
+
+_p1 = _dep._k8s_pairs(_SECRET_FIRST, "s.yaml")
+check("A SECRET'S VALUE IS NEVER TAKEN AS ITS NAME, EVEN WHEN stringData COMES FIRST",
+      _p1 == [("Secret", "db-credentials")])
+_p2 = _dep._k8s_pairs(_NO_META_NAME, "s.yaml")
+check("...and with no metadata.name at all it falls back to the FILENAME, not to the value",
+      _p2 == [("Secret", "s.yaml")])
+check("...so no part of the secret survives into the pairs",
+      not any(fake("sk-", "proj-", "AbCdEf") in n for _, n in _p1 + _p2))
+check("...while an ordinary manifest is unchanged",
+      _dep._k8s_pairs(_ORDINARY, "s.yaml") == [("Secret", "db-credentials")])
+
+# The rendered block is what actually reaches a reader, so assert there too, not only on the pairs.
+_k8d = Path(tempfile.mkdtemp(prefix="chamnan-k8s-"))
+(_k8d / "secret.yaml").write_text(_SECRET_FIRST, encoding="utf-8")
+_k8_out = _dep.render(_dep.scan(_k8d))
+check("...and the rendered Deployment section carries the name, never the value",
+      "db-credentials" in _k8_out and fake("AKIA", "IOSFODNN7EXAMPLE") not in _k8_out)
+_rmtree(_k8d, ignore_errors=True)
+
+# The quieter wrong answer the same fix closes: a container's name is not its Deployment's name.
+_DEPLOY = ("apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\nspec:\n  template:\n"
+           "    spec:\n      containers:\n        - name: nginx-sidecar\n")
+check("...and a Deployment is named for itself, not for a container inside it",
+      _dep._k8s_pairs(_DEPLOY, "d.yaml") == [("Deployment", "web")])
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

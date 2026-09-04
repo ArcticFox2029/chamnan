@@ -99,6 +99,51 @@ K8S_NESTED_NAME = re.compile(r"^\s*name:\s*([\w.-]+)\s*$", re.M)
 DOC_SPLIT = re.compile(r"^---\s*$", re.M)
 
 
+_BLOCK_KEY = re.compile(r"^([ \t]*)(?:-[ \t]+)?([A-Za-z_][\w-]*):[ \t]*$", re.M)
+
+
+def _metadata_spans(doc):
+    """Character ranges covered by a `metadata:` block, so a name can be required to live in one.
+
+    🐛 A Kubernetes object's name is `metadata.name` and nothing else, but the name pattern was
+    matched against the WHOLE document and the first hit after `kind:` was taken. Two orderings,
+    both legal YAML and both real, therefore put a Secret's own value where the index prints a name:
+
+        kind: Secret          kind: Secret
+        stringData:           metadata:
+          name: AKIA…           generateName: db-cred-
+        metadata:             stringData:
+          name: db-creds        name: sk-proj-…
+
+    The first because `stringData` simply came first; the second because `generateName` is a real
+    field and leaves no `metadata.name` to find at all. Both reproduced end to end into MAP.md,
+    under the caption "names only — never their contents" and the line "a Secret contributes its
+    name and nothing under it". A caption that is false is worse than no caption: it is the reason
+    a reader does not check.
+
+    A block's extent without a YAML parser: `metadata:` at indent N owns every following line
+    indented deeper than N, and ends at the first non-blank line that is not. That is enough for
+    both the top-level and the inside-a-List case, and a manifest with no `metadata:` now yields no
+    name and falls back to the filename -- which is the safe direction.
+
+    It also fixes a quieter wrong answer: `spec.template.spec.containers[].name` was eligible too,
+    so a Deployment could be indexed under a container's name rather than its own.
+    """
+    spans, lines, pos = [], doc.splitlines(keepends=True), 0
+    starts = []
+    for line in lines:
+        m = _BLOCK_KEY.match(line)
+        if m and m.group(2) == "metadata":
+            starts.append((len(m.group(1)), pos))
+        elif starts and line.strip():
+            indent = len(line) - len(line.lstrip(" \t"))
+            while starts and indent <= starts[-1][0]:
+                spans.append((starts.pop()[1], pos))
+        pos += len(line)
+    spans.extend((start, len(doc)) for _, start in starts)
+    return spans
+
+
 def _pair_in(doc, kind_re, name_re, fallback):
     """Give every `kind:` the name that belongs to IT, by position within its own document.
 
@@ -106,9 +151,14 @@ def _pair_in(doc, kind_re, name_re, fallback):
     three-document manifest holding a ConfigMap, a Deployment and a Service therefore indexed all
     three under whichever name came first, and the index said so with no hedge. An invented entry
     is worse here than a missing one: a reader can act on it.
+
+    And the name has to come from a `metadata:` block -- see `_metadata_spans` for the secret a
+    document-wide match printed into the index.
     """
     kinds = [(m.start(), m.group(1)) for m in kind_re.finditer(doc)]
-    names = [(m.start(), m.group(1)) for m in name_re.finditer(doc)]
+    meta = _metadata_spans(doc)
+    names = [(m.start(), m.group(1)) for m in name_re.finditer(doc)
+             if any(a <= m.start() < b for a, b in meta)]
     out = []
     for i, (pos, kind) in enumerate(kinds):
         nxt = kinds[i + 1][0] if i + 1 < len(kinds) else len(doc)
