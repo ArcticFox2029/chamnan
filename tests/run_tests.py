@@ -13477,6 +13477,81 @@ for _name in ("windsurf", "antigravity"):
           _r.returncode == 0 and 0 < _size <= _VENDOR_CEILINGS[_name][0])
 
 
+# --------------------------------------------- the subagent pointer, and why it is only a pointer
+# Angle 33 -- "subagents and the context they never receive" -- was recorded as a dead end because
+# no event fired at the right moment. It does: the hooks reference's decision-control table lists
+# SubagentStart with SessionStart and PostModelSwitch as "Context only", and its own section says
+# additionalContext is "added to the subagent's context at the start of its conversation, before its
+# first prompt". The angle stayed closed for as long as it did because WebFetch truncates that page
+# before the per-event sections; `curl` on the .md URL returns all 317,647 bytes.
+#
+# The checks below are mostly about what this hook must NOT do. One session on this machine spawned
+# fifteen subagents in an afternoon, so anything paid here is paid fifteen times, and the failure
+# mode is not a crash -- it is a hook that quietly grows into a second session-start block.
+_sa_hook = ROOT / "hooks" / "chamnan_subagent_start.py"
+check("the subagent hook exists", _sa_hook.is_file())
+
+_sa_payload = json.dumps({"session_id": "t", "cwd": str(ROOT.parent.parent),
+                          "hook_event_name": "SubagentStart", "agent_id": "a1",
+                          "agent_type": "Explore"})
+_sa = subprocess.run([sys.executable, str(_sa_hook)], input=_sa_payload,
+                     capture_output=True, text=True)
+check("...and exits 0 on a real payload", _sa.returncode == 0)
+try:
+    _sa_out = json.loads(_sa.stdout)
+except (ValueError, TypeError):
+    _sa_out = {}
+_sa_ctx = (_sa_out.get("hookSpecificOutput") or {}).get("additionalContext", "")
+
+# Plain stdout is context for SessionStart and is NOT for this event -- printing the block the way
+# the session-start hook does would produce a hook that looks correct and delivers nothing.
+check("IT USES THE EXPLICIT hookSpecificOutput FORM, WHICH THIS EVENT REQUIRES",
+      (_sa_out.get("hookSpecificOutput") or {}).get("hookEventName") == "SubagentStart"
+      and bool(_sa_ctx))
+check("...and says something about where the index is", ".chamnan/MAP.md" in _sa_ctx)
+
+_sa_bytes = len(_sa_ctx.encode("utf-8"))
+_sa_src = _sa_hook.read_text(encoding="utf-8")
+_sa_cap = int(re.search(r"^MAX_BYTES = ([\d_]+)", _sa_src, re.M).group(1).replace("_", ""))
+check(f"IT IS A POINTER, NOT A BLOCK -- {_sa_bytes:,} bytes, cap {_sa_cap:,}",
+      0 < _sa_bytes <= _sa_cap)
+check("...and the cap is a small fraction of the session-start ceiling, not a second one",
+      _sa_cap <= 2_000)
+
+# The load-bearing negative: it must name the index, never carry it. A future edit that starts
+# pasting rows would pass every check above and cost fifteen times over.
+_map = ROOT.parent.parent / ".chamnan" / "MAP.md"
+if _map.is_file():
+    _map_body = _map.read_text(encoding="utf-8", errors="replace")
+    _rows = [ln for ln in _map_body.splitlines() if ln.startswith("- **`") and len(ln) > 40][:20]
+    check("NO INDEX CONTENT IS PASTED INTO THE SUBAGENT",
+          not [r for r in _rows if r.strip() in _sa_ctx])
+
+# Outside a chamnan workspace it must say nothing at all, rather than an empty pointer.
+_sa_none = subprocess.run(
+    [sys.executable, str(_sa_hook)],
+    input=json.dumps({"cwd": tempfile.gettempdir(), "hook_event_name": "SubagentStart"}),
+    capture_output=True, text=True)
+check("it is silent where there is no workspace to point at",
+      _sa_none.returncode == 0 and not _sa_none.stdout.strip())
+
+# Malformed input is what a hook actually meets in the wild, and stderr never reaches the transcript.
+for _bad in ("", "null", "[]", "{", '{"cwd": null}'):
+    _r = subprocess.run([sys.executable, str(_sa_hook)], input=_bad,
+                        capture_output=True, text=True)
+    check(f"...and exits 0 on malformed input {_bad!r}", _r.returncode == 0)
+
+# The registration, and the dedup trap this file's own _comment describes: Claude Code deduplicates
+# by the RAW command string before ${CLAUDE_PLUGIN_ROOT} expands, so an unprefixed name collides
+# with any other plugin that chose it and one is dropped with no error anywhere.
+_hooks_json = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+check("SubagentStart is registered", "SubagentStart" in _hooks_json["hooks"])
+_sa_cmds = [h["command"] for entry in _hooks_json["hooks"].get("SubagentStart", [])
+            for h in entry.get("hooks", [])]
+check("...under a chamnan-prefixed filename, so another plugin cannot displace it",
+      all("chamnan_" in c for c in _sa_cmds) and _sa_cmds)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
