@@ -40,7 +40,7 @@ is plain markdown committed beside the code.
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
-**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
+**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
 runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
@@ -1143,20 +1143,42 @@ Sources: [arXiv:2601.23254](https://arxiv.org/html/2601.23254v2), [arXiv:2608.13
 A leak-audited causal ablation of a structural codebase index inside a coding agent, with per-cell
 cost controlled:
 
-| | with the index | grep-only agent | |
-|---|---|---|---|
-| issues resolved | **50.4%** | **45.3%** | **p = 0.087 — not significant** |
-| localization acc@5 | **84.5%** | **75.3%** | **p = 0.080 — not significant** |
-| turns to resolution | **28.3** | **36.2** | **p < 0.0001** |
-| dollar cost per cell | — | — | **null (p = 0.73)** |
+The paper ran **three** arms and reports **two different comparisons**. Until 2026-09-04 this
+section presented them as one, which was wrong in a way worth stating plainly: it labelled the
+cross-harness check "a causal ablation", quoted its non-significant p-values as the strongest
+evidence against this tool, and took the turns row from the *other* table. The paper's own
+framing is in its abstract.
 
-Read it straight: **an index richer than this one did not beat a competent grep agent on outcome at
-conventional significance.** What it did change, decisively, is how the budget is spent — a third
-fewer turns for the same money. And the paper's own breakdown puts the gain in **cross-file,
-call-graph-dependent** changes rather than single-file ones.
+**§6.2 — the causal ablation.** Same harness, same model, same seeds; the index is the only thing
+that changes (Table V, n = 80, paired Wilcoxon):
 
-That is a burden of proof, and it points somewhere specific. `MAP.md` is mostly a flat per-file
-line, which is the losing shape; its `## Impact` section is cross-file reachability, which is the
+| | index on | index off | | |
+|---|---|---|---|---|
+| issues resolved | **50.4%** | **41.9%** | **+7.9pp** | **p = 0.003** |
+| localization acc@5 | **84.5%** | **44.3%** | **+39.6pp** | **p < 0.0001** |
+| turns to resolution | **28.3** | **36.2** | **−8.3** | **p < 0.0001** |
+| dollar cost per cell | $1.15 | $1.19 | −$0.118 | **null (p = 0.73)** |
+| dollar cost per solve | $2.30 | $2.84 | −$0.54 | — |
+
+**§6.1 — the cross-harness validity check**, against OpenCode, an agentic-grep comparator. Its
+purpose is to show the index does not *regress* against competent grep, and non-significance there
+is the intended result rather than a finding against the index:
+
+| | index on | grep comparator | | |
+|---|---|---|---|---|
+| issues resolved | **50.4%** | **45.3%** | +5.1pp | **p = 0.087** |
+| localization acc@5 | **84.5%** | **75.3%** | +9.2pp | **p = 0.080** |
+
+In the authors' words: *"SC-ON matches or modestly favors OpenCode … at minimum, it does not
+regress the agent."*
+
+Read it straight, and the burden it creates for chamnan is unchanged by the correction — it just
+moves. The ablation is real and large, so an index of that kind demonstrably pays. But the paper's
+own breakdown puts the gain in **cross-file, call-graph-dependent** changes rather than single-file
+ones, and it is an index richer than this one.
+
+That points somewhere specific. `MAP.md` is mostly a flat per-file
+line, which is the shape the paper's heterogeneity breakdown does NOT credit; its `## Impact` section is cross-file reachability, which is the
 winning one — and until this release the injected block never told a session that section existed.
 It does now, in eighty bytes. **What is still not claimed:** chamnan's impact map is an import
 graph, not a call graph, and it is grepped rather than injected, so the mechanism the paper
