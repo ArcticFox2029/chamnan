@@ -33,6 +33,27 @@ import workspace as ws
 # (workflows.py, chamnan_scratch_watch.py) rather than inventing a fourth threshold value to justify.
 FLAG_AT = 3
 
+# 🐛 [2026-09-04] `stderr_seen` no longer raises the flag, and this is the measurement that took it
+# out. `runs` and `stderr_seen` were EQUAL for every tool in a real workspace:
+#
+#     session_block_size.py   runs=4  stderr_seen=4
+#     extract_findings.py     runs=5  stderr_seen=5
+#     silent_probe.py         runs=1  stderr_seen=1   <- its entire body is print("ok")
+#
+# A script whose only statement writes one line to stdout cannot produce stderr, and it was counted
+# anyway. So in at least one shipped harness the `stderr` field of a Bash `tool_response` is never
+# empty -- it appears to carry the host's own trailing notice, not the command's output -- and the
+# counter is a constant, not a signal. Every promoted tool crossed the threshold on its third run
+# and was reported as "worth a look" for behaving correctly.
+#
+# The docstring above called it "a WEAK signal". Weak would be survivable. A constant is worse: it
+# fires on everything, which trains a reader to ignore the notice, which costs the `interrupted`
+# signal beside it -- and that one IS real, because a killed or timed-out call is an unambiguous
+# fact the harness genuinely reports.
+#
+# It is still COUNTED, and still printed by chamnan-report, because the number is evidence about
+# the harness and someone should be able to see it. It just cannot raise an alarm on its own.
+
 
 def path(root):
     from workspace import workspace
@@ -131,7 +152,8 @@ def match_call(root, command):
 def record_call(root, name, interrupted=False, stderr_nonempty=False):
     """Increment `runs`, and `interrupted`/`stderr_seen` when the call showed that signal, for the
     entry named `name`. Returns (entry, just_flagged) -- `just_flagged` is True exactly once, on
-    the call that FIRST reaches FLAG_AT on either counter, so a caller can print a notice on the
+    the call that FIRST reaches FLAG_AT on `interrupted` -- `stderr_seen` is counted but cannot
+    raise the flag, for the reason measured at FLAG_AT above -- so a caller can print a notice on the
     crossing and stay silent on every repeat after it, the same restraint every other notice in
     this plugin already uses."""
     # The whole read-modify-write under one lock, not just the write. An atomic write alone does
@@ -165,14 +187,12 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
         # unequal-delta case already gets -- cheaper than a custom git merge driver, which would
         # need a `.gitattributes` entry AND a per-clone `git config` write outside this workspace.
         entry["last_run"] = datetime.now().astimezone().isoformat(timespec="microseconds")
-        was_flaggable = (entry.get("interrupted", 0) >= FLAG_AT
-                         or entry.get("stderr_seen", 0) >= FLAG_AT)
+        was_flaggable = entry.get("interrupted", 0) >= FLAG_AT
         if interrupted:
             entry["interrupted"] = entry.get("interrupted", 0) + 1
         if stderr_nonempty:
             entry["stderr_seen"] = entry.get("stderr_seen", 0) + 1
-        now_flaggable = (entry.get("interrupted", 0) >= FLAG_AT
-                         or entry.get("stderr_seen", 0) >= FLAG_AT)
+        now_flaggable = entry.get("interrupted", 0) >= FLAG_AT
         _save(root, entries)
     return entry, (now_flaggable and not was_flaggable)
 

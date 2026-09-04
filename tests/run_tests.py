@@ -904,27 +904,51 @@ check("a clean call is silent and still counts as a run",
 check("a run with empty stderr does not count as a stderr signal",
       tools_index.load(th_root)[0]["stderr_seen"] == 0)
 
+# 🐛 [2026-09-04] These three checks used to assert that the THIRD stderr occurrence raises the
+# flag. Measured in a real workspace, `stderr_seen` equalled `runs` for every promoted tool --
+# including one whose entire body is `print("ok")`, which cannot write to stderr at all. In at
+# least one shipped harness the `stderr` field of a Bash tool_response is never empty, so the
+# counter is a constant rather than a weak signal, and every correct tool was reported as "worth a
+# look" on its third run.
+#
+# So stderr is counted and cannot raise the flag. The checks below assert that directly: the
+# counter still moves, and silence holds however high it goes.
 out2 = call_flaky(stderr_text="warning one")
 out3 = call_flaky(stderr_text="warning two")
-check("stderr below the flag threshold stays silent",
-      out2.strip() == "" and out3.strip() == "")
 out4 = call_flaky(stderr_text="warning three")
-check("THE THIRD STDERR OCCURRENCE CROSSES THE THRESHOLD AND SPEAKS, ONCE",
-      "flaky.sh" in out4 and "3" in out4)
-check("the crossing names the demote command", "demote" in out4)
 out5 = call_flaky(stderr_text="warning four")
-check("A FOURTH OCCURRENCE STAYS SILENT — ONLY THE CROSSING SPOKE", out5.strip() == "")
-check("runs and stderr_seen both kept incrementing while silent",
-      tools_index.load(th_root)[0]["runs"] == 5
-      and tools_index.load(th_root)[0]["stderr_seen"] == 4)
+check("stderr never raises the flag, at any count -- it is a constant in at least one harness",
+      all(o.strip() == "" for o in (out2, out3, out4, out5)))
+check("...but it is still counted, because the number is evidence about the harness",
+      tools_index.load(th_root)[0]["stderr_seen"] == 4)
+check("...and runs keeps counting alongside it",
+      tools_index.load(th_root)[0]["runs"] == 5)
 
+# `interrupted` is the signal that survives: a killed or timed-out call is a fact the harness
+# genuinely reports, and it is the only thing the notice now names.
+int1 = call_flaky(interrupted=True)
+int2 = call_flaky(interrupted=True)
+check("one and two interruptions stay silent", int1.strip() == "" and int2.strip() == "")
+int3 = call_flaky(interrupted=True)
+check("THE THIRD INTERRUPTION CROSSES THE THRESHOLD AND SPEAKS, ONCE",
+      "flaky.sh" in int3 and "3" in int3)
+check("the crossing names the demote command", "demote" in int3)
+check("...and says interrupted rather than the old 'or written to stderr'",
+      "interrupted" in int3 and "written to stderr" not in int3)
+int4 = call_flaky(interrupted=True)
+check("A FOURTH INTERRUPTION STAYS SILENT -- ONLY THE CROSSING SPOKE", int4.strip() == "")
+
+# Compared before and after rather than against a literal. The count was hardcoded to 5, so adding
+# calls ABOVE this line broke a check about something else entirely -- and the number was never the
+# point: the property is that an unrelated command leaves the index alone.
+_runs_before = tools_index.load(th_root)[0]["runs"]
 unrelated_out = subprocess.run(
     [sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
     input=json.dumps({"tool_name": "Bash", "tool_input": {"command": "git status"},
                       "tool_response": {"stdout": "", "stderr": "", "interrupted": False}}),
     capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=th_root)
 check("a command that does not invoke a promoted tool never touches the index",
-      tools_index.load(th_root)[0]["runs"] == 5)
+      tools_index.load(th_root)[0]["runs"] == _runs_before)
 
 # interrupted is tracked as its own signal, independent of stderr.
 tools_index.register(th_root, {"name": "other.sh"})
