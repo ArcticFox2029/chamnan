@@ -415,6 +415,6 @@ def render_detail(tables):
             out.append(t["summary"])
         if t["columns"]:
             out.append(f"columns: {', '.join(t['columns'])}")
-        out.append(f"defined in `{t['source']}`")
+        out.append(f"defined in `{mdblock.as_quoted(t['source'], 120)}`")
         out.append("")
     return "\n".join(out)

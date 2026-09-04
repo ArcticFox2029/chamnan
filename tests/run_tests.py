@@ -13338,6 +13338,14 @@ _MD_REPO_FIELD = re.compile(
     r"|\b(?:path|name|title|summary|docstring|desc)\b")
 # An f-string that opens a heading, a bullet or a table row is output somebody reads as Markdown.
 _MD_OUTPUT = re.compile(r"^f['\"](?:#{1,6} |\s*[-*] |\|)")
+# ...but three modules write hook output that starts with none of those, and a prefix-keyed audit
+# walked straight past all three -- pointer.py (which fires on EVERY Read/Edit/Write, the widest
+# reach in the plugin), coedit.py (the one site where a literal embedded newline survived, not
+# merely a control character) and environments.constraints_notice (emitted by a third hook that no
+# earlier audit had looked at). Found by R19 agent 2 after this check was already written and
+# already passing, which is the whole argument for keeping both halves of it. In these, EVERY
+# interpolation of a repository field is checked, whatever the line starts with.
+_MD_ALWAYS = ("lib/pointer.py", "lib/coedit.py", "lib/environments.py")
 
 
 def _md_clean_locals(fn):
@@ -13369,7 +13377,8 @@ def _md_unsanitised():
             for _n in _mdast.walk(_fn):
                 if not isinstance(_n, _mdast.JoinedStr):
                     continue
-                if not _MD_OUTPUT.search(_mdast.unparse(_n)):
+                _rel_now = str(_p.relative_to(ROOT)).replace(os.sep, "/")
+                if _rel_now not in _MD_ALWAYS and not _MD_OUTPUT.search(_mdast.unparse(_n)):
                     continue
                 for _v in _n.values:
                     if not isinstance(_v, _mdast.FormattedValue):
