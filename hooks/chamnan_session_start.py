@@ -1148,9 +1148,17 @@ def main():
                        "builds one, or `/chamnan:bootstrap` builds it and records a baseline._\n")
 
         if _bad_cfg:
-            out.insert(0, "_⚠ `.chamnan/config.json` does not parse — a stray comma or quote. "
+            # 🐛 [2026-09-04] The reason used to be assumed rather than reported: one sentence about
+            # "a stray comma or quote", printed for the only case this could detect. A config that
+            # is valid JSON but not an object -- `[]`, `"text"`, `42`, `null` -- is discarded just
+            # as completely by load_config, was not detected at all, and would have been described
+            # with syntax advice that does not apply to it. `config_is_malformed` names the reason
+            # now and it is interpolated here, so the line tells the reader which mistake they made.
+            _fix = ("fix the syntax" if _bad_cfg == "does not parse"
+                    else "wrap the settings in `{ }`")
+            out.insert(0, f"_⚠ `.chamnan/config.json` {mdblock.as_quoted(_bad_cfg, 120)}. "
                           "This session is running on DEFAULTS and every value set in that file is "
-                          "being ignored. It has NOT been overwritten; fix the syntax and it takes "
+                          f"being ignored. It has NOT been overwritten; {_fix} and it takes "
                           "effect on the next session._\n")
         if any(OPEN_MARK in part for part in out):
             out.insert(0, FRAMING + "\n")

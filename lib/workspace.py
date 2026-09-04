@@ -491,12 +491,15 @@ def ensure(root=None):
     # Refusing to start would be worse than the bug: a session with no chamnan block is what
     # everything else in this file is written to prevent. So the run continues on defaults, the
     # file is left exactly as the user wrote it, and the block says there is a typo in it.
-    malformed = False
-    try:
-        if cfg.is_file() and cfg.read_text(encoding="utf-8", errors="replace").strip():
-            json.loads(cfg.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError, RecursionError):
-        malformed = True
+    # 🐛 [2026-09-04] This asked only whether json.loads RAISES, and the comment above describes
+    # exactly why that matters -- for the case it covered. A config that is valid JSON but not an
+    # object parses cleanly, so `malformed` stayed False, `merged` became DEFAULT_CONFIG, and the
+    # write below replaced the user's file. Reproduced with `["a","b"]`: the file on disk was a
+    # default config afterwards and the block, which promises "It has NOT been overwritten", had
+    # said nothing at all. Identical consequence to the bug the comment above documents, missed
+    # because the guard was written around one way of being wrong instead of around the question
+    # load_config actually asks.
+    malformed = bool(_config_problem(cfg))
     current = load_json(cfg, dict)
     merged = dict(DEFAULT_CONFIG)
     # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale option
@@ -890,21 +893,60 @@ def exclusive(path):
 
 
 def config_is_malformed(root):
-    """True when config.json exists, is not empty, and does not parse.
+    """Why config.json will not be used, as a short reason — or "" when it will be.
+
+    Truthy/falsy exactly as the old boolean was, so `if config_is_malformed(root):` still reads the
+    same; the string exists because the two ways a config is discarded need different advice and the
+    block used to give one message for both.
 
     Separate from ensure() so the hook can say so without ensure() having to return it, and cheap
-    enough to do twice — the file is a few hundred bytes. Missing, empty and unreadable all return
-    False: those degrade correctly and always have. Only a file the user clearly meant to write,
-    and got wrong, is worth a line in the block.
+    enough to do twice -- the file is a few hundred bytes. Missing, empty and unreadable all return
+    "": those degrade correctly and always have. Only a file the user clearly meant to write, and
+    got wrong, is worth a line in the block.
+
+    🐛 [2026-09-04] This only knew about the first case, and the second is the one that actually
+    fires. A `config.json` holding `[]`, `"text"`, `42` or `null` is VALID JSON, so it parsed, so
+    this returned False -- and `load_config` then dropped it anyway because `load_json(path, dict)`
+    returns an empty dict for anything that is not an object. Every value the user set vanished and
+    nothing said a word. Measured on all four shapes: `index_token_budget` came back as the 3000
+    default in each.
+
+    The suite had a guard pointed at the first case, and on Python 3.14 it stopped reaching even
+    that: `json.loads` there parses 100,000 levels of nesting without complaint, so the 10,000-level
+    config the test writes is not a parse failure any more -- it is a list, which lands in the second
+    case. The guard had quietly become a test of the wrong thing on the newest interpreter while
+    still passing on older ones.
     """
     try:
-        text = (workspace(root) / "config.json").read_text(encoding="utf-8", errors="replace")
-    except (OSError, NotAWorkspace):
-        return False
-    if not text.strip():
-        return False
+        return _config_problem(workspace(root) / "config.json")
+    except NotAWorkspace:
+        return ""
+
+
+def _config_problem(path):
+    """The one definition of "load_config will discard this file", shared with ensure().
+
+    It was two: this function decided what the block SAYS, and ensure() decided whether the file is
+    safe to rewrite, using a narrower rule of its own. They disagreed on a config that is valid JSON
+    but not an object -- ensure() called it fine and overwrote it, while the block said nothing --
+    which is how `["a","b"]` became a default config with no warning and no backup. Same question,
+    so it is answered in one place.
+    """
     try:
-        json.loads(text)
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if not text.strip():
+        return ""
+    try:
+        parsed = json.loads(text)
     except (ValueError, RecursionError):
-        return True
-    return False
+        return "does not parse"
+    if not isinstance(parsed, dict):
+        # Named, because "wrong shape" is not actionable and "you wrote an array" is. In JSON's own
+        # vocabulary, not Python's -- the person reading this wrote JSON, and "NoneType" would send
+        # them looking for something that does not exist in the file they are editing.
+        _JSON_NAME = {list: "array", str: "string", bool: "boolean",
+                      int: "number", float: "number", type(None): "null"}
+        return f"is a JSON {_JSON_NAME.get(type(parsed), 'value')}, not an object"
+    return ""

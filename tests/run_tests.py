@@ -10072,9 +10072,56 @@ _dcr = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_sta
 check("a config nested past the recursion limit does not kill the session",
       "Traceback" not in _dcr.stdout and "Traceback" not in _dcr.stderr)
 check("...the block is still injected", len(_dcr.stdout) > 500)
-check("...and it says the config did not parse rather than pretending it did",
-      "does not parse" in _dcr.stdout)
+# 🐛 [2026-09-04] This asserted the literal phrase "does not parse", and on Python 3.14 that stopped
+# being what happens: json there parses 100,000 levels without complaint, so the 10,000-level file
+# written above is not a parse failure any more -- it is a JSON array, which load_config discards
+# just as completely. The check was passing on older interpreters and testing the wrong branch on
+# the newest one. Assert what the reader needs -- that the block says the file is not being used --
+# rather than which of the two ways it is unusable.
+check("...and it says the config is not being used, whichever way it is unusable",
+      "config.json" in _dcr.stdout and "running on DEFAULTS" in _dcr.stdout)
 _rmtree(_dcroot.parent, ignore_errors=True)
+
+# 🐛 [2026-09-04] The bug the check above could not see. A config that is VALID JSON but not an
+# object -- `[]`, `"text"`, `42`, `null` -- parsed, so ensure()'s `malformed` guard stayed False,
+# so the merge wrote DEFAULT_CONFIG over it. The user's file was destroyed, nothing was said, and
+# the warning the block does print promises "It has NOT been overwritten". Same consequence as the
+# malformed-config bug documented in ensure(), missed because that guard was written around one way
+# of being wrong instead of around the question load_config actually asks.
+for _shape, _label in (('["a","b"]', "array"), ('"text"', "string"),
+                       ("42", "number"), ("null", "null")):
+    _wsroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-shape-")) / "r"
+    (_wsroot / ".chamnan").mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(_wsroot)], check=True)
+    _cfgp = _wsroot / ".chamnan" / "config.json"
+    _cfgp.write_text(_shape, encoding="utf-8")
+    _wsr = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          input=json.dumps({"cwd": str(_wsroot), "hook_event_name": "SessionStart",
+                                            "session_id": "s"}),
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check(f"a config that is a JSON {_label} is left on disk, not overwritten with defaults",
+          _cfgp.read_text(encoding="utf-8") == _shape)
+    check(f"...and the block says so rather than staying silent ({_label})",
+          "config.json" in _wsr.stdout and "running on DEFAULTS" in _wsr.stdout)
+    check(f"...naming the shape, because 'wrong shape' is not actionable ({_label})",
+          _label in _wsr.stdout)
+    _rmtree(_wsroot.parent, ignore_errors=True)
+
+# A valid config still merges: the user's value survives and missing defaults are filled in. Without
+# this, "never overwrite" could be satisfied by never writing at all, which breaks upgrades.
+_okroot = _ppl.Path(tempfile.mkdtemp(prefix="chamnan-okcfg-")) / "r"
+(_okroot / ".chamnan").mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_okroot)], check=True)
+(_okroot / ".chamnan" / "config.json").write_text('{"index_token_budget": 9000}', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+               input=json.dumps({"cwd": str(_okroot), "hook_event_name": "SessionStart",
+                                 "session_id": "o"}),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_okcfg = json.loads((_okroot / ".chamnan" / "config.json").read_text(encoding="utf-8"))
+check("a VALID config still merges — the user's value survives",
+      _okcfg.get("index_token_budget") == 9000)
+check("...and the keys it was missing are filled in", len(_okcfg) > 5)
+_rmtree(_okroot.parent, ignore_errors=True)
 
 
 # ------------------------------ a committed symlink read a file from outside the repository
