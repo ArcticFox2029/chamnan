@@ -4972,6 +4972,43 @@ check("the headline no longer calls the cross-harness comparison a causal ablati
 check("...and the burden the paper creates for this tool is still stated",
       "richer than this one" in _rd and "cross-file" in _rd)
 
+
+# ------------------- the tools index recorded the machine it was promoted on
+# 🐛 [2026-09-04, R15 agent 2] `chamnan-promote` wrote `str(src)` into the `origin` field, and
+# `.chamnan/tools/index.json` is tracked and committed. Promoting `~/Desktop/scratch/fix.py`
+# published a home directory and a username to everyone who clones -- the class this repository's
+# own rule names, "never let machine-specific paths reach a commit", produced by a file chamnan
+# writes on the user's behalf. Reproduced before the fix: `/private/var/folders/.../probe.py`.
+#
+# Nothing derives behaviour from the field, so provenance is kept and the machine is dropped.
+_prroot = Path(tempfile.mkdtemp(prefix="chamnan-origin-")) / "r"
+(_prroot / ".chamnan" / "tools").mkdir(parents=True)
+(_prroot / "sub").mkdir()
+subprocess.run(["git", "init", "-q", str(_prroot)], check=True)
+(_prroot / "sub" / "inside.py").write_text("print(1)\n", encoding="utf-8")
+_proutdir = Path(tempfile.mkdtemp(prefix="chamnan-originout-"))
+(_proutdir / "outside.py").write_text("print(2)\n", encoding="utf-8")
+for _arg, _name in ((str(Path("sub") / "inside.py"), "inside"),
+                    (str(_proutdir / "outside.py"), "outside")):
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), _arg, _name,
+                    "--desc", "probe"], cwd=str(_prroot), capture_output=True, text=True)
+_prentries = json.loads((_prroot / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))
+_prorigins = [e.get("origin", "") for e in _prentries]
+check("promote registered both tools", len(_prentries) == 2)
+check("no origin carries an absolute path",
+      all(not o.startswith("/") and not (len(o) > 1 and o[1] == ":") for o in _prorigins))
+check("...nor the home directory or a username",
+      not any(str(Path.home()) in o or "/Users/" in o or "\\Users\\" in o
+              for o in _prorigins))
+# Provenance still has to be worth having: a source inside the repository keeps its path relative
+# to the root, which is what makes the field answer "where did this come from".
+check("a source inside the repository keeps its relative path",
+      "sub/inside.py" in _prorigins)
+check("...and one from outside keeps its filename rather than being blanked",
+      "outside.py" in _prorigins)
+shutil.rmtree(_prroot.parent, ignore_errors=True)
+shutil.rmtree(_proutdir, ignore_errors=True)
+
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
 # regenerated file is the purest form of the noisy, unfocused diff that slows review down.
