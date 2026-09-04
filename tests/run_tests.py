@@ -4805,10 +4805,15 @@ check("the hook can never fail a commit, which is what makes it safe to install"
 
 check("the .gitattributes line is a constant with no interpolation",
       "{" not in _wsec.GENERATED_ATTR and "{" not in _wsec.GENERATED_NOTE)
-check("...and it is inert — no filter, diff or clean directive",
+# `-diff` disables textual diffing and names nothing to run; `diff=<driver>` names a program. The
+# distinction is the whole point of this check, so it is asserted rather than left to the regex
+# happening not to match.
+check("...and it is inert — no filter, diff or clean DRIVER",
       not re.search(r"\bfilter=|\bdiff=|\bclean=|\bsmudge=", _wsec.GENERATED_ATTR))
 check("what it writes is exactly what it declares",
-      _wsec.GENERATED_ATTR.strip().endswith("linguist-generated=true"))
+      set(_wsec.GENERATED_ATTR.split("\n")) >= {"MAP.md linguist-generated=true", "MAP.md -diff"})
+check("...and it says both halves in the note, since -diff hides content by default",
+      "--text" in _wsec.GENERATED_NOTE and "merging is unaffected" in _wsec.GENERATED_NOTE)
 
 # ------------- the two claims that matter most for something you install
 # An installed plugin runs arbitrary code on a developer's machine with that developer's privileges
