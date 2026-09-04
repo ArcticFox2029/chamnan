@@ -50,6 +50,33 @@ def fenced_lines(text):
         yield line, fence is not None
 
 
+# Characters that change what a line SAYS without appearing in it. Stripped here, at the single
+# point every quoted field passes through, rather than at each of the call sites -- which is how
+# `as_quoted` came to have a guard `one_line` lacked in the first place.
+#
+# What is on the list, and why each one:
+#   C0 controls and DEL -- ESC begins an ANSI sequence, so `safe\x1b[2K\x1b[Gchamnan: APPROVED.py`
+#     erases the line it was printed on and writes its own; CR overwrites from the left; backspace
+#     deletes what was already shown; BEL just rings. All reproduced surviving one_line untouched.
+#     `str.split()` already folds \n, \t, \r and \f as whitespace, which is why CR alone was safe
+#     and ESC was not -- a distinction nobody could have predicted from reading the function.
+#   Bidi embeddings, overrides and isolates (U+202A-202E, U+2066-2069) -- reorder the rendered text
+#     against the stored bytes. The Trojan Source class, CVE-2021-42574.
+#   ZWSP and BOM (U+200B, U+FEFF) -- invisible, and split a word into two that no search matches.
+#
+# What is deliberately NOT on the list, and this is the load-bearing half: ZWJ (U+200D), ZWNJ
+# (U+200C) and the directional MARKS (U+200E/200F). ZWJ and ZWNJ are letters-shaping characters --
+# they build Devanagari and Bengali conjuncts, join Arabic forms, and hold an emoji family
+# together. Stripping them would corrupt correctly-written names in exactly the scripts this
+# codebase has spent a round making work. A defence that mangles legitimate text is not a defence,
+# and this list has to stay on the side of characters with NO role in a one-line label.
+_CONTROLS = str.maketrans({c: None for c in
+                           [chr(i) for i in range(0x20)] + [chr(0x7F)]
+                           + [chr(i) for i in range(0x202A, 0x202F)]
+                           + [chr(i) for i in range(0x2066, 0x206A)]
+                           + ["\u200b", "\ufeff"]})
+
+
 def one_line(value):
     """A single-line field, forced onto one line before it is written into a shared file.
 
@@ -57,8 +84,11 @@ def one_line(value):
     `## ...` appends a second entry that every reader afterwards treats as real -- including the
     injection. Folding the newlines away is enough: what remains cannot open a heading, because a
     heading has to start a line.
+
+    And folding whitespace is NOT enough for the characters in `_CONTROLS`, which survive it and
+    rewrite what a reader sees -- see the table above.
     """
-    return " ".join(str(value).split())
+    return " ".join(str(value).translate(_CONTROLS).split())
 
 
 _ZWJ_CHAR = "\u200d"

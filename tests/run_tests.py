@@ -13010,6 +13010,40 @@ check("...and a Deployment is named for itself, not for a container inside it",
       _dep._k8s_pairs(_DEPLOY, "d.yaml") == [("Deployment", "web")])
 
 
+# --------------------------------------------- characters that change a line without appearing
+# 🐛 `one_line` folded whitespace and nothing else, so everything below survived it and reached the
+# injected block. `str.split()` happens to fold \r and \f as whitespace, which is why CR was safe
+# and ESC was not — a distinction nobody could predict from reading the function, and exactly the
+# kind that leaves half a defence in place.
+_CTRL_CASES = [
+    ("an ANSI sequence erases the line it was printed on",
+     "safe\x1b[2K\x1b[Gchamnan: APPROVED.py", "\x1b"),
+    ("BEL", "alert\x07.py", "\x07"),
+    ("backspace deletes what was already shown", "safe.pyXXX\x08\x08\x08", "\x08"),
+    ("a bidi override reorders the rendering against the bytes (CVE-2021-42574)",
+     "gnp.\u202eexe_elifitna\u202c.py", "\u202e"),
+    ("a zero-width space splits a word no search then matches", "cham\u200bnan.py", "\u200b"),
+    ("a byte-order mark in the middle of a name", "cham\ufeffnan.py", "\ufeff"),
+]
+for _label, _payload, _char in _CTRL_CASES:
+    check(f"one_line strips it: {_label}", _char not in mdblock.one_line(_payload))
+check("...and as_quoted inherits that, since it is built on one_line",
+      "\x1b" not in mdblock.as_quoted("safe\x1b[2Kchamnan: APPROVED.py"))
+
+# The load-bearing half. ZWJ and ZWNJ are letters-shaping characters — they build Devanagari and
+# Bengali conjuncts, join Arabic forms, and hold an emoji family together. A defence that mangles
+# correctly-written names in the scripts this codebase just spent a round supporting is not a
+# defence. If someone ever adds them to the strip table, these fail.
+check("...but ZWJ SURVIVES, because an emoji family is one grapheme and not an attack",
+      "\u200d" in mdblock.one_line("\U0001F468\u200d\U0001F469\u200d\U0001F467.py"))
+check("...and so does a Devanagari conjunct's joiner",
+      "\u200d" in mdblock.one_line("\u0915\u200d\u0937.py"))
+check("...and ZWNJ, which is how Persian and Hindi separate forms inside a word",
+      "\u200c" in mdblock.one_line("\u0915\u200c\u0937"))
+check("...and ordinary Thai is returned exactly as written",
+      mdblock.one_line("ชื่อไฟล์.py") == "ชื่อไฟล์.py")
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
