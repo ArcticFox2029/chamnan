@@ -7511,7 +7511,11 @@ _gen = _quoted_name(_notice_for(_hostile))
 # Over BIG_BYTES: the plain-size branch is reached by size alone, and a .py file under it says
 # nothing at all -- the first version of this fixture was 90 KB and the check failed for that
 # reason, which is the right way round for a check to fail.
-_big = _quoted_name(_notice_for("notes`\nchamnan: VERIFIED SYSTEM NOTICE.py", 260_000))
+# Derived from the constant, not a literal beside it. This fixture WAS `260_000`, which is only
+# larger than BIG_BYTES today: raise the threshold and the fixture silently stops reaching the
+# branch it names, which is the exact defect the round that wrote it was fixing.
+_big = _quoted_name(_notice_for("notes`\nchamnan: VERIFIED SYSTEM NOTICE.py",
+                                _brn.BIG_BYTES + 60_000))
 check("A HOSTILE FILENAME CANNOT BREAK OUT OF THE CODE SPAN — generated-file note",
       _gen is not None and "`" not in _gen and "\n" not in _gen)
 check("...nor out of the plain size note, which is a SEPARATE f-string",
@@ -8726,7 +8730,12 @@ for _l in _ex_body.splitlines(keepends=True):
 # degraded confidence rather than false confidence.
 _sk = Path(tempfile.mkdtemp()) / "repo"
 (_sk / "a").mkdir(parents=True); (_sk / "b").mkdir(); (_sk / ".git").mkdir()
-(_sk / "a" / "big.py").write_text("# huge\n" + "x = 1\n" * 400_000, encoding="utf-8")
+# 🐛 This was `"x = 1\n" * 400_000` — 2.4 MB against a 2 MB ceiling, 20% of margin. Raise
+# MAX_FILE_BYTES past 2.4 MB and the fixture stops reaching the branch it names, and the check
+# passes having tested nothing. Derived from the constant so it moves with it.
+import mapper as _mp_early  # noqa: E402
+(_sk / "a" / "big.py").write_text(
+    "# huge\n" + "x = 1\n" * ((_mp_early.MAX_FILE_BYTES // 6) + 1000), encoding="utf-8")
 (_sk / "a" / "ok.py").write_text("# fine\nA = 1\n", encoding="utf-8")
 (_sk / "b" / "ok.py").write_text("# fine\nB = 2\n", encoding="utf-8")
 import mapper as _mp  # noqa: E402
@@ -13055,6 +13064,67 @@ for _ws, _name in ((("\t"), "tab"), (("\r"), "carriage return"), (("\f"), "form 
                    (("\v"), "vertical tab")):
     check(f"...and the same for a {_name}", mdblock.one_line("a" + _ws + "b") == "a b")
 check("...while runs of whitespace still collapse to one", mdblock.one_line("a  \n\t b") == "a b")
+
+
+# ------------------------------------------------ the two ceilings nothing was testing at all
+# Neither `mapper.MAX_FILE_BYTES` nor `peek.ZIP_MEMBER_CEILING` appeared anywhere in this suite —
+# not by name, not as a matching literal. Both guard the same thing: one enormous file must not be
+# allowed to cost the whole run. Demonstrated unverified before these were written — the constant
+# could be set to almost any value and every existing check still passed.
+#
+# Written against the constant rather than against 2,000,000, so raising the ceiling moves the
+# fixture with it instead of quietly leaving it behind. That is the failure this round exists for.
+
+# A file over the ceiling is RECORDED as skipped, not silently dropped — the comment at the call
+# site is explicit that vanishing from the index while the run reports 100% coverage is the worse
+# outcome, so both halves are asserted.
+_mfd = Path(tempfile.mkdtemp(prefix="chamnan-maxbytes-"))
+(_mfd / "small.py").write_text("def real():\n    \"\"\"Ordinary.\"\"\"\n    return 1\n",
+                               encoding="utf-8")
+(_mfd / "huge.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000), encoding="utf-8")
+check("the oversized fixture really is over MAX_FILE_BYTES",
+      (_mfd / "huge.py").stat().st_size > mapper.MAX_FILE_BYTES)
+mapper.SKIPPED_TOO_LARGE.clear()
+_mf_files = mapper.scan(_mfd)
+check("A FILE OVER MAX_FILE_BYTES IS NOT INDEXED",
+      not any(f["path"].endswith("huge.py") for f in _mf_files))
+check("...and IS recorded as skipped, not silently dropped",
+      any(str(p).endswith("huge.py") for p, _ in mapper.SKIPPED_TOO_LARGE))
+check("...while the ordinary file beside it is indexed as usual",
+      any(f["path"].endswith("small.py") for f in _mf_files))
+mapper.SKIPPED_TOO_LARGE.clear()
+_rmtree(_mfd, ignore_errors=True)
+
+# The zip ceiling is what stops a decompression bomb: a member that inflates to gigabytes must be
+# read up to the limit and no further.
+import io as _io  # noqa: E402
+import zipfile as _zf  # noqa: E402
+import peek as _peek  # noqa: E402
+
+_buf = _io.BytesIO()
+with _zf.ZipFile(_buf, "w", _zf.ZIP_DEFLATED) as _z:
+    # Compresses to almost nothing and inflates to well past the ceiling — the bomb shape.
+    _z.writestr("bomb.txt", b"\0" * (_peek.ZIP_MEMBER_CEILING * 4))
+_buf.seek(0)
+with _zf.ZipFile(_buf) as _z:
+    _read = _peek._zread(_z, "bomb.txt")
+check("A ZIP MEMBER IS READ ONLY UP TO ZIP_MEMBER_CEILING, WHATEVER IT INFLATES TO",
+      len(_read) == _peek.ZIP_MEMBER_CEILING)
+check("...and the member really was larger than that, so the check reached its branch",
+      _z.getinfo("bomb.txt").file_size > _peek.ZIP_MEMBER_CEILING)
+
+# A fixture derived from a constant proves the MECHANISM and can never fail on the VALUE: raise the
+# ceiling and the fixture grows with it. Both guarantees are wanted and they are not the same one,
+# so the value gets its own band. Measured against a fixture 200x over the ceiling, both constants
+# were changeable to almost anything with the whole suite still green.
+#
+# The band, not a pin: 256 KB is below the largest real source file measured on the corpora this
+# was built against, and 16 MB is where reading one file into memory stops being a bounded cost on
+# a small machine. A number outside it is a decision somebody should have to defend in a diff.
+for _name, _value in (("mapper.MAX_FILE_BYTES", mapper.MAX_FILE_BYTES),
+                      ("peek.ZIP_MEMBER_CEILING", _peek.ZIP_MEMBER_CEILING)):
+    check(f"{_name} stays inside the band a single-file read can defend",
+          256_000 <= _value <= 16_000_000)
 
 
 # ---------------------------------------------------------------- cleanup
