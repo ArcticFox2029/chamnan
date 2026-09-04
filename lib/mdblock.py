@@ -70,11 +70,23 @@ def fenced_lines(text):
 # together. Stripping them would corrupt correctly-written names in exactly the scripts this
 # codebase has spent a round making work. A defence that mangles legitimate text is not a defence,
 # and this list has to stay on the side of characters with NO role in a one-line label.
-_CONTROLS = str.maketrans({c: None for c in
-                           [chr(i) for i in range(0x20)] + [chr(0x7F)]
-                           + [chr(i) for i in range(0x202A, 0x202F)]
-                           + [chr(i) for i in range(0x2066, 0x206A)]
-                           + ["\u200b", "\ufeff"]})
+# 🐛 The first version of this table mapped EVERY C0 control to None, `\n` `\t` `\r` `\f`
+# included -- and they are deleted before `str.split()` ever sees them, so it had nothing left to
+# split on. "First sentence here.\nSecond sentence follows." came out as
+# "First sentence here.Second sentence follows.", two words glued with no space. The security
+# property still held (no newline survives, so a heading cannot be reopened) which is exactly why
+# it was easy to miss: the check that mattered passed, and the text was quietly wrong.
+#
+# Whitespace is FOLDED to a space and everything else is deleted. That is what the docstring
+# always said this function does.
+_WHITESPACE = "\t\n\v\f\r"
+_CONTROLS = str.maketrans(
+    {**{c: " " for c in _WHITESPACE},
+     **{c: None for c in
+        [chr(i) for i in range(0x20) if chr(i) not in _WHITESPACE] + [chr(0x7F)]
+        + [chr(i) for i in range(0x202A, 0x202F)]
+        + [chr(i) for i in range(0x2066, 0x206A)]
+        + ["\u200b", "\ufeff"]}})
 
 
 def one_line(value):
