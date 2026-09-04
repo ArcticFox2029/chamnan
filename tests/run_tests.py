@@ -4886,6 +4886,58 @@ check("and there is no dependency manifest to install one from",
 # the real guard; keeping this beside it meant two checks where one could pass while the other
 # failed, and the weaker one reading like corroboration.
 
+
+# ------------------- a credential that continued past a space kept half of itself on the line
+# 🐛 [2026-09-04, R14 agent 2 finding 02] `ASSIGNED_SECRET_BARE` stops the value at the first
+# space, so `aws_secret_key: AKIA1234 EXTRA5678` came back as `<REDACTED> EXTRA5678` — half the
+# credential still there, beside a marker that tells a reviewer the line was handled. The module
+# already calls that shape "worse than a plain miss" about a different rule.
+#
+# Letting the value span spaces is what the history tried and reverted (it ate `password: ask the
+# platform team for it`). So the placeholder swallows FOLLOWING runs only while they are
+# credential-shaped. Both halves are asserted here, because fixing either one alone is how this
+# has already been reverted once.
+for _leak, _why in (
+    ("aws_secret_key: AKIA1234 EXTRA5678", "a second run of the same credential"),
+    ("api_token = abc123XYZ deadBEEF99", "digits beside letters in both runs"),
+):
+    _got = redact.scrub(_leak)
+    check(f"nothing survives beside the placeholder: {_why}",
+          redact.PLACEHOLDER in _got and not any(
+              tok in _got for tok in _leak.split()[2:]))
+# 🐛 The first version of these prose cases was vacuous. "password: ask the platform team for it"
+# never reaches the swallow at all — "ask" is three characters and the base rule needs six, so the
+# line is untouched whatever the discriminator does. Mutating _looks_like_more_credential to
+# `return True` left the suite green. Every case below has a first value long enough to MATCH, so
+# the words after it are genuinely at risk and the assertion is about the swallow.
+for _prose, _tail in (
+    ("password: unknown ask the platform team", "ask the platform team"),
+    ("secret: pending confirmation from the ops team", "confirmation from the ops team"),
+    ("api_key = missing from this environment entirely", "from this environment entirely"),
+    ("password: rotated during the September migration", "during the September migration"),
+):
+    _got = redact.scrub(_prose)
+    check(f"the value goes and the prose after it stays: {_prose[:36]!r}",
+          redact.PLACEHOLDER in _got and _got.endswith(_tail))
+# Measured before landing: of 496 real lines in this repository carrying a secret word and an
+# assignment, zero had anything additional consumed. If that stops being true the discriminator has
+# drifted into prose, which is the failure this whole design is arranged around.
+_swallowed = 0
+for _pyf in list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py")):
+    for _ln in _pyf.read_text(encoding="utf-8", errors="replace").splitlines():
+        _m = redact.ASSIGNED_SECRET_BARE.search(_ln)
+        if _m and redact._swallow_trailing_credential_runs(_ln, _m.end()):
+            _swallowed += 1
+check("...and it consumes nothing extra anywhere in this repository's own source",
+      _swallowed == 0)
+
+# Checked and NOT acted on: a secret in a Jupyter OUTPUT cell is not redacted, and does not need to
+# be — `.ipynb` is not in EXT_LANG, the mapper never reads one, and a repository containing a
+# notebook full of credentials produces a block with none of it. Recorded so the next round does not
+# re-open it as a finding.
+check("notebooks are not indexed, which is why the redactor never sees their outputs",
+      ".ipynb" not in getattr(__import__("mapper"), "EXT_LANG", {}))
+
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
 # regenerated file is the purest form of the noisy, unfocused diff that slows review down.
