@@ -302,11 +302,16 @@ def _track_tool_health(payload, root):
     entry, just_flagged = tools_index.record_call(root, name, interrupted, stderr_nonempty)
     if not just_flagged or entry is None:
         return False
-    signal = max(entry.get("interrupted", 0), entry.get("stderr_seen", 0))
-    say(f"chamnan: `.chamnan/tools/{name}` has been interrupted or written to stderr "
-          f"{signal} times in its last {entry.get('runs', '?')} run(s) — worth a look. "
-          f"`chamnan-candidates demote {name}` sends it back for review if it no longer does "
-          f"what you expect.")
+    # 🐛 [2026-09-04] The notice said "interrupted or written to stderr" and reported the LARGER of
+    # the two counters, which meant it usually reported the stderr one — a constant in at least one
+    # harness (see FLAG_AT in tools_index.py) — while naming interruption first. A reader chasing an
+    # interruption that never happened is worse served than one told nothing.
+    #
+    # Only the counter that raised the flag is named now, and it is the only one that can.
+    say(f"chamnan: `.chamnan/tools/{name}` was interrupted "
+          f"{entry.get('interrupted', 0)} times in its last {entry.get('runs', '?')} run(s) — "
+          f"killed or timed out, not merely noisy. `chamnan-candidates demote {name}` sends it back "
+          f"for review if it no longer does what you expect.")
     return True
 
 
