@@ -17,6 +17,7 @@ So: `fenced_lines` for reading, `one_line` for writing. Both are deliberately sm
 parser is not being added to a plugin whose whole deployment story is the standard library.
 """
 import re
+import unicodedata
 
 import md
 
@@ -60,6 +61,42 @@ def one_line(value):
     return " ".join(str(value).split())
 
 
+_ZWJ_CHAR = "\u200d"
+_VARIATION = range(0xFE00, 0xFE10)
+_SKIN_TONE = range(0x1F3FB, 0x1F400)
+_REGIONAL = range(0x1F1E6, 0x1F200)
+
+
+def whole_graphemes(text):
+    """`text` with any trailing fragment of an incomplete cluster removed.
+
+    Moved here from `mapper._clip`, which had it and `as_quoted` did not — the same guard applied to
+    one member of a set and not the other, on two functions that both cut repository-authored text
+    to a length. Reproduced: a filename ending in a flag emoji truncated at 80 characters left one
+    regional indicator behind, rendering as a stray letter box in nine call sites that quote
+    filenames, rule titles and branch names inside chamnan's own sentence.
+
+    mdblock rather than mapper because mapper imports mdblock and not the other way round.
+    """
+    while text:
+        c = text[-1]
+        o = ord(c)
+        if (unicodedata.combining(c) or c == _ZWJ_CHAR
+                or o in _VARIATION or o in _SKIN_TONE):
+            text = text[:-1]
+            continue
+        # A regional indicator is only a flag in a pair; an odd one left at the end is half of one.
+        if o in _REGIONAL:
+            run = 0
+            while run < len(text) and ord(text[-1 - run]) in _REGIONAL:
+                run += 1
+            if run % 2:
+                text = text[:-1]
+                continue
+        break
+    return text
+
+
 def as_quoted(value, limit=80):
     """Repository-authored text, made safe to print inside chamnan's OWN sentence.
 
@@ -78,7 +115,7 @@ def as_quoted(value, limit=80):
     it non-secret.
     """
     text = one_line(value).replace("`", "'")
-    return text if len(text) <= limit else text[:limit - 1] + "…"
+    return text if len(text) <= limit else whole_graphemes(text[:limit - 1]) + "…"
 
 
 def demote_headings(text):
