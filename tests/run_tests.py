@@ -13043,6 +13043,19 @@ check("...and ZWNJ, which is how Persian and Hindi separate forms inside a word"
 check("...and ordinary Thai is returned exactly as written",
       mdblock.one_line("ชื่อไฟล์.py") == "ชื่อไฟล์.py")
 
+# 🐛 The first version of the strip table mapped every C0 control to None — `\n` `\t` `\r` `\f`
+# included — and they were deleted before `str.split()` could split on them, so two words separated
+# only by a newline came out glued. The security property still held, which is exactly why it was
+# easy to miss: the check that mattered passed and the text was quietly wrong. Whitespace FOLDS to
+# a space; everything else is deleted.
+check("WHITESPACE IS FOLDED TO A SPACE, NOT DELETED — words must not be glued together",
+      mdblock.one_line("First sentence here.\nSecond sentence follows.")
+      == "First sentence here. Second sentence follows.")
+for _ws, _name in ((("\t"), "tab"), (("\r"), "carriage return"), (("\f"), "form feed"),
+                   (("\v"), "vertical tab")):
+    check(f"...and the same for a {_name}", mdblock.one_line("a" + _ws + "b") == "a b")
+check("...while runs of whitespace still collapse to one", mdblock.one_line("a  \n\t b") == "a b")
+
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
