@@ -69,6 +69,25 @@ TYPEORM_ENTITY = re.compile(r"@Entity\([^)]*\)\s*(?:export\s+)?class\s+(\w+)", r
 # reason: `Order` is not what the table is called.
 TYPEORM_NAMED = re.compile(
     r"@Entity\s*\(\s*(?:[\"']([\w.]+)[\"']|\{[^{}]*?name\s*:\s*[\"']([\w.]+)[\"'])", re.S)
+# 🐛 [2026-09-04, R15 agent 4] Drizzle and Sequelize produced zero rows, and between them they are
+# most of what a TypeScript or Node repository written since 2023 uses. TypeORM was matched and
+# these were not, so a Drizzle project's `## Data model` section was empty and the index reported
+# that the repository declares no tables — worse than saying nothing, because the section's presence
+# implies it looked.
+#
+# Drizzle names the table in the first argument, which is the real name; the exported const is a
+# JavaScript binding and often differs (`export const users = pgTable("app_users", …)`). The
+# dialect prefix varies (pgTable, mysqlTable, sqliteTable) and third-party dialects add more, so
+# the suffix is what is matched rather than an enumeration that goes stale.
+DRIZZLE_TABLE = re.compile(
+    r"\b(?:\w*[Tt]able)\s*\(\s*[\"']([\w.]+)[\"']", re.M)
+# Sequelize's `define()` takes the MODEL name first and the table name in the options object, which
+# is the reverse of Drizzle. `tableName` wins where it is given, exactly as @Entity({name}) beats
+# the class name above; without it Sequelize pluralises the model name at runtime and the literal
+# in the file is the closest thing to an answer.
+SEQUELIZE_NAMED = re.compile(
+    r"\.define\s*\(\s*[\"'](\w+)[\"'][\s\S]{0,400}?tableName\s*:\s*[\"']([\w.]+)[\"']")
+SEQUELIZE_DEFINE = re.compile(r"\.define\s*\(\s*[\"'](\w+)[\"']")
 # A view is a queryable object, and an analytics materialized view is often the only place a
 # derived figure is defined. Neither was matched at all, so "where does lane performance come
 # from" had no answer in the index even though the repo declares it.
@@ -331,6 +350,18 @@ def scan(root, files):
             add(m.group(1) or m.group(2), f["path"], _summary_above(text, m.start()))
         for m in TYPEORM_ENTITY.finditer(text):
             if m.start() not in named:
+                add(m.group(1), f["path"], _summary_above(text, m.start()))
+
+        # Drizzle, and Sequelize, in the same shape as the TypeORM block above: the declared name
+        # beats the binding name, and the binding name is only the fallback.
+        for m in DRIZZLE_TABLE.finditer(text):
+            add(m.group(1), f["path"], _summary_above(text, m.start()))
+        seq_named = set()
+        for m in SEQUELIZE_NAMED.finditer(text):
+            seq_named.add(m.start())
+            add(m.group(2), f["path"], _summary_above(text, m.start()))
+        for m in SEQUELIZE_DEFINE.finditer(text):
+            if m.start() not in seq_named:
                 add(m.group(1), f["path"], _summary_above(text, m.start()))
 
         # A computed __tablename__ names no table in this file, but the classes are still tables.
