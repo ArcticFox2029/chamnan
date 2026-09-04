@@ -524,10 +524,25 @@ def ensure(root=None):
     return ws
 
 
-GENERATED_ATTR = "MAP.md linguist-generated=true\n"
-GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap. This line collapses\n"
-                  "# it in pull-request diffs, so a rebuild does not bury the review in a file nobody\n"
-                  "# reads by hand. Delete it if you would rather see the diff.\n")
+# Two lines, because the first one only covers github.com. `-diff` is the local half: it stops
+# `git diff`, `git log -p`, `git blame` and every IDE from printing a 285KB regenerated file, which
+# is where the docstring below says `linguist-generated` does nothing.
+#
+# It is a trade, not a free win, and it is stated as one in the note the user gets: the content is
+# hidden by default and `git diff --text` is how you get it back. Measured on a fixture — a
+# five-line change to MAP.md prints 3 lines of "Binary files differ" instead of 13 of patch, and
+# `--text` restores all 13. **Merging is unaffected**: `-diff` is a diff attribute, and the same
+# fixture still performed an ordinary 3-way text merge and produced ordinary conflict markers.
+#
+# Neither line names an external program. That is the property the checks in the suite defend —
+# `filter=`, `diff=<driver>`, `clean=` and `smudge=` all run something, and `-diff` runs nothing.
+GENERATED_ATTR = ("MAP.md linguist-generated=true\n"
+                  "MAP.md -diff\n")
+GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap. These lines keep a\n"
+                  "# rebuild from burying a review in a file nobody reads by hand: the first collapses\n"
+                  "# it on github.com, the second stops git and your editor printing it at all.\n"
+                  "# `git diff --text` still shows it, and merging is unaffected. Delete either line\n"
+                  "# if you would rather see the diff.\n")
 
 
 def _mark_generated(root):
