@@ -83,7 +83,14 @@ BUILD_NAMES = {"go.mod", "go.sum", "cargo.toml", "package.json", "pyproject.toml
                "brewfile", "gnumakefile", "tox.ini", "noxfile.py", "justfile.toml"}
 
 
-def _human(size):
+def human_bytes(size):
+    """A byte count as a person reads it: 134B, 40.0MB, 1.2GB.
+
+    Public, and the only copy. `peek` carried a near-identical `_human` that stopped at GB and
+    `mapper` was about to grow a third when the git-lfs pointer summary needed one. Three
+    definitions of the same six lines is how they drift: peek's would have printed "41943040.0GB"
+    for a terabyte where this one says TB.
+    """
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024 or unit == "TB":
             return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
@@ -143,7 +150,7 @@ def render(groups):
         total_n = sum(g["count"] for _, g in ranked)
         total_b = sum(g["bytes"] for _, g in ranked)
         out += ["## Stored material (not source)", "",
-                f"{total_n:,} files, {_human(total_b)}. **Payload, not code — do not read these to "
+                f"{total_n:,} files, {human_bytes(total_b)}. **Payload, not code — do not read these to "
                 f"understand the system.** Listed so that their shape is known without anyone going "
                 f"looking, which costs more than this section does.", ""]
         for name, g in ranked[:MAX_DIRS_LISTED]:
@@ -158,7 +165,7 @@ def render(groups):
             # skip.
             if readable:
                 tail += ("  _(**written to be read**: " + ", ".join(readable) + ")_")
-            out.append(f"- **`{name}/`** — {g['count']:,} files, {_human(g['bytes'])} — {shown}{tail}")
+            out.append(f"- **`{name}/`** — {g['count']:,} files, {human_bytes(g['bytes'])} — {shown}{tail}")
         if len(ranked) > MAX_DIRS_LISTED:
             out.append(f"- _…and {len(ranked)-MAX_DIRS_LISTED} more directories_")
         out.append("")

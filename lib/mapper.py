@@ -1318,6 +1318,39 @@ def _lang_from_shebang(path):
     return None
 
 
+# The first line of every git-lfs pointer, fixed by the spec. A pointer is also required to be
+# small -- the spec caps it well under this -- and the size guard is what stops a real source file
+# that happens to quote the spec URL from being mistaken for one.
+_LFS_MAGIC = "version https://git-lfs.github.com/spec/v1"
+_LFS_MAX_BYTES = 1024
+
+
+def lfs_pointer_size(text):
+    """Bytes the REAL file holds, when `text` is a git-lfs pointer rather than the file itself.
+
+    🐛 A 41 MB file stored in LFS is checked out as a three-line pointer, and the index described it
+    as `(3L) — —`: a trivial, empty file. That is the index stating something untrue about the
+    repository, which is worse than omitting the file -- a reader who trusts it will not look, and a
+    reader who does look finds three lines of metadata and concludes the file is broken.
+
+    Skipping such files would only turn the lie into a silence. The pointer carries the real size in
+    its own `size` line, so the honest answer is available for free: say what the file is and how big
+    it actually is. Recommended by an earlier research round and never implemented until the case was
+    reproduced -- an LFS-tracked `.py` renders in the Quick Index like any other source file.
+
+    Returns None for anything that is not a pointer.
+    """
+    if not text.startswith(_LFS_MAGIC) or len(text) > _LFS_MAX_BYTES:
+        return None
+    for line in text.splitlines():
+        if line.startswith("size "):
+            try:
+                return int(line[5:].strip())
+            except ValueError:
+                return None
+    return None
+
+
 def is_text_file(path):
     """A NUL in the first block means binary, and no text source contains one. Split out of
     `indexable` so a caller that skipped the sniff for speed can apply it to the few files it
@@ -1543,6 +1576,8 @@ def _scan(root):
             # silently, and in chamnan's favour: splitlines is the better count of what a reader
             # sees.
             "lines": len(source.splitlines()), "doc": doc,
+            # None for every ordinary file, so callers that never heard of LFS are unaffected.
+            "lfs": lfs_pointer_size(source),
             "funcs": funcs, "classes": classes, "consts": consts,
             # Not rendered anywhere -- carried so render()'s later scanners (catalogs.scan_routes,
             # catalogs._django_mounts, catalogs.scan_env) can reuse the read this loop already paid
@@ -1614,6 +1649,11 @@ def _render(files, root):
             # so the label is what had to change, not what is collected.
             counts.append(f"{len(f['classes'])}{'ty' if f.get('lang') == 'js' else 'cls'}")
         summary = f["doc"] or "—"
+        if f.get("lfs") is not None:
+            # Overrides the docstring rather than appending to it: a pointer has no docstring, and
+            # if some future format ever gave it one it would be describing a file that is not here.
+            summary = (f"**not checked out** — a git-lfs pointer to "
+                       f"{assets_mod.human_bytes(f['lfs'])} of content")
         # `one_line` on the PATH, not only on the summary. A file name may legally contain a
         # newline, and an index row is a `- ` bullet -- so a file called
         # "safe\n- **INJECTED** (999L) -- ....py" rendered as TWO bullets, the second of which a
