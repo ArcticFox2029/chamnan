@@ -1443,7 +1443,7 @@ suite** rather than asserted in a sentence:
 | network calls at runtime | **none** — no runtime file imports `socket`, `urllib`, `http`, `requests` or any sibling |
 | third-party dependencies | **none** — every import is Python's standard library or chamnan's own `lib/` |
 | a manifest to install one from | **none** — no `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile` or lockfile |
-| `subprocess` | present, and only ever to run `git` or this same Python interpreter on a file that ships inside chamnan — `chamnan-map` re-runs the session-start hook so it shows you the real injection rather than a second model of it |
+| `subprocess` | present. At runtime it runs only `git`, or this same Python interpreter on a file that ships inside chamnan — `chamnan-map` re-runs the session-start hook so it shows you the real injection rather than a second model of it. `bench/`, which is tracked and so arrives with a clone, additionally runs the `claude` CLI: it measures this plugin's real cost by driving the real thing, and nothing in the plugin ever invokes it |
 
 There is nothing to fetch, so there is nothing to fetch *and execute*; and there is nothing beneath
 it to compromise. Those four rows are `check()`s that fail the build if they stop being true.
@@ -1452,8 +1452,18 @@ That last row said "only ever to run `git`" until 2026-09-02, and it was wrong: 
 `sys.executable` on `hooks/chamnan_session_start.py`. Nothing caught it, because the row had no
 guard — so the fix is not only the wording. A check now parses every source file, finds every
 `subprocess` call, and reads the first element of the argv it is handed; a call site that executes
-anything but `git` or this interpreter fails the build, and a call site whose argv the check cannot
-resolve fails it too rather than being skipped.
+anything but the permitted set fails the build, and a call site whose argv the check cannot resolve
+fails it too rather than being skipped.
+
+It was corrected a second time on 2026-09-04, and the second correction is the more useful one to
+read. The check walked three directories — `lib/`, `hooks/`, `bin/` — while this page claimed it read
+every source file. `bench/` was outside it, `bench/` is tracked, and `bench/` launches `claude` with
+`--permission-mode bypassPermissions`. Nothing about that is dangerous: it is a maintainer harness
+that measures this plugin's own cost by running the real CLI, and the plugin never calls it. But a
+claim about which binaries a package executes is worth nothing if the scan behind it skips a
+directory, and the gap was found by auditing our own claim rather than by anyone reporting it. The
+check now walks `lib/`, `hooks/`, `bin/`, `bench/` and `install/`, and permits `claude` only under
+`bench/` — a `claude` call appearing anywhere in the shipped runtime fails the build.
 
 ### 9a. The exfiltration chain, and where chamnan breaks it
 
