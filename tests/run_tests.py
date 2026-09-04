@@ -4880,9 +4880,11 @@ check("no runtime file imports a third-party package", not _foreign)
 check("and there is no dependency manifest to install one from",
       not any((ROOT / n).exists() for n in
               ("requirements.txt", "pyproject.toml", "setup.py", "Pipfile", "poetry.lock")))
-check("subprocess is used, but only ever to run git",
-      all("git" in f.read_text(encoding="utf-8", errors="replace")
-          for f in _files if "subprocess" in _all.get(f.name, ())))
+# 🐛 [removed 2026-09-04] This asked whether the string "git" appeared ANYWHERE in a file that
+# mentions subprocess — a comment was enough. A file running `rm -rf /` with the word git in a
+# docstring passed it. The AST walk further down reads the actual argv of every call site and is
+# the real guard; keeping this beside it meant two checks where one could pass while the other
+# failed, and the weaker one reading like corroboration.
 
 # ------------------- MAP.md is generated, and git should be told so
 # chamnan recommends committing MAP.md, and it is 285KB on the development repository. A large
@@ -9128,9 +9130,22 @@ check("a file that is ONLY the Xcode header is left undescribed rather than wron
 # the argv list it is handed. Two things are permitted and both are named in the README: the literal
 # "git", and `sys.executable` — this interpreter re-running a file that ships inside this package.
 # Anything else fails here, including a new call site added by someone who did not read the README.
+# 🐛 [2026-09-04] This walked lib/, hooks/ and bin/ — three directories, while the README said it
+# reads "every source file". bench/ is tracked, so it ships to everyone who clones, and it launches
+# `claude` twice with --permission-mode bypassPermissions. Nobody auditing this repo would have found
+# that from the README, and a claim about executed binaries that skips a directory is worth less than
+# no claim. Every directory holding Python is walked now, and bench/ is the one place `claude` is
+# permitted — it is a maintainer harness that measures the plugin's real cost by running the real
+# CLI, and the plugin itself never invokes it.
 _exec_allowed, _exec_found, _exec_bad = {"git"}, [], []
-for _pyf in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))
-                   + [p for p in (ROOT / "bin").iterdir() if p.is_file()]):
+_exec_dirs = ("lib", "hooks", "bin", "bench", "install")
+_exec_files = []
+for _d in _exec_dirs:
+    _dp = ROOT / _d
+    if not _dp.is_dir():
+        continue
+    _exec_files += [p for p in _dp.rglob("*") if p.is_file() and p.suffix in ("", ".py")]
+for _pyf in sorted(_exec_files):
     try:
         _tree = _pa.parse(_pyf.read_text(encoding="utf-8"))
     except SyntaxError:
@@ -9145,7 +9160,7 @@ for _pyf in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glo
         if not _node.args:
             continue
         _argv = _node.args[0]
-        _where = f"{_pyf.name}:{_node.lineno}"
+        _where = f"{_pyf.parent.name}/{_pyf.name}:{_node.lineno}"
         # A list literal: read its first element. Anything else (a name built earlier) is resolved
         # by hand below, because a test that silently skips what it cannot read is the vacuous kind.
         if isinstance(_argv, (_pa.List, _pa.Tuple)) and _argv.elts:
@@ -9154,6 +9169,9 @@ for _pyf in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glo
                 _exec_found.append((_where, "git"))
             elif (isinstance(_first, _pa.Attribute) and _first.attr == "executable"):
                 _exec_found.append((_where, "sys.executable"))
+            elif (isinstance(_first, _pa.Constant) and _first.value == "claude"
+                  and _pyf.parent.name == "bench"):
+                _exec_found.append((_where, "claude (bench only)"))
             else:
                 _exec_bad.append((_where, _pa.dump(_first)[:60]))
         elif isinstance(_argv, _pa.Name):
@@ -9162,6 +9180,10 @@ for _pyf in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glo
             _prev = "\n".join(_src[max(0, _node.lineno - 12):_node.lineno])
             if f"{_argv.id} = [sys.executable" in _prev:
                 _exec_found.append((_where, "sys.executable"))
+            elif f'{_argv.id} = [\n        "claude"' in _prev and _pyf.parent.name == "bench":
+                _exec_found.append((_where, "claude (bench only)"))
+            elif f'{_argv.id} = ["claude"' in _prev and _pyf.parent.name == "bench":
+                _exec_found.append((_where, "claude (bench only)"))
             else:
                 _exec_bad.append((_where, f"argv built as {_argv.id}, unresolved"))
         else:
@@ -9176,6 +9198,10 @@ check("...and the check actually found call sites, so it is not passing on an em
       len(_exec_found) >= 5)
 check("...including at least one that is NOT git, which is why the README's old wording was wrong",
       any(k == "sys.executable" for _, k in _exec_found))
+check("...and bench/ is walked, which is where the `claude` calls the old scan never saw live",
+      any(w.startswith("bench/") for w, _ in _exec_found))
+check("...and `claude` is permitted ONLY under bench/, never in the shipped runtime",
+      all(_pyf_dir.startswith("bench/") for _pyf_dir, _k in _exec_found if _k.startswith("claude")))
 # The claim in the README has to match what was just measured, or the guard guards nothing.
 # Assert the property, not the absence of a string: the first wording of the fix still contained
 # the old phrase inside a longer, correct sentence, and a substring check called that a failure.
@@ -9184,6 +9210,8 @@ _srow = next((l for l in _rdm.split("\n") if l.startswith("| `subprocess` |")), 
 check("the README has a row describing what subprocess runs", bool(_srow))
 check("...and it names BOTH git and this interpreter, which is what the AST walk just measured",
       "git" in _srow and ("interpreter" in _srow or "sys.executable" in _srow))
+check("...and it does not hide the `claude` calls in bench/, which are tracked and do ship",
+      "bench" in _srow and "claude" in _srow)
 
 
 # ------------------------------ the last-resort cut has to say what it removed, and why
