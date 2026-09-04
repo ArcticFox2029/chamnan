@@ -143,6 +143,7 @@ def _text_encoding(path):
 # One definition, in assets. This module's own copy stopped at GB, so a terabyte member rendered
 # as a four-digit GB figure -- the drift a duplicated formatter produces without anyone editing it.
 from assets import human_bytes as _human
+import mdblock
 
 
 def _identify(head):
@@ -713,12 +714,12 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
         # A key file's shape IS its content. Naming it and refusing is the whole useful answer;
         # peek is the one command that opens an arbitrary path on request, which makes it the
         # one that most needs a deny-list, and it did not have one.
-        return (f"# {path.name}\n{_human(size)} · {path.suffix.lower() or 'no extension'}\n\n"
+        return (f"# {mdblock.one_line(path.name)}\n{_human(size)} · {mdblock.one_line(path.suffix.lower() or 'no extension')}\n\n"
                 f"Refused: chamnan does not open this kind of file. Its contents are credentials "
                 f"or a key, and there is no summary of them that is safe to put in a session.\n\n"
                 f"_[nothing read]_")
     ext = path.suffix.lower()
-    header = [f"# {path.name}", f"{_human(size)} · {ext or 'no extension'}"]
+    header = [f"# {mdblock.one_line(path.name)}", f"{_human(size)} · {mdblock.one_line(ext or 'no extension')}"]
 
     # 🐛 An env file was printed like any other text file, values and all — an internal
     # hostname, an admin address, a live DSN. `catalogs.scan_env` publishes NAMES only for this
