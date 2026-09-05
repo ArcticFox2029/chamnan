@@ -13582,6 +13582,48 @@ try:
 finally:
     _rmtree(_mvn, ignore_errors=True)
 
+
+# 🐛 Past roughly 200 sibling groups the roll-up named what fitted and the tail was simply cut, with
+# only the generic "Quick Index is cut short" line to show for it — no directory named, no count, so
+# a reader could not tell whether three were missing or six hundred. Measured on 300 sibling
+# packages (a Lerna/Nx/Turborepo/Go-multi-module layout, and what a package-per-service team has):
+# 212 named, 88 gone. `collapse`'s own docstring promises "coarse and complete beats detailed and
+# arbitrarily half-missing", and past that point it was delivering exactly the arbitrary half.
+#
+# The overflow is folded one level UP now: leftover groups are gathered by parent and each parent
+# gets a line saying how many directories and files are under it. Both numbers are asserted, because
+# a summary line that says the wrong count is worse than no summary line.
+for _npkg in (300, 800):
+    _pk2 = Path(tempfile.mkdtemp(prefix="chamnan-fold2-"))
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=_pk2, capture_output=True)
+        for _i in range(1, _npkg + 1):
+            _d = _pk2 / "packages" / f"pkg{_i:03d}"
+            _d.mkdir(parents=True)
+            (_d / "m.py").write_text(f'"""P{_i}."""\ndef f(): pass\n', encoding="utf-8")
+        subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_pk2,
+                       capture_output=True)
+        _txt = (_pk2 / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+        _qi = "## Quick Index" + _txt.split("## Quick Index", 1)[1].split("\n---", 1)[0]
+        _out = rollup.collapse(_qi, ".chamnan/MAP.md", 3000, None, per_dir=0)
+        _named = len(re.findall(r"^- \*\*.+?/\*\* \(\d+\)", _out, re.M))
+        _m = re.search(r"_(\d+) more director(?:y|ies) under", _out)
+        _more = int(_m.group(1)) if _m else 0
+        check(f"AT {_npkg} SIBLING GROUPS, EVERY DIRECTORY IS ACCOUNTED FOR, NAMED OR COUNTED",
+              _named + _more == _npkg)
+        check(f"...and the {_npkg}-group block is still inside the token budget",
+              tokens_mod.estimate(_out) <= 3000)
+        check(f"...and it names the parent the missing ones are under, not just a number",
+              "packages" in (_m.string[_m.start():_m.end() + 40] if _m else ""))
+    finally:
+        _rmtree(_pk2, ignore_errors=True)
+
+# The other direction: a repository that already fits gains no summary line at all.
+_fits = rollup.collapse("## Quick Index\n\n" + "".join(
+    f"- **`src/mod{i}/file.py`** (3L)\n" for i in range(6)), "x", 3000, None)
+check("...while a repository that already fits gains no overflow line",
+      "more director" not in _fits)
+
 # 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
 # nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
 # README said "not required" and `chamnan-map` in the same directory built the workspace the hook

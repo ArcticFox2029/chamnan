@@ -5,6 +5,7 @@ the folding at session start, and chamnan-map, which has to tell the user what t
 separate estimate in the reporting path was wrong by 2.4x the first time it was tried — close enough
 to look plausible, far enough to make the decision on bad numbers. One implementation, called twice.
 """
+import re
 import json
 import mdblock
 import os
@@ -388,7 +389,53 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         folded.append(f"- **{mdblock.as_quoted(top, 80)}/** ({len(names)})"
                       + (f" — {shown}{more}" if shown else ""))
     out = "\n".join(head + folded + tail)
+    if budget:
+        out = _fold_the_overflow(head, folded, tail, map_rel, budget)
     return _enforce(out, map_rel, budget) if budget else out
+
+
+def _fold_the_overflow(head, folded, tail, map_rel, budget):
+    """One more level of folding, for when the directory lines THEMSELVES do not fit.
+
+    🐛 Measured on 300 sibling packages -- a Lerna/Nx/Turborepo/Go-multi-module layout, and the shape
+    a package-per-service team has: `per_dir=0` named 212 of them and the other 88 were the tail
+    `_enforce` cut off. The block then said "Quick Index is cut short", which is true and useless: it
+    names no directory, gives no count, and the reader cannot tell whether three are missing or three
+    hundred. `collapse`'s own docstring promises "coarse and complete beats detailed and arbitrarily
+    half-missing", and past ~200 groups it was delivering exactly the arbitrary half.
+
+    So the overflow is folded one level UP rather than dropped: the leftover groups are gathered by
+    their parent and each parent gets a line saying how many directories and files are under it. The
+    reader learns that `packages/` holds 88 more, which is the difference between a known gap and an
+    invisible one. Nothing is silently lost, and the cost is one line per parent.
+    """
+    if tokens.estimate("\n".join(head + folded + tail)) <= budget:
+        return "\n".join(head + folded + tail)
+
+    def parent_of(line):
+        name = line[len("- **"):].split("/**", 1)[0] if line.startswith("- **") else ""
+        return name.rsplit("/", 1)[0] if "/" in name else ""
+
+    def counted(line):
+        m = re.search(r"\*\* \((\d+)\)", line)
+        return int(m.group(1)) if m else 0
+
+    # How many of the detailed lines fit, leaving room for the summary lines that replace the rest.
+    kept = len(folded)
+    while kept > 0:
+        overflow = folded[kept:]
+        summary = []
+        for par in dict.fromkeys(parent_of(l) for l in overflow):
+            rows = [l for l in overflow if parent_of(l) == par]
+            where = f"`{mdblock.as_quoted(par, 60)}/`" if par else "the repository root"
+            summary.append(f"- _{len(rows)} more director{'y' if len(rows) == 1 else 'ies'} under "
+                           f"{where}, {sum(counted(l) for l in rows):,} files, not named here — "
+                           f"grep `{map_rel}`_")
+        candidate = "\n".join(head + folded[:kept] + summary + tail)
+        if tokens.estimate(candidate) <= budget:
+            return candidate
+        kept -= max(1, len(folded) // 40)
+    return "\n".join(head + folded + tail)
 
 
 def _enforce(out, map_rel, budget):
