@@ -12108,8 +12108,18 @@ def _impact_corpus(n):
              "imports": [f"django.db.models.field{i}", f"os.path.join{i}"]} for i in range(n)]
 
 
+# 🐛 [found by CI, twice] 500/1000/2000 files run in single-digit milliseconds, and a doubling
+# ratio built from those is measuring the clock and the runner's other tenants, not the code.
+# Windows resolves process_time to about 15.6 ms and produced 0.016/0.000/0.016 -- ratios of 0.00
+# and 15625.00. macOS produced 0.004/0.016/0.017 -- 4.30 and 1.10, which failed the 3.0 bound while
+# demonstrating the opposite of quadratic, since quadratic means BOTH ratios near 4, not one.
+#
+# Sixteen times the corpus, measured linear on this machine across 500-16,000 (32x the files, 32x
+# the time), so the smallest run is tens of milliseconds on the slowest runner rather than one tick.
+# The whole block costs about a third of a second.
+_IMPACT_SIZES = (8_000, 16_000, 32_000)
 _imp_times = {}
-for _n in (500, 1000, 2000):
+for _n in _IMPACT_SIZES:
     _t = time.process_time()
     impact_mod.build(_impact_corpus(_n))
     _imp_times[_n] = time.process_time() - _t
@@ -12121,8 +12131,10 @@ for _n in (500, 1000, 2000):
 # check failed on noise while reporting itself as a scaling regression. A ratio built from a 0.000 s
 # measurement is not evidence in either direction, so it is not computed: the timer says what it can
 # resolve, and a run that cannot resolve the work says so instead of guessing.
+# Two floors, because a platform can report a fine resolution and still tick coarsely: 20 of
+# whatever it claims, AND 20 ms absolute.
 _clock_res = time.get_clock_info("process_time").resolution
-_measurable = min(_imp_times.values()) > _clock_res * 4
+_measurable = min(_imp_times.values()) > max(_clock_res * 20, 0.020)
 if not _measurable:
     print(f"  [SKIP] impact-map scaling — this platform's process_time resolves to "
           f"{_clock_res * 1000:.1f} ms and the corpus runs in "
@@ -12131,13 +12143,13 @@ if not _measurable:
 # Skipped outright rather than passed: a check that always succeeds because it cannot measure
 # anything is worse than no check, and this file has been caught shipping one of those before.
 if _measurable:
-    _ratio_1 = _imp_times[1000] / max(_imp_times[500], 1e-6)
-    _ratio_2 = _imp_times[2000] / max(_imp_times[1000], 1e-6)
+    _ratio_1 = _imp_times[_IMPACT_SIZES[1]] / max(_imp_times[_IMPACT_SIZES[0]], 1e-6)
+    _ratio_2 = _imp_times[_IMPACT_SIZES[2]] / max(_imp_times[_IMPACT_SIZES[1]], 1e-6)
     check("THE IMPACT MAP SCALES LINEARLY, NOT QUADRATICALLY, IN FILE COUNT",
           _ratio_1 < 3.0 and _ratio_2 < 3.0)
     if not (_ratio_1 < 3.0 and _ratio_2 < 3.0):
         print(f"     doubling ratios: {_ratio_1:.2f}, {_ratio_2:.2f} "
-              f"(times {_imp_times[500]:.3f}s {_imp_times[1000]:.3f}s {_imp_times[2000]:.3f}s)")
+              f"(times {' '.join(f'{_imp_times[k]:.3f}s' for k in _IMPACT_SIZES)})")
 
 # The shortlist must not change any ANSWER -- a faster lookup that resolves differently is a
 # correctness regression wearing a performance win. Same corpus through both paths.
