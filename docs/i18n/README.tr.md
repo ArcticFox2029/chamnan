@@ -118,6 +118,29 @@ Hepsi `.chamnan/` içinde, sıradan markdown ve JSON. Okunabilir, elle düzenlen
 | **Sırlar önce süzülür** | Yazılacak ya da oturuma enjekte edilecek her şey önce bir sır süzgecinden geçer: değişken *adları* kalır, değerleri kalmaz. Bu süzgecin ulaşamadığı sınır ise İngilizce README'de kendi sayısının yanında yazılıdır. |
 | **Kurulu bir eklenti size ne yapabilir** | İngilizce README'de tam olarak açıklanmıştır; chamnan'ın sızıntı zincirini nerede kestiği dahil. |
 
+## Nelerle çalışır
+
+chamnan metin ve standart kütüphane Python'ıdır. Dizindeki hiçbir şey belirli bir sağlayıcıya, belirli bir editöre ya da belirli bir işletim sistemine ait değildir.
+
+| | |
+|---|---|
+| **Herhangi bir model, herhangi bir sağlayıcı** | Dizin düz metindir ve bağlam olarak gönderilir. Model yalnızca ne kadarının gönderilmeye değer olduğunu değiştirir; neyin nereye gideceğini asla. Boyutu `--model`, `--window` ya da `--profile` ile ayarlarsınız. Model değiştirmek hiçbir şeyi yeniden kurmayı gerektirmez. |
+| **macOS, Linux, Windows, WSL** | Her yerde aynı eklenti, yalnızca standart kütüphane, kurulacak bir şey yok. macOS ve Linux'ta komutlar doğrudan çalışır. Windows'ta kabuk uzantısız bir betiği çalıştıramaz, bu yüzden her komutun ve her kancanın yanında üretilmiş bir `.cmd` durur; bunlar eklentiyle birlikte gelir ve CI doğrudan onları çalıştırır. WSL, Linux gibi davranır. |
+| **Çok ajan, tek dizin** | Claude Code bloğu bir oturum kancasıyla alır ve projenize hiçbir dosya yazılmaz. Gemini CLI'nin de gerçek bir oturum kancası vardır. Diğer ajanlar, o ajanın okuduğu yolda bir dosya alır; aynı yolu okuyanlar ise her biri zamanla birbirinden ayrışan bir kopya tutmak yerine dosyayı paylaşır. |
+| **Hermes Agent** | Hermes aynı zamanda başka kod ajanlarını yöneten bir denetim katmanıdır; bu yüzden onun için hazırlanmış bir depo çoğu zaman birden çok aracın aynı dizini okuması demektir. Proje yönergelerini sabit bir sırayla arar ve bulduğu ilkini alır; chamnan bu sıranın başındaki dosyayı yazar, boyutunu Hermes'in kendi belgelediği sınıra göre ayarlar ve kendi yazmadığı bir dosyanın üzerine yazmayı reddeder. |
+
+## Nasıl kurulur
+
+Hangi yoldan gireceğiniz yalnızca o aracın oturum kancası olup olmadığına bağlıdır.
+
+| | |
+|---|---|
+| **Claude Code** | Eklenti olarak kurun ve bir depo içinde başlangıç komutunu bir kez çalıştırın. Kodunuza hiçbir şey yazılmaz ve bundan sonra her oturum dizin zaten bağlamdayken başlar. |
+| **Geri kalan her şey, Hermes dâhil** | Önce chamnan'ın ne algıladığını sorun, sonra hangi ajan için yazacağını söyleyin. Deponun biçimi değiştiğinde dizini yeniden kurun ve dosyayı tekrar yazın; isteğe bağlı bir Git kancası işlem sırasında ikisini de yapar. Claude Code gerekmez: bunlar sıradan komutlardır ve eklenti yalnızca bir teslim yoludur, ürünün kendisi değil. Ajan belirtilmezse ne algıladığını ve hangi komutun uygun olacağını yazdırır, kararı size bırakır. Asla tahmine dayanarak yazmaz. |
+
+Komut adları, ajanların tam listesi ve her birinin aldığı dosya İngilizce README'de yer alır; sürüme bağlı her ayrıntı orada yaşar.
+
+
 ## Gereksinimler
 
 Claude Code · Python · Git · macOS, Linux ya da Windows

@@ -118,6 +118,29 @@ Semuanya di dalam `.chamnan/`, berupa markdown dan JSON biasa. Bisa dibaca, disu
 | **Kredensial disaring lebih dulu** | Semua yang akan ditulis atau disuntikkan ke sesi melewati penyaring kredensial: *nama* variabel disimpan, nilainya tidak. Batas yang tidak bisa dicapai penyaring itu ditulis tepat di samping angkanya sendiri di README bahasa Inggris. |
 | **Apa yang bisa dilakukan sebuah plugin terpasang terhadap Anda** | Dijelaskan lengkap di README bahasa Inggris, termasuk di titik mana chamnan memutus rantai kebocoran. |
 
+## Bekerja dengan apa saja
+
+chamnan adalah teks dan Python pustaka standar. Tidak ada isi indeks yang menjadi milik satu vendor, satu editor, atau satu sistem operasi tertentu.
+
+| | |
+|---|---|
+| **Model apa pun, vendor apa pun** | Indeks berupa teks biasa dan dikirim sebagai konteks. Model hanya menentukan seberapa banyak yang layak dikirim, tidak pernah menentukan apa pergi ke mana. Aturlah ukurannya dengan `--model`, `--window`, atau `--profile`. Berganti model tidak menuntut pemasangan ulang apa pun. |
+| **macOS, Linux, Windows, WSL** | Plugin yang sama di mana pun, hanya pustaka standar, tidak ada yang perlu dipasang. Di macOS dan Linux perintah berjalan langsung. Di Windows, shell tidak dapat menjalankan skrip tanpa ekstensi, sehingga di samping setiap perintah dan setiap hook diletakkan berkas `.cmd` hasil pembangkitan; berkas itu ikut terkirim bersama plugin dan CI menjalankannya sendiri. WSL berperilaku seperti Linux. |
+| **Banyak agen, satu indeks** | Claude Code menerimanya lewat hook sesi dan tidak ada berkas yang ditulis ke proyek Anda. Gemini CLI juga punya hook sesi yang sesungguhnya. Agen lain menerima berkas di jalur yang dibacanya, dan agen yang membaca jalur sama berbagi berkas itu alih-alih masing-masing menyimpan salinan yang lama-lama menyimpang. |
+| **Hermes Agent** | Hermes sekaligus lapisan kendali yang mengarahkan agen pemrograman lain, sehingga repositori yang disiapkan untuknya sering berarti beberapa perkakas membaca indeks yang sama. Ia mencari instruksi proyek dengan urutan tetap dan memakai yang pertama ditemukan; chamnan menulis berkas yang berada di puncak urutan itu, menyesuaikan ukurannya dengan batas yang didokumentasikan Hermes sendiri, dan menolak menimpa berkas yang bukan tulisannya. |
+
+## Cara memasangnya
+
+Lewat jalan mana Anda masuk hanya bergantung pada ada tidaknya hook sesi pada perkakas itu.
+
+| | |
+|---|---|
+| **Claude Code** | Pasang sebagai plugin lalu jalankan perintah awal satu kali di dalam sebuah repositori. Tidak ada yang ditulis ke kode Anda, dan sesudahnya setiap sesi dimulai dengan indeks sudah berada di konteks. |
+| **Selebihnya, termasuk Hermes** | Tanyakan dulu apa yang terdeteksi oleh chamnan, lalu sebutkan untuk agen mana ia harus menulis. Ketika bentuk repositori berubah, bangun ulang indeksnya dan tulis berkasnya lagi; sebuah hook Git opsional mengerjakan keduanya saat commit. Claude Code tidak diperlukan: ini perintah biasa, dan plugin hanyalah satu jalur pengantaran, bukan produknya. Tanpa agen yang disebut, ia mencetak apa yang terdeteksi beserta perintah yang cocok, dan menyerahkan keputusan kepada Anda. Ia tidak pernah menulis berdasarkan terkaan. |
+
+Nama perintah, daftar lengkap agen, dan berkas yang diterima masing-masing ada di README bahasa Inggris, tempat setiap rincian yang terikat versi berada.
+
+
 ## Kebutuhan sistem
 
 Claude Code · Python · Git · macOS, Linux atau Windows

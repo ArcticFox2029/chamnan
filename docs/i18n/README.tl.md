@@ -118,6 +118,29 @@ Lahat ay nasa loob ng `.chamnan/`, karaniwang markdown at JSON. Nababasa, naeedi
 | **Sinasala muna ang mga lihim** | Lahat ng isusulat o ipapasok sa sesyon ay dumadaan muna sa salaan ng lihim: nananatili ang *pangalan* ng variable, hindi ang halaga. At ang hangganang hindi naaabot ng salaang iyon ay nakasulat katabi ng sarili nitong numero sa README na Ingles. |
 | **Ano ang kayang gawin sa iyo ng isang naka-install na plugin** | Buong ipinaliwanag sa README na Ingles, kasama kung saan pinuputol ng chamnan ang tanikala ng pagtagas. |
 
+## Kung ano ang pinagtatrabahuhan nito
+
+Ang chamnan ay teksto at Python mula sa karaniwang aklatan. Walang anuman sa indeks ang pag-aari ng iisang tagapagbigay, iisang editor, o iisang operating system.
+
+| | |
+|---|---|
+| **Anumang modelo, anumang tagapagbigay** | Ang indeks ay payak na teksto at ipinapasa bilang konteksto. Ang modelo ang nagtatakda lamang kung gaano karami ang sulit ipadala, hindi kung saan mapupunta ang anuman. Itakda ang laki sa pamamagitan ng `--model`, `--window`, o `--profile`. Ang paglipat ng modelo ay hindi nangangailangan ng anumang muling pag-install. |
+| **macOS, Linux, Windows, WSL** | Iisang plugin saanman, karaniwang aklatan lamang, walang kailangang i-install. Sa macOS at Linux, tumatakbo nang tuwiran ang mga utos. Sa Windows, hindi kayang patakbuhin ng shell ang iskrip na walang extension, kaya may nabuong `.cmd` sa tabi ng bawat utos at bawat hook; kasama ang mga ito sa plugin at ang mismong mga iyon ang pinapatakbo ng CI. Ang WSL ay kumikilos gaya ng Linux. |
+| **Maraming ahente, iisang indeks** | Tinatanggap ito ng Claude Code sa pamamagitan ng hook ng sesyon at walang file na isinusulat sa iyong proyekto. May tunay ding hook ng sesyon ang Gemini CLI. Ang ibang ahente ay tumatanggap ng file sa landas na binabasa nila, at ang mga bumabasa sa iisang landas ay nagbabahagi ng file sa halip na ang bawat isa ay may sariling kopyang unti-unting naiiba. |
+| **Hermes Agent** | Ang Hermes ay isa ring patong ng pamamahala na umuutos sa ibang ahente ng pagkokodigo, kaya ang isang repositoryong inihanda para rito ay madalas nangangahulugang maraming kasangkapan ang bumabasa sa iisang indeks. Hinahanap nito ang tagubilin ng proyekto sa takdang pagkakasunod-sunod at kinukuha ang unang matatagpuan; isinusulat ng chamnan ang file na nangunguna sa pagkakasunod-sunod na iyon, iniaayon ang laki sa hangganang mismong idinodokumento ng Hermes, at tumatangging patungan ang file na hindi nito isinulat. |
+
+## Paano ito i-set up
+
+Kung aling daan ang tatahakin mo ay nakasalalay lamang sa kung may hook ng sesyon ang kasangkapang iyon.
+
+| | |
+|---|---|
+| **Claude Code** | I-install bilang plugin at patakbuhin nang minsan ang panimulang utos sa loob ng isang repositoryo. Walang isinusulat sa iyong kodigo, at mula roon ang bawat sesyon ay nagsisimula nang nasa konteksto na ang indeks. |
+| **Lahat ng iba pa, kasama ang Hermes** | Itanong muna kung ano ang natukoy ng chamnan, saka sabihin kung para kanino itong magsusulat. Kapag nagbago ang hugis ng repositoryo, muling itayo ang indeks at isulat muli ang file; may opsyonal na Git hook na ginagawa ang dalawa tuwing commit. Hindi kailangan ang Claude Code: pangkaraniwang utos ang mga ito, at ang plugin ay isa lamang daan ng paghahatid, hindi ang produkto. Kapag walang tinukoy na ahente, inilalathala nito kung ano ang natukoy at kung anong utos ang aangkop, at sa iyo iniiwan ang pasya. Hindi ito kailanman nagsusulat batay sa hula. |
+
+Ang mga pangalan ng utos, ang buong talaan ng mga ahente, at ang file na natatanggap ng bawat isa ay nasa README sa Ingles, kung saan naninirahan ang bawat detalyeng nakatali sa bersyon.
+
+
 ## Kailangan
 
 Claude Code · Python · Git · macOS, Linux o Windows

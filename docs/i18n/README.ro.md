@@ -118,6 +118,29 @@ Totul în `.chamnan/`, markdown și JSON obișnuite. Se pot citi, edita de mân�
 | **Secretele sunt filtrate mai întâi** | Tot ce urmează să fie scris sau introdus în sesiune trece mai întâi prin filtrul de secrete: rămân *numele* variabilelor, nu valorile. Iar limita la care acel filtru nu ajunge este scrisă lângă propria ei cifră în README-ul în engleză. |
 | **Ce vă poate face un plugin instalat** | Explicat în întregime în README-ul în engleză, inclusiv unde chamnan rupe lanțul de scurgere. |
 
+## Cu ce funcționează
+
+chamnan este text și Python din biblioteca standard. Nimic din index nu aparține unui anumit furnizor, unui anumit editor sau unui anumit sistem de operare.
+
+| | |
+|---|---|
+| **Orice model, orice furnizor** | Indexul este text simplu și se trimite drept context. Modelul schimbă doar cât merită trimis, niciodată unde ajunge ceva. Dimensiunea se reglează cu `--model`, `--window` sau `--profile`. Schimbarea modelului nu cere nicio reinstalare. |
+| **macOS, Linux, Windows, WSL** | Același plugin peste tot, doar bibliotecă standard, nimic de instalat. Pe macOS și Linux comenzile rulează direct. Pe Windows interpretorul nu poate rula un script fără extensie, așa că lângă fiecare comandă și fiecare cârlig stă un `.cmd` generat; sunt livrate cu pluginul, iar CI le rulează chiar pe ele. WSL se comportă ca Linux. |
+| **Mulți agenți, un singur index** | Claude Code îl primește printr-un cârlig de sesiune și nu se scrie niciun fișier în proiectul tău. Și Gemini CLI are un cârlig de sesiune adevărat. Ceilalți agenți primesc un fișier în calea pe care o citesc, iar cei care citesc aceeași cale împart fișierul în loc ca fiecare să țină o copie care se depărtează. |
+| **Hermes Agent** | Hermes este totodată un strat de control care dirijează alți agenți de cod, așa că un depozit pregătit pentru el înseamnă adesea mai multe unelte care citesc același index. Caută instrucțiunile proiectului într-o ordine fixă și ia prima găsită; chamnan scrie fișierul aflat în fruntea acelei ordini, îi potrivește dimensiunea la limita documentată chiar de Hermes și refuză să suprascrie un fișier pe care nu l-a scris el. |
+
+## Cum îl instalezi
+
+Pe ce cale intri depinde numai de faptul dacă unealta are sau nu un cârlig de sesiune.
+
+| | |
+|---|---|
+| **Claude Code** | Instalează-l ca plugin și rulează o dată comanda de pornire într-un depozit. Nu se scrie nimic în codul tău, iar de atunci fiecare sesiune începe cu indexul deja în context. |
+| **Tot restul, inclusiv Hermes** | Întreabă mai întâi ce a detectat chamnan, apoi spune-i pentru care agent să scrie. Când forma depozitului se schimbă, reconstruiește indexul și scrie fișierul din nou; un cârlig Git opțional le face pe amândouă la commit. Nu e nevoie de Claude Code: acestea sunt comenzi obișnuite, iar pluginul e doar o cale de livrare, nu produsul. Fără un agent numit, tipărește ce a detectat și ce comandă s-ar potrivi, lăsându-ți ție decizia. Nu scrie niciodată pe ghicite. |
+
+Numele comenzilor, lista completă a agenților și fișierul primit de fiecare se află în README-ul în engleză, unde locuiește orice detaliu legat de o versiune.
+
+
 ## Cerințe
 
 Claude Code · Python · Git · macOS, Linux sau Windows

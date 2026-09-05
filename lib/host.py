@@ -95,6 +95,11 @@ _AGENTS = {
     # six agents for every repository.
     #
     # Detection still writes nothing. Its only consumers are `--detect` and a printed suggestion.
+    # Hermes reads project instructions from the repository, so `.hermes.md` and `HERMES.md` are
+    # the signals. `~/.hermes/` is deliberately NOT one: this file's own rule is that HOME is the
+    # weakest and stalest marker there is, and somebody who installed Hermes once would otherwise
+    # have every repository on the machine reported as a Hermes repository forever.
+    "hermes": {"env": ("HERMES_HOME",), "repo": (".hermes.md", "HERMES.md"), "home": ()},
     "windsurf": {"env": (), "repo": (".windsurf/",), "home": ()},
     "roo": {"env": (), "repo": (".roo/",), "home": ()},
     "cline": {"env": (), "repo": (".clinerules",), "home": ()},
@@ -131,7 +136,7 @@ _AGENTS = {
 # by this order.
 ORDER = ("claude", "cursor", "gemini", "kiro", "windsurf", "roo", "cline", "continue", "copilot",
          "amazonq", "augment", "trae", "junie", "goose", "grok", "antigravity", "zed", "replit",
-         "qwen", "iflow", "codebuddy", "mistral", "aider", "generic")
+         "qwen", "iflow", "codebuddy", "mistral", "aider", "hermes", "generic")
 
 
 def _marker_present(base, marker):

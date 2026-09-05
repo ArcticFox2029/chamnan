@@ -118,6 +118,29 @@ Alt inne i `.chamnan/`, vanlig markdown og JSON. Kan leses, endres for hånd og 
 | **Hemmeligheter filtreres først** | Alt som skal skrives eller settes inn i økten, går først gjennom hemmelighetsfilteret: variablenes *navn* blir igjen, verdiene ikke. Og grensen filteret ikke når, står ved siden av sitt eget tall i den engelske README-en. |
 | **Hva et installert tillegg kan gjøre mot deg** | Forklart i sin helhet i den engelske README-en, inkludert hvor chamnan bryter lekkasjekjeden. |
 
+## Hva det virker sammen med
+
+chamnan er tekst og Python fra standardbiblioteket. Ingenting i indeksen tilhører én bestemt leverandør, én bestemt editor eller ett bestemt operativsystem.
+
+| | |
+|---|---|
+| **Enhver model, enhver leverandør** | Indeksen er vanlig tekst og sendes med som kontekst. Modellen endrer bare hvor mye det er verdt å sende, aldri hvor noe havner. Størrelsen settes med `--model`, `--window` eller `--profile`. Å bytte modell krever ingen reinstallasjon. |
+| **macOS, Linux, Windows, WSL** | Samme plugin overalt, bare standardbibliotek, ingenting å installere. På macOS og Linux kjøres kommandoene direkte. På Windows kan skallet ikke kjøre et skript uten filendelse, så ved siden av hver kommando og hver krok ligger en generert `.cmd`; de følger med plugin-et, og CI kjører nettopp dem. WSL oppfører seg som Linux. |
+| **Mange agenter, ét indeks** | Claude Code får blokken via en øktkrok, og ingen fil skrives inn i prosjektet ditt. Gemini CLI har også en ekte øktkrok. Øvrige agenter får en fil på stien agenten leser, og de som leser samme sti deler filen i stedet for at hver har en kopi som driver fra hverandre. |
+| **Hermes Agent** | Hermes er samtidig et styringslag som dirigerer andre kodeagenter, så et repo satt opp for det betyr ofte at flere verktøy leser den samme indeksen. Det leter etter prosjektinstruksjoner i en fast rekkefølge og tar den første det finner; chamnan skriver filen først i den rekkefølgen, tilpasser størrelsen til grensen Hermes selv dokumenterer, og nekter å overskrive en fil det ikke har skrevet. |
+
+## Slik setter du det opp
+
+Hvilken vei inn du tar, avhenger bare av om verktøyet har en øktkrok.
+
+| | |
+|---|---|
+| **Claude Code** | Installer som plugin, og kjør startkommandoen én gang inne i et repo. Ingenting skrives til koden din, og deretter starter hver økt med indeksen allerede i konteksten. |
+| **Alt andet, Hermes iberegnet** | Spør først hva chamnan finner, og si så hvilken agent den skal skrive for. Når formen på repoet endres, bygger du indeksen på nytt og skriver filen igjen; en valgfri Git-krok gjør begge deler ved commit. Claude Code trengs ikke: dette er vanlige kommandoer, og plugin-et er bare én leveringsvei, ikke produktet. Uten en nevnt agent skriver det ut hva det fant og hvilken kommando som ville passe, og lar avgjørelsen være din. Det skriver aldri på en gjetning. |
+
+Kommandonavn, hele listen over agenter og filen hver av dem får, står i den engelske README-en, der hver versjonsbundet detalj bor.
+
+
 ## Krav
 
 Claude Code · Python · Git · macOS, Linux eller Windows

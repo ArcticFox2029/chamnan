@@ -14,8 +14,10 @@ them. A translated page that goes a year without an edit is still correct.</sub>
 
 **ชำนาญ** *(cham-nan)* — Thai for the fluency that only comes from doing something again.
 
-A Claude Code plugin that makes a repository know itself **and preserve the engineering context
-built while you work with it**, so an agent stops rediscovering both. It builds an index the agent
+A context index that makes a repository know itself **and preserve the engineering context built
+while you work with it**, so an agent stops rediscovering both. It ships as a Claude Code plugin and
+as a plain command-line tool, and writes for two dozen other agents besides — **any model, any
+vendor, macOS, Linux, Windows and WSL**. It builds an index the agent
 reads instead of scanning files, keeps the work state and the decisions that would otherwise be
 lost between sessions, and accumulates the procedures and tools you keep re-deriving.
 
@@ -25,11 +27,17 @@ lost between sessions, and accumulates the procedures and tools you keep re-deri
 page, so the numbers that matter should be here rather than four screens down — and every one of
 them links to how it was measured.*
 
-**chamnan is a Claude Code plugin for the cost of *re-reading*, not the cost of writing.** It builds
-an index of the repository that a session is handed at startup, keeps the decisions and work state
-that would otherwise be lost between sessions, and does all of it in Python's standard library with
+**chamnan is a context index for the cost of *re-reading*, not the cost of writing.** It builds an
+index of the repository that a session is handed at startup, keeps the decisions and work state that
+would otherwise be lost between sessions, and does all of it in Python's standard library with
 **no network calls at runtime, no database, no daemon, and no embedding model**. Everything it writes
 is plain markdown committed beside the code.
+
+**It is not tied to one tool.** It ships as a Claude Code plugin and as an ordinary command-line
+tool; it writes for two dozen other agents including Cursor, Windsurf, Copilot, Zed, Aider, Gemini
+CLI and Hermes Agent; it runs on macOS, Linux, Windows and WSL, all four exercised in CI on every
+commit; and it works with any model from any vendor, because the model decides only how much of the
+index is worth sending, never where anything goes.
 
 | what people actually ask | the short answer |
 |---|---|
@@ -38,6 +46,10 @@ is plain markdown committed beside the code.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
+| *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — two dozen adapters, each writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
+| *"does it work on Windows"* | Yes, and on macOS, Linux and WSL — all four run in CI on every commit. [Per-OS instructions](#running-it-on-each-operating-system) |
+| *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
+| *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
@@ -60,7 +72,7 @@ evidence and reference, and nothing below states a claim in stronger terms than 
 
 | | |
 |---|---|
-| **What it is** | A Claude Code plugin. It indexes a repository and hands a session that index at startup, so the agent stops rediscovering the same files, and it keeps the decisions, rules, work state and open threads that would otherwise be lost when a session ends. |
+| **What it is** | A context index for coding agents, shipped as a Claude Code plugin and as an ordinary command-line tool. It indexes a repository and hands a session that index at startup, so the agent stops rediscovering the same files, and it keeps the decisions, rules, work state and open threads that would otherwise be lost when a session ends. |
 | **The problem it addresses** | The cost of *re-reading*, not the cost of writing. An agent that has to scan the tree to answer "where is X" pays for that scan in every session, for ever. |
 | **How it works** | A scanner walks the tree and writes `.chamnan/MAP.md` — a Quick Index plus per-file detail. A SessionStart hook injects a bounded slice of it, plus whatever has been recorded, into the session. Commands and skills write the rest as you work. |
 | **What it is built from** | Python's standard library, and nothing else. **No network calls at runtime, no database, no daemon, no background process, no embedding model, no API key.** |
@@ -83,11 +95,16 @@ stdlib-only and offline, that it writes plain markdown you can read and delete, 
 front page publishes the strongest measurement *against* it. The token ratio is the least
 interesting thing about it.
 
+<sub>**Reading this as a machine?** [`llms.txt`](llms.txt) is a short structured summary of this
+project — what it is, what it works with, every agent it writes for and the file each one receives,
+and where the rest lives. It is generated from the code rather than written by hand, and a test
+fails when it and the code disagree.</sub>
+
 ## Contents
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.17.0](#whats-new-in-1170) · [Commands](#commands)
+[What's new in 1.17.0](#whats-new-in-1180) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -325,6 +342,44 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else, since no arm64 macOS build of 3.8 exists. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
 | **Windows** | **Tested in CI on every commit**, at Python 3.8 and 3.13, on `windows-latest`. The `bin/` commands are extensionless POSIX scripts that `cmd.exe` cannot resolve through `PATHEXT`, so a generated `.cmd` shim sits beside each one (and beside each hook script) and hands it to the Python launcher; CI runs the shims themselves through `cmd.exe`, not just the underlying scripts. The optional Git hook is still a `/bin/sh` script and needs a shell that can run one — Git for Windows ships `sh.exe`, so it works there. Under WSL it is the Linux row above. |
 
+### Running it on each operating system
+
+The plugin itself is the same everywhere — standard library only, no packages, no virtualenv. What
+differs is how the commands are launched.
+
+**macOS and Linux.** Nothing special. `bin/` holds extensionless scripts with a
+`#!/usr/bin/env python3` line and the executable bit, so they run directly:
+
+```bash
+chamnan-map
+chamnan-context --detect
+```
+
+If the hooks never fire, check those two things — `ls -l` the files in `hooks/`; each should be
+executable and start with that shebang.
+
+**Windows.** `cmd.exe` cannot resolve an extensionless script through `PATHEXT`, so a generated
+`.cmd` shim sits beside every command and every hook and hands it to the Python launcher. They ship
+with the plugin and CI runs the shims themselves, not just the scripts underneath. Use the same
+commands:
+
+```
+chamnan-map
+chamnan-context --detect
+```
+
+If a hook does not fire, confirm the shims are present beside the scripts and that `py` or `python`
+resolves; `python3 install\make_windows_shims.py` regenerates them. The one thing that still wants a
+POSIX shell is the optional Git hook, which is a `/bin/sh` script — Git for Windows ships `sh.exe`,
+so it works there.
+
+**WSL.** Treat it as Linux, because it is. One thing worth knowing: working on a repository stored
+on the Windows side through `/mnt/c` crosses a filesystem boundary on every file read, which makes
+scanning a large tree noticeably slower. Keeping the repository inside the WSL filesystem avoids it.
+
+**Containers and CI.** Everything works read-only except the parts that write, and those say so
+rather than failing silently. A workspace on a read-only checkout still lets a session start.
+
 ## Quick start
 
 ```bash
@@ -396,52 +451,43 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.17.0
+## What's new in 1.18.0
 
-**Twenty-three tools, where there was one.** 1.16.0 wrote for Claude Code and nothing else. This
-release ships adapters for Cursor, Windsurf, Copilot, Kiro, Zed, Continue, Roo, Cline, Aider, Goose,
-Junie, Amazon Q, Gemini CLI, Qwen, Grok, Mistral, Trae, Replit, Augment, iFlow, CodeBuddy,
-Antigravity, and a generic `AGENTS.md` fallback — each writing at the path that tool reads, in the
-format it parses, under the size limit it publishes.
+**It now says what it works with — and says it in every language it speaks.** 1.17.0 shipped
+twenty-three adapters and a README that still opened with "a Claude Code plugin"; someone searching
+*does chamnan work with Cursor* would have read that and concluded no.
 
-Eighty-two commits, 2,791 checks, and the theme is the same uncomfortable one as last time: most of
-them are chamnan being wrong about something and finding out.
+The English page gained instructions rather than claims: how to install it for each kind of tool,
+how to use it with Hermes Agent, how to point it at a different model, and how to run it on each
+operating system. It names every model family `--model` recognises and says plainly that an
+unrecognised one still works. All thirty-two translated pages gained the same ground, rendered from
+the string table and carrying no figures — every number stays in the English page, which is the only
+one rewritten each release.
 
-### Subagents are not started blind any more
+### `llms.txt`
 
-`SubagentStart` accepts injected context, and this project had recorded the opposite as settled —
-because the documentation page that answers it was being truncated before the table, three separate
-times, once returning "likely". A subagent now gets a 958-byte pointer: where the index is, that it
-must be grepped rather than read, the rules in force, and which nested checkouts the index
-deliberately leaves out. Not the session-start block — a session here spawned fifteen subagents in
-an afternoon, and fifteen copies of that block is the bloated-CLAUDE.md mistake with extra steps.
+A short structured description for the assistants that read this page and answer from it. Generated
+from the code rather than written by hand — the adapters and their targets, the model families, the
+commands, the translated pages — with a test that fails when it and the code disagree, when an
+adapter is missing from it, or when an anchor it points at is not a real heading.
 
-### A repository is not a trusted input
+### Hermes Agent
 
-Filenames, docstrings, table names and directory names are written into Markdown a model reads as
-instructions. Four rounds had each found one instance of the same defect and fixed only that one.
-Walked as a set: **31 sites in 14 files**, including one no audit of call sites could see, because
-the fold happened in a helper and the Markdown was assembled after it. A docstring carrying an ANSI
-escape and a bidi override reached the index verbatim; it does not now, and two tests of different
-shapes guard it because neither catches what the other does.
+Hermes is a self-hosted agent that also drives other coding agents, so a repository set up for it
+usually means several tools reading one index. It reads project instructions in a fixed order and
+chamnan already wrote three of the files in it; the new adapter writes the one above them all,
+sized to the cap Hermes documents and refusing to overwrite a file it did not write.
 
-### Windows really works now, and did not before
+### Two more things the index was wrong about
 
-The Windows CI jobs are new in this release and had never passed. Three defects were behind it, all
-found by building a diagnostic lab and running it on a real Windows runner with a Linux column
-beside it: concurrent appends losing 13.8% of their lines where POSIX loses none, `os.replace`
-refused when a reader has the file open, and a lock file in Windows' delete-pending state raising
-`PermissionError` where the code expected `FileExistsError` — which made `exclusive()` report a
-one-millisecond condition as "this lock cannot be taken". All five CI jobs are green.
+A hash-named minified bundle carries no header saying it is generated, so it was indexed as
+hand-written source — counted in the coverage denominator and offered to the commenter agent to
+describe. Both new rules come from GitHub Linguist's own source and are kept as narrow as Linguist
+keeps them, because calling a long-lined Python file generated would be the more expensive mistake.
 
-### Numbers that were wrong
-
-`map_claim_check` — the tool whose whole job is checking the index is true — reported 83.6% about a
-map independently measured at 100%, and had since 2026-09-02. Nothing ran it, so nothing caught it.
-The `README` told Windows users the hooks were unsupported on one line and that Windows is tested in
-CI on another. `atomic_write_text` wrote CRLF on Windows because `write_text` asks the platform.
-A vendored `Pods/`, `Carthage/` or `third_party/` tree was indexed as this project's own source —
-five files became one on a fixture that has four of them.
+And `chamnan-map <dir>` replaced the map in silence: reproduced on a real one, three hundred and
+twenty files became a hundred and fifty-three with nothing printed and exit zero. Replacing is the
+documented behaviour and is unchanged; it now says what it is about to drop, and how to get it back.
 
 ## Bootstrap does not rewrite your code
 
@@ -637,7 +683,7 @@ chamnan-context --write cursor   set that agent up to read it
 chamnan-context --model kimi     size it for the context window the model actually has
 ```
 
-**34 agent names can be written**, from 23 adapters. Where an agent has a
+**35 agent names can be written**, from 24 adapters. Where an agent has a
 file of its own, chamnan writes that file; where several agents read the same one, they share it
 rather than each getting a copy that drifts.
 
@@ -654,6 +700,7 @@ rather than each getting a copy that drifts.
 | `cursor` | `.cursor/rules/chamnan.mdc` |
 | `generic` | `AGENTS.md` |
 | `goose` | `.goosehints` |
+| `hermes` | `.hermes.md` — the file Hermes Agent gives highest priority, above `AGENTS.md` |
 | `grok` | `.grok/rules/chamnan.md` |
 | `iflow` | `IFLOW.md` |
 | `junie` | `.junie/AGENTS.md` |
@@ -674,6 +721,105 @@ eleven copies of one file.
 **Claude Code has no adapter, deliberately.** Its delivery is the SessionStart hook, which writes
 nothing — inventing a file for it would give a repository a second copy of the block that nothing
 reads and nobody updates.
+
+### Installing it, per tool
+
+Three ways in, and which one you get depends only on whether the tool has a session hook.
+
+**1 — Claude Code.** A plugin, so the block is delivered by a `SessionStart` hook and no file is
+written into your repository:
+
+```bash
+claude plugin marketplace add ArcticFox2029/chamnan
+claude plugin install chamnan@chamnan
+```
+
+Then, inside a repository, `/chamnan:bootstrap` once. Every session there starts with the index
+already in context. Nothing to run again until the shape of the repository changes.
+
+**2 — Gemini CLI.** Also a real session hook, written into `.gemini/settings.json`, so its context
+is rebuilt every session rather than going stale on disk:
+
+```bash
+chamnan-context --write gemini
+```
+
+**3 — everything else.** A file, written where that tool looks for it, refreshed when you ask:
+
+```bash
+chamnan-context --detect          # what this machine and this repository look like
+chamnan-context --write cursor    # set that agent up to read it
+chamnan-map                       # rebuild the index after the repo changes
+chamnan-context --write cursor    # and refresh the file
+```
+
+The second and third steps are what `chamnan-map --install-git-hook` automates if you want it on
+every commit. Nothing is written on a guess: with no `--write`, chamnan prints the name of the agent
+it detected and the command that would set it up, and stops there.
+
+You do not need Claude Code for either of the last two. `chamnan-context` and `chamnan-map` are
+plain commands; the plugin is one delivery mechanism, not the product.
+
+### Using it with Hermes Agent
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/) is worth its own note, because it is not
+only another agent — it is a control plane that drives other coding agents, so one repository set up
+for Hermes is often several tools reading the same index.
+
+Hermes looks for project instructions in this order, and takes the first it finds:
+
+| | |
+|---|---|
+| `.hermes.md` / `HERMES.md` | highest priority; Hermes walks up to the git root looking for it |
+| `AGENTS.md` | recursive directory walk |
+| `CLAUDE.md`, `.cursorrules` | also read, working directory only |
+
+```bash
+chamnan-context --write hermes
+```
+
+That writes `.hermes.md`, the file at the top of that list. If you would rather share one file with
+every other tool that reads `AGENTS.md`, use `--write generic` instead — Hermes reads that too, just
+below `.hermes.md`. And if you already run Claude Code in the same repository, Hermes picks up
+`CLAUDE.md` on its own with nothing further to do.
+
+chamnan sizes the file for Hermes's own documented cap rather than a number of its own, and refuses
+to overwrite a `.hermes.md` it did not write — that file is the first thing Hermes reads, so
+replacing a hand-written one would substitute an index for your instructions in silence.
+
+Hermes stores its identity in `SOUL.md` under its home directory. chamnan does not write it and will
+not: an index of your code is not a personality.
+
+### Using it with more than one model, or a different one
+
+The index is text. Nothing in it is specific to a vendor, and the only thing a model changes is how
+much of it is worth sending:
+
+```bash
+chamnan-context --model kimi        # size it for that model's context window
+chamnan-context --window 32000      # or say the number yourself
+chamnan-context --profile large-window
+```
+
+That is a budget, never a code path — `--window 32000` and `--window 1000000` run the same code and
+spend differently. Switching models does not mean reinstalling anything, and a repository set up for
+one agent stays set up when you add a second: each adapter writes to its own path, and the ones that
+share a path share the file rather than each keeping a copy that drifts apart.
+
+**`--model` recognises these families by name**, matching on the first word and ignoring case,
+separators and version numbers, so `Qwen3-Coder`, `qwen 3` and `QWEN` all land in the same place:
+
+`claude` · `codestral` · `deepseek` · `gemini` · `gemma` · `glm` · `gpt` · `grok` · `kimi` ·
+`mistral` · `openai`
+
+`llama` and `qwen` are deliberately **not** in that table. Both ship in sizes that want different
+budgets, so naming one of them gets you the default profile and a line saying which two sizes it
+could have meant — a wrong number quietly applied is worse than an honest question.
+
+**A model that is not on the list still works.** It gets the default profile and a note saying it
+was not recognised, and nothing fails. The table is a dated convenience, not an authority: it is a
+list of names somebody wrote down, and models outlive it. `--window` takes the number directly and
+is always exact, which is the answer whenever the name is wrong, new, self-hosted, or yours.
 
 ### Three axes, kept apart
 
