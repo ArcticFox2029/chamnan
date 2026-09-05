@@ -13127,7 +13127,13 @@ check("...and peek imports it rather than keeping a copy",
 # a tip pinned to the end of the report trains a reader to stop reading the end of the report, and
 # that is where the report's "an observation, not an experiment" caveat lives.
 _nd = Path(tempfile.mkdtemp(prefix="chamnan-notice-"))
-(_nd / ".chamnan" / "state").mkdir(parents=True)
+# 🐛 This line used to be `(_nd / ".chamnan" / "state").mkdir(parents=True)` — the test created the
+# directory the CODE should have created, so it passed while `notice_due` returned True forever on
+# every real workspace: `ensure()` had no `state` in its scaffold list, `exclusive()` could not make
+# a lock file inside a directory that did not exist, and every "shown three times, then stops" tip
+# showed for ever (R12 agent 5). A fixture that supplies the missing precondition is a test that
+# cannot see the bug. It goes through `ensure()` now, like a real workspace does.
+ws.ensure(_nd)
 _shown = [ws.notice_due(_nd, "a_tip") for _ in range(6)]
 check("A ONE-OFF NOTICE STOPS AFTER ITS THIRD SHOWING", _shown == [True] * 3 + [False] * 3)
 check("...and two different notices do not share a counter", ws.notice_due(_nd, "another_tip"))
