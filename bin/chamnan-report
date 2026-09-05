@@ -48,7 +48,22 @@ import redact  # noqa: E402
 # correct-per-file. See redact.emit.
 print = redact.emit  # noqa: A001
 
-PROJECT_ROOT = Path.home() / ".claude" / "projects"
+def _home_or_none():
+    """`Path.home()`, or None when it cannot be resolved.
+
+    🐛 This was `Path.home()` at MODULE level, so on a machine where neither $HOME nor a passwd
+    entry resolves, importing this file raised — and the command died with a raw traceback before
+    argument parsing, taking `--help` with it. A command that reports on a workspace should not
+    need a home directory to explain itself (R20 agent 1).
+    """
+    try:
+        return Path.home()
+    except (RuntimeError, OSError):
+        return None
+
+
+_HOME = _home_or_none()
+PROJECT_ROOT = (_HOME / ".claude" / "projects") if _HOME else None
 
 
 def _project_roots():
@@ -74,7 +89,9 @@ def _project_roots():
     # PROJECT_ROOT stays the default and the single seam a test can move; the environment variable
     # adds the second tree rather than replacing it, because a machine running two accounts has
     # work in both and the question "how much context did this repo cost" spans them.
-    for d in ([Path(cfg) / "projects"] if cfg else []) + [PROJECT_ROOT]:
+    # PROJECT_ROOT is None where no home directory resolves; the CLAUDE_CONFIG_DIR tree may still
+    # be there, and a report over that alone is a real answer rather than a crash.
+    for d in ([Path(cfg) / "projects"] if cfg else []) + ([PROJECT_ROOT] if PROJECT_ROOT else []):
         if d.is_dir() and str(d) not in seen:
             seen.add(str(d))
             roots.append(d)
