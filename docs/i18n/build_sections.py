@@ -66,7 +66,12 @@ def render(t):
     # no way to learn that it is not tied to one model, one operating system or one agent.
     out += ["", f"## {t['h_works']}", "", t["works_intro"], "", "| | |", "|---|---|"]
     for w in ("llm", "os", "agents", "hermes"):
-        out.append(f"| **{t['works_' + w + '_n']}** | {t['works_' + w]} |")
+        body = t["works_" + w]
+        # The model row carries the family names too. They are brand names, not figures, so they
+        # belong on a translated page: "any model" does not answer "will it work with mine".
+        if w == "llm":
+            body += " " + t["works_llm_names"]
+        out.append(f"| **{t['works_' + w + '_n']}** | {body} |")
     out += ["", f"## {t['h_setup2']}", "", t["setup_intro"], "", "| | |", "|---|---|"]
     for w in ("plugin", "file2"):
         out.append(f"| **{t['setup_' + w + '_n']}** | {t['setup_' + w]} |")
