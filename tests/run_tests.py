@@ -13703,6 +13703,60 @@ finally:
         pass
 
 
+# ------------------------- a lock in Windows' delete-pending state is contention, not a dead end
+# 🐛 A lock file another process has just unlinked stays visible on Windows for a moment in
+# DELETE-PENDING state: the name resolves, every open of it fails with ERROR_ACCESS_DENIED, and
+# Python raises PermissionError rather than FileExistsError. `exclusive()` caught that in its
+# catch-all `except OSError: break` and reported "cannot lock" -- so every caller either skipped its
+# write or performed it unguarded, for a condition that clears in a millisecond.
+#
+# Measured on a Windows Server 2025 runner against record_call's exact shape, 8 processes x 50
+# increments: 399/400 treating it as fatal, 400/400 retrying. The ubuntu column of the same run
+# raised PermissionError zero times, which is why POSIX has never seen this and why it needs to be
+# provoked here rather than waited for.
+_dp_dir = Path(tempfile.mkdtemp(prefix="chamnan-deletepending-"))
+_dp_target = _dp_dir / "registry.json"
+_dp_target.write_text("{}", encoding="utf-8")
+_dp_real_open = os.open
+_dp_raised = {"n": 0}
+
+
+def _dp_fake_open(path, flags, *a, **k):
+    """PermissionError on the first few O_EXCL creates of the lock, then out of the way."""
+    if str(path).endswith(".lock") and (flags & os.O_EXCL) and _dp_raised["n"] < 3:
+        _dp_raised["n"] += 1
+        raise PermissionError(13, "Access is denied")
+    return _dp_real_open(path, flags, *a, **k)
+
+
+try:
+    os.open = _dp_fake_open
+    with ws.exclusive(_dp_target) as _dp_held:
+        _dp_got = _dp_held
+finally:
+    os.open = _dp_real_open
+
+check("the delete-pending condition was actually provoked", _dp_raised["n"] == 3)
+check("A LOCK IN DELETE-PENDING IS RETRIED, NOT REPORTED AS UNLOCKABLE", _dp_got is True)
+
+# ...and the failure it must still report: a lock genuinely held by somebody else for longer than
+# the timeout has to yield False, or this fix would have turned every contention into a false
+# "acquired" and made the guard decorative.
+_dp_held_lock = Path(str(_dp_target) + ".lock")
+_dp_fd = os.open(str(_dp_held_lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+try:
+    _dp_t0 = time.time()
+    with ws.exclusive(_dp_target) as _dp_busy:
+        pass
+    check("...while a lock somebody else really holds still yields False", _dp_busy is False)
+    check("...after waiting LOCK_TIMEOUT rather than returning at once",
+          time.time() - _dp_t0 >= ws.LOCK_TIMEOUT * 0.8)
+finally:
+    os.close(_dp_fd)
+    _dp_held_lock.unlink(missing_ok=True)
+_rmtree(_dp_dir, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
