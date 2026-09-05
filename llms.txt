@@ -1,0 +1,102 @@
+# chamnan
+
+> A context index for coding agents. It reads a repository once, writes one line per file plus sections for the data model, API surface, configuration and deployment, and hands that to an agent at the start of every session — so the agent stops rediscovering the shape of the codebase and starts from it. Pure Python standard library, no dependencies, MIT licence.
+
+chamnan is delivered as a Claude Code plugin and as a plain command-line tool. The index itself is text and belongs to no vendor: the same file is written for every other agent that reads project instructions, and the model in use only decides how much of it is worth sending.
+
+## Installing
+
+- [Quick start](https://arcticfox2029.github.io/chamnan#quick-start): install as a Claude Code plugin, then `/chamnan:bootstrap` once.
+- [Installing it, per tool](https://arcticfox2029.github.io/chamnan#installing-it-per-tool): the three routes in — a plugin, a session hook, or a file.
+- [Requirements](https://arcticfox2029.github.io/chamnan#requirements): Python and nothing else. No packages, no virtualenv.
+
+## What it works with
+
+- **Operating systems**: macOS, Linux, Windows and WSL, all exercised in CI on every commit. See [Running it on each operating system](https://arcticfox2029.github.io/chamnan#running-it-on-each-operating-system).
+- **Models**: any. `--model` recognises `claude`, `codestral`, `deepseek`, `gemini`, `gemma`, `glm`, `gpt`, `grok`, `kimi`, `mistral`, `openai` by name; `llama` and `qwen` ship in several sizes and are deliberately left out; anything unrecognised still works and `--window` takes an exact number.
+- **Agents**: 24 adapters. Claude Code and Gemini CLI receive a real session hook; every other agent receives a file at the path it reads.
+- **Hermes Agent**: writes `.hermes.md`, the project-instruction file Hermes gives highest priority. See [Using it with Hermes Agent](https://arcticfox2029.github.io/chamnan#using-it-with-hermes-agent).
+
+### Agents and the file each one receives
+
+- `aider`: `CONVENTIONS.md`
+- `amazonq`: `.amazonq/rules/chamnan.md`
+- `antigravity`: `.agents/rules/chamnan.md`
+- `augment`: `.augment/rules/chamnan.md`
+- `cline`: `.clinerules/chamnan.md`
+- `codebuddy`: `CODEBUDDY.md`
+- `continue`: `.continue/rules/chamnan.md`
+- `copilot`: `.github/instructions/chamnan.instructions.md`
+- `cursor`: `.cursor/rules/chamnan.mdc`
+- `gemini`: `.gemini/settings.json`
+- `generic`: `AGENTS.md`
+- `goose`: `.goosehints`
+- `grok`: `.grok/rules/chamnan.md`
+- `hermes`: `.hermes.md`
+- `iflow`: `IFLOW.md`
+- `junie`: `.junie/AGENTS.md`
+- `kiro`: `.kiro/steering/chamnan.md`
+- `mistral`: `.vibe/AGENTS.md`
+- `qwen`: `QWEN.md`
+- `replit`: `replit.md`
+- `roo`: `.roo/rules/chamnan.md`
+- `trae`: `.trae/rules/project_rules.md`
+- `windsurf`: `.windsurf/rules/chamnan.md`
+- `zed`: `.rules`
+
+## Commands
+
+- `chamnan-age`: which stored knowledge names a version no environment declares any more
+- `chamnan-candidates`: review what the workflow detector has found, quickly
+- `chamnan-context`: this repository's context block on stdout, for any tool on any OS
+- `chamnan-env`: the constraints nobody writes down and everybody re-learns
+- `chamnan-impact`: what breaks if I change this file, and what happened last time it changed
+- `chamnan-map`: build .chamnan/MAP.md from the repository's source, and report what it cost
+- `chamnan-peek`: read the shape of one file instead of the whole thing
+- `chamnan-promote`: turn a one-off script into a tool the repo keeps
+- `chamnan-report`: measure this repo's context cost per turn, before and after the workspace existed
+- `chamnan-timeline`: one line of work followed across the sessions it actually took
+
+## Documentation
+
+- [README](https://arcticfox2029.github.io/chamnan): everything, including every measurement and its method.
+- [Repository](https://github.com/ArcticFox2029/chamnan): source, releases and issues.
+- [Changelog](https://github.com/ArcticFox2029/chamnan/blob/main/CHANGELOG.md): what changed in each release.
+- [Architecture](https://github.com/ArcticFox2029/chamnan/blob/main/docs/architecture.md) · [Data flow](https://github.com/ArcticFox2029/chamnan/blob/main/docs/data-flow.md) · [Verification](https://github.com/ArcticFox2029/chamnan/blob/main/docs/verification.md)
+
+## Other languages
+
+Translated pages cover what chamnan is, what it works with and how to install it, in 32 languages. They carry no figures by design — every measurement lives in the English README, which is the only page rewritten each release.
+
+- [ar](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.ar.md)
+- [bn](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.bn.md)
+- [cs](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.cs.md)
+- [da](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.da.md)
+- [de](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.de.md)
+- [el](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.el.md)
+- [es](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.es.md)
+- [fi](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.fi.md)
+- [fr](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.fr.md)
+- [he](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.he.md)
+- [hi](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.hi.md)
+- [hu](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.hu.md)
+- [id](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.id.md)
+- [it](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.it.md)
+- [ja](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.ja.md)
+- [ko](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.ko.md)
+- [nl](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.nl.md)
+- [no](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.no.md)
+- [pl](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.pl.md)
+- [pt-BR](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.pt-BR.md)
+- [pt-PT](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.pt-PT.md)
+- [ro](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.ro.md)
+- [ru](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.ru.md)
+- [sv](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.sv.md)
+- [th](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.th.md)
+- [tl](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.tl.md)
+- [tr](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.tr.md)
+- [uk](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.uk.md)
+- [ur](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.ur.md)
+- [vi](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.vi.md)
+- [zh-CN](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.zh-CN.md)
+- [zh-TW](https://github.com/ArcticFox2029/chamnan/blob/main/docs/i18n/README.zh-TW.md)
