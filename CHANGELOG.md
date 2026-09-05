@@ -1,11 +1,120 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1160), and every one of these is on the
+[README](README.md#whats-new-in-1170), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.17.0
+
+### chamnan is no longer a Claude Code plugin that happens to write files
+
+**1.16.0 shipped zero adapters. This release has twenty-three.** `cursor`, `windsurf`, `copilot`,
+`kiro`, `zed`, `continue`, `roo`, `cline`, `aider`, `goose`, `junie`, `amazonq`, `gemini`, `qwen`,
+`grok`, `mistral`, `trae`, `replit`, `augment`, `iflow`, `codebuddy`, `antigravity`, and a `generic`
+AGENTS.md fallback. Each writes the block at the path that tool actually reads, in the format it
+actually parses, under the size limit that tool actually publishes.
+
+That last clause is not decoration. `antigravity` declared no ceiling and emitted 21,388 bytes
+against Google's documented 12,000-character cap — 1.78× over, silently, with nothing shrinking and
+nothing warning. It emits 11,931 now. `windsurf` had carried the identical fix for two days; the
+sibling added the same day did not get it. The ceilings that have been checked against a vendor's own
+documentation are now a table in the test suite rather than a constant per file, so an adapter for a
+vendor already in that table cannot quietly declare `None`.
+
+### Subagents get context now
+
+`SubagentStart` accepts `additionalContext`. This programme had recorded the opposite as settled —
+"subagents and the context they never receive", closed as unfixable — on the strength of a
+documentation page that was being truncated before the table that answers it. Three separate
+attempts read the event list and never reached the decision-control table; one came back hedged as
+"likely". `curl` on the `.md` URL returns all 317,647 bytes at once.
+
+What a subagent gets is a **pointer, not the block**: 958 bytes naming the index, saying to grep it
+rather than read it, listing the rules in force, and — the part that took a second pass — naming the
+nested checkouts the index deliberately excludes. 96.6% of this repository's own subagent dispatches
+start at the outer root while the work is in an inner project, where the outer index mentions the
+file they need zero times and the inner one is 85,000 characters about it. An index that looks empty
+reads as "this repository is undocumented" rather than "you are looking at the wrong one".
+
+Forks get nothing: they inherit the parent's whole conversation already. Measured over 22 historical
+fork dispatches, none ever opened the map.
+
+### Repository text cannot rewrite what you read
+
+A repository chamnan indexes is not a trusted input. Its filenames, docstrings, table names and
+directory names are written into Markdown that a model then reads as instructions, and four
+consecutive research rounds each found an instance of the same defect and fixed only that instance.
+
+Walked as a set instead: **31 sites in 14 files**, against the 8 that had been found one at a time.
+The one that mattered was invisible to every audit of call sites — `mapper._clip()` is the second
+whitespace fold in the codebase and never had the control-character table, and its callers assemble
+the Markdown afterwards, so no f-string anywhere shows an unsanitised field. Reproduced on a fixture
+repository: a docstring carrying `\x1b[31m` and a bidi override reached MAP.md verbatim.
+
+Two guards, because neither shape catches the other: a structural one that walks `lib/` and `hooks/`
+and names any unsanitised field, and a behavioural one that runs the real renderer over a repository
+built to attack it.
+
+### Windows was never actually working, and now CI says so out loud
+
+The Windows CI jobs were added in this release and had **never been green**. Three real defects were
+behind that, and none of them could be found from a Mac — so a lab was built out of the CI runner
+itself: six isolated questions run on `windows-latest` with an `ubuntu-latest` column beside them in
+the same job.
+
+The first hypothesis was wrong, which is why it was measured. `LOCK_TIMEOUT` was never being
+reached: 240 of 240 acquisitions succeeded on both platforms. What was actually happening:
+
+| | windows | ubuntu |
+|---|---|---|
+| concurrent `open("a")`, 6 × 200 short lines | **1,034 / 1,200** | 1,200 / 1,200 |
+| `os.replace` onto a file a reader has open | **PermissionError** | allowed |
+| 8 × 50 increments through `record_call`'s shape | **399 / 400** | 400 / 400 |
+
+- **Appends are not atomic on Windows.** The code carried a comment saying "the append path is safe
+  on its own — O_APPEND writes of short lines do not interleave". True, and true only on POSIX. 166
+  of 1,200 lines vanished with no error anywhere. The append now takes the lock on Windows and keeps
+  the lock-free path on POSIX, where it is correct and runs on every Bash call.
+- **`os.replace` can be refused.** A write could fail purely because somebody was reading the file
+  at that instant. It now retries twelve times over about a quarter of a second and re-raises if it
+  still cannot land — a caller that cannot write must hear about it.
+- **A lock in DELETE-PENDING state raises the wrong exception.** A lock file another process has
+  just unlinked stays visible on Windows: the name resolves, opens fail with `ERROR_ACCESS_DENIED`,
+  and Python raises `PermissionError` rather than `FileExistsError`. That fell into a catch-all that
+  read "somebody has this, retry in 10ms" as "this lock cannot be taken". One in four hundred, on a
+  running total nothing recomputes, so it stayed wrong forever.
+
+Two of the failures were the tests rather than the code — a doubling ratio computed from a 0.000 s
+measurement on a 15.6 ms clock, and a path compared in its 8.3 short form against its long one — and
+both are fixed. All five jobs are green.
+
+### Measured, 1.16.0 against 1.17.0
+
+Both on the same machine, alternating, the 1.16.0 column being the released plugin as installed.
+
+| | 1.16.0 | 1.17.0 | |
+|---|---|---|---|
+| tools chamnan can write for | 1 | **23** | Claude Code was the only one |
+| a repo with `Pods/`, `Carthage/`, `third_party/`, `bower_components/` | 5 files indexed | **1** | the other four were somebody else's library |
+| Antigravity rules file, large-window profile | — | **11,931 bytes** | under the documented 12,000 |
+| regression checks | 2,168/2,169 | **2,795/2,795** | the released build has one failing |
+| CI platforms green | 3 of 3 | **5 of 5** | Windows jobs added here, and made to pass |
+| hooks | 5 | **6** | `SubagentStart` |
+| `map_claim_check` on a correct map | 83.6% | **100.0%** | it had been wrong since 2026-09-02 |
+| SessionStart hook, this repository | 0.55–0.62 s | 0.48–0.63 s | **no measurable difference — ranges overlap** |
+| injected block | 8,618 bytes | 8,647 bytes | +29 |
+
+**Eighty-two commits, 90 files, +9,270 −822.** The theme, again, is chamnan being wrong about
+something and finding out: a checker that reported 83.6% about a map independently measured at 100%
+and had been doing so for three days because nothing ran it; a `README` that told Windows users to
+use WSL on one line and that Windows is tested in CI on another; `atomic_write_text` writing CRLF on
+Windows because `write_text` asks the platform; a second drifted copy of the skip list; and
+`carry_forward` reading one session record where two people had written two.
 
 ---
 

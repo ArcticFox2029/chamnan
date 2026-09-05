@@ -69,8 +69,40 @@ def body_of(payload):
     return ""
 
 
+# The redactor's own placeholder tokenises to `redacted`, and a token every scrubbed script shares
+# is a fingerprint of nothing -- worse, it drags the Jaccard overlap between two unrelated scripts
+# up. Dropped, which is the same reasoning the old per-token filter used to justify dropping
+# rather than replacing.
+PLACEHOLDER_TOKENS = {"redacted"}
+
+# How much of a body is scrubbed before it is fingerprinted. `redact.scrub` is linear at about
+# 1.5ms/KB (measured: 2 KB 2.97ms, 8 KB 12.01ms, 64 KB 114.61ms), and this hook runs on a
+# PostToolUse, so an unbounded scrub of a large scratch file is a delay on somebody's editor.
+# 8 KB yields ~397 distinct tokens against the 120 the fingerprint keeps, so the bound costs
+# nothing the digest was going to use.
+SCRUB_CEILING = 8 * 1024
+
+
+def scrubbable(text):
+    """`text` cut to `SCRUB_CEILING`, on a LINE boundary.
+
+    Cutting mid-line could leave the first half of a secret in the part that gets scrubbed, too
+    short for the pattern that would have caught it whole -- so a secret is either entirely inside
+    the scrubbed part or entirely outside it, and what is outside is never tokenised at all.
+    """
+    if len(text) <= SCRUB_CEILING:
+        return text
+    kept, used = [], 0
+    for line in text.splitlines(True):
+        if used + len(line) > SCRUB_CEILING:
+            break
+        kept.append(line)
+        used += len(line)
+    return "".join(kept)
+
+
 def fingerprint(text):
-    return set(t.lower() for t in TOKEN.findall(text))
+    return set(t.lower() for t in TOKEN.findall(text)) - PLACEHOLDER_TOKENS
 
 
 SKIP_HEAD = re.compile(r"^\s*(#|//|/\*|\*|import\b|from\b|require\(|use\b|package\b|$)")
@@ -113,7 +145,7 @@ def _nudge_path(wsdir, session_id):
 def _nudge_read(wsdir, session_id):
     try:
         d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError, RecursionError):
         return {"calls": 0, "nudged": False}
     # Valid JSON of the wrong shape is not a missing file: a list here raised AttributeError on
     # every subsequent tool call in the session.
@@ -270,11 +302,16 @@ def _track_tool_health(payload, root):
     entry, just_flagged = tools_index.record_call(root, name, interrupted, stderr_nonempty)
     if not just_flagged or entry is None:
         return False
-    signal = max(entry.get("interrupted", 0), entry.get("stderr_seen", 0))
-    say(f"chamnan: `.chamnan/tools/{name}` has been interrupted or written to stderr "
-          f"{signal} times in its last {entry.get('runs', '?')} run(s) — worth a look. "
-          f"`chamnan-candidates demote {name}` sends it back for review if it no longer does "
-          f"what you expect.")
+    # 🐛 [2026-09-04] The notice said "interrupted or written to stderr" and reported the LARGER of
+    # the two counters, which meant it usually reported the stderr one — a constant in at least one
+    # harness (see FLAG_AT in tools_index.py) — while naming interruption first. A reader chasing an
+    # interruption that never happened is worse served than one told nothing.
+    #
+    # Only the counter that raised the flag is named now, and it is the only one that can.
+    say(f"chamnan: `.chamnan/tools/{name}` was interrupted "
+          f"{entry.get('interrupted', 0)} times in its last {entry.get('runs', '?')} run(s) — "
+          f"killed or timed out, not merely noisy. `chamnan-candidates demote {name}` sends it back "
+          f"for review if it no longer does what you expect.")
     return True
 
 
@@ -301,10 +338,16 @@ def _environment_notice(payload, wsdir, root):
     if (payload.get("tool_name") or "") != "Bash":
         return False
     command = str((payload.get("tool_input") or {}).get("command") or "")
-    name = environments.match_command(root, command)
+    # 🐛 These two calls each re-read and re-parse `environments.md`. `environments.py`'s own
+    # docstring says they do not -- it names THIS function as the caller that "passes it through
+    # instead of paying" for a second parse -- and the `envs=` argument it describes was added and
+    # never wired up here. Measured on a twelve-environment file: 0.795ms against 0.398ms, exactly
+    # the 2x the argument exists to remove, on a PostToolUse hook that fires on every Bash call.
+    envs = environments.entries(root)
+    name = environments.match_command(root, command, envs=envs)
     if not name:
         return False
-    notice = environments.constraints_notice(root, name)
+    notice = environments.constraints_notice(root, name, envs=envs)
     if not notice:
         return False
 
@@ -448,6 +491,21 @@ def main():
     text = body_of(payload)
     if not text.strip():
         return 0
+    # 🐛 Scrubbed HERE, before anything tokenises it, and not once per token further down.
+    # `fp` used to be filtered per token (`redact.scrub(t) == t`, drop what the redactor touches),
+    # and that filter is defeated by its own tokeniser: `TOKEN` splits on `-`, so
+    # `sk-ant-api03-PLANTED...` reaches the filter as `api03` and a bare suffix, with the `sk-ant-`
+    # prefix that `redact.PATTERNS` needs already thrown away. Rendered: the suffix went to
+    # `scratch.jsonl` in clear text. Every hyphen-delimited provider prefix is affected -- `sk-`,
+    # `xox[baprs]-`, `xapp-`, `glpat-`, `GOCSPX-`, `pypi-` -- and so is every pattern keyed to an
+    # assignment SHAPE (`key = value`, `key: value`, `key => value`), because the `=`/`:`/`=>` the
+    # shape depends on is exactly what a token excludes. That second class is the wider one: a bare
+    # hex blob assigned to `SECRET_KEY` has no prefix of its own and was only ever caught by shape.
+    #
+    # A whole-text scrub gives every pattern the delimiters it was written against, which is how
+    # `head` was already doing it. Two scripts differing only in their secret now fingerprint the
+    # same, and for a "you have written this throwaway three times" detector that is right.
+    text = redact.scrub(scrubbable(text))
     fp = fingerprint(text)
     if len(fp) < MIN_TOKENS:
         return 0
@@ -457,40 +515,73 @@ def main():
 
     log = wsdir / "logs" / "scratch.jsonl"
     log.parent.mkdir(parents=True, exist_ok=True)
-    prior = []
-    if log.is_file():
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                _rec = json.loads(line)
-                # A line that is valid JSON but not an object -- a stray number left by a
-                # half-written entry -- parsed fine and then raised AttributeError later.
-                if isinstance(_rec, dict):
-                    prior.append(_rec)
-            except json.JSONDecodeError:
-                continue
 
-    # A record with no `kind` predates this field and is a scratch fingerprint by construction --
-    # nothing else was ever written here before now -- so missing reads as "scratch". Anything
-    # tagged something else must not be treated as one, the same rule workflows._runs() applies to
-    # commands.jsonl: a future record shape sharing this log must not silently join a comparison it
-    # was not written for.
-    matches = [p for p in prior
-               if p.get("kind", "scratch") == "scratch" and jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
-    entry = {
-        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "kind": "scratch",
-        "tool": tool_name,
-        "fp": sorted(fp)[:120],
-        "head": headline(text),
-    }
-    if file_path:
-        entry["file"] = file_path
-    prior.append(entry)
-    log.write_text("\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n",
-                   encoding="utf-8")
+    # 🐛 This whole block used to read `prior`, then rewrite the file with `log.write_text(...)` --
+    # a full read-modify-write on EVERY qualifying Write/Edit, with no lock and no
+    # `ws.atomic_write_text`. That is the exact shape `commands.jsonl`'s trim had before it was put
+    # under `ws.exclusive` (see workflows.record()'s own comment: unlocked, 55% of concurrent
+    # appends lost), except wider -- this rewrites on every call, not just an occasional trim.
+    # Reproduced: 20 concurrent PostToolUse hook invocations survived clean, but 40 lost 1/40, 60
+    # lost 1/60, 80 lost 2/80 -- every losing process still exited 0. Locking the read AND the
+    # write, the same pattern `tools_index.record_call` and `coedit.record` already use for this
+    # shape of shared hot-path log: skip the whole write when the lock is busy (a dropped notice
+    # entry is the cheap outcome) rather than ever writing an unserialised snapshot.
+    matches = []
+    with ws.exclusive(log) as held:
+        if not held:
+            return 0
+        prior = []
+        if log.is_file():
+            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+                try:
+                    _rec = json.loads(line)
+                    # A line that is valid JSON but not an object -- a stray number left by a
+                    # half-written entry -- parsed fine and then raised AttributeError later.
+                    if isinstance(_rec, dict):
+                        prior.append(_rec)
+                except (json.JSONDecodeError, RecursionError):
+                    continue
+
+        # A record with no `kind` predates this field and is a scratch fingerprint by
+        # construction -- nothing else was ever written here before now -- so missing reads as
+        # "scratch". Anything tagged something else must not be treated as one, the same rule
+        # workflows._runs() applies to commands.jsonl: a future record shape sharing this log must
+        # not silently join a comparison it was not written for.
+        matches = [p for p in prior
+                   if p.get("kind", "scratch") == "scratch"
+                   and jaccard(fp, set(p.get("fp", []))) >= SIMILAR]
+        # 🐛 `redact` was imported here and used only on the notice PRINTED to the user. What was
+        # WRITTEN to `logs/scratch.jsonl` — the opening line of every throwaway script, and a
+        # token fingerprint of its body — went to disk verbatim. Rendered: a key planted in a
+        # scratch script came back out of the log in `head` and again as a token in `fp`.
+        #
+        # The workspace's own `.gitignore` names this file and says in its comment that "a
+        # credential typed into a one-off script lands in these files intact". That was a
+        # description of a defect, not a design: the redactor is right there, the cost is one pass
+        # over one line, and a file being gitignored is not a reason to keep a secret in it — it
+        # still sits in the clone, in plain text, for as long as the retention window.
+        #
+        # Both derive from the already-scrubbed `text` above, so neither re-scrubs. Keeping the
+        # two in one derivation is the point: the per-token filter that used to sit on this line
+        # looked like a second net and was a hole, because it ran on tokens the redactor could no
+        # longer read.
+        _head = headline(text)
+        _fp = sorted(fp)[:120]
+        entry = {
+            "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "kind": "scratch",
+            "tool": tool_name,
+            "fp": _fp,
+            "head": _head,
+        }
+        if file_path:
+            entry["file"] = file_path
+        prior.append(entry)
+        ws.atomic_write_text(
+            log, "\n".join(json.dumps(p, ensure_ascii=False) for p in prior[-KEEP_ENTRIES:]) + "\n")
 
     # Only the exact threshold speaks. Firing on every later repeat would turn a useful nudge into
-    # noise the user learns to scroll past.
+    # noise the user learns to scroll past. Outside the lock: `say()` only writes to stdout.
     if len(matches) + 1 == REPEAT_AT:
         first = matches[0].get("at", "")[:10]
         say(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "

@@ -58,6 +58,16 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_subagent_start.py\""
+          }
+        ]
+      }
     ]
   }
 }

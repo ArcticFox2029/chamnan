@@ -14,6 +14,7 @@ partial index) rather than silent.
 """
 import json
 import hashlib
+import os
 import secrets
 import re
 import sys
@@ -27,6 +28,7 @@ import fit  # noqa: E402
 import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
+import profiles  # noqa: E402
 import mdblock  # noqa: E402
 import redact  # noqa: E402
 import rollup  # noqa: E402
@@ -258,7 +260,7 @@ def display(path, root):
     print a path to the reader, and a label is never worth an exception: the one time this raised,
     it took the whole injection with it and the session started with nothing at all."""
     try:
-        return str(Path(path).relative_to(root))
+        return str(Path(path).relative_to(root).as_posix())
     except (ValueError, TypeError):
         return Path(path).name
 
@@ -267,6 +269,12 @@ def section(title, body, source=""):
     if not body.strip():
         return ""
     fenced = body.rstrip().replace(CLOSE_MARK, f"[/repo:escaped]")
+    # A body that opens a ``` or ~~~ block and never closes it -- whether that is how the file was
+    # written, or how a budget cut left it -- swallows everything after it into what a renderer
+    # treats as one unterminated code block: the `[/repo:nonce]` mark below, and every section
+    # injected after this one. Closing it here is a no-op on an already-balanced body, so this
+    # runs for every section rather than only the ones known to need it.
+    fenced = mdblock.close_dangling_fence(fenced)
     text = f"\n### {title}\n{OPEN_MARK}\n{fenced}\n{CLOSE_MARK}\n"
     # Priced with the real estimator on the real text. Counting characters and pricing them as if
     # they were ASCII is wrong on a repository whose STATE.md is half Thai, and the error would
@@ -370,7 +378,7 @@ def index_is_behind(root, map_path):
                        key=lambda f: -f.stat().st_mtime)
         if not newer:
             return 0, []
-        return newest - built, [str(f.relative_to(root)) for f in newer]
+        return newest - built, [str(f.relative_to(root).as_posix()) for f in newer]
     except Exception:
         return 0, []      # never let a nicety break a session
 
@@ -524,6 +532,63 @@ def unindexed(root, map_text):
         return 0, []
 
 
+def _with_profile(cfg):
+    """`cfg` with the context profile's budgets folded in, resolved ONCE.
+
+    Six separate places read `cfg.get("index_token_budget", 3000)`. Applying a profile at each of
+    them is the exact failure this project has now hit eight times -- a correct change made to some
+    members of a set and forgotten in the others -- so the profile is applied to the config object
+    itself and every one of those six reads sees it without knowing profiles exist.
+
+    `CHAMNAN_CONTEXT_PROFILE` overrides the file, so a caller can ask for the block at a different
+    size without editing a config that belongs to the repository and is committed. An explicit
+    budget in the file still wins over the profile: someone who tuned a number by hand measured
+    something, and a profile added later must not quietly undo it -- `profiles.resolve` owns that
+    precedence rather than it being restated here.
+    """
+    asked = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
+    if asked:
+        cfg = dict(cfg)
+        cfg["context_profile"] = asked.strip()
+        # An override is an instruction to change the size, so it also displaces a hand-tuned
+        # number -- otherwise asking for a small window silently returns the standard block.
+        for key in ("index_token_budget", "state_token_budget"):
+            cfg.pop(key, None)
+    _name, budgets = profiles.resolve(cfg)
+    out = dict(cfg)
+    out.update(budgets)
+    return out
+
+
+def _folded_dirs(text):
+    """How many directories a folded index names.
+
+    A folded row is `- **pkg/sub/** (15) — `a.py`, `b.py` _+13 more_`: the directory is bold and
+    bare, the backticks belong to the files listed after the dash. Matching a quoted name found
+    nothing, which is what made the step-down selector blind to the only thing it was choosing on.
+    """
+    return len(re.findall(r"^- \*\*([^*`]+/)\*\*", text, re.M))
+
+
+def _ceiling_from_env(cfg):
+    """The output byte ceiling: environment, then config, then the built-in default.
+
+    Kept out of `main()` so the hook path and `chamnan-context` resolve it the same way rather than
+    each carrying its own copy of the rule. A value that is not a positive integer is IGNORED
+    rather than raising -- this runs at session start, and an exception here costs the session its
+    whole block over a typo in a shell export.
+    """
+    raw = os.environ.get("CHAMNAN_OUTPUT_CEILING")
+    if raw:
+        try:
+            asked = int(str(raw).strip())
+            if asked > 0:
+                return asked
+        except (TypeError, ValueError):
+            pass
+    return cfg.get("output_byte_ceiling", fit.CEILING)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -611,7 +676,7 @@ def main():
             return 0
     except OSError:
         return 0                      # read-only checkout, or no permission — never fail a session
-    cfg = ws.load_config(root)
+    cfg = _with_profile(ws.load_config(root))
     # Said once, plainly. A config that does not parse is running on defaults, and every value the
     # user set is being ignored — silently, that is a settings file that appears not to work.
     _bad_cfg = ws.config_is_malformed(root)
@@ -719,7 +784,56 @@ def main():
                 # folded index no longer has any, so re-folding its own output finds nothing to group.
                 index_render = (index, display(mp, root), budget, root)
                 if not tokens.fits(index, budget):
-                    index = rollup.collapse(index, display(mp, root), budget, root)
+                    # 🐛 This folded at the default `per_dir=8` and stopped there, so whatever
+                    # still did not fit was cut by `_enforce`'s prefix truncation -- which drops
+                    # whole DIRECTORIES off the end. `rollup.collapse` has taken a graduated
+                    # `per_dir` all along, and only the byte-ceiling pass further down ever used
+                    # the (8, 4, 2, 0) stepping.
+                    #
+                    # Measured on a 40-directory, 600-file index at a 2,000-token budget:
+                    #
+                    #     per_dir=8   1,938 tokens   22 of 40 directories named   <- what shipped
+                    #     per_dir=4   1,976 tokens   38 of 40
+                    #     per_dir=2   1,325 tokens   40 of 40
+                    #
+                    # Stepping down is smaller AND says more: fewer names per directory costs less
+                    # than losing eighteen directories, and a directory line with two names still
+                    # orients a reader where a missing directory cannot. Take the FIRST step that
+                    # names every directory the previous step named -- so an index that already
+                    # fits at 8 is untouched, and one that does not steps until nothing is lost.
+                    # 🐛 The directory count used `\*\*`([^`]+/)`\*\*` — a directory name wrapped
+                    # in BACKTICKS inside bold. A folded line is `- **pkg0/** (15) — `a.py`, ...`:
+                    # the directory is bold and NOT quoted, the backticks are around the FILES. So
+                    # the count was 0 at every step, `_try_named > _named` was never true, and the
+                    # whole selection fell through to the token tiebreak.
+                    #
+                    # It happened to pick well on the fixture I measured — fewest tokens was also
+                    # most directories there — so the end-to-end numbers were real and the reason I
+                    # gave for them was not. Found by an agent reading the selector rather than its
+                    # output, which is the check I skipped: I measured the result and assumed the
+                    # mechanism.
+                    # Coverage first, and among equal coverage the EARLIEST step — not the
+                    # cheapest. Fixing the counter above exposed a second wrong rule underneath it:
+                    # breaking a coverage tie on token count picks `per_dir=0`, which names every
+                    # directory and not one file inside any of them. This file's own comment says
+                    # why that is the wrong end to optimise — "a directory line with four names
+                    # still orients a reader and one with none still says the directory exists" —
+                    # so the tie goes to the step that keeps the most names while fitting.
+                    #
+                    # Measured on 600 files in 40 directories at a 2,000-token budget:
+                    #     per_dir=8  22/40 dirs  1,938 tokens
+                    #     per_dir=4  38/40       1,976
+                    #     per_dir=2  40/40       1,325   <- chosen: full coverage, still has names
+                    #     per_dir=0  40/40         446      full coverage, no names at all
+                    _rel = display(mp, root)
+                    _steps = []
+                    for _step in (8, 4, 2, 0):
+                        _try = rollup.collapse(index, _rel, budget, root, _step)
+                        _steps.append((_folded_dirs(_try), -_step, _try))
+                    _reach = max(n for n, _s, _t in _steps)
+                    # Highest coverage; then the largest per_dir among those, which is the earliest
+                    # step and the one that keeps the most file names. `-_step` sorts that way.
+                    _named, _neg, index = min((n, s, t) for n, s, t in _steps if n == _reach)
                 index_slot = len(out)
                 # 🐛 The largest section injected every session, and the one that never went
                 # through the redactor. Every sibling section is scrubbed; this one was read
@@ -761,9 +875,19 @@ def main():
                             + ("…" if n > len(examples) else "") + ". ") if n else ""
                     # The offer to install the hook goes only to a repo that has not installed it.
                     # Repeating it to someone who has is how a warning stops being read.
+                    #
+                    # 🐛 And it used to say the hook keeps the index "current on every commit",
+                    # offered in answer to a staleness the hook does not fix. It rebuilds only when
+                    # a file is added, deleted or renamed (`--diff-filter=ACDR`), deliberately —
+                    # the rebuild is a full rescan measured at 107s on 1,032 files and running it
+                    # in the foreground of every commit would be worse. But measured on this
+                    # repository, 297 of 355 non-merge commits (83.7%) touch only existing files,
+                    # so the hook fires on about one commit in six. A reader who installs it
+                    # because this line told them to sees the same warning next session and learns
+                    # to ignore the line — which is the one thing a staleness warning cannot afford.
                     fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
-                           "`chamnan-map`, or `chamnan-map --install-git-hook` to keep it current on "
-                           "every commit")
+                           "`chamnan-map`, or `chamnan-map --install-git-hook` to rebuild it "
+                           "whenever a commit adds, deletes or renames a file")
                     # A count and up to three names, so the reader can judge whether it matters
                     # rather than guessing from a duration. Capped because on a two-week gap this
                     # would name most of the tree, which is noise wearing the costume of a signal.
@@ -938,7 +1062,7 @@ def main():
                 ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
                 ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
                 ranked.sort(key=lambda t: -(t.get("runs") or 0))
-                lines = [f"- `{t['name']}` — {t.get('desc') or 'no description'}"
+                lines = [f"- `{mdblock.one_line(t['name'])}` — {mdblock.one_line(t.get('desc') or 'no description')}"
                          for t in ranked[:MAX_TOOLS]]
                 if len(tools) > MAX_TOOLS:
                     lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
@@ -962,7 +1086,8 @@ def main():
                 # from a filename. A registry of bare filenames spends the injection and buys nothing.
                 lines = []
                 for s in skills[:MAX_TOOLS]:
-                    lines.append(f"- `{s.name}` — {describe(s) or 'no description — add one'}")
+                    lines.append(f"- `{mdblock.as_quoted(s.name)}` — "
+                                 f"{describe(s) or 'no description — add one'}")
                 if len(skills) > MAX_TOOLS:
                     lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
                 out.append(section(
@@ -987,7 +1112,7 @@ def main():
                     data = json.loads(digest_path.read_text(encoding="utf-8"))
                     if isinstance(data, dict):
                         lines = [str(x) for x in (data.get("lines") or [])][:6]
-                except (OSError, json.JSONDecodeError):
+                except (OSError, json.JSONDecodeError, RecursionError):
                     lines = []
                 try:
                     digest_path.unlink()
@@ -1033,9 +1158,17 @@ def main():
                        "builds one, or `/chamnan:bootstrap` builds it and records a baseline._\n")
 
         if _bad_cfg:
-            out.insert(0, "_⚠ `.chamnan/config.json` does not parse — a stray comma or quote. "
+            # 🐛 [2026-09-04] The reason used to be assumed rather than reported: one sentence about
+            # "a stray comma or quote", printed for the only case this could detect. A config that
+            # is valid JSON but not an object -- `[]`, `"text"`, `42`, `null` -- is discarded just
+            # as completely by load_config, was not detected at all, and would have been described
+            # with syntax advice that does not apply to it. `config_is_malformed` names the reason
+            # now and it is interpolated here, so the line tells the reader which mistake they made.
+            _fix = ("fix the syntax" if _bad_cfg == "does not parse"
+                    else "wrap the settings in `{ }`")
+            out.insert(0, f"_⚠ `.chamnan/config.json` {mdblock.as_quoted(_bad_cfg, 120)}. "
                           "This session is running on DEFAULTS and every value set in that file is "
-                          "being ignored. It has NOT been overwritten; fix the syntax and it takes "
+                          f"being ignored. It has NOT been overwritten; {_fix} and it takes "
                           "effect on the next session._\n")
         if any(OPEN_MARK in part for part in out):
             out.insert(0, FRAMING + "\n")
@@ -1052,7 +1185,13 @@ def main():
         # sits late in the block no matter how carefully it was budgeted or pinned. Choosing what to
         # lose here — whole sections, named, lowest value first — beats a positional cut that keeps a
         # directory listing and silently throws away the repository's own rules.
-        ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
+        # The environment wins over the config file, and both over the default, because the
+        # ~10,000-byte cut this defends against is a property of the HARNESS rather than of
+        # this repository. Claude Code truncates a hook's stdout; a tool that reads a file
+        # off disk has no such limit, and forcing that tool down to 9,000 bytes would throw
+        # away material it could have taken whole. `chamnan-context` sets this so one caller
+        # can ask for the block at its own ceiling without editing anyone's config.
+        ceiling = _ceiling_from_env(cfg)
 
         # Spend the index's resolution before spending the index. A directory line with four names
         # still orients a reader and one with none still says the directory exists, so stepping the

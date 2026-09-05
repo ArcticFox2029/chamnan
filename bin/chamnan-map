@@ -34,9 +34,22 @@ print = redact.emit  # noqa: A001
 
 
 def coverage(files):
-    """Counts only files that could carry a summary — see mapper.scan's `describable`."""
-    countable = [f for f in files if f.get("describable", True)]
+    """Counts only files that could carry a summary — see mapper.scan's `describable`.
+
+    🐛 A GENERATED file was counted as missing one. On twelve `.pb.go` files beside one
+    hand-written module this reported `1/13 (8%)` for a repository that is fully described
+    wherever description is possible -- and the nudge below then asked for a comment under a
+    DO NOT EDIT line, which the next `protoc` run discards. chamnan already recognised the header;
+    it just never let that recognition reach the count.
+    """
+    countable = [f for f in files
+                 if f.get("describable", True) and not f.get("generated")]
     return len([f for f in countable if f["doc"]]), len(countable)
+
+
+def generated_count(files):
+    """How many files a program wrote. Reported, not hidden — see `coverage`."""
+    return len([f for f in files if f.get("generated")])
 
 
 HOOK_MARKER = "# >>> chamnan"
@@ -74,8 +87,8 @@ def preview(root, explain=False):
     # produced "nothing to inject yet — run chamnan-map first", which is the wrong diagnosis and
     # sends a debugging reader in the wrong direction.
     try:
-        out = subprocess.run(args, input="{}", capture_output=True, text=True,
-                             errors="replace", cwd=root, timeout=120)
+        out = subprocess.run(args, input="{}", capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             cwd=root, timeout=120)
     except subprocess.TimeoutExpired:
         print("chamnan: the session-start hook did not finish within 120s", file=sys.stderr)
         return 1
@@ -119,7 +132,7 @@ def _hooks_dir(root):
     """
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
-                             capture_output=True, text=True, timeout=10)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
         if out.returncode == 0 and out.stdout.strip():
             p = Path(out.stdout.strip())
             return p if p.is_absolute() else (root / p)
@@ -161,7 +174,7 @@ def _show(path, root):
     warning never cleared and the advice looked broken.
     """
     try:
-        return str(path.relative_to(root))
+        return str(path.relative_to(root).as_posix())
     except ValueError:
         return str(path)
 
@@ -198,7 +211,16 @@ def install_git_hook(root):
         target.write_text("#!/bin/sh\n\n" + body, encoding="utf-8")
         target.chmod(0o755)
         print(f"chamnan: installed {_show(target, root)}")
-    print("  The index now refreshes on every commit that touches tracked files.")
+    # 🐛 This said "on every commit that touches tracked files", which the hook has never done:
+    # `--diff-filter=ACDR` leaves out Modified, and measured on this repository 297 of 355
+    # non-merge commits (83.7%) touch only existing files. The filter is the right trade — the
+    # rebuild is a full rescan, 107s on 1,032 files, in the foreground of the commit — but a
+    # promise the tool cannot keep is not part of that trade. Editing a file still makes the index
+    # stale, and the session-start warning still says so; this line just no longer implies it will
+    # not happen.
+    print("  It rebuilds whenever a commit adds, deletes or renames a file.")
+    print("  Editing an existing file leaves the index behind — session start says so when it is,")
+    print("  and `chamnan-map` refreshes it.")
     # 🎯 Said at install time because it is the only moment the user is making this choice, and
     # because the rebuild is a FULL rescan with no incremental path — on tinygrad, 1,032 source
     # files, it measured 107 seconds, and this hook runs it in the foreground, so every commit that
@@ -237,6 +259,27 @@ def main(argv):
     # what was asked, with nothing on screen to say so.
     if any(a in ("-h", "--help") for a in argv):
         print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
+        # 🐛 `--help` printed the docstring and stopped, and the docstring explains what the map is
+        # FOR — not that the command takes five flags. So `--preview`, `--explain`, `--measure` and
+        # `--install-git-hook` were undiscoverable by the one command a stranger types to find out
+        # what a command does. Found by an agent walking the tool as a newcomer.
+        #
+        # Derived from KNOWN_FLAGS rather than typed out again, so a flag added later cannot be
+        # missing from this list without also being missing from the parser that accepts it.
+        print("\nOptions")
+        for _flag, _what in (
+                ("--preview", "print the index that WOULD be built, and write nothing"),
+                ("--explain", "where the session-start block's tokens go, section by section"),
+                ("--measure", "what this index costs against the session budget"),
+                ("--install-git-hook", "rebuild the map on every commit (opt-in, never destructive)"),
+                ("-h, --help", "this text")):
+            print(f"  {_flag:<20} {_what}")
+        _undocumented = [f for f in KNOWN_FLAGS
+                         if f not in ("-h", "--help")
+                         and f not in ("--preview", "--explain", "--measure", "--install-git-hook")]
+        if _undocumented:
+            print(f"  (also accepted, undocumented: {', '.join(_undocumented)})")
+        print("\n  chamnan-map <dir> [<dir> ...]   index only those directories")
         return 0
     unknown = [a for a in argv if a.startswith("-") and a not in KNOWN_FLAGS]
     if unknown:
@@ -279,6 +322,16 @@ def main(argv):
         return 0
     ws.prune_logs(root)
     ws.prune_sessions(root)
+    # 🐛 This command printed NOTHING until it finished. An agent walking the tool as a newcomer
+    # started it in the wrong directory, watched it produce no output for two minutes, and killed
+    # it — a run that is working and a run that is hung look exactly alike, and the only way to
+    # tell was to wait.
+    #
+    # One line, before the walk, naming what is about to be indexed. Someone who is in the wrong
+    # place sees it immediately; someone in the right place has one line of confirmation that it
+    # started. On STDERR because a dozen checks compare this command's stdout byte for byte, and
+    # because it is progress rather than result — a pipe still gets exactly the report.
+    print(f"chamnan-map: indexing {target}", file=sys.stderr)
     files = []
     seen_paths = set()
     # Once per run, not once per target — scan() no longer clears these itself, because doing so
@@ -288,7 +341,7 @@ def main(argv):
         for f in mapper.scan(one):
             # Paths are made relative to the repo root so several scanned directories share one
             # namespace instead of each restarting from its own root.
-            rel = str((one / f["path"]).relative_to(root))
+            rel = str((one / f["path"]).relative_to(root).as_posix())
             if rel in seen_paths:
                 continue
             seen_paths.add(rel)
@@ -349,7 +402,7 @@ def main(argv):
     if targets == [root]:
         scope = ""
     else:
-        names = ", ".join(str(x.relative_to(root)) for x in targets)
+        names = ", ".join(str(x.relative_to(root).as_posix()) for x in targets)
         scope = f"  (scanned {names})"
     # Say which repository was measured whenever that is not the directory the command was run in.
     # Silent is the dangerous default here: find_root walks up for a VCS marker, so running this
@@ -445,9 +498,18 @@ def main(argv):
     print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({share})")
     print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
     bar = "#" * int(pct / 5) + "." * (20 - int(pct / 5))
-    skipped = len(files) - total
+    # 🐛 `len(files) - total` swept the generated files into "no code to describe", which is not
+    # true of them -- they have code, it is just not anyone's to comment. Two lines then said
+    # different things about the same twelve files. Generated files are subtracted here and
+    # reported on their own line below.
+    _gen = generated_count(files)
+    skipped = len(files) - total - _gen
     note = f", {skipped} with no code to describe" if skipped else ""
     print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%{note})")
+    # Stated rather than silently dropped, the same way a .gitattributes-declared file is. A count
+    # that quietly excludes files is a count nobody can check.
+    if _gen:
+        print(f"  not counted, a program wrote them (\"do not edit\"): {_gen} file(s)")
 
     for label, marker in (("data model", "## Data model\n"), ("API surface", "## API surface"),
                           ("config", "## Configuration")):
@@ -495,6 +557,7 @@ def main(argv):
         # instructs — those files are the owner's work and belong in the map.
         missing = [f["path"] for f in files
                    if not f["doc"] and f.get("describable", True)
+                   and not f.get("generated")
                    and not str(f["path"]).startswith(".chamnan/")][:8]
         print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
         print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")

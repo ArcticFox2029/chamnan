@@ -244,7 +244,7 @@ def _grpc_source(root, service):
         try:
             if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
                          path.read_text(encoding="utf-8", errors="replace"), re.M):
-                return str(path.relative_to(root))
+                return str(path.relative_to(root).as_posix())
         except OSError:
             continue
     return ""
@@ -466,11 +466,19 @@ def scan_routes(root, files):
                 elif len(g) >= 2:
                     add(g[0], g[1], f["path"])
 
+    # _grpc_source(root, svc) re-walks and re-reads every .proto file to find which one declares
+    # `svc` -- and _grpc(root) yields one (svc, method) pair per RPC, so a service with several
+    # methods called it that many times for an answer that cannot change within this loop: the
+    # service a given name belongs to is fixed by the .proto tree scan_routes() was called with.
+    # Memoized per svc, not across calls -- this cache dies with scan_routes()'s call frame.
+    _grpc_src_cache = {}
     for svc, method in _grpc(root):
-        routes[("gRPC", f"{svc}/{method}")] = _grpc_source(root, svc)
+        if svc not in _grpc_src_cache:
+            _grpc_src_cache[svc] = _grpc_source(root, svc)
+        routes[("gRPC", f"{svc}/{method}")] = _grpc_src_cache[svc]
 
     for path, text in _spec_files(root):
-        rel = str(path.relative_to(root))
+        rel = str(path.relative_to(root).as_posix())
         base = _spec_base(text)
         if path.suffix == ".json":
             try:
@@ -479,7 +487,7 @@ def scan_routes(root, files):
                     for meth in ops:
                         if meth.lower() in ("get", "post", "put", "patch", "delete"):
                             add(meth, p, rel, base)
-            except (json.JSONDecodeError, AttributeError):
+            except (json.JSONDecodeError, AttributeError, RecursionError):
                 continue
         else:
             # No yaml in the stdlib; the path keys are indented two spaces under `paths:` and that
@@ -624,7 +632,7 @@ def scan_env(root, files):
     # list. This is a real measurement and it is what the cut is made on.
     refs = {}
     for path, text in _readable(root, (".env", ".env.*", "*.env", "env.example")):
-        rel = str(path.relative_to(root))
+        rel = str(path.relative_to(root).as_posix())
         for m in ENV_FILE_KEY.finditer(text):
             names.setdefault(m.group(1), rel)
             refs.setdefault(m.group(1), set()).add(rel)

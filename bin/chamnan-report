@@ -81,7 +81,15 @@ def encoded_dir(repo_root):
 
     The encoding is lossy — a directory whose own name contains a dash is indistinguishable from a
     separator — so an exact match is tried first and a suffix match is the fallback."""
-    want = str(repo_root).replace("/", "-")
+    # 🐛 `str(repo_root).replace("/", "-")` did nothing on Windows, where `str(Path)` yields
+    # backslashes -- so the exact match never fired there and every lookup fell through to the
+    # suffix fallback below. Both separators are handled now, and the drive colon is dropped
+    # because a colon cannot appear in a directory name on that platform.
+    #
+    # UNVERIFIED, and stated as such: no Windows install of Claude Code was available to confirm
+    # the exact name it writes. What IS certain is that the old form could not have been right,
+    # and that the fallback below is what carries the answer when this guess is wrong.
+    want = str(repo_root).replace("\\", "-").replace("/", "-").replace(":", "")
     for root in _project_roots():
         exact = root / want
         if exact.is_dir():
@@ -183,7 +191,7 @@ def collect(project_dir, want_opened=False, root=None):
                     # U+FFFD rather than raising UnicodeDecodeError, which the `except ValueError`
                     # below would not have caught.
                     rec = json.loads(line.decode("utf-8", errors="replace"))
-                except json.JSONDecodeError:
+                except (json.JSONDecodeError, RecursionError):
                     continue
                 msg = rec.get("message") or {}
                 usage, rid, model = msg.get("usage"), rec.get("requestId"), msg.get("model")
@@ -244,7 +252,7 @@ def collect(project_dir, want_opened=False, root=None):
                     continue
                 try:
                     when = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
                 entry = (
                     when, SNAPSHOT.sub("", model),
@@ -313,8 +321,14 @@ def print_inventory(root):
 def known_commands():
     """Every `chamnan-*` script in `bin/` alongside this one, sorted. Read from the directory
     rather than a hand-kept list, so a new CLI command is picked up here the day it is added,
-    with nothing else to update."""
-    return sorted(p.name for p in HERE.iterdir() if p.is_file() and p.name.startswith("chamnan-"))
+    with nothing else to update.
+
+    🐛 Extensionless only. When the Windows `.cmd` shims landed beside the commands, every one of
+    them matched `startswith("chamnan-")` — so the Usage table listed `chamnan-map` and
+    `chamnan-map.cmd` as two commands, the second with no docstring to explain itself, on every
+    platform. A shim is the Windows spelling of a command, not a command."""
+    return sorted(p.name for p in HERE.iterdir()
+                  if p.is_file() and p.name.startswith("chamnan-") and not p.suffix)
 
 
 def command_summaries():
@@ -407,7 +421,7 @@ def _workspace_created(wsdir):
         if dates:
             try:
                 oldest = datetime.strptime(dates[0], "%Y-%m-%d").astimezone().timestamp()
-            except ValueError:
+            except (ValueError, RecursionError):
                 oldest = None
     candidates = [t for t in (born, oldest, stat.st_ctime) if t]
     return datetime.fromtimestamp(min(candidates)).astimezone() if candidates else None
@@ -424,7 +438,7 @@ def _read_pointer_log(root):
         for line in log.read_text(encoding="utf-8").splitlines():
             try:
                 rec = json.loads(line)
-            except ValueError:
+            except (ValueError, RecursionError):
                 continue
             fired += 1
             for path in rec.get("named") or []:
@@ -594,7 +608,7 @@ def main(argv):
             for day in sorted(touched_by_week):
                 try:
                     wk = datetime.fromisoformat(day).isocalendar()[:2]
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue
                 weeks_seen.setdefault(wk, set()).update(touched_by_week[day])
             # The earliest week is skipped, not counted as 0%: it has no earlier week to revisit
@@ -657,8 +671,17 @@ def main(argv):
         print("\n  Not enough history on both sides of the workspace's creation date to compare yet.")
         print("  Run this again after a week or two of normal work.")
 
+    # 🐛 This tip printed on every single run, forever, whenever `language` was unset -- which is
+    # the default, so for most repositories that is every run there will ever be. Measured at 103
+    # tokens, and this repository's own command log shows seven reruns in one window. The token cost
+    # is the smaller half: a tip pinned to the end of the report trains a reader to stop reading the
+    # end of the report, and that is where the "read this as an observation, not an experiment"
+    # caveat directly above it lives.
+    #
+    # Every comparable notice in chamnan already stops itself -- pointer.already_pointed, the
+    # scratch-watch nudge's three strikes. This one did not because it had no state to stop against.
     lang = ws.load_config(root).get("language", "en")
-    if lang == "en":
+    if lang == "en" and ws.notice_due(root, "report_language_tip"):
         print("\n  Tip: chamnan writes generated comments and recorded procedures in English by")
         print("  default — they are re-read every session, and English carries the same meaning in")
         print("  fewer tokens. Set \"language\" in .chamnan/config.json if your team needs another.")

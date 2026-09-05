@@ -7,9 +7,11 @@
 # No dependency step on purpose. chamnan is standard library only, and if this file ever needs a
 # `pip install`, that is the change to reject rather than the workflow to fix.
 #
-# Windows is deliberately absent: the README states it is not expected to work as-is, because the
-# hooks are invoked as bare paths relying on a shebang and an executable bit. Running it here to
-# watch it fail would report a defect where there is a documented limitation.
+# Windows is HERE now, and that is a change of claim rather than of configuration. It used to be
+# absent because the hooks are invoked as bare paths relying on a shebang and an executable bit,
+# neither of which Windows has -- so running it would have reported a defect where there was a
+# documented limitation. `bin/*.cmd` and `hooks/*.cmd` shims exist since, so the claim is now
+# testable, and an untested claim is the thing this file was written to stop.
 name: tests
 
 on:
@@ -28,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
         # The floor the README declares, and the newest. The versions between are the same code
         # path; running all of them would buy repetition rather than coverage.
         python: ["3.8", "3.13"]
@@ -52,7 +54,12 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Every file compiles
-        run: python -m compileall -q lib bin hooks tests
+        # NOT `compileall`: it finds source by SUFFIX, and every chamnan command is an
+        # extensionless file with a shebang. That blind spot let a broken `bin/chamnan-map` — a
+        # duplicated keyword argument from an automated edit — pass this step and reach a commit.
+        # `tests/compile_all.py` reads and compiles each file instead, which is the only way to
+        # cover the ten commands. Reading rather than importing, because several run work on import.
+        run: python tests/compile_all.py
 
       - name: Regression suite
         run: python tests/run_tests.py
@@ -61,6 +68,26 @@ jobs:
         # The suite checks the parts; this checks that the whole thing runs end to end on a tree it
         # did not construct itself, which is how the roll-up and mapper bugs of the last two
         # releases were actually found.
+        #
+        # The size assertion is Python rather than `test -s`: cmd.exe has no `test`, and a step
+        # that silently does nothing on one platform is the shape of an untested claim.
         run: |
           python bin/chamnan-map
-          test -s .chamnan/MAP.md
+          python -c "import sys,pathlib; p=pathlib.Path('.chamnan/MAP.md'); sys.exit(0 if p.is_file() and p.stat().st_size > 0 else 'MAP.md is missing or empty')"
+
+      - name: Windows shims are current and actually run
+        if: runner.os == 'Windows'
+        # The whole reason Windows is in this matrix. `chamnan-map` has no extension and starts
+        # with a POSIX shebang, so cmd.exe cannot run it; `chamnan-map.cmd` beside it can. This
+        # runs the shim the way a user would -- by name, through the shell -- rather than by
+        # handing the script to an interpreter, which would prove nothing about the shim.
+        shell: cmd
+        run: |
+          python install\make_windows_shims.py --check
+          bin\chamnan-map.cmd --help
+          bin\chamnan-context.cmd --detect .
+
+      - name: The preflight runs where there is no POSIX shell
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: install\chamnan-check.cmd

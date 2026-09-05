@@ -140,11 +140,10 @@ def _text_encoding(path):
     return "cp1252" if odd <= len(text) * 0.05 else None
 
 
-def _human(n):
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
-            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
-        n /= 1024
+# One definition, in assets. This module's own copy stopped at GB, so a terabyte member rendered
+# as a four-digit GB figure -- the drift a duplicated formatter produces without anyone editing it.
+from assets import human_bytes as _human
+import mdblock
 
 
 def _identify(head):
@@ -273,7 +272,10 @@ def _shape(value, depth=0):
 def peek_json(path, find=None):
     try:
         data = json.loads(path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace"))
-    except (json.JSONDecodeError, MemoryError) as err:
+    # RecursionError belongs beside MemoryError here: both mean the document is too much for the
+    # parser rather than malformed, and both should degrade to the text view instead of raising out
+    # of a tool whose entire purpose is reading files that are too big to read.
+    except (json.JSONDecodeError, MemoryError, RecursionError) as err:
         return [f"not valid JSON as a whole ({type(err).__name__}); may be JSON Lines",
                 *peek_text(path, find)]
     out = ["structure (keys and types only, no values):", "  " + _shape(data)]
@@ -307,7 +309,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
                 if len(rows) < sample:
                     try:
                         rows.append(json.loads(line))
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, RecursionError):
                         bad += 1
                 if find and len(hits) < HIT_CAP and find.lower() in line.lower():
                     hits.append((i + 1, line))
@@ -357,6 +359,27 @@ def _unxml(s):
              .replace("&apos;", "'").replace("&amp;", "&"))
 
 
+
+# A zip member reports its uncompressed size in a header the archive itself writes, so the number
+# cannot be trusted and reading "just this one member" can be arbitrarily large.
+#
+# 🐛 Every `zf.read(name)` here read a whole member with no bound. Rendered: a 59 KB crafted .xlsx
+# drove ~200 MB of resident memory and 4.4 seconds through one call — a decompression bomb, and
+# `chamnan-peek` is a command an agent runs on a file it was asked about, so the file is often one
+# somebody else chose.
+#
+# Two million bytes, matching `mapper.MAX_FILE_BYTES`: past that this command is not previewing a
+# document any more. Read through `open()` rather than `read()` so the bound applies to the
+# DECOMPRESSED stream, not to a size the archive claims.
+ZIP_MEMBER_CEILING = 2_000_000
+
+
+def _zread(zf, name, limit=ZIP_MEMBER_CEILING):
+    """At most `limit` decompressed bytes of one zip member."""
+    with zf.open(name) as member:
+        return member.read(limit)
+
+
 def _sheet_rows(zf, names, limit):
     """Rows of the first worksheet, resolving both shared and inline strings."""
     sheet = next((n for n in names if re.fullmatch(r"xl/worksheets/sheet1?\.xml", n)), None)
@@ -364,11 +387,11 @@ def _sheet_rows(zf, names, limit):
         return []
     shared = []
     if "xl/sharedStrings.xml" in names:
-        _sxml = zf.read("xl/sharedStrings.xml").decode("utf-8", "replace")
+        _sxml = _zread(zf, "xl/sharedStrings.xml").decode("utf-8", "replace")
         # Per <si>, joining that entry's runs — never per <t>.
         shared = ["".join(_unxml(t) for t in _INLINE.findall(m.group(1) or ""))
                   for m in _SI.finditer(_sxml)]
-    xml = zf.read(sheet).decode("utf-8", "replace")
+    xml = _zread(zf, sheet).decode("utf-8", "replace")
     rows = []
     for body in _ROW.findall(xml):
         cells = []
@@ -392,7 +415,7 @@ def _sheet_rows(zf, names, limit):
 
 
 def _docx_paragraphs(zf):
-    xml = zf.read("word/document.xml").decode("utf-8", "replace")
+    xml = _zread(zf, "word/document.xml").decode("utf-8", "replace")
     paras = [_unxml("".join(_RUN.findall(body))).strip() for body in _PARA.findall(xml)]
     return [p for p in paras if p]
 
@@ -403,7 +426,7 @@ def peek_zip(path, find=None):
         out = [f"{len(names)} member(s), {_human(sum(i.file_size for i in zf.infolist()))} uncompressed"]
         # .xlsx and .docx are zips with their meaning in known members, so read those directly.
         if "xl/workbook.xml" in names:
-            book = zf.read("xl/workbook.xml").decode("utf-8", "replace")
+            book = _zread(zf, "xl/workbook.xml").decode("utf-8", "replace")
             sheets = re.findall(r'<sheet[^>]*name="([^"]+)"', book)
             out.append("spreadsheet sheets: " + ", ".join(f"`{s}`" for s in sheets))
             # Bounded on purpose: reading past a few hundred rows to sample three of them
@@ -432,7 +455,7 @@ def peek_zip(path, find=None):
                 out.append("\nopening text:")
                 out += [f"  {p[:220]}" for p in paras[:4]]
         if "docProps/core.xml" in names:
-            core = zf.read("docProps/core.xml").decode("utf-8", "replace")
+            core = _zread(zf, "docProps/core.xml").decode("utf-8", "replace")
             for tag in ("dc:title", "dc:creator", "dcterms:created"):
                 m = re.search(rf"<{tag}[^>]*>([^<]+)<", core)
                 if m:
@@ -691,12 +714,12 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
         # A key file's shape IS its content. Naming it and refusing is the whole useful answer;
         # peek is the one command that opens an arbitrary path on request, which makes it the
         # one that most needs a deny-list, and it did not have one.
-        return (f"# {path.name}\n{_human(size)} · {path.suffix.lower() or 'no extension'}\n\n"
+        return (f"# {mdblock.one_line(path.name)}\n{_human(size)} · {mdblock.one_line(path.suffix.lower() or 'no extension')}\n\n"
                 f"Refused: chamnan does not open this kind of file. Its contents are credentials "
                 f"or a key, and there is no summary of them that is safe to put in a session.\n\n"
                 f"_[nothing read]_")
     ext = path.suffix.lower()
-    header = [f"# {path.name}", f"{_human(size)} · {ext or 'no extension'}"]
+    header = [f"# {mdblock.one_line(path.name)}", f"{_human(size)} · {mdblock.one_line(ext or 'no extension')}"]
 
     # 🐛 An env file was printed like any other text file, values and all — an internal
     # hostname, an admin address, a live DSN. `catalogs.scan_env` publishes NAMES only for this

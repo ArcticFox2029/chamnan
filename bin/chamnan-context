@@ -1,0 +1,328 @@
+#!/usr/bin/env python3
+"""chamnan-context — this repository's context block on stdout, for any tool on any OS.
+
+chamnan's block has only ever reached one place: Claude Code's SessionStart hook. This command is
+the same block with the harness taken out of the way -- one pipe anything can read.
+
+    chamnan-context                      the block, as text
+    chamnan-context --json               the block plus what was detected, for a wrapper
+    chamnan-context --window 32000       size it for the window the model actually has
+    chamnan-context --profile small-window          the same, by name
+    chamnan-context --model kimi         size it by model family, if you know that instead
+    chamnan-context --ceiling 9000       for a harness that truncates, like Claude Code's hook
+    chamnan-context --detect             what chamnan thinks this machine is, and nothing else
+    chamnan-context --write cursor       set that agent up to read it
+    chamnan-context --emit gemini        the block in that agent's own wire format
+
+**Why the ceiling defaults to non-binding rather than to 9,000.** That number is Claude Code
+truncating a hook's stdout, and it is the tightest limit chamnan has ever worked under. A tool that
+reads a file off disk has no such limit, and inheriting it would throw away material that tool
+could have taken whole -- measured on the repository this was written in, the same block is 8,878
+bytes under the hook ceiling and 19,801 without it. The budgets are the lever here; the ceiling
+stays out of the way until a caller says otherwise.
+
+**The hook is imported and called, not spawned.** A subprocess would cost a process start on every
+invocation, and this repository holds one rule about `subprocess` that is worth more than the
+convenience: it is used only ever to run git. A command that shells out to a Python interpreter
+makes that rule a judgement call, and the rule's value is that it is not one.
+
+Nothing here calls a model and nothing reaches the network. The block is built from files in this
+repository and written to stdout; what reads it is the caller's business.
+"""
+import argparse
+import contextlib
+import hashlib
+import importlib.util
+import io
+import json
+import os
+import re
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+
+import adapters  # noqa: E402
+import host  # noqa: E402
+import profiles  # noqa: E402
+import tokens as tokens_mod  # noqa: E402
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# Shadows the builtin for the whole module, so a print added later is scrubbed without its author
+# having to know this line exists. See `redact.emit`.
+print = redact.emit  # noqa: A001
+
+HOOK = HERE.parent / "hooks" / "chamnan_session_start.py"
+
+# High enough not to bind on any repository measured, and still finite: an unbounded ceiling would
+# make a runaway MAP.md the caller's problem to discover at the far end of a pipe.
+NON_BINDING = 1_000_000
+
+
+_FENCE = re.compile(r"\[/?repo:([0-9a-f]{6})\]")
+
+
+def _stabilise_fence(body):
+    """Re-derive the block's fence marker from the block's own content.
+
+    🐛 The hook picks a RANDOM marker when there is no session id, which is correct for a hook —
+    it fires many times in one session and the id keeps it constant. Through this command there is
+    no session, so every regeneration produced a different marker and the file changed by 46 bytes
+    with nothing in the repository having changed. Measured on a one-file fixture.
+    
+    That costs the target agent its prompt cache. A rules file sits near the head of the prompt,
+    and cache reuse is an exact-prefix match — so a repository nobody touched still paid full
+    price for its context on the next run. It also makes the file impossible to diff: a reader
+    cannot tell "the repository changed" from "chamnan ran again".
+
+    Derived from a digest of the block with the marker masked out, so identical content gives an
+    identical file and any real change moves it.
+
+    **What this trades away, stated plainly.** The marker becomes predictable, where in a session
+    it cannot be guessed in advance. The nonce was always the SECOND layer: `section()` escapes any
+    literal occurrence of the closing mark inside a body before wrapping it, and that escape is
+    what actually holds. Predictability costs the defence in depth, not the defence — and a file on
+    disk is a different threat model from a live session anyway, since whoever can edit the file
+    does not need to forge a marker inside it.
+    """
+    found = _FENCE.search(body)
+    if not found:
+        return body
+    masked = body.replace(found.group(1), "0" * 6)
+    stable = hashlib.blake2s(masked.encode("utf-8"), digest_size=3).hexdigest()
+    return masked.replace("0" * 6, stable)
+
+
+def _load_hook():
+    """The SessionStart hook as an imported module.
+
+    Loadable by `spec_from_file_location` without a loader spelled out because it carries a `.py`
+    extension -- the `bin/` commands do not, which is a different problem and not this one's.
+    Imported under its own name rather than `__main__`, so its `if __name__` guard does not fire
+    and the module is inert until `main()` is called.
+    """
+    spec = importlib.util.spec_from_file_location("chamnan_session_start", HOOK)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build(root, profile, ceiling):
+    """The block, as text. Runs the hook's own `main()` rather than reimplementing any of it.
+
+    The hook reads its root from the working directory and its payload from stdin, so both are
+    swapped for the duration and put back in a `finally` -- a command that leaves the process in
+    another directory is a bug that surfaces somewhere else entirely.
+    """
+    was_cwd, was_stdin = os.getcwd(), sys.stdin
+    was_profile = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
+    was_ceiling = os.environ.get("CHAMNAN_OUTPUT_CEILING")
+    buffer = io.StringIO()
+    try:
+        if profile:
+            os.environ["CHAMNAN_CONTEXT_PROFILE"] = profile
+        os.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling)
+        os.chdir(str(root))
+        sys.stdin = io.StringIO("{}")
+        with contextlib.redirect_stdout(buffer):
+            _load_hook().main()
+    finally:
+        os.chdir(was_cwd)
+        sys.stdin = was_stdin
+        for name, previous in (("CHAMNAN_CONTEXT_PROFILE", was_profile),
+                               ("CHAMNAN_OUTPUT_CEILING", was_ceiling)):
+            if previous is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous
+    return _stabilise_fence(buffer.getvalue().rstrip("\n"))
+
+
+def _budget_notice(body, profile):
+    """A line for stderr when the index could not be made as small as the caller asked for, or "".
+
+    🐛 Measured on this repository: `--profile small-window` (1,200 tokens) and the default
+    `standard` (3,000) deliver a BYTE-IDENTICAL block. That is not a bug in the fold -- the index
+    folds to one line per directory and lands at ~1,294 tokens, which is under 3,000 and over
+    1,200, and there is no representation in between. Forcing a difference would mean dropping
+    directories, which loses more than it saves; I tried it and the block came out LARGER.
+    
+    What was wrong is that nobody said so. A caller who asks for a small window and receives the
+    standard block has no way to tell whether the request was honoured, ignored, or impossible.
+    This says which. It goes to stderr, so a pipe still gets exactly the block and nothing else.
+    """
+    section = ""
+    if "### Architecture index" in body:
+        section = body.split("### Architecture index", 1)[1].split("\n### ", 1)[0]
+    if not section:
+        return ""
+    spent = tokens_mod.estimate(section)
+    asked = profiles.budgets(profile)["index_token_budget"]
+    if spent <= asked:
+        return ""
+    return (f"chamnan-context: the index is ~{spent:,.0f} tokens against the {asked:,} that "
+            f"`{profile}` asks for. It is already folded to one line per directory — the next step "
+            f"down drops directories entirely, which loses more than it saves. Delivered as is.\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(add_help=True, description=__doc__.splitlines()[0])
+    parser.add_argument("root", nargs="?", default=".")
+    parser.add_argument("--json", action="store_true", help="the block plus what was detected")
+    parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
+    parser.add_argument("--write", default=None, choices=adapters.names(),
+                        help="set this agent up to read the block")
+    parser.add_argument("--emit", default=None, choices=adapters.names(),
+                        help="print the block in this agent's own wire format")
+    parser.add_argument("--window", type=int, default=None,
+                        help="context window in tokens; picks the profile for you")
+    parser.add_argument("--profile", default=None, choices=profiles.names(),
+                        help="pick the profile by name instead")
+    parser.add_argument("--model", default=None,
+                        help="model family (qwen, kimi, gemini, deepseek, glm, llama, ...); "
+                             "a dated convenience, --window is the authority")
+    parser.add_argument("--ceiling", type=int, default=NON_BINDING,
+                        help=f"byte ceiling for a harness that truncates "
+                             f"(default {NON_BINDING:,}, which does not bind)")
+    args = parser.parse_args()
+
+    root = Path(args.root).resolve()
+    if not ws.workspace(root).is_dir():
+        sys.stderr.write(f"chamnan: no .chamnan/ workspace at {root}. "
+                         f"Run /chamnan:bootstrap there first.\n")
+        return 1
+
+    # --window and --profile answer the same question. Rather than silently preferring one, say so:
+    # a caller passing both has a wrong belief about what it is asking for, and only a message fixes
+    # that. --window wins because it is the more specific statement of the same fact.
+    if args.window is not None and args.profile is not None:
+        sys.stderr.write("chamnan-context: --window and --profile both set; using --window "
+                         f"({profiles.by_window(args.window)}).\n")
+    # Three ways to say the same thing, and the more specific one wins: an exact window beats a
+    # profile name, and a profile name beats a model family -- because the family table is a dated
+    # snapshot and the other two are statements about this deployment.
+    profile = args.profile
+    if args.model is not None:
+        guessed, note = profiles.by_model(args.model)
+        if note:
+            sys.stderr.write(f"chamnan-context: {note}\n")
+        profile = profile or guessed
+    if args.window is not None:
+        profile = profiles.by_window(args.window)
+
+    detected = {
+        "os": host.os_family(),
+        "agents": [{"name": n, "evidence": e} for n, e in host.agents(root=root)],
+        "profile": profile or profiles.DEFAULT,
+        "ceiling": args.ceiling,
+    }
+    if args.detect:
+        print(json.dumps(detected, indent=2))
+        return 0
+
+    # --emit is what an agent's own hook runs: the block, in that agent's wire format, on stdout.
+    if args.emit:
+        emitter = adapters.for_agent(args.emit)
+        declared = getattr(emitter, "CEILING", None)
+        if declared and args.ceiling == NON_BINDING:
+            args.ceiling = declared
+        print(emitter.render(build(root, profile, args.ceiling)))
+        return 0
+
+    # An adapter that declares its own ceiling knows something this caller does not -- what the
+    # agent it writes for will truncate. It wins over the default, and loses to an explicit
+    # --ceiling, because a caller who typed a number meant it.
+    if args.write:
+        declared = getattr(adapters.for_agent(args.write), "CEILING", None)
+        if declared and args.ceiling == NON_BINDING:
+            args.ceiling = declared
+            detected["ceiling"] = declared
+
+    # Detection was inert: `host.agents()` had one consumer, `--detect`'s JSON dump, and nothing
+    # acted on it. Turned into a SUGGESTION rather than an action, deliberately.
+    #
+    # Never auto-write. Writing a file into another tool's configuration directory on a guess is
+    # the same class of mistake `safe_target` exists to prevent, and a machine can carry several
+    # agents' directories at once — this repository's own `--detect` reports three. Only REPO and
+    # RUNNING evidence counts; HOME is what the detection module's own docstring calls the weakest
+    # and stalest signal, and a suggestion built on it would fire on every repository on the
+    # machine. stderr, so a pipe still receives exactly the block.
+    if not args.write and not args.json and not args.detect:
+        # 🐛 Written as `for _name, _strength in detected["agents"]` — and those are DICTS, so the
+        # unpack silently bound the two KEY NAMES instead of the values. No exception, no match, no
+        # output: the suggestion never fired and nothing said why.
+        for _found in detected["agents"]:
+            _name, _strength = _found["name"], _found["evidence"]
+            if _strength in (host.RUNNING, host.REPO) and adapters.for_agent(_name) is not None:
+                sys.stderr.write(
+                    f"chamnan-context: this repository looks set up for `{_name}` "
+                    f"({_strength}). `chamnan-context --write {_name}` puts the block where it "
+                    f"reads it.\n")
+                break
+
+    body = build(root, profile, args.ceiling)
+    _notice = _budget_notice(body, profile or profiles.DEFAULT)
+    if _notice:
+        sys.stderr.write(_notice)
+
+    if args.write:
+        # The command the agent will run at session start, spelled absolutely: the agent's working
+        # directory when it fires is its own business, and a relative path would resolve against it.
+        run = f"{Path(__file__).resolve()} --emit {args.write}"
+        try:
+            written = adapters.install(root, args.write, body, run)
+        except ValueError as exc:
+            sys.stderr.write(f"chamnan-context: {exc}\n")
+            return 1
+        except OSError as exc:
+            # `.clinerules` is the live case: Cline accepts it as a FILE or as a DIRECTORY, and a
+            # repository using the file form makes `mkdir` fail. Refusing is right -- the file
+            # holds rules somebody wrote -- but a traceback is not a message, and this is what a
+            # user sees at the moment it happens.
+            sys.stderr.write(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
+            return 1
+        print(f"chamnan-context -> {written}")
+        # Declaring a ceiling bounds chamnan's own share; it cannot bound a file that also holds
+        # what the user wrote. Measured against the finished file, which is the thing the agent
+        # will actually read and truncate.
+        limit = getattr(adapters.for_agent(args.write), "CEILING", None)
+        if limit and written.is_file():
+            size = written.stat().st_size
+            if size > limit:
+                print(f"  ⚠ {size:,} bytes, over {args.write}'s {limit:,}-byte limit by "
+                      f"{size - limit:,}. That agent truncates silently past it — lower "
+                      f"index_token_budget in .chamnan/config.json, or pass --window smaller.")
+        # An agent that does not auto-discover its own context file is only half installed by
+        # writing it. Saying so is the difference between a working setup and a file nobody opens.
+        manual = getattr(adapters.for_agent(args.write), "MANUAL_STEP", "")
+        if manual:
+            print(f"  ⚠ {manual}")
+
+        line = adapters.ignore_line(args.write)
+        if line:
+            print("  generated and per-developer. Add this to .gitignore if it is not there yet:")
+            print(f"    {line}")
+        return 0
+
+    if args.json:
+        detected["context"] = body
+        detected["bytes"] = len(body.encode("utf-8"))
+        print(json.dumps(detected, indent=2))
+        return 0
+
+    # Through the module-level `print`, so the same scrub every other command applies covers this
+    # one -- the hook redacts each section as it builds it, and this is the second layer rather
+    # than the only one. Windows: text-mode stdout falls back to the process's ANSI code page when
+    # it is a pipe, and one character out of somebody's comment raises UnicodeEncodeError, which
+    # here would mean the caller gets nothing at all.
+    try:
+        print(body)
+    except UnicodeEncodeError:
+        sys.stdout.buffer.write(redact.scrub(body).encode("utf-8", "replace") + b"\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

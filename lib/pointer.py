@@ -41,6 +41,7 @@ import fnmatch
 
 import md
 import workspace as ws
+import mdblock
 
 # Scanned in the order they are listed, which is the order they are printed: the reason first, then
 # the procedure, then the line of work. `label` is what the reader sees.
@@ -231,7 +232,7 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
                 if label == "rule" and _governs(text, rel_path):
                     found.append(((2, 0, rank, f.name), label, f, text))
     found.sort(key=lambda x: x[0])
-    return [(label, str(f.relative_to(wsdir)), _title(text, f.stem.replace("-", " ")))
+    return [(label, str(f.relative_to(wsdir).as_posix()), _title(text, f.stem.replace("-", " ")))
             for _, label, f, text in found[:max_hits]]
 
 
@@ -243,18 +244,18 @@ def render(rel_path, hits, edges=None):
     """
     lines = []
     for label, path, title in hits:
-        lines.append(f"  {label:9} {path} — {title}")
+        lines.append(f"  {label:9} {mdblock.one_line(path)} — {mdblock.as_quoted(title, 100)}")
     if edges:
         used, tests = edges.get("used_by") or [], edges.get("tests") or []
         if used:
             more = f" +{edges.get('used_by_more', 0)}" if edges.get("used_by_more") else ""
-            lines.append(f"  {'used by':9} {', '.join(used)}{more}")
+            lines.append(f"  {'used by':9} {', '.join(mdblock.one_line(u) for u in used)}{more}")
         if tests:
             more = f" +{edges.get('tests_more', 0)}" if edges.get("tests_more") else ""
-            lines.append(f"  {'tested by':9} {', '.join(tests)}{more}")
+            lines.append(f"  {'tested by':9} {', '.join(mdblock.one_line(t) for t in tests)}{more}")
     if not lines:
         return ""
-    return (f"[chamnan] what this repository already records about {rel_path}:\n"
+    return (f"[chamnan] what this repository already records about {mdblock.one_line(rel_path)}:\n"
             + "\n".join(lines)
             + "\n  (read one only if it bears on the change — this is a pointer, not a summary)")
 

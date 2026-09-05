@@ -40,7 +40,7 @@ is plain markdown committed beside the code.
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
-**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The strongest of those: a causal ablation of a *richer* index than this one beat a grep-only agent by **+5.1pp** on resolve rate at **p = 0.087 — not significant** ([arXiv:2606.22417](https://arxiv.org/abs/2606.22417)). What it did move, at p < 0.0001, was **28.3 turns instead of 36.2** for the same money.
+**Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
 runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
@@ -87,7 +87,7 @@ interesting thing about it.
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.16.0](#whats-new-in-1160) · [Commands](#commands)
+[What's new in 1.17.0](#whats-new-in-1170) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -323,7 +323,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 |---|---|
 | **macOS** | **Supported and tested.** Developed and exercised on macOS (arm64) with Python 3.12; the test suite and the polyglot run below were both done there. |
 | **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else, since no arm64 macOS build of 3.8 exists. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
-| **Windows** | **Not tested, and not expected to work as-is.** The hooks are invoked as bare paths to `.py` files, which depends on the `#!/usr/bin/env python3` line and the executable bit; Windows honours neither. The optional Git hook is a `/bin/sh` script. Under WSL it is the Linux row above. |
+| **Windows** | **Tested in CI on every commit**, at Python 3.8 and 3.13, on `windows-latest`. The `bin/` commands are extensionless POSIX scripts that `cmd.exe` cannot resolve through `PATHEXT`, so a generated `.cmd` shim sits beside each one (and beside each hook script) and hands it to the Python launcher; CI runs the shims themselves through `cmd.exe`, not just the underlying scripts. The optional Git hook is still a `/bin/sh` script and needs a shell that can run one — Git for Windows ships `sh.exe`, so it works there. Under WSL it is the Linux row above. |
 
 ## Quick start
 
@@ -396,51 +396,52 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.16.0
+## What's new in 1.17.0
 
-**Seventy-nine commits, and the theme is uncomfortable: most of them are chamnan being wrong about
-chamnan.** Eight claims the tool made about itself did not survive being checked. Every one was
-reproduced before it was believed and pinned by a test afterwards; the suite is at 2,172 checks.
+**Twenty-three tools, where there was one.** 1.16.0 wrote for Claude Code and nothing else. This
+release ships adapters for Cursor, Windsurf, Copilot, Kiro, Zed, Continue, Roo, Cline, Aider, Goose,
+Junie, Amazon Q, Gemini CLI, Qwen, Grok, Mistral, Trae, Replit, Augment, iFlow, CodeBuddy,
+Antigravity, and a generic `AGENTS.md` fallback — each writing at the path that tool reads, in the
+format it parses, under the size limit it publishes.
 
-### It could not see its own commands
+Eighty-two commits, 2,791 checks, and the theme is the same uncomfortable one as last time: most of
+them are chamnan being wrong about something and finding out.
 
-Nine command-line entry points — every command chamnan has — are extensionless shebang scripts, and
-the indexer decided language from the suffix alone. `lib/redact.py` was published as used by 7
-modules when it is used by 16, and all nine missing consumers were the CLI tools that print output
-for a living. Present since the first commit, with the index reporting full coverage the whole time.
+### Subagents are not started blind any more
+
+`SubagentStart` accepts injected context, and this project had recorded the opposite as settled —
+because the documentation page that answers it was being truncated before the table, three separate
+times, once returning "likely". A subagent now gets a 958-byte pointer: where the index is, that it
+must be grepped rather than read, the rules in force, and which nested checkouts the index
+deliberately leaves out. Not the session-start block — a session here spawned fifteen subagents in
+an afternoon, and fifteen copies of that block is the bloated-CLAUDE.md mistake with extra steps.
+
+### A repository is not a trusted input
+
+Filenames, docstrings, table names and directory names are written into Markdown a model reads as
+instructions. Four rounds had each found one instance of the same defect and fixed only that one.
+Walked as a set: **31 sites in 14 files**, including one no audit of call sites could see, because
+the fold happened in a helper and the Markdown was assembled after it. A docstring carrying an ANSI
+escape and a bidi override reached the index verbatim; it does not now, and two tests of different
+shapes guard it because neither catches what the other does.
+
+### Windows really works now, and did not before
+
+The Windows CI jobs are new in this release and had never passed. Three defects were behind it, all
+found by building a diagnostic lab and running it on a real Windows runner with a Linux column
+beside it: concurrent appends losing 13.8% of their lines where POSIX loses none, `os.replace`
+refused when a reader has the file open, and a lock file in Windows' delete-pending state raising
+`PermissionError` where the code expected `FileExistsError` — which made `exclusive()` report a
+one-millisecond condition as "this lock cannot be taken". All five CI jobs are green.
 
 ### Numbers that were wrong
 
-The **"repeat work" headline** counted file paths from other repositories, because a session rooted
-here dispatches subagents elsewhere and their paths land in this repository's transcript: 20%→7%
-becomes 28%→20% once scoped. **`--explain` billed sections it had already dropped**, printing its own
-remainder as −3,396. The **coverage bar counted compiler directives as descriptions** — `//go:build`
-was the summary of 12 of gin's described files, a JSDoc `@import` of 289 of svelte's 440, putting
-real coverage at ~31% against 44% and 4.3% against 13%.
-
-### Faster, measured with interleaved runs
-
-    SessionStart hook, 6,000-file repo    16-39 s  ->  1.2-2.7 s
-    chamnan-report                          7.14 s ->  5.20 s
-    file opens in one map                    2,259 ->  568
-
-The staleness check was reading 8 KB of every file to answer a question about mtimes; the symlink
-guard resolved every path when the short-circuit meant to stop it sat one line below.
-
-### Security
-
-A **route path could open a heading in the index it was written into**, reproduced in ordinary valid
-JavaScript, putting an attacker's prose into the region injected into every session. Both automatic
-hooks were the two that never redacted. A committed symlink could read `~/.ssh/id_rsa` into the
-block. Every `bin/` command now scrubs what it prints rather than each deciding for itself.
-
-### It reads what it could not
-
-`.svelte`, `.vue` and `.astro` — Svelte's own repository indexed 3,480 files with 4,540 invisible.
-Go and Rust environment variables too, added only after measuring 58 and 12 true positives with zero
-false ones on real clones.
-
-[Every release is in the CHANGELOG](CHANGELOG.md).
+`map_claim_check` — the tool whose whole job is checking the index is true — reported 83.6% about a
+map independently measured at 100%, and had since 2026-09-02. Nothing ran it, so nothing caught it.
+The `README` told Windows users the hooks were unsupported on one line and that Windows is tested in
+CI on another. `atomic_write_text` wrote CRLF on Windows because `write_text` asks the platform.
+A vendored `Pods/`, `Carthage/` or `third_party/` tree was indexed as this project's own source —
+five files became one on a fixture that has four of them.
 
 ## Bootstrap does not rewrite your code
 
@@ -621,6 +622,81 @@ terse here" is enough, and Claude edits it for you.
 `config.json` is **merged**, not replaced: keys you set are kept, and keys the plugin no longer has
 are dropped. So an option that disappears after an upgrade was removed from the plugin — it is not
 a lost setting.
+
+## Any agent, not only Claude Code
+
+chamnan started as a Claude Code plugin and its index is not Claude's to keep. `chamnan-context`
+prints the same block Claude Code gets at session start, on stdout, for anything that can read a
+pipe:
+
+```
+chamnan-context                  the block, as text
+chamnan-context --detect         what this machine and this repository look like
+chamnan-context --json           the block plus what was detected, for a wrapper
+chamnan-context --write cursor   set that agent up to read it
+chamnan-context --model kimi     size it for the context window the model actually has
+```
+
+**34 agent names can be written**, from 23 adapters. Where an agent has a
+file of its own, chamnan writes that file; where several agents read the same one, they share it
+rather than each getting a copy that drifts.
+
+| agent | what gets written |
+|---|---|
+| `aider` | `CONVENTIONS.md` |
+| `amazonq` | `.amazonq/rules/chamnan.md` |
+| `antigravity` | `.agents/rules/chamnan.md` |
+| `augment` | `.augment/rules/chamnan.md` |
+| `cline` | `.clinerules/chamnan.md` |
+| `codebuddy` | `CODEBUDDY.md` |
+| `continue` | `.continue/rules/chamnan.md` |
+| `copilot` | `.github/instructions/chamnan.instructions.md` |
+| `cursor` | `.cursor/rules/chamnan.mdc` |
+| `generic` | `AGENTS.md` |
+| `goose` | `.goosehints` |
+| `grok` | `.grok/rules/chamnan.md` |
+| `iflow` | `IFLOW.md` |
+| `junie` | `.junie/AGENTS.md` |
+| `kiro` | `.kiro/steering/chamnan.md` |
+| `mistral` | `.vibe/AGENTS.md` |
+| `qwen` | `QWEN.md` |
+| `replit` | `replit.md` |
+| `roo` | `.roo/rules/chamnan.md` |
+| `trae` | `.trae/rules/project_rules.md` |
+| `windsurf` | `.windsurf/rules/chamnan.md` |
+| `zed` | `.rules` |
+| `gemini` | `.gemini/settings.json` — a real `SessionStart` hook, so its context is rebuilt every session rather than going stale |
+
+`amp`, `codex`, `crush`, `deepseek`, `devin`, `kilo`, `kimi`, `muse`, `opencode`, `openhands` and
+`warp` all read the root `AGENTS.md`, so they are names for the `generic` adapter rather than
+eleven copies of one file.
+
+**Claude Code has no adapter, deliberately.** Its delivery is the SessionStart hook, which writes
+nothing — inventing a file for it would give a repository a second copy of the block that nothing
+reads and nobody updates.
+
+### Three axes, kept apart
+
+| | what it decides | set by |
+|---|---|---|
+| **OS** | which file operations are legal | detected |
+| **agent** | where the block is delivered, and in what format | detected, or `--write <name>` |
+| **context window** | how much material is worth sending | `--model`, `--window` or `--profile` |
+
+The third is a number, never a code path. A model does not change where a file goes; it changes
+how much of the index is worth putting in front of it. `--window 32000` and `--window 1000000` are
+the same code and different budgets.
+
+### What it will not do
+
+It **never writes on a guess.** With no `--write`, it prints one line naming the agent it detected
+and the command that would set it up, and leaves the decision alone. Writing a file into another
+tool's configuration directory because a directory happened to exist is how a context tool becomes
+something people uninstall.
+
+It **refuses a target it cannot vouch for.** A symlink anywhere in the path, or a file with a
+second name on disk, and it stops and says why — one adapter merges into a file it reads first, and
+a link out of the repository would copy that file's contents in.
 
 ## Commands
 
@@ -1068,20 +1144,42 @@ Sources: [arXiv:2601.23254](https://arxiv.org/html/2601.23254v2), [arXiv:2608.13
 A leak-audited causal ablation of a structural codebase index inside a coding agent, with per-cell
 cost controlled:
 
-| | with the index | grep-only agent | |
-|---|---|---|---|
-| issues resolved | **50.4%** | **45.3%** | **p = 0.087 — not significant** |
-| localization acc@5 | **84.5%** | **75.3%** | **p = 0.080 — not significant** |
-| turns to resolution | **28.3** | **36.2** | **p < 0.0001** |
-| dollar cost per cell | — | — | **null (p = 0.73)** |
+The paper ran **three** arms and reports **two different comparisons**. Until 2026-09-04 this
+section presented them as one, which was wrong in a way worth stating plainly: it labelled the
+cross-harness check "a causal ablation", quoted its non-significant p-values as the strongest
+evidence against this tool, and took the turns row from the *other* table. The paper's own
+framing is in its abstract.
 
-Read it straight: **an index richer than this one did not beat a competent grep agent on outcome at
-conventional significance.** What it did change, decisively, is how the budget is spent — a third
-fewer turns for the same money. And the paper's own breakdown puts the gain in **cross-file,
-call-graph-dependent** changes rather than single-file ones.
+**§6.2 — the causal ablation.** Same harness, same model, same seeds; the index is the only thing
+that changes (Table V, n = 80, paired Wilcoxon):
 
-That is a burden of proof, and it points somewhere specific. `MAP.md` is mostly a flat per-file
-line, which is the losing shape; its `## Impact` section is cross-file reachability, which is the
+| | index on | index off | | |
+|---|---|---|---|---|
+| issues resolved | **50.4%** | **41.9%** | **+7.9pp** | **p = 0.003** |
+| localization acc@5 | **84.5%** | **44.3%** | **+39.6pp** | **p < 0.0001** |
+| turns to resolution | **28.3** | **36.2** | **−8.3** | **p < 0.0001** |
+| dollar cost per cell | $1.15 | $1.19 | −$0.118 | **null (p = 0.73)** |
+| dollar cost per solve | $2.30 | $2.84 | −$0.54 | — |
+
+**§6.1 — the cross-harness validity check**, against OpenCode, an agentic-grep comparator. Its
+purpose is to show the index does not *regress* against competent grep, and non-significance there
+is the intended result rather than a finding against the index:
+
+| | index on | grep comparator | | |
+|---|---|---|---|---|
+| issues resolved | **50.4%** | **45.3%** | +5.1pp | **p = 0.087** |
+| localization acc@5 | **84.5%** | **75.3%** | +9.2pp | **p = 0.080** |
+
+In the authors' words: *"SC-ON matches or modestly favors OpenCode … at minimum, it does not
+regress the agent."*
+
+Read it straight, and the burden it creates for chamnan is unchanged by the correction — it just
+moves. The ablation is real and large, so an index of that kind demonstrably pays. But the paper's
+own breakdown puts the gain in **cross-file, call-graph-dependent** changes rather than single-file
+ones, and it is an index richer than this one.
+
+That points somewhere specific. `MAP.md` is mostly a flat per-file
+line, which is the shape the paper's heterogeneity breakdown does NOT credit; its `## Impact` section is cross-file reachability, which is the
 winning one — and until this release the injected block never told a session that section existed.
 It does now, in eighty bytes. **What is still not claimed:** chamnan's impact map is an import
 graph, not a call graph, and it is grepped rather than injected, so the mechanism the paper
@@ -1368,7 +1466,7 @@ suite** rather than asserted in a sentence:
 | network calls at runtime | **none** — no runtime file imports `socket`, `urllib`, `http`, `requests` or any sibling |
 | third-party dependencies | **none** — every import is Python's standard library or chamnan's own `lib/` |
 | a manifest to install one from | **none** — no `requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile` or lockfile |
-| `subprocess` | present, and only ever to run `git` or this same Python interpreter on a file that ships inside chamnan — `chamnan-map` re-runs the session-start hook so it shows you the real injection rather than a second model of it |
+| `subprocess` | present. At runtime it runs only `git`, or this same Python interpreter on a file that ships inside chamnan — `chamnan-map` re-runs the session-start hook so it shows you the real injection rather than a second model of it. `bench/`, which is tracked and so arrives with a clone, additionally runs the `claude` CLI: it measures this plugin's real cost by driving the real thing, and nothing in the plugin ever invokes it |
 
 There is nothing to fetch, so there is nothing to fetch *and execute*; and there is nothing beneath
 it to compromise. Those four rows are `check()`s that fail the build if they stop being true.
@@ -1377,8 +1475,18 @@ That last row said "only ever to run `git`" until 2026-09-02, and it was wrong: 
 `sys.executable` on `hooks/chamnan_session_start.py`. Nothing caught it, because the row had no
 guard — so the fix is not only the wording. A check now parses every source file, finds every
 `subprocess` call, and reads the first element of the argv it is handed; a call site that executes
-anything but `git` or this interpreter fails the build, and a call site whose argv the check cannot
-resolve fails it too rather than being skipped.
+anything but the permitted set fails the build, and a call site whose argv the check cannot resolve
+fails it too rather than being skipped.
+
+It was corrected a second time on 2026-09-04, and the second correction is the more useful one to
+read. The check walked three directories — `lib/`, `hooks/`, `bin/` — while this page claimed it read
+every source file. `bench/` was outside it, `bench/` is tracked, and `bench/` launches `claude` with
+`--permission-mode bypassPermissions`. Nothing about that is dangerous: it is a maintainer harness
+that measures this plugin's own cost by running the real CLI, and the plugin never calls it. But a
+claim about which binaries a package executes is worth nothing if the scan behind it skips a
+directory, and the gap was found by auditing our own claim rather than by anyone reporting it. The
+check now walks `lib/`, `hooks/`, `bin/`, `bench/` and `install/`, and permits `claude` only under
+`bench/` — a `claude` call appearing anywhere in the shipped runtime fails the build.
 
 ### 9a. The exfiltration chain, and where chamnan breaks it
 
@@ -1838,7 +1946,7 @@ chamnan-map --preview
 | Sessions feel expensive and you cannot see why | Nothing reported what the injection was made of | `chamnan-map --explain` prices every section and names where it came from |
 | `python3: command not found` | The hooks are launched by their `#!/usr/bin/env python3` line | `python3 -V` — 3.8 or newer, on `PATH`. There are no packages to install |
 | Hooks never fire on macOS or Linux | The hook files need their executable bit and their shebang intact | `ls -l` the four files in `hooks/`; each should be executable and start with `#!/usr/bin/env python3` |
-| Hooks never fire on Windows | Not supported — the launch path relies on a shebang and an executable bit that Windows does not honour | Use WSL |
+| Hooks never fire on Windows | `cmd.exe` cannot run an extensionless POSIX script, so each hook has a generated `.cmd` shim beside it | Check `hooks/*.cmd` exist and that `py` or `python` resolves; regenerate them with `python3 install/make_windows_shims.py`. Under WSL it is the Linux path instead |
 | `no recognised source files under …` | Nothing under that path has an extension chamnan indexes | Check you are at the repository root, not beside it |
 | The index is mostly filenames | Files have no opening comment, so there is nothing to summarise them with | `chamnan-map` names the files that are missing one. Ask Claude to add them, or write them yourself — with `"agents": false` chamnan will only ever list them |
 | The index describes files that moved or vanished | It is a snapshot, and the repo has changed since | `/chamnan:remap`, or `chamnan-map`. To stop having to remember: `chamnan-map --install-git-hook` |

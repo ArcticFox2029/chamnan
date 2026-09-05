@@ -29,6 +29,7 @@ by this module; the caller passes the count `workflows.repeated()` already compu
 distinct days), so a write here is idempotent when nothing changed and correct when it did.
 """
 import re
+import mdblock
 
 DIRNAME = "candidates"
 
@@ -68,7 +69,7 @@ def render(sequence, observed, last_seen, provenance):
         raise ValueError(f"unknown provenance: {provenance!r}")
     title = " · ".join(sequence)
     steps = ", ".join(sequence)
-    return (f"# {title}\n\n"
+    return (f"# {mdblock.one_line(title)}\n\n"
             f"**Sequence:** {steps}\n"
             f"**Observed:** {observed}\n"
             f"**Last seen:** {last_seen}\n"
