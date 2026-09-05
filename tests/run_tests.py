@@ -13892,6 +13892,48 @@ check("SEEN_MAX_AGE outlives a working day but not a week, since it drops a dead
       12 * 3600 <= _ptr.SEEN_MAX_AGE <= 7 * 24 * 3600)
 check("MAX_ROUTES_LISTED bounds the route catalogue at something a person would still read",
       10 <= _cat.MAX_ROUTES_LISTED <= 500)
+
+
+# 🐛 CodeBuddy declared `CEILING = None`, so nothing shrank toward its limit and nothing warned —
+# and its limit is a HARD one: past 40,000 characters the vendor rejects the whole context file
+# rather than reading a prefix (R12 agent 1, from the shipped `.d.ts` declarations). Being told the
+# index was shortened when it is in fact absent is worse than not being warned, so an adapter now
+# declares which it does and the message follows the declaration.
+check("CODEBUDDY DECLARES THE CEILING ITS VENDOR ACTUALLY ENFORCES",
+      adapters_mod.for_agent("codebuddy").CEILING == 40_000)
+check("...and declares that past it the file is REJECTED, not truncated",
+      getattr(adapters_mod.for_agent("codebuddy"), "CEILING_IS_HARD", False) is True)
+check("...while the adapters that really do truncate say nothing of the kind",
+      not any(getattr(adapters_mod.for_agent(_n), "CEILING_IS_HARD", False)
+              for _n in ("windsurf", "antigravity", "hermes", "generic")))
+_cb_src = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
+check("...and the warning text is chosen from that flag, not hardcoded",
+      "CEILING_IS_HARD" in _cb_src and "reads NONE of a file past it" in _cb_src)
+
+# 🐛 `generic.py` writes a fresh AGENTS.md when it finds none — and on a CASE-SENSITIVE filesystem
+# `agents.md` is a different file, so the one the person maintains is left behind, unmerged and
+# unread, in silence. macOS and Windows hide this; Linux does not. Proved on a real case-sensitive
+# APFS volume (R11/R12 agent 1). Warned rather than merged: choosing which of two files the agent
+# reads is the tool's answer to give, not chamnan's.
+_cs = Path(tempfile.mkdtemp(prefix="chamnan-casesib-"))
+try:
+    (_cs / ".chamnan").mkdir()
+    _cs_theirs = _cs / "agents.md"
+    _cs_theirs.write_text("# their own file\nKEEP THIS\n", encoding="utf-8")
+    if (_cs / "AGENTS.md").exists():
+        # A case-INSENSITIVE filesystem: the two names are one inode, so the merge path runs and
+        # this warning is neither needed nor reachable. Say so rather than assert a false thing.
+        check("case-sibling warning: skipped, this filesystem folds case", True)
+    else:
+        _cs_out = io.StringIO()
+        with contextlib.redirect_stderr(_cs_out):
+            adapters_mod.install(_cs, "generic", "## chamnan\nindex\n")
+        check("A DIFFERENTLY-CASED SIBLING IS REPORTED, NOT SILENTLY LEFT BEHIND",
+              "differs from" in _cs_out.getvalue() and "only by case" in _cs_out.getvalue())
+        check("...and their file is untouched", "KEEP THIS" in _cs_theirs.read_text(encoding="utf-8"))
+        check("...and chamnan's own file is still written", (_cs / "AGENTS.md").is_file())
+finally:
+    _rmtree(_cs, ignore_errors=True)
 check("...and its sibling cap is in the same range, which is the pair that made this one look fine",
       10 <= _cat.MAX_ENV_LISTED <= 500)
 
