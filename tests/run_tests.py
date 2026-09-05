@@ -13769,6 +13769,49 @@ finally:
 _rmtree(_dp_dir, ignore_errors=True)
 
 
+# ------------------------------------------------ build output that carries no header saying so
+# GENERATED_MARKER finds files that announce themselves. Webpack, Vite, esbuild and Next.js emit
+# hash-named bundles with no header at all, so a 161 KB single-line `main.4f2a91.min.js` was indexed
+# as source somebody wrote — counted in the coverage denominator and offered to the commenter agent
+# to write a sentence about.
+#
+# Both rules are GitHub Linguist's, quoted from lib/linguist/generated.rb, and both are deliberately
+# limited to JS and CSS as Linguist limits them. The over-skipping direction is the dangerous one
+# here: a Python file with long lines is a style, not a build artefact, and silencing the coverage
+# nudge on hand-written code is the mistake that cost coveragepy 29% of its index.
+_bo = Path(tempfile.mkdtemp(prefix="chamnan-buildoutput-"))
+try:
+    (_bo / "main.4f2a91.min.js").write_text("!function(e,t){" + "n(r,o);" * 24_000 + "}();\n",
+                                            encoding="utf-8")
+    (_bo / "app.bundle.js").write_text(
+        "\n".join(f"function f{i}() {{ return {i}; }}" for i in range(60))
+        + "\n//# sourceMappingURL=app.bundle.js.map\n", encoding="utf-8")
+    (_bo / "widget.js").write_text(
+        "// A small hand-written module.\n" + "\n".join(
+            f"export function thing{i}(a, b) {{ return a + b + {i}; }}" for i in range(40)) + "\n",
+        encoding="utf-8")
+    # Long lines in a language Linguist does not apply this to. Must stay hand-written.
+    (_bo / "wide.py").write_text(
+        '"""A module whose author likes long lines."""\n' + "\n".join(
+            f"CONSTANT_{i} = " + repr("x" * 200) for i in range(30)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_bo, capture_output=True)
+    import mapper as _bom
+    _bo_files = {f["path"]: f for f in _bom.scan(_bo)}
+    check("A MINIFIED BUNDLE WITH NO HEADER IS BUILD OUTPUT, NOT SOURCE",
+          _bo_files.get("main.4f2a91.min.js", {}).get("generated") is True)
+    check("...and so is a file whose last lines carry a sourceMappingURL",
+          _bo_files.get("app.bundle.js", {}).get("generated") is True)
+    check("...while ordinary hand-written JS is left alone",
+          _bo_files.get("widget.js", {}).get("generated") is False)
+    # The load-bearing negative. Linguist applies this to JS and CSS only, and so does chamnan:
+    # calling a long-lined Python file generated would silence the coverage nudge on real code.
+    check("...AND A LONG-LINED PYTHON FILE IS NOT CALLED GENERATED",
+          _bo_files.get("wide.py", {}).get("generated") is False)
+    check("the threshold is Linguist's 110, not a number invented here", _bom.MINIFIED_AVG_LINE == 110)
+finally:
+    _rmtree(_bo, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
