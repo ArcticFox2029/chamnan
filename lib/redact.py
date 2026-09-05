@@ -441,7 +441,7 @@ def _redact_literals_in(expr):
     return "".join(out)
 
 
-def _looks_like_a_credential_name(key):
+def _looks_like_a_credential_name(key, value=None):
     """False when the name's own tail says it is something other than a credential.
 
     Complements `_names_a_mechanism` below, which reads a curated suffix list. This one reads the
@@ -449,13 +449,51 @@ def _looks_like_a_credential_name(key):
     header or an ordering, and no value it holds is a secret.
     """
     bare = re.sub(r"['\"\s:=]+$", "", (key or "").strip())
-    return not _NOT_A_CREDENTIAL_NAME.search(bare)
+    if not _NOT_A_CREDENTIAL_NAME.search(bare):
+        return True
+    # 🐛 The tail decided alone, so ~50 ordinary endings — `id`, `type`, `name`, `field` — exempted
+    # the value whatever it was. Reproduced end to end through `bin/chamnan-peek --find`:
+    # `api_secret_id = "AKIAIOSFODNN7EXAMPLE1234"` and `db_password_type = "tr0ub4dor3horsebattery"`
+    # printed in full (R12 agent 2). The exemption is still needed — `secret_name` and
+    # `api_key_path` genuinely name things, and redacting those is the noise that gets a redactor
+    # switched off — so the name still decides unless the VALUE settles it.
+    return _value_overrides_the_name(value)
 
 
-def _names_a_mechanism(key):
-    """True when the key is describing HOW a credential is handled, not holding one."""
+# A value that no name should be trusted against: nothing whose tail says "this holds a path" or
+# "this holds a type" ever holds THIS. Long, mixed, and not a word or a path — the same evidence
+# the adjacency rules use, applied in the other direction.
+_CREDENTIAL_SHAPED = re.compile(r"^[A-Za-z0-9+/=_\-.]{16,}$")
+
+
+def _value_overrides_the_name(value):
+    """Whether the VALUE is credential-shaped enough to ignore a reassuring key name."""
+    v = (value or "").strip().strip("\"'").strip(",;)]}\"' ")
+    if not _CREDENTIAL_SHAPED.match(v) or "/" in v or v.startswith("."):
+        return False
+    # A path, a hyphenated phrase and a dotted module name are all long and mixed; a credential is
+    # the one that carries both letters and digits with no separator doing the work.
+    if _is_a_plain_word(v) or v.count("-") >= 2 or v.count(".") >= 2:
+        return False
+    return any(c.isdigit() for c in v) and any(c.isalpha() for c in v)
+
+
+def _names_a_mechanism(key, value=None):
+    """True when the key is describing HOW a credential is handled, not holding one.
+
+    🐛 It read the key and nothing else, so ~50 ordinary tails — `name`, `id`, `type`, `field`,
+    `path` — exempted the value whatever it was. Reproduced end to end through
+    `bin/chamnan-peek --find`: `api_secret_id = "AKIAIOSFODNN7EXAMPLE1234"` and
+    `db_password_type = "tr0ub4dor3horsebattery"` printed in full (R12 agent 2).
+    
+    The exemption is still right and still needed — `secret_name = "the-name-of-my-secret"` and
+    `api_key_path = "/etc/keys/prod.pem"` genuinely name things, and redacting those is the noise
+    that gets a redactor switched off. So the name still decides, unless the VALUE settles it.
+    """
     tail = key.rstrip(": =\t").lower().rsplit("_", 1)[-1].rsplit("-", 1)[-1]
-    return tail in NAMING_SUFFIXES
+    if tail not in NAMING_SUFFIXES:
+        return False
+    return not _value_overrides_the_name(value)
 
 
 # 🐛 [2026-09-04, R14 agent 2 finding 02, verified before acting] A value that continued past a
@@ -545,7 +583,7 @@ def scrub(text):
     # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
     # and running them first means a value they take is not left for a looser rule to half-capture.
     text = XML_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
     # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
     # pattern cannot match a document that does not contain those two characters. The word list in
@@ -558,7 +596,7 @@ def scrub(text):
     # (38 secrets, 30 decoys) before and after — identical results, not merely a similar score.
     if "=>" in text:
         text = ROCKET_SECRET.sub(
-            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
             else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # 🐛 The first version of this gate tested `"|" in text or ">" in text`, which is TRUE on any
     # markdown document — a table uses `|` and a blockquote uses `>` — so it skipped nothing and the
@@ -569,7 +607,7 @@ def scrub(text):
     # newline. That cannot be faked by a table row.
     if _YAML_BLOCK_OPENER.search(text):
         text = YAML_BLOCK_SECRET.sub(
-            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
             else f"{m.group(1)}  {PLACEHOLDER}\n", text)
     text = SPACED_SECRET.sub(
         lambda m: m.group(0)
@@ -578,7 +616,7 @@ def scrub(text):
         # the output a reader is scanning for real findings. Pre-existing; found while adding the
         # CLI-flag rule beside this one.
         if m.group(2).startswith("-") else m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}", text)
     text = FLAG_SECRET.sub(
@@ -595,17 +633,17 @@ def scrub(text):
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        if _names_a_mechanism(m.group(1), m.group(3)) or not _looks_like_a_credential_name(m.group(1), m.group(3))
         or _value_is_the_key_itself(m.group(1), m.group(3))
         else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
     text = ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
     text = ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         # An earlier, more specific rule already replaced this value. Re-matching it swallowed the
         # `<REDACTED>` and everything after: `'password' => '<REDACTED>',` collapsed to
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
