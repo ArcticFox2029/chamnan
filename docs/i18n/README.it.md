@@ -118,6 +118,29 @@ Tutto dentro `.chamnan/`, semplice markdown e JSON. Si legge, si modifica a mano
 | **I segreti vengono filtrati per primi** | Tutto ciò che sta per essere scritto o iniettato nella sessione passa prima dal filtro dei segreti: restano i *nomi* delle variabili, non i valori. E il limite che quel filtro non raggiunge è scritto accanto al suo stesso numero nel README inglese. |
 | **Che cosa può farvi un plugin installato** | Spiegato per intero nel README inglese, compreso il punto in cui chamnan spezza la catena di esfiltrazione. |
 
+## Con che cosa funziona
+
+chamnan è testo e Python di libreria standard. Niente nell'indice appartiene a un fornitore, a un editor o a un sistema operativo particolare.
+
+| | |
+|---|---|
+| **Qualsiasi modello, qualsiasi fornitore** | L'indice è testo semplice e viene passato come contesto. Il modello cambia solo quanto valga la pena inviarne, mai dove va ciascuna cosa. La dimensione si regola con `--model`, `--window` o `--profile`. Cambiare modello non richiede di reinstallare nulla. |
+| **macOS, Linux, Windows, WSL** | Lo stesso plugin ovunque, solo libreria standard, niente da installare. Su macOS e Linux i comandi si eseguono direttamente. Su Windows la shell non sa avviare uno script senza estensione, quindi accanto a ogni comando e a ogni hook c'è un `.cmd` generato; vengono distribuiti con il plugin e la CI li esegue davvero. WSL si comporta come Linux. |
+| **Molti agenti, un solo indice** | Claude Code lo riceve tramite un hook di sessione e nel tuo progetto non viene scritto alcun file. Anche Gemini CLI ha un vero hook di sessione. Gli altri agenti ricevono un file nel percorso che quell'agente legge, e quelli che leggono lo stesso percorso condividono il file invece di tenerne ciascuno una copia che si allontana dalle altre. |
+| **Hermes Agent** | Hermes è anche un piano di controllo che guida altri agenti di codice, perciò un repository configurato per lui spesso significa più strumenti che leggono lo stesso indice. Cerca le istruzioni di progetto in un ordine fisso e prende la prima che trova; chamnan scrive il file in testa a quell'ordine, lo dimensiona sul limite che Hermes documenta e rifiuta di sovrascrivere un file che non ha scritto lui. |
+
+## Come installarlo
+
+Quale strada si prende dipende solo dal fatto che quello strumento abbia o no un hook di sessione.
+
+| | |
+|---|---|
+| **Claude Code** | Installalo come plugin ed esegui una volta il comando di avvio dentro un repository. Nel tuo codice non viene scritto nulla, e da lì in poi ogni sessione parte con l'indice già nel contesto. |
+| **Tutto il resto, Hermes compreso** | Chiedi prima che cosa rileva chamnan, poi digli per quale agente scrivere. Quando cambia la forma del repository, ricostruisci l'indice e riscrivi il file; un hook Git facoltativo fa entrambe le cose al commit. Claude Code non serve: sono comandi ordinari e il plugin è solo una via di consegna, non il prodotto. Senza un agente indicato, stampa che cosa ha rilevato e il comando che servirebbe, e lascia a te la decisione. Non scrive mai per supposizione. |
+
+I nomi dei comandi, l'elenco completo degli agenti e il file che ciascuno riceve stanno nel README in inglese, dove vive ogni dettaglio legato a una versione.
+
+
 ## Requisiti
 
 Claude Code · Python · Git · macOS, Linux o Windows

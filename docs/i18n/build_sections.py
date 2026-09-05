@@ -61,6 +61,16 @@ def render(t):
             "| | |", "|---|---|"]
     for s in SAFETY:
         out.append(f"| **{t[s + '_n']}** | {t[s]} |")
+    # What it works with, and how to set it up for each. Added because the translated pages said
+    # what chamnan IS and never said what it runs against -- a reader who does not read English had
+    # no way to learn that it is not tied to one model, one operating system or one agent.
+    out += ["", f"## {t['h_works']}", "", t["works_intro"], "", "| | |", "|---|---|"]
+    for w in ("llm", "os", "agents", "hermes"):
+        out.append(f"| **{t['works_' + w + '_n']}** | {t['works_' + w]} |")
+    out += ["", f"## {t['h_setup2']}", "", t["setup_intro"], "", "| | |", "|---|---|"]
+    for w in ("plugin", "file2"):
+        out.append(f"| **{t['setup_' + w + '_n']}** | {t['setup_' + w]} |")
+    out += ["", t["setup_more"], ""]
     out += ["", f"## {t['h_req']}", "", t["req"], "", t["req_note"], "",
             f"## {t['h_off']}", "", t["off"], ""]
     return "\n".join(out)

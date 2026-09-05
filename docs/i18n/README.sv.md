@@ -118,6 +118,29 @@ Allt inuti `.chamnan/`, vanlig markdown och JSON. Går att läsa, ändra för ha
 | **Hemligheter filtreras först** | Allt som ska skrivas eller matas in i sessionen går först genom hemlighetsfiltret: variablernas *namn* blir kvar, värdena inte. Och den gräns filtret inte når står bredvid sin egen siffra i den engelska README-filen. |
 | **Vad ett installerat tillägg kan göra mot dig** | Förklarat i sin helhet i den engelska README-filen, inklusive var chamnan bryter läckagekedjan. |
 
+## Vad det fungerar med
+
+chamnan är text och Python ur standardbiblioteket. Inget i indexet tillhör en viss leverantör, en viss editor eller ett visst operativsystem.
+
+| | |
+|---|---|
+| **Vilken modell som helst, vilken leverantör som helst** | Indexet är vanlig text och skickas med som kontext. Modellen ändrar bara hur mycket som är värt att skicka, aldrig var något hamnar. Storleken ställs in med `--model`, `--window` eller `--profile`. Att byta modell kräver ingen ominstallation. |
+| **macOS, Linux, Windows, WSL** | Samma plugin överallt, enbart standardbibliotek, inget att installera. På macOS och Linux körs kommandona direkt. På Windows kan skalet inte köra ett skript utan filändelse, så intill varje kommando och varje krok ligger en genererad `.cmd`; de följer med plugin-paketet och CI kör just dem. WSL beter sig som Linux. |
+| **Många agenter, ett index** | Claude Code får blocket via en sessionskrok och ingen fil skrivs in i ditt projekt. Gemini CLI har också en riktig sessionskrok. Övriga agenter får en fil på den sökväg agenten läser, och de som läser samma sökväg delar filen i stället för att var och en hålla en kopia som glider isär. |
+| **Hermes Agent** | Hermes är samtidigt ett styrlager som dirigerar andra kodagenter, så ett repo som ställts in för det betyder ofta att flera verktyg läser samma index. Det letar efter projektinstruktioner i en fast ordning och tar den första det hittar; chamnan skriver filen som står först i den ordningen, anpassar storleken till den gräns Hermes själv dokumenterar och vägrar skriva över en fil som det inte skrivit. |
+
+## Så sätter du upp det
+
+Vilken väg in du tar beror bara på om verktyget har en sessionskrok.
+
+| | |
+|---|---|
+| **Claude Code** | Installera som plugin och kör startkommandot en gång inne i ett repo. Inget skrivs till din kod, och därefter börjar varje session med indexet redan i kontexten. |
+| **Allt annat, Hermes inräknat** | Fråga först vad chamnan upptäcker och säg sedan vilken agent det ska skriva för. När repots form ändras bygger du om indexet och skriver filen igen; en valfri Git-krok gör bådadera vid commit. Claude Code behövs inte: det här är vanliga kommandon och plugin-paketet är bara en leveransväg, inte produkten. Utan angiven agent skriver det ut vad det upptäckt och vilket kommando som skulle passa, och lämnar beslutet till dig. Det skriver aldrig på en gissning. |
+
+Kommandonamn, hela listan över agenter och filen var och en får finns i den engelska README-filen, där varje versionsbunden detalj bor.
+
+
 ## Krav
 
 Claude Code · Python · Git · macOS, Linux eller Windows
