@@ -23,6 +23,7 @@ import re
 import shutil
 import stat
 import subprocess
+import importlib.util as _ilu
 import sys
 import tempfile
 from pathlib import Path
@@ -13248,6 +13249,79 @@ if _stale_refs:
 check("NO ENTRY POINT CALLS A LIB NAME THAT NO LONGER EXISTS", not _stale_refs)
 check("...and the sweep actually looked at the scripts, rather than finding none",
       len(_entry_points) >= 20 and len(_lib_exports) >= 20)
+
+# 🐛 The run that most needs a reason was the only run that never printed one. `if not files` returns
+# BEFORE the skip-reason block further down, so a repository whose every candidate was excluded said
+# "no recognised source files" and stopped -- while chamnan held the reason in a list the whole time.
+# Reproduced two independent ways (R6 agent 1, Topics 1 and 12); all four reasons are pinned here,
+# plus the genuinely-empty case, because a message that always blames something is its own defect.
+for _why_name, _why_build, _why_expect in (
+    ("size", lambda d: (d / "huge.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000),
+                                                  encoding="utf-8"), "over the size limit"),
+    ("build dir", lambda d: ((d / "build").mkdir(),
+                             (d / "build" / "a.py").write_text('"""x"""\ndef a(): pass\n',
+                                                               encoding="utf-8")),
+     "look like build output"),
+    ("unknown ext", lambda d: ((d / "a.qqq").write_text("x\n", encoding="utf-8"),
+                               (d / "b.qqq").write_text("y\n", encoding="utf-8")),
+     "extensions chamnan does not read"),
+    ("empty", lambda d: None, "nothing was excluded either"),
+):
+    _wd = Path(tempfile.mkdtemp(prefix="chamnan-whyempty-"))
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=_wd, capture_output=True)
+        _why_build(_wd)
+        _wr = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_wd,
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+        _wout = _wr.stdout + _wr.stderr
+        check(f"AN EMPTY INDEX SAYS WHY — {_why_name}",
+              "no recognised source files" in _wout and _why_expect in _wout)
+    finally:
+        _rmtree(_wd, ignore_errors=True)
+
+# 🐛 `.chamnan` as a symlink out of the repository was followed in silence: the index, the memory and
+# the session records all landed at the target while `git status` showed one untracked SYMLINK, so
+# `git add .chamnan` commits a pointer and the content is never versioned at all. chamnan's whole
+# premise is markdown committed beside the code. Warned rather than refused -- someone sharing one
+# workspace across worktrees has a reason -- so both directions are pinned: it fires when the link
+# escapes, and it stays quiet for an ordinary workspace, which is the half that makes it readable.
+_esc = Path(tempfile.mkdtemp(prefix="chamnan-escape-"))
+_esc_out = Path(tempfile.mkdtemp(prefix="chamnan-escapetarget-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_esc, capture_output=True)
+    (_esc / "a.py").write_text('"""Real."""\ndef run(): pass\n', encoding="utf-8")
+    (_esc / ".chamnan").symlink_to(_esc_out, target_is_directory=True)
+    _er = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_esc,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("A WORKSPACE SYMLINKED OUT OF THE REPOSITORY IS REPORTED, NOT FOLLOWED IN SILENCE",
+          "is a symlink to" in (_er.stdout + _er.stderr)
+          and "outside" in (_er.stdout + _er.stderr))
+finally:
+    _rmtree(_esc, ignore_errors=True)
+    _rmtree(_esc_out, ignore_errors=True)
+_ok_ws = Path(tempfile.mkdtemp(prefix="chamnan-normalws-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_ok_ws, capture_output=True)
+    (_ok_ws / "a.py").write_text('"""Real."""\ndef run(): pass\n', encoding="utf-8")
+    _okr = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ok_ws,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("...and an ordinary workspace says nothing about symlinks at all",
+          "is a symlink to" not in (_okr.stdout + _okr.stderr))
+finally:
+    _rmtree(_ok_ws, ignore_errors=True)
+
+# 🐛 ago()'s docstring promised a gap is "never rounded up into a claim" and the minute branch floored
+# at max(1, ...), so a ONE-SECOND gap read as "1 minute behind". The reader is deciding whether to
+# rebuild the index, and seconds mean the opposite of a minute: somebody just saved a file. Every
+# boundary is pinned, because the fix moved one and a plural is the classic thing to move with it.
+_ss_spec = _ilu.spec_from_file_location("_ss_ago", ROOT / "hooks" / "chamnan_session_start.py")
+_ss_mod = _ilu.module_from_spec(_ss_spec)
+_ss_spec.loader.exec_module(_ss_mod)
+for _sec, _said in ((0, "0 seconds behind"), (1, "1 second behind"), (2, "2 seconds behind"),
+                    (59, "59 seconds behind"), (60, "1 minute behind"), (119, "1 minute behind"),
+                    (3599, "59 minutes behind"), (3600, "1 hour behind"),
+                    (86399, "23 hours behind"), (86400, "1 day behind"), (172800, "2 days behind")):
+    check(f"ago({_sec}) says {_said!r}", _ss_mod.ago(_sec) == _said)
 
 # The zip ceiling is what stops a decompression bomb: a member that inflates to gigabytes must be
 # read up to the limit and no further.

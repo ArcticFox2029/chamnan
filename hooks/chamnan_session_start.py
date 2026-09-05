@@ -299,9 +299,18 @@ def skipped(title, reason):
 
 
 def ago(seconds):
-    """A gap said the way a person would say it, and never rounded up into a claim."""
+    """A gap said the way a person would say it, and never rounded up into a claim.
+
+    🐛 The minute branch used to floor at `max(1, ...)`, which contradicted that sentence in the one
+    place it mattered: a one-second gap was reported as "1 minute behind". The reader is deciding
+    whether to rebuild the index, and a gap of seconds means the opposite of a gap of a minute --
+    somebody just saved a file, not that the index has fallen behind the work.
+    """
+    if seconds < 60:
+        n = max(0, int(seconds))
+        return f"{n} second{'s' if n != 1 else ''} behind"
     if seconds < 3600:
-        n = max(1, int(seconds // 60))
+        n = int(seconds // 60)
         return f"{n} minute{'s' if n != 1 else ''} behind"
     if seconds < 86400:
         n = int(seconds // 3600)
