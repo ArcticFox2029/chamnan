@@ -1353,6 +1353,40 @@ _SHEBANG_LANG = {"python": "py", "python2": "py", "python3": "py", "node": "js",
                  "ruby": "rb", "perl": "pl", "php": "php"}
 
 
+# `.m` is Objective-C, and it is also MATLAB, Mercury, MUF, M, Wolfram and Limbo. The suffix alone
+# was mapped straight to the C extractor, so a MATLAB solver came through as describable C with an
+# empty summary -- counted as "missing a comment", offered to the commenter agent, and invisible to
+# the "cannot index" section at the same time, because that section keys on extensions chamnan has
+# no reader for and `.m` has one. Wrong on every honesty mechanism at once, which is worse than being
+# honestly unreadable.
+#
+# The two patterns are GitHub Linguist's, from lib/linguist/heuristics.yml, quoted rather than
+# invented. Objective-C is the default when neither fires: that is today's behaviour, and the change
+# is only allowed to move a file OUT of the C extractor on positive evidence, never into it.
+_OBJC_MARK = re.compile(
+    r"^\s*(@(interface|class|protocol|property|end|synchronised|selector|implementation)\b"
+    r"|#import\s+.+\.h[\">])", re.M)
+_MATLAB_MARK = re.compile(r"^\s*%", re.M)
+_DOT_M_PROBE_BYTES = 4_000
+
+
+def _dot_m_is_objective_c(path):
+    """True unless the file positively looks like MATLAB and not at all like Objective-C.
+
+    Only the first few kilobytes are read, the way `_lang_from_shebang` reads only its first line:
+    an `@implementation` or `#import` sits at the top of an Objective-C file or nowhere, and a
+    MATLAB file opens with a `%` comment block by convention.
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(_DOT_M_PROBE_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return True
+    if _OBJC_MARK.search(head):
+        return True
+    return not _MATLAB_MARK.search(head)
+
+
 def _lang_from_shebang(path):
     """The language of an extensionless executable, from its first line, or None.
 
@@ -1482,6 +1516,12 @@ def indexable(root, nested=None, with_text=False, sniff=True):
         if redact.is_blocked(path):
             continue          # private keys, certificates, local databases — never opened at all
         lang = EXT_LANG.get(path.suffix.lower())
+        if lang == "c" and path.suffix.lower() == ".m" and not _dot_m_is_objective_c(path):
+            # Positively MATLAB-shaped. There is no extractor for it, so it belongs in the
+            # "cannot index" count under a key that says which of `.m`'s languages it was --
+            # a bare `.m` in that list would read as "chamnan cannot read Objective-C".
+            SKIPPED_UNKNOWN_EXT[".m (MATLAB)"] += 1
+            continue
         if not lang and not path.suffix:
             # 🐛 chamnan's own `bin/` was invisible to chamnan's own index, from the first commit.
             # Nine extensionless shebang scripts — every command-line entry point it has — 2,382
