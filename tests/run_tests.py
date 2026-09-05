@@ -14059,10 +14059,17 @@ try:
     os.utime(_pl_live / "stale.md", (_pl_old, _pl_old))
     (_pl_live / "now.md").write_text("w", encoding="utf-8")
     (_pl_logs / "empty_leftover").mkdir()
-    _pl_esc = _pl_logs / "escaping"
-    _pl_esc.mkdir()
-    (_pl_esc / "link").symlink_to(_pl)          # a link OUT of logs/, inside a dead directory
-    os.utime(_pl_esc / "link", (_pl_old, _pl_old), follow_symlinks=False)
+    # 🐛 Windows has no way to set a LINK's own timestamp — os.utime rejects follow_symlinks=False
+    # there with NotImplementedError, which took the whole run down at this line. The directory
+    # holding the link would read as fresh and never be pruned, so this half cannot be POSED there,
+    # let alone answered. Built where it can be, and the expected count follows it rather than
+    # staying a constant that quietly means something different per platform.
+    _pl_links = os.utime in os.supports_follow_symlinks
+    if _pl_links:
+        _pl_esc = _pl_logs / "escaping"
+        _pl_esc.mkdir()
+        (_pl_esc / "link").symlink_to(_pl)      # a link OUT of logs/, inside a dead directory
+        os.utime(_pl_esc / "link", (_pl_old, _pl_old), follow_symlinks=False)
 
     _pl_n = ws.prune_logs(_pl)
     check("A DIRECTORY UNDER logs/ IS REACHED BY RETENTION, NOT INVISIBLE TO IT",
@@ -14073,9 +14080,11 @@ try:
           not (_pl_logs / "empty_leftover").exists())
     check("...and the ordinary file rules are unchanged", not (_pl_logs / "old.md").exists()
           and (_pl_logs / "fresh.md").exists())
-    check("...and a symlink inside a pruned directory is unlinked, never followed out of it",
-          not _pl_esc.exists() and _pl.is_dir())
-    check("...and the count returned matches what was actually removed", _pl_n == 4)
+    if _pl_links:
+        check("...and a symlink inside a pruned directory is unlinked, never followed out of it",
+              not _pl_esc.exists() and _pl.is_dir())
+    check("...and the count returned matches what was actually removed",
+          _pl_n == (4 if _pl_links else 3))
 finally:
     _rmtree(_pl, ignore_errors=True)
 
