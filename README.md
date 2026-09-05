@@ -425,6 +425,15 @@ the fold happened in a helper and the Markdown was assembled after it. A docstri
 escape and a bidi override reached the index verbatim; it does not now, and two tests of different
 shapes guard it because neither catches what the other does.
 
+### Windows really works now, and did not before
+
+The Windows CI jobs are new in this release and had never passed. Three defects were behind it, all
+found by building a diagnostic lab and running it on a real Windows runner with a Linux column
+beside it: concurrent appends losing 13.8% of their lines where POSIX loses none, `os.replace`
+refused when a reader has the file open, and a lock file in Windows' delete-pending state raising
+`PermissionError` where the code expected `FileExistsError` — which made `exclusive()` report a
+one-millisecond condition as "this lock cannot be taken". All five CI jobs are green.
+
 ### Numbers that were wrong
 
 `map_claim_check` — the tool whose whole job is checking the index is true — reported 83.6% about a

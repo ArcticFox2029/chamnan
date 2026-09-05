@@ -60,6 +60,39 @@ Two guards, because neither shape catches the other: a structural one that walks
 and names any unsanitised field, and a behavioural one that runs the real renderer over a repository
 built to attack it.
 
+### Windows was never actually working, and now CI says so out loud
+
+The Windows CI jobs were added in this release and had **never been green**. Three real defects were
+behind that, and none of them could be found from a Mac — so a lab was built out of the CI runner
+itself: six isolated questions run on `windows-latest` with an `ubuntu-latest` column beside them in
+the same job.
+
+The first hypothesis was wrong, which is why it was measured. `LOCK_TIMEOUT` was never being
+reached: 240 of 240 acquisitions succeeded on both platforms. What was actually happening:
+
+| | windows | ubuntu |
+|---|---|---|
+| concurrent `open("a")`, 6 × 200 short lines | **1,034 / 1,200** | 1,200 / 1,200 |
+| `os.replace` onto a file a reader has open | **PermissionError** | allowed |
+| 8 × 50 increments through `record_call`'s shape | **399 / 400** | 400 / 400 |
+
+- **Appends are not atomic on Windows.** The code carried a comment saying "the append path is safe
+  on its own — O_APPEND writes of short lines do not interleave". True, and true only on POSIX. 166
+  of 1,200 lines vanished with no error anywhere. The append now takes the lock on Windows and keeps
+  the lock-free path on POSIX, where it is correct and runs on every Bash call.
+- **`os.replace` can be refused.** A write could fail purely because somebody was reading the file
+  at that instant. It now retries twelve times over about a quarter of a second and re-raises if it
+  still cannot land — a caller that cannot write must hear about it.
+- **A lock in DELETE-PENDING state raises the wrong exception.** A lock file another process has
+  just unlinked stays visible on Windows: the name resolves, opens fail with `ERROR_ACCESS_DENIED`,
+  and Python raises `PermissionError` rather than `FileExistsError`. That fell into a catch-all that
+  read "somebody has this, retry in 10ms" as "this lock cannot be taken". One in four hundred, on a
+  running total nothing recomputes, so it stayed wrong forever.
+
+Two of the failures were the tests rather than the code — a doubling ratio computed from a 0.000 s
+measurement on a 15.6 ms clock, and a path compared in its 8.3 short form against its long one — and
+both are fixed. All five jobs are green.
+
 ### Measured, 1.16.0 against 1.17.0
 
 Both on the same machine, alternating, the 1.16.0 column being the released plugin as installed.
@@ -69,7 +102,8 @@ Both on the same machine, alternating, the 1.16.0 column being the released plug
 | tools chamnan can write for | 1 | **23** | Claude Code was the only one |
 | a repo with `Pods/`, `Carthage/`, `third_party/`, `bower_components/` | 5 files indexed | **1** | the other four were somebody else's library |
 | Antigravity rules file, large-window profile | — | **11,931 bytes** | under the documented 12,000 |
-| regression checks | 2,168/2,169 | **2,791/2,791** | the released build has one failing |
+| regression checks | 2,168/2,169 | **2,795/2,795** | the released build has one failing |
+| CI platforms green | 3 of 3 | **5 of 5** | Windows jobs added here, and made to pass |
 | hooks | 5 | **6** | `SubagentStart` |
 | `map_claim_check` on a correct map | 83.6% | **100.0%** | it had been wrong since 2026-09-02 |
 | SessionStart hook, this repository | 0.55–0.62 s | 0.48–0.63 s | **no measurable difference — ranges overlap** |
