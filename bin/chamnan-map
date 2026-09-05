@@ -9,6 +9,7 @@ The coverage number printed at the end is not decoration. The index is built fro
 opening comment, so a repository that does not write them gets an index of filenames and function
 counts, which is worth far less. Reporting coverage tells the user which lever to pull.
 """
+import os
 import re
 import subprocess
 import sys
@@ -80,6 +81,11 @@ def preview(root, explain=False):
     if not hook.is_file():
         print("chamnan: chamnan_session_start.py not found beside this command", file=sys.stderr)
         return 1
+    # This command's own --help says --preview "writes nothing", and what it runs to answer the
+    # question is the hook that SETS THE WORKSPACE UP. In a repository that had never run chamnan,
+    # asking to see what you would get created it instead — 14 entries, .gitignore and
+    # .gitattributes included (R21 agent 3). The hook is told to look without touching.
+    env = dict(os.environ, **{ws.READ_ONLY_ENV: "1"})
     args = [sys.executable, str(hook)] + (["--explain"] if explain else [])
     # The only subprocess call in this package that had no timeout, no exception handling and no
     # returncode check. All three matter for the same reason: this command exists to tell someone
@@ -89,7 +95,7 @@ def preview(root, explain=False):
     # sends a debugging reader in the wrong direction.
     try:
         out = subprocess.run(args, input="{}", capture_output=True, text=True, encoding="utf-8", errors="replace",
-                             cwd=root, timeout=120)
+                             cwd=root, timeout=120, env=env)
     except subprocess.TimeoutExpired:
         print("chamnan: the session-start hook did not finish within 120s", file=sys.stderr)
         return 1

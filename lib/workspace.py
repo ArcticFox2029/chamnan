@@ -577,8 +577,26 @@ def _warn_if_workspace_escapes(ws, root):
           file=sys.stderr)
 
 
+# A command that has told the user it writes nothing must be able to keep that promise even when
+# what it runs, to answer the question, is the hook that sets the workspace up.
+READ_ONLY_ENV = "CHAMNAN_READ_ONLY"
+
+
+def read_only():
+    """True when this process has been asked to look without touching anything."""
+    return bool(os.environ.get(READ_ONLY_ENV))
+
+
 def ensure(root=None):
     ws = workspace(root)
+    # 🐛 `chamnan-map --preview`'s own --help says it "writes nothing", and in a repository that had
+    # never run chamnan it created the entire workspace — 14 entries including .gitignore and
+    # .gitattributes — because what it runs to answer the question is the SessionStart hook, and
+    # the hook sets the workspace up. The user asked to SEE what they would get and was given it
+    # instead (R21 agent 3). Returning the path unchanged is the honest read-only answer: every
+    # reader below already copes with a workspace that does not exist yet.
+    if read_only():
+        return ws
     # Checked before anything is attempted. A plain file named `.chamnan` -- a bad merge, a stray
     # download -- made the first mkdir succeed-by-exist_ok and then killed the run several lines
     # later on a NotADirectoryError from write_text, with a traceback naming config.json rather
@@ -724,6 +742,8 @@ def _mark_generated(root):
 
     Appended, never rewritten, since a user may have put their own rules in this file too.
     """
+    if read_only():
+        return None
     del LAST_GENERATED_RULES_ADDED[:]
     try:
         if not root or not (Path(root) / ".git").exists():
@@ -816,6 +836,8 @@ def reconcile_version(root, running):
     An upgrade is silent — it just updates the record. Only going backwards is worth interrupting
     for, because that is the one direction the user did not intend.
     """
+    if read_only():
+        return ""
     if not running:
         return ""
     path = workspace(root) / VERSION_FILE
@@ -1069,6 +1091,8 @@ def _mark_ignored(root):
     workspaces that already exist); doing it in silence is not, because the person is left to
     discover it from `git status` and guess.
     """
+    if read_only():
+        return None
     del LAST_IGNORE_RULES_ADDED[:]
     try:
         if not root or not (Path(root) / ".git").exists():
@@ -1200,6 +1224,8 @@ def atomic_write_text(dest, text, encoding="utf-8"):
     Returns True on success. Best-effort by default: a workspace on a read-only checkout must still
     let a session start, so the caller decides whether a failed write is worth reporting.
     """
+    if read_only():
+        return None
     tmp = None
     try:
         dest = pathlib.Path(dest)
