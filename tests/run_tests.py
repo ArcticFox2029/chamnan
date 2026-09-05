@@ -13813,9 +13813,31 @@ for _rd_text, _rd_should, _rd_why in (
     ('password_field = "user_password"', False, "and a field names a field"),
     ('token_header = "Authorization"', False, "and a header names a header"),
     ('SECRET_RE = r"[a-z]+"', False, "and a regex is a regex"),
+    # 🐛 The key-is-the-value exemption let through the commonest weak credential there is, because
+    # `password = "password"` looks exactly like a label under a rule that only compares the two
+    # (R13 agent 2). A label's key carries a component BESIDES the secret word — it is naming a
+    # thing, not holding one — and reading that required walking back to the full identifier,
+    # since these patterns start at the secret word and `s_secrets` is captured as bare `secrets`.
+    ('password = "password"', True, "the commonest weak credential of all"),
+    ('secret = "secret"', True, "and its lowercase siblings"),
+    ('SECRET = "secret"', False, "while an ALL-CAPS constant naming itself is the enum idiom"),
+    ('    "s_secrets": "Secrets",', False, "and a prefixed key really is a label"),
+    ('"password_label": "Password"', False, "and so is a suffixed one"),
 ):
     _rd_got = _rd.scrub(_rd_text) != _rd_text
     check(f"redact {'redacts' if _rd_should else 'keeps  '}: {_rd_why}", _rd_got == _rd_should)
+
+# 🐛 A constant added today was given a name this module already used further down, so Python bound
+# the later one and the new rule silently ran against a different pattern than the one written
+# beside it. A module-scope collision raises nothing and reads correctly (R13 agent 2).
+import ast as _rd_ast  # noqa: E402
+_rd_tree = _rd_ast.parse((ROOT / "lib" / "redact.py").read_text(encoding="utf-8"))
+_rd_assigned = [t.id for n in _rd_tree.body if isinstance(n, _rd_ast.Assign)
+                for t in n.targets if isinstance(t, _rd_ast.Name)]
+_rd_dupes = sorted({n for n in _rd_assigned if _rd_assigned.count(n) > 1})
+check("NO MODULE-LEVEL NAME IN redact.py IS DEFINED TWICE", not _rd_dupes)
+if _rd_dupes:
+    print("      shadowed:", ", ".join(_rd_dupes))
 
 
 # 🐛 A `.version` that stopped being version-shaped stayed that way forever: the guard that refuses
