@@ -13750,6 +13750,31 @@ try:
 finally:
     _rmtree(_gi, ignore_errors=True)
 
+
+# 🐛 A redactor that eats ordinary text is a redactor people turn off, so both directions are one
+# table. The false positives were found by R11 agent 2 in files THIS repository has committed:
+# a translation table keyed `s_secrets` had its English label redacted, which is a value that is
+# simply the key spelled as a word — a label, an enum or a column heading, never a credential.
+# The misses are Java keytool's flags, single words whose internal `pass` the component boundary
+# correctly refuses, so they have to be named in full.
+import redact as _rd  # noqa: E402
+for _rd_text, _rd_should, _rd_why in (
+    ('    "s_secrets": "Secrets",', False, "a label that is the key's own name"),
+    ('    "password_label": "Password",', False, "the same shape, quoted"),
+    ('CREDENTIAL = "credential"', False, "an enum member"),
+    ('The keypass mechanism is documented upstream.', False, "prose containing the word"),
+    ('tool --password --verbose', False, "the next flag is not this flag's value"),
+    ('restic --password-file /etc/restic/pw.txt backup', False, "names the file, is not the secret"),
+    ('keytool -storepass hunter2 -keypass hunter2 -alias x', True, "keytool flags"),
+    ('mysql --password s3cr3tvalue -u root', True, "a flag and its value"),
+    ('api_key = "correcthorse"', True, "a plain word IS the secret in an assignment"),
+    ('db_password = "swordfish"', True, "a weak password is still a password"),
+    ('DATABASE_PASSWORD=tr0ub4dor3horse', True, "unquoted, as every .env is written"),
+    ('ANTHROPIC_API_KEY=sk-ant-api03-AAAABBBBCCCC', True, "a real key shape"),
+):
+    _rd_got = _rd.scrub(_rd_text) != _rd_text
+    check(f"redact {'redacts' if _rd_should else 'keeps  '}: {_rd_why}", _rd_got == _rd_should)
+
 # 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
 # nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
 # README said "not required" and `chamnan-map` in the same directory built the workspace the hook
