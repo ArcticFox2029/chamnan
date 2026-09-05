@@ -13535,6 +13535,22 @@ _sa_none = subprocess.run(
 check("it is silent where there is no workspace to point at",
       _sa_none.returncode == 0 and not _sa_none.stdout.strip())
 
+# 🐛 The index excludes nested checkouts by design, and saying nothing about that pointed a subagent
+# at a map with nothing in it about the work: the outer map here mentions `mapper.py` zero times
+# while the inner one is 85,000 characters entirely about it.
+check("A NESTED CHECKOUT IS NAMED, SO AN EMPTY-LOOKING INDEX IS NOT MISTAKEN FOR A SILENT ONE",
+      "does NOT cover the checkouts nested inside" in _sa_ctx and "chamnan" in _sa_ctx)
+
+# A fork already carries the parent's whole conversation, session-start block included. Measured
+# over 22 historical fork dispatches: none ever opened MAP.md.
+_sa_fork = subprocess.run(
+    [sys.executable, str(_sa_hook)],
+    input=json.dumps({"cwd": str(ROOT.parent.parent), "hook_event_name": "SubagentStart",
+                      "agent_type": "fork"}),
+    capture_output=True, text=True)
+check("a fork gets nothing — it already has the parent's context",
+      _sa_fork.returncode == 0 and not _sa_fork.stdout.strip())
+
 # Malformed input is what a hook actually meets in the wild, and stderr never reaches the transcript.
 for _bad in ("", "null", "[]", "{", '{"cwd": null}'):
     _r = subprocess.run([sys.executable, str(_sa_hook)], input=_bad,

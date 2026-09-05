@@ -59,6 +59,24 @@ def _block(root):
             f"({size:,} characters). **Grep it for one heading — never read it whole.** "
             "`## `path`` is one file's detail; `## Impact` is what is connected to what, "
             "worth checking before changing a file rather than after.")
+        # 🐛 The index deliberately excludes nested checkouts -- somebody else's code is not this
+        # repository's source. Said nothing about it, a subagent spawned at the outer root and sent
+        # to work on an inner project was pointed at an index with NOTHING about the files it
+        # needed: measured here, the outer map mentions `mapper.py` zero times while the inner one
+        # is 85,000 characters entirely about it. Naming them is the difference between an index
+        # that is silent and one that looks empty.
+        try:
+            import mapper
+            nested = sorted(d.relative_to(root).as_posix()
+                            for d in mapper._nested_repo_dirs(root))
+        except Exception:
+            nested = []
+        if nested:
+            shown = ", ".join(f"`{n}`" for n in nested[:4])
+            parts.append(
+                f"That index does NOT cover the checkouts nested inside this one — {shown}"
+                + (f" and {len(nested) - 4} more" if len(nested) > 4 else "")
+                + ". Each has its own `.chamnan/MAP.md`; use that one if the work is in there.")
 
     # Rules are the half a subagent is most likely to break without knowing, because they are
     # decisions rather than facts and nothing in the code states them.
@@ -87,6 +105,11 @@ def main():
         payload = json.load(sys.stdin)
         payload = payload if isinstance(payload, dict) else {}
     except Exception:
+        return 0
+    # A fork inherits the parent's whole conversation, session-start block included, so the pointer
+    # would be a second copy of something already in its context. Measured over 22 historical fork
+    # dispatches in this repository: none of them ever opened MAP.md, and none of them needed to.
+    if (payload.get("agent_type") or "").lower() == "fork":
         return 0
     root = ws.find_root(Path(payload.get("cwd") or "."))
     if root is None:

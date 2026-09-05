@@ -55,7 +55,24 @@ UNEXTRACTED_SOURCE = {
     ".ss", ".lisp", ".lsp", ".el", ".ml", ".mli", ".re", ".res", ".coffee", ".hx", ".st", ".abap",
     ".apex", ".cls", ".trigger", ".rexx", ".ahk", ".au3", ".nut", ".moon",
 }
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "vendor", ".terraform", "dist"}
+# 🐛 This held a second, hand-maintained copy of mapper.SKIP_DIRS and had drifted from it: `build`,
+# `venv`, `tmp` and `coverage` were missing, so this section reported them as "stored material" --
+# payload worth knowing about -- on the same repository where mapper had already classified them as
+# build noise. One list now, so the two cannot disagree again.
+#
+# Fetched at call time rather than imported at module level: mapper imports THIS module, so a
+# top-level `from mapper import SKIP_DIRS` is a circular import and fails at the first `import
+# mapper` anywhere. The cache keeps it to one lookup.
+_SKIP_DIRS = None
+
+
+def _skip_dirs():
+    """mapper's list, resolved late to keep the import graph acyclic."""
+    global _SKIP_DIRS
+    if _SKIP_DIRS is None:
+        import mapper
+        _SKIP_DIRS = mapper.SKIP_DIRS
+    return _SKIP_DIRS
 # Build and project manifests are not payload. They declare dependencies and project layout, which
 # is exactly what someone joining the repo needs, and this section's headline tells the reader not
 # to open them to understand the system. Being counted here made that sentence false about go.mod
@@ -111,7 +128,7 @@ def scan(root, source_paths, ext_lang):
             rel = path.relative_to(root)
         except (OSError, ValueError):
             continue
-        if any(p in SKIP_DIRS or p.startswith(".") for p in rel.parts[:-1]):
+        if any(p in _skip_dirs() or p.startswith(".") for p in rel.parts[:-1]):
             continue
         if str(rel) in source_paths or path.suffix.lower() in ext_lang:
             continue
