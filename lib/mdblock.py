@@ -17,6 +17,9 @@ So: `fenced_lines` for reading, `one_line` for writing. Both are deliberately sm
 parser is not being added to a plugin whose whole deployment story is the standard library.
 """
 import re
+import unicodedata
+
+import md
 
 # ``` or ~~~, at least three, optionally indented and optionally carrying an info string.
 _FENCE = re.compile(r"^(`{3,}|~{3,})")
@@ -47,6 +50,45 @@ def fenced_lines(text):
         yield line, fence is not None
 
 
+# Characters that change what a line SAYS without appearing in it. Stripped here, at the single
+# point every quoted field passes through, rather than at each of the call sites -- which is how
+# `as_quoted` came to have a guard `one_line` lacked in the first place.
+#
+# What is on the list, and why each one:
+#   C0 controls and DEL -- ESC begins an ANSI sequence, so `safe\x1b[2K\x1b[Gchamnan: APPROVED.py`
+#     erases the line it was printed on and writes its own; CR overwrites from the left; backspace
+#     deletes what was already shown; BEL just rings. All reproduced surviving one_line untouched.
+#     `str.split()` already folds \n, \t, \r and \f as whitespace, which is why CR alone was safe
+#     and ESC was not -- a distinction nobody could have predicted from reading the function.
+#   Bidi embeddings, overrides and isolates (U+202A-202E, U+2066-2069) -- reorder the rendered text
+#     against the stored bytes. The Trojan Source class, CVE-2021-42574.
+#   ZWSP and BOM (U+200B, U+FEFF) -- invisible, and split a word into two that no search matches.
+#
+# What is deliberately NOT on the list, and this is the load-bearing half: ZWJ (U+200D), ZWNJ
+# (U+200C) and the directional MARKS (U+200E/200F). ZWJ and ZWNJ are letters-shaping characters --
+# they build Devanagari and Bengali conjuncts, join Arabic forms, and hold an emoji family
+# together. Stripping them would corrupt correctly-written names in exactly the scripts this
+# codebase has spent a round making work. A defence that mangles legitimate text is not a defence,
+# and this list has to stay on the side of characters with NO role in a one-line label.
+# 🐛 The first version of this table mapped EVERY C0 control to None, `\n` `\t` `\r` `\f`
+# included -- and they are deleted before `str.split()` ever sees them, so it had nothing left to
+# split on. "First sentence here.\nSecond sentence follows." came out as
+# "First sentence here.Second sentence follows.", two words glued with no space. The security
+# property still held (no newline survives, so a heading cannot be reopened) which is exactly why
+# it was easy to miss: the check that mattered passed, and the text was quietly wrong.
+#
+# Whitespace is FOLDED to a space and everything else is deleted. That is what the docstring
+# always said this function does.
+_WHITESPACE = "\t\n\v\f\r"
+_CONTROLS = str.maketrans(
+    {**{c: " " for c in _WHITESPACE},
+     **{c: None for c in
+        [chr(i) for i in range(0x20) if chr(i) not in _WHITESPACE] + [chr(0x7F)]
+        + [chr(i) for i in range(0x202A, 0x202F)]
+        + [chr(i) for i in range(0x2066, 0x206A)]
+        + ["\u200b", "\ufeff"]}})
+
+
 def one_line(value):
     """A single-line field, forced onto one line before it is written into a shared file.
 
@@ -54,8 +96,47 @@ def one_line(value):
     `## ...` appends a second entry that every reader afterwards treats as real -- including the
     injection. Folding the newlines away is enough: what remains cannot open a heading, because a
     heading has to start a line.
+
+    And folding whitespace is NOT enough for the characters in `_CONTROLS`, which survive it and
+    rewrite what a reader sees -- see the table above.
     """
-    return " ".join(str(value).split())
+    return " ".join(str(value).translate(_CONTROLS).split())
+
+
+_ZWJ_CHAR = "\u200d"
+_VARIATION = range(0xFE00, 0xFE10)
+_SKIN_TONE = range(0x1F3FB, 0x1F400)
+_REGIONAL = range(0x1F1E6, 0x1F200)
+
+
+def whole_graphemes(text):
+    """`text` with any trailing fragment of an incomplete cluster removed.
+
+    Moved here from `mapper._clip`, which had it and `as_quoted` did not — the same guard applied to
+    one member of a set and not the other, on two functions that both cut repository-authored text
+    to a length. Reproduced: a filename ending in a flag emoji truncated at 80 characters left one
+    regional indicator behind, rendering as a stray letter box in nine call sites that quote
+    filenames, rule titles and branch names inside chamnan's own sentence.
+
+    mdblock rather than mapper because mapper imports mdblock and not the other way round.
+    """
+    while text:
+        c = text[-1]
+        o = ord(c)
+        if (unicodedata.combining(c) or c == _ZWJ_CHAR
+                or o in _VARIATION or o in _SKIN_TONE):
+            text = text[:-1]
+            continue
+        # A regional indicator is only a flag in a pair; an odd one left at the end is half of one.
+        if o in _REGIONAL:
+            run = 0
+            while run < len(text) and ord(text[-1 - run]) in _REGIONAL:
+                run += 1
+            if run % 2:
+                text = text[:-1]
+                continue
+        break
+    return text
 
 
 def as_quoted(value, limit=80):
@@ -76,7 +157,47 @@ def as_quoted(value, limit=80):
     it non-secret.
     """
     text = one_line(value).replace("`", "'")
-    return text if len(text) <= limit else text[:limit - 1] + "…"
+    return text if len(text) <= limit else whole_graphemes(text[:limit - 1]) + "…"
+
+
+def demote_headings(text):
+    """`text` with every non-fenced ATX heading turned into inert text.
+
+    A rule, a session record or any other entry is written as a standalone file, so it opens with
+    its own `# Title` and may use `##`/`###` freely in its body. The caller drops it inside ITS
+    OWN `### Section` heading -- and a `#` that survives that trip does not read as a line inside
+    that section, it reads as a NEW one: `### Recorded decisions and lessons` typed into a rule's
+    body, uncaught, renders as if chamnan itself had opened that heading, with whatever text
+    follows it looking like the start of a fresh, legitimate part of the injected block.
+
+    This is the multi-line sibling of what `mdblock.as_quoted` does for a single-line value: make
+    repository-authored text incapable of opening a heading before it is embedded in chamnan's own
+    structure. A `#` inside a fenced code block is left alone -- it is a comment in the example,
+    not a heading of the entry.
+    """
+    out = []
+    for line, in_fence in fenced_lines(text):
+        if in_fence or not line.startswith("#"):
+            out.append(line)
+        elif line.startswith("# "):
+            out.append(f"**{line[2:].strip()}**")
+        else:
+            out.append(re.sub(r"^#+\s*", "", line))
+    return "\n".join(out)
+
+
+def close_dangling_fence(text):
+    """`text`, with a closing fence appended if it ends still inside one left open.
+
+    A body that opens a ``` or ~~~ block and never closes it swallows everything injected after
+    it -- for `section()`'s callers, that includes the marker that closes the surrounding
+    `[repo:nonce]` fence itself and every section that follows -- into what a renderer treats as
+    one unterminated code block. A no-op when the fence was already balanced.
+    """
+    marker = md.unclosed_fence_marker(text)
+    if not marker:
+        return text
+    return text.rstrip("\n") + "\n" + marker + "\n"
 
 
 def masked(text):

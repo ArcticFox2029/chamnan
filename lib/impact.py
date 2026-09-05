@@ -20,8 +20,11 @@ time it did without it.
 """
 import os
 import re
+
+from unicode_marks import mark_aware
 import sys
 from pathlib import Path
+import mdblock
 
 # One pattern per language family. Group 1 is the imported thing. These are deliberately loose:
 # a missed import costs one line of output, while a wrong one sends a reader to the wrong file.
@@ -77,6 +80,12 @@ IMPORT_PATTERNS = {
     "cs": [r"^\s*using\s+(?:static\s+)?([\w.]+)"],
     "lua": [r"""require\s*\(?\s*['"]([^'"]+)['"]"""],
 }
+
+# Same reason as the language tables in `mapper.py`: `\w` does not match a combining mark, so
+# `import ชื่อ` produced no edge. Most of these capture a quoted path and were already fine; the
+# `[\w.]+` ones were not. Rewritten over the whole table so no language is left behind.
+IMPORT_PATTERNS = {lang: [mark_aware(p) for p in pats]
+                   for lang, pats in IMPORT_PATTERNS.items()}
 
 # A file is a test if its path says so. Convention rather than content, because every ecosystem
 # announces this in the path and none of them agree on how.
@@ -151,11 +160,15 @@ def _index(files):
     return by_noext, unambiguous
 
 
-def resolve(name, importer, by_noext, by_stem):
+def resolve(name, importer, by_noext, by_stem, by_last_segment=None):
     """One import name to a repository path, or None.
 
     None is the common and correct answer: most imports are standard library or third-party, and
     those are not in this repository. Guessing at them would fill the section with noise.
+
+    `by_last_segment` is optional so every existing direct call to this function (the tests call
+    it with four arguments) keeps working unchanged -- see `_only_suffix_match` for what passing
+    it actually buys.
     """
     if not name:
         return None
@@ -180,7 +193,7 @@ def resolve(name, importer, by_noext, by_stem):
             key = str(candidate).replace("\\", "/")
             if key in by_noext:
                 return by_noext[key]
-            hit = _only_suffix_match(key, by_noext)
+            hit = _only_suffix_match(key, by_noext, by_last_segment)
             if hit:
                 return hit
 
@@ -220,7 +233,7 @@ def resolve(name, importer, by_noext, by_stem):
     # real and the impact map said the file had no users.
     if f"{as_path}/__init__" in by_noext:
         return by_noext[f"{as_path}/__init__"]
-    hit = _only_suffix_match(as_path, by_noext)
+    hit = _only_suffix_match(as_path, by_noext, by_last_segment)
     if hit:
         return hit
 
@@ -256,13 +269,43 @@ def _unprefix(path_):
     return path_.lstrip("/")
 
 
-def _only_suffix_match(key, by_noext):
+def _by_last_segment(by_noext):
+    """`by_noext`'s keys, grouped by their own last path segment.
+
+    🐛 `_only_suffix_match` used to scan every key in `by_noext` for each import that reached it --
+    correct, and O(files) per call on a function `build()` calls once per import. On a repository
+    whose imports mostly resolve some other way that is invisible; on one where they do not
+    (multi-segment absolute imports of packages this repository does not contain -- `django.db.
+    models`, `os.path`, any third-party dotted import -- are the ordinary case in real Python), it
+    is O(imports x files), and since imports scale with files, O(files^2). Measured on a synthetic
+    2,000-file corpus where every import takes this path: 0.578s CPU, rising to 2.288s at 4,000
+    files -- a 3.96x cost for a 2x corpus, the signature of a quadratic, not the "linear in edges"
+    this module's own docstring claims (verified on a 2,365-file corpus that evidently did not
+    exercise this branch much).
+
+    Only a file sharing `key`'s own last segment can ever match `f.endswith("/" + key)`, so
+    shortlisting by that segment first turns the scan from O(files) into O(files sharing one
+    basename) -- which stays small on a real repository even as the repository grows, because the
+    number of files named e.g. `models` does not scale with the total file count.
+    """
+    out = {}
+    for p in by_noext:
+        out.setdefault(p.rsplit("/", 1)[-1], []).append(p)
+    return out
+
+
+def _only_suffix_match(key, by_noext, by_last_segment=None):
     """The one path ending in `key`, or None when several do.
 
     Guarding the stem lookup alone was not enough: a bare name like `utils` also suffix-matches
     both `a/utils` and `b/utils`, and returning the first is the same guess the stem map refuses
     to make. A navigation aid that sends someone to the wrong file is worse than one that says
     nothing.
+
+    `by_last_segment` is optional and, when given, is `_by_last_segment(by_noext)` -- a caller
+    that calls this once (a test, an ad hoc lookup) has no reason to build it, so the full scan is
+    still there as the default. `build()` calls this once per import and builds it once per
+    repository, which is where the difference actually matters.
     """
     # A single match is not enough on its own. `from reporting.utils import send`, where
     # `reporting` is a third-party package the repository does not contain, suffix-matches
@@ -273,7 +316,9 @@ def _only_suffix_match(key, by_noext):
     # apart from a real relative import.
     if "/" not in key:
         return None
-    matches = [f for f in by_noext if f.endswith("/" + key) or f == key]
+    candidates = (by_last_segment.get(key.rsplit("/", 1)[-1], [])
+                  if by_last_segment is not None else by_noext)
+    matches = [f for f in candidates if f.endswith("/" + key) or f == key]
     return by_noext[matches[0]] if len(matches) == 1 else None
 
 
@@ -285,13 +330,14 @@ def build(files):
     becomes an unreadable one.
     """
     by_noext, by_stem = _index(files)
+    by_last_segment = _by_last_segment(by_noext)
     used_by, tests = {}, {}
 
     for f in files:
         importer = f["path"]
         importer_is_test = is_test(importer)
         for name in f.get("imports", []):
-            target = resolve(name, importer, by_noext, by_stem)
+            target = resolve(name, importer, by_noext, by_stem, by_last_segment)
             if not target or target == importer:
                 continue
             if importer_is_test:
@@ -343,7 +389,7 @@ def render(impact):
             more = (f" _+{len(edges['tests']) - MAX_TESTS} more_"
                     if len(edges["tests"]) > MAX_TESTS else "")
             parts.append(f"**tested by** {shown}{more}")
-        lines.append(f"- **`{path}`** — " + "; ".join(parts))
+        lines.append(f"- **`{mdblock.one_line(path)}`** — " + "; ".join(parts))
     if len(ranked) > MAX_ENTRIES:
         lines.append(f"- _…and {len(ranked) - MAX_ENTRIES} more with incoming references_")
     return "\n".join(lines)

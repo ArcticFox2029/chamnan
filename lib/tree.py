@@ -80,7 +80,7 @@ def _walk(root):
 
     def _note(err):
         try:
-            UNREADABLE.add(str(Path(err.filename).relative_to(base)))
+            UNREADABLE.add(str(Path(err.filename).relative_to(base).as_posix()))
         except (ValueError, TypeError):
             pass
 

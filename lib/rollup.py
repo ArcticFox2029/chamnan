@@ -37,7 +37,7 @@ def _head(root):
     """The commit the churn answer belongs to, or "" when git cannot say."""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=5)
+                             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
     except (OSError, subprocess.SubprocessError):
         return ""
     return out.stdout.strip() if out.returncode == 0 else ""
@@ -130,11 +130,14 @@ def _churn(root, window=CHURN_WINDOW):
              "--pretty=format:", "-n", str(window)],
             # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
             # bytes the hook has not read yet, or block waiting on a prompt that will never come.
-            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-            # errors="replace": a raw invalid-UTF-8 byte in a filename raises
-            # UnicodeDecodeError, which is neither an OSError nor a SubprocessError,
-            # so the except below would not catch it and the whole hook would die.
-            errors="replace", timeout=10)
+            stdin=subprocess.DEVNULL, capture_output=True,
+            # `encoding` is named rather than left to `text=True` alone: that decodes with the
+            # machine's preferred encoding, which on Windows is its ANSI code page -- so a commit
+            # message or a filename with a Thai character or an em dash raises UnicodeDecodeError
+            # there and nowhere else. `errors="replace"` because a raw invalid-UTF-8 byte in a
+            # filename raises the same exception, which is neither an OSError nor a
+            # SubprocessError, so the except below would not catch it and the whole hook would die.
+            text=True, encoding="utf-8", errors="replace", timeout=10)
     except (OSError, subprocess.SubprocessError):
         return _remember(disk, head, key, {})
     if out.returncode != 0:

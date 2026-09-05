@@ -85,7 +85,8 @@ def recent_titles(root, count=INJECT_RECENT):
     # that says "newest first", and pushed the genuinely second-newest out of the list entirely.
     # An undated entry sorts last rather than being dropped: it still happened.
     ordered = sorted(found, key=lambda e: (e[0] or "", ), reverse=True)
-    lines = [f"- **{date}** — {title}" for date, title, _ in ordered[:count]]
+    lines = [f"- **{mdblock.one_line(date)}** — {mdblock.one_line(title)}"
+             for date, title, _ in ordered[:count]]
     if len(found) > count:
         lines.append(f"- _…{len(found) - count} earlier in `.chamnan/{FILENAME}`_")
     return "\n".join(lines)

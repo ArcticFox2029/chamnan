@@ -7,6 +7,7 @@ code also means it can be committed, so a team shares one accumulated memory ins
 rebuilding their own — and a machine move carries it along with the clone.
 """
 import re
+import hashlib
 import json
 import time
 import contextlib
@@ -123,7 +124,7 @@ DEFAULT_CONFIG = {
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 
-def inside(path, root):
+def inside(path, root, _resolved_root=None):
     """True when `path` really lives under `root`, following symlinks before deciding.
 
     🐛 chamnan reads whatever is at a workspace path. A committed symlink at
@@ -134,9 +135,16 @@ def inside(path, root):
     `resolve()` on BOTH sides, because a repository reached through a symlinked parent — /tmp on a
     Mac, a home directory on a network mount — would otherwise fail this test for every file it
     contains.
+
+    `_resolved_root` is an internal fast path only: `root` never changes across one caller's own
+    loop, so a caller checking many paths against the same root in one call (`memory.entries`) may
+    resolve it once and pass that in, skipping a repeated `resolve()` of a value that cannot have
+    changed since the caller last resolved it. `path` is still resolved fresh every time -- THAT is
+    the half of the check a TOCTOU actually threatens, and it is never skipped or cached here.
     """
     try:
-        return Path(root).resolve() in Path(path).resolve().parents
+        root_resolved = _resolved_root if _resolved_root is not None else Path(root).resolve()
+        return root_resolved in Path(path).resolve().parents
     except (OSError, ValueError, RuntimeError):
         return False          # a broken or looping link is not inside anything
 
@@ -212,7 +220,7 @@ def _in_range(key, value):
     return True
 
 
-# Keyed on (path, mtime_ns, size); see load_config. Bounded because a process could in principle
+# Keyed on (path, digest of the bytes); see load_config. Bounded because a process could in principle
 # resolve several roots, and an unbounded memo in a library is a leak waiting to be found.
 _CONFIG_MEMO = {}
 
@@ -233,11 +241,23 @@ def load_config(root=None):
     # unchanged file per Edit. Keyed on (mtime_ns, size) rather than held outright, so a config
     # edited mid-session is still picked up; every entry point here is a short-lived process, so the
     # memo never outlives the run that made it.
+    #
+    # 🐛 The key was `(path, mtime_ns, size)`, and that is not enough to identify a file's
+    # CONTENT. `{"index_token_budget": true}` and `{"index_token_budget": 5000}` are both 28
+    # bytes, so two writes close enough together to share an mtime produced one stamp for two
+    # different configs -- and the second edit was silently ignored for the rest of the process.
+    # Found on Windows, where NTFS's mtime resolution makes "close enough together" wide; POSIX
+    # gives nanoseconds and hides it, which is why this survived until a second platform ran the
+    # suite.
+    #
+    # Keyed on a digest of the bytes now. The memo exists to skip the PARSE and the per-key type
+    # validation below, not the read -- a config file is a few hundred bytes and reading it is
+    # what `load_json` was about to do anyway.
     try:
-        st = path.stat()
-        stamp = (str(path), st.st_mtime_ns, st.st_size)
+        raw = path.read_bytes()
+        stamp = (str(path), hashlib.blake2s(raw, digest_size=16).hexdigest())
     except OSError:
-        stamp = (str(path), None, None)
+        stamp = (str(path), None)
     hit = _CONFIG_MEMO.get(stamp)
     if hit is not None:
         return dict(hit)
@@ -471,12 +491,15 @@ def ensure(root=None):
     # Refusing to start would be worse than the bug: a session with no chamnan block is what
     # everything else in this file is written to prevent. So the run continues on defaults, the
     # file is left exactly as the user wrote it, and the block says there is a typo in it.
-    malformed = False
-    try:
-        if cfg.is_file() and cfg.read_text(encoding="utf-8", errors="replace").strip():
-            json.loads(cfg.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError, RecursionError):
-        malformed = True
+    # 🐛 [2026-09-04] This asked only whether json.loads RAISES, and the comment above describes
+    # exactly why that matters -- for the case it covered. A config that is valid JSON but not an
+    # object parses cleanly, so `malformed` stayed False, `merged` became DEFAULT_CONFIG, and the
+    # write below replaced the user's file. Reproduced with `["a","b"]`: the file on disk was a
+    # default config afterwards and the block, which promises "It has NOT been overwritten", had
+    # said nothing at all. Identical consequence to the bug the comment above documents, missed
+    # because the guard was written around one way of being wrong instead of around the question
+    # load_config actually asks.
+    malformed = bool(_config_problem(cfg))
     current = load_json(cfg, dict)
     merged = dict(DEFAULT_CONFIG)
     # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale option
@@ -501,10 +524,25 @@ def ensure(root=None):
     return ws
 
 
-GENERATED_ATTR = "MAP.md linguist-generated=true\n"
-GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap. This line collapses\n"
-                  "# it in pull-request diffs, so a rebuild does not bury the review in a file nobody\n"
-                  "# reads by hand. Delete it if you would rather see the diff.\n")
+# Two lines, because the first one only covers github.com. `-diff` is the local half: it stops
+# `git diff`, `git log -p`, `git blame` and every IDE from printing a 285KB regenerated file, which
+# is where the docstring below says `linguist-generated` does nothing.
+#
+# It is a trade, not a free win, and it is stated as one in the note the user gets: the content is
+# hidden by default and `git diff --text` is how you get it back. Measured on a fixture — a
+# five-line change to MAP.md prints 3 lines of "Binary files differ" instead of 13 of patch, and
+# `--text` restores all 13. **Merging is unaffected**: `-diff` is a diff attribute, and the same
+# fixture still performed an ordinary 3-way text merge and produced ordinary conflict markers.
+#
+# Neither line names an external program. That is the property the checks in the suite defend —
+# `filter=`, `diff=<driver>`, `clean=` and `smudge=` all run something, and `-diff` runs nothing.
+GENERATED_ATTR = ("MAP.md linguist-generated=true\n"
+                  "MAP.md -diff\n")
+GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap. These lines keep a\n"
+                  "# rebuild from burying a review in a file nobody reads by hand: the first collapses\n"
+                  "# it on github.com, the second stops git and your editor printing it at all.\n"
+                  "# `git diff --text` still shows it, and merging is unaffected. Delete either line\n"
+                  "# if you would rather see the diff.\n")
 
 
 def _mark_generated(root):
@@ -572,7 +610,7 @@ def plugin_version(plugin_root):
         data = json.loads((Path(plugin_root) / ".claude-plugin" / "plugin.json")
                           .read_text(encoding="utf-8"))
         return str(data.get("version", ""))
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         return ""
 
 
@@ -684,7 +722,7 @@ def available_update(plugin_root):
                 if offered and _as_tuple(offered) > _as_tuple(running):
                     return offered
             break
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError):
         pass
     return ""
 
@@ -696,9 +734,10 @@ def available_update(plugin_root):
 # user had added the ignore rule BY HAND. chamnan wrote the file and left protecting it to them.
 #
 # These logs are not summaries. `scratch.jsonl` keeps the opening line of each throwaway script and
-# `commands.jsonl` keeps command signatures, both verbatim, and neither passes through the
-# redactor: redaction guards what goes into MAP.md and the injected block, which is a different
-# path. A credential typed into a one-off script lands here intact.
+# `commands.jsonl` keeps command signatures (the program name, not its arguments), and neither
+# passes through the redactor that guards MAP.md and the injected block, which is a different path.
+# `scratch.jsonl`'s opening line and token fingerprint are scrubbed with the same redactor before
+# they are written, so this file is the exception rather than a second gap.
 #
 # The README used to say "add .chamnan/logs/ to .gitignore if you would rather not carry it",
 # which reads as a preference about repository size. It is not one.
@@ -708,9 +747,9 @@ def available_update(plugin_root):
 # touched. Appended, never rewritten.
 IGNORE_LINES = [
     "# chamnan: runtime logs. NOT summaries — scratch.jsonl keeps the opening line of each",
-    "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither",
-    "# passes through the redactor (that guards MAP.md and the injected block, a different path).",
-    "# A credential typed into a one-off script lands in these files intact.",
+    "# throwaway script, scrubbed by the same redactor MAP.md uses. commands.jsonl keeps",
+    "# command signatures verbatim — the program name only, never its arguments, so a secret",
+    "# passed as an argument is not captured here in the first place.",
     "logs/*.jsonl",
     "logs/nudge/",
     "logs/nudge_state.json",
@@ -791,6 +830,31 @@ LOCK_TIMEOUT = 2.0
 LOCK_STALE = 30.0
 
 
+def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
+    """`os.replace`, which is not always allowed to proceed on Windows.
+
+    🐛 On POSIX a rename over a path another process has OPEN is fine -- the reader keeps reading the
+    old inode and everyone is correct. Windows refuses it: PermissionError, errno 13, measured on a
+    Windows Server 2025 runner with an ubuntu column beside it in the same run showing "allowed".
+    So a write here could fail purely because somebody was reading the file at that instant, and
+    whatever the caller was saving was lost.
+
+    A reader holds a small file open for microseconds, so this waits rather than gives up: twelve
+    attempts over about a quarter of a second. If it still cannot land, the original exception is
+    raised -- a caller that cannot write must hear about it, not be told it succeeded.
+
+    POSIX takes the first attempt every time and pays nothing for this.
+    """
+    for n in range(attempts):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError:
+            if n == attempts - 1:
+                raise
+            time.sleep(pause)
+
+
 def atomic_write_text(dest, text, encoding="utf-8"):
     """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
 
@@ -824,8 +888,14 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # file. os.getpid() is enough here: two threads of one process writing the same workspace
         # file is what `exclusive()` below is for, and every entry point is a separate process.
         tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
-        tmp.write_text(text, encoding=encoding)
-        os.replace(tmp, dest)
+        # newline="" because Path.write_text goes through io.TextIOWrapper, whose default
+        # translates every \n to os.linesep on write -- so on native Windows every file this
+        # writes gets CRLF, including MAP.md, which is then diffed and grepped by tools that
+        # were handed LF everywhere else. chamnan generates its own content and controls its
+        # own line endings; nothing here wants the platform's opinion.
+        with tmp.open("w", encoding=encoding, newline="") as fh:
+            fh.write(text)
+        _replace_with_retry(tmp, dest)
         return True
     except Exception:
         if tmp is not None:
@@ -834,6 +904,41 @@ def atomic_write_text(dest, text, encoding="utf-8"):
             except OSError:
                 pass
         return False
+
+
+NOTICE_TIMES = 3
+
+
+def notice_due(root, key, times=NOTICE_TIMES):
+    """True while a one-off piece of advice still has something to teach, and record the showing.
+
+    Advice that repeats forever is worse than advice shown once. It costs tokens every time an agent
+    runs the command, and it costs more than that from a reader's side: a tip pinned to the end of a
+    report trains people to stop reading the end of the report, which is where that report's real
+    caveats live. Three showings, then it stops.
+
+    Scoped to the WORKSPACE, not the session -- the sibling nudges in `chamnan_scratch_watch` are
+    per-session because they are about what this session just did, while advice about a config
+    setting is learned once and stays learned.
+
+    Both layers, as any new writer of a shared file in this codebase owes: the lock stops a lost
+    update and the atomic write stops a torn file, and neither substitutes for the other. Failing to
+    take the lock shows the notice rather than suppressing it -- the harmless direction, and it keeps
+    a contended counter from silencing advice that was never delivered.
+    """
+    store = workspace(root) / "state" / "notices.json"
+    with exclusive(store) as held:
+        seen = load_json(store)
+        seen = seen if isinstance(seen, dict) else {}
+        count = seen.get(key, 0)
+        if count >= times:
+            return False
+        if not held:
+            return True
+        seen[key] = count + 1
+        store.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_text(store, json.dumps(seen, ensure_ascii=False, indent=1))
+    return True
 
 
 @contextlib.contextmanager
@@ -855,6 +960,22 @@ def exclusive(path):
             if time.time() > deadline:
                 break
             time.sleep(0.01)
+        # 🐛 A lock another process has just unlinked sits in Windows' DELETE-PENDING state for a
+        # moment: the name is still there, every open of it fails with ERROR_ACCESS_DENIED, and
+        # Python raises PermissionError rather than FileExistsError. That fell through to the
+        # `except OSError: break` below, which reads "somebody has this, try again in 10ms" as
+        # "this lock cannot be taken" -- and every caller of exclusive() then either skipped its
+        # write or made it unguarded.
+        #
+        # Measured on a Windows Server 2025 runner, 8 processes x 50 increments through
+        # record_call's exact shape: 399 of 400 with this treated as fatal, 400 of 400 with it
+        # retried. One in four hundred, which is why it survived every previous look -- and it is
+        # a lost update on a running total that nothing ever recomputes, so it stays wrong forever.
+        # The ubuntu column of the same run raised it zero times, which is why POSIX never saw this.
+        except PermissionError:
+            if time.time() > deadline:
+                break
+            time.sleep(0.01)
         except OSError:
             break
     try:
@@ -869,21 +990,60 @@ def exclusive(path):
 
 
 def config_is_malformed(root):
-    """True when config.json exists, is not empty, and does not parse.
+    """Why config.json will not be used, as a short reason — or "" when it will be.
+
+    Truthy/falsy exactly as the old boolean was, so `if config_is_malformed(root):` still reads the
+    same; the string exists because the two ways a config is discarded need different advice and the
+    block used to give one message for both.
 
     Separate from ensure() so the hook can say so without ensure() having to return it, and cheap
-    enough to do twice — the file is a few hundred bytes. Missing, empty and unreadable all return
-    False: those degrade correctly and always have. Only a file the user clearly meant to write,
-    and got wrong, is worth a line in the block.
+    enough to do twice -- the file is a few hundred bytes. Missing, empty and unreadable all return
+    "": those degrade correctly and always have. Only a file the user clearly meant to write, and
+    got wrong, is worth a line in the block.
+
+    🐛 [2026-09-04] This only knew about the first case, and the second is the one that actually
+    fires. A `config.json` holding `[]`, `"text"`, `42` or `null` is VALID JSON, so it parsed, so
+    this returned False -- and `load_config` then dropped it anyway because `load_json(path, dict)`
+    returns an empty dict for anything that is not an object. Every value the user set vanished and
+    nothing said a word. Measured on all four shapes: `index_token_budget` came back as the 3000
+    default in each.
+
+    The suite had a guard pointed at the first case, and on Python 3.14 it stopped reaching even
+    that: `json.loads` there parses 100,000 levels of nesting without complaint, so the 10,000-level
+    config the test writes is not a parse failure any more -- it is a list, which lands in the second
+    case. The guard had quietly become a test of the wrong thing on the newest interpreter while
+    still passing on older ones.
     """
     try:
-        text = (workspace(root) / "config.json").read_text(encoding="utf-8", errors="replace")
-    except (OSError, NotAWorkspace):
-        return False
-    if not text.strip():
-        return False
+        return _config_problem(workspace(root) / "config.json")
+    except NotAWorkspace:
+        return ""
+
+
+def _config_problem(path):
+    """The one definition of "load_config will discard this file", shared with ensure().
+
+    It was two: this function decided what the block SAYS, and ensure() decided whether the file is
+    safe to rewrite, using a narrower rule of its own. They disagreed on a config that is valid JSON
+    but not an object -- ensure() called it fine and overwrote it, while the block said nothing --
+    which is how `["a","b"]` became a default config with no warning and no backup. Same question,
+    so it is answered in one place.
+    """
     try:
-        json.loads(text)
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if not text.strip():
+        return ""
+    try:
+        parsed = json.loads(text)
     except (ValueError, RecursionError):
-        return True
-    return False
+        return "does not parse"
+    if not isinstance(parsed, dict):
+        # Named, because "wrong shape" is not actionable and "you wrote an array" is. In JSON's own
+        # vocabulary, not Python's -- the person reading this wrote JSON, and "NoneType" would send
+        # them looking for something that does not exist in the file they are editing.
+        _JSON_NAME = {list: "array", str: "string", bool: "boolean",
+                      int: "number", float: "number", type(None): "null"}
+        return f"is a JSON {_JSON_NAME.get(type(parsed), 'value')}, not an object"
+    return ""

@@ -88,7 +88,7 @@ def check(root, now=None):
         return [], [], ("no environments declared — `chamnan-env set <name> …` gives this "
                         "something to compare against. Nothing is checked against a clock.")
 
-    stale = dict(environments.stale_environments(root, now=now))
+    stale = dict(environments.stale_environments(root, now=now, envs=envs))
     fresh = [e for e in envs if e["name"] not in stale]
     if not fresh:
         names = ", ".join(sorted(stale))

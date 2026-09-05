@@ -36,6 +36,7 @@ import workspace as ws
 import os
 import time
 from collections import Counter, defaultdict
+import mdblock
 
 LOG = "logs/edits.jsonl"
 # How many later edits count as "next". Five was not tuned: it is the window the measurement above
@@ -65,13 +66,33 @@ TRIM_AT = int(MAX_LINES * 1.25)
 
 
 def record(wsdir, path):
-    """Append one edit. Called from the PostToolUse hook, which already fires on Write and Edit."""
+    """Append one edit. Called from the PostToolUse hook, which already fires on Write and Edit.
+
+    🐛 The append used to happen OUTSIDE any lock (`dest.open("a")`, unguarded), with only the
+    occasional trim below taking `ws.exclusive`. That is not enough: `_trim`'s rewrite replaces
+    the file via `os.replace`, and a concurrent `open("a")` from this function can hold a
+    descriptor to the OLD inode across that replace -- its write then lands in bytes nothing will
+    ever read from `dest` again, lost the moment that descriptor closes, even though the append
+    itself "succeeded". Locking only the trim (an earlier fix here) cut the loss from 63% to a few
+    percent but did not close it; the append has to be inside the same lock as the trim for the
+    two to never interleave. This is the same shape `tools_index.record_call` already uses for the
+    tool registry -- lock the WHOLE read-modify-write, not just the write, and skip (never write
+    unlocked) when the lock is busy. Reproduced before this fix: 6 processes x 40 appends against a
+    file already past the size gate, 151-239 of 240 (63% down to under 1%, but not 0) lost across
+    repeated runs, always silent and always reported as success.
+    """
     try:
         dest = wsdir / LOG
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with dest.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"at": int(time.time()), "fp": str(path)}) + "\n")
-        _trim(dest)
+        with ws.exclusive(dest) as held:
+            # A dropped record under contention is the cheap outcome; a lost update from writing
+            # an unserialised snapshot is not -- same choice tools_index.record_call and
+            # workflows.record() already make for exactly this shape of shared, hot-path log.
+            if not held:
+                return
+            with dest.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"at": int(time.time()), "fp": str(path)}) + "\n")
+            _trim(dest)
     except OSError:
         pass          # a read-only checkout must still be able to edit files
 
@@ -79,9 +100,11 @@ def record(wsdir, path):
 def _trim(dest):
     """Drop the oldest lines once the file has drifted past the cap. Silent, and never partial.
 
-    Written through a per-pid temp and `os.replace`, for the reason the ages file needed the same
-    treatment: two hooks can run at once, a shared staging name is not made safe by an atomic
-    replace, and a half-written ledger reads as a torn line rather than as an error.
+    Called from inside `record()`'s `ws.exclusive(dest)` block -- never on its own -- so the read
+    below is never stale and the write below never races a concurrent append. Written through a
+    per-pid temp and `os.replace` regardless, for the reason the ages file needed the same
+    treatment: a shared staging name is not made safe by an atomic replace on its own, and a
+    half-written ledger reads as a torn line rather than as an error.
     """
     try:
         # 🐛 The gate was `TRIM_AT * 40` bytes on the assumption of a 40-byte line. A real line with a
@@ -107,7 +130,7 @@ def _sequence(wsdir):
             for line in fh:
                 try:
                     rec = json.loads(line)
-                except ValueError:
+                except (ValueError, RecursionError):
                     continue          # a torn append is one lost edit, not a broken feature
                 if isinstance(rec, dict) and rec.get("fp") and (rec.get("at") or 0) >= cutoff:
                     out.append(rec["fp"])
@@ -148,5 +171,6 @@ def line(wsdir, path, display=str):
     rows = partners(wsdir, path)
     if not rows:
         return ""
-    parts = ", ".join(f"`{display(b)}` ({p * 100:.0f}%)" for b, _, p in rows)
+    parts = ", ".join(f"`{mdblock.one_line(display(b))}` ({p * 100:.0f}%)"
+                     for b, _, p in rows)
     return f"_You usually change {parts} right after this one._"

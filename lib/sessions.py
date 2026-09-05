@@ -142,17 +142,32 @@ def where_git_says_you_stopped(root, limit=6):
     try:
         st = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
                              "status", "--porcelain"],
-                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                            errors="replace", timeout=5)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=5)
         if st.returncode != 0:
             return ""
         lines = [l for l in st.stdout.splitlines() if l.strip()]
         if not lines:
             return ""          # a clean tree has nothing to carry forward, which is the good case
         br = subprocess.run(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
-                            stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                            errors="replace", timeout=5)
+                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=5)
         branch = br.stdout.strip() if br.returncode == 0 else ""
+        # 🐛 `--abbrev-ref HEAD` returns the literal string "HEAD" when the checkout is DETACHED,
+        # so the block said "on `HEAD`" as though that were a branch — in every CI checkout, every
+        # `git bisect`, and every checkout of a tag. A reader has no way to tell that from a branch
+        # somebody really named HEAD, and the whole point of this line is that it is git's answer
+        # rather than a guess.
+        #
+        # The short sha is what is actually true there, and it is also the thing you would type to
+        # come back to it. Best-effort: if that call fails too, the line simply says nothing about
+        # where you are, which is better than saying something false.
+        if branch == "HEAD":
+            sha = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
+                                 stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=5)
+            short = sha.stdout.strip() if sha.returncode == 0 else ""
+            branch = f"a detached HEAD at {short}" if short else ""
     except (OSError, subprocess.SubprocessError):
         return ""
 
@@ -162,43 +177,84 @@ def where_git_says_you_stopped(root, limit=6):
     for line in lines[:limit]:
         names.append(f"`{mdblock.as_quoted(line[3:].strip(), 60)}`")
     tail = f" _+{more} more_" if more else ""
-    where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
+    # A detached HEAD is described in words rather than quoted as a name -- backticks around
+    # "a detached HEAD at 1a2b3c4" would read as a branch with that name, which is the same
+    # mistake one level down.
+    if branch.startswith("a detached HEAD"):
+        where = f" on {mdblock.as_quoted(branch, 40)}"
+    else:
+        where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
     return (f"**Where the last session stopped**, as the working tree has it{where} — "
             f"nobody recorded it, so this is git's answer rather than anyone's:\n"
             f"{len(lines)} uncommitted file(s): " + ", ".join(names) + tail + "\n")
 
 
-def carry_forward(root):
-    """The part of the newest record the next session needs: what is unfinished, and what blocked.
+# How many same-day records carry forward at once. One is the single-developer case and the
+# common one; the cap exists so a busy shared day cannot push the whole injected block over its
+# budget, and it is small because MAX_CARRY_CHARS is shared across all of them.
+MAX_CARRIED_RECORDS = 3
 
-    Returns "" when there is no record, when the record has nothing outstanding, or when the file
-    cannot be read. An empty return means the hook injects nothing at all, which is the right
-    outcome for a repository where the last session finished what it started.
-    """
-    path = latest(root)
-    if path is None:
-        return ""
+
+def _outstanding(path):
+    """(title, body) of what one record leaves unfinished, or None when it leaves nothing."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        return ""
-
+        return None
     found = _sections(text)
     parts = []
     for name in CARRIED:
         body = found.get(name, "").strip()
         if body and not _is_nothing(body):
-            parts.append(f"**{name}**\n{body}")
-    if not parts:
+            # Demoted the same way a rule's body is: this text is free prose someone wrote in a
+            # `## Remaining` / `## Blockers` section, dropped here under the hook's own `###`
+            # heading, and an untouched `#` in it reads as a NEW section of the injected block
+            # rather than a line inside this one.
+            parts.append(f"**{name}**\n{mdblock.demote_headings(body)}")
+    return (title_of(path, text), "\n\n".join(parts)) if parts else None
+
+
+def carry_forward(root):
+    """The part of the newest day's records the next session needs: unfinished work, and blockers.
+
+    Returns "" when there is no record, when nothing is outstanding, or when the files cannot be
+    read. An empty return means the hook injects nothing at all, which is the right outcome for a
+    repository where the last session finished what it started.
+
+    🐛 This read exactly ONE record — `latest()`, which is `records()[0]`. `records()` already
+    tie-breaks two same-day records by mtime, and mtime is reset by a clone or a checkout, which is
+    precisely the situation where a second record exists: two people working the same repository
+    on the same day. Their files merge cleanly in git, so nothing looks wrong, and one person's
+    "Remaining" then never reaches the next session at all. Reproduced through the real
+    `records()`/`latest()` calls.
+
+    So the unit is the DAY, not the file. Every record sharing the newest date is carried, each
+    under its own title, and the single-record case renders exactly as it did before — that is the
+    common case and it must not pay for this.
+    """
+    found = records(root)
+    if not found:
+        return ""
+    newest = _DATE.match(found[0].name)
+    same_day = [p for p in found
+                if newest and (m := _DATE.match(p.name)) and m.group(1) == newest.group(1)]
+    group = (same_day or [found[0]])[:MAX_CARRIED_RECORDS]
+
+    carried = [c for c in (_outstanding(p) for p in group) if c]
+    if not carried:
         return ""
 
-    m = _DATE.match(path.name)
-    when = m.group(1) if m else path.stem
-    head = f"_Last session ({when}) — {title_of(path, text)}_"
-    body = "\n\n".join(parts)
+    when = newest.group(1) if newest else found[0].stem
+    if len(carried) == 1:
+        head = f"_Last session ({when}) — {carried[0][0]}_"
+        body = carried[0][1]
+    else:
+        head = f"_Last session ({when}) — {len(carried)} records, all unfinished_"
+        body = "\n\n".join(f"**{mdblock.one_line(title)}**\n\n{text}"
+                           for title, text in carried)
     if len(body) > MAX_CARRY_CHARS:
         body = body[:MAX_CARRY_CHARS].rsplit("\n", 1)[0] + \
-            f"\n\n_…truncated — read `{path.name}` for the rest._"
+            f"\n\n_…truncated — read `{mdblock.one_line(group[0].name)}` for the rest._"
     return f"{head}\n\n{body}"
 
 

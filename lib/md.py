@@ -48,6 +48,28 @@ def fenced_spans(text):
     return spans
 
 
+def unclosed_fence_marker(text):
+    """The exact fence marker (e.g. `` ``` `` or `~~~~`) still open at the end of `text`, or "".
+
+    `fenced_spans` already knows THAT the last span runs to the end of the document when a fence
+    is left open; it does not say WITH WHAT to close it, because none of its callers needed that.
+    A caller about to drop `text` into a larger document does: an unclosed fence swallows
+    everything injected after it -- headings, closing markers, whatever comes next -- into what a
+    renderer treats as one code block that never ends. Same open/close rule as `fenced_spans`,
+    repeated rather than factored out of it, so a change to one cannot silently retune the other.
+    """
+    open_at, marker = None, ""
+    for m in _FENCE.finditer(text):
+        fence = m.group("fence")
+        if open_at is None:
+            if fence[0] == "`" and "`" in m.group("info"):
+                continue
+            open_at, marker = m.start(), fence
+        elif fence[0] == marker[0] and len(fence) >= len(marker) and not m.group("info").strip():
+            open_at, marker = None, ""
+    return marker
+
+
 def prose_only(text):
     """A predicate: does this character offset sit in ordinary prose rather than inside a fence?
 

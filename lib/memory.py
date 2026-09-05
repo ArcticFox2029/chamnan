@@ -25,6 +25,7 @@ characters, titles are capped by count, and the store itself is allowed to grow 
 files are small and each one was written on purpose.
 """
 import re
+from pathlib import Path
 import workspace as ws
 import mdblock
 import state
@@ -54,7 +55,17 @@ def entries(root, category):
     # A symlink out of the repository is refused: the workspace travels with a clone, so the
     # link is chosen by whoever wrote the repo. `~/.ssh/id_rsa` behind a `.md` name reached the
     # injected block before this. See `workspace.inside`.
-    return sorted(p for p in d.glob("*.md") if p.is_file() and ws.inside(p, root))
+    #
+    # `root` is resolved once here rather than once per file inside `ws.inside` -- it is the same
+    # value on every iteration of this loop, so re-resolving it per file was pure repeated work,
+    # not a safety check. Each file's own path is still resolved fresh per file, which is the half
+    # of the check that actually guards against a symlink swapped in between calls.
+    try:
+        root_resolved = Path(root).resolve()
+    except (OSError, ValueError, RuntimeError):
+        return []
+    return sorted(p for p in d.glob("*.md")
+                  if p.is_file() and ws.inside(p, root, _resolved_root=root_resolved))
 
 
 # `see memory `slug``, `memory: `slug``, or a bare ``slug`` next to the word memory. Written by
@@ -118,7 +129,7 @@ def dangling_citations(root):
             slug = m.group(1)
             if slug in known:
                 continue
-            where = (f"{f.relative_to(wsdir)}", text.count("\n", 0, m.start()) + 1)
+            where = (f"{f.relative_to(wsdir).as_posix()}", text.count("\n", 0, m.start()) + 1)
             found.setdefault(slug, [])
             if where not in found[slug]:
                 found[slug].append(where)
@@ -220,8 +231,8 @@ def rules_text(root):
             # whose filename collides by case only is not reliably ONE rule -- on a case-sensitive
             # checkout the sibling file is real content nobody meant to inject as fact, and on the
             # case-insensitive machine that wrote it, it already silently ate the other one's body.
-            others = ", ".join(f"`{p.name}`" for p in group if p != path)
-            out.append(f"**{title_of(path)}** — ⚠ this rule's filename collides with {others}, "
+            others = ", ".join(f"`{mdblock.as_quoted(p.name)}`" for p in group if p != path)
+            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule's filename collides with {others}, "
                        f"differing only by case. Filesystems disagree on whether these are one file "
                        f"or two, so it is NOT in force until the files are merged or renamed apart; "
                        f"do not act on either side.")
@@ -229,12 +240,18 @@ def rules_text(root):
         elif body and unresolved_conflict(body):
             # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
             # was never written, and the point is to get this file resolved.
-            out.append(f"**{title_of(path)}** — ⚠ this rule is mid-merge and both sides are still "
-                       f"in `{path.name}`. It is NOT in force until someone resolves it; do not act "
-                       f"on either side.")
+            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule is mid-merge and both sides are still "
+                       f"in `{mdblock.as_quoted(path.name)}`. It is NOT in force until someone "
+                       f"resolves it; do not act on either side.")
             titles.append(title_of(path))
         elif body:
-            out.append(_flatten(body))
+            # Closed per RULE, not only once around the finished section. A fence left open
+            # in one rule's own file otherwise runs to the end of the whole section, and
+            # every rule written after it renders as code inside that block — measured: the
+            # section-level close stops the damage escaping the section, and leaves the
+            # rules after the broken one swallowed exactly as before. Balancing here also
+            # means both cuts below operate on text whose fences already match.
+            out.append(mdblock.close_dangling_fence(_flatten(body)))
             titles.append(title_of(path))
     if not out:
         return ""
@@ -258,7 +275,7 @@ def rules_text(root):
                 trimmed.append(body)
             else:
                 trimmed.append(_cut_clean(body, share) +
-                               f"\n\n_…the rest of **{title}** is in `.chamnan/memory/rules/`._")
+                               f"\n\n_…the rest of **{mdblock.one_line(title)}** is in `.chamnan/memory/rules/`._")
         joined = "\n\n".join(trimmed)
         if len(joined) <= MAX_RULES_CHARS:
             return joined
@@ -305,21 +322,12 @@ def _flatten(body):
     An entry is a standalone file, so it opens with `# Title`. The hook drops it inside a `###`
     section, and an H1 nested under an H3 makes the injected block's structure read wrongly — the
     rule looks like a new top-level document rather than one item in a list of constraints.
+
+    The demotion itself lives in `mdblock.demote_headings` now, shared with every other caller
+    that injects free-form, multi-line, repository-authored text under one of chamnan's own `###`
+    sections -- this was the only one of them doing it before.
     """
-    out = []
-    for line, in_fence in mdblock.fenced_lines(body):
-        if in_fence:
-            # A `#` inside a fence is a comment in the example, not a heading of the rule. It used
-            # to be demoted like any other, so a rule whose whole point was `# retries=3 is
-            # load-bearing` was injected with that marker stripped off the line it annotated.
-            out.append(line)
-        elif line.startswith("# "):
-            out.append(f"**{line[2:].strip()}**")
-        elif line.startswith("#"):
-            out.append(re.sub(r"^#+\s*", "", line))
-        else:
-            out.append(line)
-    return "\n".join(out).strip()
+    return mdblock.demote_headings(body).strip()
 
 
 def titles(root):
@@ -367,7 +375,8 @@ def render_titles(found):
                 interleaved.append(by_cat[cat][i])
         i += 1
     shown = interleaved[:MAX_TITLES]
-    lines = [f"- **{cat[:-1]}** · `{name}` — {_cap(title)}" for cat, title, name in shown]
+    lines = [f"- **{cat[:-1]}** · `{mdblock.as_quoted(name)}` — {mdblock.one_line(_cap(title))}"
+             for cat, title, name in shown]
     if len(found) > MAX_TITLES:
         missing = sorted({c for c, _, _ in found} - {c for c, _, _ in shown})
         note = f"- _…and {len(found) - MAX_TITLES} more in `.chamnan/memory/`"

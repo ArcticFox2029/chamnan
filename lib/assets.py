@@ -15,6 +15,7 @@ size, the extensions that dominate — and never opens a file. Directories below
 out entirely, because a handful of images beside a README is not a mount and saying so is noise.
 """
 from collections import defaultdict
+import mdblock
 
 # Below this many non-source files a directory is not an asset store, it is a few loose files.
 MIN_FILES = 12
@@ -54,7 +55,24 @@ UNEXTRACTED_SOURCE = {
     ".ss", ".lisp", ".lsp", ".el", ".ml", ".mli", ".re", ".res", ".coffee", ".hx", ".st", ".abap",
     ".apex", ".cls", ".trigger", ".rexx", ".ahk", ".au3", ".nut", ".moon",
 }
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "vendor", ".terraform", "dist"}
+# 🐛 This held a second, hand-maintained copy of mapper.SKIP_DIRS and had drifted from it: `build`,
+# `venv`, `tmp` and `coverage` were missing, so this section reported them as "stored material" --
+# payload worth knowing about -- on the same repository where mapper had already classified them as
+# build noise. One list now, so the two cannot disagree again.
+#
+# Fetched at call time rather than imported at module level: mapper imports THIS module, so a
+# top-level `from mapper import SKIP_DIRS` is a circular import and fails at the first `import
+# mapper` anywhere. The cache keeps it to one lookup.
+_SKIP_DIRS = None
+
+
+def _skip_dirs():
+    """mapper's list, resolved late to keep the import graph acyclic."""
+    global _SKIP_DIRS
+    if _SKIP_DIRS is None:
+        import mapper
+        _SKIP_DIRS = mapper.SKIP_DIRS
+    return _SKIP_DIRS
 # Build and project manifests are not payload. They declare dependencies and project layout, which
 # is exactly what someone joining the repo needs, and this section's headline tells the reader not
 # to open them to understand the system. Being counted here made that sentence false about go.mod
@@ -83,7 +101,14 @@ BUILD_NAMES = {"go.mod", "go.sum", "cargo.toml", "package.json", "pyproject.toml
                "brewfile", "gnumakefile", "tox.ini", "noxfile.py", "justfile.toml"}
 
 
-def _human(size):
+def human_bytes(size):
+    """A byte count as a person reads it: 134B, 40.0MB, 1.2GB.
+
+    Public, and the only copy. `peek` carried a near-identical `_human` that stopped at GB and
+    `mapper` was about to grow a third when the git-lfs pointer summary needed one. Three
+    definitions of the same six lines is how they drift: peek's would have printed "41943040.0GB"
+    for a terabyte where this one says TB.
+    """
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if size < 1024 or unit == "TB":
             return f"{size:.0f}{unit}" if unit == "B" else f"{size:.1f}{unit}"
@@ -103,7 +128,7 @@ def scan(root, source_paths, ext_lang):
             rel = path.relative_to(root)
         except (OSError, ValueError):
             continue
-        if any(p in SKIP_DIRS or p.startswith(".") for p in rel.parts[:-1]):
+        if any(p in _skip_dirs() or p.startswith(".") for p in rel.parts[:-1]):
             continue
         if str(rel) in source_paths or path.suffix.lower() in ext_lang:
             continue
@@ -143,7 +168,7 @@ def render(groups):
         total_n = sum(g["count"] for _, g in ranked)
         total_b = sum(g["bytes"] for _, g in ranked)
         out += ["## Stored material (not source)", "",
-                f"{total_n:,} files, {_human(total_b)}. **Payload, not code — do not read these to "
+                f"{total_n:,} files, {human_bytes(total_b)}. **Payload, not code — do not read these to "
                 f"understand the system.** Listed so that their shape is known without anyone going "
                 f"looking, which costs more than this section does.", ""]
         for name, g in ranked[:MAX_DIRS_LISTED]:
@@ -158,7 +183,7 @@ def render(groups):
             # skip.
             if readable:
                 tail += ("  _(**written to be read**: " + ", ".join(readable) + ")_")
-            out.append(f"- **`{name}/`** — {g['count']:,} files, {_human(g['bytes'])} — {shown}{tail}")
+            out.append(f"- **`{mdblock.one_line(name)}/`** — {g['count']:,} files, {human_bytes(g['bytes'])} — {shown}{tail}")
         if len(ranked) > MAX_DIRS_LISTED:
             out.append(f"- _…and {len(ranked)-MAX_DIRS_LISTED} more directories_")
         out.append("")
@@ -173,7 +198,7 @@ def render(groups):
         for name, g in ranked[:MAX_DIRS_LISTED]:
             exts = sorted(g["exts"].items(), key=lambda kv: -kv[1])[:MAX_EXTS_SHOWN]
             shown = ", ".join(f"{e} ×{n:,}" for e, n in exts)
-            out.append(f"- **`{name}/`** — {g['count']:,} files — {shown}")
+            out.append(f"- **`{mdblock.one_line(name)}/`** — {g['count']:,} files — {shown}")
         if len(ranked) > MAX_DIRS_LISTED:
             out.append(f"- _…and {len(ranked)-MAX_DIRS_LISTED} more directories_")
         out.append("")

@@ -20,8 +20,10 @@ actually saves the context, not the file existing.
 
   python3 lib/mapper.py <repo> [--out PATH] [--measure]
 
-That is this module's own entry point, and its flags are not the plugin command's:
-chamnan-map takes --preview and --install-git-hook, and does not accept --measure.
+That is this module's own entry point, and its flags are not the plugin command's: chamnan-map
+takes --preview, --explain and --install-git-hook. It also accepts --measure without erroring, but
+that is only so the name is not rejected as unknown — it is not wired to this module's --measure
+output above, and running it prints the same thing plain `chamnan-map` does.
 
 Never imports or executes the code it reads.
 """
@@ -43,6 +45,7 @@ import impact as impact_mod
 import redact
 import schema as schema_mod
 import tokens
+from unicode_marks import mark_aware
 
 # Directories that are never source: dependency trees, build output, VCS internals, caches.
 # Wider than tree.PRUNE_DIRS on purpose — see that constant. This list is mapper's own filter,
@@ -52,7 +55,33 @@ SKIP_DIRS = {
     "dist", "build", "target", "out", ".next", ".nuxt", "vendor", ".terraform",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", "coverage", ".idea", ".vscode",
     "site-packages", ".gradle", ".cache", "tmp", "logs",
+    # 🐛 Everything below this line was indexed as ordinary hand-written source. The comment on
+    # `_generated_globs` said the "machinery directories are already covered by SKIP_DIRS" and it
+    # was not true of any of them -- a Swift repository handed chamnan its whole CocoaPods
+    # checkout as source, and the Quick Index described somebody else's library.
+    #
+    # These are dependency-manager checkouts and nothing else: no project uses one of these names
+    # for its own code, which is why they go here rather than in AMBIGUOUS_SKIP below. Checked
+    # against GitHub Linguist's own vendor.yml (fetched 2026-09-05) -- `bower_components`,
+    # `Carthage`, `Godeps` and `flow-typed` are in it verbatim. `Pods`, `third_party` and `.tox`
+    # are NOT in Linguist and are here on their own merits: a CocoaPods checkout, a vendored tree,
+    # and tox's virtualenvs. The research report that proposed all seven claimed Linguist covered
+    # them; three of its five names were not in the file. Fetched and diffed rather than believed.
+    "Pods", "Carthage", "bower_components", "Godeps", "flow-typed", "third_party", ".tox",
+    # Ambiguous, so listed again in AMBIGUOUS_SKIP and rescued when git tracks it: `deps/` is a
+    # fetched dependency tree in Elixir and Erlang and a perfectly ordinary source directory
+    # elsewhere.
+    "deps",
 }
+# Deliberately NOT added, though Linguist lists them: `testdata` is Go's own committed-fixture
+# convention and skipping it would lose real content; `cache`, `fixtures`, `plugins`, `releases`,
+# `sdks`, `versions`, `wrapper` and `debian` are ordinary source directory names far more often than
+# they are machinery. Linguist can afford to be aggressive because it is deciding what to colour on
+# a language bar; this list decides what a reader is told exists at all, and the two mistakes are
+# not the same size. Linguist's per-library entries (`MathJax`, `select2`, `tiny_mce`, `extjs`,
+# `ace-builds`, `bootstrap-datepicker`, `Sparkle`, `puphpet`, `admin_media`, `xvba_modules`) are a
+# list of specific bundled libraries from another era and are a maintenance liability here, not a
+# rule.
 MAX_FILE_BYTES = 2_000_000
 
 # What the last scan left out and why. Populated by indexable(), read by the caller that
@@ -72,7 +101,8 @@ SKIPPED_BINARY = []
 # by setuptools is ignored, `src/build/` is committed -- so that is the question asked, per PATH
 # rather than per name, and only for these eight. The rest of SKIP_DIRS is unambiguous machinery
 # and is never rescued: a committed `vendor/` or `node_modules/` is still noise.
-AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp", "logs"})
+AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp",
+                            "logs", "deps"})
 # Directories skipped under one of those names. Reported by chamnan-map, because the silence was
 # the half of this defect that could not be argued about -- and note SKIPPED_TOO_LARGE and
 # SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
@@ -97,8 +127,13 @@ def _generated_globs(root):
     described figure to say that a generated file exists.
 
     `linguist-generated` only, deliberately. `linguist-vendored` is also declared here and is NOT
-    read: a vendored directory is often a fork somebody actually edits, and the machinery
-    directories are already covered by SKIP_DIRS.
+    read: a vendored directory is often a fork somebody actually edits.
+
+    That paragraph used to end "and the machinery directories are already covered by SKIP_DIRS",
+    which was false and stayed false for as long as nobody diffed it. Twenty-one of twenty-two
+    common vendor directory names were being indexed as ordinary source. Seven were added to
+    SKIP_DIRS on 2026-09-05; the rest were rejected there for reasons written beside them. Reading
+    `linguist-vendored` properly is still the more thorough fix and is still not done.
 
     Not the same judgement as .gitignore, which this file refuses to read a few lines down and for
     a reason that does not transfer: .gitignore is often absent, often wrong, and never covers a
@@ -280,30 +315,27 @@ CLIP_BACKOFF = 18
 # indicator that most terminals draw as a boxed letter rather than a flag. The word-boundary
 # back-off does not help: from Python's side each half is already a valid, ordinary string.
 _ZWJ = "\u200d"
-_VARIATION = range(0xFE00, 0xFE10)
-_SKIN_TONE = range(0x1F3FB, 0x1F400)
-_REGIONAL = range(0x1F1E6, 0x1F200)
+# The grapheme guard lives in mdblock now, because `as_quoted` needed it too and mdblock cannot
+# import mapper. Same function, one definition.
+_whole_graphemes = mdblock.whole_graphemes
 
 
-def _whole_graphemes(text):
-    """`text` with any trailing fragment of an incomplete cluster removed."""
-    while text:
-        c = text[-1]
-        o = ord(c)
-        if (unicodedata.combining(c) or c == _ZWJ
-                or o in _VARIATION or o in _SKIN_TONE):
-            text = text[:-1]
-            continue
-        # A regional indicator is only a flag in a pair; an odd one left at the end is half of one.
-        if o in _REGIONAL:
-            run = 0
-            while run < len(text) and ord(text[-1 - run]) in _REGIONAL:
-                run += 1
-            if run % 2:
-                text = text[:-1]
-                continue
-        break
-    return text
+# CJK writes its full stop as U+3002 and its exclamation and question marks full-width, so a split
+# on ". " never fires on a Japanese or Chinese docstring and the WHOLE docstring became the file's
+# one-line summary. Reproduced with parallel-content docstrings: the English one was cut to its
+# first sentence and the Japanese one was not cut at all.
+#
+# Thai is a genuine dead end here and is left alone deliberately: it ends sentences with a space and
+# no terminal punctuation, so telling one from a word break needs segmentation, and every usable
+# segmenter is a dependency this project does not take. `_clip` still bounds the length, which is
+# the guarantee that actually matters — the summary is short, just not sentence-shaped.
+_SENTENCE_ENDS = (". ", "。", "！", "？", "।")
+
+
+def _first_sentence(text):
+    """The opening sentence, for the scripts where "sentence" is a thing you can find."""
+    cut = min((i for i in (text.find(e) for e in _SENTENCE_ENDS) if i > 0), default=-1)
+    return text[:cut] if cut > 0 else text
 
 
 def _clip(text, limit=110):
@@ -321,7 +353,13 @@ def _clip(text, limit=110):
     """
     text = DECORATION.sub(" ", text or "")
     text = _strip_doc_tags(text)
-    text = " ".join(text.split())
+    # 🐛 This is the SECOND whitespace fold in the codebase, and for a long time it was the one that
+    # never got mdblock's control-character table. `" ".join(split())` removes newlines and tabs and
+    # leaves ESC and the bidi overrides untouched, so a docstring carrying `\x1b[31m` or U+202E
+    # reached MAP.md intact -- reproduced on a fixture repository, one line, verbatim. Every caller
+    # here assembles its own string afterwards (`f"`{name}`: " + _clip(...)`), which is why wrapping
+    # the call sites kept missing it: the fold has to happen where the folding is.
+    text = mdblock.one_line(text)
     if len(text) <= limit:
         return text
     head = text[: limit - 1]
@@ -485,6 +523,24 @@ MAGIC_COMMENT = re.compile(
     r"@import\s*\{[^}]*\}(?:\s*from\s*['\"][^'\"]*['\"])?|"
     r"type\s*:\s*ignore|rubocop:\w+\s+[\w/,\s]+)[\s.,;:-]*""", re.I)
 # How far into the opening comment to look for a licence. See the use site.
+# The generated-file markers, on their own and NOT reused from BOILERPLATE.
+#
+# 🐛 chamnan already recognised these — `BOILERPLATE` matches "code generated by" and "do not
+# edit", and uses that to blank a description so a protoc header does not become a file's summary.
+# It never used the same recognition anywhere else, so on a repository of 12 `.pb.go` files beside
+# one hand-written module, `chamnan-map` reported `described 1/13 (8%)` and told the user:
+# "12 file(s) have no opening comment... Ask Claude: add a one-line opening comment". Following
+# that advice writes a comment under a DO NOT EDIT line, which the next `protoc` run discards --
+# the tool asking for work it knows will be thrown away, and reporting 8% coverage for a
+# repository that is fully described where description is possible.
+#
+# A SEPARATE pattern rather than BOILERPLATE itself, because BOILERPLATE also matches licence
+# headers, and a hand-written file carrying a copyright notice is describable and belongs in the
+# nudge. Only these spellings mean "a program wrote this file".
+GENERATED_MARKER = re.compile(
+    r"(?:code\s+generated\s+by|generated\s+by\s+\S|do\s+not\s+edit|@generated|autogenerated"
+    r"|auto-generated|this\s+file\s+is\s+generated)", re.I)
+
 BOILERPLATE_WINDOW = 240
 # 🐛 A comment that labels the import block is not a description of the file, and letting one
 # through is worse than leaving the file blank -- it counts as described, inflates coverage, and
@@ -700,6 +756,86 @@ def _one_comment(lines, i, prefix=COMMENT_PREFIX):
 
 _PARSE_MEMO = (None, None)
 
+# The keyword(s) in front of the name, on the ONE line a def/class node's col_offset points to.
+# Only the keyword -- the name itself is walked off character by character below, NOT captured
+# with `\w+`: Thai tone marks and vowel signs (U+0E48 MAI EK, U+0E39 SARA UU, ...) are legal
+# inside a Python identifier (PEP 3131 allows Unicode category Mn/Mc after the first character)
+# but `\w` in Python's `re` follows `str.isalnum()`, which excludes combining marks. `\w+` on
+# "ลูกค้า" stops after the first letter -- it matches Lo but not the Mn tone mark right after it --
+# so a regex "fix" here would have replaced one silent truncation with another.
+_DEF_KEYWORD = re.compile(r"^(?:async\s+)?(?:def|class)\s+")
+
+
+def _verbatim_name(source_lines, node):
+    """`node.name` re-read from the source line instead of trusted as `ast` reports it.
+
+    CPython's parser NFKC-normalises non-ASCII identifiers before `ast` ever sees them (PEP 3131),
+    so `node.name` is not always what the file spells. Thai's SARA AM (U+0E33) is the common case:
+    it normalises to NIKHAHIT + SARA AA, two codepoints for one, so a name that is 9 codepoints in
+    the source comes back 10 codepoints long from `ast` -- visually identical, and a literal `grep`
+    for either spelling misses the other. MAP.md's own header tells the reader to grep it, so this
+    silently broke the documented workflow.
+
+    `node.lineno`/`node.col_offset` name the exact `def`/`class` keyword regardless -- normalisation
+    only touches the identifier text, not where the parser says it starts. `col_offset` is a UTF-8
+    BYTE offset, not a character offset, so the line is encoded before slicing and decoded after;
+    slicing the `str` directly would cut mid-character on any line with non-ASCII text before the
+    keyword (a preceding decorator never applies -- it is always a separate node on its own line).
+
+    The name is then walked off one character at a time, using `str.isidentifier()` -- the same
+    XID_Start/XID_Continue rule the parser itself used to accept it -- rather than a regex class,
+    because no fixed regex character class matches exactly what CPython accepts as an identifier.
+
+    Falls back to `node.name` if the source line cannot be re-read (should not happen for a node
+    `ast` just produced from this exact `source`, but a fallback beats a crash on a well-formed
+    file for something that is a display nicety, not correctness-critical).
+    """
+    try:
+        line = source_lines[node.lineno - 1]
+        after = line.encode("utf-8")[node.col_offset:].decode("utf-8")
+    except (IndexError, UnicodeDecodeError):
+        return node.name
+    m = _DEF_KEYWORD.match(after)
+    if not m:
+        return node.name
+    name = ""
+    for c in after[m.end():]:
+        candidate = name + c
+        if not candidate.isidentifier():
+            break
+        name = candidate
+    return name or node.name
+
+
+
+def _verbatim_arg(source_lines, arg):
+    """An argument's name as the SOURCE spells it, not as `ast` normalised it.
+
+    The sibling of `_verbatim_name` for `ast.arg`, and simpler: an `arg` node's position points at
+    the identifier itself, so there is no keyword to skip past.
+
+    The same PEP 3131 normalisation applies here — `def คำนวณ(จำนวน)` came back with the parameter
+    spelled `จํานวน`, ten codepoints where the source has nine, so a reader grepping MAP.md for the
+    parameter as written found nothing. The function name was fixed first and the arguments were
+    left, which meant one line of the signature was greppable and the rest of it was not.
+
+    `col_offset` is a UTF-8 BYTE offset, so the line is encoded before slicing — a Thai parameter
+    is almost always preceded on its line by a Thai function name, which is exactly the case where
+    slicing the `str` directly cuts mid-character.
+    """
+    try:
+        line = source_lines[arg.lineno - 1]
+        after = line.encode("utf-8")[arg.col_offset:].decode("utf-8")
+    except (IndexError, UnicodeDecodeError, AttributeError):
+        return arg.arg
+    name = ""
+    for c in after:
+        candidate = name + c
+        if not candidate.isidentifier():
+            break
+        name = candidate
+    return name or arg.arg
+
 
 def _parse_py(source, path):
     """Parse a Python file once, not twice.
@@ -744,7 +880,7 @@ def extract_python(source, path, lang='py'):
         # RecursionError is deeply nested literals. None of these should cost more than one file.
         return None, [], []
     doc = _clip(ast.get_docstring(tree) or "")
-    doc = doc.split(". ")[0] if doc else ""
+    doc = _first_sentence(doc) if doc else ""
     if not doc:
         # A module docstring is the Python convention, but plenty of real files open with a `#`
         # header instead and mean exactly the same thing. Reading only docstrings scored a file
@@ -752,14 +888,17 @@ def extract_python(source, path, lang='py'):
         # coverage figure the whole design leans on.
         doc = leading_comment(source, lang)
     funcs, classes, consts = [], [], []
+    source_lines = source.splitlines()
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            args = ", ".join(a.arg for a in node.args.args)
-            funcs.append((f"{node.name}({args})", _clip(ast.get_docstring(node) or "", 90)))
+            args = ", ".join(_verbatim_arg(source_lines, a) for a in node.args.args)
+            name = _verbatim_name(source_lines, node)
+            funcs.append((f"{name}({args})", _clip(ast.get_docstring(node) or "", 90)))
         elif isinstance(node, ast.ClassDef):
-            methods = [n.name for n in node.body
+            methods = [_verbatim_name(source_lines, n) for n in node.body
                        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-            classes.append((node.name, _clip(ast.get_docstring(node) or "", 90), methods))
+            classes.append((_verbatim_name(source_lines, node),
+                             _clip(ast.get_docstring(node) or "", 90), methods))
         elif isinstance(node, ast.Assign):
             for t in node.targets:
                 if isinstance(t, ast.Name) and t.id.isupper() and len(t.id) > 2:
@@ -830,7 +969,15 @@ REGEX_RULES = {
     # method name may also be an OPERATOR, with no word character in it at all: `def ==(other)`,
     # `def <=>(other)`, `def [](key)` matched nothing and were invisible. And a module is Ruby's
     # actual namespacing keyword, with no rule at all -- every `module Portal` was unindexed.
-    "rb": [("func", r"^\s*def\s+(?:self\.)?([A-Za-z_]\w*[?!=]?)"),
+    # 🐛 The first character class was `[A-Za-z_]`, so a Ruby method with a non-ASCII name was not
+    # captured AT ALL — not mis-spelled, invisible. Ruby has accepted UTF-8 identifiers since 1.9.
+    # Measured across seven languages with the same Thai method name: go, c, js, rs, php and kotlin
+    # all found it; only Ruby did not, so this is one gap rather than the "fixed in some members of
+    # a set" shape it looked like.
+    #
+    # `[^\W\d]` is a word character that is not a digit — a Unicode letter or underscore, which is
+    # what the ASCII class was trying to say. A name starting with a digit is still refused.
+    "rb": [("func", r"^\s*def\s+(?:self\.)?([^\W\d]\w*[?!=]?)"),
            ("func", r"^\s*def\s+(?:self\.)?(\[\]=?|<=>|===?|!=|[<>]=?|[+\-*/%]|<<|>>|\*\*|=~|!)\s*\("),
            ("class", r"^\s*(?:class|module)\s+(\w+(?:::\w+)*)"),
            # attr_accessor and friends define real callable methods with no `def` anywhere. A
@@ -918,6 +1065,34 @@ REGEX_RULES = {
               ("func", r"^\s*rpc\s+(\w+)\s*\(([^)]*)\)")],
     "graphql": [("class", r"^\s*(?:type|input|interface|enum|union)\s+(\w+)")],
 }
+
+
+# 🐛 Every table above spelled an identifier `\w`, and `\w` in Python's `re` does not match the
+# Mn/Mc categories — combining marks. `ชื่อ` is four codepoints of which two are marks, so it is
+# not a `\w+` match, and an ordinary Thai method name was invisible in TWELVE languages. Measured
+# with one name in each, before and after:
+#
+#     go c js ts rs php kotlin java cs swift sh   ราคา found      ชื่อ NOTHING
+#     rb                                          ราคา found      ชื่อ -> `ช`   (truncated!)
+#
+# Ruby's is the worse outcome of the two: `[^\W\d]\w*` starts correctly and then stops at the
+# first mark, so the index published a one-character name that is not the method's name — a fix I
+# landed for Ruby last round that traded invisibility for a wrong answer.
+#
+# **And the commit that landed it said the opposite.** It recorded "measured across seven languages
+# with the same Thai method name: go, c, js, rs, php and kotlin all found it; only Ruby did not, so
+# this is one gap rather than the 'fixed in some members of a set' shape it looked like." That
+# conclusion was an artefact of the name chosen for the test: `ราคา` has no combining marks, and
+# with one that does, every language fails. Tenth occurrence of that shape here, ruled out by a
+# measurement that could not see it.
+#
+# Rewritten over the WHOLE table in one pass rather than pattern by pattern, which is the only
+# form of this fix that cannot be applied to some languages and forgotten in others. The scanner
+# tracks whether it is inside a character class, because `[\w:]` has to become `[\w<marks>:]` and
+# a bare `\w*` has to become `[\w<marks>]*` — substituting the same text in both places produces
+# a nested bracket and a pattern that means something else entirely.
+REGEX_RULES = {lang: [(kind, mark_aware(pat)) for kind, pat in rules]
+               for lang, rules in REGEX_RULES.items()}
 EXT_LANG = {
     ".py": "py", ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js", ".ts": "js", ".tsx": "js",
     ".go": "go", ".sh": "sh", ".bash": "sh", ".command": "sh", ".zsh": "sh",
@@ -1178,6 +1353,39 @@ def _lang_from_shebang(path):
     return None
 
 
+# The first line of every git-lfs pointer, fixed by the spec. A pointer is also required to be
+# small -- the spec caps it well under this -- and the size guard is what stops a real source file
+# that happens to quote the spec URL from being mistaken for one.
+_LFS_MAGIC = "version https://git-lfs.github.com/spec/v1"
+_LFS_MAX_BYTES = 1024
+
+
+def lfs_pointer_size(text):
+    """Bytes the REAL file holds, when `text` is a git-lfs pointer rather than the file itself.
+
+    🐛 A 41 MB file stored in LFS is checked out as a three-line pointer, and the index described it
+    as `(3L) — —`: a trivial, empty file. That is the index stating something untrue about the
+    repository, which is worse than omitting the file -- a reader who trusts it will not look, and a
+    reader who does look finds three lines of metadata and concludes the file is broken.
+
+    Skipping such files would only turn the lie into a silence. The pointer carries the real size in
+    its own `size` line, so the honest answer is available for free: say what the file is and how big
+    it actually is. Recommended by an earlier research round and never implemented until the case was
+    reproduced -- an LFS-tracked `.py` renders in the Quick Index like any other source file.
+
+    Returns None for anything that is not a pointer.
+    """
+    if not text.startswith(_LFS_MAGIC) or len(text) > _LFS_MAX_BYTES:
+        return None
+    for line in text.splitlines():
+        if line.startswith("size "):
+            try:
+                return int(line[5:].strip())
+            except ValueError:
+                return None
+    return None
+
+
 def is_text_file(path):
     """A NUL in the first block means binary, and no text source contains one. Split out of
     `indexable` so a caller that skipped the sniff for speed can apply it to the few files it
@@ -1365,9 +1573,16 @@ def _scan(root):
             # _extract_one already gave up on.
             describable = bool(source.strip()) and not _is_empty_module(
                 _sfc_extraction_source(source, path), lang)
+            # A generated file is real source and stays in the index -- what changes is that it is
+            # not counted as missing a summary and is not offered to the commenter agent. Read from
+            # the same window BOILERPLATE uses, because a marker further down the file is a
+            # sentence about generation rather than a declaration of it.
+            generated = bool(GENERATED_MARKER.search(source[:BOILERPLATE_WINDOW]))
         except Exception:
             doc, funcs, classes, consts, describable = "", [], [], [], False
+            generated = False
         files.append({
+            "generated": generated,
             # A file with no statements at all — an empty __init__.py, a file of only comments —
             # has nothing to describe, so counting it as "missing a summary" both understates the
             # coverage figure and pushes the user to write a sentence about a file with no code in
@@ -1396,6 +1611,8 @@ def _scan(root):
             # silently, and in chamnan's favour: splitlines is the better count of what a reader
             # sees.
             "lines": len(source.splitlines()), "doc": doc,
+            # None for every ordinary file, so callers that never heard of LFS are unaffected.
+            "lfs": lfs_pointer_size(source),
             "funcs": funcs, "classes": classes, "consts": consts,
             # Not rendered anywhere -- carried so render()'s later scanners (catalogs.scan_routes,
             # catalogs._django_mounts, catalogs.scan_env) can reuse the read this loop already paid
@@ -1415,16 +1632,37 @@ def render(files, root):
         return _render(files, root)
 
 
+# Twice the default session budget. Below that, reading the Quick Index in full is the habit the
+# file is written to encourage; above it, that advice costs more than the file saves and the header
+# says so instead. A round number, stated rather than fitted -- the honest claim is "this is large
+# enough that reading it whole is the wrong move", not a precise threshold anyone measured.
+_READ_IN_FULL_CEILING = 6_000
+
+# The whole paragraph swaps, not just its first sentence. Leaving the rest in place produced a
+# header that contradicted itself on a large repository: "the index is a fraction of the detail"
+# is false where the index measures larger than the source it summarises.
+_HOW_TO_READ = ("**Read the Quick Index in full. Do NOT read the Full Detail section end to end** "
+                "— grep it\n"
+                "for the one heading you need (`## \\`path\\``). That habit is the entire point of "
+                "this file:\n"
+                "the index is a fraction of the detail, and the detail is a fraction of the source.")
+
+_TOO_BIG_TO_READ_IN_FULL = (
+    "**This index is too large to read in full — grep BOTH sections, never read either whole.**\n"
+    "Look for the one heading you need (`## \\`path\\``), or read one directory's block at a time.\n"
+    "This repository has enough files that summarising them all costs what reading them would: the\n"
+    "session-start block rolls this up to one line per directory, and this file is the place to\n"
+    "come when you need one of them in full.")
+
+
 def _render(files, root):
     total_chars = sum(f["chars"] for f in files)
     lines = [
-        f"# Architecture map — {root.name}",
+        f"# Architecture map — {mdblock.one_line(root.name)}",
         "",
         f"Generated by chamnan. {len(files)} source file(s), {total_chars:,} characters.",
         "",
-        "**Read the Quick Index in full. Do NOT read the Full Detail section end to end** — grep it",
-        "for the one heading you need (`## \\`path\\``). That habit is the entire point of this file:",
-        "the index is a fraction of the detail, and the detail is a fraction of the source.",
+        _HOW_TO_READ,
         "",
         "## Quick Index",
         "",
@@ -1446,6 +1684,11 @@ def _render(files, root):
             # so the label is what had to change, not what is collected.
             counts.append(f"{len(f['classes'])}{'ty' if f.get('lang') == 'js' else 'cls'}")
         summary = f["doc"] or "—"
+        if f.get("lfs") is not None:
+            # Overrides the docstring rather than appending to it: a pointer has no docstring, and
+            # if some future format ever gave it one it would be describing a file that is not here.
+            summary = (f"**not checked out** — a git-lfs pointer to "
+                       f"{assets_mod.human_bytes(f['lfs'])} of content")
         # `one_line` on the PATH, not only on the summary. A file name may legally contain a
         # newline, and an index row is a `- ` bullet -- so a file called
         # "safe\n- **INJECTED** (999L) -- ....py" rendered as TWO bullets, the second of which a
@@ -1478,7 +1721,7 @@ def _render(files, root):
             lines.append(f"**`{mdblock.one_line(here if here != '.' else '.')}/`**")
         shown = PurePosixPath(f["path"]).name
         lines.append(f"- **`{mdblock.one_line(shown)}`**"
-                     f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {summary}")
+                     f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {mdblock.one_line(summary)}")
 
     # Optional sections, in one file rather than several: a repo of plain scripts should end up
     # with a code index and nothing else, not a folder of empty catalogues. Each renderer returns
@@ -1516,9 +1759,9 @@ def _render(files, root):
     if detail:
         lines += [detail, ""]
     for f in files:
-        lines.append(f"## `{f['path']}`")
+        lines.append(f"## `{mdblock.one_line(f['path'])}`")
         if f["doc"]:
-            lines.append(f"{f['doc']}")
+            lines.append(mdblock.demote_headings(f["doc"]))
         lines.append("")
         if f["consts"]:
             lines.append(f"**Constants:** {', '.join(f['consts'][:40])}")
@@ -1527,16 +1770,33 @@ def _render(files, root):
             # Quick Index's own `ty` counter. Full Detail is what the index tells a reader to grep
             # for symbol-level truth, and it was calling a union type alias a class.
             kind = "type" if f.get("lang") == "js" else "class"
-            lines.append(f"- **{kind} {name}**{' — ' + doc if doc else ''}")
+            lines.append(f"- **{kind} {mdblock.one_line(name)}**"
+                         f"{' — ' + mdblock.one_line(doc) if doc else ''}")
             if methods:
-                lines.append(f"  - methods: {', '.join(methods[:30])}")
+                lines.append(f"  - methods: {', '.join(mdblock.one_line(m) for m in methods[:30])}")
         for sig, doc in f["funcs"]:
-            lines.append(f"- `{sig}`{' — ' + doc if doc else ''}")
+            lines.append(f"- `{mdblock.one_line(sig)}`"
+                         f"{' — ' + mdblock.one_line(doc) if doc else ''}")
         lines.append("")
     # One choke point, on the whole document, rather than at each of the dozen places a summary is
     # extracted. Scrubbing per-extractor means every new extractor is a chance to forget; scrubbing
     # the finished text means nothing reaches the file unscanned, including sections added later.
-    return redact.scrub("\n".join(lines) + "\n")
+    # 🐛 The header said "Read the Quick Index in full" unconditionally. On a 5,000-file monorepo
+    # that index measures ~132,000 tokens — 96% of the source — and the instruction is not merely
+    # unhelpful there, it is false: reading it in full every session is precisely the cost this
+    # tool exists to avoid. chamnan already writes a self-aware caveat at the SMALL end ("larger
+    # than the source — this repository is too small for an index to pay"); this is the matching
+    # one at the large end.
+    #
+    # Measured after the index is built rather than guessed from the file count, because the size
+    # that matters is the rendered text and nothing else predicts it: 5,000 tiny files and 500
+    # heavily documented ones can land in the same place.
+    text = "\n".join(lines) + "\n"
+    if _HOW_TO_READ in text:
+        quick = text.split("## Quick Index", 1)[-1].split("\n---", 1)[0]
+        if tokens.estimate(quick) > _READ_IN_FULL_CEILING:
+            text = text.replace(_HOW_TO_READ, _TOO_BIG_TO_READ_IN_FULL, 1)
+    return redact.scrub(text)
 
 
 def main():

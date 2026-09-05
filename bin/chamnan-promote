@@ -12,6 +12,7 @@ than the cost: a regression check that is rewritten each run is not a regression
 """
 import shutil
 import stat
+import pathlib
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -83,6 +84,26 @@ def show(root):
         print(f"\n  {broken} entr{'y' if broken == 1 else 'ies'} above name nothing this workspace "
               f"has. Sessions skip them; remove them from tools/index.json.")
     return 0
+
+
+def _origin_for(src, root):
+    """Where this tool came from, recorded WITHOUT the machine it came from.
+
+    🐛 [2026-09-04, R15 agent 2] `str(src)` wrote the absolute path, and `tools/index.json` is a
+    tracked, committed file. Promoting `~/Desktop/scratch/fix.py` published a home directory and a
+    username to everyone who clones -- the same class the repository's own rule names, "never let
+    machine-specific paths reach a commit", in a file chamnan writes on the user's behalf.
+    Reproduced: the entry read `/private/var/folders/.../probe.py`.
+
+    Nothing derives behaviour from the field; `tools_index.load` carries it through and
+    `chamnan-report` prints it. So provenance is kept and the machine is dropped: relative to the
+    repository when the source is inside it, and the bare filename when it is not, since a path
+    outside the repository means nothing to anyone else reading the file anyway.
+    """
+    try:
+        return src.resolve().relative_to(pathlib.Path(root).resolve()).as_posix()
+    except (OSError, ValueError):
+        return src.name
 
 
 def main(argv):
@@ -176,7 +197,7 @@ def main(argv):
         tools_index.register(root, {
             "name": dest.name, "desc": desc,
             "added": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "origin": str(src),
+            "origin": _origin_for(src, root),
         })
     except OSError as err:
         try:
@@ -196,7 +217,7 @@ def main(argv):
           if dest.suffix == ".py" else f"  run it with:  {rel}")
     if not desc:
         print("  no description given — add one so a future session knows when to reach for it:")
-        print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root)})")
+        print(f"    chamnan-promote --list   (then edit {tools_index.path(root).relative_to(root).as_posix()})")
     return 0
 
 
