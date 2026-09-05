@@ -1,11 +1,84 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1170), and every one of these is on the
+[README](README.md#whats-new-in-1180), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.18.0
+
+### It now says what it works with, in every language it speaks
+
+1.17.0 shipped twenty-three adapters and a README that still opened with "a Claude Code plugin".
+Someone who searched *does chamnan work with Cursor* would have read that sentence and concluded no.
+
+The English page gained four sections written as instructions rather than claims — **installing it
+per tool** (three routes in, and which one you get depends only on whether the tool has a session
+hook), **using it with Hermes Agent**, **using it with more than one model**, and **running it on
+each operating system**. The front page now names every model family `--model` recognises, says
+plainly that an unrecognised one still works, and answers the four questions people actually type:
+does it work with Cursor, does it work on Windows, does it work with GPT or a local model, does it
+work with Hermes.
+
+All thirty-two translated pages gained the same ground — seventeen new keys each, rendered from the
+string table rather than hand-edited, and not a digit in any of them. That rule is the translation
+set's own: every number lives in the English README, the only page rewritten each release, because a
+translated page carrying a release-specific figure is wrong within one cycle and still reads as
+current.
+
+### `llms.txt`
+
+The convention for handing a model a short structured description instead of making it parse a
+rendering meant for people. This README is over a hundred and forty thousand characters; an
+assistant reads the first few thousand and answers from those, so an absent summary is not the
+neutral outcome — it answers anyway, from whatever it happened to see.
+
+Generated from the code, never hand-written: the adapters and their targets, the model families, the
+commands and the translated pages are all read from the tree. A test fails when the generated and
+committed forms disagree, when an adapter is missing from it, or when an anchor it points at is not
+a real heading.
+
+### Hermes Agent
+
+Hermes is a self-hosted agent that also acts as a control plane for other coding agents — its own
+documentation names Codex, Claude Code, Gemini CLI and OpenCode as things it drives, so a repository
+set up for it usually means several tools reading one index.
+
+Its precedence, taken from the official docs rather than a search summary: `.hermes.md` / `HERMES.md`
+first and walking to the git root, then `AGENTS.md`, then `CLAUDE.md` and `.cursorrules`. chamnan
+already wrote three of those, so Hermes has been reading it since the adapter set shipped. What was
+missing is the file above them, and that is what the new adapter writes — sized to the cap Hermes
+documents, and refusing to overwrite one it did not write.
+
+### Two more things the index was wrong about
+
+**A bundle with no header saying it is one.** GENERATED_MARKER finds files that announce themselves;
+Webpack, Vite and esbuild emit hash-named output that announces nothing. A single-line minified
+`.js` was indexed as hand-written source, counted in the coverage denominator and offered to the
+commenter agent. Both new rules are GitHub Linguist's own, quoted from its source, and kept as
+narrow as Linguist keeps them — a long-lined Python file is a style, not a build artefact, and the
+test pins that direction because over-skipping is the more expensive mistake.
+
+**`chamnan-map <dir>` replaced the map in silence.** Replacing is the documented, useful behaviour;
+doing it without a word is not. Reproduced on a real map: three hundred and twenty files became a
+hundred and fifty-three, every other directory gone, exit zero, nothing printed. It now says how
+many described files are about to stop being described, and how to get them back.
+
+### Measured, 1.17.0 against 1.18.0
+
+| | 1.17.0 | 1.18.0 | |
+|---|---|---|---|
+| agent names it can write for | thirty-four | **thirty-five** | Hermes |
+| a repo with a hash-named minified bundle | indexed as hand-written source | **flagged as build output** | |
+| `llms.txt` for AI search | absent | **present, generated** | |
+| README mentions Hermes | no | **yes** | |
+| translated pages covering models, systems, agents and Hermes | none | **all thirty-two** | |
+| strings per translated page | eighty-three | **one hundred** | |
+| regression checks | two thousand seven hundred and ninety-one | **two thousand eight hundred and thirteen** | |
 
 ---
 

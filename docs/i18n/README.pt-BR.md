@@ -118,6 +118,29 @@ Tudo dentro de `.chamnan/`, markdown e JSON comuns. Dá para ler, editar à mão
 | **Os segredos são filtrados primeiro** | Tudo o que vai ser escrito ou injetado na sessão passa antes pelo filtro de segredos: ficam os *nomes* das variáveis, não os valores. E o limite a que esse filtro não chega está escrito ao lado do seu próprio número no README em inglês. |
 | **O que um plugin instalado lhe pode fazer** | Explicado por inteiro no README em inglês, inclusive onde o chamnan quebra a cadeia de exfiltração. |
 
+## Com o que funciona
+
+chamnan é texto e Python de biblioteca padrão. Nada no índice pertence a um fornecedor, a um editor ou a um sistema operacional específico.
+
+| | |
+|---|---|
+| **Qualquer modelo, qualquer fornecedor** | O índice é texto puro e vai como contexto. O modelo muda apenas quanto vale a pena enviar, nunca para onde cada coisa vai. Ajuste o tamanho com `--model`, `--window` ou `--profile`. Trocar de modelo não exige reinstalar nada. |
+| **macOS, Linux, Windows, WSL** | O mesmo plugin em todo lugar, só biblioteca padrão, nada a instalar. No macOS e no Linux os comandos rodam direto. No Windows o console não consegue executar um script sem extensão, então ao lado de cada comando e de cada hook fica um `.cmd` gerado; eles vêm com o plugin e a CI executa esses próprios arquivos. WSL se comporta como Linux. |
+| **Vários agentes, um índice** | O Claude Code recebe por um hook de sessão e nenhum arquivo é escrito no seu projeto. O Gemini CLI também tem um hook de sessão de verdade. Os demais agentes recebem um arquivo no caminho que aquele agente lê, e os que leem o mesmo caminho compartilham o arquivo em vez de cada um guardar uma cópia que vai se afastando. |
+| **Hermes Agent** | O Hermes também é um plano de controle que comanda outros agentes de código, então um repositório configurado para ele costuma significar várias ferramentas lendo o mesmo índice. Ele procura as instruções do projeto numa ordem fixa e usa a primeira que encontra; o chamnan escreve o arquivo que encabeça essa ordem, dimensiona pelo limite que o próprio Hermes documenta e se recusa a sobrescrever um arquivo que não tenha escrito. |
+
+## Como instalar
+
+Por qual caminho você entra depende apenas de a ferramenta ter ou não um hook de sessão.
+
+| | |
+|---|---|
+| **Claude Code** | Instale como plugin e rode o comando de bootstrap uma vez dentro de um repositório. Nada é escrito no seu código, e daí em diante toda sessão começa com o índice já no contexto. |
+| **Todo o resto, incluindo o Hermes** | Pergunte primeiro o que o chamnan detectou e depois diga para qual agente escrever. Quando a forma do repositório mudar, reconstrua o índice e escreva o arquivo de novo; um hook de Git opcional faz as duas coisas no commit. Não é preciso Claude Code: são comandos comuns e o plugin é apenas uma via de entrega, não o produto. Sem um agente indicado, ele imprime o que detectou e o comando que serviria, e deixa a decisão com você. Nunca escreve por suposição. |
+
+Os nomes dos comandos, a lista completa de agentes e o arquivo que cada um recebe estão no README em inglês, onde vive todo detalhe ligado a uma versão.
+
+
 ## Requisitos
 
 Claude Code · Python · Git · macOS, Linux ou Windows

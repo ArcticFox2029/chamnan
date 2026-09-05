@@ -13518,6 +13518,8 @@ _VENDOR_CEILINGS = {
     "antigravity":  (12_000, "antigravity.google/docs/rules-workflows/ — "
                              '"Rules files are limited to 12,000 characters each"'),
     "generic":      (32_768, "Codex truncates AGENTS.md at 32,768"),
+    "hermes":       (20_000, "hermes-agent.nousresearch.com — context_file_max_chars floors at "
+                             "20K characters, so a small-context model really does cap there"),
 }
 _adapters_dir = ROOT / "lib" / "adapters"
 check("the adapter set is present to check", _adapters_dir.is_dir())
@@ -13767,6 +13769,126 @@ finally:
     os.close(_dp_fd)
     _dp_held_lock.unlink(missing_ok=True)
 _rmtree(_dp_dir, ignore_errors=True)
+
+
+# ------------------------------------------------ build output that carries no header saying so
+# GENERATED_MARKER finds files that announce themselves. Webpack, Vite, esbuild and Next.js emit
+# hash-named bundles with no header at all, so a 161 KB single-line `main.4f2a91.min.js` was indexed
+# as source somebody wrote — counted in the coverage denominator and offered to the commenter agent
+# to write a sentence about.
+#
+# Both rules are GitHub Linguist's, quoted from lib/linguist/generated.rb, and both are deliberately
+# limited to JS and CSS as Linguist limits them. The over-skipping direction is the dangerous one
+# here: a Python file with long lines is a style, not a build artefact, and silencing the coverage
+# nudge on hand-written code is the mistake that cost coveragepy 29% of its index.
+_bo = Path(tempfile.mkdtemp(prefix="chamnan-buildoutput-"))
+try:
+    (_bo / "main.4f2a91.min.js").write_text("!function(e,t){" + "n(r,o);" * 24_000 + "}();\n",
+                                            encoding="utf-8")
+    (_bo / "app.bundle.js").write_text(
+        "\n".join(f"function f{i}() {{ return {i}; }}" for i in range(60))
+        + "\n//# sourceMappingURL=app.bundle.js.map\n", encoding="utf-8")
+    (_bo / "widget.js").write_text(
+        "// A small hand-written module.\n" + "\n".join(
+            f"export function thing{i}(a, b) {{ return a + b + {i}; }}" for i in range(40)) + "\n",
+        encoding="utf-8")
+    # Long lines in a language Linguist does not apply this to. Must stay hand-written.
+    (_bo / "wide.py").write_text(
+        '"""A module whose author likes long lines."""\n' + "\n".join(
+            f"CONSTANT_{i} = " + repr("x" * 200) for i in range(30)) + "\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_bo, capture_output=True)
+    import mapper as _bom
+    _bo_files = {f["path"]: f for f in _bom.scan(_bo)}
+    check("A MINIFIED BUNDLE WITH NO HEADER IS BUILD OUTPUT, NOT SOURCE",
+          _bo_files.get("main.4f2a91.min.js", {}).get("generated") is True)
+    check("...and so is a file whose last lines carry a sourceMappingURL",
+          _bo_files.get("app.bundle.js", {}).get("generated") is True)
+    check("...while ordinary hand-written JS is left alone",
+          _bo_files.get("widget.js", {}).get("generated") is False)
+    # The load-bearing negative. Linguist applies this to JS and CSS only, and so does chamnan:
+    # calling a long-lined Python file generated would silence the coverage nudge on real code.
+    check("...AND A LONG-LINED PYTHON FILE IS NOT CALLED GENERATED",
+          _bo_files.get("wide.py", {}).get("generated") is False)
+    check("the threshold is Linguist's 110, not a number invented here", _bom.MINIFIED_AVG_LINE == 110)
+finally:
+    _rmtree(_bo, ignore_errors=True)
+
+
+# ------------------------------- narrowing the map is a feature; doing it in silence was not
+# `chamnan-map <dir>` REPLACES the map. That is documented and useful -- the README offers it for a
+# tree bigger than you work in -- but it happened with no output at all. Reproduced on this
+# repository's real map: 320 files became 153, the other directories gone, exit 0, nothing printed.
+_nm = Path(tempfile.mkdtemp(prefix="chamnan-narrow-"))
+try:
+    for d in ("src", "docs_src"):
+        (_nm / d).mkdir()
+        for k in range(3):
+            (_nm / d / f"m{k}.py").write_text(f'"""Module {d}{k}."""\ndef f{k}(): pass\n',
+                                              encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_nm, capture_output=True)
+    _nm_map = [sys.executable, str(ROOT / "bin" / "chamnan-map")]
+    _r_full = subprocess.run(_nm_map, cwd=str(_nm), capture_output=True, text=True,
+                             encoding="utf-8", errors="replace")
+    check("a first full build says nothing about dropping anything",
+          "REPLACES" not in _r_full.stderr)
+    _r_again = subprocess.run(_nm_map, cwd=str(_nm), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+    # 🐛 A first pass counted the "Stored material" section's DIRECTORY rows as files and warned on
+    # an ordinary full rebuild. A warning that fires when nothing is wrong teaches the reader to
+    # ignore it, which is worse than not warning at all.
+    check("...AND NEITHER DOES REBUILDING THE WHOLE REPOSITORY AGAIN",
+          "REPLACES" not in _r_again.stderr)
+    _r_narrow = subprocess.run(_nm_map + ["src"], cwd=str(_nm), capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+    check("NARROWING TO ONE DIRECTORY SAYS WHAT IT IS ABOUT TO DROP",
+          "REPLACES" in _r_narrow.stderr and "3 file(s)" in _r_narrow.stderr)
+    check("...and says how to get the whole index back",
+          "with no arguments" in _r_narrow.stderr)
+    # The feature itself is unchanged: it still narrows.
+    _nm_text = (_nm / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+    check("...while still doing what it was asked to do",
+          "docs_src" not in _nm_text and "m0.py" in _nm_text)
+finally:
+    _rmtree(_nm, ignore_errors=True)
+
+
+# --------------------------------- llms.txt, and every anchor and adapter name it promises
+# `llms.txt` is what an assistant reads instead of a hundred-and-fifty-thousand-character README.
+# In practice it will read the first few thousand characters of whatever it is given and answer from
+# those, so a stale summary is not a smaller answer, it is a WRONG one delivered confidently: an
+# adapter list missing the one somebody asked about reads as "chamnan does not support that".
+#
+# So it is generated from the code, and this fails when the generated form and the committed form
+# have parted company.
+_llms = ROOT / "llms.txt"
+check("llms.txt exists", _llms.is_file())
+_lr = subprocess.run([sys.executable, str(ROOT / "tools" / "build_llms_txt.py"), "--check"],
+                     capture_output=True, text=True, cwd=str(ROOT))
+check("LLMS.TXT IS CURRENT WITH THE CODE IT DESCRIBES", _lr.returncode == 0)
+if _lr.returncode != 0:
+    print("      " + (_lr.stderr or _lr.stdout).strip()[:160])
+
+_llms_text = _llms.read_text(encoding="utf-8") if _llms.is_file() else ""
+# Every adapter it can write must appear, since the list is the question it exists to answer.
+_missing_ad = [n for n in adapters_mod.ADAPTERS if f"`{n}`:" not in _llms_text]
+check("...naming every agent it can write for", not _missing_ad)
+if _missing_ad:
+    print("      absent from llms.txt:", _missing_ad)
+
+# 🐛 A link into a page anchor that does not exist sends the reader nowhere and reads as a broken
+# project. Checked against README.md's real headings, using GitHub's own slug rule.
+_heads = set()
+for _line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines():
+    _m = re.match(r"^#{2,6}\s+(.*)$", _line)
+    if _m:
+        _t = re.sub(r"[^\w\s-]", "", _m.group(1).strip().lower().replace("`", ""))
+        _heads.add(re.sub(r"\s+", "-", _t).strip("-"))
+_used = re.findall(r"chamnan#([a-z0-9-]+)", _llms_text)
+check("...and every anchor it points at is a real heading in the README",
+      bool(_used) and all(a in _heads for a in _used))
+for _a in _used:
+    if _a not in _heads:
+        print(f"      broken anchor: #{_a}")
 
 
 # ---------------------------------------------------------------- cleanup

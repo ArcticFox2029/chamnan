@@ -118,6 +118,29 @@ Vše uvnitř `.chamnan/`, obyčejný markdown a JSON. Dá se to číst, ručně 
 | **Tajemství se filtrují jako první** | Vše, co se má zapsat nebo vložit do sezení, projde nejdřív filtrem tajemství: *názvy* proměnných zůstávají, hodnoty ne. A hranice, kam tenhle filtr nedosáhne, je popsána vedle jeho vlastního čísla v anglickém README. |
 | **Co s vámi může udělat nainstalovaný plugin** | Celé je to vysvětleno v anglickém README, včetně toho, kde chamnan přetrhne řetěz úniku. |
 
+## S čím to funguje
+
+chamnan je text a Python ze standardní knihovny. Nic v indexu nepatří jednomu dodavateli, jednomu editoru ani jednomu operačnímu systému.
+
+| | |
+|---|---|
+| **Jakýkoli model, jakýkoli dodavatel** | Index je prostý text a předává se jako kontext. Model mění jen to, kolik se vyplatí poslat, nikdy to, kam co patří. Velikost nastavíte pomocí `--model`, `--window` nebo `--profile`. Změna modelu nevyžaduje nic přeinstalovat. |
+| **macOS, Linux, Windows, WSL** | Všude tentýž plugin, jen standardní knihovna, není co instalovat. Na macOS a Linuxu se příkazy spouštějí přímo. Na Windows shell neumí spustit skript bez přípony, a tak vedle každého příkazu i háčku leží vygenerovaný `.cmd`; dodávají se s pluginem a CI spouští právě je. WSL se chová jako Linux. |
+| **Mnoho agentů, jeden index** | Claude Code jej dostává přes háček relace a do vašeho projektu se nezapisuje žádný soubor. Gemini CLI má rovněž skutečný háček relace. Ostatní agenti dostanou soubor v cestě, kterou čtou, a ti, kdo čtou tutéž cestu, sdílejí jeden soubor, místo aby si každý držel kopii, která se rozchází. |
+| **Hermes Agent** | Hermes je zároveň řídicí vrstva, která diriguje jiné kódovací agenty, takže repozitář připravený pro něj obvykle znamená několik nástrojů čtoucích tentýž index. Pokyny projektu hledá v pevném pořadí a bere první nalezený; chamnan zapisuje soubor stojící v čele toho pořadí, velikost přizpůsobuje limitu, který Hermes sám dokumentuje, a odmítá přepsat soubor, který nenapsal. |
+
+## Jak to nasadit
+
+Kterou cestou půjdete, závisí jen na tom, zda má nástroj háček relace.
+
+| | |
+|---|---|
+| **Claude Code** | Nainstalujte jako plugin a jednou spusťte úvodní příkaz uvnitř repozitáře. Do vašeho kódu se nic nezapisuje a od té chvíle každá relace začíná s indexem už v kontextu. |
+| **Všechno ostatní, včetně Hermes** | Nejdřív se zeptejte, co chamnan rozpoznal, a pak řekněte, pro kterého agenta má psát. Když se tvar repozitáře změní, sestavte index znovu a soubor zapište znovu; volitelný Git háček udělá při commitu obojí. Claude Code není potřeba: jsou to běžné příkazy a plugin je jen jedna cesta doručení, ne produkt. Bez uvedeného agenta vypíše, co rozpoznal, a příkaz, který by se hodil, a rozhodnutí nechá na vás. Nikdy nepíše podle dohadu. |
+
+Názvy příkazů, úplný seznam agentů a soubor, který každý dostane, jsou v anglickém README, kde žije každý detail vázaný na verzi.
+
+
 ## Požadavky
 
 Claude Code · Python · Git · macOS, Linux nebo Windows

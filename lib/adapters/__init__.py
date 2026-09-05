@@ -51,6 +51,7 @@ from . import qwen
 from . import replit
 from . import roo
 from . import trae
+from . import hermes
 from . import windsurf
 from . import zed
 
@@ -79,6 +80,7 @@ ADAPTERS = {
     replit.NAME: replit,
     roo.NAME: roo,
     trae.NAME: trae,
+    hermes.NAME: hermes,
     windsurf.NAME: windsurf,
     zed.NAME: zed,
 }

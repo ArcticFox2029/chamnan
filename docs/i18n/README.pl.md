@@ -118,6 +118,29 @@ Wszystko w `.chamnan/`, zwykły markdown i JSON. Da się to czytać, poprawiać 
 | **Sekrety są filtrowane najpierw** | Wszystko, co ma zostać zapisane albo wstrzyknięte do sesji, przechodzi najpierw przez filtr sekretów: *nazwy* zmiennych zostają, wartości nie. A granica, do której ten filtr nie sięga, jest opisana obok jego własnej liczby w angielskim README. |
 | **Co zainstalowana wtyczka może ci zrobić** | Opisane w całości w angielskim README, łącznie z tym, gdzie chamnan przerywa łańcuch wycieku. |
 
+## Z czym to działa
+
+chamnan to tekst i Python z biblioteki standardowej. Nic w indeksie nie należy do jednego dostawcy, jednego edytora ani jednego systemu operacyjnego.
+
+| | |
+|---|---|
+| **Dowolny model, dowolny dostawca** | Indeks to zwykły tekst przekazywany jako kontekst. Model zmienia tylko to, ile warto wysłać, nigdy zaś to, gdzie co trafia. Rozmiar ustawia się przez `--model`, `--window` lub `--profile`. Zmiana modelu nie wymaga ponownej instalacji. |
+| **macOS, Linux, Windows, WSL** | Wszędzie ta sama wtyczka, wyłącznie biblioteka standardowa, nie ma czego instalować. Na macOS i Linuksie polecenia uruchamiają się wprost. Na Windows powłoka nie potrafi uruchomić skryptu bez rozszerzenia, więc obok każdego polecenia i każdego haka leży wygenerowany `.cmd`; są dostarczane z wtyczką, a CI uruchamia właśnie je. WSL zachowuje się jak Linux. |
+| **Wiele agentów, jeden indeks** | Claude Code dostaje blok przez hak sesji i do twojego projektu nie trafia żaden plik. Gemini CLI również ma prawdziwy hak sesji. Pozostali agenci dostają plik w miejscu, które czytają, a ci, którzy czytają to samo miejsce, dzielą jeden plik, zamiast trzymać każdy własną kopię rozjeżdżającą się z resztą. |
+| **Hermes Agent** | Hermes jest zarazem warstwą sterującą, która kieruje innymi agentami kodu, więc repozytorium przygotowane pod niego zwykle oznacza kilka narzędzi czytających ten sam indeks. Szuka instrukcji projektu w ustalonej kolejności i bierze pierwszą znalezioną; chamnan zapisuje plik stojący na czele tej kolejności, dobiera rozmiar do limitu, który Hermes sam dokumentuje, i odmawia nadpisania pliku, którego nie napisał. |
+
+## Jak to uruchomić
+
+Którą drogą wejdziesz, zależy wyłącznie od tego, czy narzędzie ma hak sesji.
+
+| | |
+|---|---|
+| **Claude Code** | Zainstaluj jako wtyczkę i raz uruchom polecenie startowe wewnątrz repozytorium. Do twojego kodu nic nie jest zapisywane, a od tej pory każda sesja zaczyna się z indeksem już w kontekście. |
+| **Cała reszta, w tym Hermes** | Najpierw zapytaj, co chamnan wykrył, a potem wskaż, dla którego agenta ma pisać. Gdy zmieni się kształt repozytorium, przebuduj indeks i zapisz plik ponownie; opcjonalny hak Gita robi jedno i drugie przy zatwierdzeniu. Claude Code nie jest potrzebny: to zwykłe polecenia, a wtyczka to tylko jedna z dróg dostarczenia, nie sam produkt. Bez wskazanego agenta wypisuje, co wykrył, i polecenie, które by pasowało, zostawiając decyzję tobie. Nigdy nie pisze na domysł. |
+
+Nazwy poleceń, pełna lista agentów i plik, który każdy z nich otrzymuje, są w angielskim README, gdzie mieszkają wszystkie szczegóły związane z wersją.
+
+
 ## Wymagania
 
 Claude Code · Python · Git · macOS, Linux albo Windows
