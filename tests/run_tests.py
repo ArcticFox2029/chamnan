@@ -4191,7 +4191,7 @@ check("the walk never descends into .git", not any("/.git/" in r or r.startswith
 # pruning the union instead of the intersection changed the stored-material count on a real repo.
 check("the walk leaves build/ for each scanner's own filter to decide", "build/out.py" in rels)
 
-gits = {str(p.relative_to(walkdir).as_posix()) for p in tree.git_dirs(walkdir)}
+gits = {str(p.relative_to(walkdir).as_posix()) for p in tree.vcs_dirs(walkdir)}
 check("a nested .git is reported even though it is never entered", "inner/.git" in gits)
 
 # Paths must come back joined onto the root AS GIVEN. Callers do path.relative_to(root), which
@@ -8902,6 +8902,29 @@ finally:
     _rmtree(_ctl, ignore_errors=True)
 check("...and the characters that lay a table out are not among the ones removed",
       redact.for_a_terminal("a\tb\nc\td") == "a\tb\nc\td")
+
+# 🐛 A checkout inside a checkout is somebody else's code, and `.git` was the only marker that
+# said so — while workspace.VCS_MARKERS has treated `.git`, `.hg` and `.svn` as equals from the
+# start, so find_root calls a Mercurial or Subversion checkout a repository and the walker called
+# its internal store ordinary source. The three are asserted together rather than one at a time,
+# because a set half-covered is this repository's own recurring defect (R21 agent 5).
+_vcs_fix = Path(tempfile.mkdtemp(prefix="chamnan-vcs-"))
+try:
+    (_vcs_fix / ".git").mkdir()
+    (_vcs_fix / "mine.py").write_text("def mine():\n    return 1\n", encoding="utf-8")
+    for _marker in tree.VCS_DIRS:
+        _sub = _vcs_fix / ("nested" + _marker)
+        (_sub / _marker).mkdir(parents=True)
+        (_sub / "theirs.py").write_text("def theirs():\n    return 1\n", encoding="utf-8")
+        (_sub / _marker / "internal.py").write_text("x = 1\n", encoding="utf-8")
+    _nested = {p.name for p in mapper._nested_repo_dirs(_vcs_fix)}
+    check("EVERY VERSION-CONTROL MARKER MARKS A NESTED CHECKOUT, NOT JUST .git",
+          _nested == {"nested" + m for m in tree.VCS_DIRS})
+    _walked = {p.relative_to(_vcs_fix).as_posix() for p in tree.files(_vcs_fix)}
+    check("...and no version-control store is walked as if it were source",
+          not any("/." in f for f in _walked))
+finally:
+    _rmtree(_vcs_fix, ignore_errors=True)
 
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
