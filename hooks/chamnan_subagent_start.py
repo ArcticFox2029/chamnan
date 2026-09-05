@@ -36,6 +36,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import mdblock  # noqa: E402
 import memory  # noqa: E402
 import redact  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -87,7 +88,9 @@ def _block(root):
     if rules:
         titles = [ln.lstrip("# ").strip() for ln in rules.splitlines()
                   if ln.startswith("# ") or ln.startswith("**")]
-        shown = [t.strip("*") for t in titles if t][:4]
+        # Each title through one_line: a rule TITLE is repository text, and this is paid into every
+        # subagent. redact.scrub below strips credentials, not control characters.
+        shown = [mdblock.one_line(t.strip("*")) for t in titles if t][:4]
         if shown:
             parts.append("Rules this repository works under, in `.chamnan/memory/rules/` — "
                          "read the one that matches before assuming: "

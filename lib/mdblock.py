@@ -175,8 +175,18 @@ def demote_headings(text):
     structure. A `#` inside a fenced code block is left alone -- it is a comment in the example,
     not a heading of the entry.
     """
+    # 🐛 This made a heading inert and let everything ELSE through. It sat on the sanitiser
+    # allow-list of the structural audit -- "the multi-line sibling of as_quoted", says the docstring
+    # above -- and it did not have as_quoted's control-character table. So a rule whose heading
+    # carried an ESC/OSC terminal-title sequence and a bidi-override triple arrived in the injected
+    # block byte-for-byte, reproduced end to end through the real session-start hook, and reachable
+    # from a freshly cloned repository with no local history: session records and rules are files in
+    # git. Every line is translated through the table one_line uses, before the heading logic runs,
+    # so the two siblings finally agree on what "inert" means. Fenced lines too: a code block is
+    # still text a model reads.
     out = []
     for line, in_fence in fenced_lines(text):
+        line = line.translate(_CONTROLS)
         if in_fence or not line.startswith("#"):
             out.append(line)
         elif line.startswith("# "):
