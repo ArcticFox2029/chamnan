@@ -13910,6 +13910,44 @@ _cb_src = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
 check("...and the warning text is chosen from that flag, not hardcoded",
       "CEILING_IS_HARD" in _cb_src and "reads NONE of a file past it" in _cb_src)
 
+
+# 🐛 A dotted import of a THIRD-PARTY package invented an edge. `from stripe_orm.models import
+# Charge` fell through to the last-resort tail lookup, `models` matched the one repository file with
+# that stem, and the map asserted that a billing file depends on auth models — two files with
+# nothing to do with each other, in the section CLAUDE.md tells every session to grep BEFORE
+# changing a file (R12 agent 2). The existing guards do not reach this shape: it is multi-segment,
+# so the bare-import guard passes it, and its tail is unique, so the two-segment guard passes it.
+#
+# Both directions, because this branch is load-bearing: deleting it outright would cost click about
+# 170 of its 231 edges, and the fix has to leave a relative import untouched. Measured on two real
+# repositories before and after — chamnan 208 edges, Lumin-App 337, identical either way.
+_im = Path(tempfile.mkdtemp(prefix="chamnan-impact-"))
+try:
+    (_im / "src" / "auth").mkdir(parents=True)
+    (_im / "src" / "billing").mkdir(parents=True)
+    (_im / "src" / "auth" / "models.py").write_text('"""Auth."""\nclass User: pass\n',
+                                                    encoding="utf-8")
+    (_im / "src" / "billing" / "charge.py").write_text(
+        '"""Billing."""\nfrom stripe_orm.models import Charge\n', encoding="utf-8")
+    _im_built = impact_mod.build(_mp.scan(_im))
+    check("A THIRD-PARTY DOTTED IMPORT INVENTS NO EDGE INTO THIS REPOSITORY",
+          not _im_built.get("src/auth/models.py", {}).get("used_by"))
+    # ...while a relative import, which is what this branch exists to resolve, still does.
+    (_im / "src" / "billing" / "charge.py").write_text(
+        '"""Billing."""\nfrom ..auth.models import User\n', encoding="utf-8")
+    _im_rel = impact_mod.build(_mp.scan(_im))
+    check("...while a real relative import still produces one",
+          "src/billing/charge.py" in _im_rel.get("src/auth/models.py", {}).get("used_by", []))
+    # ...and so does a dotted import whose root package IS in the tree.
+    (_im / "src" / "__init__.py").write_text("", encoding="utf-8")
+    (_im / "src" / "billing" / "charge.py").write_text(
+        '"""Billing."""\nfrom src.auth.models import User\n', encoding="utf-8")
+    _im_abs = impact_mod.build(_mp.scan(_im))
+    check("...and so does a dotted import rooted at a package this repository really has",
+          "src/billing/charge.py" in _im_abs.get("src/auth/models.py", {}).get("used_by", []))
+finally:
+    _rmtree(_im, ignore_errors=True)
+
 # 🐛 `generic.py` writes a fresh AGENTS.md when it finds none — and on a CASE-SENSITIVE filesystem
 # `agents.md` is a different file, so the one the person maintains is left behind, unmerged and
 # unread, in silence. macOS and Windows hide this; Linux does not. Proved on a real case-sensitive
