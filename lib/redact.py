@@ -162,7 +162,14 @@ SECRET_WORDS = (
     #
     # Bounded as components like the rest, so `passphraseless` and `credible` are untouched --
     # the whole reason these are components and not substrings.
-    r"(?<![A-Za-z])(?:password|passwd|pwd|passphrase|secret|credential|cred)s?(?![A-Za-z])"
+    #
+    # `storepass` and `keypass` are Java's keytool flags and are single words, so the component
+    # boundary that protects everything else works against them: the `pass` in `storepass` is
+    # preceded by a letter and the lookbehind refuses it. Named in full instead. Measured missed:
+    # `keytool -storepass hunter2 -keypass hunter2` passed through whole — a real shape in any
+    # repository that signs an Android build or a JAR.
+    r"(?<![A-Za-z])(?:password|passwd|pwd|passphrase|secret|credential|cred|storepass|keypass)"
+    r"s?(?![A-Za-z])"
     # `token` needs a component beside it, for the same reason `key` does: a bare `token` in source
     # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
     # the identifier family this module's own docstring says was already fixed once. The credential
@@ -260,6 +267,16 @@ YAML_BLOCK_SECRET = re.compile(
 # neither refusal list, so peek opens both.
 SPACED_SECRET = re.compile(
     r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})$", re.I | re.M)
+# A command-line FLAG and its value: `-storepass hunter2`, `--password hunter2`. SPACED_SECRET
+# cannot reach these because it anchors the value at end-of-line, and that anchor is not negotiable
+# — it is what stops the weakest rule in this file from eating prose, which it has done before.
+#
+# A leading dash is the discriminator, and it is a strong one: `-storepass hunter2` is not a
+# sentence anybody writes, so this rule needs no plain-word guard the way the adjacency rules do.
+# Bounded to a value with no whitespace, and the flag must be the whole token, so `--password-file
+# creds.txt` (a PATH, not a secret) still has to be handled by the value shape rather than by luck.
+FLAG_SECRET = re.compile(
+    r"((?:^|[ \t])--?[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(?!-)([^\s]{4,})", re.I | re.M)
 PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)$", re.M)
 
 ASSIGNED_SECRET_CALL = re.compile(
@@ -484,6 +501,29 @@ def _swallow_trailing_credential_runs(text, start):
         end += gap.end() + run.end()
 
 
+def _value_is_the_key_itself(key_part, value):
+    """Whether the value is just the key's own name — a label, never a credential.
+
+    🐛 `"s_secrets": "Secrets"` in this repository's own committed translation table was redacted:
+    an explicit assignment whose key carries a secret word, which is the strongest evidence the
+    assignment rules have and normally right (`api_key = correcthorse` IS the secret). It is wrong
+    for exactly one shape, and the shape is narrow enough to name: a value that is the key spelled
+    as a word. A translation table, an enum, a form label and a column heading all look like this,
+    and nobody has ever set a password to the name of the field holding it.
+
+    Deliberately not a general softening of the assignment rules — a plain-word value there is
+    still redacted, because that is where a weak password actually lives.
+    """
+    # Stripped of quotes AND of the punctuation a value carries in real source: `"Secrets",` is
+    # what the bare rule captures, trailing comma included, and an earlier version of this checked
+    # `isalpha()` on that and answered False — the guard was written, wired into both rules, and
+    # still did nothing. Its own test caught it.
+    word = value.strip().strip("\"'").strip(",;:)]}\"' ").lower()
+    if not word or not word.isalpha():
+        return False
+    return word in re.sub(r"[^a-z]+", " ", key_part.lower()).split()
+
+
 def scrub(text):
     """Every string that leaves chamnan for a written file goes through this."""
     if not text:
@@ -533,13 +573,30 @@ def scrub(text):
             else f"{m.group(1)}  {PLACEHOLDER}\n", text)
     text = SPACED_SECRET.sub(
         lambda m: m.group(0)
+        # 🐛 The next FLAG is not this flag's value: `tool --password --verbose` means no password
+        # was given on the command line at all, and redacting `--verbose` is pure noise in exactly
+        # the output a reader is scanning for real findings. Pre-existing; found while adding the
+        # CLI-flag rule beside this one.
+        if m.group(2).startswith("-") else m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
         or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
+        else f"{m.group(1)}{PLACEHOLDER}", text)
+    text = FLAG_SECRET.sub(
+        lambda m: m.group(0) if PLACEHOLDER in m.group(2)
+        # The next FLAG is not this flag's value. `tool --password --verbose` means the password
+        # was not given on the command line at all; redacting `--verbose` would be pure noise.
+        # A lookahead in the pattern was tried first and let this through, so it is asserted here.
+        or m.group(2).startswith("-")
+        # A flag naming a FILE that holds the secret is not the secret. `--password-file creds.txt`
+        # and `-storepass:file x.txt` name a path the reader may need; redacting it hides which
+        # file to go and protect.
+        or m.group(1).rstrip().endswith("-file") or "/" in m.group(2) or m.group(2).endswith(".txt")
         else f"{m.group(1)}{PLACEHOLDER}", text)
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
     text = ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        or _value_is_the_key_itself(m.group(1), m.group(3))
         else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
     text = ASSIGNED_SECRET_CALL.sub(
@@ -555,6 +612,7 @@ def scrub(text):
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
+        or _value_is_the_key_itself(m.group(1), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
         + " " * 0, text)
     # Applied after the substitution above rather than inside it, because the amount to swallow is
