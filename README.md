@@ -654,6 +654,7 @@ rather than each getting a copy that drifts.
 | `cursor` | `.cursor/rules/chamnan.mdc` |
 | `generic` | `AGENTS.md` |
 | `goose` | `.goosehints` |
+| `hermes` | `.hermes.md` — the file Hermes Agent gives highest priority, above `AGENTS.md` |
 | `grok` | `.grok/rules/chamnan.md` |
 | `iflow` | `IFLOW.md` |
 | `junie` | `.junie/AGENTS.md` |
