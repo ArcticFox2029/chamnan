@@ -430,6 +430,32 @@ def _looks_generated(text):
     return [ln for ln in body.splitlines() if ln.startswith("## ")] == ["## chamnan"]
 
 
+def fixed_overhead(agent):
+    """Bytes an adapter adds around the block: its wrapper, plus the provenance marker.
+
+    🐛 A declared CEILING was passed straight to the block builder, and then `render()` wrapped the
+    result and `install()` appended the marker — so a block sized exactly to the ceiling was WRITTEN
+    over it, every time the ceiling actually bound. Measured: windsurf +0.96%, antigravity +0.73%,
+    generic +0.50%, codebuddy +0.22% (R12 agent 4, and worse since the marker was added).
+    
+    A fraction of a percent sounds harmless and is not: CodeBuddy REJECTS a file past its limit
+    rather than reading a prefix, so an 87-byte overshoot costs the whole index. Measured here
+    rather than assumed, because the wrapper differs per adapter and the marker is shared.
+    """
+    adapter = for_agent(agent)
+    if adapter is None or not hasattr(adapter, "render"):
+        return 0
+    try:
+        empty = adapter.render("")
+    except Exception:
+        return 0
+    # The marker is written by the SHARED writer only. An adapter with its own install() wraps the
+    # block its own way and does not get one, so counting it there would shrink the block for bytes
+    # that never arrive.
+    marker = 0 if hasattr(adapter, "install") else len(f"\n\n{MARKER}\n".encode())
+    return len(empty.encode()) + marker
+
+
 def install(root, agent, body, command=""):
     """Write `body` through `agent`'s adapter. Returns the path written, or None.
 

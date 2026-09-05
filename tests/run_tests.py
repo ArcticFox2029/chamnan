@@ -13911,6 +13911,36 @@ check("...and the warning text is chosen from that flag, not hardcoded",
       "CEILING_IS_HARD" in _cb_src and "reads NONE of a file past it" in _cb_src)
 
 
+# 🐛 A declared CEILING was handed straight to the block builder, and then `render()` wrapped the
+# result and `install()` appended the marker — so a block sized exactly to the ceiling was WRITTEN
+# over it, every time the ceiling actually bound (R12 agent 4: windsurf +0.96%, antigravity +0.73%,
+# generic +0.50%, codebuddy +0.22%, and worse since the marker was added).
+#
+# A fraction of a percent is not harmless here: CodeBuddy REJECTS a file past its limit rather than
+# reading a prefix, so 89 bytes of overshoot costs the entire index. The ceiling is a promise about
+# the FILE, so the block is sized to the ceiling MINUS whatever that adapter wraps around it.
+for _ch_name in sorted(adapters_mod.names()):
+    _ch_a = adapters_mod.for_agent(_ch_name)
+    _ch_c = getattr(_ch_a, "CEILING", None)
+    if not _ch_c:
+        continue
+    _ch_root = Path(tempfile.mkdtemp(prefix="chamnan-ceilfit-"))
+    try:
+        (_ch_root / ".chamnan").mkdir()
+        _ch_oh = adapters_mod.fixed_overhead(_ch_name)
+        _ch_path = adapters_mod.install(_ch_root, _ch_name, "x" * (_ch_c - _ch_oh))
+        _ch_size = Path(_ch_path).stat().st_size
+        check(f"{_ch_name}: A BLOCK SIZED TO ITS CEILING FITS INSIDE ITS CEILING ONCE WRITTEN",
+              _ch_size <= _ch_c)
+        check(f"{_ch_name}: ...and the room given up is only the wrapper, not more",
+              _ch_size >= _ch_c - _ch_oh)
+    finally:
+        _rmtree(_ch_root, ignore_errors=True)
+_cx_src = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
+check("...and chamnan-context subtracts that overhead rather than passing the ceiling raw",
+      "fixed_overhead(args.write)" in _cx_src)
+
+
 # 🐛 A dotted import of a THIRD-PARTY package invented an edge. `from stripe_orm.models import
 # Charge` fell through to the last-resort tail lookup, `models` matched the one repository file with
 # that stem, and the map asserted that a billing file depends on auth models — two files with

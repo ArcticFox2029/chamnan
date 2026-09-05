@@ -257,7 +257,8 @@ def main():
         emitter = adapters.for_agent(args.emit)
         declared = getattr(emitter, "CEILING", None)
         if declared and args.ceiling == NON_BINDING:
-            args.ceiling = declared
+            # --emit prints render()'s output and writes no marker, so only the wrapper counts.
+            args.ceiling = max(1, declared - len(emitter.render("").encode()))
         print(emitter.render(build(root, profile, args.ceiling)))
         return 0
 
@@ -267,7 +268,10 @@ def main():
     if args.write:
         declared = getattr(adapters.for_agent(args.write), "CEILING", None)
         if declared and args.ceiling == NON_BINDING:
-            args.ceiling = declared
+            # Minus what this adapter wraps around the block. The ceiling is a promise about the
+            # FILE, and the file is the block plus the wrapper plus the marker — sizing the block to
+            # the whole ceiling wrote over it every time the ceiling bound.
+            args.ceiling = max(1, declared - adapters.fixed_overhead(args.write))
             detected["ceiling"] = declared
 
     # Detection was inert: `host.agents()` had one consumer, `--detect`'s JSON dump, and nothing
