@@ -863,7 +863,13 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # file. os.getpid() is enough here: two threads of one process writing the same workspace
         # file is what `exclusive()` below is for, and every entry point is a separate process.
         tmp = dest.with_name(f"{dest.name}.{os.getpid()}.tmp")
-        tmp.write_text(text, encoding=encoding)
+        # newline="" because Path.write_text goes through io.TextIOWrapper, whose default
+        # translates every \n to os.linesep on write -- so on native Windows every file this
+        # writes gets CRLF, including MAP.md, which is then diffed and grepped by tools that
+        # were handed LF everywhere else. chamnan generates its own content and controls its
+        # own line endings; nothing here wants the platform's opinion.
+        with tmp.open("w", encoding=encoding, newline="") as fh:
+            fh.write(text)
         os.replace(tmp, dest)
         return True
     except Exception:

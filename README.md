@@ -1945,7 +1945,7 @@ chamnan-map --preview
 | Sessions feel expensive and you cannot see why | Nothing reported what the injection was made of | `chamnan-map --explain` prices every section and names where it came from |
 | `python3: command not found` | The hooks are launched by their `#!/usr/bin/env python3` line | `python3 -V` — 3.8 or newer, on `PATH`. There are no packages to install |
 | Hooks never fire on macOS or Linux | The hook files need their executable bit and their shebang intact | `ls -l` the four files in `hooks/`; each should be executable and start with `#!/usr/bin/env python3` |
-| Hooks never fire on Windows | Not supported — the launch path relies on a shebang and an executable bit that Windows does not honour | Use WSL |
+| Hooks never fire on Windows | `cmd.exe` cannot run an extensionless POSIX script, so each hook has a generated `.cmd` shim beside it | Check `hooks/*.cmd` exist and that `py` or `python` resolves; regenerate them with `python3 install/make_windows_shims.py`. Under WSL it is the Linux path instead |
 | `no recognised source files under …` | Nothing under that path has an extension chamnan indexes | Check you are at the repository root, not beside it |
 | The index is mostly filenames | Files have no opening comment, so there is nothing to summarise them with | `chamnan-map` names the files that are missing one. Ask Claude to add them, or write them yourself — with `"agents": false` chamnan will only ever list them |
 | The index describes files that moved or vanished | It is a snapshot, and the repo has changed since | `/chamnan:remap`, or `chamnan-map`. To stop having to remember: `chamnan-map --install-git-hook` |
