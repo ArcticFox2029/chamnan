@@ -517,6 +517,15 @@ def main(argv):
         print(__doc__.strip())
         return 0
     root = ws.find_root()
+    # 🐛 The one of nine `bin/` commands that reported on a directory with no workspace in it.
+    # `find_root` returns the directory it was given when nothing above it is a repository, so
+    # running this anywhere printed a complete inventory reading "0 entries, last write never" —
+    # which is exactly what a real workspace nobody has written to yet also prints. The reader
+    # cannot tell "you are in the wrong directory" from "your workspace is empty", and those call
+    # for opposite next steps (R21 agent 5).
+    if not ws.workspace(root).is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
