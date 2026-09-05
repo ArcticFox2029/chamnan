@@ -72,10 +72,15 @@ def _record_a_firing(root, agent_type, size, outcome="delivered"):
     """
     try:
         import mdblock as _md
-        # A firing with no workspace still happened, and is the case most worth seeing. Fall back
-        # to the workspace of wherever the process is, and give up quietly if there is none.
-        path = ws.workspace(root if root is not None else None) / FIRINGS
-        if root is None and not path.parent.parent.is_dir():
+        path = ws.workspace(root) / FIRINGS
+        # 🐛 Recording NEVER scaffolds. `find_root` falls back to the directory it was given when
+        # nothing above it is a repository, so writing unconditionally created a `.chamnan/` in
+        # whatever directory a subagent happened to start in — one turned up in $TMPDIR within an
+        # hour of this recording at every gate, and broke the suite by making the temp directory
+        # look like a workspace to every fixture created under it. A firing with nowhere of its own
+        # to write is the one outcome that stays unobservable, and littering somebody else's
+        # directory is not a fair price for seeing it.
+        if not path.parent.parent.is_dir():
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -177,8 +182,12 @@ def main():
         # parent's whole conversation.
         _record_a_firing(root, _agent_type, 0, "fork")
         return 0
-    if root is None:
-        _record_a_firing(None, _agent_type, 0, "no-workspace")
+    # `find_root` returns the directory it was given when nothing above it is a repository, so it
+    # is never None and this gate spent its first evening unreachable — asking the wrong question of
+    # a function that cannot answer it. What "no workspace" means is that the root it settled on has
+    # none, which is a thing that can actually be checked.
+    if not (root / ws.WORKSPACE_DIRNAME).is_dir():
+        _record_a_firing(root, _agent_type, 0, "no-workspace")
         return 0
     # Default-on, switchable off in .chamnan/config.json like every other section.
     if not ws.enabled("subagent_pointer", root):

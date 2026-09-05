@@ -3970,6 +3970,53 @@ check("a different plugin's marketplace entry is not mistaken for this one",
       ws.available_update(installed) == "")
 check("a plugin outside any marketplace layout reports nothing",
       ws.available_update(Path(tempfile.mkdtemp())) == "")
+
+# 🐛 A marketplace added from a local path is NEVER copied under plugins/marketplaces/, so listing
+# that directory saw nothing of it — and a path install is the one that most needs the notice,
+# because `claude plugin update` does not refresh it while the version string is unchanged. Found
+# on the machine that develops chamnan: three accounts sat 25 commits behind while this check said
+# nothing, reading a stale clone of a source that had long since moved (R20 agent 4).
+(market / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "demo", "version": "0.9.0"}), encoding="utf-8")
+elsewhere = Path(tempfile.mkdtemp()) / "checkout"
+(elsewhere / ".claude-plugin").mkdir(parents=True)
+(elsewhere / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "demo", "version": "1.3.0"}), encoding="utf-8")
+(fakeplug / "plugins" / "known_marketplaces.json").write_text(json.dumps({
+    "demo": {"source": {"source": "directory", "path": str(elsewhere)},
+             "installLocation": str(elsewhere)}}), encoding="utf-8")
+check("A MARKETPLACE REGISTERED FROM A LOCAL PATH IS READ, NOT ONLY THE CLONED ONES",
+      ws.available_update(installed) == "1.3.0")
+(elsewhere / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "demo", "version": "1.0.0"}), encoding="utf-8")
+check("...and reports nothing once that path has nothing newer either",
+      ws.available_update(installed) == "")
+(fakeplug / "plugins" / "known_marketplaces.json").write_text(
+    "{ this is not json", encoding="utf-8")
+check("...and an unreadable registry does not take the cloned marketplaces down with it",
+      ws.available_update(installed) == "")
+_rmtree(elsewhere.parent, ignore_errors=True)
+(fakeplug / "plugins" / "known_marketplaces.json").unlink()
+
+# A marketplace carrying several plugins declares each one's directory rather than putting a
+# manifest at its root, and only the root was ever looked at.
+multi = fakeplug / "plugins" / "marketplaces" / "multi"
+(multi / ".claude-plugin").mkdir(parents=True)
+(multi / ".claude-plugin" / "marketplace.json").write_text(json.dumps({
+    "name": "multi",
+    "plugins": [{"name": "other", "source": "./other"}, {"name": "demo", "source": "./demo"},
+                {"name": "escapee", "source": "../../../outside"}]}), encoding="utf-8")
+for _sub, _n, _v in (("other", "other", "9.9.9"), ("demo", "demo", "1.4.0")):
+    (multi / _sub / ".claude-plugin").mkdir(parents=True)
+    (multi / _sub / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": _n, "version": _v}), encoding="utf-8")
+(fakeplug / "outside" / ".claude-plugin").mkdir(parents=True)
+(fakeplug / "outside" / ".claude-plugin" / "plugin.json").write_text(
+    json.dumps({"name": "demo", "version": "99.0.0"}), encoding="utf-8")
+check("A PLUGIN DECLARED IN A SUBDIRECTORY OF A MARKETPLACE IS FOUND",
+      ws.available_update(installed) == "1.4.0")
+check("...and a declared source pointing outside the marketplace is not read",
+      ws.available_update(installed) != "99.0.0")
 _rmtree(fakeplug, ignore_errors=True)
 
 # A workspace remembers the newest version that has set it up, so an OLD build running against it
@@ -14151,6 +14198,20 @@ try:
                      for _l in _sf2_log.read_text(encoding="utf-8").splitlines()]
         check("A FIRING THAT DELIVERS NOTHING IS STILL RECORDED, WITH THE REASON",
               _outcomes == ["fork", "nothing-to-point-at", "delivered"])
+        # 🐛 ...and recording never SCAFFOLDS. find_root falls back to the directory it was given,
+        # so a subagent started anywhere that is not a repository had a .chamnan/ created for it —
+        # one appeared in $TMPDIR within an hour, and every test fixture made under it then
+        # resolved to the temp directory as its root.
+        _bare = Path(tempfile.mkdtemp(prefix="chamnan-nowhere-"))
+        try:
+            subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                           input=json.dumps({"cwd": str(_bare), "hook_event_name": "SubagentStart",
+                                             "agent_type": "Explore"}),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+            check("A HOOK FIRING OUTSIDE A REPOSITORY CREATES NOTHING ON DISK",
+                  list(_bare.iterdir()) == [])
+        finally:
+            _rmtree(_bare, ignore_errors=True)
     finally:
         _rmtree(_sf2, ignore_errors=True)
     check("...and the log bounds itself by record, like the others beside it",
