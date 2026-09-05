@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.17.0](#whats-new-in-1170) · [Commands](#commands)
+[What's new in 1.17.0](#whats-new-in-1180) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -451,52 +451,43 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.17.0
+## What's new in 1.18.0
 
-**Twenty-three tools, where there was one.** 1.16.0 wrote for Claude Code and nothing else. This
-release ships adapters for Cursor, Windsurf, Copilot, Kiro, Zed, Continue, Roo, Cline, Aider, Goose,
-Junie, Amazon Q, Gemini CLI, Qwen, Grok, Mistral, Trae, Replit, Augment, iFlow, CodeBuddy,
-Antigravity, and a generic `AGENTS.md` fallback — each writing at the path that tool reads, in the
-format it parses, under the size limit it publishes.
+**It now says what it works with — and says it in every language it speaks.** 1.17.0 shipped
+twenty-three adapters and a README that still opened with "a Claude Code plugin"; someone searching
+*does chamnan work with Cursor* would have read that and concluded no.
 
-Eighty-two commits, 2,791 checks, and the theme is the same uncomfortable one as last time: most of
-them are chamnan being wrong about something and finding out.
+The English page gained instructions rather than claims: how to install it for each kind of tool,
+how to use it with Hermes Agent, how to point it at a different model, and how to run it on each
+operating system. It names every model family `--model` recognises and says plainly that an
+unrecognised one still works. All thirty-two translated pages gained the same ground, rendered from
+the string table and carrying no figures — every number stays in the English page, which is the only
+one rewritten each release.
 
-### Subagents are not started blind any more
+### `llms.txt`
 
-`SubagentStart` accepts injected context, and this project had recorded the opposite as settled —
-because the documentation page that answers it was being truncated before the table, three separate
-times, once returning "likely". A subagent now gets a 958-byte pointer: where the index is, that it
-must be grepped rather than read, the rules in force, and which nested checkouts the index
-deliberately leaves out. Not the session-start block — a session here spawned fifteen subagents in
-an afternoon, and fifteen copies of that block is the bloated-CLAUDE.md mistake with extra steps.
+A short structured description for the assistants that read this page and answer from it. Generated
+from the code rather than written by hand — the adapters and their targets, the model families, the
+commands, the translated pages — with a test that fails when it and the code disagree, when an
+adapter is missing from it, or when an anchor it points at is not a real heading.
 
-### A repository is not a trusted input
+### Hermes Agent
 
-Filenames, docstrings, table names and directory names are written into Markdown a model reads as
-instructions. Four rounds had each found one instance of the same defect and fixed only that one.
-Walked as a set: **31 sites in 14 files**, including one no audit of call sites could see, because
-the fold happened in a helper and the Markdown was assembled after it. A docstring carrying an ANSI
-escape and a bidi override reached the index verbatim; it does not now, and two tests of different
-shapes guard it because neither catches what the other does.
+Hermes is a self-hosted agent that also drives other coding agents, so a repository set up for it
+usually means several tools reading one index. It reads project instructions in a fixed order and
+chamnan already wrote three of the files in it; the new adapter writes the one above them all,
+sized to the cap Hermes documents and refusing to overwrite a file it did not write.
 
-### Windows really works now, and did not before
+### Two more things the index was wrong about
 
-The Windows CI jobs are new in this release and had never passed. Three defects were behind it, all
-found by building a diagnostic lab and running it on a real Windows runner with a Linux column
-beside it: concurrent appends losing 13.8% of their lines where POSIX loses none, `os.replace`
-refused when a reader has the file open, and a lock file in Windows' delete-pending state raising
-`PermissionError` where the code expected `FileExistsError` — which made `exclusive()` report a
-one-millisecond condition as "this lock cannot be taken". All five CI jobs are green.
+A hash-named minified bundle carries no header saying it is generated, so it was indexed as
+hand-written source — counted in the coverage denominator and offered to the commenter agent to
+describe. Both new rules come from GitHub Linguist's own source and are kept as narrow as Linguist
+keeps them, because calling a long-lined Python file generated would be the more expensive mistake.
 
-### Numbers that were wrong
-
-`map_claim_check` — the tool whose whole job is checking the index is true — reported 83.6% about a
-map independently measured at 100%, and had since 2026-09-02. Nothing ran it, so nothing caught it.
-The `README` told Windows users the hooks were unsupported on one line and that Windows is tested in
-CI on another. `atomic_write_text` wrote CRLF on Windows because `write_text` asks the platform.
-A vendored `Pods/`, `Carthage/` or `third_party/` tree was indexed as this project's own source —
-five files became one on a fixture that has four of them.
+And `chamnan-map <dir>` replaced the map in silence: reproduced on a real one, three hundred and
+twenty files became a hundred and fifty-three with nothing printed and exit zero. Replacing is the
+documented behaviour and is unchanged; it now says what it is about to drop, and how to get it back.
 
 ## Bootstrap does not rewrite your code
 
