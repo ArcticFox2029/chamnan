@@ -13518,6 +13518,8 @@ _VENDOR_CEILINGS = {
     "antigravity":  (12_000, "antigravity.google/docs/rules-workflows/ — "
                              '"Rules files are limited to 12,000 characters each"'),
     "generic":      (32_768, "Codex truncates AGENTS.md at 32,768"),
+    "hermes":       (20_000, "hermes-agent.nousresearch.com — context_file_max_chars floors at "
+                             "20K characters, so a small-context model really does cap there"),
 }
 _adapters_dir = ROOT / "lib" / "adapters"
 check("the adapter set is present to check", _adapters_dir.is_dir())
