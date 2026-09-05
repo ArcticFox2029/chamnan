@@ -13,6 +13,7 @@ import time
 import contextlib
 import pathlib
 import os
+import sys
 from pathlib import Path
 
 WORKSPACE_DIRNAME = ".chamnan"
@@ -456,6 +457,34 @@ class NotAWorkspace(Exception):
 
 
 
+_ESCAPE_WARNED = set()
+
+
+def _warn_if_workspace_escapes(ws, root):
+    """Say so when `.chamnan` is a symlink whose target is outside the repository.
+
+    tree.py already refuses to follow a scanned file out of the tree; the workspace root itself was
+    the one path with no such guard, and it is the one that decides whether any of this is committed.
+    """
+    try:
+        if not ws.is_symlink():
+            return
+        target = ws.resolve()
+        base = root.resolve()
+    except OSError:
+        return
+    if target == base or base in target.parents:
+        return
+    key = str(ws)
+    if key in _ESCAPE_WARNED:
+        return
+    _ESCAPE_WARNED.add(key)
+    print(f"chamnan: {ws} is a symlink to {target}, which is outside {base}.\n"
+          f"  Everything chamnan writes — the index, memory, session records — lands there, and git\n"
+          f"  in this repository sees only the link. Nothing here is being committed with the code.",
+          file=sys.stderr)
+
+
 def ensure(root=None):
     ws = workspace(root)
     # Checked before anything is attempted. A plain file named `.chamnan` -- a bad merge, a stray
@@ -466,6 +495,16 @@ def ensure(root=None):
         raise NotAWorkspace(
             f"{ws} exists and is not a directory. chamnan's workspace has to be a folder at that "
             f"path — move or delete the file, then run this again.")
+    # 🐛 A `.chamnan` symlink pointing outside the repository is followed in silence, and everything
+    # chamnan exists to do lands somewhere git is not looking. Reproduced: the map, the memory, the
+    # session records all written to the target, while `git status` shows one untracked SYMLINK --
+    # so `git add .chamnan` commits a pointer and the content it points at is never versioned at
+    # all. The whole premise is markdown committed beside the code, so this is worth saying.
+    #
+    # Said, not refused. Someone sharing one workspace across git worktrees has a reason, and this
+    # runs on every write path -- a hard failure there would break a deliberate setup with no way to
+    # opt out. Warned once per process instead, because ensure() is called many times per run.
+    _warn_if_workspace_escapes(ws, find_root(root))
     for sub in ("", "skills", "tools", "logs", "sessions", "threads",
                 "memory", "memory/decisions", "memory/lessons", "memory/rules"):
         try:

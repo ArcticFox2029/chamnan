@@ -387,7 +387,34 @@ def main(argv):
             files.append(f)
     files.sort(key=lambda f: f["path"])
     if not files:
+        # 🐛 This early return sits BEFORE the skip-reason block further down, so the one run that
+        # most needs a reason was the one run that never printed one. Reproduced two independent
+        # ways: a repository holding a single oversized file, and one whose only source sits under
+        # a directory named `build` with no git on PATH to rescue it. Both said "no recognised
+        # source files" and stopped, while chamnan held the exact reason in a list the whole time.
+        # A person seeing this is deciding whether chamnan is broken or their repository is unusual,
+        # and that is precisely the question these four lists answer.
+        why = []
+        if mapper.SKIPPED_TOO_LARGE:
+            why.append(f"{len(mapper.SKIPPED_TOO_LARGE)} over the size limit "
+                       f"({assets_mod.human_bytes(mapper.MAX_FILE_BYTES)})")
+        if mapper.SKIPPED_BUILD_DIR:
+            why.append("under directories that look like build output: "
+                       + ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6]))
+        if mapper.SKIPPED_BINARY:
+            why.append(f"{len(mapper.SKIPPED_BINARY)} binary behind a source extension")
+        if mapper.SKIPPED_GENERATED:
+            why.append(f"{len(mapper.SKIPPED_GENERATED)} declared linguist-generated")
+        if mapper.SKIPPED_UNKNOWN_EXT:
+            _top = ", ".join(f"{ext} x{n}" for ext, n in
+                             mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
+            why.append(f"extensions chamnan does not read: {_top}")
         print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
+        for reason in why:
+            print(f"  every candidate was excluded — {reason}", file=sys.stderr)
+        if not why:
+            print("  nothing was excluded either: the tree holds no files chamnan indexes.",
+                  file=sys.stderr)
         return 1
     text = mapper.render(files, root)
     try:
