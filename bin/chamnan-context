@@ -225,8 +225,15 @@ def main():
 
     root = Path(args.root).resolve()
     if not ws.workspace(root).is_dir():
+        # 🐛 This named a Claude Code slash command and nothing else — to a reader who, by the
+        # very fact of running this command in a terminal, may not have Claude Code at all. The
+        # whole point of chamnan-context is setting up the OTHER agents, so the one error a
+        # non-Claude-Code user is most likely to hit sent them to a command they cannot run
+        # (R21 agent 3). `chamnan-map` creates the workspace and the index anywhere.
         sys.stderr.write(f"chamnan: no .chamnan/ workspace at {root}. "
-                         f"Run /chamnan:bootstrap there first.\n")
+                         f"Run `chamnan-map` there first — it creates the workspace and builds "
+                         f"the index. (Inside Claude Code, `/chamnan:bootstrap` does that and "
+                         f"records a baseline.)\n")
         return 1
 
     # --window and --profile answer the same question. Rather than silently preferring one, say so:

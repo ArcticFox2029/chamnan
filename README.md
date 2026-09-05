@@ -347,6 +347,30 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 The plugin itself is the same everywhere — standard library only, no packages, no virtualenv. What
 differs is how the commands are launched.
 
+**First, put `bin/` on your `PATH`.** Nothing does this for you, and every command below assumes it:
+without it `chamnan-map` is simply "command not found". The plugin installs under Claude Code's
+plugin cache, one directory per version:
+
+```bash
+# macOS and Linux — add to ~/.zshrc or ~/.bashrc.
+# The installed path carries the version, so this picks the newest rather than naming one.
+export PATH="$(ls -d "$HOME"/.claude/plugins/cache/chamnan/chamnan/*/bin | sort -V | tail -1):$PATH"
+```
+
+```
+:: Windows PowerShell
+$bin = (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\chamnan\chamnan\*\bin" |
+        Sort-Object Name | Select-Object -Last 1).FullName
+setx PATH "$bin;$env:PATH"
+```
+
+Or skip `PATH` entirely: clone this repository anywhere and run `bin/chamnan-map` from the
+checkout. The commands need nothing installed and work from any copy.
+
+**Inside Claude Code you do not need any of this**: the skills invoke the commands by their own
+path, so `/chamnan:bootstrap` and the rest work the moment the plugin is installed. The `PATH`
+entry is for driving chamnan from a terminal, or from an agent that is not Claude Code.
+
 **macOS and Linux.** Nothing special. `bin/` holds extensionless scripts with a
 `#!/usr/bin/env python3` line and the executable bit, so they run directly:
 

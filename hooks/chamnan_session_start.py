@@ -1228,13 +1228,20 @@ def main():
             # Said once, on the session that created the workspace. An empty scaffold is still
             # invisible: without this the teammate's experience is a folder appearing and nothing
             # explaining it.
+            # Under CHAMNAN_READ_ONLY the workspace has NOT been created — this is a preview of
+            # what a first session would receive — so the sentence that announces it says which of
+            # the two happened. A preview that claims to have done the thing it is previewing is
+            # the same untruth `--preview` was just fixed for.
+            _made = ("has just been created" if not ws.read_only()
+                     else "would be created on the first real session")
             out.append(section(
                 "chamnan is set up in this repository",
-                "`.chamnan/` has just been created — `memory/`, `sessions/`, `threads/`, `skills/`, "
+                f"`.chamnan/` {_made} — `memory/`, `sessions/`, `threads/`, `skills/`, "
                 "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
-                "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
-                "index and record a baseline; the write skills listed above work from now on, whether "
-                "or not that has been run.", "(generated)"))
+                "Nothing has been indexed yet. `chamnan-map` builds the architecture index, and "
+                "inside Claude Code `/chamnan:bootstrap` builds it and records a baseline; the write "
+                "skills listed above work from now on, whether or not that has been run.",
+                "(generated)"))
         elif not (wsdir / "MAP.md").is_file():
             # 🐛 The section above is said ONCE, on the session that created the workspace. A user
             # who was not paying attention that minute never hears it again: every session after
@@ -1245,7 +1252,8 @@ def main():
             # absent — so it stops the moment it is acted on and never nags a repository that
             # already has one.
             out.append("_There is no architecture index in this repository yet — `chamnan-map` "
-                       "builds one, or `/chamnan:bootstrap` builds it and records a baseline._\n")
+                       "builds one, and inside Claude Code `/chamnan:bootstrap` builds it and "
+                       "records a baseline._\n")
 
         if _bad_cfg:
             # 🐛 [2026-09-04] The reason used to be assumed rather than reported: one sentence about
