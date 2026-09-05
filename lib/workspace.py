@@ -830,6 +830,31 @@ LOCK_TIMEOUT = 2.0
 LOCK_STALE = 30.0
 
 
+def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
+    """`os.replace`, which is not always allowed to proceed on Windows.
+
+    🐛 On POSIX a rename over a path another process has OPEN is fine -- the reader keeps reading the
+    old inode and everyone is correct. Windows refuses it: PermissionError, errno 13, measured on a
+    Windows Server 2025 runner with an ubuntu column beside it in the same run showing "allowed".
+    So a write here could fail purely because somebody was reading the file at that instant, and
+    whatever the caller was saving was lost.
+
+    A reader holds a small file open for microseconds, so this waits rather than gives up: twelve
+    attempts over about a quarter of a second. If it still cannot land, the original exception is
+    raised -- a caller that cannot write must hear about it, not be told it succeeded.
+
+    POSIX takes the first attempt every time and pays nothing for this.
+    """
+    for n in range(attempts):
+        try:
+            os.replace(tmp, dest)
+            return
+        except PermissionError:
+            if n == attempts - 1:
+                raise
+            time.sleep(pause)
+
+
 def atomic_write_text(dest, text, encoding="utf-8"):
     """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
 
@@ -870,7 +895,7 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # own line endings; nothing here wants the platform's opinion.
         with tmp.open("w", encoding=encoding, newline="") as fh:
             fh.write(text)
-        os.replace(tmp, dest)
+        _replace_with_retry(tmp, dest)
         return True
     except Exception:
         if tmp is not None:
