@@ -7366,10 +7366,13 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
     # 🐛 Counted `subprocess.run(["git"` AND `["git", "-C"`, which both match the SAME line — every
     # call was counted twice, so the bound was never the number of call sites it was named for. One
     # pattern now, and the bound is the real count with room for a couple more before the paragraph
-    # needs revisiting.
+    # needs revisiting. Revisited 2026-09-05: the MAP.md commit stamp added three sites (one writes
+    # it, two check it) and the README's sentence went from seven purposes to nine in the same
+    # commit -- the event this check exists to force. Sites and purposes differ because several
+    # purposes use two sites; the README counts purposes, this counts sites.
     _gitcalls += _t.count('["git",')
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      3 <= _gitcalls <= 9)
+      3 <= _gitcalls <= 14)
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -13994,6 +13997,115 @@ try:
           "cannot index" in _fl_out2 and ".pl" in _fl_out2)
 finally:
     _rmtree(_fl, ignore_errors=True)
+
+
+# ----------------------------------- a module-scoped IIFE is not a function named after its const
+# 🐛 `[^)]*` let a `(` into the JS arrow rule's parameter capture, so `const I18N = (() => {...})()`
+# matched as a function I18N with the parameter list `(`, and MAP.md carried `I18N(()`, `Audio(()`
+# and `NoSleepVideo(()` -- three of 2,710 symbols, and three of three of that pattern's real
+# occurrences. Misleading rather than wrong: the name is right and the parenthesisation is garbage.
+import mapper as _iim
+_ii_src = (
+    "const I18N = (() => {\n  const t = {};\n  return { t };\n})();\n"
+    "const Audio = (function () { return {}; })();\n"
+    "const NoSleepVideo = (async () => { return 1; })();\n"
+    "export const add = (a, b) => a + b;\n"
+    "const typed = (x: number): number => x * 2;\n"
+    "let later = async (req) => req;\n"
+    "function plain(a, b) { return a + b; }\n")
+_ii = _iim.extract_regex(_ii_src, "js")
+_ii_funcs = [f for f, _ in _ii[1]]
+check("AN IIFE ASSIGNED TO A CONST IS NOT REPORTED AS A FUNCTION",
+      not any(f.startswith(("I18N(", "Audio(", "NoSleepVideo(")) for f in _ii_funcs))
+check("...in its arrow, function-expression and async forms alike",
+      not any("((" in f for f in _ii_funcs))
+# The direction that must not move: real arrows, typed arrows, async arrows, plain functions.
+check("...WHILE REAL ARROW FUNCTIONS KEEP THEIR PARAMETERS", "add(a, b)" in _ii_funcs)
+check("...including a typed arrow", any(f.startswith("typed(x") for f in _ii_funcs))
+check("...and an async arrow assigned with let", "later(req)" in _ii_funcs)
+check("...and an ordinary function declaration", "plain(a, b)" in _ii_funcs)
+
+# ------------------------------------- a slug that is a Windows device name is not a filename
+# 🐛 Both slug() functions reduce a title to `[a-z0-9-]` and use it as a filename. A thread called
+# "CON" or a candidate sequence "nul" produced `con.md` and `nul.md`, which on Windows are the console
+# and the bit bucket: the write does not fail, it goes to the device, and the record is gone. The
+# list is Microsoft's own -- CON PRN AUX NUL COM1-9 LPT1-9 and the superscript variants -- and
+# "NUL.txt and NUL.tar.gz are both equivalent to NUL", so the check is on the stem before the dot.
+import timeline as _tsl
+import candidates as _csl
+for _bad in ("CON", "nul", "Com1", "LPT9", "aux", "PRN"):
+    _got_t = _tsl.slug(_bad)
+    _got_c = _csl.slug([_bad])
+    check(f"a thread titled {_bad!r} does not become a device name ({_got_t})",
+          _got_t.startswith("_") and _got_t.lower().lstrip("_") == _bad.lower())
+    check(f"...nor does a candidate sequence {_bad!r} ({_got_c})", _got_c.startswith("_"))
+# The guard must only ever move a name chamnan chose; ordinary titles are untouched, and a name
+# that merely CONTAINS a device word is not a device.
+check("an ordinary title is untouched", _tsl.slug("Fix the auth flow") == "fix-the-auth-flow")
+check("...and 'console' or 'conversation' are not CON", _tsl.slug("console") == "console"
+      and _csl.slug(["conversation"]) == "conversation")
+check("the stem is what is checked, so nul-ish dotted forms are caught",
+      _iim and __import__("mdblock").filename_safe("nul.tar") == "_nul.tar")
+
+# ------------------------ a `git checkout` no longer makes a current index report itself stale
+# 🐛 The staleness check compared MAP.md's mtime to the newest source file's. git writes checked-out
+# files in tree order, so on a branch whose MAP.md was committed in the same commit as the code it
+# describes, the map landed milliseconds before `src/` did -- 5 of 5 trials in R2 agent 5's repro --
+# and every session on that checkout said "1 minute behind" until somebody rebuilt by hand. The
+# commit hash is the fact the clock was standing in for, so chamnan-map writes it into the header
+# and the check reads it first. Everything unconfirmable falls back to the clock, as before.
+_gc = Path(tempfile.mkdtemp(prefix="chamnan-checkout-"))
+try:
+    _g = ["git", "-C", str(_gc), "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", str(_gc)], capture_output=True)
+    (_gc / "src").mkdir()
+    (_gc / "src" / "app.py").write_text('"""The app."""\ndef main(): pass\n', encoding="utf-8")
+    (_gc / "lib").mkdir()
+    (_gc / "lib" / "util.py").write_text('"""Utilities."""\ndef u(): pass\n', encoding="utf-8")
+    subprocess.run(_g + ["add", "."], capture_output=True)
+    subprocess.run(_g + ["commit", "-qm", "code"], capture_output=True)
+    # Build the map ON this commit, then commit it alongside -- the shape of a repo that keeps its
+    # map in version control, which is the shape the false warning bit.
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_gc),
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _gc_map = _gc / ".chamnan" / "MAP.md"
+    _gc_head = _gc_map.read_text(encoding="utf-8")[:400]
+    check("CHAMNAN-MAP STAMPS THE MAP WITH THE COMMIT IT WAS BUILT FROM", "Built from " in _gc_head)
+    subprocess.run(_g + ["add", "-A"], capture_output=True)
+    subprocess.run(_g + ["commit", "-qm", "map"], capture_output=True)
+    # The repro: switch away, wait so mtimes can differ, switch back. git rewrites the working
+    # tree in tree order; MAP.md (root, uppercase) lands before src/ and lib/.
+    subprocess.run(_g + ["checkout", "-q", "-b", "other"], capture_output=True)
+    (_gc / "other.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(_g + ["add", "-A"], capture_output=True)
+    subprocess.run(_g + ["commit", "-qm", "other"], capture_output=True)
+    subprocess.run(_g + ["checkout", "-q", "-"], capture_output=True)
+    # Force the ordering the bug depends on rather than hoping the filesystem reproduces it: make
+    # every source file newer than the map, which is what tree-order checkout does in practice.
+    import time as _gt
+    _now = _gt.time()
+    os.utime(_gc_map, (_now - 5, _now - 5))
+    for _f in (_gc / "src" / "app.py", _gc / "lib" / "util.py"):
+        os.utime(_f, (_now, _now))
+    _gc_behind, _gc_files = _sshook.index_is_behind(_gc, _gc_map)
+    check("A CURRENT MAP IS NOT CALLED STALE BECAUSE A CHECKOUT REORDERED MTIMES",
+          _gc_behind == 0 and _gc_files == [])
+    # The clock path is still live for a real edit: the tree is dirty, so the stamp is not trusted.
+    (_gc / "src" / "app.py").write_text('"""The app, edited."""\ndef main(): pass\n',
+                                         encoding="utf-8")
+    _gc_behind2, _gc_files2 = _sshook.index_is_behind(_gc, _gc_map)
+    check("...while a REAL edit is still reported, because the tree is no longer clean",
+          _gc_behind2 > 0 and "src/app.py" in _gc_files2)
+    subprocess.run(_g + ["checkout", "-q", "--", "src/app.py"], capture_output=True)
+    # No stamp -> the clock decides, exactly as before this change.
+    _gc_map.write_text(_gc_map.read_text(encoding="utf-8").replace(
+        _gc_head.split("Built from")[1].split(".")[0], "").replace("Built from .", ""),
+        encoding="utf-8")
+    os.utime(_gc_map, (_now - 5, _now - 5))
+    _gc_behind3, _ = _sshook.index_is_behind(_gc, _gc_map)
+    check("...and a map with no stamp falls back to the clock, as it always did", _gc_behind3 > 0)
+finally:
+    _rmtree(_gc, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup

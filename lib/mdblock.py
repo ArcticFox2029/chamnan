@@ -212,3 +212,24 @@ def masked(text):
         out.append(" " * len(line) if in_fence else line)
     tail = "\n" if text.endswith("\n") else ""
     return "\n".join(out) + tail
+
+# Microsoft's list, from "Naming Files, Paths, and Namespaces" (learn.microsoft.com), fetched
+# 2026-09-05: CON, PRN, AUX, NUL, COM1-COM9, LPT1-LPT9, plus the superscript variants COM¹ COM² COM³
+# LPT¹ LPT² LPT³ -- and "avoid these names followed immediately by an extension; NUL.txt and
+# NUL.tar.gz are both equivalent to NUL." So the check is on the stem before the first dot, and it
+# is case-insensitive because Windows is.
+_WINDOWS_RESERVED = frozenset(
+    ["con", "prn", "aux", "nul"]
+    + [f"com{i}" for i in "123456789¹²³"] + [f"lpt{i}" for i in "123456789¹²³"])
+
+
+def filename_safe(stem):
+    """`stem`, or `_stem` when Windows would treat it as a device rather than a file.
+
+    🐛 Both slug() functions in this codebase reduce a title to `[a-z0-9-]` and use it as a filename.
+    A thread called "CON" or a candidate sequence "nul" therefore produced `con.md` and `nul.md`,
+    which on Windows are the console and the bit-bucket: the write does not fail, it goes to the
+    device, and the record is gone. Applied to the stem chamnan chose, never to a name it was given,
+    so nothing a user typed is altered -- only where chamnan puts its own file.
+    """
+    return f"_{stem}" if stem.split(".", 1)[0].lower() in _WINDOWS_RESERVED else stem

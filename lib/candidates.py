@@ -46,7 +46,7 @@ def directory(root):
 def slug(sequence):
     joined = "-".join(sequence)
     s = re.sub(r"[^a-zA-Z0-9]+", "-", joined.strip().lower()).strip("-")
-    return (s[:60].rstrip("-") or "candidate")
+    return mdblock.filename_safe(s[:60].rstrip("-") or "candidate")
 
 
 def filename(sequence):
