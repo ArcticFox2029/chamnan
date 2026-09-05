@@ -188,7 +188,7 @@ def cmd_promote(root, ident, destination=None, name=None):
             "origin": f"candidate:{p.stem}",
         })
         p.unlink()
-        rel = dest.relative_to(root)
+        rel = dest.relative_to(root).as_posix()
         print(f"chamnan: skeleton installed -> {rel}")
         print(f"  it will exit non-zero until you replace the TODO lines with real commands")
         print(f"  the candidate is removed — its finding now lives in {rel}")

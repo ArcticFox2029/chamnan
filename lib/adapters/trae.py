@@ -1,7 +1,11 @@
 """Trae (ByteDance) — `.trae/rules/project_rules.md`.
 
-Trae reads `project_rules.md` from `.trae/rules/` at the project root, and from nested `.trae/rules/`
-directories up to three levels deep for subdirectory scope. Its frontmatter keys are `alwaysApply`,
+Trae reads EVERY `.md` under `.trae/rules/`, not one reserved name: its own documentation walks a
+user through creating `ci-rules.md`, `general-rules.md` and others, and the scan is recursive to
+three levels for subdirectory scope. So `project_rules.md` is chamnan's choice of filename, which is
+the right call — a name of its own cannot collide with a rule file the repository already had — and
+an earlier version of this docstring, which said Trae "reads one specific name", was wrong about the
+vendor rather than about the code (R7/R8 agent 1, checked against docs.trae.ai). Its frontmatter keys are `alwaysApply`,
 `globs` and `description` -- the same three Cursor uses, which is not a coincidence and is not a
 reason to share code with it either.
 

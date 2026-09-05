@@ -11297,11 +11297,16 @@ check("a fork's renamed file is what gets written, not its parent's",
 for _renamed, _file in (("iflow", "IFLOW.md"), ("codebuddy", "CODEBUDDY.md")):
     check(f"{_renamed} writes its own renamed file", adapters_mod.for_agent(_renamed).TARGET == _file)
 
-# Mistral's Vibe CLI reads AGENTS.md from inside .vibe/, not the root. A repository set up for the
-# eight root-AGENTS.md agents gives it nothing, which is why it is a module and not a ninth alias.
-check("mistral reads AGENTS.md from its own directory, not the root",
-      adapters_mod.for_agent("mistral").TARGET == ".vibe/AGENTS.md"
-      and adapters_mod.for_agent("mistral") is not adapters_mod.for_agent("generic"))
+# 🐛 This asserted the opposite until 2026-09-05, and the assertion was the bug: the module was
+# written on the reading that Vibe wants AGENTS.md inside `.vibe/`, and everything chamnan wrote for
+# Vibe was therefore read by nothing. Settled against the vendor's own source (mistralai/mistral-vibe
+# `main` at 6c79ef0): `_DEFAULT_VIBE_HOME = Path.home() / ".vibe"`, so `.vibe/` is the USER'S HOME;
+# the project tier reads a bare `AGENTS.md` at the repository root and upward. A test can encode a
+# wrong belief as firmly as code can, and this one held it for as long as the code did.
+check("mistral writes the root AGENTS.md, which is what Vibe's project tier reads",
+      adapters_mod.for_agent("mistral").TARGET == "AGENTS.md")
+check("...and sharing that target with the other AGENTS.md agents is the correct answer, not a clash",
+      adapters_mod.for_agent("generic").TARGET == "AGENTS.md")
 
 # Three vendor harnesses DO read the root file, verified one by one -- including Meta's Muse Code,
 # where several secondary sources claim a proprietary MUSE_CODE.md and Meta's own docs do not.
@@ -11804,6 +11809,95 @@ for _path, _src in _runtime_sources():
 check("A RELATIVE PATH RENDERED AS TEXT IS POSIX-SHAPED", not _unposixed)
 for _u in _unposixed[:6]:
     print("     ", _u)
+
+# 🐛 The check above reads the bytes that FOLLOW the relative_to() call, so it only ever sees a
+# site where the call and the render are the same expression. `rel = dest.relative_to(root)` on one
+# line and `f"... {rel}"` on the next is invisible to it -- the binding line contains no print(,
+# f", str( or .join(, so it is not even a candidate. Nine such sites existed (R18 agent 4), and one
+# of them was not cosmetic: lib/assets.py compared `str(rel)` against mapper's POSIX-keyed
+# source_paths, so on Windows every indexed file missed the test and the whole source tree was
+# reported a second time as stored payload.
+#
+# This is the same shape as the _clip blind spot and the demote_headings allow-list before it: a
+# guard that only looks where it expects the problem. It walks the AST instead -- bind, then render.
+_assign_then_render = []
+for _path, _src in _runtime_sources():
+    try:
+        _tree = ast.parse(_src)
+    except SyntaxError:
+        continue
+    _tainted = {}
+    for _node in ast.walk(_tree):
+        if (isinstance(_node, ast.Assign) and len(_node.targets) == 1
+                and isinstance(_node.targets[0], ast.Name)
+                and isinstance(_node.value, ast.Call)
+                and isinstance(_node.value.func, ast.Attribute)
+                and _node.value.func.attr == "relative_to"):
+            _tainted[_node.targets[0].id] = _node.lineno
+    if not _tainted:
+        continue
+    for _node in ast.walk(_tree):
+        _rendered = None
+        if isinstance(_node, ast.FormattedValue) and isinstance(_node.value, ast.Name):
+            _rendered = _node.value.id
+        elif (isinstance(_node, ast.Call) and isinstance(_node.func, ast.Name)
+              and _node.func.id == "str" and _node.args
+              and isinstance(_node.args[0], ast.Name)):
+            _rendered = _node.args[0].id
+        if _rendered in _tainted:
+            _assign_then_render.append(
+                f"{_path.name}:{_tainted[_rendered]} binds `{_rendered}` from relative_to(), "
+                f"rendered as text at line {_node.lineno}")
+check("...INCLUDING WHEN THE BINDING AND THE RENDER ARE ON DIFFERENT LINES",
+      not _assign_then_render)
+for _u in sorted(set(_assign_then_render))[:6]:
+    print("     ", _u)
+
+
+# `ws.exclusive` YIELDS whether the lock was taken; it does not raise. A caller that ignores the
+# value runs its critical section unlocked and cannot know it did. R43 raised this as a hypothesis
+# about tools_index.remove/record_call and never reproduced it -- and it is not true of them: all
+# three of their sites bind `held` and branch on it. Auditing by hand found exactly one caller that
+# discards the value, and that one is deliberate and says so in six lines of comment above itself.
+#
+# Pinned rather than re-audited. The exemption is by NAME, so a second unlocked caller is a failure
+# here instead of a paragraph in a report nobody re-checks.
+_LOCK_PROCEEDS_UNHELD = {("state.py", "age_out")}   # an ages file is a staleness hint, not data
+_unchecked_locks = []
+for _path, _src in _runtime_sources():
+    try:
+        _tree = ast.parse(_src)
+    except SyntaxError:
+        continue
+    _fn_at = {}
+    for _node in ast.walk(_tree):
+        if isinstance(_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for _sub in ast.walk(_node):
+                _fn_at[id(_sub)] = _node.name
+    for _node in ast.walk(_tree):
+        if not isinstance(_node, ast.With):
+            continue
+        for _lockitem in _node.items:
+            _lockctx = _lockitem.context_expr
+            if not (isinstance(_lockctx, ast.Call) and isinstance(_lockctx.func, ast.Attribute)
+                    and _lockctx.func.attr == "exclusive"):
+                continue
+            _owner = _fn_at.get(id(_node), "<module>")
+            if (_path.name, _owner) in _LOCK_PROCEEDS_UNHELD:
+                continue
+            _lockvar = _lockitem.optional_vars
+            _name = _lockvar.id if isinstance(_lockvar, ast.Name) else None
+            _used = _name is not None and any(
+                isinstance(_x, ast.Name) and _x.id == _name
+                for _stmt in _node.body for _x in ast.walk(_stmt))
+            if not _used:
+                _unchecked_locks.append(f"{_path.name}:{_node.lineno} in {_owner}()")
+check("EVERY ws.exclusive CALLER ACTS ON WHETHER IT ACTUALLY GOT THE LOCK",
+      not _unchecked_locks)
+for _u in _unchecked_locks[:6]:
+    print("     ", _u)
+check("...and the one documented exception still exists, so the exemption is not stale",
+      "def age_out" in (ROOT / "lib" / "state.py").read_text(encoding="utf-8"))
 
 # --- INVARIANT 9: a shim is never mistaken for a command -------------------------------------
 # 🐛 `chamnan-report`'s Usage table listed `chamnan-map` and `chamnan-map.cmd` as two commands
@@ -13385,6 +13479,9 @@ try:
     (_hr / f"big{_EVIL}.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000),
                                         encoding="utf-8")
     (_hr / f"odd{_EVIL}.qqzz").write_text("x\n", encoding="utf-8")
+    # No opening comment, so chamnan-map's advice list names it — the sibling print site the
+    # oversized fixture above never reaches, because that one routes to the size line instead.
+    (_hr / "src" / f"nodoc{_EVIL}.py").write_text("def q():\n    return 2\n", encoding="utf-8")
 
     _hw = _hr / ".chamnan"
     for _sub in ("skills", "memory/rules", "memory/decisions", "sessions", "logs"):
@@ -13410,8 +13507,25 @@ try:
                            input=(json.dumps(stdin_payload) if stdin_payload is not None else None))
         return r.stdout + r.stderr
 
+    # 🐛 The first version of this list held four readers, and R8 agent 2 found three leaks in the
+    # ones it did not run — plus one in bin/chamnan-map that it DID run, because the oversized
+    # fixture routed to the size line and never reached the missing-comment advice list beside it.
+    # A sweep is only as wide as its list, so the list is the thing to keep honest: every command in
+    # bin/ that prints repository-derived text, and every hook that emits any.
     _readers = [
         ("chamnan-map", [sys.executable, str(ROOT / "bin" / "chamnan-map")], None),
+        ("chamnan-impact", [sys.executable, str(ROOT / "bin" / "chamnan-impact"), "src/main.py"], None),
+        ("chamnan-report", [sys.executable, str(ROOT / "bin" / "chamnan-report")], None),
+        ("chamnan-timeline", [sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "list"], None),
+        ("chamnan-candidates", [sys.executable, str(ROOT / "bin" / "chamnan-candidates")], None),
+        ("file pointer", [sys.executable, str(ROOT / "hooks" / "chamnan_file_pointer.py")],
+         {"cwd": str(_hr), "hook_event_name": "PreToolUse", "tool_name": "Read",
+          "tool_input": {"file_path": "src/main.py"}}),
+        ("session end", [sys.executable, str(ROOT / "hooks" / "chamnan_session_end.py")],
+         {"cwd": str(_hr), "hook_event_name": "SessionEnd"}),
+        ("scratch watch", [sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
+         {"cwd": str(_hr), "hook_event_name": "PostToolUse", "tool_name": "Write",
+          "tool_input": {"file_path": "s.py", "content": "x = 1\n"}}),
         ("session start", [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
          {"cwd": str(_hr), "hook_event_name": "SessionStart", "source": "startup"}),
         ("subagent start", [sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],

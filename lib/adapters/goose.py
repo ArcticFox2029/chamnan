@@ -1,7 +1,12 @@
-"""Goose (Block) — `.goosehints`.
+"""Goose — `.goosehints`.
 
 Plain text, no frontmatter, read from the project directory and up the git hierarchy, with
-`~/.config/goose/.goosehints` as the global one. The format supports `@file` references, which
+`~/.config/goose/.goosehints` as the global one. Goose reads a root `AGENTS.md` by default as well
+(R8 agent 1), so a repository that has run `--write generic` was already reaching it; `.goosehints`
+is the file Goose's own convention names, and it is what this adapter is for.
+
+Not "(Block)" any more: the project moved to the Linux Foundation's AAIF. Attribution in a docstring
+goes stale silently, which is why the sentence above names the FILE and not the vendor. The format supports `@file` references, which
 chamnan does not use: the block is already the content, and a reference would make Goose read a
 file that says the same thing one indirection away.
 

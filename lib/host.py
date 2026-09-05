@@ -118,7 +118,10 @@ _AGENTS = {
     "qwen": {"env": (), "repo": ("QWEN.md",), "home": ()},
     "iflow": {"env": (), "repo": ("IFLOW.md",), "home": ()},
     "codebuddy": {"env": (), "repo": ("CODEBUDDY.md",), "home": ()},
-    "mistral": {"env": (), "repo": (".vibe/",), "home": ()},
+    # No `mistral` row, and its old one was wrong twice over: `.vibe/` is Vibe's HOME directory
+    # (`_DEFAULT_VIBE_HOME = Path.home()/".vibe"` in the vendor's source), so a `.vibe/` inside a
+    # repository marks nothing -- and Vibe reads the root AGENTS.md, which makes `mistral` an alias
+    # of `generic` and detected the way every other AGENTS.md reader is: by that file.
     "aider": {"env": (), "repo": (".aider.conf.yml", "CONVENTIONS.md"), "home": ()},
     "generic": {
         # `AGENTS.md` is the cross-tool convention several agents now read, and it is what an agent
@@ -136,7 +139,7 @@ _AGENTS = {
 # by this order.
 ORDER = ("claude", "cursor", "gemini", "kiro", "windsurf", "roo", "cline", "continue", "copilot",
          "amazonq", "augment", "trae", "junie", "goose", "grok", "antigravity", "zed", "replit",
-         "qwen", "iflow", "codebuddy", "mistral", "aider", "hermes", "generic")
+         "qwen", "iflow", "codebuddy", "aider", "hermes", "generic")
 
 
 def _marker_present(base, marker):

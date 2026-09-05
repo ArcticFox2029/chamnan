@@ -83,7 +83,7 @@ def cmd_show(root, ident):
 
 def cmd_new(root, title):
     path, is_new = timeline.create(root, title, _today())
-    rel = path.relative_to(root)
+    rel = path.relative_to(root).as_posix()
     if not is_new:
         print(f"chamnan: that thread already exists — {rel}")
         print(f"  add to it with `chamnan-timeline add {path.stem} \"<what happened>\"`")
