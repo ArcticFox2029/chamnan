@@ -21,6 +21,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import impact as impact_mod  # noqa: E402
+import mdblock  # noqa: E402
 import timeline  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
@@ -66,7 +67,8 @@ def main(argv):
         try:
             target = _t.resolve().relative_to(pathlib.Path(root).resolve()).as_posix()
         except (OSError, ValueError):
-            print(f"chamnan: {argv[0]} is outside this repository", file=sys.stderr)
+            print(f"chamnan: {mdblock.as_quoted(argv[0], 100)} is outside this repository",
+                  file=sys.stderr)
             return 1
     # Existence changes only the WORDING of the all-clear below, never whether the question is
     # answered: a file that was deleted can still have a history worth reading, and the suite pins
@@ -94,7 +96,7 @@ def main(argv):
     history = timeline.for_path(root, target) if ws.enabled("timeline", root) else []
 
     if resolved is None and not history:
-        print(f"chamnan: nothing recorded for {target}")
+        print(f"chamnan: nothing recorded for {mdblock.as_quoted(target, 100)}")
         if map_path.is_file():
             print(f"  no incoming references in the index ({_index_age(map_path)}), and no thread "
                   f"entry names it")
@@ -109,15 +111,18 @@ def main(argv):
                       f"all-clear — check the path")
         return 0
 
-    print(f"chamnan-impact — {resolved or target}\n")
+    # Every name below comes out of the index, which is built from the repository. This is a
+    # terminal, and an agent's Bash output becomes transcript. `print = redact.emit` guards
+    # credentials, not control characters -- which read as guarded until it was tested.
+    print(f"chamnan-impact — {mdblock.as_quoted(resolved or target, 100)}\n")
 
     if edges:
         if edges["used_by"]:
-            shown = ", ".join(edges["used_by"])
+            shown = ", ".join(mdblock.as_quoted(_e, 80) for _e in edges["used_by"])
             more = f" (+{edges['used_by_more']} more)" if edges["used_by_more"] else ""
             print(f"  used by   {shown}{more}")
         if edges["tests"]:
-            shown = ", ".join(edges["tests"])
+            shown = ", ".join(mdblock.as_quoted(_e, 80) for _e in edges["tests"])
             more = f" (+{edges['tests_more']} more)" if edges["tests_more"] else ""
             print(f"  tested by {shown}{more}")
         elif edges["used_by"]:

@@ -130,16 +130,21 @@ def scan(root, source_paths, ext_lang):
         try:
             if not path.is_file() or path.is_symlink():
                 continue
-            rel = path.relative_to(root)
+            # 🐛 as_posix(), and here it decides BEHAVIOUR rather than appearance: `str(rel)` is
+            # `src\\main.py` on Windows while `source_paths` holds mapper's POSIX `src/main.py`, so
+            # the membership test below missed every indexed file and reported the whole source tree
+            # a second time as stored payload. The same-line POSIX check could not see it -- the
+            # binding and the use are on different lines.
+            rel = path.relative_to(root).as_posix()
         except (OSError, ValueError):
             continue
-        if any(p in _skip_dirs() or p.startswith(".") for p in rel.parts[:-1]):
+        if any(p in _skip_dirs() or p.startswith(".") for p in rel.split("/")[:-1]):
             continue
-        if str(rel) in source_paths or path.suffix.lower() in ext_lang:
+        if rel in source_paths or path.suffix.lower() in ext_lang:
             continue
         if path.suffix.lower() in BUILD_MANIFESTS or path.name.lower() in BUILD_NAMES:
             continue
-        top = rel.parts[0] if len(rel.parts) > 1 else "(root)"
+        top = rel.split("/")[0] if "/" in rel else "(root)"
         try:
             size = path.stat().st_size
         except OSError:

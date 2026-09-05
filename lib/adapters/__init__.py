@@ -46,7 +46,6 @@ from . import generic
 from . import iflow
 from . import junie
 from . import kiro
-from . import mistral
 from . import qwen
 from . import replit
 from . import roo
@@ -75,7 +74,6 @@ ADAPTERS = {
     iflow.NAME: iflow,
     junie.NAME: junie,
     kiro.NAME: kiro,
-    mistral.NAME: mistral,
     qwen.NAME: qwen,
     replit.NAME: replit,
     roo.NAME: roo,
@@ -112,6 +110,17 @@ ALIASES = {
     "deepseek": generic.NAME,
     "kimi": generic.NAME,
     "muse": generic.NAME,
+
+    # 🐛 Mistral Vibe was a MODULE writing `.vibe/AGENTS.md`, on the reading that Vibe wants its
+    # AGENTS.md inside `.vibe/` rather than at the root. Everything chamnan wrote for Vibe was
+    # therefore read by nothing, and the suite asserted the wrong target as firmly as the code did.
+    # Settled against the vendor's own source rather than its README (mistralai/mistral-vibe, `main`
+    # at 6c79ef0, 2026-09-05): `vibe/utils/paths.py` sets `_DEFAULT_VIBE_HOME = Path.home()/".vibe"`,
+    # so `.vibe/` is the USER'S HOME; `_harness_manager.py`'s project tier reads a bare `AGENTS.md`
+    # at the repository root and upward, and its user tier reads `~/.vibe/AGENTS.md`. Neither reads
+    # a `.vibe/AGENTS.md` inside a checkout. An alias and not a module, for the reason every name
+    # above is: two modules writing one path would give that path two owners.
+    "mistral": generic.NAME,
 }
 
 
@@ -367,6 +376,21 @@ def _exists_at(target):
         return False
 
 
+def _looks_generated(text):
+    """Whether `text` is chamnan's own previous output, judged by shape rather than by a word.
+
+    Deliberately strict: the first line that is not YAML frontmatter has to BE chamnan's heading.
+    Anything else -- including a file that merely mentions chamnan -- is somebody's own work.
+    """
+    body = text.lstrip("\ufeff").lstrip()
+    if body.startswith("---"):
+        end = body.find("\n---", 3)
+        if end < 0:
+            return False
+        body = body[end + 4:].lstrip()
+    return body.startswith("## chamnan")
+
+
 def install(root, agent, body, command=""):
     """Write `body` through `agent`'s adapter. Returns the path written, or None.
 
@@ -402,11 +426,17 @@ def install(root, agent, body, command=""):
         # goes through, never did -- a guard on some members of a set. It lives here now, so an
         # adapter gets it by not defining install() rather than by remembering to.
         #
-        # Recognition is "chamnan" within the first 400 characters: every shared-writer adapter's
-        # render() names chamnan by offset 119 at the latest (pinned in the suite), and a file that
-        # names chamnan in its opening lines and is not ours is the one edge case worth accepting.
+        # 🐛 Recognition was "the word chamnan appears in the first 400 characters", and R8 agent 2
+        # defeated it with one line of ordinary prose -- `# We also use chamnan for the index.` in a
+        # hand-written file was enough to have that file destroyed, which is the exact outcome this
+        # guard exists to prevent. A file that MENTIONS a tool is not a file that tool wrote.
+        #
+        # Structure instead, and no marker: every shared-writer adapter's render() emits either
+        # `## chamnan` as its first line or a `---` frontmatter block whose body then opens with it.
+        # A hand-written file has to literally begin that way to be replaced, at which point it is
+        # chamnan's own output. Nothing needs migrating, and no format gains a byte it cannot parse.
         existing = read_target(target)
-        if existing is not None and "chamnan" not in existing[:400]:
+        if existing is not None and not _looks_generated(existing):
             raise ValueError(
                 f"{target.path} exists and was not written by chamnan, so it is not replaced. "
                 f"Move it aside -- or fold what it says into `.chamnan/memory/rules/`, where every "

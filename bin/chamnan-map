@@ -495,7 +495,7 @@ def main(argv):
     here = Path.cwd().resolve()
     if root.resolve() != here:
         try:
-            where = here.relative_to(root)
+            where = here.relative_to(root).as_posix()
             print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
         except ValueError:
             print(f"chamnan: scanning {root}")
@@ -668,8 +668,10 @@ def main(argv):
                    and not str(f["path"]).startswith(".chamnan/")][:8]
         print(f"\n  {total-have} file(s) have no opening comment, so the index cannot say what they do.")
         print(f"  That is the single biggest lever on this map's usefulness. Missing, for example:")
+        # The second unguarded print site in this file: the sweep's oversized fixture routes to
+        # the size line instead, so this one was never exercised. Same names, same terminal.
         for m in missing:
-            print(f"    - {m}")
+            print(f"    - {mdblock.as_quoted(m, 80)}")
         if ws.enabled("agents", root):
             print(f"  Ask Claude: \"add a one-line opening comment to the files chamnan listed\"")
             print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")

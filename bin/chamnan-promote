@@ -208,7 +208,7 @@ def main(argv):
         print("  nothing was left behind -- fix the underlying issue (often the index file's "
               "permissions) and run this again.", file=sys.stderr)
         return 1
-    rel = dest.relative_to(root)
+    rel = dest.relative_to(root).as_posix()
     print(f"chamnan: promoted -> {rel}")
     # Only claim direct execution when the file can actually be executed directly. A promoted file
     # with no shebang and no known suffix is still useful; it is just not a command.

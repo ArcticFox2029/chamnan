@@ -6,6 +6,7 @@ separate estimate in the reporting path was wrong by 2.4x the first time it was 
 to look plausible, far enough to make the decision on bad numbers. One implementation, called twice.
 """
 import json
+import mdblock
 import os
 import subprocess
 
@@ -380,7 +381,12 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         # "+N more" is only meaningful next to names it is more THAN. With none shown the count
         # already says how many there are, and repeating it as "(12) +12 more" reads as a bug.
         more = f" _+{hidden} more_" if hidden and picked else ""
-        folded.append(f"- **{top}/** ({len(names)})" + (f" — {shown}{more}" if shown else ""))
+        # 🐛 as_quoted, not one_line: `one_line` folds newlines and strips control characters
+        # but leaves BACKTICKS, and this line wraps nothing in a code span itself -- a
+        # directory named ``code`` closed the span the caller opens and rendered as chamnan
+        # speaking. Verified end to end, chamnan-map -> MAP.md -> the injected block.
+        folded.append(f"- **{mdblock.as_quoted(top, 80)}/** ({len(names)})"
+                      + (f" — {shown}{more}" if shown else ""))
     out = "\n".join(head + folded + tail)
     return _enforce(out, map_rel, budget) if budget else out
 
