@@ -344,6 +344,38 @@ def expiring_logs(root=None, within_days=1.0):
     return sorted(out, key=lambda r: r[1])
 
 
+# A crashed `atomic_write_text` leaves its per-process staging file behind. Nothing swept them:
+# `prune_logs` only walks `logs/`, and these land beside whatever was being written, anywhere in the
+# workspace. Reproduced by killing a write with SIGKILL (R11b agent 3) — the file persisted and
+# every later prune removed nothing.
+#
+# An hour, and the shape `<name>.<pid>.tmp`, because both bounds have to be wrong before this can
+# touch a write in progress: a real staging file exists for the milliseconds between open and
+# os.replace, and a name without a numeric middle segment was not written by this module.
+_ORPHAN_TEMP_AGE = 3600
+_ORPHAN_TEMP = re.compile(r"\.\d+\.tmp$")
+
+
+def prune_orphaned_temps(root=None):
+    """Remove staging files a killed write left behind. Best effort and silent, like every prune."""
+    import time
+    ws_dir = workspace(root)
+    if not ws_dir.is_dir():
+        return 0
+    cutoff = time.time() - _ORPHAN_TEMP_AGE
+    removed = 0
+    for path in ws_dir.rglob("*.tmp"):
+        try:
+            if not _ORPHAN_TEMP.search(path.name) or path.is_symlink() or not path.is_file():
+                continue
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 def prune_logs(root=None):
     """Delete files under logs/ older than the retention window. Best-effort and silent: a
     housekeeping failure must never be the reason a command the user asked for fails.
@@ -758,6 +790,21 @@ def reconcile_version(root, running):
     # rather than quoted — the banner's job is to say a newer build touched this workspace, and
     # the exact string is not needed to say it.
     if seen and not _VERSION_SHAPE.match(seen):
+        # 🐛 ...and REPAIRED, not merely reported. This branch returned here, before the write
+        # below, so a `.version` that stopped being version-shaped stayed that way forever: every
+        # session afterwards said "an unreadable version" and none of them fixed it. Measured over
+        # five consecutive calls — the self-heal on the last line of this function was unreachable
+        # from the one state that needs it (R11b agent 3).
+        #
+        # Overwriting is the right recovery and not a loss: this file is a generated marker, not
+        # anybody's content. It is also the disinfectant — the planted-banner attack above works by
+        # PERSISTING, and a payload that is overwritten on first sight has one session to act
+        # instead of every session forever. What is given up is knowing which version was recorded,
+        # and that was already unknowable: the string could not be parsed.
+        try:
+            path.write_text(running + "\n", encoding="utf-8")
+        except OSError:
+            pass
         return "an unreadable version"
     if seen and _as_tuple(running) < _as_tuple(seen):
         return seen

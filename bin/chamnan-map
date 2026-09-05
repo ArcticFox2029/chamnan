@@ -360,6 +360,7 @@ def main(argv):
         print("chamnan: map is disabled in .chamnan/config.json")
         return 0
     ws.prune_logs(root)
+    ws.prune_orphaned_temps(root)
     ws.prune_sessions(root)
     # 🐛 This command printed NOTHING until it finished. An agent walking the tool as a newcomer
     # started it in the wrong directory, watched it produce no output for two minutes, and killed

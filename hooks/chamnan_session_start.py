@@ -685,6 +685,7 @@ def main():
             _expiring = []
         try:
             ws.prune_logs(root)
+            ws.prune_orphaned_temps(root)
             ws.prune_sessions(root)
         except Exception:
             pass
