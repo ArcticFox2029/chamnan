@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.17.0](#whats-new-in-1181) · [Commands](#commands)
+[What's new in 1.20.0](#whats-new-in-1200) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -475,44 +475,44 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.18.1
+## What's new in 1.20.0
 
-**It now says what it works with — and says it in every language it speaks.** 1.17.0 shipped
-twenty-three adapters and a README that still opened with "a Claude Code plugin"; someone searching
-*does chamnan work with Cursor* would have read that and concluded no.
+**Thirty-nine commits, and most of them are the same shape: a rule that was applied to some
+members of a set and not the identical ones beside them.** That is this repository's own recurring
+defect, so the fixes below were found by walking each set programmatically rather than by reading
+code, and each is held by a test that asserts the whole set rather than the member that broke.
 
-The English page gained instructions rather than claims: how to install it for each kind of tool,
-how to use it with Hermes Agent, how to point it at a different model, and how to run it on each
-operating system. All thirty-two translated pages gained the same ground, and each of them now names
-every model family `--model` recognises, the two left out on purpose, and the exact escape hatch for
-one that is not listed. They still carry no figures — that rule exists because measurements change
-every release and a translation does not, and family names are proper nouns rather than
-measurements. A test fails if a family is added to the code and any page falls behind.
+**The redactor got faster without getting looser.** Five of its rules cannot match text that has no
+secret word in it, so one cheap scan now tells the other five where not to look: `scrub()` on the
+293 KB index goes 277ms to 216ms, byte-identical on that file, on the test corpus, and on 400
+randomised adversarial documents. Two earlier attempts at this were wrong and both are now
+regression tests — including one whose safety argument held for four of the five rules and left a
+40-line quoted secret, the shape of a PEM key in a config file, entirely in the clear.
 
-### `llms.txt`
+**Output is guarded against what it says, not just what it contains.** Every command already routed
+its output through the redactor, which removed credentials. A committed file holding an ANSI erase
+sequence could still rewrite the line a reader had just seen, and a right-to-left override could
+make one command's output read as another's. Both are stripped now, at the single point every
+command already prints through.
 
-A short structured description for the assistants that read this page and answer from it. Generated
-from the code rather than written by hand — the adapters and their targets, the model families, the
-commands, the translated pages — with a test that fails when it and the code disagree, when an
-adapter is missing from it, or when an anchor it points at is not a real heading.
+**`--preview` writes nothing, which is what it always said it did.** In a repository that had never
+run chamnan it created the entire workspace — fourteen entries — before telling you what you would
+get, because what it runs to answer the question is the hook that sets the workspace up.
 
-### Hermes Agent
+**It stopped telling other agents to type Claude Code commands.** Twenty-three adapters wrote
+`/chamnan:remember` and its siblings into AGENTS.md, `.cursorrules` and the rest, and that line
+exists precisely to tell an agent it is allowed to write — so it failed worst for the readers it
+was aimed at. The same went for the first error a terminal user hits. Both now name a command that
+works everywhere, and the README finally says how to get `bin/` onto `PATH`, without which every
+example in it is "command not found".
 
-Hermes is a self-hosted agent that also drives other coding agents, so a repository set up for it
-usually means several tools reading one index. It reads project instructions in a fixed order and
-chamnan already wrote three of the files in it; the new adapter writes the one above them all,
-sized to the cap Hermes documents and refusing to overwrite a file it did not write.
+**A Mercurial or Subversion checkout nested inside a repository is now somebody else's code**, as a
+Git one always was, and its internal store is no longer walked as source.
 
-### Two more things the index was wrong about
-
-A hash-named minified bundle carries no header saying it is generated, so it was indexed as
-hand-written source — counted in the coverage denominator and offered to the commenter agent to
-describe. Both new rules come from GitHub Linguist's own source and are kept as narrow as Linguist
-keeps them, because calling a long-lined Python file generated would be the more expensive mistake.
-
-And `chamnan-map <dir>` replaced the map in silence: reproduced on a real one, three hundred and
-twenty files became a hundred and fifty-three with nothing printed and exit zero. Replacing is the
-documented behaviour and is unchanged; it now says what it is about to drop, and how to get it back.
+**The update notice can see a plugin installed from a local path** — the convention this project is
+itself developed under, and one that `claude plugin update` does not refresh while the version
+string is unchanged. Three installs on the machine that writes chamnan sat twenty-five commits
+behind while the check that exists to say so read a stale copy of a different directory.
 
 ## Bootstrap does not rewrite your code
 
