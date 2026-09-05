@@ -596,8 +596,103 @@ def _value_is_the_key_itself(key_part, value):
     return bare.isupper()
 
 
-def scrub(text):
-    """Every string that leaves chamnan for a written file goes through this."""
+# The five rules below — SPACED_SECRET, FLAG_SECRET and the three ASSIGNED_SECRET* — cannot match
+# any text that does not contain a SECRET_WORDS occurrence, because every one of them begins with
+# that alternation. So one cheap scan for the word can tell the other five where NOT to look, and
+# on the real 293 KB MAP.md that is most of the document.
+#
+# 🐛 The version of this that was written and reverted in 0a4605c used a raw ±8192-character window
+# and two things were wrong with it. The window was so wide that its spans merged into 77.7% of the
+# real document — measurably SLOWER than not windowing at all — and it cut at raw character
+# offsets, which under re.M makes the cut itself a `^`/`$` position and can truncate a value.
+#
+# 🐛 And the correction that came back from research still leaked, which is why this is not that
+# diff either. Its argument was that snapping every boundary to a line ending makes the window safe
+# "as long as the value does not itself contain a newline, which none of these patterns permit".
+# ASSIGNED_SECRET permits exactly that: its value is delimited by quotes, not by the line, so
+# `api_password = "<40 lines of base64>"` is one match. Measured against the design as proposed: the
+# windowed path left all 40 lines in the clear, because the window held the opening quote and not
+# the closing one, so the rule did not match AT ALL rather than matching short. A PEM key pasted
+# into a config file is that shape, and the full-document path redacts it today.
+#
+# So a window ends where a line ends AND where no quoted value opened by this occurrence is still
+# open. Past the cap, windowing is abandoned for the whole document rather than narrowed — a
+# redactor that is slow is a cost, and one that is nearly right is a leak.
+_SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
+_WINDOW = 512
+_WINDOW_LOOKBACK = 64
+# Past this, windowing has stopped being an optimisation and is only a chance to be wrong.
+_MAX_WINDOW = 200_000
+# The `key = "` of an assignment, from the end of the secret word: the rest of the key's own
+# characters, the operator, then the quote that opens a value the line may not close.
+_OPENS_A_QUOTED_VALUE = re.compile(r"[\w-]*[^\S\n]*(?:=>|[:=])[^\S\n]*([\"'])")
+
+
+def _windows_around_secret_words(text):
+    """Merged [start, end) spans covering every SECRET_WORDS occurrence — or None for "all of it".
+
+    Every boundary sits on a line ending, so a `^` or `$` inside a window means what it would have
+    meant in the whole document. Returning None is always safe: it means scan everything.
+    """
+    hits = list(_SECRET_WORD_ANYWHERE.finditer(text))
+    if not hits:
+        return []
+    spans = []
+    for hit in hits:
+        i = hit.start()
+        lo = max(0, i - _WINDOW_LOOKBACK)
+        hi = min(len(text), i + _WINDOW)
+        # A quoted value opened here can run over any number of lines, and cutting between its two
+        # quotes does not shorten the match — it removes it.
+        opener = _OPENS_A_QUOTED_VALUE.match(text, hit.end())
+        if opener:
+            closing = text.find(opener.group(1), opener.end())
+            if closing < 0:
+                return None
+            hi = max(hi, closing + 1)
+        nl = text.rfind("\n", 0, lo)
+        lo = nl + 1 if nl >= 0 else 0
+        nl = text.find("\n", hi)
+        hi = nl + 1 if nl >= 0 else len(text)
+        if hi - lo > _MAX_WINDOW:
+            return None
+        if spans and lo <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
+        else:
+            spans.append((lo, hi))
+    return spans
+
+
+def _apply_in_windows(text, spans, steps):
+    """Run `steps` in order over each window and splice the results back into the whole.
+
+    `spans is None` means the caller could not establish a safe window, so everything is scanned.
+    """
+    if spans is None:
+        for step in steps:
+            text = step(text)
+        return text
+    pieces, pos = [], 0
+    for lo, hi in spans:
+        pieces.append(text[pos:lo])
+        chunk = text[lo:hi]
+        for step in steps:
+            chunk = step(chunk)
+        pieces.append(chunk)
+        pos = hi
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
+def scrub(text, windowed=True):
+    """Every string that leaves chamnan for a written file goes through this.
+
+    `windowed=False` runs every rule over the whole document, which is what this did before the
+    windows below existed and is still the DEFINITION of a correct result — the suite holds the two
+    against each other on a corpus built to land on window boundaries. Nothing in the plugin passes
+    it; an optimisation that cannot be checked against the thing it optimises is a claim, not a
+    measurement.
+    """
     if not text:
         return text
     for pattern in PATTERNS + LATE_PREFIXES:
@@ -643,7 +738,7 @@ def scrub(text):
         text = YAML_BLOCK_SECRET.sub(
             lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
             else f"{m.group(1)}  {PLACEHOLDER}\n", text)
-    text = SPACED_SECRET.sub(
+    _spaced = lambda chunk: SPACED_SECRET.sub(
         lambda m: m.group(0)
         # 🐛 The next FLAG is not this flag's value: `tool --password --verbose` means no password
         # was given on the command line at all, and redacting `--verbose` is pure noise in exactly
@@ -652,8 +747,8 @@ def scrub(text):
         if m.group(2).startswith("-") else m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
-        else f"{m.group(1)}{PLACEHOLDER}", text)
-    text = FLAG_SECRET.sub(
+        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+    _flag = lambda chunk: FLAG_SECRET.sub(
         lambda m: m.group(0) if PLACEHOLDER in m.group(2)
         # The next FLAG is not this flag's value. `tool --password --verbose` means the password
         # was not given on the command line at all; redacting `--verbose` would be pure noise.
@@ -663,19 +758,18 @@ def scrub(text):
         # and `-storepass:file x.txt` name a path the reader may need; redacting it hides which
         # file to go and protect.
         or m.group(1).rstrip().endswith("-file") or "/" in m.group(2) or m.group(2).endswith(".txt")
-        else f"{m.group(1)}{PLACEHOLDER}", text)
-    text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
-    text = ASSIGNED_SECRET.sub(
+        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+    _assigned = lambda chunk: ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(3)) or not _looks_like_a_credential_name(m.group(1), m.group(3))
         or _value_is_the_key_itself(_full_key_at(m), m.group(3))
-        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", chunk)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
-    text = ASSIGNED_SECRET_CALL.sub(
+    _call = lambda chunk: ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
-        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
-    text = ASSIGNED_SECRET_BARE.sub(
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", chunk)
+    _bare = lambda chunk: ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         # An earlier, more specific rule already replaced this value. Re-matching it swallowed the
@@ -686,7 +780,18 @@ def scrub(text):
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
         or _value_is_the_key_itself(_full_key_at(m), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
-        + " " * 0, text)
+        + " " * 0, chunk)
+
+    # The five rules above are the whole of what SECRET_WORDS-anchored scanning costs, and on the
+    # real map most of the document cannot match any of them. Windows are computed twice because
+    # PGPASS_LINE runs between the two groups and keeps its position: it is the one rule here that
+    # does not key off a secret word, so moving it would change what the rules after it see, and a
+    # second cheap scan is a smaller price than a reordering nobody has a corpus for.
+    text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
+                              [_spaced, _flag])
+    text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
+    text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
+                              [_assigned, _call, _bare])
     # Applied after the substitution above rather than inside it, because the amount to swallow is
     # decided from the text FOLLOWING the match and a `sub` callback cannot consume beyond its own
     # span. Walks the result, and at each placeholder removes any credential-shaped runs that

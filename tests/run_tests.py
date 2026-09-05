@@ -8798,6 +8798,83 @@ for _prose in ("# password: ask the platform team for it",
                "AUTHORS=alexander,brigitte", "token_ttl=3600"):
     check("PROSE AND CONFIGURATION SURVIVE: " + _prose[:40], redact.scrub(_prose) == _prose)
 
+# The five SECRET_WORDS-anchored rules run inside windows around the word rather than over the
+# whole document. Two designs for that have now been wrong, so the shape of each failure is pinned
+# here rather than described.
+#
+# 🐛 A raw ±8192-character window (written and reverted in 0a4605c) merged into 77.7% of the real
+# map and was SLOWER than not windowing.
+# 🐛 Snapping every boundary to a line ending is still not enough, and the argument that it was —
+# "no value class here permits a newline" — is false for ASSIGNED_SECRET, whose value is delimited
+# by quotes. A 40-line base64 value, the shape of a PEM key pasted into a config, left ALL FORTY
+# lines in the clear under that design: the window held the opening quote without the closing one,
+# so the rule did not match short, it did not match at all.
+_multiline_secret = "\n".join("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2Nzg5" for _ in range(40))
+_multiline_doc = ("filler line\n" * 5 + 'api_password = "' + _multiline_secret + '"\n'
+                  + "trailing line\n" * 3)
+check("A QUOTED SECRET RUNNING OVER FORTY LINES IS STILL REDACTED WHOLE",
+      "QUJDREVG" not in redact.scrub(_multiline_doc))
+# An UNTERMINATED quoted value is a different matter, and windowing must not quietly change it:
+# with no closing quote there is no ASSIGNED_SECRET match, so the first line is redacted by the
+# bare rule and the continuation lines are left — before this change and after it alike. That gap
+# is real and is recorded in the backlog; what is asserted here is only that windowing did not
+# widen it, which is the question this change is allowed to answer.
+_unterminated = 'api_password = "' + _multiline_secret + "\n"
+check("...and an unterminated quoted value is treated exactly as it was before windowing",
+      redact.scrub(_unterminated) == redact.scrub(_unterminated, windowed=False))
+# Windowing is an optimisation, so its ONLY correct output is what scanning everything produces.
+# Held against a corpus built to land on window boundaries: long prose lines full of apostrophes,
+# .pgpass lines (the one rule here that is not SECRET_WORDS-anchored, and which runs between the
+# two windowed groups), values shorter and far longer than the window, and no trailing newline.
+_win_rng = __import__("random").Random(1729)
+_win_keys = ["password", "api_password", "PASSWD", "x-secret", "auth_token", "storepass",
+             "credential", "cred", "pwd", "passphrase", "SECRET_KEY", "not_a_secret_at_all"]
+_win_bad = 0
+for _t in range(60):
+    _r = __import__("random").Random(_t)
+    _lines = []
+    for _ in range(_r.randrange(1, 30)):
+        _k = _r.randrange(5)
+        if _k == 0:
+            _lines.append("prose with an apostrophe: don't cut here, it's fine " * _r.randrange(1, 30))
+        elif _k == 1:
+            _lines.append("db.internal:5432:maindb:admin:Tr0ub4dorPass99")
+        elif _k == 2:
+            _q = _r.choice(['"', "'", ""])
+            _v = ("\n".join("QUJDRE" + str(_r.randrange(10 ** 6)) for _ in range(_r.randrange(1, 40)))
+                  if _r.randrange(3) == 0 else "x" * _r.randrange(1, 2000))
+            _lines.append(f"{_r.choice(_win_keys)}{_r.choice([' = ', '=', ': ', ' => '])}{_q}{_v}{_q}")
+        elif _k == 3:
+            _lines.append(f"tool --{_r.choice(_win_keys)} " + "y" * _r.randrange(1, 900))
+        else:
+            _lines.append("filler " * _r.randrange(1, 200))
+    _doc = "\n".join(_lines) + _r.choice(["", "\n"])
+    if redact.scrub(_doc) != redact.scrub(_doc, windowed=False):
+        _win_bad += 1
+check("WINDOWED REDACTION IS BYTE-IDENTICAL TO SCANNING THE WHOLE DOCUMENT", _win_bad == 0)
+
+# 🐛 `chamnan-map --preview`'s own --help says it "writes nothing", and in a repository that had
+# never run chamnan it created the whole workspace — 14 entries, .gitignore and .gitattributes
+# included — because what it runs to answer the question is the SessionStart hook, and the hook
+# sets the workspace up. Someone asking to SEE what they would get was given it instead (R21
+# agent 3). Asserted by counting what is on disk afterwards rather than by reading the code, so a
+# future writer that skips the gated helpers is caught by the same check.
+_ro = Path(tempfile.mkdtemp(prefix="chamnan-readonly-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_ro, capture_output=True)
+    (_ro / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    for _flag in ("--preview", "--explain"):
+        _r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), _flag], cwd=_ro,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace")
+        _left = [q.relative_to(_ro).as_posix() for q in sorted(_ro.rglob("*"))
+                 if not q.as_posix().startswith((_ro / ".git").as_posix())]
+        check(f"chamnan-map {_flag} SAYS IT WRITES NOTHING AND WRITES NOTHING",
+              [x for x in _left if x != "a.py"] == [])
+        check(f"...and {_flag} still answers the question it was asked",
+              _r.returncode == 0 and _r.stdout.strip() != "")
+finally:
+    _rmtree(_ro, ignore_errors=True)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
