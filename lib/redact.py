@@ -808,6 +808,37 @@ def scrub(text, windowed=True):
     return "".join(out)
 
 
+# 🐛 `scrub` removes credentials. It has never removed CONTROL characters, and repository text
+# reaches a terminal — and an agent's context — through the same commands. `mapper` already says
+# this about the map ("leaves ESC and the bidi overrides untouched, so a docstring carrying
+# `\x1b[31m` or U+202E ..."), and `mdblock.one_line` already strips them for the single-line
+# fields written INTO shared files. What had no guard was the other direction: everything the
+# `bin/` commands print straight out of a committed file. `chamnan-timeline show` prints a whole
+# thread body; `chamnan-candidates` prints a title lifted from a candidate's first heading. A
+# committed file holding `\x1b[2K\x1b[G` erases the line the reader just saw and rewrites it, and
+# U+202E reverses what follows — enough to make one command's output read as another's (R21 agent 2).
+#
+# Here rather than at each call site, for the reason `emit` itself exists: a per-call rule is one
+# every future print has to remember, and the misses are silent.
+#
+# `\n` and `\t` are kept — they are the layout of every table and every multi-line body this
+# prints. Everything else in C0, DEL, the bidi overrides and isolates, and the two invisible
+# space characters go.
+_TERMINAL_SAFE = str.maketrans({
+    **{chr(i): None for i in range(0x20) if chr(i) not in "\n\t"},
+    chr(0x7F): None,
+    **{chr(i): None for i in range(0x202A, 0x202F)},
+    **{chr(i): None for i in range(0x2066, 0x206A)},
+    "\u200b": None,
+    "\ufeff": None,
+})
+
+
+def for_a_terminal(text):
+    """Repository text with the characters that rewrite what a reader sees removed."""
+    return text.translate(_TERMINAL_SAFE)
+
+
 def emit(*args, **kwargs):
     """`print`, with every string argument scrubbed first. Meant to SHADOW the builtin.
 
@@ -825,7 +856,7 @@ def emit(*args, **kwargs):
     Non-string arguments are left alone — a caller printing an int or a Path means it, and coercing
     everything to str here would change what those commands output.
     """
-    return _print(*(scrub(a) if isinstance(a, str) else a for a in args), **kwargs)
+    return _print(*(for_a_terminal(scrub(a)) if isinstance(a, str) else a for a in args), **kwargs)
 
 
 # Captured before any module shadows the name, so `emit` still reaches the real builtin.
