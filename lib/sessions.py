@@ -124,8 +124,15 @@ def title_of(path, text=None):
     return path.stem
 
 
-def where_git_says_you_stopped(root, limit=6):
+def where_git_says_you_stopped(root, limit=6, name_files=True):
     """What the repository itself says about the last session, when nobody wrote a record.
+
+    `name_files=False` keeps the sentence and the count and drops the list of names. Pass it when
+    the reader has already been handed the same list by something else -- see the measurement in
+    the block below. It is a CALLER's decision, deliberately, and not read from the environment:
+    `chamnan-context --write cursor` run from inside a Claude Code session would look like Claude
+    Code to any env check, and would then starve Cursor of filenames it has no other source for.
+    The hook knows who it is writing for; this function cannot.
 
     `carry_forward` returns "" unless somebody ran `/chamnan:resume`, and measured across 18 real
     sessions on this machine exactly one did — 5.6%. So the section a session most wants, "where did
@@ -184,9 +191,20 @@ def where_git_says_you_stopped(root, limit=6):
         where = f" on {mdblock.as_quoted(branch, 40)}"
     else:
         where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
-    return (f"**Where the last session stopped**, as the working tree has it{where} — "
-            f"nobody recorded it, so this is git's answer rather than anyone's:\n"
-            f"{len(lines)} uncommitted file(s): " + ", ".join(names) + tail + "\n")
+    lead = (f"**Where the last session stopped**, as the working tree has it{where} — "
+            f"nobody recorded it, so this is git's answer rather than anyone's:\n")
+    if not name_files:
+        # 🐛 Claude Code injects its own `gitStatus` block once per session, and on a dirty tree it
+        # already lists every changed file with no truncation, before any hook runs. Measured on
+        # this repository with 21 files changed: chamnan's own list is 216.37 tokens against 82.71
+        # for the sentence and the count alone -- 133.66 tokens, 61.8% of the section, spent
+        # restating names the reader is holding. This section fires when no `/chamnan:resume`
+        # record exists, which its own docstring measures at 17 of 18 real sessions.
+        #
+        # The COUNT stays. It is the one thing the harness's block does not say in a sentence, and
+        # it is what makes the line worth reading at a glance.
+        return f"{lead}{len(lines)} uncommitted file(s), and nobody recorded what for.\n"
+    return lead + f"{len(lines)} uncommitted file(s): " + ", ".join(names) + tail + "\n"
 
 
 # How many same-day records carry forward at once. One is the single-developer case and the

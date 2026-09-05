@@ -1041,7 +1041,12 @@ def main():
             # uncommitted change IS where the last session stopped and it costs nobody a
             # command. Weaker on purpose: it reports what is unfinished, never why.
             if not carried:
-                carried = redact.scrub(sessions.where_git_says_you_stopped(root))
+                # The names are dropped here and only here. This file runs as a Claude Code
+                # plugin hook and nowhere else, so the reader is always the one harness that has
+                # already been handed the same list. `chamnan-context`, which emits for the other
+                # two dozen agents, calls the same function without this argument and keeps them.
+                carried = redact.scrub(
+                    sessions.where_git_says_you_stopped(root, name_files=False))
             if carried:
                 out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
 

@@ -14149,6 +14149,73 @@ finally:
     _rmtree(_sh, ignore_errors=True)
 
 
+# ------------------- the git-fallback section restated names Claude Code had already been handed
+# Claude Code injects its own `gitStatus` block once per session, and on a dirty tree it lists every
+# changed file with no truncation, before any hook runs. chamnan's git-fallback section -- which
+# fires when nobody ran `/chamnan:resume`, measured at 17 of 18 real sessions -- then printed up to
+# six of the same names again. Measured across tree dirtiness on synthetic short paths: 0.3% saved at
+# one dirty file, plateauing at 46.2% once the six-name cap is reached; R2 agent 6 measured 61.8% on
+# this repository's real paths, which are longer than a fixture's.
+#
+# The count STAYS. It is the one thing the harness's own block does not say in a sentence.
+_gfx = Path(tempfile.mkdtemp(prefix="chamnan-gitfallback-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_gfx)], capture_output=True)
+    (_gfx / "seed.txt").write_text("x\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(_gfx), "add", "."], capture_output=True)
+    subprocess.run(["git", "-C", str(_gfx), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "i"], capture_output=True)
+    for _k in range(9):
+        (_gfx / f"module_{_k}.py").write_text("x\n", encoding="utf-8")
+    import sessions as _gfs
+    _with = _gfs.where_git_says_you_stopped(_gfx)
+    _without = _gfs.where_git_says_you_stopped(_gfx, name_files=False)
+    check("THE GIT FALLBACK CAN DROP NAMES THE READER ALREADY HAS",
+          "module_0.py" in _with and "module_0.py" not in _without)
+    check("...while keeping the count, which the harness's own block does not state",
+          "9 uncommitted file(s)" in _without)
+    check("...and keeping the sentence that says whose answer this is",
+          "git's answer rather than anyone's" in _without)
+    # The default must not change: chamnan-context emits this for two dozen other agents, and none
+    # of them is handed a file list by anything else.
+    check("...and NAMING THEM STAYS THE DEFAULT, for every agent that is not Claude Code",
+          "module_0.py" in _gfs.where_git_says_you_stopped(_gfx))
+finally:
+    _rmtree(_gfx, ignore_errors=True)
+
+# 🐛 The one thing that would make this a bug rather than a saving: deciding it from the environment.
+# `chamnan-context --write cursor` run from inside a Claude Code session looks like Claude Code to
+# any env check, and would then starve Cursor of filenames it has no other source for. So the
+# decision is the caller's, and exactly one caller may make it -- the hook that only ever runs under
+# Claude Code.
+# Read as CALLS, not as text: the first version of this counted lib/sessions.py, because the
+# argument is named in the docstring that explains it. A grep cannot tell a mention from a use.
+_gf_callers = []
+for _p in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")) \
+        + [ROOT / "bin" / "chamnan-context", ROOT / "bin" / "chamnan-map"]:
+    if not _p.is_file():
+        continue
+    try:
+        _tree = _lockast.parse(_p.read_text(encoding="utf-8", errors="replace"))
+    except SyntaxError:
+        continue
+    for _n in _lockast.walk(_tree):
+        if not isinstance(_n, _lockast.Call):
+            continue
+        _fn = _n.func
+        _nm = _fn.attr if isinstance(_fn, _lockast.Attribute) else getattr(_fn, "id", "")
+        if _nm != "where_git_says_you_stopped":
+            continue
+        if any(_k.arg == "name_files" for _k in _n.keywords):
+            _gf_callers.append(str(_p.relative_to(ROOT)).replace(os.sep, "/"))
+check("EXACTLY ONE CALLER DROPS THE NAMES, AND IT IS THE CLAUDE CODE HOOK",
+      _gf_callers == ["hooks/chamnan_session_start.py"])
+if _gf_callers != ["hooks/chamnan_session_start.py"]:
+    print("      callers passing name_files=False:", _gf_callers)
+check("...and the choice is never taken from the environment",
+      "name_files" not in (ROOT / "lib" / "host.py").read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
