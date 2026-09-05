@@ -798,6 +798,21 @@ spend differently. Switching models does not mean reinstalling anything, and a r
 one agent stays set up when you add a second: each adapter writes to its own path, and the ones that
 share a path share the file rather than each keeping a copy that drifts apart.
 
+**`--model` recognises these families by name**, matching on the first word and ignoring case,
+separators and version numbers, so `Qwen3-Coder`, `qwen 3` and `QWEN` all land in the same place:
+
+`claude` · `codestral` · `deepseek` · `gemini` · `gemma` · `glm` · `gpt` · `grok` · `kimi` ·
+`mistral` · `openai`
+
+`llama` and `qwen` are deliberately **not** in that table. Both ship in sizes that want different
+budgets, so naming one of them gets you the default profile and a line saying which two sizes it
+could have meant — a wrong number quietly applied is worse than an honest question.
+
+**A model that is not on the list still works.** It gets the default profile and a note saying it
+was not recognised, and nothing fails. The table is a dated convenience, not an authority: it is a
+list of names somebody wrote down, and models outlive it. `--window` takes the number directly and
+is always exact, which is the answer whenever the name is wrong, new, self-hosted, or yours.
+
 ### Three axes, kept apart
 
 | | what it decides | set by |
