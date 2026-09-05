@@ -362,12 +362,53 @@ def prune_logs(root=None):
         try:
             if path.name in SELF_PRUNING_LOGS:
                 continue
-            if path.is_file() and path.stat().st_mtime < cutoff:
-                path.unlink()
-                removed += 1
+            if path.is_file():
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+                continue
+            # 🐛 `is_file()` was the whole test, so a DIRECTORY under logs/ was invisible to
+            # retention forever, at any age. That is not a corner case: a multi-file scratch dump is
+            # exactly what a research agent reaches for, and measured on this repository 7.6 MB of
+            # the workspace's 10 MB logs/ sat in two such directories with seven more beside them.
+            # A separate incident the same day left 339 MB and 82,558 files there, one of them a
+            # symlink to `/` that sent a Python 3.9 rglob across the whole machine.
+            #
+            # Judged by the NEWEST file inside, not by the directory's own mtime: a directory being
+            # written to right now has a fresh file in it, while its own mtime says only when an
+            # entry was last added or removed. A directory whose every file is past the window is
+            # finished work, and one holding nothing at all is a leftover -- neither is history the
+            # record-level rules are keeping on purpose.
+            if path.is_dir() and not path.is_symlink():
+                inside = [f for f in path.rglob("*") if f.is_file()]
+                newest = max((f.stat().st_mtime for f in inside), default=0)
+                if newest < cutoff:
+                    _rmtree_quietly(path)
+                    removed += 1
         except OSError:
             continue
     return removed
+
+
+def _rmtree_quietly(path):
+    """Remove a directory tree without following symlinks out of it, and without raising.
+
+    `shutil.rmtree` is not used: it is the one call in this module that could act on a path outside
+    the workspace if a link inside pointed there, and retention is best-effort housekeeping that
+    must never be the reason a command the user asked for fails.
+    """
+    for child in sorted(path.rglob("*"), key=lambda c: len(c.parts), reverse=True):
+        try:
+            if child.is_symlink() or child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        except OSError:
+            pass
+    try:
+        path.rmdir()
+    except OSError:
+        pass
 
 
 def prune_sessions(root=None):

@@ -13624,6 +13624,83 @@ _fits = rollup.collapse("## Quick Index\n\n" + "".join(
 check("...while a repository that already fits gains no overflow line",
       "more director" not in _fits)
 
+
+# 🐛 Two defects in the fold above, both found by R10 agent 2 within an hour of it shipping, and both
+# the same mistake in different clothes: trusting text instead of data.
+#
+# (a) The summary's file count was regexed back out of the markdown the function had just written.
+#     `as_quoted` strips backticks, not asterisks or parentheses, so a directory named
+#     `evil** (99999)` is matched FIRST by that regex and the repository dictates the number chamnan
+#     prints in its own voice. The counts never leave Python now.
+# (b) `kept` stepped by a stride under `while kept > 0` and walked past zero without evaluating it —
+#     and zero is the maximally folded candidate. At any budget tight enough to need full folding it
+#     returned the RAW UNFOLDED dump, the exact failure the function exists to prevent, disguised as
+#     mere truncation because `_enforce` cuts the tail afterwards.
+_forge_rows = "".join(f"- **`packages/pkg{i:03d}/m.py`** (3L)\n" for i in range(1, 300))
+_forge_rows += "- **`evil** (99999)/m.py`** (3L)\n"
+_forge = rollup.collapse("## Quick Index\n\n" + _forge_rows, "x", 3000, None, per_dir=0)
+_fm = re.search(r"_(\d+) more director(?:y|ies) under .+?, ([\d,]+) files", _forge)
+check("A DIRECTORY NAME CANNOT FORGE THE COUNT IN CHAMNAN'S OWN SUMMARY LINE",
+      _fm is not None and int(_fm.group(2).replace(",", "")) < 5_000)
+check("...and named plus counted still accounts for every directory, forged name included",
+      _fm is not None
+      and len(re.findall(r"^- \*\*.+?/\*\* \(\d+\)", _forge, re.M)) + int(_fm.group(1)) == 300)
+
+# (b): a budget that forces full folding must still be FOLDED, not the raw listing.
+_tight = rollup.collapse("## Quick Index\n\n" + _forge_rows, "x", 300, None, per_dir=0)
+check("AT A BUDGET NEEDING FULL FOLDING, THE RESULT IS FOLDED RATHER THAN THE RAW DUMP",
+      "more director" in _tight)
+check("...and it accounts for all 300 there too",
+      (lambda m: m is not None
+       and len(re.findall(r"^- \*\*.+?/\*\* \(\d+\)", _tight, re.M)) + int(m.group(1)) == 300
+      )(re.search(r"_(\d+) more director", _tight)))
+
+
+# 🐛 `prune_logs` tested `path.is_file()` and nothing else, so a DIRECTORY under `logs/` was outside
+# retention forever at any age. Measured on this repository: 7.6 MB of the workspace's 10 MB logs/
+# sat in two such directories with seven more beside them, while the README says in three places
+# that logs/ is pruned. A separate incident the same day left 339 MB and 82,558 files there.
+#
+# Every branch is driven, because the fix is a deletion rule and the expensive mistake is the one
+# that deletes work still in progress: a directory with a single fresh file inside must survive.
+_pl = Path(tempfile.mkdtemp(prefix="chamnan-prunedirs-"))
+try:
+    _pl_logs = _pl / ".chamnan" / "logs"
+    _pl_logs.mkdir(parents=True)
+    _pl_old = time.time() - 90 * 86400
+    (_pl_logs / "old.md").write_text("x", encoding="utf-8")
+    os.utime(_pl_logs / "old.md", (_pl_old, _pl_old))
+    (_pl_logs / "fresh.md").write_text("x", encoding="utf-8")
+    _pl_dead = _pl_logs / "dead_scratch"
+    _pl_dead.mkdir()
+    (_pl_dead / "a.md").write_text("y" * 4000, encoding="utf-8")
+    os.utime(_pl_dead / "a.md", (_pl_old, _pl_old))
+    _pl_live = _pl_logs / "live_scratch"
+    _pl_live.mkdir()
+    (_pl_live / "stale.md").write_text("z", encoding="utf-8")
+    os.utime(_pl_live / "stale.md", (_pl_old, _pl_old))
+    (_pl_live / "now.md").write_text("w", encoding="utf-8")
+    (_pl_logs / "empty_leftover").mkdir()
+    _pl_esc = _pl_logs / "escaping"
+    _pl_esc.mkdir()
+    (_pl_esc / "link").symlink_to(_pl)          # a link OUT of logs/, inside a dead directory
+    os.utime(_pl_esc / "link", (_pl_old, _pl_old), follow_symlinks=False)
+
+    _pl_n = ws.prune_logs(_pl)
+    check("A DIRECTORY UNDER logs/ IS REACHED BY RETENTION, NOT INVISIBLE TO IT",
+          not _pl_dead.exists())
+    check("...and one holding a file written since the cutoff is KEPT, work in progress and all",
+          _pl_live.exists() and (_pl_live / "now.md").exists())
+    check("...and an empty leftover directory goes, since nothing writes it any more",
+          not (_pl_logs / "empty_leftover").exists())
+    check("...and the ordinary file rules are unchanged", not (_pl_logs / "old.md").exists()
+          and (_pl_logs / "fresh.md").exists())
+    check("...and a symlink inside a pruned directory is unlinked, never followed out of it",
+          not _pl_esc.exists() and _pl.is_dir())
+    check("...and the count returned matches what was actually removed", _pl_n == 4)
+finally:
+    _rmtree(_pl, ignore_errors=True)
+
 # 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
 # nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
 # README said "not required" and `chamnan-map` in the same directory built the workspace the hook
