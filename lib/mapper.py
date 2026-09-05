@@ -55,7 +55,33 @@ SKIP_DIRS = {
     "dist", "build", "target", "out", ".next", ".nuxt", "vendor", ".terraform",
     ".pytest_cache", ".mypy_cache", ".ruff_cache", "coverage", ".idea", ".vscode",
     "site-packages", ".gradle", ".cache", "tmp", "logs",
+    # 🐛 Everything below this line was indexed as ordinary hand-written source. The comment on
+    # `_generated_globs` said the "machinery directories are already covered by SKIP_DIRS" and it
+    # was not true of any of them -- a Swift repository handed chamnan its whole CocoaPods
+    # checkout as source, and the Quick Index described somebody else's library.
+    #
+    # These are dependency-manager checkouts and nothing else: no project uses one of these names
+    # for its own code, which is why they go here rather than in AMBIGUOUS_SKIP below. Checked
+    # against GitHub Linguist's own vendor.yml (fetched 2026-09-05) -- `bower_components`,
+    # `Carthage`, `Godeps` and `flow-typed` are in it verbatim. `Pods`, `third_party` and `.tox`
+    # are NOT in Linguist and are here on their own merits: a CocoaPods checkout, a vendored tree,
+    # and tox's virtualenvs. The research report that proposed all seven claimed Linguist covered
+    # them; three of its five names were not in the file. Fetched and diffed rather than believed.
+    "Pods", "Carthage", "bower_components", "Godeps", "flow-typed", "third_party", ".tox",
+    # Ambiguous, so listed again in AMBIGUOUS_SKIP and rescued when git tracks it: `deps/` is a
+    # fetched dependency tree in Elixir and Erlang and a perfectly ordinary source directory
+    # elsewhere.
+    "deps",
 }
+# Deliberately NOT added, though Linguist lists them: `testdata` is Go's own committed-fixture
+# convention and skipping it would lose real content; `cache`, `fixtures`, `plugins`, `releases`,
+# `sdks`, `versions`, `wrapper` and `debian` are ordinary source directory names far more often than
+# they are machinery. Linguist can afford to be aggressive because it is deciding what to colour on
+# a language bar; this list decides what a reader is told exists at all, and the two mistakes are
+# not the same size. Linguist's per-library entries (`MathJax`, `select2`, `tiny_mce`, `extjs`,
+# `ace-builds`, `bootstrap-datepicker`, `Sparkle`, `puphpet`, `admin_media`, `xvba_modules`) are a
+# list of specific bundled libraries from another era and are a maintenance liability here, not a
+# rule.
 MAX_FILE_BYTES = 2_000_000
 
 # What the last scan left out and why. Populated by indexable(), read by the caller that
@@ -75,7 +101,8 @@ SKIPPED_BINARY = []
 # by setuptools is ignored, `src/build/` is committed -- so that is the question asked, per PATH
 # rather than per name, and only for these eight. The rest of SKIP_DIRS is unambiguous machinery
 # and is never rescued: a committed `vendor/` or `node_modules/` is still noise.
-AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp", "logs"})
+AMBIGUOUS_SKIP = frozenset({"coverage", "build", "out", "target", "dist", "env", "tmp",
+                            "logs", "deps"})
 # Directories skipped under one of those names. Reported by chamnan-map, because the silence was
 # the half of this defect that could not be argued about -- and note SKIPPED_TOO_LARGE and
 # SKIPPED_BINARY above are written and never read by anything but a test, so "report it the way
@@ -100,8 +127,13 @@ def _generated_globs(root):
     described figure to say that a generated file exists.
 
     `linguist-generated` only, deliberately. `linguist-vendored` is also declared here and is NOT
-    read: a vendored directory is often a fork somebody actually edits, and the machinery
-    directories are already covered by SKIP_DIRS.
+    read: a vendored directory is often a fork somebody actually edits.
+
+    That paragraph used to end "and the machinery directories are already covered by SKIP_DIRS",
+    which was false and stayed false for as long as nobody diffed it. Twenty-one of twenty-two
+    common vendor directory names were being indexed as ordinary source. Seven were added to
+    SKIP_DIRS on 2026-09-05; the rest were rejected there for reasons written beside them. Reading
+    `linguist-vendored` properly is still the more thorough fix and is still not done.
 
     Not the same judgement as .gitignore, which this file refuses to read a few lines down and for
     a reason that does not transfer: .gitignore is often absent, often wrong, and never covers a

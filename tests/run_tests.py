@@ -13552,6 +13552,69 @@ check("...under a chamnan-prefixed filename, so another plugin cannot displace i
       all("chamnan_" in c for c in _sa_cmds) and _sa_cmds)
 
 
+# ------------------------------------------- vendored trees, and the two mistakes they can cause
+# The comment on `_generated_globs` claimed the "machinery directories are already covered by
+# SKIP_DIRS" and it was untrue of twenty-one of twenty-two common vendor names: a Swift repository
+# handed chamnan its whole CocoaPods checkout as hand-written source and the Quick Index described
+# somebody else's library.
+#
+# Both directions are pinned here, because the fix for one is the other's bug. Skipping too little
+# fills the index with vendored code; skipping too much is the coveragepy failure this file already
+# records -- 29% of a repository's real source lost under a name that is also a build-output name,
+# with no warning and a coverage bar reading 85% of what remained. Names that are unambiguously a
+# dependency-manager checkout are skipped outright; names that are also ordinary source directory
+# names go through the git-tracked rescue instead.
+_vt = Path(tempfile.mkdtemp(prefix="chamnan-vendor-"))
+try:
+    for d in ("src", "Pods/AFNetworking", "third_party/zlib", "deps", "testdata"):
+        (_vt / d).mkdir(parents=True)
+    (_vt / "src" / "main.py").write_text('"""The project\'s own code."""\ndef run(): pass\n',
+                                         encoding="utf-8")
+    (_vt / "Pods" / "AFNetworking" / "a.py").write_text('"""Vendored."""\ndef q(): pass\n',
+                                                        encoding="utf-8")
+    (_vt / "third_party" / "zlib" / "d.py").write_text('"""Vendored."""\ndef d(): pass\n',
+                                                       encoding="utf-8")
+    (_vt / "deps" / "f.py").write_text('"""Fetched."""\ndef f(): pass\n', encoding="utf-8")
+    (_vt / "testdata" / "g.py").write_text('"""Go keeps committed fixtures here."""\ndef g(): pass\n',
+                                           encoding="utf-8")
+    _git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q"], cwd=_vt, capture_output=True)
+    subprocess.run(_git + ["add", "src", "Pods", "third_party", "testdata"], cwd=_vt,
+                   capture_output=True)
+    subprocess.run(_git + ["commit", "-qm", "init"], cwd=_vt, capture_output=True)
+
+    import mapper as _vm
+    _vm.SKIPPED_BUILD_DIR.clear()
+    _got = {f["path"] for f in _vm.scan(_vt)}
+    check("a CocoaPods checkout is not indexed as this project's source",
+          not [p for p in _got if p.startswith("Pods/")])
+    check("...nor is a vendored third_party tree",
+          not [p for p in _got if p.startswith("third_party/")])
+    check("...and both stay skipped even though git tracks them — a committed vendor tree is "
+          "still somebody else's code",
+          not [p for p in _got if p.startswith(("Pods/", "third_party/"))])
+    check("the project's own source is untouched", "src/main.py" in _got)
+    # Go commits its fixtures under testdata/ and Linguist calls it vendored. Following Linguist
+    # there would lose real content, so it is deliberately not in SKIP_DIRS.
+    check("testdata/ is NOT skipped — Linguist lists it, chamnan deliberately does not",
+          "testdata/g.py" in _got)
+    # `deps` is a fetched tree in Elixir and an ordinary directory elsewhere, so the name cannot
+    # decide it and git is asked instead.
+    check("an untracked deps/ is skipped", "deps/f.py" not in _got)
+    check("...and is reported rather than silently dropped", "deps" in _vm.SKIPPED_BUILD_DIR)
+    subprocess.run(_git + ["add", "deps"], cwd=_vt, capture_output=True)
+    subprocess.run(_git + ["commit", "-qm", "deps is committed"], cwd=_vt, capture_output=True)
+    _vm._TRACKED_AMBIGUOUS.clear()
+    check("...but a COMMITTED deps/ is rescued and indexed",
+          "deps/f.py" in {f["path"] for f in _vm.scan(_vt)})
+finally:
+    _rmtree(_vt, ignore_errors=True)
+    try:
+        _vm._TRACKED_AMBIGUOUS.clear()
+    except NameError:
+        pass
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
