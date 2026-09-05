@@ -12807,6 +12807,21 @@ else:
 # than the lost update. Named here so the exemption is a decision on the record, not an omission.
 import ast as _lockast  # noqa: E402
 
+
+def _node_src(node, source):
+    """The original text of `node`, on any Python this project supports.
+
+    🐛 Both audits below were written with `ast.unparse`, which arrived in 3.9. chamnan declares
+    3.8 and CI runs it, so the whole suite died at import on that job -- `AttributeError: module
+    'ast' has no attribute 'unparse'` -- and took four other jobs' worth of signal with it.
+    `ast.get_source_segment` is 3.8 and reads the real source rather than a re-rendering of it,
+    which is what these checks wanted in the first place.
+    """
+    try:
+        return _lockast.get_source_segment(source, node) or ""
+    except (ValueError, TypeError, AttributeError):
+        return ""
+
 _LOCK_EXEMPT = {("lib/state.py", "age_out")}
 
 
@@ -12814,7 +12829,8 @@ def _lock_sites():
     """(file, enclosing function, checked?) for every `with ws.exclusive(...)` in shipped code."""
     for _p in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))):
         try:
-            _tree = _lockast.parse(_p.read_text(encoding="utf-8"))
+            _text = _p.read_text(encoding="utf-8")
+            _tree = _lockast.parse(_text)
         except (SyntaxError, OSError):
             continue
         _owner = {}
@@ -12826,15 +12842,15 @@ def _lock_sites():
             if not isinstance(_n, (_lockast.With, _lockast.AsyncWith)):
                 continue
             for _it in _n.items:
-                if "exclusive(" not in _lockast.unparse(_it.context_expr):
+                if "exclusive(" not in _node_src(_it.context_expr, _text):
                     continue
-                _var = _lockast.unparse(_it.optional_vars) if _it.optional_vars else ""
+                _var = _node_src(_it.optional_vars, _text) if _it.optional_vars else ""
                 _seen = False
                 if _var:
                     for _m in _lockast.walk(_n):
-                        if isinstance(_m, _lockast.If) and _var in _lockast.unparse(_m.test):
+                        if isinstance(_m, _lockast.If) and _var and _var in _node_src(_m.test, _text):
                             _seen = True
-                        elif isinstance(_m, _lockast.BoolOp) and _var in _lockast.unparse(_m):
+                        elif isinstance(_m, _lockast.BoolOp) and _var and _var in _node_src(_m, _text):
                             _seen = True
                 _rel = str(_p.relative_to(ROOT)).replace(os.sep, "/")
                 yield _rel, _owner.get(id(_n), "<module>"), _seen
@@ -13348,12 +13364,12 @@ _MD_OUTPUT = re.compile(r"^f['\"](?:#{1,6} |\s*[-*] |\|)")
 _MD_ALWAYS = ("lib/pointer.py", "lib/coedit.py", "lib/environments.py")
 
 
-def _md_clean_locals(fn):
+def _md_clean_locals(fn, source):
     """Names assigned from a sanitiser call anywhere in this function."""
     clean = set()
     for n in _mdast.walk(fn):
         if isinstance(n, _mdast.Assign):
-            value = _mdast.unparse(n.value)
+            value = _node_src(n.value, source)
             if any(s in value for s in _MD_SANITISERS):
                 for t in n.targets:
                     if isinstance(t, _mdast.Name):
@@ -13367,23 +13383,24 @@ def _md_unsanitised():
     out = []
     for _p in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
         try:
-            _tree = _mdast.parse(_p.read_text(encoding="utf-8"))
+            _mdtext = _p.read_text(encoding="utf-8")
+            _tree = _mdast.parse(_mdtext)
         except (SyntaxError, OSError):
             continue
         for _fn in _mdast.walk(_tree):
             if not isinstance(_fn, (_mdast.FunctionDef, _mdast.AsyncFunctionDef)):
                 continue
-            _clean = _md_clean_locals(_fn)
+            _clean = _md_clean_locals(_fn, _mdtext)
             for _n in _mdast.walk(_fn):
                 if not isinstance(_n, _mdast.JoinedStr):
                     continue
                 _rel_now = str(_p.relative_to(ROOT)).replace(os.sep, "/")
-                if _rel_now not in _MD_ALWAYS and not _MD_OUTPUT.search(_mdast.unparse(_n)):
+                if _rel_now not in _MD_ALWAYS and not _MD_OUTPUT.search(_node_src(_n, _mdtext)):
                     continue
                 for _v in _n.values:
                     if not isinstance(_v, _mdast.FormattedValue):
                         continue
-                    _expr = _mdast.unparse(_v.value)
+                    _expr = _node_src(_v.value, _mdtext)
                     if not _MD_REPO_FIELD.search(_expr):
                         continue
                     if any(s in _expr for s in _MD_SANITISERS):
@@ -13470,7 +13487,10 @@ for _name, (_want, _why) in sorted(_VENDOR_CEILINGS.items()):
 for _name in ("windsurf", "antigravity"):
     _r = subprocess.run(
         [sys.executable, str(ROOT / "bin" / "chamnan-context"), "--emit", _name,
-         "--profile", "large-window", str(ROOT.parent.parent)],
+         # chamnan's OWN repository, which exists wherever this runs. `ROOT.parent.parent` is
+         # two directories above the checkout: a real repository on the development machine and
+         # an empty runner directory in CI, where every emit came back 0 bytes.
+         "--profile", "large-window", str(ROOT)],
         capture_output=True, text=True)
     _size = len(_r.stdout.encode("utf-8"))
     check(f"{_name}'s emitted file fits under its ceiling ({_size:,} bytes)",
@@ -13491,7 +13511,23 @@ for _name in ("windsurf", "antigravity"):
 _sa_hook = ROOT / "hooks" / "chamnan_subagent_start.py"
 check("the subagent hook exists", _sa_hook.is_file())
 
-_sa_payload = json.dumps({"session_id": "t", "cwd": str(ROOT.parent.parent),
+# A fixture repository rather than whatever happens to sit above the checkout: this needs a
+# workspace with a map, a rule and a nested checkout, and it must be the same one everywhere.
+_sa_fix = Path(tempfile.mkdtemp(prefix="chamnan-subagent-"))
+(_sa_fix / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+(_sa_fix / ".chamnan" / "MAP.md").write_text(
+    "# Architecture map — fixture\n\n## Quick Index\n\n**`src/`**\n"
+    "- **`alpha.py`** (10L, 1fn) — The first module.\n"
+    "- **`beta.py`** (12L, 1fn) — The second module.\n", encoding="utf-8")
+(_sa_fix / ".chamnan" / "memory" / "rules" / "a-rule.md").write_text(
+    "# Never deploy on a Friday\n\nBecause nobody is around on Saturday.\n", encoding="utf-8")
+subprocess.run(["git", "init", "-q"], cwd=_sa_fix, capture_output=True)
+# A checkout inside the checkout, which the index excludes and the pointer must name.
+(_sa_fix / "inner").mkdir()
+subprocess.run(["git", "init", "-q"], cwd=_sa_fix / "inner", capture_output=True)
+(_sa_fix / "inner" / "x.py").write_text("x = 1\n", encoding="utf-8")
+
+_sa_payload = json.dumps({"session_id": "t", "cwd": str(_sa_fix),
                           "hook_event_name": "SubagentStart", "agent_id": "a1",
                           "agent_type": "Explore"})
 _sa = subprocess.run([sys.executable, str(_sa_hook)], input=_sa_payload,
@@ -13520,7 +13556,7 @@ check("...and the cap is a small fraction of the session-start ceiling, not a se
 
 # The load-bearing negative: it must name the index, never carry it. A future edit that starts
 # pasting rows would pass every check above and cost fifteen times over.
-_map = ROOT.parent.parent / ".chamnan" / "MAP.md"
+_map = _sa_fix / ".chamnan" / "MAP.md"
 if _map.is_file():
     _map_body = _map.read_text(encoding="utf-8", errors="replace")
     _rows = [ln for ln in _map_body.splitlines() if ln.startswith("- **`") and len(ln) > 40][:20]
@@ -13539,17 +13575,18 @@ check("it is silent where there is no workspace to point at",
 # at a map with nothing in it about the work: the outer map here mentions `mapper.py` zero times
 # while the inner one is 85,000 characters entirely about it.
 check("A NESTED CHECKOUT IS NAMED, SO AN EMPTY-LOOKING INDEX IS NOT MISTAKEN FOR A SILENT ONE",
-      "does NOT cover the checkouts nested inside" in _sa_ctx and "chamnan" in _sa_ctx)
+      "does NOT cover the checkouts nested inside" in _sa_ctx and "inner" in _sa_ctx)
 
 # A fork already carries the parent's whole conversation, session-start block included. Measured
 # over 22 historical fork dispatches: none ever opened MAP.md.
 _sa_fork = subprocess.run(
     [sys.executable, str(_sa_hook)],
-    input=json.dumps({"cwd": str(ROOT.parent.parent), "hook_event_name": "SubagentStart",
+    input=json.dumps({"cwd": str(_sa_fix), "hook_event_name": "SubagentStart",
                       "agent_type": "fork"}),
     capture_output=True, text=True)
 check("a fork gets nothing — it already has the parent's context",
       _sa_fork.returncode == 0 and not _sa_fork.stdout.strip())
+_rmtree(_sa_fix, ignore_errors=True)
 
 # Malformed input is what a hook actually meets in the wild, and stderr never reaches the transcript.
 for _bad in ("", "null", "[]", "{", '{"cwd": null}'):
