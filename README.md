@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.17.0](#whats-new-in-1180) · [Commands](#commands)
+[What's new in 1.17.0](#whats-new-in-1181) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -451,7 +451,7 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.18.0
+## What's new in 1.18.1
 
 **It now says what it works with — and says it in every language it speaks.** 1.17.0 shipped
 twenty-three adapters and a README that still opened with "a Claude Code plugin"; someone searching
@@ -459,10 +459,11 @@ twenty-three adapters and a README that still opened with "a Claude Code plugin"
 
 The English page gained instructions rather than claims: how to install it for each kind of tool,
 how to use it with Hermes Agent, how to point it at a different model, and how to run it on each
-operating system. It names every model family `--model` recognises and says plainly that an
-unrecognised one still works. All thirty-two translated pages gained the same ground, rendered from
-the string table and carrying no figures — every number stays in the English page, which is the only
-one rewritten each release.
+operating system. All thirty-two translated pages gained the same ground, and each of them now names
+every model family `--model` recognises, the two left out on purpose, and the exact escape hatch for
+one that is not listed. They still carry no figures — that rule exists because measurements change
+every release and a translation does not, and family names are proper nouns rather than
+measurements. A test fails if a family is added to the code and any page falls behind.
 
 ### `llms.txt`
 

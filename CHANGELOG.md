@@ -1,11 +1,35 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1180), and every one of these is on the
+[README](README.md#whats-new-in-1181), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.18.1
+
+### The translated pages name the models too
+
+1.18.0 gave all thirty-two translations a row saying chamnan works with any model from any vendor,
+and stopped there. The English page listed every family `--model` recognises; the translated pages
+did not, so a reader who does not read English got "any model" in answer to the question they
+actually had, which is *will it work with mine*.
+
+The omission came from applying the translation set's own rule too widely. That rule is that no
+translated page carries a **number**, because figures change every release and a translation does
+not. Model family names are not figures — they are proper nouns that change when the table changes,
+which is rarely, and they are the single most useful thing that row can say.
+
+Every translated page now names all eleven families, the two left out on purpose and why, and the
+exact escape hatch for a model that is not listed. No digit entered the translation set to do it,
+and a test now fails if a family is added to the code and any page falls behind — it names the
+language and the family that went missing.
+
+Found by the owner reading the rendered Thai page, which is the only way it could have been found:
+every check that existed passed.
 
 ---
 
