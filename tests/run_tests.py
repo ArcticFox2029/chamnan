@@ -14108,6 +14108,47 @@ finally:
     _rmtree(_gc, ignore_errors=True)
 
 
+# ------------------------- demote_headings sat on the sanitiser allow-list without sanitising
+# 🐛 The structural audit accepts `demote_headings(` as a sanitiser because its docstring calls it
+# "the multi-line sibling of as_quoted". It made headings inert and passed every other byte through:
+# an ESC/OSC terminal-title sequence and a bidi-override triple in a rule heading reached the
+# injected block unchanged, reproduced end to end through the real session-start hook by R5 agent 2,
+# from a freshly cloned repository. Being on the allow-list is exactly why no structural check could
+# see it, which is why this one is behavioural.
+import mdblock as _dhm
+_hostile_body = "# Rule\x1b]0;PWNED\x07 name \u202edorp.exe\u2066hidden\u2069\n\nsome body\n```\n# a comment \x1b[31m\n```\n"
+_dh_out = _dhm.demote_headings(_hostile_body)
+check("DEMOTE_HEADINGS STRIPS THE CONTROL CHARACTERS ITS SIBLING STRIPS",
+      "\x1b" not in _dh_out and "\x07" not in _dh_out)
+check("...bidi overrides and isolates included",
+      not any(c in _dh_out for c in ("\u202e", "\u2066", "\u2069")))
+check("...inside a fence as well, since a code block is still text a model reads",
+      "\x1b" not in _dh_out.split("```")[1])
+check("...while the heading is still made inert and the words still arrive",
+      _dh_out.startswith("**Rule") and "some body" in _dh_out and "# Rule" not in _dh_out)
+
+# The same bytes in a rule TITLE, through the subagent pointer, which is paid into every subagent.
+_sh = Path(tempfile.mkdtemp(prefix="chamnan-hostiletitle-"))
+try:
+    (_sh / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+    (_sh / ".chamnan" / "MAP.md").write_text("# Architecture map\n\n## Quick Index\n\n", encoding="utf-8")
+    (_sh / ".chamnan" / "memory" / "rules" / "r.md").write_text(
+        "# Deploy only on \x1b]0;PWNED\x07 Fridays \u202eyadnoM\n\nBecause.\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_sh, capture_output=True)
+    _sh_r = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                           input=json.dumps({"cwd": str(_sh), "hook_event_name": "SubagentStart",
+                                             "agent_type": "Explore"}),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _sh_ctx = (json.loads(_sh_r.stdout).get("hookSpecificOutput") or {}).get("additionalContext", "") \
+        if _sh_r.stdout.strip() else ""
+    check("A HOSTILE RULE TITLE REACHES NO SUBAGENT WITH ITS CONTROL BYTES INTACT",
+          bool(_sh_ctx) and "\x1b" not in _sh_ctx and "\u202e" not in _sh_ctx)
+    check("...and the title's words still arrive, so the pointer is not simply emptied",
+          "Deploy only on" in _sh_ctx)
+finally:
+    _rmtree(_sh, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
