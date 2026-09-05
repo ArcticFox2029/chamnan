@@ -13636,9 +13636,31 @@ try:
             if "TODO step 1" in _l:
                 _sl[_i] = 'echo "building"'      # exactly what the generated file tells you to do
         _skel.write_text("\n".join(_sl) + "\n", encoding="utf-8")
-        subprocess.run(["/bin/bash", str(_skel)], cwd=_inj, capture_output=True)
-        check("A CANDIDATE'S STEP CANNOT EXECUTE AS A SHELL COMMAND IN THE SCRIPT IT GENERATES",
-              not _inj_proof.exists())
+        # 🐛 `/bin/bash` as a literal path exists on macOS and Linux and nowhere on Windows, so
+        # this raised FileNotFoundError and took the whole suite down with it — on the one platform
+        # the suite is meant to prove chamnan works on. It was never seen because the commits it
+        # arrived in had not been pushed, and CI is the only Windows here.
+        # `_POSIX_SHELL` is this file's existing answer to the question, declared at the top for
+        # exactly this reason; a second convention beside it would be the set-half-covered defect
+        # the suite is full of tests for.
+        if _POSIX_SHELL:
+            subprocess.run([shutil.which("bash") or "/bin/sh", str(_skel)],
+                           cwd=_inj, capture_output=True)
+            check("A CANDIDATE'S STEP CANNOT EXECUTE AS A SHELL COMMAND IN THE SCRIPT IT GENERATES",
+                  not _inj_proof.exists())
+        else:
+            # No shell to run it with. Assert the property that run would have demonstrated, rather
+            # than a check that passes by not looking: every `$(` and backtick in the generated
+            # script sits inside a single-quoted span, where the shell cannot act on it.
+            _outside, _in_quote = [], False
+            for _ch in _skel.read_text(encoding="utf-8"):
+                if _ch == "'":
+                    _in_quote = not _in_quote
+                elif not _in_quote:
+                    _outside.append(_ch)
+            _bare = "".join(_outside)
+            check("A CANDIDATE'S STEP CANNOT EXECUTE AS A SHELL COMMAND IN THE SCRIPT IT GENERATES",
+                  "$(" not in _bare and "`" not in _bare)
         check("...and the step's words still reach the file, so it is quoted and not dropped",
               "deploy" in _skel.read_text(encoding="utf-8"))
 finally:
