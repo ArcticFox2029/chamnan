@@ -754,8 +754,17 @@ IGNORE_LINES = [
     "logs/nudge/",
     "logs/nudge_state.json",
     "logs/pointer_seen*.json",
-    "logs/*.lock",
     "logs/repeat_digest.json",
+    "",
+    "# chamnan: mutex files. `exclusive()` creates `<target>.lock` beside whatever it is guarding",
+    "# and unlinks it on the way out; one left behind is a crash, not a record, and is reclaimed",
+    "# after LOCK_STALE seconds. This used to read `logs/*.lock` and covered exactly the two lock",
+    "# sites somebody enumerated -- `tools/index.json.lock` (written on every Bash call) and",
+    "# `state/notices.json.lock` escaped it, and the next lock site added would have escaped it too.",
+    "# One rule for the whole workspace instead: inside `.chamnan/` a `.lock` is always chamnan's,",
+    "# and a package manager's lockfile lives outside it, where this file does not reach.",
+    "**/*.lock",
+    "*.lock",
     "",
     "# Derived, not recorded: rebuilt from git history whenever HEAD moves. Committing it would put",
     "# a 40 KB file that changes on every commit into every diff, and merge it for no reason — the",
@@ -773,12 +782,33 @@ def _mark_ignored(root):
         if not gi.parent.is_dir():
             return
         existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
-        if "logs/*.jsonl" in existing:
+        # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
+        # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
+        # workspaces only, and every existing one kept leaking whatever the new rule was for. Moving
+        # the sentinel to "the last line" was the same trap one step along: today's rule was inserted
+        # mid-list and the last line did not change, so nothing appended.
+        #
+        # No sentinel. The rules actually present are compared against the rules that should be, and
+        # only the missing ones are appended -- self-maintaining, idempotent, and correct however a
+        # future rule is ordered. Comments and blanks are not rules and are only carried along when
+        # they introduce a rule that is being added.
+        have = {ln.strip() for ln in existing.splitlines()}
+        missing, pending = [], []
+        for line in IGNORE_LINES:
+            if not line.strip() or line.lstrip().startswith("#"):
+                pending.append(line)
+                continue
+            if line in have:
+                pending = []
+                continue
+            missing.extend(pending + [line])
+            pending = []
+        if not missing:
             return
         with gi.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
-            fh.write(("\n" if existing else "") + "\n".join(IGNORE_LINES) + "\n")
+            fh.write(("\n" if existing else "") + "\n".join(missing).strip("\n") + "\n")
     except OSError:
         pass
 
