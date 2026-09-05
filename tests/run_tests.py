@@ -14124,9 +14124,35 @@ try:
     _sf_log = _sf / ".chamnan" / "logs" / "subagent_start.jsonl"
     check("THE SUBAGENT POINTER RECORDS THAT IT FIRED, SO SILENCE CAN BE TOLD FROM ABSENCE",
           _sf_log.is_file() and len(_sf_log.read_text(encoding="utf-8").splitlines()) == 3)
-    check("...and each record says which agent type and how many bytes it delivered",
-          all({"at", "agent_type", "bytes"} <= set(json.loads(_l))
+    check("...and each record says which agent type, how many bytes, and what came of it",
+          all({"at", "agent_type", "bytes", "outcome"} <= set(json.loads(_l))
               for _l in _sf_log.read_text(encoding="utf-8").splitlines()))
+    # 🐛 The first version wrote the line after FOUR early returns — a fork, no workspace, the
+    # feature disabled, an empty block — none of which are about whether the hook fired. So an empty
+    # log still could not separate "never fires" from "fires and produces nothing", which is the one
+    # question it exists to answer (R20 agent 2). Every gate records, with the reason.
+    _sf2 = Path(tempfile.mkdtemp(prefix="chamnan-firings2-"))
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=_sf2, capture_output=True)
+        (_sf2 / ".chamnan").mkdir(exist_ok=True)
+        for _payload in ({"agent_type": "fork"}, {"agent_type": "Explore"}):
+            subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                           input=json.dumps({"cwd": str(_sf2), "hook_event_name": "SubagentStart",
+                                             **_payload}),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+        (_sf2 / ".chamnan" / "MAP.md").write_text("# Architecture map\n\n## Quick Index\n\n",
+                                                  encoding="utf-8")
+        subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                       input=json.dumps({"cwd": str(_sf2), "hook_event_name": "SubagentStart",
+                                         "agent_type": "Explore"}),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+        _sf2_log = _sf2 / ".chamnan" / "logs" / "subagent_start.jsonl"
+        _outcomes = [json.loads(_l)["outcome"]
+                     for _l in _sf2_log.read_text(encoding="utf-8").splitlines()]
+        check("A FIRING THAT DELIVERS NOTHING IS STILL RECORDED, WITH THE REASON",
+              _outcomes == ["fork", "nothing-to-point-at", "delivered"])
+    finally:
+        _rmtree(_sf2, ignore_errors=True)
     check("...and the log bounds itself by record, like the others beside it",
           "subagent_start.jsonl" in ws.SELF_PRUNING_LOGS)
     # A hook must never fail over its own bookkeeping.
