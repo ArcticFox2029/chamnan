@@ -139,7 +139,12 @@ def main():
     # TITLE is repository text, and a title has carried a live credential before.
     text = redact.scrub(text)
     if len(text.encode("utf-8")) > MAX_BYTES:
-        text = text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip() + " …"
+        # decode(errors="ignore") already drops a half-written CODE POINT; it knows nothing about a
+        # grapheme spanning several of them, so a cut landing inside a flag or a skin-toned emoji
+        # left a stray regional indicator or a bare modifier behind. Same guard `as_quoted` and
+        # `_clip` already apply -- this was the third cutter in the set and the one without it.
+        text = mdblock.whole_graphemes(
+            text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SubagentStart", "additionalContext": text}}))
     return 0

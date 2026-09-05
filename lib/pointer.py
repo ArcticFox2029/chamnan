@@ -82,13 +82,13 @@ def _title(text, fallback):
     if front:
         m = _FRONT_NAME.search(front)
         if m:
-            return " ".join(m.group(1).split())[:96]
+            return mdblock.as_quoted(m.group(1), 96)
     m = _COMMENT_DESC.search(text)
     if m:
-        return " ".join(m.group(1).split())[:96]
+        return mdblock.as_quoted(m.group(1), 96)
     heads = md.headings(_HEADING, text)
     if heads:
-        return " ".join(heads[0].group(1).split())[:96]
+        return mdblock.as_quoted(heads[0].group(1), 96)
     return fallback
 
 

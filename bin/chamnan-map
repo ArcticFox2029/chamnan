@@ -19,6 +19,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 
 import assets as assets_mod  # noqa: E402
 import mapper  # noqa: E402
+import mdblock  # noqa: E402
 import tree  # noqa: E402
 import rollup  # noqa: E402
 import tokens  # noqa: E402
@@ -400,13 +401,14 @@ def main(argv):
                        f"({assets_mod.human_bytes(mapper.MAX_FILE_BYTES)})")
         if mapper.SKIPPED_BUILD_DIR:
             why.append("under directories that look like build output: "
-                       + ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6]))
+                       + ", ".join(mdblock.as_quoted(d, 60)
+                                   for d in sorted(mapper.SKIPPED_BUILD_DIR)[:6]))
         if mapper.SKIPPED_BINARY:
             why.append(f"{len(mapper.SKIPPED_BINARY)} binary behind a source extension")
         if mapper.SKIPPED_GENERATED:
             why.append(f"{len(mapper.SKIPPED_GENERATED)} declared linguist-generated")
         if mapper.SKIPPED_UNKNOWN_EXT:
-            _top = ", ".join(f"{ext} x{n}" for ext, n in
+            _top = ", ".join(f"{mdblock.as_quoted(ext, 24)} x{n}" for ext, n in
                              mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
             why.append(f"extensions chamnan does not read: {_top}")
         print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
@@ -519,22 +521,29 @@ def main(argv):
     # is 8.5 MB, 71% of the repository and the reason it exists, absent from the index, with
     # "described 3/3 files (100%)" printed beneath. The nested-checkout exclusion is correct but
     # equally unannounced, so a submodule superproject's map is its glue file and nothing else.
+    # 🐛 Every name below is chosen by whoever wrote the clone, and this is stdout -- a terminal,
+    # or an agent's own Bash tool call whose output becomes transcript the model then reads. A
+    # filename carrying an ESC/OSC title sequence was delivered raw and set the window title; in a
+    # transcript it is the `chamnan:`-prefixed shape already found working as an injection vector
+    # elsewhere. as_quoted on every one of them, the same as the injected block already does.
     if mapper.SKIPPED_TOO_LARGE:
-        _big = ", ".join(f"{p.name} ({assets_mod.human_bytes(sz) if isinstance(sz, int) else sz})"
-                        for p, sz in mapper.SKIPPED_TOO_LARGE[:4])
+        _big = ", ".join(f"{mdblock.as_quoted(p.name, 60)} "
+                         f"({assets_mod.human_bytes(sz) if isinstance(sz, int) else sz})"
+                         for p, sz in mapper.SKIPPED_TOO_LARGE[:4])
         _more = len(mapper.SKIPPED_TOO_LARGE) - 4
         print(f"  not indexed, over the size limit: {_big}" + (f" +{_more} more" if _more > 0 else ""))
     if mapper.SKIPPED_BINARY:
         print(f"  not indexed, binary content behind a source extension: "
               f"{len(mapper.SKIPPED_BINARY)} file(s)")
     if getattr(tree, "UNREADABLE", None):
-        _un = ", ".join(sorted(tree.UNREADABLE)[:4])
+        _un = ", ".join(mdblock.as_quoted(u, 60) for u in sorted(tree.UNREADABLE)[:4])
         print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}")
     if mapper.SKIPPED_GENERATED:
         print(f"  not indexed, declared linguist-generated in .gitattributes: "
               f"{len(mapper.SKIPPED_GENERATED)} file(s)")
     if mapper.SKIPPED_BUILD_DIR:
-        named = ", ".join(sorted(mapper.SKIPPED_BUILD_DIR)[:6])
+        named = ", ".join(mdblock.as_quoted(d, 60)
+                          for d in sorted(mapper.SKIPPED_BUILD_DIR)[:6])
         more = len(mapper.SKIPPED_BUILD_DIR) - 6
         print(f"  not indexed, read as build output: {named}" + (f" +{more} more" if more > 0 else ""))
     # 🐛 An extension chamnan cannot read was the one skip reason that said nothing. Measured on
@@ -619,10 +628,27 @@ def main(argv):
         # token count printed to a terminal, and the count is the same either way. Measured:
         # 1,361 tokens churn-ranked against 1,385 alphabetical, a difference of 1.77% in a figure
         # already shown with a `~`.
-        rolled = tokens.estimate(rollup.collapse(text[:index_chars], out.name, budget, None))
+        # 🐛 This used to run collapse() once at its default per_dir=8 and then print, as a fixed
+        # sentence, "with every directory still named" -- a guarantee the command never checked and
+        # the hook's own better algorithm could not keep on the same input. Reproduced on 300
+        # sibling packages: 196 named at session start, "every directory" printed here. The hook
+        # steps per_dir through (8, 4, 2, 0) and keeps the step that names the most directories;
+        # this now runs that same stepping and prints the count it actually reached.
+        _best, _named_dirs = None, -1
+        for _step in (8, 4, 2, 0):
+            _try = rollup.collapse(text[:index_chars], out.name, budget, None, per_dir=_step)
+            _n = len(re.findall(r"^- \*\*.+?/\*\* \(\d+\)", _try, re.M))
+            if _n > _named_dirs:
+                _best, _named_dirs = _try, _n
+        rolled = tokens.estimate(_best)
+        _total_dirs = len({f["path"].rsplit("/", 1)[0] for f in files if "/" in f["path"]})
         print(f"\n  Over the {budget:,}-token session budget, so session start will roll this up by")
-        print(f"  directory: ~{rolled:,.0f} tokens injected per session instead of {index_tokens:,.0f},")
-        print(f"  with every directory still named and the full entry a grep away in MAP.md.")
+        print(f"  directory: ~{rolled:,.0f} tokens injected per session instead of {index_tokens:,.0f}.")
+        if _total_dirs and _named_dirs < _total_dirs:
+            print(f"  {_named_dirs} of {_total_dirs} directories are named at that size; the rest are")
+            print(f"  reachable only through MAP.md. Raise index_token_budget to name more of them.")
+        else:
+            print(f"  Every directory is still named, and the full entry is a grep away in MAP.md.")
         print(f"  For per-file detail in the session instead, either raise index_token_budget or")
         print(f"  narrow the scan: chamnan-map <dir> [<dir> ...]")
     else:

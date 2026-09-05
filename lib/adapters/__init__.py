@@ -394,6 +394,23 @@ def install(root, agent, body, command=""):
     if hasattr(adapter, "install"):
         return adapter.install(root, body, command)
     with held_target(root, adapter.TARGET) as target:
+        # 🐛 Six adapters -- trae, replit, codebuddy, qwen, iflow, aider -- write to one predictable
+        # filename a developer could plausibly have written by hand before installing chamnan, and
+        # this line replaced that file with O_TRUNC and printed a plain success. Reproduced: a
+        # hand-written `.trae/rules/project_rules.md` gone, no trace it had existed. zed, hermes and
+        # generic each refused in their OWN install(); the shared writer, which every other adapter
+        # goes through, never did -- a guard on some members of a set. It lives here now, so an
+        # adapter gets it by not defining install() rather than by remembering to.
+        #
+        # Recognition is "chamnan" within the first 400 characters: every shared-writer adapter's
+        # render() names chamnan by offset 119 at the latest (pinned in the suite), and a file that
+        # names chamnan in its opening lines and is not ours is the one edge case worth accepting.
+        existing = read_target(target)
+        if existing is not None and "chamnan" not in existing[:400]:
+            raise ValueError(
+                f"{target.path} exists and was not written by chamnan, so it is not replaced. "
+                f"Move it aside -- or fold what it says into `.chamnan/memory/rules/`, where every "
+                f"adapter's output will carry it -- and run this again.")
         write_target(target, adapter.render(body))
     return target.path
 

@@ -21,7 +21,7 @@ this works. The index is built from each file's opening comment; without them it
 of filenames, which is worth little.
 
 Say plainly what the number means and what you can do about it, then — **with the user's go-ahead** —
-dispatch the `commenter` agent over the files that lack one. That agent runs on a cheap model
+dispatch the `chamnan:commenter` agent over the files that lack one (the plugin-scoped name, so a second installed plugin that also ships a `commenter` cannot be picked instead). That agent runs on a cheap model
 because "read this file, write one line about it" does not need an expensive one; this is the
 routing principle the plugin ships with, applied to its own onboarding.
 
