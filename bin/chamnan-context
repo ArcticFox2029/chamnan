@@ -329,8 +329,15 @@ def main():
         if limit and written.is_file():
             size = written.stat().st_size
             if size > limit:
+                # 🐛 "truncates silently" was hardcoded and is not true of every agent: CodeBuddy
+                # REJECTS a file past its limit and reads none of it (R12 agent 1). Being told the
+                # index is shortened when it is in fact absent is worse than not being warned, so
+                # the adapter declares which it does.
+                hard = getattr(adapters.for_agent(args.write), "CEILING_IS_HARD", False)
+                what = ("That agent reads NONE of a file past it — the whole file is rejected"
+                        if hard else "That agent truncates silently past it")
                 print(f"  ⚠ {size:,} bytes, over {args.write}'s {limit:,}-byte limit by "
-                      f"{size - limit:,}. That agent truncates silently past it — lower "
+                      f"{size - limit:,}. {what} — lower "
                       f"index_token_budget in .chamnan/config.json, or pass --window smaller.")
         # An agent that does not auto-discover its own context file is only half installed by
         # writing it. Saying so is the difference between a working setup and a file nobody opens.
