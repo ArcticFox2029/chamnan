@@ -13404,6 +13404,83 @@ check("NO ENTRY POINT CALLS A LIB NAME THAT NO LONGER EXISTS", not _stale_refs)
 check("...and the sweep actually looked at the scripts, rather than finding none",
       len(_entry_points) >= 20 and len(_lib_exports) >= 20)
 
+
+# 🐛 SHELL INJECTION in `chamnan-candidates promote … tool …`, reproduced end to end with a payload
+# that created a real file. A candidate's `**Sequence:**` field went into a DOUBLE-QUOTED echo in a
+# script this command chmod +x's and invites you to run, so `$(touch /tmp/x)` in a step was a command
+# substitution. Step 1's `exit 1` hid it only until somebody did what the generated file tells them
+# to do and replaced that line (R20 agent 2).
+#
+# The test is the exploit. It replaces step 1 exactly as the file instructs, runs the script, and
+# asserts nothing happened — because asserting on the script's TEXT would pass the moment somebody
+# invented a new way to escape.
+_inj = Path(tempfile.mkdtemp(prefix="chamnan-inject-"))
+_inj_proof = Path(tempfile.mkdtemp(prefix="chamnan-proof-")) / "fired"
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_inj, capture_output=True)
+    (_inj / "a.py").write_text('"""x"""\ndef a(): pass\n', encoding="utf-8")
+    (_inj / ".chamnan" / "candidates").mkdir(parents=True)
+    (_inj / ".chamnan" / "candidates" / "c1.md").write_text(
+        "---\ndescription: a candidate\n---\n\n# A candidate\n\n"
+        f"**Sequence:** build, $(touch {_inj_proof}), `touch {_inj_proof}`, deploy\n",
+        encoding="utf-8")
+    for _argv in (["confirm", "c1"], ["promote", "c1", "tool", "skel"]):
+        subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates")] + _argv,
+                       cwd=_inj, capture_output=True, text=True)
+    _skel = _inj / ".chamnan" / "tools" / "skel.sh"
+    if not _skel.is_file():
+        check("candidate injection: skeleton was not produced, cannot test", False)
+    else:
+        _sl = _skel.read_text(encoding="utf-8").splitlines()
+        for _i, _l in enumerate(_sl):
+            if "TODO step 1" in _l:
+                _sl[_i] = 'echo "building"'      # exactly what the generated file tells you to do
+        _skel.write_text("\n".join(_sl) + "\n", encoding="utf-8")
+        subprocess.run(["/bin/bash", str(_skel)], cwd=_inj, capture_output=True)
+        check("A CANDIDATE'S STEP CANNOT EXECUTE AS A SHELL COMMAND IN THE SCRIPT IT GENERATES",
+              not _inj_proof.exists())
+        check("...and the step's words still reach the file, so it is quoted and not dropped",
+              "deploy" in _skel.read_text(encoding="utf-8"))
+finally:
+    _rmtree(_inj, ignore_errors=True)
+    _rmtree(_inj_proof.parent, ignore_errors=True)
+# 🐛 `Path.home()` raises where neither $HOME nor a passwd entry resolves — a container, a daemon, a
+# stripped environment. `bin/chamnan-report` called it at MODULE level, so importing the file threw
+# and `--help` died with a raw traceback before argument parsing; `lib/host.py` called it on a path
+# every `chamnan-context` reaches. Detection and reporting are conveniences and must never be the
+# reason a command fails (R20 agent 1). Driven by making the call raise, which is the only way to
+# reach it on a machine that has a home directory.
+_nh = Path(tempfile.mkdtemp(prefix="chamnan-nohome-"))
+try:
+    _nh_script = _nh / "drive.py"
+    _nh_script.write_text(
+        "import pathlib, runpy, sys\n"
+        "pathlib.Path.home = classmethod("
+        "lambda cls: (_ for _ in ()).throw(RuntimeError('no home')))\n"
+        f"sys.path.insert(0, {str(ROOT / 'lib')!r})\n"
+        "import host\n"
+        "from pathlib import Path\n"
+        f"host.agents(Path({str(ROOT)!r}))\n"
+        "sys.argv = ['chamnan-report', '--help']\n"
+        "try:\n"
+        f"    runpy.run_path({str(ROOT / 'bin' / 'chamnan-report')!r}, run_name='__main__')\n"
+        "except SystemExit:\n"
+        "    pass\n"
+        "print('SURVIVED')\n", encoding="utf-8")
+    _nh_r = subprocess.run([sys.executable, str(_nh_script)], cwd=str(_nh),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("NO HOME DIRECTORY IS NOT A REASON FOR A COMMAND TO FAIL",
+          "SURVIVED" in _nh_r.stdout and "Traceback" not in _nh_r.stderr)
+finally:
+    _rmtree(_nh, ignore_errors=True)
+
+# Augment's ceiling was `None`, so nothing shrank toward it and nothing warned — and unlike the
+# others it is not merely unstated, it is documented: 49,512 characters COMBINED across Workspace
+# Guidelines and Rules, which chamnan's rules file counts against (R20 agent 1).
+check("augment declares the ceiling its vendor documents",
+      adapters_mod.for_agent("augment").CEILING == 49_512)
+
+
 # 🐛 The run that most needs a reason was the only run that never printed one. `if not files` returns
 # BEFORE the skip-reason block further down, so a repository whose every candidate was excluded said
 # "no recognised source files" and stopped -- while chamnan held the reason in a list the whole time.

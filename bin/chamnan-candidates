@@ -171,14 +171,30 @@ def cmd_promote(root, ident, destination=None, name=None):
             print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
                   file=sys.stderr)
             return 1
+        # 🐛 SHELL INJECTION, reproduced end to end. `step` comes from a candidate file's
+        # `**Sequence:**` field, and a candidate that reaches disk by any route other than
+        # `candidates.render()` — a hand edit, a merge, a stale checkout — carries whatever it likes.
+        # It was spliced into a DOUBLE-QUOTED echo inside a script this command then chmod +x's and
+        # invites you to run, so `$(touch /tmp/x)` in a step became a command substitution the shell
+        # executed. Step 1's `exit 1` hid it only until somebody did what the file tells them to do
+        # and replaced that line; then it fired. Proved with a real payload creating a real file
+        # (R20 agent 2).
+        #
+        # Not escaped — quoted by the language that owns the quoting. `shlex.quote` produces a
+        # single-quoted literal that no shell interprets, so the step is DATA in the generated
+        # script exactly as it was data in the candidate. Escaping by hand is how this class of bug
+        # is written a second time.
+        import shlex
         lines = ["#!/bin/bash",
                  f"# {dest.stem} — generated from a confirmed candidate, not a real script yet.",
-                 f"# Detected sequence (observed {fields.get('observed', '?')} time(s)): "
-                 f"{', '.join(sequence)}",
+                 "# Detected sequence (observed "
+                 f"{shlex.quote(str(fields.get('observed', '?')))} time(s)): "
+                 + ", ".join(shlex.quote(x) for x in sequence),
                  "# Replace every placeholder below with the ACTUAL command you run at that step.",
                  "set -euo pipefail", ""]
         for i, step in enumerate(sequence, 1):
-            lines.append(f'echo "TODO step {i}: {step}" >&2; exit 1  # replace this line')
+            lines.append(f"echo 'TODO step {i}: '{shlex.quote(step)} >&2; exit 1"
+                         f"  # replace this line")
         dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         tools_index.register(root, {

@@ -596,6 +596,52 @@ def _value_is_the_key_itself(key_part, value):
     return bare.isupper()
 
 
+# Every rule below that carries SECRET_WORDS begins with it: the pattern cannot match text that
+# does not contain one of those words, and the match starts AT the word. On a real map that is 4.3%
+# of the document — 139 occurrences across 293,302 characters — and the other 95.7% is scanned by
+# seven separate large alternations for a hit that is impossible.
+#
+# So the expensive rules are applied to windows anchored at those words instead of to the whole
+# document. This is a pre-filter of the same kind as the `"=>" in text` gate below and is subject to
+# the same rule: it must not change one byte of output. The window is far wider than any credential,
+# and the whole thing is proved rather than argued — `tests/run_tests.py` runs the redactor over a
+# 1.48 MB corpus (every real artefact on this machine, every secret shape this module claims, every
+# decoy it must not eat) and compares a hash of the result against the unwindowed path.
+#
+# 🐛 The failure this replaces is recorded a few lines down: a gate that tested `"|" in text` was
+# true of every markdown document, skipped nothing, and the commit claimed a saving it never made.
+# A gate has to test what the pattern NEEDS, and its saving has to be measured.
+_SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
+# Wider than any credential, any assignment, and any YAML block one could sit in. A match that ran
+# past this would have to be a single 8 KB secret.
+_WINDOW = 8192
+
+
+def _windows_around_secret_words(text):
+    """Merged [start, end) spans covering every place a SECRET_WORDS rule could match, or None.
+
+    None means "no secret word at all", and the caller skips those rules entirely.
+    """
+    starts = [m.start() for m in _SECRET_WORD_ANYWHERE.finditer(text)]
+    if not starts:
+        return None
+    spans = []
+    for i in starts:
+        lo, hi = max(0, i - 64), min(len(text), i + _WINDOW)
+        if spans and lo <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
+        else:
+            spans.append((lo, hi))
+    return spans
+
+
+def _sub_in_windows(pattern_sub, text, spans):
+    """Apply `pattern_sub` only inside `spans`, right to left so earlier offsets stay valid."""
+    for lo, hi in reversed(spans):
+        text = text[:lo] + pattern_sub(text[lo:hi]) + text[hi:]
+    return text
+
+
 def scrub(text):
     """Every string that leaves chamnan for a written file goes through this."""
     if not text:

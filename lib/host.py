@@ -163,7 +163,16 @@ def agents(root=None, env=None, home=None):
     -- a Windows layout, a Cursor install -- without needing that machine.
     """
     env = os.environ if env is None else env
-    home = Path.home() if home is None else Path(home)
+    # 🐛 Unguarded, and reachable from every `chamnan-context` run. `Path.home()` raises when
+    # neither $HOME nor a passwd entry resolves — a container, a daemon, a stripped environment —
+    # and detection is a convenience that must never be the reason a command fails (R20 agent 1).
+    if home is None:
+        try:
+            home = Path.home()
+        except (RuntimeError, OSError):
+            home = None
+    else:
+        home = Path(home)
     root = None if root is None else Path(root)
 
     found = {}
