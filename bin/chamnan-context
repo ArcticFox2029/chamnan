@@ -109,7 +109,7 @@ def _load_hook():
     return module
 
 
-def build(root, profile, ceiling):
+def build(root, profile, ceiling, agent=None):
     """The block, as text. Runs the hook's own `main()` rather than reimplementing any of it.
 
     The hook reads its root from the working directory and its payload from stdin, so both are
@@ -118,11 +118,15 @@ def build(root, profile, ceiling):
     """
     was_cwd, was_stdin = os.getcwd(), sys.stdin
     was_profile = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
+    was_agent = os.environ.get("CHAMNAN_CONTEXT_AGENT")
     was_ceiling = os.environ.get("CHAMNAN_OUTPUT_CEILING")
     buffer = io.StringIO()
     try:
         if profile:
             os.environ["CHAMNAN_CONTEXT_PROFILE"] = profile
+        # Parts of the block are addressed to the reader, and the reader is not always Claude Code.
+        if agent:
+            os.environ["CHAMNAN_CONTEXT_AGENT"] = agent
         os.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling)
         os.chdir(str(root))
         sys.stdin = io.StringIO("{}")
@@ -132,6 +136,7 @@ def build(root, profile, ceiling):
         os.chdir(was_cwd)
         sys.stdin = was_stdin
         for name, previous in (("CHAMNAN_CONTEXT_PROFILE", was_profile),
+                               ("CHAMNAN_CONTEXT_AGENT", was_agent),
                                ("CHAMNAN_OUTPUT_CEILING", was_ceiling)):
             if previous is None:
                 os.environ.pop(name, None)
@@ -259,7 +264,7 @@ def main():
         if declared and args.ceiling == NON_BINDING:
             # --emit prints render()'s output and writes no marker, so only the wrapper counts.
             args.ceiling = max(1, declared - len(emitter.render("").encode()))
-        print(emitter.render(build(root, profile, args.ceiling)))
+        print(emitter.render(build(root, profile, args.ceiling, agent=args.emit)))
         return 0
 
     # An adapter that declares its own ceiling knows something this caller does not -- what the
@@ -296,7 +301,7 @@ def main():
                     f"reads it.\n")
                 break
 
-    body = build(root, profile, args.ceiling)
+    body = build(root, profile, args.ceiling, agent=args.write)
     _notice = _budget_notice(body, profile or profiles.DEFAULT)
     if _notice:
         sys.stderr.write(_notice)

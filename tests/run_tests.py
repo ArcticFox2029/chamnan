@@ -8926,6 +8926,31 @@ try:
 finally:
     _rmtree(_vcs_fix, ignore_errors=True)
 
+# 🐛 `/chamnan:remember` and its three siblings are Claude Code SLASH COMMANDS, and the line
+# naming them was written into every adapter's file — AGENTS.md, .cursorrules, the rest — because
+# nothing asked who the reader was. A Cursor or Codex session was being told, in its own rules
+# file, to type commands it has no way to run (R21 agent 3). Every adapter is checked, not one:
+# the line was correct for the one reader anybody tested with.
+_ad = Path(tempfile.mkdtemp(prefix="chamnan-adapters-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_ad, capture_output=True)
+    (_ad / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ad, capture_output=True)
+    for _agent in sorted(adapters_mod.ADAPTERS):
+        _out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"),
+                               "--emit", _agent], cwd=_ad, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        check(f"NO CLAUDE-CODE-ONLY COMMAND IS WRITTEN INTO {_agent}'s OWN FILE",
+              "/chamnan:" not in _out.stdout)
+    # ...and Claude Code, where those commands do exist, still learns that it can write.
+    _hook_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                               cwd=_ad, input="{}", capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+    check("...while the session-start block still tells Claude Code the write skills exist",
+          "/chamnan:" in _hook_out.stdout)
+finally:
+    _rmtree(_ad, ignore_errors=True)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
