@@ -17,6 +17,7 @@ import hashlib
 import os
 import secrets
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -329,6 +330,51 @@ def _indexable(root):
             yield path
 
 
+_BUILT_FROM = re.compile(r"\bBuilt from ([0-9a-f]{7,40})\.")
+
+
+def _map_is_current_by_git(root, map_path):
+    """True when nothing the map describes has changed since the commit it was built from.
+
+    🐛 mtime alone produced a false "1 minute behind" on every session after a `git checkout`: git
+    writes checked-out files in tree order, so MAP.md (root, uppercase) landed before `src/` and
+    `lib/` did, 5 of 5 trials, on a map committed in the same commit as the code it describes. The
+    commit hash is the fact the clock was a proxy for, so chamnan-map writes it into the header.
+
+    🐛 The first version of this asked "is HEAD still the stamped commit?" -- and it could never be,
+    for exactly the repository that had the bug. A map is built on commit A and then COMMITTED,
+    which makes HEAD commit B. The stamp says A forever. So the question is not whether HEAD moved
+    but whether any indexed SOURCE moved with it: `git diff --quiet <stamp> HEAD -- . ':(exclude).chamnan'`
+    is empty when the only thing that changed since the build is the workspace itself, which is what
+    committing a map looks like. Plus a clean working tree for the same paths.
+
+    Anything unconfirmable -- no git, no stamp, an unknown stamp, a real source change -- returns
+    False, and the mtime path decides exactly as it did before this existed.
+    """
+    try:
+        head_text = map_path.read_text(encoding="utf-8", errors="replace")[:600]
+        m = _BUILT_FROM.search(head_text)
+        if not m:
+            return False
+        stamped = m.group(1)
+        # Both argv lists are single literals on purpose: a guard in the suite reads every
+        # subprocess call's first element from the AST to prove it is `git` or this interpreter,
+        # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
+        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "HEAD", "--",
+                               ".", ":(exclude).chamnan"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=5)
+        if diff.returncode != 0:          # 1 = something changed; 128 = unknown stamp or no git
+            return False
+        st = subprocess.run(["git", "-C", str(root), "status", "--porcelain",
+                             "--untracked-files=no", "--", ".", ":(exclude).chamnan"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=5)
+        return st.returncode == 0 and not st.stdout.strip()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+
+
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
 
@@ -342,6 +388,8 @@ def index_is_behind(root, map_path):
     repository. Only files mapper would actually index count, or a log line written overnight would
     report the architecture as out of date.
     """
+    if _map_is_current_by_git(root, map_path):
+        return 0, []
     try:
         newest = 0.0
         # 🐛 The walk already stats every indexable file to find the newest, so counting the ones

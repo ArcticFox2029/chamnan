@@ -67,7 +67,7 @@ def slug(title):
     and guessable, and create() disambiguates when it actually has to.
     """
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return s[:50].rstrip("-") or "thread"
+    return mdblock.filename_safe(s[:50].rstrip("-") or "thread")
 
 
 def _distinct_slug(directory_, title):
