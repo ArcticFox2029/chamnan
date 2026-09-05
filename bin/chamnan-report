@@ -26,6 +26,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import ledger  # noqa: E402
+# 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
+# neither of these two commands imported mdblock at all. Every value below is repository-
+# authored — an environment heading, a promoted tool name, a path the pointer hook recorded —
+# and this is stdout, which is a terminal or an agent's Bash output that becomes transcript.
+# The same path value is already wrapped in `one_line` where lib/pointer.py speaks to the
+# model; these readers of the same data were missed because four rounds of this sweep named
+# `lib/`, `hooks/` and two bin commands by example, and these two were never in the examples
+# (R13 agent 3).
+import mdblock  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -390,7 +399,8 @@ def print_usage(root):
         print("\nPromoted tools")
         twidth = max(len(name) for name, _ in tools)
         for name, runs in tools:
-            print(f"  {name:<{twidth}}   {runs:>3} run{'s' if runs != 1 else ''}")
+            print(f"  {mdblock.as_quoted(name, 60):<{twidth}}   "
+                  f"{runs:>3} run{'s' if runs != 1 else ''}")
     print()
 
 
@@ -473,7 +483,7 @@ def print_pointer(fired, named, opened):
     print(f"  fired                {fired:>4} time(s), naming {len(named)} distinct entr(ies)")
     print(f"  later opened         {len(followed):>4} of those {len(named)}")
     for path in followed[:6]:
-        print(f"      {path}")
+        print(f"      {mdblock.as_quoted(path, 100)}")
     if len(followed) > 6:
         print(f"      …and {len(followed) - 6} more")
     print("  (an observation, not a score: knowledge can be acted on without the file being")
