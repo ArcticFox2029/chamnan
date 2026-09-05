@@ -376,19 +376,50 @@ def _exists_at(target):
         return False
 
 
-def _looks_generated(text):
-    """Whether `text` is chamnan's own previous output, judged by shape rather than by a word.
+# Written into every file the shared writer produces, and the first thing `_looks_generated` looks
+# for. A person does not type this by accident, which is the entire property a heading lacked.
+MARKER = "<!-- chamnan:generated — safe to delete; `chamnan-context --write` recreates it -->"
 
-    Deliberately strict: the first line that is not YAML frontmatter has to BE chamnan's heading.
-    Anything else -- including a file that merely mentions chamnan -- is somebody's own work.
+
+def _looks_generated(text):
+    """Whether `text` is chamnan's own previous output.
+
+    🐛 Two versions of this have now been wrong in the same direction, and the second is worth
+    stating because it looked careful. It required the first non-frontmatter line to BE
+    `## chamnan` — and a per-tool rules document a person writes by hand looks exactly like that:
+
+        ---
+        description: Our team's coding rules
+        ---
+
+        ## chamnan
+        We use chamnan for the index. Do not edit .chamnan/ by hand.
+
+        ## deploy checklist
+        ...
+
+    Reproduced through `install()` on aider, qwen and replit: the deploy checklist was gone. A
+    heading cannot tell "chamnan wrote this" from "a person wrote ABOUT chamnan", because both
+    start the same way.
+
+    So the file says so itself. `MARKER` is emitted by every shared-writer install and is not
+    something anybody types by accident. The structural fallback is kept for files chamnan wrote
+    before the marker existed -- refusing those would break `--write` for everyone who already ran
+    it -- but it is narrowed by the thing that actually separates the two cases: chamnan's own
+    output carries exactly ONE `## ` heading, its own. A document with a second section is a
+    document somebody is keeping.
     """
+    if MARKER in text:
+        return True
     body = text.lstrip("\ufeff").lstrip()
     if body.startswith("---"):
         end = body.find("\n---", 3)
         if end < 0:
             return False
         body = body[end + 4:].lstrip()
-    return body.startswith("## chamnan")
+    if not body.startswith("## chamnan"):
+        return False
+    return [ln for ln in body.splitlines() if ln.startswith("## ")] == ["## chamnan"]
 
 
 def install(root, agent, body, command=""):
@@ -441,7 +472,9 @@ def install(root, agent, body, command=""):
                 f"{target.path} exists and was not written by chamnan, so it is not replaced. "
                 f"Move it aside -- or fold what it says into `.chamnan/memory/rules/`, where every "
                 f"adapter's output will carry it -- and run this again.")
-        write_target(target, adapter.render(body))
+        # The marker goes LAST: several targets require YAML frontmatter as their first bytes, and
+        # a provenance line ahead of that would break the format it is meant to protect.
+        write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n")
     return target.path
 
 

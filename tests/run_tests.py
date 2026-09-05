@@ -13507,32 +13507,54 @@ try:
                            input=(json.dumps(stdin_payload) if stdin_payload is not None else None))
         return r.stdout + r.stderr
 
-    # 🐛 The first version of this list held four readers, and R8 agent 2 found three leaks in the
-    # ones it did not run — plus one in bin/chamnan-map that it DID run, because the oversized
-    # fixture routed to the size line and never reached the missing-comment advice list beside it.
-    # A sweep is only as wide as its list, so the list is the thing to keep honest: every command in
-    # bin/ that prints repository-derived text, and every hook that emits any.
-    _readers = [
-        ("chamnan-map", [sys.executable, str(ROOT / "bin" / "chamnan-map")], None),
-        ("chamnan-impact", [sys.executable, str(ROOT / "bin" / "chamnan-impact"), "src/main.py"], None),
-        ("chamnan-report", [sys.executable, str(ROOT / "bin" / "chamnan-report")], None),
-        ("chamnan-timeline", [sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "list"], None),
-        ("chamnan-candidates", [sys.executable, str(ROOT / "bin" / "chamnan-candidates")], None),
-        ("file pointer", [sys.executable, str(ROOT / "hooks" / "chamnan_file_pointer.py")],
-         {"cwd": str(_hr), "hook_event_name": "PreToolUse", "tool_name": "Read",
-          "tool_input": {"file_path": "src/main.py"}}),
-        ("session end", [sys.executable, str(ROOT / "hooks" / "chamnan_session_end.py")],
-         {"cwd": str(_hr), "hook_event_name": "SessionEnd"}),
-        ("scratch watch", [sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
-         {"cwd": str(_hr), "hook_event_name": "PostToolUse", "tool_name": "Write",
-          "tool_input": {"file_path": "s.py", "content": "x = 1\n"}}),
-        ("session start", [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
-         {"cwd": str(_hr), "hook_event_name": "SessionStart", "source": "startup"}),
-        ("subagent start", [sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
-         {"cwd": str(_hr), "hook_event_name": "SubagentStart", "agent_type": "Explore"}),
-        ("context --write", [sys.executable, str(ROOT / "bin" / "chamnan-context"), "--emit", "claude"],
-         None),
-    ]
+    # 🐛 The first version of this list held four readers and R10 agent 2 found leaks in three it
+    # did not run. It was widened to eleven and the commit message claimed "every bin/ command and
+    # hook that emits repository text" — which was not true either: `chamnan-age`, `chamnan-env`,
+    # `chamnan-peek`, `chamnan_bulk_read_notice` and `chamnan-promote` were never in it. Twice, a
+    # hand-written list of readers went stale the moment somebody wrote it down.
+    #
+    # So the list is DERIVED. Every executable in bin/ and every hook in hooks/ is driven unless it
+    # is named below with a reason. A command added tomorrow is swept by existing, not by being
+    # remembered — and if it needs arguments the sweep cannot guess, the assertion at the bottom
+    # fails until somebody says so here.
+    _needs_argv = {
+        "chamnan-impact": ["src/main.py"],       # takes a path
+        "chamnan-timeline": ["list"],            # takes a subcommand
+        "chamnan-peek": [f"src/{'main.py'}"],    # takes a path to peek at
+        "chamnan-context": ["--emit", "claude"], # --write would install files; --emit only prints
+    }
+    _not_swept = {
+        # Writes to the repository rather than reading from it; driving it here would install a
+        # git hook into the fixture and prove nothing about rendering.
+        "chamnan-promote": "takes a file to promote and WRITES; covered by its own tests",
+    }
+    _hook_payload = {
+        "chamnan_session_start.py": {"hook_event_name": "SessionStart", "source": "startup"},
+        "chamnan_subagent_start.py": {"hook_event_name": "SubagentStart", "agent_type": "Explore"},
+        "chamnan_session_end.py": {"hook_event_name": "SessionEnd"},
+        "chamnan_file_pointer.py": {"hook_event_name": "PreToolUse", "tool_name": "Read",
+                                    "tool_input": {"file_path": "src/main.py"}},
+        "chamnan_scratch_watch.py": {"hook_event_name": "PostToolUse", "tool_name": "Write",
+                                     "tool_input": {"file_path": "s.py", "content": "x = 1\n"}},
+        "chamnan_bulk_read_notice.py": {"hook_event_name": "PostToolUse", "tool_name": "Read",
+                                        "tool_input": {"file_path": "src/main.py"}},
+    }
+    _readers = []
+    for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
+                       if p.is_file() and p.suffix == "" and p.name.startswith("chamnan-")):
+        if _cmd.name in _not_swept:
+            continue
+        _readers.append((_cmd.name, [sys.executable, str(_cmd)] + _needs_argv.get(_cmd.name, []),
+                         None))
+    for _hk in sorted((ROOT / "hooks").glob("chamnan_*.py")):
+        _payload = dict(_hook_payload.get(_hk.name, {"hook_event_name": "SessionStart"}))
+        _payload["cwd"] = str(_hr)
+        _readers.append((_hk.name, [sys.executable, str(_hk)], _payload))
+    check("the sweep covers every command in bin/ and every hook, minus what is named as skipped",
+          len(_readers) == len([p for p in (ROOT / "bin").iterdir()
+                                if p.is_file() and p.suffix == "" and p.name.startswith("chamnan-")])
+          - len(_not_swept) + len(list((ROOT / "hooks").glob("chamnan_*.py"))))
+
     for _label, _argv, _stdin in _readers:
         _out = _emitted(_argv, _stdin)
         _leaked = [repr(c) for c in _CTRL_BYTES if c in _out]
@@ -13784,6 +13806,31 @@ try:
             _sw_replaced.append(_n)
     check("EVERY SHARED-WRITER ADAPTER REFUSES TO REPLACE A FILE IT DID NOT WRITE",
           set(_sw_refused) == set(_sw_names))
+    # 🐛 The version of this guard before the marker required the first non-frontmatter line to BE
+    # `## chamnan`, and a per-tool rules document somebody writes by hand looks exactly like that:
+    # frontmatter, a `## chamnan` section saying how the team uses it, then their own sections.
+    # Reproduced through install() on aider, qwen and replit — the other sections were gone. A
+    # heading cannot separate "chamnan wrote this" from "a person wrote ABOUT chamnan".
+    for _sw_n in _sw_names:
+        _sw_ad = adapters_mod.for_agent(_sw_n)
+        _sw_t = _sw_root / _sw_ad.TARGET
+        _sw_t.parent.mkdir(parents=True, exist_ok=True)
+        _sw_t.write_text("---\ndescription: our rules\n---\n\n## chamnan\n\nWe use chamnan.\n\n"
+                         "## deploy checklist\n\nKEEP THIS\n", encoding="utf-8")
+        try:
+            adapters_mod.install(_sw_root, _sw_n, _sw_body)
+        except ValueError:
+            pass
+        check(f"{_sw_n}: a hand-written doc with its own `## chamnan` SECTION is not destroyed",
+              "KEEP THIS" in _sw_t.read_text(encoding="utf-8"))
+        # And output written before the marker existed is still recognised, or --write breaks for
+        # everyone who already ran it.
+        _sw_t.write_text("## chamnan\n\n### Rules\n\nfoo\n", encoding="utf-8")
+        adapters_mod.install(_sw_root, _sw_n, _sw_body)
+        check(f"{_sw_n}: ...while its own pre-marker output is still replaced",
+              "shared-writer sweep" in _sw_t.read_text(encoding="utf-8"))
+        check(f"{_sw_n}: ...and what it writes now carries the marker",
+              adapters_mod.MARKER in _sw_t.read_text(encoding="utf-8"))
     check("...and the hand-written content is still there afterwards, byte for byte",
           set(_sw_kept) == set(_sw_names))
     check("...while its own previous output is still replaced on the next run",
