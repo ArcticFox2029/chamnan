@@ -578,7 +578,13 @@ def ensure(root=None):
     # runs on every write path -- a hard failure there would break a deliberate setup with no way to
     # opt out. Warned once per process instead, because ensure() is called many times per run.
     _warn_if_workspace_escapes(ws, find_root(root))
-    for sub in ("", "skills", "tools", "logs", "sessions", "threads",
+    # 🐛 `state` was missing from this list, and it is the directory CLAUDE.md calls "what the
+    # tooling READS". `notice_due()` writes its counter there through `exclusive()`, whose lock file
+    # cannot be created when the parent does not exist — so the lock was never held, the function
+    # returned True unconditionally, and every "shown three times, then stops" tip showed forever on
+    # a freshly bootstrapped workspace. Reproduced through the plugin's own `ensure()`, five calls,
+    # five Trues (R12 agent 5).
+    for sub in ("", "skills", "tools", "logs", "sessions", "threads", "state",
                 "memory", "memory/decisions", "memory/lessons", "memory/rules"):
         try:
             (ws / sub).mkdir(parents=True, exist_ok=True)
