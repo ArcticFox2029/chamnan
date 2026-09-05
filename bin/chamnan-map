@@ -248,6 +248,44 @@ def install_git_hook(root):
 KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure", "-h", "--help")
 
 
+def _paths_being_dropped(map_path, files, root):
+    """How many files the existing map describes that this run will not.
+
+    Counted from the Quick Index's own rows rather than a stored file list, because the map is the
+    only record of what the last run indexed. A map that cannot be read counts as zero: a first run,
+    or a corrupt one, is not something to warn about here.
+    """
+    try:
+        text = map_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return 0
+    # 🐛 Only the Quick Index. Later sections reuse the `- **`name`**` row shape for different
+    # content -- "Stored material" lists DIRECTORIES that way -- so a first pass counted
+    # `Work-Mode/`, `idle-fantacia/` and `miki-hybridge-ai/` as three files about to be dropped and
+    # warned on an ordinary full rebuild. A warning that fires when nothing is wrong teaches the
+    # reader to ignore it, which is worse than not warning at all.
+    start = text.find("## Quick Index")
+    if start < 0:
+        return 0
+    nxt = [m.start() for m in re.finditer(r"^## ", text[start + 1:], re.M)]
+    text = text[start:start + 1 + nxt[0]] if nxt else text[start:]
+    had, cur = set(), ""
+    for line in text.splitlines():
+        m = re.match(r"^\*\*`([^`]+)/`\*\*$", line)
+        if m:
+            cur = "" if m.group(1) in (".", "") else m.group(1)
+            continue
+        m = re.match(r"^- \*\*`([^`]+)`\*\*", line)
+        if m:
+            rel = m.group(1)
+            had.add(f"{cur}/{rel}" if cur and "/" not in rel else rel)
+    if not had:
+        return 0
+    now = {str((root / f["path"]).relative_to(root).as_posix()) if not str(f["path"]).startswith("/")
+           else f["path"] for f in files}
+    return len(had - now)
+
+
 def main(argv):
     # 🐛 There was no `--help`, and this command treats any non-flag argument as a directory to
     # scan — so `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the
@@ -357,6 +395,22 @@ def main(argv):
     except ws.NotAWorkspace as err:
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
+    # 🐛 `chamnan-map <dir>` REPLACES the map rather than adding to it. That is the documented
+    # behaviour and the useful one -- the README offers it as the way to narrow an index on a tree
+    # bigger than you work in -- but it happened in silence. Reproduced on this repository's real
+    # map: 320 files became 153, the other directories gone from the file entirely, exit 0, nothing
+    # printed. Somebody who ran it to look at one directory has thrown away the index for the rest
+    # and has no way to know until a later session is missing everything it needs.
+    #
+    # The feature is not the defect and is not changed. The silence is. This says how many
+    # described files the map is about to stop describing, and how to get them back, in the same
+    # place the "indexing" line already goes.
+    _dropping = _paths_being_dropped(out, files, root)
+    if _dropping:
+        print(f"chamnan-map: this REPLACES the map — {_dropping:,} file(s) the current "
+              f"{out.name} describes are not under the path(s) you gave, and will be dropped. "
+              f"Run `chamnan-map` with no arguments to index the whole repository again.",
+              file=sys.stderr)
     # 🐛 Was a plain write_text, which truncates the file and then fills it — so an interrupted run
     # leaves a MAP.md that is HALF AN INDEX, and the session-start hook injects it as a complete
     # one. Reproduced with `ulimit -f 8`: the header still said "41 source file(s)", 31 rows were

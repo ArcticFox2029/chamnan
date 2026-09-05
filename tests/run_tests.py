@@ -13812,6 +13812,44 @@ finally:
     _rmtree(_bo, ignore_errors=True)
 
 
+# ------------------------------- narrowing the map is a feature; doing it in silence was not
+# `chamnan-map <dir>` REPLACES the map. That is documented and useful -- the README offers it for a
+# tree bigger than you work in -- but it happened with no output at all. Reproduced on this
+# repository's real map: 320 files became 153, the other directories gone, exit 0, nothing printed.
+_nm = Path(tempfile.mkdtemp(prefix="chamnan-narrow-"))
+try:
+    for d in ("src", "docs_src"):
+        (_nm / d).mkdir()
+        for k in range(3):
+            (_nm / d / f"m{k}.py").write_text(f'"""Module {d}{k}."""\ndef f{k}(): pass\n',
+                                              encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_nm, capture_output=True)
+    _nm_map = [sys.executable, str(ROOT / "bin" / "chamnan-map")]
+    _r_full = subprocess.run(_nm_map, cwd=str(_nm), capture_output=True, text=True,
+                             encoding="utf-8", errors="replace")
+    check("a first full build says nothing about dropping anything",
+          "REPLACES" not in _r_full.stderr)
+    _r_again = subprocess.run(_nm_map, cwd=str(_nm), capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+    # 🐛 A first pass counted the "Stored material" section's DIRECTORY rows as files and warned on
+    # an ordinary full rebuild. A warning that fires when nothing is wrong teaches the reader to
+    # ignore it, which is worse than not warning at all.
+    check("...AND NEITHER DOES REBUILDING THE WHOLE REPOSITORY AGAIN",
+          "REPLACES" not in _r_again.stderr)
+    _r_narrow = subprocess.run(_nm_map + ["src"], cwd=str(_nm), capture_output=True, text=True,
+                               encoding="utf-8", errors="replace")
+    check("NARROWING TO ONE DIRECTORY SAYS WHAT IT IS ABOUT TO DROP",
+          "REPLACES" in _r_narrow.stderr and "3 file(s)" in _r_narrow.stderr)
+    check("...and says how to get the whole index back",
+          "with no arguments" in _r_narrow.stderr)
+    # The feature itself is unchanged: it still narrows.
+    _nm_text = (_nm / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+    check("...while still doing what it was asked to do",
+          "docs_src" not in _nm_text and "m0.py" in _nm_text)
+finally:
+    _rmtree(_nm, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
