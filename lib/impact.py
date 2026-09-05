@@ -160,7 +160,13 @@ def _index(files):
     return by_noext, unambiguous
 
 
-def resolve(name, importer, by_noext, by_stem, by_last_segment=None):
+def _root_packages(by_noext):
+    """Every first path segment in the repository, as a set — the packages an absolute dotted import
+    could legitimately be rooted at. Built once per repository, not once per import."""
+    return {k.split("/", 1)[0] for k in by_noext}
+
+
+def resolve(name, importer, by_noext, by_stem, by_last_segment=None, roots=None):
     """One import name to a repository path, or None.
 
     None is the common and correct answer: most imports are standard library or third-party, and
@@ -256,6 +262,25 @@ def resolve(name, importer, by_noext, by_stem, by_last_segment=None):
     # than one file matches.
     if "." not in dotted and not name.startswith(".") and dotted in _STDLIB:
         return None
+    # 🐛 ...and never for a DOTTED absolute import whose root package this repository does not
+    # contain. `from stripe_orm.models import Charge` fell to the tail below, `models` matched
+    # `src/auth/models.py` because exactly one file carries that stem, and the map asserted that a
+    # billing file depends on auth models — two files with nothing to do with each other, in the
+    # section CLAUDE.md tells every session to grep BEFORE changing a file (R12 agent 2).
+    #
+    # The guard above rejects a bare `import json`; the two-segment guard in `_only_suffix_match`
+    # rejects `reporting/utils`; neither reaches this shape, because it is multi-segment and its
+    # tail is unique. What settles it is the ROOT: `stripe_orm` is not in the tree, so nothing
+    # under that name is either. A relative import (`.models`) has no root to check and is
+    # deliberately untouched — that is what this branch exists for and where its edges come from.
+    if "." in dotted and not name.startswith("."):
+        # Precomputed, for the reason `by_last_segment` is: scanning every key here is O(files) per
+        # IMPORT, and the suite's linearity check caught exactly that regression the first time this
+        # was written as an `any(...)` over `by_noext`.
+        if roots is None:
+            roots = _root_packages(by_noext)
+        if dotted.split(".", 1)[0] not in roots:
+            return None
     tail = dotted.rsplit(".", 1)[-1]
     return by_stem.get(tail)
 
@@ -331,13 +356,14 @@ def build(files):
     """
     by_noext, by_stem = _index(files)
     by_last_segment = _by_last_segment(by_noext)
+    roots = _root_packages(by_noext)
     used_by, tests = {}, {}
 
     for f in files:
         importer = f["path"]
         importer_is_test = is_test(importer)
         for name in f.get("imports", []):
-            target = resolve(name, importer, by_noext, by_stem, by_last_segment)
+            target = resolve(name, importer, by_noext, by_stem, by_last_segment, roots)
             if not target or target == importer:
                 continue
             if importer_is_test:
