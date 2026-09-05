@@ -872,6 +872,15 @@ def available_update(plugin_root):
 
     It reports. It never installs. Upgrading someone's tooling because they opened a session is the
     behaviour this is meant to prevent, not perform: the user is told, and decides.
+
+    "Beside the installed copy" is TWO conventions, not one, and reading only the first is how this
+    check went blind on the machine that develops it. `plugins/marketplaces/<name>/` is where a git
+    marketplace is cloned; a marketplace added from a local path is never copied there at all, and
+    lives wherever the user's disk already had it — recorded only in `known_marketplaces.json`. A
+    path install is exactly the case that most needs the notice, because `claude plugin update` will
+    not refresh it while the version string is unchanged, so the user's only signal that they are
+    behind is this line. Both conventions are read, and a stale clone left over from a source that
+    has since changed is simply one more candidate that reports nothing.
     """
     try:
         root = Path(plugin_root).resolve()
@@ -880,23 +889,124 @@ def available_update(plugin_root):
             return ""
         name = json.loads((root / ".claude-plugin" / "plugin.json")
                           .read_text(encoding="utf-8")).get("name", "")
+        best = ""
         for ancestor in root.parents:
             if ancestor.name != "plugins":
                 continue
-            for entry in sorted((ancestor / "marketplaces").iterdir()):
-                manifest = entry / ".claude-plugin" / "plugin.json"
-                if not manifest.is_file():
-                    continue
-                data = json.loads(manifest.read_text(encoding="utf-8"))
-                if name and data.get("name") != name:
-                    continue
-                offered = str(data.get("version", ""))
-                if offered and _as_tuple(offered) > _as_tuple(running):
-                    return offered
+            for entry in _marketplace_dirs(ancestor):
+                for manifest in _plugin_manifests_under(entry):
+                    try:
+                        data = json.loads(manifest.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, RecursionError):
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    if name and data.get("name") != name:
+                        continue
+                    offered = str(data.get("version", ""))
+                    if not offered or _as_tuple(offered) <= _as_tuple(running):
+                        continue
+                    # The highest on offer, not the first found. With two registered sources for the
+                    # same plugin — the usual shape of a path install that was once a git one — the
+                    # order they happen to be read in must not decide which version is reported.
+                    if not best or _as_tuple(offered) > _as_tuple(best):
+                        best = offered
             break
+        return best
     except (OSError, ValueError, TypeError, RecursionError):
         pass
     return ""
+
+
+# A marketplace registered from a local path is never copied under `plugins/marketplaces/`, so
+# listing that directory is only half the set. `known_marketplaces.json` is the other half, and it
+# is written by Claude Code rather than by anything here.
+MAX_MARKETPLACES = 64
+
+
+def _marketplace_dirs(plugins_dir):
+    """Every directory that could hold a marketplace's plugins: cloned ones and registered paths."""
+    found, seen = [], set()
+
+    def offer(path):
+        try:
+            resolved = Path(path).resolve()
+        except (OSError, ValueError, RuntimeError):
+            return
+        if resolved in seen or not resolved.is_dir():
+            return
+        seen.add(resolved)
+        found.append(resolved)
+
+    try:
+        for entry in sorted((plugins_dir / "marketplaces").iterdir()):
+            offer(entry)
+    except OSError:
+        pass
+    try:
+        known = json.loads((plugins_dir / "known_marketplaces.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        known = None
+    if isinstance(known, dict):
+        for record in list(known.values())[:MAX_MARKETPLACES]:
+            if not isinstance(record, dict):
+                continue
+            source = record.get("source")
+            for candidate in (record.get("installLocation"),
+                              source.get("path") if isinstance(source, dict) else None):
+                if isinstance(candidate, str) and candidate:
+                    offer(candidate)
+    return found[:MAX_MARKETPLACES]
+
+
+# How many plugins one marketplace may declare. A marketplace.json is a manifest, not a filesystem
+# walk — a repository holding a handful of plugins is the shape this exists for.
+MAX_PLUGINS_PER_MARKETPLACE = 32
+
+
+def _plugin_manifests_under(market):
+    """The plugin.json files a marketplace directory offers — its own, and each one it declares.
+
+    A single-plugin marketplace puts the manifest at its root, which is what chamnan does and what
+    this only ever looked for. A marketplace carrying several plugins declares each one's directory
+    in `.claude-plugin/marketplace.json` instead, and those manifests were invisible here.
+    """
+    out, seen = [], set()
+
+    def offer(path):
+        try:
+            resolved = Path(path).resolve()
+        except (OSError, ValueError, RuntimeError):
+            return
+        # Confined to the marketplace it was declared by: a `source` is a relative path inside that
+        # repository, and one climbing out of it is reading a manifest nobody offered.
+        if resolved != market and market not in resolved.parents:
+            return
+        manifest = resolved / ".claude-plugin" / "plugin.json"
+        if manifest in seen or not manifest.is_file():
+            return
+        seen.add(manifest)
+        out.append(manifest)
+
+    offer(market)
+    # A document nested past the interpreter's recursion limit raises RecursionError, not
+    # ValueError, and the suite walks every json.loads in this package asserting all three are
+    # caught — a marketplace manifest is a file on disk that this code did not write.
+    try:
+        declared = json.loads((market / ".claude-plugin" / "marketplace.json")
+                              .read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return out
+    entries = declared.get("plugins") if isinstance(declared, dict) else None
+    if not isinstance(entries, list):
+        return out
+    for item in entries[:MAX_PLUGINS_PER_MARKETPLACE]:
+        source = item.get("source") if isinstance(item, dict) else None
+        # Only a relative path inside the marketplace. A dict source names another repository
+        # entirely, which is not on this disk and is not this function's question.
+        if isinstance(source, str) and source and not Path(source).is_absolute():
+            offer(market / source)
+    return out
 
 
 # What chamnan writes that must not be committed, and why each one is on the list.
