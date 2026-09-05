@@ -325,6 +325,44 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else, since no arm64 macOS build of 3.8 exists. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
 | **Windows** | **Tested in CI on every commit**, at Python 3.8 and 3.13, on `windows-latest`. The `bin/` commands are extensionless POSIX scripts that `cmd.exe` cannot resolve through `PATHEXT`, so a generated `.cmd` shim sits beside each one (and beside each hook script) and hands it to the Python launcher; CI runs the shims themselves through `cmd.exe`, not just the underlying scripts. The optional Git hook is still a `/bin/sh` script and needs a shell that can run one — Git for Windows ships `sh.exe`, so it works there. Under WSL it is the Linux row above. |
 
+### Running it on each operating system
+
+The plugin itself is the same everywhere — standard library only, no packages, no virtualenv. What
+differs is how the commands are launched.
+
+**macOS and Linux.** Nothing special. `bin/` holds extensionless scripts with a
+`#!/usr/bin/env python3` line and the executable bit, so they run directly:
+
+```bash
+chamnan-map
+chamnan-context --detect
+```
+
+If the hooks never fire, check those two things — `ls -l` the files in `hooks/`; each should be
+executable and start with that shebang.
+
+**Windows.** `cmd.exe` cannot resolve an extensionless script through `PATHEXT`, so a generated
+`.cmd` shim sits beside every command and every hook and hands it to the Python launcher. They ship
+with the plugin and CI runs the shims themselves, not just the scripts underneath. Use the same
+commands:
+
+```
+chamnan-map
+chamnan-context --detect
+```
+
+If a hook does not fire, confirm the shims are present beside the scripts and that `py` or `python`
+resolves; `python3 install\make_windows_shims.py` regenerates them. The one thing that still wants a
+POSIX shell is the optional Git hook, which is a `/bin/sh` script — Git for Windows ships `sh.exe`,
+so it works there.
+
+**WSL.** Treat it as Linux, because it is. One thing worth knowing: working on a repository stored
+on the Windows side through `/mnt/c` crosses a filesystem boundary on every file read, which makes
+scanning a large tree noticeably slower. Keeping the repository inside the WSL filesystem avoids it.
+
+**Containers and CI.** Everything works read-only except the parts that write, and those say so
+rather than failing silently. A workspace on a read-only checkout still lets a session start.
+
 ## Quick start
 
 ```bash
@@ -637,7 +675,7 @@ chamnan-context --write cursor   set that agent up to read it
 chamnan-context --model kimi     size it for the context window the model actually has
 ```
 
-**34 agent names can be written**, from 23 adapters. Where an agent has a
+**35 agent names can be written**, from 24 adapters. Where an agent has a
 file of its own, chamnan writes that file; where several agents read the same one, they share it
 rather than each getting a copy that drifts.
 
@@ -675,6 +713,90 @@ eleven copies of one file.
 **Claude Code has no adapter, deliberately.** Its delivery is the SessionStart hook, which writes
 nothing — inventing a file for it would give a repository a second copy of the block that nothing
 reads and nobody updates.
+
+### Installing it, per tool
+
+Three ways in, and which one you get depends only on whether the tool has a session hook.
+
+**1 — Claude Code.** A plugin, so the block is delivered by a `SessionStart` hook and no file is
+written into your repository:
+
+```bash
+claude plugin marketplace add ArcticFox2029/chamnan
+claude plugin install chamnan@chamnan
+```
+
+Then, inside a repository, `/chamnan:bootstrap` once. Every session there starts with the index
+already in context. Nothing to run again until the shape of the repository changes.
+
+**2 — Gemini CLI.** Also a real session hook, written into `.gemini/settings.json`, so its context
+is rebuilt every session rather than going stale on disk:
+
+```bash
+chamnan-context --write gemini
+```
+
+**3 — everything else.** A file, written where that tool looks for it, refreshed when you ask:
+
+```bash
+chamnan-context --detect          # what this machine and this repository look like
+chamnan-context --write cursor    # set that agent up to read it
+chamnan-map                       # rebuild the index after the repo changes
+chamnan-context --write cursor    # and refresh the file
+```
+
+The second and third steps are what `chamnan-map --install-git-hook` automates if you want it on
+every commit. Nothing is written on a guess: with no `--write`, chamnan prints the name of the agent
+it detected and the command that would set it up, and stops there.
+
+You do not need Claude Code for either of the last two. `chamnan-context` and `chamnan-map` are
+plain commands; the plugin is one delivery mechanism, not the product.
+
+### Using it with Hermes Agent
+
+[Hermes Agent](https://hermes-agent.nousresearch.com/) is worth its own note, because it is not
+only another agent — it is a control plane that drives other coding agents, so one repository set up
+for Hermes is often several tools reading the same index.
+
+Hermes looks for project instructions in this order, and takes the first it finds:
+
+| | |
+|---|---|
+| `.hermes.md` / `HERMES.md` | highest priority; Hermes walks up to the git root looking for it |
+| `AGENTS.md` | recursive directory walk |
+| `CLAUDE.md`, `.cursorrules` | also read, working directory only |
+
+```bash
+chamnan-context --write hermes
+```
+
+That writes `.hermes.md`, the file at the top of that list. If you would rather share one file with
+every other tool that reads `AGENTS.md`, use `--write generic` instead — Hermes reads that too, just
+below `.hermes.md`. And if you already run Claude Code in the same repository, Hermes picks up
+`CLAUDE.md` on its own with nothing further to do.
+
+chamnan sizes the file for Hermes's own documented cap rather than a number of its own, and refuses
+to overwrite a `.hermes.md` it did not write — that file is the first thing Hermes reads, so
+replacing a hand-written one would substitute an index for your instructions in silence.
+
+Hermes stores its identity in `SOUL.md` under its home directory. chamnan does not write it and will
+not: an index of your code is not a personality.
+
+### Using it with more than one model, or a different one
+
+The index is text. Nothing in it is specific to a vendor, and the only thing a model changes is how
+much of it is worth sending:
+
+```bash
+chamnan-context --model kimi        # size it for that model's context window
+chamnan-context --window 32000      # or say the number yourself
+chamnan-context --profile large-window
+```
+
+That is a budget, never a code path — `--window 32000` and `--window 1000000` run the same code and
+spend differently. Switching models does not mean reinstalling anything, and a repository set up for
+one agent stays set up when you add a second: each adapter writes to its own path, and the ones that
+share a path share the file rather than each keeping a copy that drifts apart.
 
 ### Three axes, kept apart
 

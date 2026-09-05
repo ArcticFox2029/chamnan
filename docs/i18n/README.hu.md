@@ -118,6 +118,29 @@ Minden a `.chamnan/` mappán belül, hétköznapi markdown és JSON. Olvasható,
 | **A titkok szűrése az első** | Minden, ami leírásra vagy a munkamenetbe kerülne, előbb áthalad a titokszűrőn: a változók *neve* megmarad, az értékük nem. Azt a határt pedig, ameddig ez a szűrő nem ér el, az angol README-ben a saját száma mellé írtuk. |
 | **Mit tehet önnel egy telepített bővítmény** | Teljes egészében az angol README-ben, azzal együtt, hogy a chamnan hol vágja el a kiszivárgás láncát. |
 
+## Mivel működik együtt
+
+A chamnan szöveg és szabványos könyvtári Python. Az indexben semmi sem tartozik egyetlen szállítóhoz, egyetlen szerkesztőhöz vagy egyetlen operációs rendszerhez.
+
+| | |
+|---|---|
+| **Bármelyik modell, bármelyik szállító** | Az index egyszerű szöveg, és kontextusként megy át. A modell csak azt változtatja, mennyit érdemes elküldeni, azt soha, hogy mi hová kerül. A méretet a `--model`, `--window` vagy `--profile` állítja. Modellt váltani nem jár újratelepítéssel. |
+| **macOS, Linux, Windows, WSL** | Mindenütt ugyanaz a bővítmény, csak szabványos könyvtár, nincs mit telepíteni. macOS-en és Linuxon a parancsok közvetlenül futnak. Windowson a parancsértelmező nem tud kiterjesztés nélküli szkriptet futtatni, ezért minden parancs és minden horog mellé generált `.cmd` kerül; ezek a bővítménnyel érkeznek, és a CI éppen ezeket futtatja. A WSL úgy viselkedik, mint a Linux. |
+| **Sok ügynök, egyetlen index** | A Claude Code munkamenet-horgon át kapja meg, és a projektedbe egyetlen fájl sem íródik. A Gemini CLI-nek is van valódi munkamenet-horga. A többi ügynök abban az útvonalban kap fájlt, amelyet olvas, és akik ugyanazt olvassák, osztoznak a fájlon ahelyett, hogy mindegyik a maga széttartó másolatát őrizné. |
+| **Hermes Agent** | A Hermes egyben vezérlőréteg is, amely más kódügynököket irányít, így az érte beállított tároló gyakran azt jelenti, hogy több eszköz ugyanazt az indexet olvassa. A projekt utasításait rögzített sorrendben keresi, és az elsőt veszi, amit talál; a chamnan a sorrend élén álló fájlt írja, méretét a Hermes által magának dokumentált korláthoz igazítja, és megtagadja olyan fájl felülírását, amelyet nem ő írt. |
+
+## Így állítod be
+
+Hogy melyik úton indulsz, kizárólag attól függ, van-e az eszköznek munkamenet-horga.
+
+| | |
+|---|---|
+| **Claude Code** | Telepítsd bővítményként, és futtasd le egyszer az indító parancsot egy tárolón belül. A kódodba semmi sem íródik, és onnantól minden munkamenet úgy indul, hogy az index már a kontextusban van. |
+| **Minden más, a Hermesszel együtt** | Előbb kérdezd meg, mit észlelt a chamnan, aztán mondd meg, melyik ügynöknek írjon. Ha a tároló alakja változik, építsd újra az indexet, és írd ki újra a fájlt; egy választható Git-horog véglegesítéskor mindkettőt elvégzi. Claude Code nem kell: ezek hétköznapi parancsok, a bővítmény pedig csak egy kézbesítési út, nem maga a termék. Megnevezett ügynök nélkül kiírja, mit észlelt és melyik parancs illene, a döntést pedig rád hagyja. Sosem ír találgatásból. |
+
+A parancsnevek, az ügynökök teljes listája és a fájl, amelyet mindegyik kap, az angol README-ben található, ahol minden verzióhoz kötött részlet lakik.
+
+
 ## Követelmények
 
 Claude Code · Python · Git · macOS, Linux vagy Windows

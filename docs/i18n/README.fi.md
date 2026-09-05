@@ -118,6 +118,29 @@ Kaikki hakemistossa `.chamnan/`, tavallista markdownia ja JSONia. Luettavissa, k
 | **Salaisuudet suodatetaan ensin** | Kaikki kirjoitettava tai istuntoon syötettävä kulkee ensin salaisuussuodattimen läpi: muuttujien *nimet* jäävät, arvot eivät. Ja se raja, johon suodatin ei yllä, on kirjoitettu oman lukunsa viereen englanninkielisessä README-tiedostossa. |
 | **Mitä asennettu laajennus voi tehdä sinulle** | Selitetty kokonaan englanninkielisessä README-tiedostossa, mukaan lukien se, missä kohtaa chamnan katkaisee vuotoketjun. |
 
+## Minkä kanssa tämä toimii
+
+chamnan on tekstiä ja vakiokirjaston Pythonia. Mikään hakemistossa ei kuulu yhdelle toimittajalle, yhdelle editorille eikä yhdelle käyttöjärjestelmälle.
+
+| | |
+|---|---|
+| **Mikä tahansa malli, mikä tahansa toimittaja** | Hakemisto on tavallista tekstiä ja lähetetään kontekstina. Malli muuttaa vain sen, kuinka paljon kannattaa lähettää, ei koskaan sitä mihin mikäkin menee. Koko asetetaan valitsimilla `--model`, `--window` tai `--profile`. Mallin vaihtaminen ei vaadi mitään uudelleenasennusta. |
+| **macOS, Linux, Windows, WSL** | Sama lisäosa kaikkialla, pelkkä vakiokirjasto, ei mitään asennettavaa. macOS:llä ja Linuxilla komennot ajetaan suoraan. Windowsissa komentotulkki ei osaa ajaa päätteetöntä skriptiä, joten jokaisen komennon ja koukun viereen tehdään `.cmd`-tiedosto; ne toimitetaan lisäosan mukana ja CI ajaa juuri niitä. WSL käyttäytyy kuin Linux. |
+| **Monta agenttia, yksi hakemisto** | Claude Code saa lohkon istuntokoukun kautta eikä projektiisi kirjoiteta tiedostoa. Myös Gemini CLI:llä on aito istuntokoukku. Muut agentit saavat tiedoston siihen polkuun, jota kyseinen agentti lukee, ja samaa polkua lukevat jakavat tiedoston sen sijaan että kukin pitäisi omaa kopiotaan, joka erkanee muista. |
+| **Hermes Agent** | Hermes on myös ohjauskerros, joka johtaa muita koodiagentteja, joten sitä varten pystytetty repositorio tarkoittaa usein useaa työkalua lukemassa samaa hakemistoa. Se etsii projektin ohjeita kiinteässä järjestyksessä ja ottaa ensimmäisen löytämänsä; chamnan kirjoittaa tuon järjestyksen kärjessä olevan tiedoston, mitoittaa sen Hermesin itsensä dokumentoimaan rajaan ja kieltäytyy korvaamasta tiedostoa, jota se ei ole kirjoittanut. |
+
+## Näin otat sen käyttöön
+
+Kumpaa reittiä menet, riippuu vain siitä, onko työkalussa istuntokoukku.
+
+| | |
+|---|---|
+| **Claude Code** | Asenna lisäosana ja aja aloituskomento kerran repositorion sisällä. Koodiisi ei kirjoiteta mitään, ja sen jälkeen jokainen istunto alkaa hakemisto jo kontekstissa. |
+| **Kaikki muu, Hermes mukaan lukien** | Kysy ensin, mitä chamnan tunnistaa, ja kerro sitten, mille agentille sen pitää kirjoittaa. Kun repositorion muoto muuttuu, rakenna hakemisto uudelleen ja kirjoita tiedosto uudestaan; valinnainen Git-koukku tekee molemmat committaessa. Claude Codea ei tarvita: nämä ovat tavallisia komentoja, ja lisäosa on vain yksi toimitustapa, ei tuote. Ilman nimettyä agenttia se tulostaa, mitä se tunnisti ja mikä komento sopisi, ja jättää päätöksen sinulle. Se ei koskaan kirjoita arvauksen perusteella. |
+
+Komentojen nimet, agenttien täysi luettelo ja kunkin saama tiedosto ovat englanninkielisessä README-tiedostossa, jossa jokainen versioon sidottu yksityiskohta asuu.
+
+
 ## Vaatimukset
 
 Claude Code · Python · Git · macOS, Linux tai Windows

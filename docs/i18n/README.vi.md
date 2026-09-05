@@ -118,6 +118,29 @@ Tất cả nằm trong `.chamnan/`, là markdown và JSON thường. Đọc đư
 | **Bí mật được lọc trước** | Mọi thứ sắp được ghi ra hay nạp vào phiên đều đi qua bộ lọc bí mật: giữ *tên* biến, bỏ giá trị. Còn giới hạn mà bộ lọc ấy không với tới thì được ghi ngay cạnh con số của nó trong README tiếng Anh. |
 | **Một plugin đã cài có thể làm gì với bạn** | README tiếng Anh nói đủ, kể cả chỗ chamnan cắt đứt chuỗi rò rỉ. |
 
+## Dùng được với những gì
+
+chamnan là văn bản và Python thư viện chuẩn. Không có gì trong chỉ mục thuộc về một nhà cung cấp, một trình soạn thảo hay một hệ điều hành cụ thể.
+
+| | |
+|---|---|
+| **Mô hình nào cũng được, nhà cung cấp nào cũng được** | Chỉ mục là văn bản thuần và được gửi kèm làm ngữ cảnh. Mô hình chỉ quyết định gửi bao nhiêu là đáng, không bao giờ quyết định cái gì đi đâu. Chỉnh kích thước bằng `--model`, `--window` hoặc `--profile`. Đổi mô hình không phải cài lại thứ gì. |
+| **macOS, Linux, Windows, WSL** | Cùng một plugin ở mọi nơi, chỉ dùng thư viện chuẩn, không có gì phải cài. Trên macOS và Linux các lệnh chạy thẳng. Trên Windows, shell không chạy được tệp lệnh không có phần mở rộng, nên bên cạnh mỗi lệnh và mỗi hook có một tệp `.cmd` được sinh ra; chúng đi kèm plugin và CI chạy chính những tệp đó. WSL hoạt động như Linux. |
+| **Nhiều tác nhân, một chỉ mục** | Claude Code nhận khối qua một hook phiên và không có tệp nào được ghi vào dự án của bạn. Gemini CLI cũng có hook phiên thật sự. Các tác nhân khác nhận một tệp tại đường dẫn mà tác nhân đó đọc, và những tác nhân đọc cùng một đường dẫn thì dùng chung tệp, thay vì mỗi bên giữ một bản sao dần lệch nhau. |
+| **Hermes Agent** | Hermes đồng thời là lớp điều khiển chỉ huy các tác nhân lập trình khác, nên một kho được cấu hình cho nó thường có nghĩa là nhiều công cụ cùng đọc một chỉ mục. Nó tìm tệp hướng dẫn dự án theo thứ tự cố định và lấy tệp đầu tiên tìm thấy; chamnan ghi đúng tệp đứng đầu thứ tự ấy, chỉnh kích thước theo giới hạn mà chính Hermes công bố, và từ chối ghi đè tệp không phải do nó tạo ra. |
+
+## Cách cài đặt
+
+Đi lối nào chỉ phụ thuộc một điều: công cụ đó có hook phiên hay không.
+
+| | |
+|---|---|
+| **Claude Code** | Cài như một plugin rồi chạy lệnh khởi tạo một lần trong kho. Không có gì được ghi vào mã của bạn, và từ đó mỗi phiên bắt đầu với chỉ mục đã nằm sẵn trong ngữ cảnh. |
+| **Mọi thứ còn lại, kể cả Hermes** | Trước hết hãy hỏi chamnan phát hiện được gì, rồi cho biết cần ghi cho tác nhân nào. Khi hình dạng kho thay đổi thì dựng lại chỉ mục và ghi tệp lần nữa; một hook Git tùy chọn làm cả hai việc lúc commit. Không cần Claude Code: đây là những lệnh bình thường, còn plugin chỉ là một con đường chuyển giao, không phải sản phẩm. Nếu không nêu tên tác nhân, nó in ra thứ đã phát hiện cùng lệnh phù hợp, và để bạn quyết định. Nó không bao giờ ghi theo phỏng đoán. |
+
+Tên lệnh, danh sách đầy đủ các tác nhân và tệp mà mỗi tác nhân nhận được đều nằm trong README tiếng Anh, nơi chứa mọi chi tiết gắn với phiên bản.
+
+
 ## Yêu cầu
 
 Claude Code · Python · Git · macOS, Linux hoặc Windows
