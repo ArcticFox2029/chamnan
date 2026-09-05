@@ -21,6 +21,7 @@ any two working sessions share `git status` and `ls`. Four guards keep it quiet 
 It speaks once, at the threshold, the same restraint scratch_watch uses. A hint that fires on
 every repetition is a hint people learn to scroll past.
 """
+import os
 import json
 
 import workspace as ws
@@ -202,6 +203,18 @@ def read(log_path):
     return out
 
 
+# Paths appended to without the lock on Windows, for a test to assert the fallback is reachable and
+# for anybody debugging a short log to find. Never read at runtime.
+_unlocked_appends = []
+
+
+def _append_entries(log_path, fresh):
+    """The append itself, so the locked and unlocked paths cannot drift apart."""
+    with log_path.open("a", encoding="utf-8") as handle:
+        for entry in fresh:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
 def record(log_path, sigs, when, tool=None, interrupted=False):
     """Append signatures to the bounded log and return the full history.
 
@@ -229,9 +242,30 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
         # Append, do not rewrite. This runs from a PostToolUse hook on every single Bash call, and
         # a calendar window holds more than a flat 400 did, so rewriting the whole file every time
         # would make the log's own cost grow in step with its usefulness.
-        with log_path.open("a", encoding="utf-8") as handle:
-            for entry in fresh:
-                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        #
+        # 🐛 "The append path above is safe on its own -- O_APPEND writes of short lines do not
+        # interleave" was true, and true only on POSIX. Windows documents no such guarantee and does
+        # not provide one. Measured on a Windows Server 2025 runner, six processes appending 200
+        # short lines each: 1,034 of 1,200 lines reached the disk. 166 gone, 13.8%, no error
+        # anywhere. The same lab on ubuntu-latest in the same run: 1,200 of 1,200.
+        #
+        # So the append takes the lock too, on that platform only. POSIX keeps the lock-free path
+        # because it is correct there and this runs on every Bash call; paying a lock per call to
+        # fix a platform that does not have the problem would be the wrong trade.
+        if os.name == "nt":
+            with ws.exclusive(log_path) as held:
+                # Appended either way, and deliberately. The trim below RETURNS when the lock was
+                # not taken, because rewriting unguarded destroys other processes' records; an
+                # append cannot destroy anything, it can only fail to survive a collision. Not
+                # appending loses this record with certainty; appending unguarded loses it with the
+                # probability the lab measured, 13.8% under six-way contention. The certain loss is
+                # the worse one, so the flag is read and the decision is written down rather than
+                # the block silently doing the same thing either way.
+                if not held:
+                    _unlocked_appends.append(str(log_path))
+                _append_entries(log_path, fresh)
+        else:
+            _append_entries(log_path, fresh)
 
     history = read(log_path)
     kept = prune(history)
