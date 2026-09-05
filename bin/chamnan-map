@@ -507,6 +507,13 @@ def main(argv):
     # has always used len(files), so the tool and its own artifact reported different sizes for the
     # same scan. Caught by reading both at once on a real repository: 187 printed, 189 in the file.
     print(f"  {len(files)} source file(s), {src:,.0f} tokens of code")
+    # A command that edits a file the user may be about to commit says so. `ensure()` keeps
+    # .chamnan/.gitignore current on every run, which is right — a rule added to the plugin has to
+    # reach workspaces that already exist — but doing it in silence left people finding a dirty
+    # working tree in `git status` with no idea which command had touched it (R11 agent 1).
+    if ws.LAST_IGNORE_RULES_ADDED:
+        print("  added to .chamnan/.gitignore: "
+              + ", ".join(mdblock.as_quoted(r, 40) for r in ws.LAST_IGNORE_RULES_ADDED))
     # Said out loud because the silence was the indefensible half of the defect this reports.
     # coveragepy's index was built without `coverage/` -- the shipped library, 29% of the repo --
     # and the run said nothing at all, so the only visible number was a coverage bar computed over
