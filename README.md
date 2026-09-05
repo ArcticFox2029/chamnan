@@ -87,7 +87,7 @@ interesting thing about it.
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.16.0](#whats-new-in-1160) · [Commands](#commands)
+[What's new in 1.17.0](#whats-new-in-1170) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -396,51 +396,43 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.16.0
+## What's new in 1.17.0
 
-**Seventy-nine commits, and the theme is uncomfortable: most of them are chamnan being wrong about
-chamnan.** Eight claims the tool made about itself did not survive being checked. Every one was
-reproduced before it was believed and pinned by a test afterwards; the suite is at 2,172 checks.
+**Twenty-three tools, where there was one.** 1.16.0 wrote for Claude Code and nothing else. This
+release ships adapters for Cursor, Windsurf, Copilot, Kiro, Zed, Continue, Roo, Cline, Aider, Goose,
+Junie, Amazon Q, Gemini CLI, Qwen, Grok, Mistral, Trae, Replit, Augment, iFlow, CodeBuddy,
+Antigravity, and a generic `AGENTS.md` fallback — each writing at the path that tool reads, in the
+format it parses, under the size limit it publishes.
 
-### It could not see its own commands
+Eighty-two commits, 2,791 checks, and the theme is the same uncomfortable one as last time: most of
+them are chamnan being wrong about something and finding out.
 
-Nine command-line entry points — every command chamnan has — are extensionless shebang scripts, and
-the indexer decided language from the suffix alone. `lib/redact.py` was published as used by 7
-modules when it is used by 16, and all nine missing consumers were the CLI tools that print output
-for a living. Present since the first commit, with the index reporting full coverage the whole time.
+### Subagents are not started blind any more
+
+`SubagentStart` accepts injected context, and this project had recorded the opposite as settled —
+because the documentation page that answers it was being truncated before the table, three separate
+times, once returning "likely". A subagent now gets a 958-byte pointer: where the index is, that it
+must be grepped rather than read, the rules in force, and which nested checkouts the index
+deliberately leaves out. Not the session-start block — a session here spawned fifteen subagents in
+an afternoon, and fifteen copies of that block is the bloated-CLAUDE.md mistake with extra steps.
+
+### A repository is not a trusted input
+
+Filenames, docstrings, table names and directory names are written into Markdown a model reads as
+instructions. Four rounds had each found one instance of the same defect and fixed only that one.
+Walked as a set: **31 sites in 14 files**, including one no audit of call sites could see, because
+the fold happened in a helper and the Markdown was assembled after it. A docstring carrying an ANSI
+escape and a bidi override reached the index verbatim; it does not now, and two tests of different
+shapes guard it because neither catches what the other does.
 
 ### Numbers that were wrong
 
-The **"repeat work" headline** counted file paths from other repositories, because a session rooted
-here dispatches subagents elsewhere and their paths land in this repository's transcript: 20%→7%
-becomes 28%→20% once scoped. **`--explain` billed sections it had already dropped**, printing its own
-remainder as −3,396. The **coverage bar counted compiler directives as descriptions** — `//go:build`
-was the summary of 12 of gin's described files, a JSDoc `@import` of 289 of svelte's 440, putting
-real coverage at ~31% against 44% and 4.3% against 13%.
-
-### Faster, measured with interleaved runs
-
-    SessionStart hook, 6,000-file repo    16-39 s  ->  1.2-2.7 s
-    chamnan-report                          7.14 s ->  5.20 s
-    file opens in one map                    2,259 ->  568
-
-The staleness check was reading 8 KB of every file to answer a question about mtimes; the symlink
-guard resolved every path when the short-circuit meant to stop it sat one line below.
-
-### Security
-
-A **route path could open a heading in the index it was written into**, reproduced in ordinary valid
-JavaScript, putting an attacker's prose into the region injected into every session. Both automatic
-hooks were the two that never redacted. A committed symlink could read `~/.ssh/id_rsa` into the
-block. Every `bin/` command now scrubs what it prints rather than each deciding for itself.
-
-### It reads what it could not
-
-`.svelte`, `.vue` and `.astro` — Svelte's own repository indexed 3,480 files with 4,540 invisible.
-Go and Rust environment variables too, added only after measuring 58 and 12 true positives with zero
-false ones on real clones.
-
-[Every release is in the CHANGELOG](CHANGELOG.md).
+`map_claim_check` — the tool whose whole job is checking the index is true — reported 83.6% about a
+map independently measured at 100%, and had since 2026-09-02. Nothing ran it, so nothing caught it.
+The `README` told Windows users the hooks were unsupported on one line and that Windows is tested in
+CI on another. `atomic_write_text` wrote CRLF on Windows because `write_text` asks the platform.
+A vendored `Pods/`, `Carthage/` or `third_party/` tree was indexed as this project's own source —
+five files became one on a fixture that has four of them.
 
 ## Bootstrap does not rewrite your code
 
