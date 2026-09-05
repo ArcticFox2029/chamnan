@@ -409,7 +409,15 @@ def _looks_generated(text):
     output carries exactly ONE `## ` heading, its own. A document with a second section is a
     document somebody is keeping.
     """
-    if MARKER in text:
+    # 🐛 This was `if MARKER in text` — anywhere in the document. The marker is a public string
+    # printed in every file chamnan writes, so anybody can paste it, and a hand-written file that
+    # merely QUOTES it (a rules doc explaining what the line means, say) was destroyed on the next
+    # `--write`. That is the exact class the marker was added hours earlier to close, reopened by
+    # the laxest possible test for it (R12 agent 2).
+    #
+    # Where it sits is the evidence, not that it appears: `install()` writes it as the LAST line.
+    # A marker anywhere else is somebody quoting it.
+    if text.rstrip().endswith(MARKER):
         return True
     body = text.lstrip("\ufeff").lstrip()
     if body.startswith("---"):

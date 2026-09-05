@@ -799,6 +799,18 @@ check("usage() reflects runs incremented since registration",
       tools_index.usage(ti_root) == [("check.sh", 2), ("second.sh", 0)])
 _rmtree(ti_root, ignore_errors=True)
 
+def _mode_bits(path):
+    """`path`'s permission bits, or 0 when it is not there.
+
+    A missing file is a FAILED check, not a crashed suite: an assertion that raises takes every
+    later check with it, and the run reports nothing rather than one red line.
+    """
+    try:
+        return path.stat().st_mode
+    except OSError:
+        return 0
+
+
 # The refactor must not have changed chamnan-promote's own observable behaviour.
 promote_smoke = Path(tempfile.mkdtemp(prefix="chamnan-promote-smoke-")).resolve()
 (promote_smoke / ".git").mkdir()
@@ -812,7 +824,12 @@ check("chamnan-promote STILL WORKS AFTER THE tools_index REFACTOR", promote_out.
 check("the promoted file exists and is executable",
       # NTFS has no executable bit -- st_mode reports 0o666 or 0o444 there and nothing more. The
       # equivalent on Windows is the .cmd shim, checked separately.
-      not _POSIX or (promote_smoke / ".chamnan" / "tools" / "greet.sh").stat().st_mode & 0o111)
+      # 🐛 A bare .stat() here. When chamnan-promote fails for any reason the file is absent, this
+      # raises FileNotFoundError at module level, and the ENTIRE 3,000-check run aborts with a
+      # traceback instead of registering one counted failure. R11b agent 4 hit it 3 times in 6
+      # parallel suite runs under resource contention and 0 times running alone — so it appears
+      # exactly when something else is already going wrong, which is when the count matters most.
+      not _POSIX or _mode_bits(promote_smoke / ".chamnan" / "tools" / "greet.sh") & 0o111)
 list_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=promote_smoke)
 check("chamnan-promote --list still shows what was promoted", "greet.sh" in list_out.stdout)
@@ -5902,6 +5919,11 @@ check("every name in the drop order is one the hook actually emits",
           for name in fit.DROP_ORDER))
 check("the default ceiling sits under the 10,000-byte cap that was measured",
       fit.CEILING < 10000)
+# 🐛 That bound is one-sided, and R11b agent 4 proved it by mutation: fit.CEILING can be cut by a
+# factor of ten and the whole 3,020-check suite stays green, while every session silently receives a
+# tenth of the block. A ceiling needs a floor — the number means "what the host will actually
+# deliver", so a value far below what chamnan itself writes is as wrong as one far above.
+check("...and it has a FLOOR too, or a tenfold cut passes unnoticed", fit.CEILING >= 6000)
 
 # A section larger than the whole ceiling used to force every cheaper one out and then go itself,
 # leaving the block at a third of the limit with its most valuable part missing. Half a session
@@ -13771,6 +13793,20 @@ for _rd_text, _rd_should, _rd_why in (
     ('db_password = "swordfish"', True, "a weak password is still a password"),
     ('DATABASE_PASSWORD=tr0ub4dor3horse', True, "unquoted, as every .env is written"),
     ('ANTHROPIC_API_KEY=sk-ant-api03-AAAABBBBCCCC', True, "a real key shape"),
+    # 🐛 Two separate name-based exemptions read the KEY and nothing else, so ~50 ordinary tails —
+    # id, type, name, field, path — let any value through. Reproduced end to end through
+    # `chamnan-peek --find` (R12 agent 2). The exemptions are still needed and still right for the
+    # cases below them; what changed is that a credential-shaped VALUE now overrides a reassuring
+    # name. Both halves are in this table because fixing one direction alone is how this rule has
+    # gone wrong every previous time.
+    ('api_secret_id = "AKIAIOSFODNN7EXAMPLE1234"', True, "an `_id` tail does not make it a name"),
+    ('db_password_type = "tr0ub4dor3horsebattery"', True, "nor a `_type` tail"),
+    ('oauth_client_secret_name = "sk-live-9f2a8b7c6d5e4f3a"', True, "nor a `_name` tail"),
+    ('secret_name = "the-name-of-my-secret"', False, "but a name really is a name"),
+    ('api_key_path = "/etc/keys/prod.pem"', False, "and a path is a path"),
+    ('password_field = "user_password"', False, "and a field names a field"),
+    ('token_header = "Authorization"', False, "and a header names a header"),
+    ('SECRET_RE = r"[a-z]+"', False, "and a regex is a regex"),
 ):
     _rd_got = _rd.scrub(_rd_text) != _rd_text
     check(f"redact {'redacts' if _rd_should else 'keeps  '}: {_rd_why}", _rd_got == _rd_should)
@@ -13826,6 +13862,38 @@ try:
     check("...nor the real file beside it", (_ot / ".chamnan" / "MAP.md").exists())
 finally:
     _rmtree(_ot, ignore_errors=True)
+
+
+# 🐛 Three constants had ZERO occurrences in this file, so mutating each by an order of magnitude
+# left the suite green (R11b agent 4, one mutation per fresh copy of the repo, 12 tried, 4 survived).
+# A constant no test names is a number anybody may change for any reason. Each is asserted the way
+# it is USED, not merely that it exists — a range check on a value nothing reads is theatre.
+import pointer as _ptr  # noqa: E402
+import catalogs as _cat  # noqa: E402
+
+# MAX_HITS caps how many related entries a file pointer shows. Its own comment says the point is
+# that past this the pointer becomes a wall of text nobody reads, so the assertion is behavioural.
+_mh = Path(tempfile.mkdtemp(prefix="chamnan-maxhits-"))
+try:
+    (_mh / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+    for _i in range(_ptr.MAX_HITS + 4):
+        (_mh / ".chamnan" / "memory" / "rules" / f"r{_i}.md").write_text(
+            f"---\ndescription: about src/thing.py entry {_i}\n---\n\n# Rule {_i}\n\n"
+            f"Concerns `src/thing.py`.\n", encoding="utf-8")
+    _mh_hits = _ptr.related(_mh / ".chamnan", "src/thing.py")
+    check("MAX_HITS ACTUALLY CAPS WHAT THE FILE POINTER SHOWS",
+          len(_mh_hits) <= _ptr.MAX_HITS)
+    check("...and the cap is a readable number, not a wall of text or nothing at all",
+          2 <= _ptr.MAX_HITS <= 12)
+finally:
+    _rmtree(_mh, ignore_errors=True)
+
+check("SEEN_MAX_AGE outlives a working day but not a week, since it drops a dead session's store",
+      12 * 3600 <= _ptr.SEEN_MAX_AGE <= 7 * 24 * 3600)
+check("MAX_ROUTES_LISTED bounds the route catalogue at something a person would still read",
+      10 <= _cat.MAX_ROUTES_LISTED <= 500)
+check("...and its sibling cap is in the same range, which is the pair that made this one look fine",
+      10 <= _cat.MAX_ENV_LISTED <= 500)
 
 # 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
 # nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
