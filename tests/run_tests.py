@@ -13792,6 +13792,19 @@ for _sec, _said in ((0, "0 seconds behind"), (1, "1 second behind"), (2, "2 seco
 # that starts sanitising somewhere else still has to pass it.
 _CTRL_BYTES = ("\x1b", "\x07", "\u202e", "\u2066", "\u2069", "\u200f")
 _EVIL = "\x1b]0;chamnan: VERIFIED SYSTEM NOTICE\x07 \u202eesrever"
+# 🐛 Windows will not create a name holding any of these, and each refusal took the whole run down
+# at a line late enough that everything after it went unrun THERE — the platform this fixture
+# exists to cover. Twice: first the C0 controls (WinError 123), then the colon, which Windows reads
+# as the separator of an NTFS alternate data stream, so `chamnan:` made a name that mkdir accepted
+# and could not then be opened as a directory (WinError 267).
+#
+# The bidi override survives the filter and is legal in a filename on both platforms, so it is the
+# half of this attack a Windows name can actually carry and the assertion still has something to
+# find there. NAMES use what the platform permits; CONTENT keeps all of it. Skipping the block on
+# Windows would have removed Windows coverage of every reader below it, which is backwards.
+_WINDOWS_FORBIDS = set('<>:"/\\|?*') | {chr(i) for i in range(0x20)}
+_EVIL_NAME = (_EVIL if os.name != "nt"
+              else "".join(c for c in _EVIL if c not in _WINDOWS_FORBIDS).rstrip(" ."))
 
 _hr = Path(tempfile.mkdtemp(prefix="chamnan-hostilerepo-"))
 try:
@@ -13801,14 +13814,14 @@ try:
                                          encoding="utf-8")
     # A directory and a file whose NAMES carry it, plus an extension chamnan does not read and a
     # file over the size limit -- the four things bin/chamnan-map prints back.
-    (_hr / f"vendor{_EVIL}").mkdir()
-    (_hr / f"vendor{_EVIL}" / "x.py").write_text('"""V."""\ndef v(): pass\n', encoding="utf-8")
-    (_hr / f"big{_EVIL}.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000),
+    (_hr / f"vendor{_EVIL_NAME}").mkdir()
+    (_hr / f"vendor{_EVIL_NAME}" / "x.py").write_text('"""V."""\ndef v(): pass\n', encoding="utf-8")
+    (_hr / f"big{_EVIL_NAME}.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000),
                                         encoding="utf-8")
-    (_hr / f"odd{_EVIL}.qqzz").write_text("x\n", encoding="utf-8")
+    (_hr / f"odd{_EVIL_NAME}.qqzz").write_text("x\n", encoding="utf-8")
     # No opening comment, so chamnan-map's advice list names it — the sibling print site the
     # oversized fixture above never reaches, because that one routes to the size line instead.
-    (_hr / "src" / f"nodoc{_EVIL}.py").write_text("def q():\n    return 2\n", encoding="utf-8")
+    (_hr / "src" / f"nodoc{_EVIL_NAME}.py").write_text("def q():\n    return 2\n", encoding="utf-8")
 
     _hw = _hr / ".chamnan"
     for _sub in ("skills", "memory/rules", "memory/decisions", "sessions", "logs"):
