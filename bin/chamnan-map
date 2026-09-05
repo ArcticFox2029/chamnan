@@ -493,7 +493,7 @@ def main(argv):
     # "described 3/3 files (100%)" printed beneath. The nested-checkout exclusion is correct but
     # equally unannounced, so a submodule superproject's map is its glue file and nothing else.
     if mapper.SKIPPED_TOO_LARGE:
-        _big = ", ".join(f"{p.name} ({assets_mod._human(sz) if isinstance(sz, int) else sz})"
+        _big = ", ".join(f"{p.name} ({assets_mod.human_bytes(sz) if isinstance(sz, int) else sz})"
                         for p, sz in mapper.SKIPPED_TOO_LARGE[:4])
         _more = len(mapper.SKIPPED_TOO_LARGE) - 4
         print(f"  not indexed, over the size limit: {_big}" + (f" +{_more} more" if _more > 0 else ""))
