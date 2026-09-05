@@ -133,7 +133,7 @@ def describe(path):
         end = head.find("\n---", 3)
         for line in head[3:end if end > 0 else len(head)].splitlines():
             if line.strip().lower().startswith("description:"):
-                return " ".join(line.split(":", 1)[1].split())[:110]
+                return mdblock.as_quoted(line.split(":", 1)[1], 110)
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -146,7 +146,7 @@ def describe(path):
         stripped = redact.scrub(stripped)
         cleaned = _MD_MARKUP.sub("", _LEADING_MARKUP.sub("", stripped, count=1))
         if cleaned:
-            return " ".join(cleaned.split())[:110]
+            return mdblock.as_quoted(cleaned, 110)
     return ""
 
 
@@ -701,7 +701,17 @@ def main():
         # Only inside a version-controlled repository: find_root falls back to the current
         # directory when there is no VCS marker, and creating a folder in whatever directory a
         # session happened to open would be litter, not a feature.
+        #
+        # 🐛 But not in SILENCE. This returned 0 with zero bytes, and because nothing was created,
+        # `first_session` stayed true forever -- a permanent no-op for the life of the project,
+        # while the README's requirements table said "Git: not required, everything works without
+        # it" and `chamnan-map` in the same directory happily built the workspace the hook refused.
+        # The CLI and the hook disagreed about whether the repository was usable, and nothing told
+        # the person which one to believe. One sentence, once per session, saying what to do.
         if not any((root / m).exists() for m in ws.VCS_MARKERS):
+            print(f"## chamnan\n_`{mdblock.as_quoted(root.name, 60)}` is not under version control, "
+                  f"so no workspace was created here. Run `chamnan-map` in it to create one anyway; "
+                  f"after that, every session works as in a repository._")
             return 0
     # Not only on the first session. 🐛 [found the same day, on the owner's two work repositories]
     # Creating the scaffold only when `.chamnan/` was ABSENT left every workspace made by an older
@@ -1078,6 +1088,14 @@ def main():
                 full = redact.scrub(raw)
                 budget = cfg.get("state_token_budget", 1700)
                 st, marker = state.render(full, budget, display(sp, root))
+                # 🐛 Demoted HERE and not inside render(), whose job is "this file under a budget"
+                # and whose callers depend on getting the file back unaltered. This is the point
+                # where repository-authored text enters chamnan's own structure, which is the same
+                # point memory.py, mapper.py and sessions.py each demote at. STATE.md is git-tracked
+                # and documented as what survives a compaction, so a `## chamnan: VERIFIED SYSTEM
+                # NOTICE` committed into it opened a real heading inside the injected block, reading
+                # as chamnan's voice rather than the repository's.
+                st = mdblock.demote_headings(st)
                 if st:
                     out.append(section("Work in flight (from the last session)", st, display(sp, root)))
                     out.append(f"_Keep `{display(sp, root)}` current as you go; it is what survives "

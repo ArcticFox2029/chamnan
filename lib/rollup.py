@@ -181,9 +181,16 @@ def _disambiguate(path, name, top):
     return rel if "/" in rel else name
 
 
-# How deep the directory roll-up may go looking for a split that separates. Three is far enough to
-# get past src/main/java without turning a line into a path nobody can read.
+# How many SPLITS the directory roll-up may take looking for a grouping that separates. Counted in
+# splits, not path segments: a Maven tree does not branch until segment seven
+# (`src/main/java/com/company/product/moduleNN`), and the earlier reading of this constant -- "three
+# is far enough to get past src/main/java" -- stopped at `src/` with one line for 300 files, because
+# it gave up the moment the NEXT segment failed to separate. Non-branching segments are skipped, up to
+# MAX_SPINE_SEGMENTS, and only a segment that separates counts as a split.
 MAX_GROUP_DEPTH = 3
+# The longest non-branching prefix the roll-up will walk down looking for a split. Past this, a
+# tree that still has not branched is one directory deep in a way no grouping will improve.
+MAX_SPINE_SEGMENTS = 12
 # Below this, one line per top-level directory is already a fine summary and deepening is noise.
 MIN_FILES_TO_DEEPEN = 40
 # One directory holding this share of everything means the depth is too shallow to be telling
@@ -302,16 +309,25 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
 
     groups = at_depth(1)
     depth = 1
-    while depth < MAX_GROUP_DEPTH and len(paths) > MIN_FILES_TO_DEEPEN:
+    splits = 0
+    while splits < MAX_GROUP_DEPTH and len(paths) > MIN_FILES_TO_DEEPEN:
         biggest = max((len(v) for v in groups.values()), default=0)
         if biggest <= len(paths) * DOMINANT_SHARE:
             break
-        deeper = at_depth(depth + 1)
-        # Only if it actually separates. A directory of 500 files with one subdirectory splits into
-        # the same single group one level down, and taking it would spend a longer name for nothing.
+        # 🐛 Only if it actually separates -- but LOOK for the depth that does, rather than testing
+        # the very next one and giving up. `src/main/java/com/company/product/module01/...` has six
+        # segments that each yield the same single group; the old loop tried depth 2, saw one group
+        # again, and broke, leaving 60 modules as one `src/` line whose eight sample names all came
+        # from module01 -- which looked like a distinction had been made when none had. Reproduced
+        # on a 300-file Maven fixture: 1 group named out of 60.
+        look = depth + 1
+        deeper = at_depth(look)
+        while len(deeper) <= len(groups) and look < MAX_SPINE_SEGMENTS:
+            look += 1
+            deeper = at_depth(look)
         if len(deeper) <= len(groups):
-            break
-        groups, depth = deeper, depth + 1
+            break          # nothing separates within the spine limit: a longer name for nothing
+        groups, depth, splits = deeper, look, splits + 1
     if not groups:
         # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an
         # older chamnan, or -- the case that actually happened -- an index that has already been

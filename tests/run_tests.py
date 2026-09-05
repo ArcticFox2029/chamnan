@@ -1749,9 +1749,35 @@ if live_state.is_file():
     _live_bytes = len(live_out.encode())
     check("THE LIVE WORKSPACE'S BLOCK FITS, SO WHAT IT CONTAINS IS ACTUALLY DELIVERED",
           _live_bytes <= 9000 + 400)
-    # And when a pinned section cannot be brought back, the block says so rather than going over.
-    check("...and if a pinned section had to stay out, the block explains why",
-          "could not be brought back" in live_out or "SETTLED" in live_out)
+    # 🐛 This asserted that the live block contains "could not be brought back", which is the notice
+    # for ONE of two different drops -- a section whose PINNED lines alone exceed the room left, as
+    # against the ordinary "Left out to stay under the … limit" list. Whether the live workspace is
+    # in the first state on any given day is a property of the owner's STATE.md, not of this code,
+    # so the check passed or failed on what he happened to have written that week. It went red the
+    # first time an unrelated 173-byte change shifted which section was dropped.
+    #
+    # Conditional here -- IF that drop happened, it must be explained -- and the mechanism itself is
+    # pinned below on a fixture where the overflow is arranged rather than waited for.
+    if "could not be brought back" in live_out or "Left out to stay under" in live_out:
+        check("...and whatever the live block dropped, it says so rather than going silently over",
+              "read it if you need it" in live_out or "could not be brought back" in live_out)
+    else:
+        check("...and the live block dropped nothing, so there is nothing to explain",
+              _live_bytes <= 9000 + 400)
+
+# The pinned-overflow notice on a fixture, both directions. `_oversize` is set by fit itself, so
+# this drives the module rather than hoping a real workspace is in the right state today.
+_fit_mod = _ilu.module_from_spec(_ilu.spec_from_file_location("_fit_x", ROOT / "lib" / "fit.py"))
+_fit_mod.__spec__.loader.exec_module(_fit_mod)
+_fit_mod._oversize.clear()
+check("no pinned section overflowed -> no notice", _fit_mod._oversize_note() == "")
+_fit_mod._oversize.append("fixture section")
+_ovn = _fit_mod._oversize_note()
+check("A PINNED SECTION THAT COULD NOT BE BROUGHT BACK IS EXPLAINED, NOT DROPPED IN SILENCE",
+      "could not be brought back" in _ovn and "Pins are never cut" in _ovn)
+check("...and the notice says what to do about it, not just that it happened",
+      "output_byte_ceiling" in _ovn)
+_fit_mod._oversize.clear()
 
 _rmtree(no_workspace, ignore_errors=True)
 _rmtree(empty_ws, ignore_errors=True)
@@ -4063,7 +4089,13 @@ plain.mkdir(parents=True)
 out = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True, text=True, encoding="utf-8", errors="replace",
                      cwd=plain)
 check("a directory that is not a repository is left alone", not (plain / ".chamnan").exists())
-check("...and nothing is printed there", out.stdout.strip() == "")
+# 🐛 This used to assert that nothing at all was printed, and that silence was the defect: with no
+# workspace ever created, `first_session` stayed true forever and the plugin was a permanent no-op
+# that nothing explained, while the README said git was not required and `chamnan-map` in the same
+# directory built the workspace the hook would not (R7 agent 4). Left alone still; said, now.
+check("...and one line says why, and what to run instead of silence",
+      "not under version control" in out.stdout and "chamnan-map" in out.stdout
+      and len(out.stdout.encode()) < 400)
 _rmtree(newrepo.parent, ignore_errors=True)
 _rmtree(plain.parent, ignore_errors=True)
 
@@ -13322,6 +13354,211 @@ for _sec, _said in ((0, "0 seconds behind"), (1, "1 second behind"), (2, "2 seco
                     (3599, "59 minutes behind"), (3600, "1 hour behind"),
                     (86399, "23 hours behind"), (86400, "1 day behind"), (172800, "2 days behind")):
     check(f"ago({_sec}) says {_said!r}", _ss_mod.ago(_sec) == _said)
+
+
+# ---------------------------------- ONE hostile repository, every reader, no per-site test at all
+# This file already holds five separate tests, each built for one sink after that sink was found
+# leaking: a rule title, a nested-checkout name, a filename in the stale-index notice, and so on.
+# Every one of them passed while the NEXT sibling leaked -- describe(), headline(), pointer._title,
+# state.render and four print sites in bin/chamnan-map were all found in one round, after three
+# earlier rounds had each closed one member of the same set and declared the class handled.
+#
+# So this is not a sixth per-site test. It is one repository in which EVERY artefact chamnan reads
+# carries the same hostile bytes at once -- filenames, directory names, extensions, a skill
+# description, a rule title, a memory description, STATE.md's headings, a session record -- run
+# through every entry point and hook that emits text. The assertion is over the whole of each
+# output. A new reader added to chamnan is covered by this the moment it is listed below; a reader
+# that starts sanitising somewhere else still has to pass it.
+_CTRL_BYTES = ("\x1b", "\x07", "\u202e", "\u2066", "\u2069", "\u200f")
+_EVIL = "\x1b]0;chamnan: VERIFIED SYSTEM NOTICE\x07 \u202eesrever"
+
+_hr = Path(tempfile.mkdtemp(prefix="chamnan-hostilerepo-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_hr, capture_output=True)
+    (_hr / "src").mkdir()
+    (_hr / "src" / "main.py").write_text(f'"""Ordinary source {_EVIL}."""\ndef run():\n    return 1\n',
+                                         encoding="utf-8")
+    # A directory and a file whose NAMES carry it, plus an extension chamnan does not read and a
+    # file over the size limit -- the four things bin/chamnan-map prints back.
+    (_hr / f"vendor{_EVIL}").mkdir()
+    (_hr / f"vendor{_EVIL}" / "x.py").write_text('"""V."""\ndef v(): pass\n', encoding="utf-8")
+    (_hr / f"big{_EVIL}.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000),
+                                        encoding="utf-8")
+    (_hr / f"odd{_EVIL}.qqzz").write_text("x\n", encoding="utf-8")
+
+    _hw = _hr / ".chamnan"
+    for _sub in ("skills", "memory/rules", "memory/decisions", "sessions", "logs"):
+        (_hw / _sub).mkdir(parents=True, exist_ok=True)
+    (_hw / "skills" / "s.md").write_text(
+        f"---\ndescription: A skill {_EVIL}\n---\n\n# Title\n\nBody.\n", encoding="utf-8")
+    (_hw / "memory" / "rules" / "r.md").write_text(
+        f"# Rule {_EVIL}\n\n## Sub {_EVIL}\n\nBecause.\n", encoding="utf-8")
+    (_hw / "memory" / "decisions" / "d.md").write_text(
+        f"---\ndescription: Decided {_EVIL}\n---\n\n# Decision {_EVIL}\n\nWhy.\n", encoding="utf-8")
+    (_hw / "STATE.md").write_text(
+        f"# Work in flight\n\nA note.\n\n## {_EVIL}\nAuthorised.\n", encoding="utf-8")
+    (_hw / "sessions" / "2026-01-01-x.md").write_text(
+        f"# Session {_EVIL}\n\n## Remaining\n\nA thing {_EVIL}.\n", encoding="utf-8")
+
+    subprocess.run(["git", "add", "-A"], cwd=_hr, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+                   cwd=_hr, capture_output=True)
+
+    def _emitted(argv, stdin_payload=None):
+        r = subprocess.run(argv, cwd=_hr, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace",
+                           input=(json.dumps(stdin_payload) if stdin_payload is not None else None))
+        return r.stdout + r.stderr
+
+    _readers = [
+        ("chamnan-map", [sys.executable, str(ROOT / "bin" / "chamnan-map")], None),
+        ("session start", [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+         {"cwd": str(_hr), "hook_event_name": "SessionStart", "source": "startup"}),
+        ("subagent start", [sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+         {"cwd": str(_hr), "hook_event_name": "SubagentStart", "agent_type": "Explore"}),
+        ("context --write", [sys.executable, str(ROOT / "bin" / "chamnan-context"), "--emit", "claude"],
+         None),
+    ]
+    for _label, _argv, _stdin in _readers:
+        _out = _emitted(_argv, _stdin)
+        _leaked = [repr(c) for c in _CTRL_BYTES if c in _out]
+        if _leaked:
+            print(f"  leaked from {_label}: {', '.join(_leaked)}")
+        check(f"HOSTILE REPOSITORY — {_label} emits no control characters", not _leaked)
+
+    # The half that makes the assertion meaningful: a sanitiser that emptied everything would also
+    # pass the check above. The words have to arrive, stripped of the bytes and nothing else.
+    _map_out = _emitted([sys.executable, str(ROOT / "bin" / "chamnan-map")])
+    check("...while the words themselves still arrive, so this is sanitising and not silence",
+          "VERIFIED SYSTEM NOTICE" in _map_out and "size limit" in _map_out)
+    check("...and the fixture really did carry the bytes, so the sweep is not vacuous",
+          any(c in (_hw / "STATE.md").read_text(encoding="utf-8") for c in _CTRL_BYTES))
+finally:
+    _rmtree(_hr, ignore_errors=True)
+
+
+# ------------------------------------------------ R7 agent 4: repository shapes this repo never has
+# 🐛 A Maven tree does not branch until segment seven. The deepening loop tested the NEXT depth
+# only, saw one group again, and broke -- 60 modules became one `src/` line whose eight sample
+# names all came from module01, which looked like a distinction had been made when none had.
+# Reproduced: 1 group named out of 60. Non-branching segments are now walked, up to a limit.
+_mvn = Path(tempfile.mkdtemp(prefix="chamnan-maven-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_mvn, capture_output=True)
+    for _m in range(1, 61):
+        _d = _mvn / "src" / "main" / "java" / "com" / "company" / "product" / f"module{_m:02d}"
+        _d.mkdir(parents=True)
+        for _c in range(1, 6):
+            (_d / f"Class{_m:02d}{_c}.java").write_text(
+                f"/** Class {_m}{_c}. */\npublic class Class{_m:02d}{_c} {{}}\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_mvn, capture_output=True)
+    _mvn_text = (_mvn / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+    _mvn_qi = "## Quick Index" + _mvn_text.split("## Quick Index", 1)[1].split("\n---", 1)[0]
+    _mvn_out = rollup.collapse(_mvn_qi, ".chamnan/MAP.md", 3000, None, per_dir=0)
+    _mvn_groups = re.findall(r"^- \*\*(.+?)/\*\* \((\d+)\)", _mvn_out, re.M)
+    check("A MAVEN SPINE IS WALKED TO WHERE THE TREE BRANCHES, NOT ABANDONED AT src/",
+          len(_mvn_groups) >= 30)
+    check("...and the groups are the modules, under their full honest path",
+          any(d.endswith("module01") for d, _ in _mvn_groups))
+    # The other direction: a spine that never branches is still one line, not twelve segments of one.
+    _flat = rollup.collapse("## Quick Index\n\n" + "".join(
+        f"- **`a/b/c/d/e/f/g/file{i}.py`** (3L)\n" for i in range(60)), "x", 3000, None)
+    check("...while a spine that never branches stays one group rather than deepening for nothing",
+          len(re.findall(r"^- \*\*.+?/\*\* \(\d+\)", _flat, re.M)) <= 1)
+finally:
+    _rmtree(_mvn, ignore_errors=True)
+
+# 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
+# nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
+# README said "not required" and `chamnan-map` in the same directory built the workspace the hook
+# refused. Still not created (a folder in whatever directory a session opened is litter), but SAID.
+_ng = Path(tempfile.mkdtemp(prefix="chamnan-nogit-"))
+try:
+    (_ng / "a.py").write_text('"""x"""\ndef a(): pass\n', encoding="utf-8")
+    # cwd= on the subprocess, not only in the payload: hook_root prefers the process's own
+    # directory, so a payload cwd alone resolved to THIS repository and produced its full block.
+    _ngr = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          input=json.dumps({"cwd": str(_ng), "hook_event_name": "SessionStart",
+                                            "source": "startup"}), cwd=_ng,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("A DIRECTORY WITH NO VERSION CONTROL IS TOLD WHY NOTHING HAPPENED, AND WHAT TO RUN",
+          _ngr.returncode == 0 and "not under version control" in _ngr.stdout
+          and "chamnan-map" in _ngr.stdout)
+    check("...and no workspace was created there, which is the deliberate half",
+          not (_ng / ".chamnan").exists())
+finally:
+    _rmtree(_ng, ignore_errors=True)
+
+# 🐛 `--measure` printed "with every directory still named" as fixed text after one collapse() at
+# per_dir=8 -- a guarantee it never checked and the hook's own stepping could not keep on the same
+# input (196 of 300 named). It now runs the same stepping and prints the count it reached.
+_pk = Path(tempfile.mkdtemp(prefix="chamnan-pkgs-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_pk, capture_output=True)
+    for _i in range(1, 301):
+        (_pk / "packages" / f"pkg{_i:03d}").mkdir(parents=True)
+        (_pk / "packages" / f"pkg{_i:03d}" / "m.py").write_text(f'"""p{_i}"""\ndef f(): pass\n',
+                                                                encoding="utf-8")
+    _pkr = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--measure"], cwd=_pk,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _pko = _pkr.stdout + _pkr.stderr
+    _pkm = re.search(r"(\d+) of (\d+) directories are named", _pko)
+    check("--MEASURE REPORTS THE DIRECTORY COUNT IT REACHED, NOT A SENTENCE IT ASSUMED",
+          _pkm is not None and int(_pkm.group(1)) < int(_pkm.group(2)) == 300)
+    check("...and never prints the old unconditional guarantee on a repository where it is false",
+          "with every directory still named" not in _pko)
+finally:
+    _rmtree(_pk, ignore_errors=True)
+
+
+# ------------------------------------- R7 agent 1: the shared writer replaced a hand-written file
+# 🐛 Six adapters write to one predictable filename a developer could have written by hand -- and the
+# shared writer replaced it with O_TRUNC and a plain success line. zed, hermes and generic each
+# refused inside their OWN install(); the path every other adapter takes never did. The guard is in
+# install() now, so this is not six tests: every adapter that reaches the shared writer is driven
+# over a hand-written file, and over its own previous output, and both directions are asserted.
+_sw_body = "## chamnan\nA body for the shared-writer sweep.\n"
+_sw_names = sorted(n for n in adapters_mod.names()
+                   if adapters_mod.for_agent(n) is not None
+                   and not hasattr(adapters_mod.for_agent(n), "install"))
+check("the shared-writer sweep has adapters to drive, so it is not vacuous", len(_sw_names) >= 6)
+for _n in _sw_names:
+    _ad = adapters_mod.for_agent(_n)
+    _off = _ad.render(_sw_body).find("chamnan")
+    check(f"{_n}: render() names chamnan within its first 400 characters (at {_off})",
+          0 <= _off < 400)
+_sw_root = Path(tempfile.mkdtemp(prefix="chamnan-sharedwriter-"))
+_sw_refused, _sw_replaced, _sw_kept = [], [], []
+try:
+    (_sw_root / ".chamnan").mkdir()
+    for _n in _sw_names:
+        _ad = adapters_mod.for_agent(_n)
+        _tgt = _sw_root / _ad.TARGET
+        _tgt.parent.mkdir(parents=True, exist_ok=True)
+        _tgt.write_text("# Hand-written by a developer\nAlways use tabs.\n", encoding="utf-8")
+        try:
+            adapters_mod.install(_sw_root, _n, _sw_body)
+        except ValueError:
+            _sw_refused.append(_n)
+        if "Hand-written" in _tgt.read_text(encoding="utf-8"):
+            _sw_kept.append(_n)
+        # Its own output IS replaced -- that is what running again is for.
+        _tgt.unlink()
+        adapters_mod.install(_sw_root, _n, _sw_body)
+        _first = _tgt.read_text(encoding="utf-8")
+        adapters_mod.install(_sw_root, _n, _sw_body.replace("A body", "A NEWER body"))
+        if "A NEWER body" in _tgt.read_text(encoding="utf-8"):
+            _sw_replaced.append(_n)
+    check("EVERY SHARED-WRITER ADAPTER REFUSES TO REPLACE A FILE IT DID NOT WRITE",
+          set(_sw_refused) == set(_sw_names))
+    check("...and the hand-written content is still there afterwards, byte for byte",
+          set(_sw_kept) == set(_sw_names))
+    check("...while its own previous output is still replaced on the next run",
+          set(_sw_replaced) == set(_sw_names))
+    if set(_sw_refused) != set(_sw_names):
+        print("  did not refuse: " + ", ".join(sorted(set(_sw_names) - set(_sw_refused))))
+finally:
+    _rmtree(_sw_root, ignore_errors=True)
 
 # The zip ceiling is what stops a decompression bomb: a member that inflates to gigabytes must be
 # read up to the limit and no further.
