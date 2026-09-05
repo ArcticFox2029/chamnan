@@ -524,6 +524,7 @@ def main(argv):
     # the records that the marker computation, 170 lines later, could no longer see.
     marker_early = _workspace_created(ws.workspace(root))
     ws.prune_logs(root)
+    ws.prune_orphaned_temps(root)
     ws.prune_sessions(root)
     if not entries:
         print("chamnan: transcripts found but no usage records yet")

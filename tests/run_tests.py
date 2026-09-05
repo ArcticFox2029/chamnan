@@ -13775,6 +13775,58 @@ for _rd_text, _rd_should, _rd_why in (
     _rd_got = _rd.scrub(_rd_text) != _rd_text
     check(f"redact {'redacts' if _rd_should else 'keeps  '}: {_rd_why}", _rd_got == _rd_should)
 
+
+# 🐛 A `.version` that stopped being version-shaped stayed that way forever: the guard that refuses
+# to QUOTE it (planted content reaches a banner in chamnan's own voice, so that guard is right and
+# stays) returned before the self-heal write below it, so every session said "an unreadable version"
+# and none repaired it. Measured over five consecutive calls (R11b agent 3). Overwriting is also the
+# disinfectant: the planted-banner attack works by persisting.
+_rv = Path(tempfile.mkdtemp(prefix="chamnan-version-"))
+try:
+    (_rv / ".chamnan").mkdir()
+    _rv_f = _rv / ".chamnan" / ws.VERSION_FILE
+    _rv_f.write_text("<<<<<<< HEAD\n1.18.1\n=======\n1.19.0\n>>>>>>> x\n", encoding="utf-8")
+    _rv_first = ws.reconcile_version(_rv, "1.19.0")
+    _rv_second = ws.reconcile_version(_rv, "1.19.0")
+    check("A CORRUPTED .version IS REPAIRED, NOT REPORTED UNREADABLE FOREVER",
+          _rv_first == "an unreadable version" and _rv_second == "")
+    check("...and the planted content is gone from disk after the first sight of it",
+          _rv_f.read_text(encoding="utf-8").strip() == "1.19.0")
+    # A real downgrade is a different thing and is still reported, and NOT overwritten.
+    _rv_f.write_text("2.0.0\n", encoding="utf-8")
+    check("...while a genuine downgrade is still reported and left alone",
+          ws.reconcile_version(_rv, "1.19.0") == "2.0.0"
+          and _rv_f.read_text(encoding="utf-8").strip() == "2.0.0")
+finally:
+    _rmtree(_rv, ignore_errors=True)
+
+# 🐛 A killed `atomic_write_text` leaves `<name>.<pid>.tmp` behind and nothing swept it: prune_logs
+# walks only logs/, and these land beside whatever was being written. Both bounds are asserted,
+# because the expensive mistake here is deleting a write that is in progress.
+_ot = Path(tempfile.mkdtemp(prefix="chamnan-orphantmp-"))
+try:
+    (_ot / ".chamnan" / "logs").mkdir(parents=True)
+    _ot_old = time.time() - 2 * ws._ORPHAN_TEMP_AGE
+    for _rel in ("MAP.md.12345.tmp", "logs/x.jsonl.999.tmp"):
+        _p = _ot / ".chamnan" / _rel
+        _p.write_text("x", encoding="utf-8")
+        os.utime(_p, (_ot_old, _ot_old))
+    for _rel in ("MAP.md.54321.tmp", "notes.tmp", "MAP.md"):
+        _p = _ot / ".chamnan" / _rel
+        _p.write_text("x", encoding="utf-8")
+        if _rel != "MAP.md.54321.tmp":      # a live write keeps a current mtime
+            os.utime(_p, (_ot_old, _ot_old))
+    _ot_n = ws.prune_orphaned_temps(_ot)
+    check("AN ORPHANED STAGING FILE IS SWEPT, WHEREVER IN THE WORKSPACE IT LANDED",
+          _ot_n == 2 and not (_ot / ".chamnan" / "MAP.md.12345.tmp").exists()
+          and not (_ot / ".chamnan" / "logs" / "x.jsonl.999.tmp").exists())
+    check("...and a write in progress is never touched", (_ot / ".chamnan" / "MAP.md.54321.tmp").exists())
+    check("...nor a .tmp this module did not write, however old",
+          (_ot / ".chamnan" / "notes.tmp").exists())
+    check("...nor the real file beside it", (_ot / ".chamnan" / "MAP.md").exists())
+finally:
+    _rmtree(_ot, ignore_errors=True)
+
 # 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
 # nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
 # README said "not required" and `chamnan-map` in the same directory built the workspace the hook
