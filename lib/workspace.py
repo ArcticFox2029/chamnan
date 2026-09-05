@@ -664,6 +664,11 @@ GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap
                   "# if you would rather see the diff.\n")
 
 
+# Lines appended to .chamnan/.gitattributes by the last `_mark_generated` that changed it,
+# so a caller can say it happened — same reason its sibling keeps one.
+LAST_GENERATED_RULES_ADDED = []
+
+
 def _mark_generated(root):
     """Tell git that MAP.md is a generated file, so a rebuild does not drown a pull request.
 
@@ -701,6 +706,7 @@ def _mark_generated(root):
 
     Appended, never rewritten, since a user may have put their own rules in this file too.
     """
+    del LAST_GENERATED_RULES_ADDED[:]
     try:
         if not root or not (Path(root) / ".git").exists():
             return
@@ -708,12 +714,26 @@ def _mark_generated(root):
         if not ga.parent.is_dir():
             return
         existing = ga.read_text(encoding="utf-8", errors="replace") if ga.is_file() else ""
-        if "MAP.md linguist-generated" in existing:
+        # 🐛 The presence test was `if "MAP.md linguist-generated" in existing: return` — a single
+        # sentinel line, which is the exact trap `_mark_ignored` a few functions down was rewritten
+        # to escape and whose comment says why: a rule added to the constant afterwards reaches NEW
+        # workspaces only, and every existing one keeps whatever it had. `MAP.md -diff` was added
+        # after that sentinel and never arrived here. Measured on this repository: the committed file
+        # carries one of the two lines, so `git diff`, `git log -p`, `git blame` and every IDE have
+        # been printing a 285 KB regenerated file in full the whole time (R13 agent 4).
+        #
+        # Same answer as its sibling: compare the rules present against the rules that should be and
+        # append only what is missing. Self-maintaining however a future line is ordered.
+        have = {ln.strip() for ln in existing.splitlines()}
+        missing = [ln for ln in GENERATED_ATTR.splitlines() if ln.strip() and ln not in have]
+        if not missing:
             return
         with ga.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
-            fh.write(("\n" if existing else "") + GENERATED_NOTE + GENERATED_ATTR)
+            note = GENERATED_NOTE if not existing else ""
+            fh.write(("\n" if existing else "") + note + "\n".join(missing) + "\n")
+        LAST_GENERATED_RULES_ADDED.extend(missing)
     except OSError:
         pass          # a nicety must never break workspace creation
 

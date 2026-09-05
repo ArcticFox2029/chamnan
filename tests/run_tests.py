@@ -13795,6 +13795,33 @@ finally:
     _rmtree(_gi, ignore_errors=True)
 
 
+# 🐛 `_mark_generated` tested for ONE sentinel line, which is the trap `_mark_ignored` beside it was
+# rewritten to escape — so `MAP.md -diff`, added to the constant after that sentinel, reached new
+# workspaces only. Measured on this repository: the committed `.gitattributes` carried one of the two
+# lines, so `git diff`, `git log -p`, `git blame` and every IDE printed a 285 KB regenerated file in
+# full, the whole time (R13 agent 4). The `-diff` half is the LOCAL one; `linguist-generated` only
+# changes github.com.
+_ga = Path(tempfile.mkdtemp(prefix="chamnan-gitattr-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_ga, capture_output=True)
+    _ga_file = _ga / ".chamnan" / ".gitattributes"
+    _ga_file.parent.mkdir(parents=True, exist_ok=True)
+    # An OLD workspace: the sentinel line present, the later rule absent.
+    _ga_file.write_text("MAP.md linguist-generated=true\n", encoding="utf-8")
+    ws.ensure(_ga)
+    _ga_text = _ga_file.read_text(encoding="utf-8")
+    check("A RULE ADDED AFTER A WORKSPACE WAS MADE STILL REACHES IT",
+          all(r.strip() in _ga_text for r in ws.GENERATED_ATTR.splitlines() if r.strip()))
+    check("...and the line it already had is not duplicated",
+          _ga_text.count("MAP.md linguist-generated=true") == 1)
+    # Idempotent: running again adds nothing.
+    ws.ensure(_ga)
+    check("...and a second run changes nothing",
+          _ga_file.read_text(encoding="utf-8") == _ga_text)
+finally:
+    _rmtree(_ga, ignore_errors=True)
+
+
 # 🐛 A redactor that eats ordinary text is a redactor people turn off, so both directions are one
 # table. The false positives were found by R11 agent 2 in files THIS repository has committed:
 # a translation table keyed `s_secrets` had its English label redacted, which is a value that is
