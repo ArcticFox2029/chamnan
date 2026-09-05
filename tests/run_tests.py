@@ -12116,13 +12116,28 @@ for _n in (500, 1000, 2000):
 # CPU time, and a generous bound: linear is 2.0 per doubling, quadratic is 4.0. Anything under 3.0
 # is not quadratic, and the slack absorbs a loaded machine without letting the real regression
 # through.
-_ratio_1 = _imp_times[1000] / max(_imp_times[500], 1e-6)
-_ratio_2 = _imp_times[2000] / max(_imp_times[1000], 1e-6)
-check("THE IMPACT MAP SCALES LINEARLY, NOT QUADRATICALLY, IN FILE COUNT",
-      _ratio_1 < 3.0 and _ratio_2 < 3.0)
-if not (_ratio_1 < 3.0 and _ratio_2 < 3.0):
-    print(f"     doubling ratios: {_ratio_1:.2f}, {_ratio_2:.2f} "
-          f"(times {_imp_times[500]:.3f}s {_imp_times[1000]:.3f}s {_imp_times[2000]:.3f}s)")
+# 🐛 [found by CI on Windows] `process_time` there ticks at about 15.6 ms, and this corpus runs in
+# 0.016 / 0.000 / 0.016 s -- at or under one tick. The ratios came out 0.00 and 15625.00, and the
+# check failed on noise while reporting itself as a scaling regression. A ratio built from a 0.000 s
+# measurement is not evidence in either direction, so it is not computed: the timer says what it can
+# resolve, and a run that cannot resolve the work says so instead of guessing.
+_clock_res = time.get_clock_info("process_time").resolution
+_measurable = min(_imp_times.values()) > _clock_res * 4
+if not _measurable:
+    print(f"  [SKIP] impact-map scaling — this platform's process_time resolves to "
+          f"{_clock_res * 1000:.1f} ms and the corpus runs in "
+          f"{min(_imp_times.values()) * 1000:.0f}-{max(_imp_times.values()) * 1000:.0f} ms, "
+          f"so a doubling ratio here would be reading the clock, not the code")
+# Skipped outright rather than passed: a check that always succeeds because it cannot measure
+# anything is worse than no check, and this file has been caught shipping one of those before.
+if _measurable:
+    _ratio_1 = _imp_times[1000] / max(_imp_times[500], 1e-6)
+    _ratio_2 = _imp_times[2000] / max(_imp_times[1000], 1e-6)
+    check("THE IMPACT MAP SCALES LINEARLY, NOT QUADRATICALLY, IN FILE COUNT",
+          _ratio_1 < 3.0 and _ratio_2 < 3.0)
+    if not (_ratio_1 < 3.0 and _ratio_2 < 3.0):
+        print(f"     doubling ratios: {_ratio_1:.2f}, {_ratio_2:.2f} "
+              f"(times {_imp_times[500]:.3f}s {_imp_times[1000]:.3f}s {_imp_times[2000]:.3f}s)")
 
 # The shortlist must not change any ANSWER -- a faster lookup that resolves differently is a
 # correctness regression wearing a performance win. Same corpus through both paths.
@@ -12705,8 +12720,13 @@ _startrepo = make_workspace("chamnan-start-")
 _started = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_startrepo),
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("THE MAP SAYS WHAT IT IS INDEXING BEFORE IT STARTS", "indexing" in _started.stderr)
+# 🐛 [found by CI on Windows] Compared the path as `mkdtemp` returned it against the path the tool
+# prints, which is resolved. On Windows those are two different strings for one directory —
+# `C:\Users\RUNNER~1\...` against `C:\Users\runneradmin\...`, the 8.3 short name versus the long
+# one — so the check failed while the tool was doing exactly what it should. Both forms count.
 check("...naming the directory, so a run in the wrong place is obvious",
-      str(_startrepo) in _started.stderr)
+      str(_startrepo) in _started.stderr
+      or str(Path(_startrepo).resolve()) in _started.stderr)
 # On stderr because a dozen checks compare this command's stdout byte for byte, and because it is
 # progress rather than result — a pipe must still receive exactly the report.
 # 🐛 This also asserted `"source file(s)" in stdout`, which is not the property and is not true on
