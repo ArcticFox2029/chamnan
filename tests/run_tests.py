@@ -13852,6 +13852,45 @@ finally:
     _rmtree(_nm, ignore_errors=True)
 
 
+# --------------------------------- llms.txt, and every anchor and adapter name it promises
+# `llms.txt` is what an assistant reads instead of a hundred-and-fifty-thousand-character README.
+# In practice it will read the first few thousand characters of whatever it is given and answer from
+# those, so a stale summary is not a smaller answer, it is a WRONG one delivered confidently: an
+# adapter list missing the one somebody asked about reads as "chamnan does not support that".
+#
+# So it is generated from the code, and this fails when the generated form and the committed form
+# have parted company.
+_llms = ROOT / "llms.txt"
+check("llms.txt exists", _llms.is_file())
+_lr = subprocess.run([sys.executable, str(ROOT / "tools" / "build_llms_txt.py"), "--check"],
+                     capture_output=True, text=True, cwd=str(ROOT))
+check("LLMS.TXT IS CURRENT WITH THE CODE IT DESCRIBES", _lr.returncode == 0)
+if _lr.returncode != 0:
+    print("      " + (_lr.stderr or _lr.stdout).strip()[:160])
+
+_llms_text = _llms.read_text(encoding="utf-8") if _llms.is_file() else ""
+# Every adapter it can write must appear, since the list is the question it exists to answer.
+_missing_ad = [n for n in adapters_mod.ADAPTERS if f"`{n}`:" not in _llms_text]
+check("...naming every agent it can write for", not _missing_ad)
+if _missing_ad:
+    print("      absent from llms.txt:", _missing_ad)
+
+# 🐛 A link into a page anchor that does not exist sends the reader nowhere and reads as a broken
+# project. Checked against README.md's real headings, using GitHub's own slug rule.
+_heads = set()
+for _line in (ROOT / "README.md").read_text(encoding="utf-8").splitlines():
+    _m = re.match(r"^#{2,6}\s+(.*)$", _line)
+    if _m:
+        _t = re.sub(r"[^\w\s-]", "", _m.group(1).strip().lower().replace("`", ""))
+        _heads.add(re.sub(r"\s+", "-", _t).strip("-"))
+_used = re.findall(r"chamnan#([a-z0-9-]+)", _llms_text)
+check("...and every anchor it points at is a real heading in the README",
+      bool(_used) and all(a in _heads for a in _used))
+for _a in _used:
+    if _a not in _heads:
+        print(f"      broken anchor: #{_a}")
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

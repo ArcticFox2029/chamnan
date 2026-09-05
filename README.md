@@ -14,8 +14,10 @@ them. A translated page that goes a year without an edit is still correct.</sub>
 
 **ชำนาญ** *(cham-nan)* — Thai for the fluency that only comes from doing something again.
 
-A Claude Code plugin that makes a repository know itself **and preserve the engineering context
-built while you work with it**, so an agent stops rediscovering both. It builds an index the agent
+A context index that makes a repository know itself **and preserve the engineering context built
+while you work with it**, so an agent stops rediscovering both. It ships as a Claude Code plugin and
+as a plain command-line tool, and writes for two dozen other agents besides — **any model, any
+vendor, macOS, Linux, Windows and WSL**. It builds an index the agent
 reads instead of scanning files, keeps the work state and the decisions that would otherwise be
 lost between sessions, and accumulates the procedures and tools you keep re-deriving.
 
@@ -25,11 +27,17 @@ lost between sessions, and accumulates the procedures and tools you keep re-deri
 page, so the numbers that matter should be here rather than four screens down — and every one of
 them links to how it was measured.*
 
-**chamnan is a Claude Code plugin for the cost of *re-reading*, not the cost of writing.** It builds
-an index of the repository that a session is handed at startup, keeps the decisions and work state
-that would otherwise be lost between sessions, and does all of it in Python's standard library with
+**chamnan is a context index for the cost of *re-reading*, not the cost of writing.** It builds an
+index of the repository that a session is handed at startup, keeps the decisions and work state that
+would otherwise be lost between sessions, and does all of it in Python's standard library with
 **no network calls at runtime, no database, no daemon, and no embedding model**. Everything it writes
 is plain markdown committed beside the code.
+
+**It is not tied to one tool.** It ships as a Claude Code plugin and as an ordinary command-line
+tool; it writes for two dozen other agents including Cursor, Windsurf, Copilot, Zed, Aider, Gemini
+CLI and Hermes Agent; it runs on macOS, Linux, Windows and WSL, all four exercised in CI on every
+commit; and it works with any model from any vendor, because the model decides only how much of the
+index is worth sending, never where anything goes.
 
 | what people actually ask | the short answer |
 |---|---|
@@ -38,6 +46,10 @@ is plain markdown committed beside the code.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
+| *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — two dozen adapters, each writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
+| *"does it work on Windows"* | Yes, and on macOS, Linux and WSL — all four run in CI on every commit. [Per-OS instructions](#running-it-on-each-operating-system) |
+| *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
+| *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
@@ -60,7 +72,7 @@ evidence and reference, and nothing below states a claim in stronger terms than 
 
 | | |
 |---|---|
-| **What it is** | A Claude Code plugin. It indexes a repository and hands a session that index at startup, so the agent stops rediscovering the same files, and it keeps the decisions, rules, work state and open threads that would otherwise be lost when a session ends. |
+| **What it is** | A context index for coding agents, shipped as a Claude Code plugin and as an ordinary command-line tool. It indexes a repository and hands a session that index at startup, so the agent stops rediscovering the same files, and it keeps the decisions, rules, work state and open threads that would otherwise be lost when a session ends. |
 | **The problem it addresses** | The cost of *re-reading*, not the cost of writing. An agent that has to scan the tree to answer "where is X" pays for that scan in every session, for ever. |
 | **How it works** | A scanner walks the tree and writes `.chamnan/MAP.md` — a Quick Index plus per-file detail. A SessionStart hook injects a bounded slice of it, plus whatever has been recorded, into the session. Commands and skills write the rest as you work. |
 | **What it is built from** | Python's standard library, and nothing else. **No network calls at runtime, no database, no daemon, no background process, no embedding model, no API key.** |
@@ -82,6 +94,11 @@ the difference is what a repository holds, not what chamnan does.
 stdlib-only and offline, that it writes plain markdown you can read and delete, and that its own
 front page publishes the strongest measurement *against* it. The token ratio is the least
 interesting thing about it.
+
+<sub>**Reading this as a machine?** [`llms.txt`](llms.txt) is a short structured summary of this
+project — what it is, what it works with, every agent it writes for and the file each one receives,
+and where the rest lives. It is generated from the code rather than written by hand, and a test
+fails when it and the code disagree.</sub>
 
 ## Contents
 
