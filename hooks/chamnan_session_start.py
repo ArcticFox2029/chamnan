@@ -94,6 +94,15 @@ def write_skills_line(plugin_root):
     held zero. An agent that does not know it can write is the failure being fixed here, so this
     line is gated on nothing except the skill actually shipping.
     """
+    # 🐛 These are Claude Code SLASH COMMANDS, and this line was written into every adapter's file
+    # — AGENTS.md, .cursorrules, the rest — because nothing here asked who the reader was. A Cursor
+    # or Codex session was being told, in its own rules file, to type four commands it has no way
+    # to run (R21 agent 3). The reader is named by CHAMNAN_CONTEXT_AGENT when a command is
+    # building the block on somebody else's behalf; unset means this hook is running where it
+    # lives, which is Claude Code.
+    for_agent = os.environ.get("CHAMNAN_CONTEXT_AGENT")
+    if for_agent and for_agent.lower() not in ("claude", "claude-code"):
+        return ""
     skills_dir = plugin_root / "skills"
     if not skills_dir.is_dir():
         return ""
