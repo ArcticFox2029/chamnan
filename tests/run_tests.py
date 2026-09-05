@@ -13723,6 +13723,33 @@ try:
 finally:
     _rmtree(_pl, ignore_errors=True)
 
+
+# 🐛 `ensure()` appends missing rules to `.chamnan/.gitignore` on every run — right, because a rule
+# added to the plugin has to reach workspaces that already exist — and said nothing at all while
+# doing it. R11 agent 1 ran a command, found the working tree dirty afterwards, and had no way to
+# tell which command had touched it. Both directions matter: it has to speak on the run that
+# changes the file, and stay quiet on every run that does not, or it becomes noise people filter.
+_gi = Path(tempfile.mkdtemp(prefix="chamnan-gitignore-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_gi, capture_output=True)
+    (_gi / "a.py").write_text('"""x"""\ndef a(): pass\n', encoding="utf-8")
+    _gi_first = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_gi,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _gi_again = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_gi,
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("A RUN THAT EDITS .gitignore SAYS SO, RATHER THAN LEAVING A DIRTY TREE UNEXPLAINED",
+          "added to .chamnan/.gitignore" in _gi_first.stdout)
+    check("...and names at least one rule it added, not just that something happened",
+          any(r.strip() and not r.lstrip().startswith("#") and r in _gi_first.stdout
+              for r in ws.IGNORE_LINES))
+    check("...and the run after it is silent, because there was nothing left to add",
+          "added to .chamnan/.gitignore" not in _gi_again.stdout)
+    check("...and the file really does carry the rules now",
+          all(r in (_gi / ".chamnan" / ".gitignore").read_text(encoding="utf-8")
+              for r in ws.IGNORE_LINES if r.strip() and not r.lstrip().startswith("#")))
+finally:
+    _rmtree(_gi, ignore_errors=True)
+
 # 🐛 In a directory with no VCS marker the first-session path returned 0 with ZERO bytes, and since
 # nothing was created, `first_session` stayed true forever -- a permanent silent no-op -- while the
 # README said "not required" and `chamnan-map` in the same directory built the workspace the hook

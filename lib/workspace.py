@@ -853,8 +853,21 @@ IGNORE_LINES = [
 ]
 
 
+# Rules appended to .chamnan/.gitignore by the last `_mark_ignored` that changed it, so a caller can
+# SAY it happened. Module-level because ensure() is several frames below whatever the user ran.
+LAST_IGNORE_RULES_ADDED = []
+
+
 def _mark_ignored(root):
-    """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation."""
+    """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation.
+
+    🐛 It appended to a file the user may be about to commit and said nothing at all — measured by
+    R11 agent 1, who ran a command and then found the working tree dirty with no idea which command
+    did it. Self-maintaining is the right behaviour (a rule added to IGNORE_LINES has to reach
+    workspaces that already exist); doing it in silence is not, because the person is left to
+    discover it from `git status` and guess.
+    """
+    del LAST_IGNORE_RULES_ADDED[:]
     try:
         if not root or not (Path(root) / ".git").exists():
             return
@@ -889,6 +902,8 @@ def _mark_ignored(root):
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
             fh.write(("\n" if existing else "") + "\n".join(missing).strip("\n") + "\n")
+        LAST_IGNORE_RULES_ADDED.extend(ln for ln in missing if ln.strip()
+                                       and not ln.lstrip().startswith("#"))
     except OSError:
         pass
 
