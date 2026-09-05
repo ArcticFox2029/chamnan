@@ -463,13 +463,17 @@ def _looks_like_a_credential_name(key, value=None):
 # A value that no name should be trusted against: nothing whose tail says "this holds a path" or
 # "this holds a type" ever holds THIS. Long, mixed, and not a word or a path — the same evidence
 # the adjacency rules use, applied in the other direction.
-_CREDENTIAL_SHAPED = re.compile(r"^[A-Za-z0-9+/=_\-.]{16,}$")
+# 🐛 Named `_CREDENTIAL_SHAPED` when it was added, which is ALSO the name of an existing constant
+# further down this file — so Python bound the later one and this rule silently ran against a
+# different pattern than the one written beside it (R13 agent 2). A collision at module scope is
+# invisible: no error, no warning, and the code reads correctly.
+_LONG_MIXED_VALUE = re.compile(r"^[A-Za-z0-9+/=_\-.]{16,}$")
 
 
 def _value_overrides_the_name(value):
     """Whether the VALUE is credential-shaped enough to ignore a reassuring key name."""
     v = (value or "").strip().strip("\"'").strip(",;)]}\"' ")
-    if not _CREDENTIAL_SHAPED.match(v) or "/" in v or v.startswith("."):
+    if not _LONG_MIXED_VALUE.match(v) or "/" in v or v.startswith("."):
         return False
     # A path, a hyphenated phrase and a dotted module name are all long and mixed; a credential is
     # the one that carries both letters and digits with no separator doing the work.
@@ -539,6 +543,20 @@ def _swallow_trailing_credential_runs(text, start):
         end += gap.end() + run.end()
 
 
+def _full_key_at(match):
+    """The whole identifier the match began inside, not just the part the pattern captured.
+
+    🐛 These patterns start AT the secret word, so `"s_secrets":` is captured as `secrets":` and the
+    `s_` prefix — the very thing that distinguishes a translation key from a bare `password` — is
+    outside the group. Walked back from the match position over identifier characters instead.
+    """
+    text, i = match.string, match.start()
+    j = i
+    while j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_-"):
+        j -= 1
+    return text[j:i] + (match.group(1) or "")
+
+
 def _value_is_the_key_itself(key_part, value):
     """Whether the value is just the key's own name — a label, never a credential.
 
@@ -559,7 +577,23 @@ def _value_is_the_key_itself(key_part, value):
     word = value.strip().strip("\"'").strip(",;:)]}\"' ").lower()
     if not word or not word.isalpha():
         return False
-    return word in re.sub(r"[^a-z]+", " ", key_part.lower()).split()
+    parts = re.sub(r"[^a-z]+", " ", key_part.lower()).split()
+    if word not in parts:
+        return False
+    # 🐛 ...and only when the key says something BESIDES the secret word. `password = "password"` is
+    # the commonest weak credential there is, and this exemption was letting it through as a label
+    # (R13 agent 2). A label's key carries another component — `s_secrets`, `password_label`,
+    # `secret_name` — because it is naming a thing, not holding one. A key that is only the secret
+    # word, with a value that repeats it, is a password somebody did not choose.
+    if any(other != word for other in parts):
+        return True
+    # The key is only the secret word. An ALL-CAPS one assigned its own lowercase name is the enum
+    # idiom — `class Kind: CREDENTIAL = "credential"` — and redacting it is noise in the output a
+    # reader is scanning for real findings. A lowercase one is a variable holding a value, and
+    # `password = "password"` is a password somebody did not choose. Case is the whole difference,
+    # and it is a convention both languages this module sees actually follow.
+    bare = re.sub(r"[^A-Za-z]+$", "", key_part.strip())
+    return bare.isupper()
 
 
 def scrub(text):
@@ -634,7 +668,7 @@ def scrub(text):
     text = ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(3)) or not _looks_like_a_credential_name(m.group(1), m.group(3))
-        or _value_is_the_key_itself(m.group(1), m.group(3))
+        or _value_is_the_key_itself(_full_key_at(m), m.group(3))
         else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
     text = ASSIGNED_SECRET_CALL.sub(
@@ -650,7 +684,7 @@ def scrub(text):
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
-        or _value_is_the_key_itself(m.group(1), m.group(2))
+        or _value_is_the_key_itself(_full_key_at(m), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
         + " " * 0, text)
     # Applied after the substitution above rather than inside it, because the amount to swallow is
