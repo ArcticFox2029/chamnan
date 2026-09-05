@@ -13923,6 +13923,79 @@ check("...and names the two left out on purpose, and the exact escape hatch", no
 check("...without a digit entering the translation set to do it", not _digits)
 
 
+# ------------------------------------- `.m` is Objective-C, and it is also MATLAB and five others
+# 🐛 EXT_LANG mapped `.m` straight to the C extractor. A MATLAB file therefore came through as
+# describable C with an EMPTY summary: counted in the coverage denominator as "missing a comment",
+# offered to the commenter agent to write one, and invisible to the "cannot index" section at the
+# same time -- because that section keys on extensions chamnan has no reader for, and `.m` has one.
+# Wrong on every honesty mechanism at once, which is worse than being honestly unreadable.
+#
+# The patterns are GitHub Linguist's, from heuristics.yml. Objective-C stays the default when
+# neither fires: a file may only leave the C extractor on positive MATLAB evidence, never enter it.
+_dm = Path(tempfile.mkdtemp(prefix="chamnan-dotm-"))
+try:
+    (_dm / "solver.m").write_text(
+        "% Solve the heat equation on a uniform grid.\nfunction u = solver(n)\n"
+        "  u = zeros(n);\nend\n", encoding="utf-8")
+    (_dm / "View.m").write_text(
+        '#import "View.h"\n@implementation View\n- (void)draw { }\n@end\n', encoding="utf-8")
+    (_dm / "Plain.m").write_text(
+        "@interface Plain\n@end\n", encoding="utf-8")
+    (_dm / "app.py").write_text('"""The app."""\ndef main(): pass\n', encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_dm, capture_output=True)
+    import mapper as _dmm
+    _dmm.reset_skips()
+    _dm_paths = {f["path"] for f in _dmm.scan(_dm)}
+    check("A MATLAB .m IS NOT INDEXED AS OBJECTIVE-C", "solver.m" not in _dm_paths)
+    check("...and is counted under a key that says which language it was",
+          _dmm.SKIPPED_UNKNOWN_EXT.get(".m (MATLAB)") == 1)
+    # The direction that must not move. Objective-C is the default and the only way out is
+    # positive evidence, so both of these stay indexed.
+    check("...WHILE OBJECTIVE-C .m FILES ARE STILL INDEXED", "View.m" in _dm_paths)
+    check("...including one with no #import, only an @interface", "Plain.m" in _dm_paths)
+    # And the key has to reach the reader, or the file is silently gone again under a new name.
+    _dm_run = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_dm),
+                             capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check("...and chamnan-map names it, rather than dropping it in silence",
+          ".m (MATLAB)" in _dm_run.stdout)
+finally:
+    _rmtree(_dm, ignore_errors=True)
+
+# ------------------------------ the honesty section had a floor under it, and said nothing below it
+# 🐛 MIN_FILES was applied by scan() to BOTH halves of the stored-material split. For payload that
+# is right -- a directory with two stray images is noise. For "Source chamnan cannot index" it is a
+# silencer: a repository with a handful of files in an unreadable language got no line anywhere, and
+# the mechanism that exists to say "the index is silent about these" was itself silent.
+_fl = Path(tempfile.mkdtemp(prefix="chamnan-floor-"))
+try:
+    (_fl / "app.py").write_text('"""The app."""\ndef main(): pass\n', encoding="utf-8")
+    for _k in range(4):
+        (_fl / f"helper{_k}.pl").write_text("# A Perl helper.\nsub run { 1 }\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_fl, capture_output=True)
+    import assets as _fa
+    import mapper as _fm
+    _fm.reset_skips()
+    _fl_files = _fm.scan(_fl)
+    _fl_out = _fa.render(_fa.scan(_fl, {f["path"] for f in _fl_files}, _fm.EXT_LANG))
+    check(f"FOUR UNREADABLE FILES ARE ENOUGH TO BE TOLD ABOUT, NOT {_fa.MIN_FILES}",
+          "cannot index" in _fl_out and ".pl" in _fl_out)
+    # The other direction, which is what the floor was for and must not move: a handful of stray
+    # PAYLOAD files is noise and stays unreported. Asserted as behaviour rather than by looking for
+    # a function name -- an earlier version of this check did the latter and passed for the wrong
+    # reason right up until the function was renamed out from under it.
+    for _k in range(4):
+        (_fl / f"scan_{_k}.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 200)
+    _fm.reset_skips()
+    _fl2 = _fm.scan(_fl)
+    _fl_out2 = _fa.render(_fa.scan(_fl, {f["path"] for f in _fl2}, _fm.EXT_LANG))
+    check("...WHILE FOUR STRAY PAYLOAD FILES STAY BELOW THE FLOOR AND UNREPORTED",
+          "Stored material" not in _fl_out2)
+    check("...and the unreadable source in the same directory is still named",
+          "cannot index" in _fl_out2 and ".pl" in _fl_out2)
+finally:
+    _rmtree(_fl, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

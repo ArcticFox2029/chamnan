@@ -48,6 +48,11 @@ READABLE = {".md", ".rst", ".adoc", ".txt", ".sql"}
 # and every one of them fails safe: the worst outcome is telling a reader that a text file is text
 # they may read, which is the direction this whole change moves in.
 UNEXTRACTED_SOURCE = {
+    # Not a suffix: the key mapper writes when a `.m` file is MATLAB rather than Objective-C.
+    # A bare `.m` cannot go here -- assets.scan() buckets by suffix and would then report
+    # every real Objective-C file as unreadable source. This key is only ever produced by
+    # mapper after it has read the file, so it is safe in a way `.m` is not.
+    ".m (MATLAB)",
     ".pm", ".pl", ".t", ".pod", ".ps1", ".psm1", ".vue", ".svelte", ".r", ".jl", ".hs", ".lhs",
     ".clj", ".cljs", ".cljc", ".erl", ".hrl", ".groovy", ".gvy", ".sol", ".cr", ".f90", ".f95",
     ".f03", ".for", ".vb", ".vbs", ".pas", ".pp", ".adb", ".ads", ".tcl", ".awk", ".bas", ".asm",
@@ -143,7 +148,34 @@ def scan(root, source_paths, ext_lang):
         g["count"] += 1
         g["bytes"] += size
         g["exts"][path.suffix.lower() or "(none)"] += 1
-    return {k: v for k, v in groups.items() if v["count"] >= MIN_FILES}
+    # 🐛 MIN_FILES was applied to every group, and the two things this function returns want
+    # opposite treatment. For PAYLOAD the floor is right: a directory holding two stray images is
+    # noise, and this section describes shape rather than listing files. For source chamnan cannot
+    # READ it is a silencer -- a repository with a handful of Perl or MATLAB files got no line
+    # anywhere, and the mechanism whose entire job is to say "the index is silent about these" was
+    # itself silent. Bisected: five such files showed nothing, twelve made the section appear.
+    #
+    # So the floor stays exactly where it was reasoned about, and a group carrying unreadable
+    # SOURCE is admitted whatever its size. Any group is only ever shown under one of the two
+    # headings, so admitting one here cannot inflate the payload half -- render() re-splits by
+    # extension and the payload side keeps the floor.
+    kept = {}
+    for k, v in groups.items():
+        if v["count"] >= MIN_FILES:
+            kept[k] = v
+        elif _has_unreadable_source(v):
+            # Admitted for its unreadable source ONLY. render() must not show this group's
+            # payload half: it did not clear the floor on size, and letting four stray PDFs
+            # through because a Perl file happened to sit beside them would re-open the noise the
+            # floor exists to keep out. Marked here so render() can tell the two admissions apart.
+            kept[k] = dict(v, below_floor=True)
+    return kept
+
+
+def _has_unreadable_source(group):
+    """True when any of this group's extensions is source chamnan has no reader for."""
+    return any(e in UNEXTRACTED_SOURCE for e in group["exts"])
+
 
 
 def render(groups):
@@ -155,6 +187,8 @@ def render(groups):
     payload, unindexed = {}, {}
     for name, g in groups.items():
         for bucket, keep in ((unindexed, True), (payload, False)):
+            if not keep and g.get("below_floor"):
+                continue          # admitted for its unreadable source only; see scan()
             exts = {e: n for e, n in g["exts"].items()
                     if (e in UNEXTRACTED_SOURCE) is keep}
             if not exts:
