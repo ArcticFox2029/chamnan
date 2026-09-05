@@ -30,6 +30,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import environments as env  # noqa: E402
+import mdblock  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
 
@@ -48,15 +49,19 @@ def cmd_list(root):
         return 0
     print(f"{len(found)} environment(s)\n")
     for e in found:
-        head = f"  {e['name']}"
+        # 🐛 Assembled here and printed below, so wrapping the print() reached neither value —
+        # the same assign-then-render shape Invariant 8 was rewritten for. Sanitised at the source.
+        head = f"  {mdblock.as_quoted(e['name'], 60)}"
         if e["platform"]:
-            head += f" — {e['platform']}"
+            head += f" — {mdblock.as_quoted(e['platform'], 60)}"
         print(head)
         if e["versions"]:
-            print("    versions: " + ", ".join(f"{k} {v}" for k, v in sorted(e["versions"].items())))
+            print("    versions: " + ", ".join(
+                f"{mdblock.as_quoted(k, 40)} {mdblock.as_quoted(v, 40)}"
+                for k, v in sorted(e["versions"].items())))
         for c in e["constraints"]:
-            print(f"    · {c}")
-        print(f"    checked {e['checked'] or 'never'}")
+            print(f"    · {mdblock.as_quoted(c, 80)}")
+        print(f"    checked {mdblock.as_quoted(e['checked'] or 'never', 40)}")
     return 0
 
 
@@ -94,7 +99,8 @@ def cmd_set(root, name, platform, versions, constraints, checked):
     entry = env.render_entry(name, platform, versions, constraints, checked)
     path, replaced = env.upsert(root, name, entry)
     verb = "updated" if replaced else "declared"
-    print(f"chamnan: {verb} {name} — {path.relative_to(root).as_posix()}")
+    print(f"chamnan: {verb} {mdblock.as_quoted(name, 60)} — "
+          f"{mdblock.as_quoted(path.relative_to(root).as_posix(), 100)}")
     if not constraints:
         print("  no constraints recorded. The constraints are the part nobody else can "
               "reconstruct — `--constraint \"...\"` is worth the minute.")
@@ -114,7 +120,7 @@ def cmd_check(root):
     print(f"{len(stale)} of {len(found)} environment(s) have gone cold\n")
     for name, days in stale:
         when = "never confirmed" if days is None else f"last confirmed {days} days ago"
-        print(f"  {name} — {when}")
+        print(f"  {mdblock.as_quoted(name, 60)} — {mdblock.as_quoted(when, 40)}")
     print(f"\n  Re-confirm with `chamnan-env set <name> --checked {_today()}` (and correct "
           f"anything that changed).")
     print("  Until then `chamnan-age` will not report against these — an unconfirmed entry is "

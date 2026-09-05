@@ -13525,6 +13525,22 @@ try:
     (_hw / "sessions" / "2026-01-01-x.md").write_text(
         f"# Session {_EVIL}\n\n## Remaining\n\nA thing {_EVIL}.\n", encoding="utf-8")
 
+    # 🐛 The reader list is derived from the filesystem, so `chamnan-report` and `chamnan-age` were
+    # both being RUN — and both still leaked, because the fixture never reached the branches that
+    # print. A sweep is only as wide as its list AND as deep as its fixture; the list was fixed once
+    # already and the fixture is the half that was still shallow (R13 agent 3). These four files put
+    # the hostile bytes where those branches actually read from.
+    (_hw / "logs").mkdir(parents=True, exist_ok=True)
+    (_hw / "tools").mkdir(parents=True, exist_ok=True)
+    (_hw / "logs" / "pointer.jsonl").write_text(
+        json.dumps({"path": f"src/{_EVIL}.py", "at": time.time()}) + "\n", encoding="utf-8")
+    (_hw / "tools" / "index.json").write_text(
+        json.dumps({"tools": {_EVIL: {"desc": "x", "uses": 3}}}), encoding="utf-8")
+    (_hw / "environments.md").write_text(
+        f"# Environments\n\n## {_EVIL}\n\nsomething\n", encoding="utf-8")
+    (_hw / "memory" / "decisions" / "d2.md").write_text(
+        f"---\ndescription: uses {_EVIL} 13\n---\n\n# Decision\n\nWhy.\n", encoding="utf-8")
+
     subprocess.run(["git", "add", "-A"], cwd=_hr, capture_output=True)
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
                    cwd=_hr, capture_output=True)
