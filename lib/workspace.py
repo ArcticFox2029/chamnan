@@ -960,6 +960,22 @@ def exclusive(path):
             if time.time() > deadline:
                 break
             time.sleep(0.01)
+        # 🐛 A lock another process has just unlinked sits in Windows' DELETE-PENDING state for a
+        # moment: the name is still there, every open of it fails with ERROR_ACCESS_DENIED, and
+        # Python raises PermissionError rather than FileExistsError. That fell through to the
+        # `except OSError: break` below, which reads "somebody has this, try again in 10ms" as
+        # "this lock cannot be taken" -- and every caller of exclusive() then either skipped its
+        # write or made it unguarded.
+        #
+        # Measured on a Windows Server 2025 runner, 8 processes x 50 increments through
+        # record_call's exact shape: 399 of 400 with this treated as fatal, 400 of 400 with it
+        # retried. One in four hundred, which is why it survived every previous look -- and it is
+        # a lost update on a running total that nothing ever recomputes, so it stays wrong forever.
+        # The ubuntu column of the same run raised it zero times, which is why POSIX never saw this.
+        except PermissionError:
+            if time.time() > deadline:
+                break
+            time.sleep(0.01)
         except OSError:
             break
     try:
