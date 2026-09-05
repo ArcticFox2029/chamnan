@@ -68,12 +68,23 @@ def _block(root):
         # that is silent and one that looks empty.
         try:
             import mapper
-            nested = sorted(d.relative_to(root).as_posix()
+            # _nested_repo_dirs returns RESOLVED paths. main() gets `root` from ws.find_root, which
+            # resolves, so the two sides match today and this is not a live defect. It is one call
+            # site away from being one: any caller that hands _block an unresolved path -- /tmp on
+            # macOS, a symlinked checkout -- makes relative_to raise, and the bare except below turns
+            # that into "no nested checkouts" rather than an error. Resolve on both sides so the
+            # subtraction cannot depend on the caller.
+            _base = root.resolve()
+            nested = sorted(d.relative_to(_base).as_posix()
                             for d in mapper._nested_repo_dirs(root))
         except Exception:
             nested = []
         if nested:
-            shown = ", ".join(f"`{n}`" for n in nested[:4])
+            # Each name through one_line, for the reason the rule titles below are: a DIRECTORY NAME
+            # is repository text too, and redact.scrub strips credentials, not control characters.
+            # The sibling line was wrapped and this one was not, which is this repository's own
+            # recurring disease -- a fix applied to some members of a set.
+            shown = ", ".join(f"`{mdblock.one_line(n)}`" for n in nested[:4])
             parts.append(
                 f"That index does NOT cover the checkouts nested inside this one — {shown}"
                 + (f" and {len(nested) - 4} more" if len(nested) > 4 else "")

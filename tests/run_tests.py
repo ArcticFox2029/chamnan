@@ -13167,6 +13167,88 @@ check("...while the ordinary file beside it is indexed as usual",
 mapper.SKIPPED_TOO_LARGE.clear()
 _rmtree(_mfd, ignore_errors=True)
 
+# 🐛 Everything above asserts LIBRARY state, and that is exactly how the crash got shipped. The
+# reporting line in bin/chamnan-map that prints this list called `assets._human`, renamed to
+# `human_bytes` three days earlier — so the moment a repository held one oversized file and one
+# ordinary file, `chamnan-map` wrote its map and then died with an AttributeError on the way out,
+# taking every skip report after it. Shipped 2026-09-02, and this suite stayed green throughout
+# because no test ever ran the entry point. Reproduced before fixing; the fixture is that pair.
+_e2e = Path(tempfile.mkdtemp(prefix="chamnan-mapmain-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_e2e, capture_output=True)
+    (_e2e / "small.py").write_text('"""Real source."""\ndef run():\n    return 1\n', encoding="utf-8")
+    (_e2e / "huge.py").write_text("x = 1\n" * ((mapper.MAX_FILE_BYTES // 6) + 1000), encoding="utf-8")
+    _e2e_r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                            cwd=_e2e, capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
+    _e2e_out = _e2e_r.stdout + _e2e_r.stderr
+    check("CHAMNAN-MAP RUNS TO COMPLETION WHEN A FILE IS SKIPPED FOR SIZE",
+          "Traceback" not in _e2e_out and _e2e_r.returncode == 0)
+    check("...and says which file it left out, in bytes a person can read",
+          "over the size limit" in _e2e_out and "huge.py" in _e2e_out)
+finally:
+    _rmtree(_e2e, ignore_errors=True)
+
+# The class the crash belongs to, rather than the one line of it. Every `module.name` an entry point
+# reads out of lib/ is checked against what that module actually defines, so a rename that updates
+# lib/ and its library callers — and misses a script — is caught here instead of by a user.
+#
+# Two calibration notes, both of which this probe got wrong first: names bound by TUPLE unpacking
+# (`RUNNING, REPO, HOME = ...` in host.py, `OPEN, CLOSED = ...` in timeline.py) are top-level names
+# and reported seven false positives until the target walker handled them; and the walk is over the
+# whole module, not just `tree.body`, because a constant assigned inside a `try` is still exported.
+def _bound_names(target, out):
+    if isinstance(target, ast.Name):
+        out.add(target.id)
+    elif isinstance(target, (ast.Tuple, ast.List)):
+        for element in target.elts:
+            _bound_names(element, out)
+    elif isinstance(target, ast.Starred):
+        _bound_names(target.value, out)
+
+
+def _module_exports(path):
+    names = set()
+    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                _bound_names(target, names)
+        elif isinstance(node, ast.AnnAssign):
+            _bound_names(node.target, names)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+    return names
+
+
+_lib_names = {p.stem for p in (ROOT / "lib").glob("*.py")}
+_lib_exports = {m: _module_exports(ROOT / "lib" / f"{m}.py") for m in _lib_names}
+_entry_points = [p for p in (ROOT / "bin").iterdir() if p.is_file()] + \
+                sorted((ROOT / "hooks").glob("*.py"))
+_stale_refs = []
+for _ep in _entry_points:
+    try:
+        _ep_tree = ast.parse(_ep.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        continue
+    _ep_alias = {a.asname or a.name: a.name
+                 for n in ast.walk(_ep_tree) if isinstance(n, ast.Import)
+                 for a in n.names if a.name in _lib_names}
+    for _n in ast.walk(_ep_tree):
+        if isinstance(_n, ast.Attribute) and isinstance(_n.value, ast.Name) \
+                and _n.value.id in _ep_alias:
+            _mod = _ep_alias[_n.value.id]
+            if _n.attr not in _lib_exports[_mod]:
+                _stale_refs.append(f"{_ep.name}:{_n.lineno} {_n.value.id}.{_n.attr} "
+                                   f"is not defined in lib/{_mod}.py")
+if _stale_refs:
+    print("  stale: " + "; ".join(sorted(set(_stale_refs))[:4]))
+check("NO ENTRY POINT CALLS A LIB NAME THAT NO LONGER EXISTS", not _stale_refs)
+check("...and the sweep actually looked at the scripts, rather than finding none",
+      len(_entry_points) >= 20 and len(_lib_exports) >= 20)
+
 # The zip ceiling is what stops a decompression bomb: a member that inflates to gigabytes must be
 # read up to the limit and no further.
 import io as _io  # noqa: E402
@@ -14148,6 +14230,49 @@ try:
           "Deploy only on" in _sh_ctx)
 finally:
     _rmtree(_sh, ignore_errors=True)
+
+
+# 🐛 The line above was written for the rule TITLE and closed only the rule title. Eight lines up in
+# the same function, the nested-checkout NAMES were interpolated raw -- the same repository text, the
+# same sink, the same subagent -- and stayed that way through the commit that fixed its sibling. That
+# is this repository's recurring disease, so the guard here is deliberately not another single-input
+# test: EVERY input the pointer reads from disk carries the hostile bytes at once, and the assertion
+# is about the whole output. A rewrite that moves the sanitiser somewhere else still has to pass it.
+#
+# One thing this test does NOT claim, because mutating the code showed the claim was wrong: the
+# resolve() added alongside the sanitiser is hardening, not a bug fix. `_nested_repo_dirs` returns
+# resolved paths and `ws.find_root` resolves too, so the two sides already matched on every path
+# main() can take. Reverting that half leaves this suite green, which is the honest result.
+_sn = Path(tempfile.mkdtemp(prefix="chamnan-hostilenested-"))
+try:
+    _evil = "proj\x1b]0;PWNED\x07\u202elmth.evil"
+    (_sn / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+    (_sn / ".chamnan" / "MAP.md").write_text("# Architecture map\n\n## Quick Index\n\n", encoding="utf-8")
+    (_sn / ".chamnan" / "memory" / "rules" / "r.md").write_text(
+        "# Deploy only on \x1b]0;PWNED\x07 Fridays \u202eyadnoM\n\nBecause.\n", encoding="utf-8")
+    subprocess.run(["git", "init", "-q"], cwd=_sn, capture_output=True)
+    (_sn / _evil).mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=_sn / _evil, capture_output=True)
+    _sn_r = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                           input=json.dumps({"cwd": str(_sn), "hook_event_name": "SubagentStart",
+                                             "agent_type": "Explore"}),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _sn_ctx = (json.loads(_sn_r.stdout).get("hookSpecificOutput") or {}).get("additionalContext", "") \
+        if _sn_r.stdout.strip() else ""
+    check("EVERY REPOSITORY-DERIVED NAME IN THE SUBAGENT POINTER IS SANITISED, NOT JUST THE TITLES",
+          bool(_sn_ctx) and not any(c in _sn_ctx for c in ("\x1b", "\x07", "\u202e", "\u2066", "\u2069")))
+    check("...and the checkout is still NAMED, so sanitising did not empty the notice instead",
+          "does NOT cover the checkouts nested inside" in _sn_ctx and "lmth.evil" in _sn_ctx)
+finally:
+    _rmtree(_sn, ignore_errors=True)
+
+# The structural half. The behavioural test above passes if a future edit sanitises somewhere else;
+# this one fails the moment a repository-derived name is interpolated into the pointer bare again.
+_sa_src = (ROOT / "hooks" / "chamnan_subagent_start.py").read_text(encoding="utf-8")
+_sa_interp = [ln.strip() for ln in _sa_src.splitlines()
+              if ("nested[" in ln or "for t in titles" in ln) and ("join" in ln or "for " in ln)]
+check("both repository-derived names in the pointer are folded through one_line",
+      len(_sa_interp) == 2 and all("one_line" in ln for ln in _sa_interp))
 
 
 # ------------------- the git-fallback section restated names Claude Code had already been handed
