@@ -339,6 +339,10 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         return _enforce(index, map_rel, budget) if budget else index
     folded = [f"_{len(rows)} files. Rolled up by directory to stay inside the session budget —"
               f" read `{map_rel}` for any one of them in full._", ""]
+    # Where the per-directory lines start. `folded` opens with a header and a blank, so the counts
+    # collected below align with `folded[first:]` and not with `folded` itself.
+    first = len(folded)
+    meta = []          # (group key, file count) per directory line, same order as folded[first:]
     churn = _churn(root)
     for top, entries in sorted(groups.items()):
         names = [n for _, n in entries]
@@ -388,13 +392,20 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         # speaking. Verified end to end, chamnan-map -> MAP.md -> the injected block.
         folded.append(f"- **{mdblock.as_quoted(top, 80)}/** ({len(names)})"
                       + (f" — {shown}{more}" if shown else ""))
+        # 🐛 Carried as DATA beside the line, never re-extracted from it. The overflow fold used to
+        # regex this count back out of the markdown above, and a directory named `evil** (99999)`
+        # survives `as_quoted` — which strips backticks, not asterisks or parentheses — to be
+        # matched FIRST by that regex. The repository could dictate the figure chamnan printed in
+        # its own voice. Re-parsing your own output is the whole defect; the count never leaves
+        # Python now.
+        meta.append((top, len(names)))
     out = "\n".join(head + folded + tail)
     if budget:
-        out = _fold_the_overflow(head, folded, tail, map_rel, budget)
+        out = _fold_the_overflow(head, folded, first, meta, tail, map_rel, budget)
     return _enforce(out, map_rel, budget) if budget else out
 
 
-def _fold_the_overflow(head, folded, tail, map_rel, budget):
+def _fold_the_overflow(head, folded, first, meta, tail, map_rel, budget):
     """One more level of folding, for when the directory lines THEMSELVES do not fit.
 
     🐛 Measured on 300 sibling packages -- a Lerna/Nx/Turborepo/Go-multi-module layout, and the shape
@@ -412,29 +423,36 @@ def _fold_the_overflow(head, folded, tail, map_rel, budget):
     if tokens.estimate("\n".join(head + folded + tail)) <= budget:
         return "\n".join(head + folded + tail)
 
-    def parent_of(line):
-        name = line[len("- **"):].split("/**", 1)[0] if line.startswith("- **") else ""
-        return name.rsplit("/", 1)[0] if "/" in name else ""
+    def parent_of(top):
+        return top.rsplit("/", 1)[0] if "/" in top else ""
 
-    def counted(line):
-        m = re.search(r"\*\* \((\d+)\)", line)
-        return int(m.group(1)) if m else 0
-
-    # How many of the detailed lines fit, leaving room for the summary lines that replace the rest.
-    kept = len(folded)
-    while kept > 0:
-        overflow = folded[kept:]
+    # 🐛 `kept` stepped by a stride under `while kept > 0`, so it walked PAST zero without ever
+    # evaluating it — and zero is the maximally folded, smallest, most useful candidate. For any
+    # budget tight enough to need full folding, this fell through to returning the raw unfolded
+    # dump: the exact failure the function exists to prevent, hidden because `_enforce` runs
+    # afterward and cuts the tail, so the block looked merely truncated rather than unfolded.
+    # The candidates are enumerated explicitly now, and the last one is 0.
+    # Down to ONE named group, never to zero. R10 agent 2 called zero "the maximally folded,
+    # smallest, most useful candidate"; driving it showed the opposite — on an index whose bulk is
+    # the sections AFTER the file rows, folding every group away hands the reader a single summary
+    # line where ten named directories would have survived `_enforce`'s tail cut. Folding is only
+    # ever an improvement while something is still named.
+    stride = max(1, len(meta) // 40)
+    for keep_n in sorted({*range(len(meta), 0, -stride), 1}, reverse=True):
         summary = []
-        for par in dict.fromkeys(parent_of(l) for l in overflow):
-            rows = [l for l in overflow if parent_of(l) == par]
+        for par in dict.fromkeys(parent_of(top) for top, _ in meta[keep_n:]):
+            rows = [(top, n) for top, n in meta[keep_n:] if parent_of(top) == par]
             where = f"`{mdblock.as_quoted(par, 60)}/`" if par else "the repository root"
             summary.append(f"- _{len(rows)} more director{'y' if len(rows) == 1 else 'ies'} under "
-                           f"{where}, {sum(counted(l) for l in rows):,} files, not named here — "
+                           f"{where}, {sum(n for _, n in rows):,} files, not named here — "
                            f"grep `{map_rel}`_")
-        candidate = "\n".join(head + folded[:kept] + summary + tail)
+        candidate = "\n".join(head + folded[:first + keep_n] + summary + tail)
         if tokens.estimate(candidate) <= budget:
             return candidate
-        kept -= max(1, len(folded) // 40)
+    # Nothing fits even with one group named, which means the budget is being spent somewhere other
+    # than these lines. Hand back the unfolded text and let `_enforce` cut the tail, which is what it
+    # did before this function existed — folding further would only delete the part still worth
+    # having.
     return "\n".join(head + folded + tail)
 
 
