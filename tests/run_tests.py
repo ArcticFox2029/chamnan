@@ -13891,6 +13891,38 @@ for _a in _used:
         print(f"      broken anchor: #{_a}")
 
 
+# ------------------------- the translated pages name the models too, because names are not numbers
+# The translation set carries no figures on purpose -- every number lives in the English README, the
+# only page rewritten each release. Model FAMILY names are not figures, and reading them as if they
+# were left thirty-two pages answering "any model, any vendor" to a reader whose actual question was
+# "will it work with mine". Caught by the owner reading the rendered Thai page, not by a test.
+sys.path.insert(0, str(ROOT / "docs" / "i18n"))
+import i18n_strings as _i18n  # noqa: E402
+import profiles as _prof  # noqa: E402
+
+_fams = sorted(_prof.MODEL_WINDOWS)
+_amb = sorted(_prof.AMBIGUOUS)
+_pages_missing, _digits = [], []
+for _lang in sorted(_i18n.STRINGS):
+    _page = (ROOT / "docs" / "i18n" / f"README.{_lang}.md")
+    if not _page.is_file():
+        continue
+    _text = _page.read_text(encoding="utf-8")
+    _miss = [f for f in _fams if f"`{f}`" not in _text]
+    if _miss or any(f"`{a}`" not in _text for a in _amb) or "`--window`" not in _text:
+        _pages_missing.append((_lang, _miss))
+    _v = _i18n.STRINGS[_lang].get("works_llm_names", "")
+    if any(c.isdigit() for c in _v):
+        _digits.append(_lang)
+
+check("EVERY TRANSLATED PAGE NAMES EVERY MODEL FAMILY --model KNOWS", not _pages_missing)
+for _l, _m in _pages_missing[:6]:
+    print(f"      {_l} is missing {_m}")
+check("...and names the two left out on purpose, and the exact escape hatch", not _pages_missing)
+# The rule the whole translation set rests on, checked on the string that most tempts a number.
+check("...without a digit entering the translation set to do it", not _digits)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
