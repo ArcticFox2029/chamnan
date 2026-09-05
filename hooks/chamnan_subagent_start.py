@@ -62,14 +62,25 @@ FIRINGS = "logs/subagent_start.jsonl"
 MAX_FIRINGS = 400
 
 
-def _record_a_firing(root, agent_type, size):
-    """Append one line saying this hook ran. Best effort: a hook must not fail over its own log."""
+def _record_a_firing(root, agent_type, size, outcome="delivered"):
+    """Append one line saying this hook ran, and what came of it.
+
+    🐛 `outcome` is here because the first version wrote the line AFTER four early returns — a fork
+    dispatch, no workspace, the feature disabled, an empty block — none of which are about whether
+    the hook FIRED. So a chronically empty log still could not separate "never fires" from "fires
+    and produces nothing", which is the one question the log exists to answer (R20 agent 2).
+    """
     try:
         import mdblock as _md
-        path = ws.workspace(root) / FIRINGS
+        # A firing with no workspace still happened, and is the case most worth seeing. Fall back
+        # to the workspace of wherever the process is, and give up quietly if there is none.
+        path = ws.workspace(root if root is not None else None) / FIRINGS
+        if root is None and not path.parent.parent.is_dir():
+            return
         path.parent.mkdir(parents=True, exist_ok=True)
         entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                 "agent_type": _md.one_line(agent_type or "")[:60], "bytes": size}
+                 "agent_type": _md.one_line(agent_type or "")[:60], "bytes": size,
+                 "outcome": outcome}
         lines = []
         if path.is_file():
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-(MAX_FIRINGS - 1):]
@@ -156,17 +167,27 @@ def main():
     # A fork inherits the parent's whole conversation, session-start block included, so the pointer
     # would be a second copy of something already in its context. Measured over 22 historical fork
     # dispatches in this repository: none of them ever opened MAP.md, and none of them needed to.
-    if (payload.get("agent_type") or "").lower() == "fork":
-        return 0
+    _agent_type = payload.get("agent_type")
+    # The root is resolved BEFORE the first gate, so every gate has somewhere to record that the
+    # hook ran. Resolving it after the fork check meant a fork had no workspace to write to and the
+    # one outcome that is deliberate went unrecorded — which is the same blindness one step along.
     root = ws.find_root(Path(payload.get("cwd") or "."))
+    if (_agent_type or "").lower() == "fork":
+        # A fork is a firing, and one that produces nothing on purpose: it already carries the
+        # parent's whole conversation.
+        _record_a_firing(root, _agent_type, 0, "fork")
+        return 0
     if root is None:
+        _record_a_firing(None, _agent_type, 0, "no-workspace")
         return 0
     # Default-on, switchable off in .chamnan/config.json like every other section.
     if not ws.enabled("subagent_pointer", root):
+        _record_a_firing(root, _agent_type, 0, "disabled")
         return 0
 
     text = _block(Path(root))
     if not text:
+        _record_a_firing(root, _agent_type, 0, "nothing-to-point-at")
         return 0
     # Scrubbed at the one place it leaves the process, as chamnan_file_pointer.py does: a rule
     # TITLE is repository text, and a title has carried a live credential before.
@@ -178,7 +199,7 @@ def main():
         # `_clip` already apply -- this was the third cutter in the set and the one without it.
         text = mdblock.whole_graphemes(
             text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
-    _record_a_firing(root, payload.get("agent_type"), len(text.encode()))
+    _record_a_firing(root, _agent_type, len(text.encode()), "delivered")
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SubagentStart", "additionalContext": text}}))
     return 0
