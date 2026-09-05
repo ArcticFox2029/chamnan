@@ -301,7 +301,8 @@ def enabled(part, root=None):
 # have deleted the whole feature after seven quiet days — the identical failure the comment
 # below describes being fixed for its two siblings. A log that bounds itself by record must
 # say so here, or the directory sweep bounds it by date instead.
-SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl")
+SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl",
+                    "subagent_start.jsonl")
 
 
 def expiring_logs(root=None, within_days=1.0):

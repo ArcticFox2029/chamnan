@@ -13947,6 +13947,48 @@ check("...and chamnan-context subtracts that overhead rather than passing the ce
       "fixed_overhead(args.write)" in _cx_src)
 
 
+# 🐛 The subagent pointer has never been OBSERVED to deliver across 297 real subagent transcripts,
+# three accounts, three weeks — while the same recording mechanism captures this plugin's other
+# hooks in the same dataset, and this hook emits correctly when invoked directly (R12 agent 6).
+# Two explanations fit and nothing could separate them, because the hook kept no account of its own
+# firings. It keeps one now. This is instrumentation to settle a question before anyone changes
+# behaviour on a guess — not a fix, and it is not claimed as one.
+_sf = Path(tempfile.mkdtemp(prefix="chamnan-firings-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_sf, capture_output=True)
+    (_sf / ".chamnan").mkdir(exist_ok=True)
+    (_sf / ".chamnan" / "MAP.md").write_text("# Architecture map\n\n## Quick Index\n\n",
+                                             encoding="utf-8")
+    for _ in range(3):
+        subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                       input=json.dumps({"cwd": str(_sf), "hook_event_name": "SubagentStart",
+                                         "agent_type": "Explore"}),
+                       capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _sf_log = _sf / ".chamnan" / "logs" / "subagent_start.jsonl"
+    check("THE SUBAGENT POINTER RECORDS THAT IT FIRED, SO SILENCE CAN BE TOLD FROM ABSENCE",
+          _sf_log.is_file() and len(_sf_log.read_text(encoding="utf-8").splitlines()) == 3)
+    check("...and each record says which agent type and how many bytes it delivered",
+          all({"at", "agent_type", "bytes"} <= set(json.loads(_l))
+              for _l in _sf_log.read_text(encoding="utf-8").splitlines()))
+    check("...and the log bounds itself by record, like the others beside it",
+          "subagent_start.jsonl" in ws.SELF_PRUNING_LOGS)
+    # A hook must never fail over its own bookkeeping.
+    _sf_ro = _sf / ".chamnan" / "logs"
+    _sf_mode = _sf_ro.stat().st_mode
+    try:
+        _sf_ro.chmod(0o500)
+        _sf_r = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                               input=json.dumps({"cwd": str(_sf), "hook_event_name": "SubagentStart",
+                                                 "agent_type": "Explore"}),
+                               capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check("...and an unwritable log does not stop the pointer being delivered",
+              _sf_r.returncode == 0 and "additionalContext" in _sf_r.stdout)
+    finally:
+        _sf_ro.chmod(_sf_mode)
+finally:
+    _rmtree(_sf, ignore_errors=True)
+
+
 # 🐛 A dotted import of a THIRD-PARTY package invented an edge. `from stripe_orm.models import
 # Charge` fell through to the last-resort tail lookup, `models` matched the one repository file with
 # that stem, and the map asserted that a billing file depends on auth models — two files with

@@ -31,6 +31,7 @@ Unlike SessionStart, a plain `print()` is NOT context here -- SubagentStart requ
 `hookSpecificOutput.additionalContext` form. Available from Claude Code 2.0.43.
 """
 import json
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
@@ -44,6 +45,38 @@ import workspace as ws  # noqa: E402
 # A hard cap, and small on purpose: this is paid once per subagent, and a session spawns many.
 # Measured against the SessionStart block's own 9,000-byte ceiling, this is under 5% of it.
 MAX_BYTES = 1_400
+
+
+# 🐛 This hook has never once been OBSERVED to deliver, across 297 real subagent transcripts
+# spanning three accounts and three weeks — while the same recording mechanism reliably captures
+# this plugin's other hooks in the identical dataset, and this one produces correct output when
+# invoked directly (R12 agent 6). Two explanations fit: SubagentStart is not firing in production,
+# or it fires and nothing records that it did. Nothing in the code could tell them apart, because
+# the hook kept no account of its own firings.
+#
+# So it keeps one. This is instrumentation to settle a question before anybody changes behaviour on
+# a guess — the dead-ends file records Angle 33 as "reopened and shipped", and the honest reading is
+# now "shipped, unverified in production". One line per firing, self-pruning by record like
+# `commands.jsonl` beside it, and never a reason for the hook to fail.
+FIRINGS = "logs/subagent_start.jsonl"
+MAX_FIRINGS = 400
+
+
+def _record_a_firing(root, agent_type, size):
+    """Append one line saying this hook ran. Best effort: a hook must not fail over its own log."""
+    try:
+        import mdblock as _md
+        path = ws.workspace(root) / FIRINGS
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "agent_type": _md.one_line(agent_type or "")[:60], "bytes": size}
+        lines = []
+        if path.is_file():
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-(MAX_FIRINGS - 1):]
+        lines.append(json.dumps(entry, ensure_ascii=False))
+        ws.atomic_write_text(path, "\n".join(lines) + "\n")
+    except Exception:
+        pass
 
 
 def _block(root):
@@ -145,6 +178,7 @@ def main():
         # `_clip` already apply -- this was the third cutter in the set and the one without it.
         text = mdblock.whole_graphemes(
             text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
+    _record_a_firing(root, payload.get("agent_type"), len(text.encode()))
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SubagentStart", "additionalContext": text}}))
     return 0
