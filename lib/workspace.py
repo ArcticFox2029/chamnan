@@ -358,11 +358,24 @@ _ORPHAN_TEMP = re.compile(r"\.\d+\.tmp$")
 
 
 def prune_orphaned_temps(root=None):
-    """Remove staging files a killed write left behind. Best effort and silent, like every prune."""
+    """Remove staging files a killed write left behind. Best effort and silent, like every prune.
+
+    Rate-limited by a stamp, because the sweep walks the whole workspace and the thing it looks for
+    is rare: a staging file only survives a process being killed mid-write. Measured at 12.8 ms on
+    this repository, paid by every `chamnan-map`, `chamnan-report` and session start — against an
+    orphan that appears perhaps never. Once an hour finds one just as surely, since nothing is
+    removed until it is an hour old anyway.
+    """
     import time
     ws_dir = workspace(root)
     if not ws_dir.is_dir():
         return 0
+    stamp = ws_dir / "state" / ".temps-swept"
+    try:
+        if stamp.is_file() and time.time() - stamp.stat().st_mtime < _ORPHAN_TEMP_AGE:
+            return 0
+    except OSError:
+        pass
     cutoff = time.time() - _ORPHAN_TEMP_AGE
     removed = 0
     for path in ws_dir.rglob("*.tmp"):
@@ -374,6 +387,11 @@ def prune_orphaned_temps(root=None):
                 removed += 1
         except OSError:
             continue
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+    except OSError:
+        pass
     return removed
 
 

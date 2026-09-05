@@ -13931,6 +13931,21 @@ try:
     check("...nor a .tmp this module did not write, however old",
           (_ot / ".chamnan" / "notes.tmp").exists())
     check("...nor the real file beside it", (_ot / ".chamnan" / "MAP.md").exists())
+    # 🐛 The sweep walks the whole workspace and looks for something that only exists after a
+    # process is killed mid-write. Measured at 12.8 ms, paid by every chamnan-map, chamnan-report
+    # and session start — most of the 10.9% chamnan-map had regressed against 1.16.0. Rate-limited
+    # by a stamp: once an hour finds an orphan just as surely, because nothing is removed until it
+    # is an hour old anyway. Both halves asserted, since a rate limit that never lifts is a sweep
+    # that was deleted.
+    _ot2 = _ot / ".chamnan" / "MAP.md.777.tmp"
+    _ot2.write_text("x", encoding="utf-8")
+    os.utime(_ot2, (_ot_old, _ot_old))
+    check("...and a second sweep within the hour does nothing, so it is not paid on every command",
+          ws.prune_orphaned_temps(_ot) == 0 and _ot2.exists())
+    _ot_stamp = _ot / ".chamnan" / "state" / ".temps-swept"
+    os.utime(_ot_stamp, (_ot_old, _ot_old))
+    check("...while once the stamp ages, the sweep runs again and the orphan goes",
+          ws.prune_orphaned_temps(_ot) == 1 and not _ot2.exists())
 finally:
     _rmtree(_ot, ignore_errors=True)
 
