@@ -8555,6 +8555,78 @@ for _sk in ("bootstrap", "remap"):
           "chamnan-map --undocumented" in _sk_text)
 _rmtree(_ud.parent, ignore_errors=True)
 
+# ------------------------------ the ninth family, and the generator that found it
+# 🐛 [2026-09-06] Eight ReDoS families were found today, one at a time, each by a person or an agent
+# noticing a shape. `lib/rulecheck.py`'s own comment has said since the third that "a fifth family
+# nobody has found yet is likely" — and it was right five times running. So the ninth was found by
+# GENERATING shapes instead: `((a|a))+c`, an ambiguous alternation wrapped in a redundant inner
+# group, invisible to both alternation patterns because neither can look inside nested parentheses,
+# and invisible to the quantifier scanner because the inner group carries no quantifier of its own.
+# 0.692s on 22 characters, against 0.000s once the redundant layer is removed.
+#
+# This check IS that generator, kept. It builds every combination of group opener, inner body and
+# quantifier — flat, nested one deep, and concatenated — compiles each, skips the ones the guards
+# already refuse, and times what is left against a short adversarial input. Anything ALLOWED that
+# takes measurable time is the tenth family, reported by name rather than waiting for a round to
+# notice it.
+#
+# Bounded to stay a test: 22 characters of input, and a 0.02s bar that every safe pattern clears by
+# three orders of magnitude. A real hazard at this length takes 0.2-0.7s, so there is no middle
+# ground for the threshold to sit wrongly in.
+# The guard set, asked the same way `_matches` asks it. Defined here rather than reusing the
+# `_would_refuse` further down the file, because this check runs earlier — and a second definition
+# that drifts from the first is exactly the defect this suite keeps finding, so both are derived
+# from the same five calls and the assertion below fails if a guard is added to one and not both.
+import rulecheck as _fzrc  # noqa: E402
+def _fz_refuse(pat):
+    return bool(_fzrc._NESTED_QUANTIFIER.search(pat)
+                or _fzrc._quantified_group_over_quantifier(pat)
+                or _fzrc._ambiguous(pat)
+                or _fzrc._too_many_quantifiers(pat)
+                or _fzrc._overlapping_alternations(pat) > _fzrc.MAX_QUANTIFIERS)
+
+
+_fz_open = ("(", "(?:", "(?P<g>", "(?i:")
+_fz_inner = ("a", "a?", "a*", "a+", "a|", "|a", "a|a", "a|aa", "[ab]", "[ab]?", r"\s?", "a??")
+_fz_quant = ("*", "+", "{18}", "{2,}", "")
+_fz_input = "a" * 22 + "b"
+_fz_shapes = []
+for _o in _fz_open:
+    for _i in _fz_inner:
+        for _q in _fz_quant:
+            _fz_shapes.append(f"{_o}{_i}){_q}c")
+            for _k in (3, 6, 12):
+                _fz_shapes.append(f"{_o}{_i}){_q}" * _k + "c")
+            for _o2 in _fz_open:
+                for _q2 in _fz_quant:
+                    _fz_shapes.append(f"{_o2}{_o}{_i}){_q}){_q2}c")
+_fz_slow, _fz_checked = [], 0
+for _pat in _fz_shapes:
+    try:
+        _fz_rx = re.compile(_pat)
+    except re.error:
+        continue
+    _fz_checked += 1
+    if _fz_refuse(_pat):
+        continue
+    _fz_t0 = _time.perf_counter()
+    _fz_rx.search(_fz_input)
+    if _time.perf_counter() - _fz_t0 > 0.02:
+        _fz_slow.append(_pat)
+if _fz_slow:
+    print("      allowed and slow: " + ", ".join(sorted(_fz_slow)[:6]))
+check(f"NO GENERATED PATTERN THE GUARDS ALLOW IS SLOW ({_fz_checked} shapes)", _fz_slow == [])
+# A generator that compiled almost nothing would pass the check above and prove nothing.
+check("...and the generator actually produced a corpus worth scanning", _fz_checked > 3000)
+# The ninth family itself, named, so a future simplification of `_unwrapped` fails here and not in
+# a round six months from now.
+for _nine in ("((a|a))+c", "(?:(a|a))*c", "((a|)){18}c", "((?:a|a))+c", "(?:(?:a|a))*c"):
+    check(f"A REDUNDANT GROUP DOES NOT HIDE AN AMBIGUOUS ALTERNATION: {_nine}",
+          _fz_refuse(_nine))
+# ...and collapsing that layer must not make an ordinary nested group read as a hazard.
+for _plain in (r"^((foo|bar))$", r"(?:(\d{4}))-\d{2}", r"((a))", r"(?:(GET|POST))"):
+    check(f"...while an ordinary nested group is untouched: {_plain}", not _fz_refuse(_plain))
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
@@ -11500,6 +11572,16 @@ for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.
             r"\b[A-Z_]{3,}\b", r"https?://[^\s]+", r"^\s*#\s*(TODO|NOTE)"):
     check("...while an ordinary rule pattern still runs: " + _ok, not _would_refuse(_ok))
 # Escapes and character classes are literal, not quantifiers.
+# 🐛 The comment beside `_fz_refuse` says the two helpers are derived from the same five calls, and
+# a comment is not an enforcement. A guard added to one and not the other is precisely the defect
+# this suite keeps finding elsewhere, so they are held against each other on a corpus that contains
+# every family found today plus the ordinary patterns that must survive.
+_agree = [p for p in
+          ("(a?){20}b", "(a|){20}b", "((a|a))+c", "(?:a|a)*$", "(a|aa)" * 26 + "b",
+           "(a+)+$", "a*a*a*a*a*b", r"(\d{4})", r"(?:GET|POST)*x", r"colou?r", r"()",
+           r"^((foo|bar))$", r"https?://[^\s]+")
+          if _would_refuse(p) != _fz_refuse(p)]
+check("THE TWO GUARD HELPERS IN THIS SUITE ASK THE SAME QUESTION", _agree == [])
 check("an escaped paren is not a group", not _would_refuse(r"\(a\)+"))
 check("...and a character class of quantifier characters is not one either",
       not _would_refuse(r"([+*])"))
