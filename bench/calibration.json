@@ -6,5 +6,19 @@
   "japanese": 35113,
   "chinese": 34993,
   "russian": 35098,
-  "german": 35245
+  "german": 35245,
+  "_measured": {
+    "at": "unrecorded — this file predates provenance stamping",
+    "claude_version": "",
+    "note": "raw token counts; subtract _base, and only within this one measurement run. Re-take them all with `python3 bench/calibrate_tokens.py --remeasure`."
+  },
+  "_ratios": {
+    "english_prose": 3.27,
+    "english_code": 2.47,
+    "thai": 1.19,
+    "japanese": 1.09,
+    "chinese": 0.96,
+    "russian": 2.82,
+    "german": 2.21
+  }
 }

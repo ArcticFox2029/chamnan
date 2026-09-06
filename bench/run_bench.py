@@ -38,9 +38,16 @@ BASELINE_PROMPT = "Reply with exactly the word OK and nothing else."
 
 
 def load_results():
-    if RESULTS.exists():
-        return json.loads(RESULTS.read_text())
-    return {"baseline": {}, "runs": {}}
+    """Results, with every cell held as a LIST of trials.
+
+    A file written before repeated trials existed holds one dict per cell. It is migrated to a
+    one-element list rather than discarded — the run happened, it is simply one sample.
+    """
+    if not RESULTS.exists():
+        return {"baseline": {}, "runs": {}}
+    data = json.loads(RESULTS.read_text())
+    data["runs"] = {k: (v if isinstance(v, list) else [v]) for k, v in data.get("runs", {}).items()}
+    return data
 
 
 def save_results(data):
@@ -96,12 +103,21 @@ def slim(env):
 
 
 def main():
-    if len(sys.argv) < 2:
-        sys.exit("usage: run_bench.py <corpus-dir> [question-id ...]")
-    corpus = Path(sys.argv[1]).resolve()
+    argv = sys.argv[1:]
+    trials = 1
+    if "--trials" in argv:
+        i = argv.index("--trials")
+        try:
+            trials = max(1, int(argv[i + 1]))
+        except (IndexError, ValueError):
+            sys.exit("--trials needs a number, e.g. --trials 3")
+        del argv[i:i + 2]
+    if not argv:
+        sys.exit("usage: run_bench.py <corpus-dir> [--trials N] [question-id ...]")
+    corpus = Path(argv[0]).resolve()
     if not corpus.is_dir():
         sys.exit(f"no such directory: {corpus}")
-    only = set(sys.argv[2:])
+    only = set(argv[1:])
 
     questions = json.loads((HERE / "questions.json").read_text())["questions"]
     if only:
@@ -125,26 +141,53 @@ def main():
         b = data["baseline"][arm]
         print(f"  context={b.get('context_total')} cost=${b.get('cost_usd', 0):.4f}")
 
+    # 🐛 Each cell ran ONCE and was then cached forever, so every figure this file has ever
+    # produced is a single sample of a process with real variance — a model's tool choices differ
+    # run to run — presented as if it were the number. Anyone re-running it got the cache back and
+    # called that reproduction. A published figure needs repetitions, and this now takes them:
+    # `--trials N` runs each cell N times and records all of them, and the report prints the
+    # median with the spread beside it so a reader can see how much the number moves.
     for q in questions:
         for arm, flags in ARMS.items():
             key = f"{q['id']}::{arm}"
-            if key in data["runs"] and "error" not in data["runs"][key]:
-                print(f"{key}: cached")
+            done = [r for r in data["runs"].get(key, []) if "error" not in r]
+            if len(done) >= trials:
+                print(f"{key}: cached ({len(done)} trial(s))")
                 continue
-            print(f"{key}: running...", flush=True)
-            data["runs"][key] = slim(run_once(q["q"], corpus, flags))
-            data["runs"][key]["dimension"] = q["dimension"]
-            save_results(data)
-            r = data["runs"][key]
-            if "error" in r:
-                print(f"  ERROR {r['error']}")
-            else:
-                print(
-                    f"  context={r['context_total']:>8}  turns={r['num_turns']:>2}"
-                    f"  {r['wall_s']:>6}s  ${r['cost_usd']:.4f}"
-                )
+            data["runs"].setdefault(key, [])
+            for n in range(len(done), trials):
+                print(f"{key}: running trial {n + 1}/{trials}...", flush=True)
+                r = slim(run_once(q["q"], corpus, flags))
+                r["dimension"] = q["dimension"]
+                data["runs"][key].append(r)
+                save_results(data)
+                if "error" in r:
+                    print(f"  ERROR {r['error']}")
+                else:
+                    print(
+                        f"  context={r['context_total']:>8}  turns={r['num_turns']:>2}"
+                        f"  {r['wall_s']:>6}s  ${r['cost_usd']:.4f}"
+                    )
 
+    _report_spread(data, trials)
     print(f"\nwrote {RESULTS}")
+
+
+def _report_spread(data, trials):
+    """Median and spread per cell. A single number from a single run is not a measurement."""
+    if trials < 2:
+        print("\n(one trial per cell — run with --trials 3 or more before publishing a figure)")
+        return
+    print(f"\n{'cell':<44}{'median ctx':>12}{'min':>9}{'max':>9}{'spread':>9}")
+    print("-" * 83)
+    for key, runs in sorted(data["runs"].items()):
+        vals = sorted(r["context_total"] for r in runs
+                      if isinstance(r, dict) and "error" not in r and r.get("context_total"))
+        if not vals:
+            continue
+        med = vals[len(vals) // 2]
+        spread = (vals[-1] - vals[0]) / med * 100 if med else 0
+        print(f"{key:<44}{med:>12,}{vals[0]:>9,}{vals[-1]:>9,}{spread:>8.1f}%")
 
 
 if __name__ == "__main__":
