@@ -991,7 +991,29 @@ def main():
                 # with a clone, so a key written into it — by hand, or by a generated comment —
                 # reached the session intact.
                 out.append(section("Architecture index", redact.scrub(index), display(mp, root)))
-                tail = (f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
+                # 🐛 [2026-09-06] The second clause repeated what the index's own header had
+                # already said, in every firing, on every repository. `mapper` has two header
+                # variants and BOTH open with the same instruction in more detail -- `_HOW_TO_READ`
+                # ("grep it for the one heading you need") and `_TOO_BIG_TO_READ_IN_FULL` ("grep
+                # BOTH sections, never read either whole"). R1 found this and scoped the guard to
+                # the literal string "too large to read in full", which is the LARGE variant only;
+                # R11 agent 6 measured it on 8-, 150- and 1,200-file fixtures and the duplication is
+                # unconditional, so that guard would have closed the minority case and left the
+                # common one open.
+                #
+                # What the tail says that neither header does is WHERE the file is: a header
+                # written inside MAP.md says "this file", which is unambiguous there and not here.
+                # So the path always survives and the instruction is dropped once it is already in
+                # the block. 38.5 tokens on every session that delivers a header.
+                # Matched on a fragment that carries no line break. `_HOW_TO_READ` is wrapped
+                # in the source -- "— grep it\nfor the one heading you need" -- so the obvious
+                # whole-sentence test silently never fired on the SMALL variant, which is the one
+                # most repositories get. Measured before believing it: 8- and 150-file fixtures
+                # still carried both copies until this was narrowed.
+                _told_how = ("for the one heading you need" in text
+                             or "never read either whole" in text)
+                tail = (f"_Full detail lives in `{display(mp, root)}`._" if _told_how else
+                        f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
                         f"never read it whole._")
                 # Named only when it is actually there. A causal ablation of a structural codebase
                 # index (arXiv:2606.22417) found its measurable gain concentrated in cross-file,

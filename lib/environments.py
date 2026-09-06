@@ -49,6 +49,9 @@ _BULLET = re.compile(r"^\s*[-*]\s+(.+?)\s*$", re.M)
 # "Kubernetes 1.28". Anything that does not match this shape is simply not a version claim, and
 # is left alone rather than guessed at.
 _VERSION = re.compile(r"([A-Za-z][\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
+# The filler word between a name and its number ("postgres version 16") is stripped by
+# `aging.version_pairs`, which BOTH sides of this feature go through -- see the note there for what
+# each of them got wrong on its own.
 
 
 def path(root):
@@ -66,12 +69,23 @@ def _ymd_to_ts(text):
     # and the staleness check it feeds reported an all-clear about a day that does not exist.
     # `datetime.date` refuses instead, which is what a validator is for. Same treatment
     # `sessions.prune()` already applies to the dates it parses.
+    #
+    # 🐛 [2026-09-06] `lib/ledger.py`'s function of the same name refuses a date in the FUTURE as
+    # well, and says why: "a typo'd 2099-01-01 made _age() report today". This copy got the
+    # calendar half of that fix and not the future half -- one member of a pair, again. Here it is
+    # worse than a wrong count: `**Checked:** 2027-01-01` makes the entry permanently fresh, so
+    # `stale_environments()` never names it and the aging check, whose whole job is to REFUSE to
+    # report against an unmaintained source, issues an all-clear from one forever (R11 agent 3).
+    # A slack of one day, same as ledger, so an entry written in a timezone ahead of this machine
+    # is not thrown away.
     try:
         y, mo, d = int(m.group(1)), int(m.group(2)), int(m.group(3))
         datetime.date(y, mo, d)                      # raises on 2026-02-30, 2026-06-31, 2026-13-01
-        return calendar.timegm((y, mo, d, 12, 0, 0))
+        ts = calendar.timegm((y, mo, d, 12, 0, 0))
     except (ValueError, TypeError):
         return None
+    import time as _time
+    return None if ts > _time.time() + 86400 else ts
 
 
 def entries(root):
@@ -98,7 +112,8 @@ def entries(root):
         fields = {k.lower(): v.strip() for k, v in _FIELD.findall(body)}
 
         versions = {}
-        for vname, vnum in _VERSION.findall(fields.get("versions", "")):
+        import aging as _aging          # deferred: aging imports nothing local, so no cycle
+        for vname, vnum in _aging.version_pairs(fields.get("versions", "")):
             versions[vname.lower()] = vnum
 
         constraints = []
