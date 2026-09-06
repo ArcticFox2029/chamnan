@@ -9387,6 +9387,50 @@ try:
 finally:
     _rmtree(_aw, ignore_errors=True)
 
+# 🐛 A STATE.md whose pinned sections fill the budget pushes the Architecture index out — pinned
+# content is deliberately never cut, which is the point of a pin, and the index is the smallest
+# droppable section. Nothing here was silent: the section was listed with the file to read it in.
+# But the two facts sat apart. The reader was told MAP.md had been left out, and separately that
+# pins are never cut, and nothing joined them — so the one action that gets the index back,
+# unpinning something, was invisible from either (R3 agent 3).
+_pin = Path(tempfile.mkdtemp(prefix="chamnan-pins-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_pin, capture_output=True)
+    for _i in range(8):
+        (_pin / f"m{_i}.py").write_text(f'"""Module {_i} does a thing."""\ndef f{_i}(): pass\n',
+                                        encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_pin,
+                   capture_output=True)
+    _filler = ("This thread is being worked on and the note explaining it runs to a few lines, "
+               "which is what an ordinary pinned thread looks like in practice.\n") * 6
+    (_pin / ".chamnan" / "STATE.md").write_text(
+        "# Work in flight\n\n"
+        + "".join(f"## Thread {_i} \U0001F4CC\n\n{_filler}\n" for _i in range(20)),
+        encoding="utf-8")
+    _pr = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                         cwd=_pin, input="{}", capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    _left = [ln for ln in _pr.stdout.splitlines() if "Left out to stay under" in ln]
+    check("A SECTION PUSHED OUT BY PINNED STATE SAYS WHAT PUSHED IT",
+          bool(_left) and "Pinned sections" in _left[0] and "unpin" in _left[0])
+    check("...and still names the section and the file it can be read from",
+          bool(_left) and "MAP.md" in _left[0])
+finally:
+    _rmtree(_pin, ignore_errors=True)
+
+# 🐛 DOMINANT_SHARE was 0.6, too permissive to catch the case it exists for: a directory holding
+# 48.6% of a repository's files stayed one bucket, folding a 118-file test suite and a 40-file tool
+# directory into one indistinguishable line — and `tools/` is what the block itself tells an agent
+# to prefer over writing a new script (R3 agent 3).
+_roll = "# Map\n\n## Quick Index\n\n" + "".join(
+    f"- **`w/tests/t{_i}.py`** ({_i}L) - a test\n" for _i in range(118)) + "".join(
+    f"- **`w/tools/u{_i}.py`** ({_i}L) - a tool\n" for _i in range(40)) + "".join(
+    f"- **`src/s{_i}.py`** ({_i}L) - source\n" for _i in range(160))
+_folded = rollup.collapse(_roll, "MAP.md", budget=3000)
+_folded = _folded[0] if isinstance(_folded, tuple) else _folded
+check("A DOMINANT DIRECTORY IS SPLIT RATHER THAN FOLDED INTO ONE OPAQUE BUCKET",
+      "w/tests/" in _folded and "w/tools/" in _folded)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
