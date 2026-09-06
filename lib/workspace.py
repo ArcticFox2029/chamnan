@@ -129,6 +129,17 @@ DEFAULT_CONFIG = {
     # profile when set by hand, which `resolve()` documents and does not change.
     "context_profile": "standard",
 }
+# 🐛 [2026-09-06] A directory's own README is that directory's INDEX, not a member of it, and
+# every store here is listed by globbing `*.md`. In this workspace `.chamnan/skills/README.md` sorts
+# second of twenty, so with a twelve-slot listing it took a real skill's place — and it was described
+# to the model by its own first prose line, which explains what the folder is rather than what a
+# procedure does (R8 agent 5). One predicate rather than a check at each listing, because there are
+# eight of those and this is exactly the shape this repository keeps rediscovering.
+def is_store_index(path):
+    """True when `path` is a store's own README rather than an entry in it."""
+    return pathlib.Path(path).name.lower() in ("readme.md", "index.md")
+
+
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 

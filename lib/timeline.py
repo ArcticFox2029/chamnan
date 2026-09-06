@@ -89,7 +89,7 @@ def threads(root):
     d = directory(root)
     if not d.is_dir():
         return []
-    return sorted(p for p in d.glob("*.md") if p.is_file())
+    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p))
 
 
 def resolve(root, ident):
