@@ -48,37 +48,15 @@ ROUTES_BUDGET_SHARE = 0.40
 ENV_BUDGET_SHARE = 2 / 15
 
 
-def _section_budget(share, configured=None):
-    """A section's token budget as a share of the index budget the user actually configured."""
-    if configured is None:
-        try:
-            import workspace as _ws
-            configured = _ws.load_config().get("index_token_budget", 3000)
-        except Exception:
-            configured = 3000
-    return max(int(configured * share), 120)
+# Both live in `tokens` now, so `deploy.py` -- which renders into the same budgeted index from the
+# same count-cap-plus-length-cap pair and never had this bound at all -- reaches the same rule
+# rather than a second copy of it. The names here stay so every call site below reads as it did.
+_section_budget = tokens.section_budget
 SKIP_PARTS = (".git", "node_modules", "vendor", "__pycache__", ".venv", "dist", "build")
 
 
-def _fill_by_budget(entries, render_one, token_budget, count_cap):
-    """Keep `entries` in order until either the token budget or the count cap is spent.
+_fill_by_budget = tokens.fill_by_budget
 
-    Returns (kept_render_lines, kept_count). At least one entry is always kept when the list is
-    non-empty, even if it alone exceeds the budget — a budget of zero rows is not a summary, and
-    `mdblock.as_quoted`'s own per-entry cap already bounds how bad the single worst case can be.
-    """
-    lines = []
-    spent = 0.0
-    for e in entries:
-        if len(lines) >= count_cap:
-            break
-        line = render_one(e)
-        cost = tokens.estimate(line)
-        if lines and spent + cost > token_budget:
-            break
-        lines.append(line)
-        spent += cost
-    return lines, len(lines)
 
 def _nested(root):
     """Nested checkouts, shared with mapper so both halves of the map agree on what this repo is.

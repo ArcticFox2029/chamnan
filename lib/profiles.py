@@ -21,6 +21,25 @@ stdout at roughly 10,000 bytes — a property of the HARNESS, not of the model b
 in a model profile would mean choosing a Gemini profile silently raised a ceiling Claude Code's
 host still enforces, and the block would be cut with no explanation. It stays on the agent adapter
 where it belongs.
+
+**What the 3x buys on Claude Code's own hook, measured rather than assumed.** R10 acc3 reported
+that the ceiling makes the delivered block "byte-for-byte identical regardless of profile" and
+that `large-window` is therefore dead code on chamnan's flagship integration. Reproduced against
+the real hook on four fixtures -- 120, 400 and 1,200 files, and 1,200 files with a five-times
+larger STATE.md -- and it is NOT identical at any size:
+
+    120 files    standard 6,781 bytes    large-window 8,957 bytes
+    400 files    standard 7,127 bytes    large-window 8,960 bytes
+    1,200 files  standard 7,142 bytes    large-window 8,836 bytes
+    1,200 + 5x STATE.md   7,143 bytes                 8,931 bytes
+
+So the profile does change what Claude Code receives, and the claim to be careful with is a
+different one: a 2.4-2.7x increase in the two TOKEN budgets buys roughly 25% more delivered BYTES,
+because `fit.CEILING` caps both profiles near the same number. That is the honest shape -- the
+budgets are caps on two sections, the ceiling is a cap on the whole block, and a bigger cap on a
+part cannot lift a smaller cap on the sum. `--explain` already says this in the reader's own
+numbers ("the byte ceiling binds first"); it is written here so the next round does not re-open a
+question that has been measured.
 """
 
 # Each profile: the two budgets, and the model class the numbers were chosen for. Names are

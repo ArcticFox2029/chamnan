@@ -7694,6 +7694,39 @@ check("...and leaves the current entry in each store alone",
       and (_ret / ".chamnan" / "sessions" / "2026-09-06-current.md").is_file())
 _rmtree(_ret.parent, ignore_errors=True)
 
+
+# 🐛 [2026-09-06] `catalogs.py` names this failure in its own comment -- "count caps and
+# mdblock.as_quoted's per-entry length cap bound quantity and size separately, and nothing bounds
+# their product" -- and fixed it for routes and configuration. `deploy.py` renders into the SAME
+# budgeted index from the SAME two primitives and never got the fix, so eight kinds of twenty
+# objects with names of the length a GitOps monorepo actually produces cost 4,059 tokens: more than
+# the whole 3,000-token default index budget, from one optional section, while MAX_PER_GROUP = 14
+# reported nothing wrong. mapper concatenates this straight into the text `tokens.fits` measures,
+# so it forced the directory roll-up onto the entire repository's Quick Index (R10 acc3).
+_dep_name = "payments-settlement-nightly-reconciliation-eu-west-1-blue"
+def _dep_found(kinds, per_kind, namelen=73):
+    return {"k8s": {f"Kind{k:02d}": [(_dep_name + f"-{i:03d}")[:namelen].ljust(namelen, "x")
+                                     for i in range(per_kind)]
+                    for k in range(kinds)},
+            "images": [], "compose": [], "ansible": [], "ci": [], "helm": []}
+_dep_big = tokens.estimate(deploy_mod.render(_dep_found(8, 20)))
+check("ONE OPTIONAL SECTION CANNOT COST MORE THAN THE WHOLE INDEX BUDGET",
+      _dep_big < 3000)
+# The unbounded dimension is the number of KINDS, which a CRD adds to without limit -- so the
+# budget has to be spent down across kinds, not handed to each one.
+_dep_many = tokens.estimate(deploy_mod.render(_dep_found(30, 20)))
+check("...and thirty kinds do not cost thirty times one kind",
+      _dep_many < 4 * tokens.estimate(deploy_mod.render(_dep_found(1, 20))))
+# The half that makes the two above mean something: a budget that rendered nothing would pass both.
+_dep_out = deploy_mod.render(_dep_found(8, 20))
+check("...while every kind is still named, with its true count",
+      all(f"**Kind{k:02d}** (20)" in _dep_out for k in range(8))
+      and "160 Kubernetes object(s)" in _dep_out)
+# An ordinary small repository must render exactly as it did before the budget existed.
+_dep_small = deploy_mod.render(_dep_found(2, 3, namelen=20))
+check("...and a small manifest set is not truncated at all",
+      _dep_small.count("`") == 2 * 6 and " _+" not in _dep_small)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
