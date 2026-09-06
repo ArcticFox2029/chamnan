@@ -281,6 +281,13 @@ if _tag:
               f"refresh and the stale-build banner stays dark.")
     check("the version is semver and the tag it matches is a real one",
           bool(re.fullmatch(r"v?\d+\.\d+\.\d+", _tag)))
+else:
+    # 🐛 `if _tag:` with no else meant that where no tag is reachable, this check and the drift
+    # notice both vanished in silence — which is every CI run, because actions/checkout clones at
+    # depth 1 with no tags. A check that skips itself quietly is worse than one that is absent: the
+    # green total counts it as passed. Said out loud, and the workflow now fetches tags.
+    print("  SKIP  no tag reachable, so version drift was not checked "
+          "(a shallow clone; `git fetch --tags` makes this run)")
 
 # ---------------------------------------------------------------- fixture repo
 fixture = Path(tempfile.mkdtemp(prefix="chamnan-test-")).resolve()
@@ -8987,6 +8994,101 @@ try:
           "/chamnan:" in _hook_out.stdout)
 finally:
     _rmtree(_ad, ignore_errors=True)
+
+# 🐛 Both "never open this file" refusals judged `path.name` — the name of the string handed in,
+# not of the file that gets opened, and opening follows a symlink. A link named `safe_data.bin`
+# pointing at a keystore sailed past the deny-list and chamnan-peek printed the keystore's readable
+# strings, password-shaped fragment included. A PEM key survived by luck, because its text still
+# matched the BEGIN/END pattern; a binary keystore is exactly what the never-opened list exists for
+# and its extracted strings carry no `=` for any rule to key on (R1 agent 2).
+_sym = Path(tempfile.mkdtemp(prefix="chamnan-symrefuse-"))
+try:
+    (_sym / "keystore").mkdir()
+    _jks = _sym / "keystore" / "release.jks"
+    _jks.write_bytes(os.urandom(200) + b"storepasswordissomethingrandom9x" + os.urandom(200))
+    (_sym / "notes.md").write_text("ordinary\n", encoding="utf-8")
+    os.symlink(_jks, _sym / "safe_data.bin")
+    os.symlink(_sym / "gone.jks", _sym / "dangling.jks")
+    os.symlink(_sym / "notes.md", _sym / "also_fine.md")
+    check("A REFUSED FILE STAYS REFUSED THROUGH A SYMLINK WITH AN INNOCENT NAME",
+          redact.is_never_opened(_sym / "safe_data.bin")
+          and redact.is_blocked(_sym / "safe_data.bin"))
+    check("...and a dangling link is still judged by its own name, having no target to judge",
+          redact.is_never_opened(_sym / "dangling.jks"))
+    check("...while an ordinary file, and a link to one, are still readable",
+          not redact.is_never_opened(_sym / "notes.md")
+          and not redact.is_never_opened(_sym / "also_fine.md"))
+    _pk = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-peek"),
+                          str(_sym / "safe_data.bin")], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    check("...and peek prints none of the keystore's contents through that link",
+          "storepasswordissomethingrandom9x" not in (_pk.stdout + _pk.stderr))
+finally:
+    _rmtree(_sym, ignore_errors=True)
+
+# 🐛 CHAMNAN_READ_ONLY was checked at five call sites in workspace.py and nowhere else, so every
+# other store kept writing with it set — including candidates.upsert, which a background hook fires
+# on ordinary Bash calls, making the one writer the user never asked for the least bound by their
+# instruction not to write. Asserted by DRIVING each store with the variable set and looking at the
+# disk, and by walking the set of writers so a new store cannot quietly join the wrong half.
+_ro2 = Path(tempfile.mkdtemp(prefix="chamnan-readonly2-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_ro2, capture_output=True)
+    (_ro2 / ".chamnan").mkdir()
+    _ro_env = dict(os.environ, CHAMNAN_READ_ONLY="1")
+    for _cmd, _argv in (("chamnan-timeline", ["new", "a thread"]),
+                        ("chamnan-timeline", ["add", "a-thread", "a note"]),
+                        ("chamnan-env", ["add", "staging", "--note", "x"])):
+        subprocess.run([sys.executable, str(ROOT / "bin" / _cmd)] + _argv, cwd=_ro2,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=_ro_env)
+    _left = sorted(q.relative_to(_ro2).as_posix() for q in (_ro2 / ".chamnan").rglob("*")
+                   if q.is_file())
+    check("NO STORE WRITES WHILE CHAMNAN_READ_ONLY IS SET", _left == [])
+    _before = set((_ro2 / ".chamnan").rglob("*"))
+    # 🐛 ...and no command CLAIMS to have written. The writers were made to no-op under the flag
+    # and the commands calling them were not told, so `chamnan-timeline new` printed
+    # "declared — .chamnan/threads/a-thread.md" with nothing on disk — the untruth `--preview` was
+    # fixed for, one layer down. Every writing subcommand is walked, because this is the shape of
+    # defect that gets fixed in one place and left in the sibling beside it.
+    # The precondition each writing subcommand needs, created with the flag OFF — otherwise
+    # `status` fails on a thread `new` was refused permission to create, and the check passes for
+    # the wrong reason. A fixture that withholds the precondition is how a test stops testing.
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new", "a thread"],
+                   cwd=_ro2, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _claims = []
+    for _cmd, _argv in (("chamnan-timeline", ["new", "another thread"]),
+                        ("chamnan-timeline", ["add", "a-thread", "a note"]),
+                        ("chamnan-timeline", ["close", "a-thread"]),
+                        ("chamnan-timeline", ["reopen", "a-thread"]),
+                        ("chamnan-candidates", ["confirm", "c1"]),
+                        ("chamnan-candidates", ["reject", "c1"]),
+                        ("chamnan-env", ["set", "staging", "--platform", "linux"])):
+        _r = subprocess.run([sys.executable, str(ROOT / "bin" / _cmd)] + _argv, cwd=_ro2,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            env=_ro_env)
+        if "CHAMNAN_READ_ONLY" not in (_r.stdout + _r.stderr):
+            _claims.append(f"{_cmd} {' '.join(_argv)}")
+    if _claims:
+        print("      said nothing about being read-only: " + "; ".join(_claims))
+    check("...and every writing subcommand says so rather than reporting success", _claims == [])
+    check("...and none of them changed the workspace while saying it",
+          {q for q in (_ro2 / ".chamnan").rglob("*")} - _before
+          <= {_ro2 / ".chamnan" / "threads", _ro2 / ".chamnan" / "threads" / "a-thread.md"})
+    # ...and the set is walked, not sampled: every module that writes into the workspace reaches
+    # the one helper that refuses, rather than calling write_text itself.
+    _raw = []
+    for _mod in sorted((ROOT / "lib").glob("*.py")):
+        if _mod.name in ("workspace.py", "mapper.py"):
+            continue                     # workspace IS the helper; mapper's is a --out CLI path
+        for _i, _ln in enumerate(_mod.read_text(encoding="utf-8").splitlines(), 1):
+            if ".write_text(" in _ln and "atomic_write_text" not in _ln:
+                _raw.append(f"{_mod.name}:{_i}")
+    if _raw:
+        print("      raw write_text outside the guarded helper: " + ", ".join(_raw))
+    check("...and no library module writes into the workspace without going through it", _raw == [])
+finally:
+    _rmtree(_ro2, ignore_errors=True)
 
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402

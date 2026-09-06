@@ -303,9 +303,17 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
 
 def _rewrite(log_path, entries):
     """Replace the log with `entries`. Kept apart from `record()` so the append path above is the
-    one that runs on every call and this one only on a trim."""
-    log_path.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n",
-                        encoding="utf-8")
+    one that runs on every call and this one only on a trim.
+
+    🐛 A plain `write_text` truncates the file and then fills it, so the log sits at ZERO BYTES for
+    the length of the write — measured at about a second on a real log. A `chamnan-report` landing
+    in that window read 450 real invocations as "(nothing logged yet)", which is not a slow answer
+    but a wrong one, and the trim is a background tidy-up nobody asked for. `atomic_write_text`
+    writes a temporary file and renames it, so a reader sees the old log or the new one and never
+    an empty one — and it is the same helper that honours CHAMNAN_READ_ONLY (R1 agent 4).
+    """
+    ws.atomic_write_text(log_path,
+                         "\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n")
 
 
 def prune(history, days=KEEP_DAYS, per_day=KEEP_PER_DAY):
