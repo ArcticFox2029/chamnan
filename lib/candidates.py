@@ -121,7 +121,10 @@ def entries(root):
     d = directory(root)
     if not d.is_dir():
         return []
-    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p))
+    # Same refusal as threads/ and memory/: a symlink out of the repository is the repository's
+    # choice, arriving with a clone, and its content is not this store's to read.
+    return sorted(p for p in d.glob("*.md")
+                  if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
 
 
 def fields_of(path):
