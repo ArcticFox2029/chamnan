@@ -37,7 +37,6 @@ import re
 import time
 from pathlib import Path
 
-import fnmatch
 
 import md
 import workspace as ws

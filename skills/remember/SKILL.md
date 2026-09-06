@@ -1,5 +1,6 @@
 ---
 description: Record why something is the way it is — a decision and its reasoning, a lesson that cost time, or a standing constraint. Use when the reasoning behind a choice would be expensive to reconstruct later.
+disable-model-invocation: true
 ---
 
 # Write down why

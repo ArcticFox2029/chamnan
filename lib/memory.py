@@ -25,6 +25,7 @@ characters, titles are capped by count, and the store itself is allowed to grow 
 files are small and each one was written on purpose.
 """
 import re
+import unicodedata
 from pathlib import Path
 import workspace as ws
 import mdblock
@@ -137,7 +138,10 @@ def dangling_citations(root):
 
 
 def case_collisions(paths):
-    """Group `paths` whose filename stems are identical except for case.
+    """Group `paths` whose filename stems collide once the filesystem is done with them.
+
+    Case is one such equivalence and Unicode normalisation is the other, and both are folded here
+    because both fail the same way and the caller cannot tell them apart.
 
     🐛 On a case-insensitive filesystem (APFS, the default on this machine, and NTFS), writing
     `no-force-push.md` and then `No-Force-Push.md` leaves exactly one FILE on disk -- the first
@@ -148,10 +152,22 @@ def case_collisions(paths):
     `entries()` -- injected as two independent-looking rules that happen to say opposite things,
     with nothing marking them as the same name in disguise. This is the one place that coexistence
     is still visible: before the workspace is ever synced to a case-insensitive machine.
+
+    🐛 [2026-09-06] The key was `casefold()` alone, and `casefold()` does not normalise. A
+    precomposed `café` (U+00E9) and its decomposed twin (`e` + U+0301) render identically, collapse
+    into ONE file on this machine's APFS exactly as the case pair does -- verified by writing both
+    names and getting a single `listdir` entry holding the second write -- and hashed to two
+    different keys here, so the guard built for precisely this failure returned nothing. NFC first,
+    then casefold, catches both classes in one pass (R6 acc3, hostile filesystem).
+
+    Pure Thai text is NOT the exposure and a future round should not go looking there: Thai
+    combining vowel and tone marks have no precomposed form, so NFC and NFD coincide for it. The
+    risk is accented Latin and Vietnamese names -- `café`, `naïve`, `façade` -- which are ordinary
+    in a bilingual repository and normalise differently depending on which tool typed them.
     """
     groups = {}
     for p in paths:
-        groups.setdefault(p.stem.casefold(), []).append(p)
+        groups.setdefault(unicodedata.normalize("NFC", p.stem).casefold(), []).append(p)
     return [sorted(g) for g in groups.values() if len(g) > 1]
 
 
@@ -401,7 +417,8 @@ def slug(title):
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return mdblock.filename_safe(s[:50].rstrip("-") or "entry")
+    return mdblock.filename_safe(s[:50].rstrip("-")
+                                 or mdblock.fallback_name(title, "entry"))
 
 
 def filename(title):

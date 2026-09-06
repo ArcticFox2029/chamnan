@@ -1215,6 +1215,27 @@ run_scratch_watch({"tool_name": "Edit", "tool_input": {"file_path": str(already_
 check("AN EXISTING Provenance IS NEVER OVERWRITTEN (user stays user, not ai-drafted)",
       "**Provenance:** user" in already_confirmed.read_text(encoding="utf-8"))
 
+# 🐛 [2026-09-06] The detection matched any line that merely STARTED with the bold words, so a
+# decision whose own prose opened `**As-of:** last quarter this was reconsidered...` read as
+# already stamped. The stamper skipped it permanently: that entry never gets a machine-readable
+# date and nothing reports the gap. Fencing was closed separately and does not cover this — the
+# prose is not in a fence, it is the body (R2 agent 4).
+_prose_stamp = stamp_root / ".chamnan" / "memory" / "decisions" / "prose-opens-with-it.md"
+_prose_stamp.parent.mkdir(parents=True, exist_ok=True)
+_prose_stamp.write_text(
+    "# A decision whose prose happens to open with the trailer words\n\n"
+    "**As-of:** last quarter this was reconsidered and kept as-is.\n"
+    "**Provenance:** whoever wrote this did not say.\n", encoding="utf-8")
+run_scratch_watch({"tool_name": "Edit", "tool_input": {"file_path": str(_prose_stamp)}},
+                  stamp_root)
+_prose_after = _prose_stamp.read_text(encoding="utf-8")
+check("PROSE THAT OPENS LIKE A TRAILER DOES NOT COUNT AS ONE",
+      _prose_after.count("**As-of:**") == 2 and _prose_after.count("**Provenance:**") == 2)
+check("...and the real trailer that was added carries a date, not the prose",
+      re.search(r"^\*\*As-of:\*\* \d{4}-\d{2}-\d{2}$", _prose_after, re.M) is not None)
+check("...and the writer's own sentence is left exactly as they wrote it",
+      "last quarter this was reconsidered and kept as-is." in _prose_after)
+
 outside_memory = stamp_root / "src" / "app.py"
 outside_memory.parent.mkdir(parents=True, exist_ok=True)
 outside_memory.write_text("print('hi')\n", encoding="utf-8")
@@ -1947,6 +1968,41 @@ _roll_index = "# Map\n\n" + "".join(
 check("with no repo root, the roll-up keeps the alphabet",
       "`zz.py`" not in rollup.collapse(_roll_index, "MAP.md"))
 
+# 🐛 [2026-09-06] The last line before the first row is the directory heading THAT row sat under in
+# the un-rolled index, and everything below is about to be regrouped — so folding left that heading
+# standing over a list it does not describe. On the real Lumin-App block, at the production default
+# budget, `**`.chamnan/tests/`**` headed twenty directories from six different trees, in every
+# session's context. The backlog and R3 agent 3 both filed it as a low-budget artefact ("at the
+# cliff", 350-500 tokens); both were right about the cliff and wrong about the scope — the heading
+# is dropped only when the whole SECTION goes, so the cliff is where the symptom disappears, not
+# where it starts (R7 agent 1). Driven at the DEFAULT budget, which is where it was said not to
+# happen.
+_orph = ("# Map\n\n## Quick Index\n\n**`src/one/`**\n\n"
+         + "".join(f"- **`src/one/f{_i}.py`** — does a thing\n" for _i in range(60))
+         + "".join(f"- **`src/two/g{_i}.py`** — does a thing\n" for _i in range(60)))
+_orph_out = rollup.collapse(_orph, "MAP.md", 3000)
+check("the roll-up fixture really did fold", "(60)" in _orph_out or "(6" in _orph_out)
+check("A FOLDED INDEX DOES NOT LEAVE A HEADING OVER A LIST IT DOES NOT DESCRIBE",
+      "**`src/one/`**" not in _orph_out)
+check("...and the rows it folded to are all still there",
+      "src/one/" in _orph_out and "src/two/" in _orph_out)
+# Whether a blank line separates the heading from the first row is a detail of how MAP.md was
+# rendered, and the first version of this fix checked `head[-1]` without stripping blanks — so it
+# worked on the real index and silently did nothing on a fixture that had one. Both shapes, because
+# a guard that only looks where it expects the problem is the defect this file has paid for twice.
+_orph_gap = ("# Map\n\n## Quick Index\n\n**`src/one/`**\n"
+             + "".join(f"- **`src/one/f{_i}.py`** — does a thing\n" for _i in range(60))
+             + "".join(f"- **`src/two/g{_i}.py`** — does a thing\n" for _i in range(60)))
+check("...whether or not a blank line separated the heading from the rows",
+      "**`src/one/`**" not in rollup.collapse(_orph_gap, "MAP.md", 3000))
+# The other direction: only a bare heading goes. `collapse()` always folds when it is called at all
+# — the budget gate is upstream — so there is no "did not fold" case to check here; what protects
+# real structure is the predicate refusing anything that is not a heading on its own.
+# And a sentence that merely BEGINS with a bolded path is prose, not a heading.
+check("...and a bolded path inside a sentence is not mistaken for one",
+      not rollup._is_a_directory_heading("**`src/`** holds the application code."))
+check("...while the bare heading is", rollup._is_a_directory_heading("**`src/`**"))
+
 _rollrepo = Path(tempfile.mkdtemp()) / "rollrepo"
 _rollrepo.mkdir(parents=True)
 subprocess.run(["git", "init", "-q", str(_rollrepo)], check=True)
@@ -2555,7 +2611,13 @@ check("retention keeps recent records", len(sessions.records(sess)) == 2)
 check("a zero window prunes nothing", sessions.prune(sess, 0) == 0)
 
 check("slug is filename-safe", sessions.slug("Kotlin: extension functions!") == "kotlin-extension-functions")
-check("slug survives having nothing usable", sessions.slug("!!!") == "session")
+# 🐛 [2026-09-06] This pinned `slug("!!!") == "session"` — the bare constant that made every title
+# with no Latin letters land on ONE filename. Two such records on one day overwrote each other, and
+# in a Thai-language repository that is the normal case rather than an edge one. It still has to
+# survive having nothing usable; what it must not do is give the same answer for two titles.
+check("slug survives having nothing usable", sessions.slug("!!!").startswith("session-"))
+check("...and two unusable titles are still two different names",
+      sessions.slug("!!!") != sessions.slug("???"))
 check("filename puts the date first",
       sessions.filename("2026-08-20", "Fix the parser") == "2026-08-20-fix-the-parser.md")
 
@@ -2979,12 +3041,19 @@ _sw2_spec = importlib.util.spec_from_file_location(
 _sw2 = importlib.util.module_from_spec(_sw2_spec)
 _sw2_spec.loader.exec_module(_sw2)
 
+# 🐛 [2026-09-06] This patched `_sw2.environments.entries` — the name as it sat on the HOOK
+# module. `chamnan_scratch_watch` now imports `environments` inside the one function that uses it,
+# because it runs on every Bash, Write and Edit and most calls never reach that function, so the
+# attribute no longer exists on the hook at all. Patching the environments MODULE is what this
+# always meant: the hook's local import resolves through `sys.modules` to the same object, so the
+# counter still sees every call, and the check no longer depends on where an import happens to sit.
+import environments as _env_mod  # noqa: E402
 _parses = [0]
-_real_entries = _sw2.environments.entries
+_real_entries = _env_mod.entries
 def _counting_entries(root, *a, **k):
     _parses[0] += 1
     return _real_entries(root, *a, **k)
-_sw2.environments.entries = _counting_entries
+_env_mod.entries = _counting_entries
 # The notice is delivered by PRINTING a hook JSON envelope, so calling it here writes that envelope
 # into the suite's own output. Captured rather than let through: this file's output is read to see
 # which checks ran, and a hook payload in the middle of it reads as something having gone wrong.
@@ -2996,7 +3065,7 @@ try:
              "tool_input": {"command": "kubectl --context prod-cluster get pods"}},
             ws.workspace(_envroot), str(_envroot))
 finally:
-    _sw2.environments.entries = _real_entries
+    _env_mod.entries = _real_entries
 check("...and the notice it emitted names the environment", "prod-cluster" in _env_out.getvalue())
 
 check("the environment notice fires on a command that matches a declared environment", _fired)
@@ -3521,6 +3590,38 @@ msg = workflows.describe(seq, 3)
 check("the notice names the sequence", "docker compose" in msg and "pytest" in msg)
 check("the notice points at the capture skill", "/chamnan:capture" in msg)
 check("the notice says how many times", "3 times" in msg)
+
+# 🐛 [2026-09-06] The PostToolUse hook read this log to learn what qualified BEFORE the command,
+# then called `record`, which read the whole file AGAIN to build the history it returns. Measured
+# at the documented retention ceiling (KEEP_DAYS x KEEP_PER_DAY = 9,000 entries) that second parse
+# is 11.4 ms of the pair's 29.4 ms, paid on every single Bash tool call in front of the user
+# (R7 agent 2). `history=` hands `record` the snapshot already in hand.
+#
+# The saving is worthless if the answer moves, so that is what is checked here: the history and the
+# detection must be identical either way, on a log big enough for the difference to exist.
+_wfd = Path(tempfile.mkdtemp(prefix="chamnan-wfhist-"))
+_wfrows = [{"at": f"2026-08-{(_d % 28) + 1:02d}T10:00:00+07:00", "kind": "command", "sig": _sg}
+           for _d in range(6)
+           for _sg in ("git status", "python3", "git add", "git commit", "pytest")]
+for _n in ("a.jsonl", "b.jsonl"):
+    (_wfd / _n).write_text("\n".join(json.dumps(_r) for _r in _wfrows) + "\n", encoding="utf-8")
+_wf_reread = workflows.record(_wfd / "a.jsonl", ["pytest"], "2026-09-06T10:00:00+07:00",
+                              tool="Bash")
+_wf_known = workflows.read(_wfd / "b.jsonl")
+_wf_reused = workflows.record(_wfd / "b.jsonl", ["pytest"], "2026-09-06T10:00:00+07:00",
+                              tool="Bash", history=_wf_known)
+check("READING THE LOG ONCE PRODUCES THE SAME HISTORY AS READING IT TWICE",
+      _wf_reread == _wf_reused and len(_wf_reused) == len(_wfrows) + 1)
+check("...and the same detection comes out of it",
+      workflows.repeated(_wf_reread) == workflows.repeated(_wf_reused))
+check("...and the appended entry really is in the reused history",
+      _wf_reused[-1]["sig"] == "pytest" and _wf_reused[-1]["tool"] == "Bash")
+# Both files must hold the same bytes afterwards: the caller's snapshot must never become what
+# gets WRITTEN, or a concurrent process's appends would be erased by the shortcut.
+check("...and neither log was rewritten from the snapshot",
+      (_wfd / "a.jsonl").read_text(encoding="utf-8")
+      == (_wfd / "b.jsonl").read_text(encoding="utf-8"))
+_rmtree(_wfd, ignore_errors=True)
 
 # The log is bounded by CALENDAR TIME with a per-day cap, not by a flat entry count. The flat cap
 # it replaced held one busy day, which meant repeated() -- which needs REPEAT_AT distinct days --
@@ -7462,6 +7563,43 @@ check("...and a repository with no .gitattributes indexes exactly what it did be
       len(_gnone) == 8)
 _rmtree(_ga, ignore_errors=True)
 
+# 🐛 [2026-09-06] Only two fixed paths were read, both anchored at the repository ROOT, and git
+# honours a `.gitattributes` at any depth scoped to its own subtree — which is exactly how a
+# monorepo package declares its own generated files without write access to a shared root file.
+# Reproduced with a location-only A/B (R6 acc3, unusual repositories): the identical declaration,
+# moved from the root file into `packages/sub/.gitattributes`, stopped being honoured — the file
+# was indexed as ordinary source, counted against `described`, and offered to the commenter agent.
+# The A/B is the test, because a single fixture cannot tell "the rule works" from "the rule only
+# works where it was already being read".
+_nested_seen = {}
+for _where, _decl in ((".", "packages/sub/generated.py linguist-generated=true\n"),
+                      ("packages/sub", "generated.py linguist-generated=true\n")):
+    _nga = Path(tempfile.mkdtemp(prefix="chamnan-nested-ga-"))
+    (_nga / "packages" / "sub").mkdir(parents=True)
+    (_nga / "packages" / "sub" / "generated.py").write_text("x = 1\n", encoding="utf-8")
+    (_nga / "packages" / "sub" / "hand.py").write_text("y = 2\n", encoding="utf-8")
+    (_nga / _where / ".gitattributes").write_text(_decl, encoding="utf-8")
+    mapper._GENERATED_GLOBS.clear()
+    with tree.session():
+        _nested_seen[_where] = sorted(
+            str(_p.relative_to(_nga).as_posix()) for _p, _ in mapper.indexable(_nga))
+    _rmtree(_nga, ignore_errors=True)
+mapper._GENERATED_GLOBS.clear()
+check("the root-level control still honours the declaration",
+      _nested_seen["."] == ["packages/sub/hand.py"])
+check("A PACKAGE'S OWN .gitattributes IS HONOURED THE SAME AS THE ROOT'S",
+      _nested_seen["packages/sub"] == _nested_seen["."])
+check("...and the hand-written file beside it is still indexed",
+      all("packages/sub/hand.py" in v for v in _nested_seen.values()))
+# `_scoped` is git's two rules, and getting them backwards would silently widen the match.
+check("a slash in the pattern anchors it to the declaring directory",
+      mapper._scoped("packages/sub", "gen/out.py") == ["packages/sub/gen/out.py"])
+check("...while a bare name applies at every level beneath it",
+      mapper._scoped("packages/sub", "out.py")
+      == ["packages/sub/out.py", "packages/sub/**/out.py"])
+check("...and a root declaration is left exactly as written",
+      mapper._scoped("", "packages/sub/out.py") == ["packages/sub/out.py"])
+
 # 🐛 The staleness warning could say how many files were MISSING from the index but not how many
 # had CHANGED, and editing is far commoner than adding. Reproduced on a real requests clone:
 # adding a file gave "**1 file(s) are not in it** — src/requests/brandnew.py", while editing one
@@ -8950,14 +9088,41 @@ _multiline_doc = ("filler line\n" * 5 + 'api_password = "' + _multiline_secret +
                   + "trailing line\n" * 3)
 check("A QUOTED SECRET RUNNING OVER FORTY LINES IS STILL REDACTED WHOLE",
       "QUJDREVG" not in redact.scrub(_multiline_doc))
-# An UNTERMINATED quoted value is a different matter, and windowing must not quietly change it:
-# with no closing quote there is no ASSIGNED_SECRET match, so the first line is redacted by the
-# bare rule and the continuation lines are left — before this change and after it alike. That gap
-# is real and is recorded in the backlog; what is asserted here is only that windowing did not
-# widen it, which is the question this change is allowed to answer.
+# 🐛 [2026-09-06] An UNTERMINATED quoted value used to leak every line after the first.
+# `ASSIGNED_SECRET` requires the closing quote and never matched, so the text fell through to
+# `ASSIGNED_SECRET_BARE`, which captured the one run of characters on the same line as the quote
+# and left the continuation in the clear. BOTH modes agreed on that wrong answer, so windowing
+# neither caused it nor hid it — which is why the check that used to sit here, "windowing did not
+# widen it", passed for two rounds while the gap stayed open (R1 agent 2 finding 5, R2 agent 2
+# finding 3, and the backlog before them). Detection was never the hard part; the STOP was.
 _unterminated = 'api_password = "' + _multiline_secret + "\n"
-check("...and an unterminated quoted value is treated exactly as it was before windowing",
+check("AN UNTERMINATED QUOTED SECRET DOES NOT LEAK ITS CONTINUATION LINES",
+      "QUJDREVG" not in redact.scrub(_unterminated))
+check("...and windowed and whole-document scanning still agree about it",
       redact.scrub(_unterminated) == redact.scrub(_unterminated, windowed=False))
+# Where it STOPS is the whole design, and over-redacting is the failure in the other direction: an
+# unterminated string is what a truncated paste or a half-finished edit looks like, and eating the
+# rest of the document would take real content with it.
+_unt_key = 'api_password = "abcdefSECRETSTART\nMORE_SECRET\nnext_setting = 3\nkeep this prose\n'
+check("...it stops where a new key resumes",
+      "MORE_SECRET" not in redact.scrub(_unt_key)
+      and "next_setting = 3" in redact.scrub(_unt_key)
+      and "keep this prose" in redact.scrub(_unt_key))
+_unt_blank = 'api_password = "abcdefSECRETSTART\nMORE_SECRET\n\nkeep this paragraph\n'
+check("...and at a blank line, which is where a pasted fragment ends",
+      "MORE_SECRET" not in redact.scrub(_unt_blank)
+      and "keep this paragraph" in redact.scrub(_unt_blank))
+check("...while a name that is a MECHANISM, not a credential, is still left alone",
+      redact.scrub('password_file = "path/to/thing\nnext line\n')
+      == 'password_file = "path/to/thing\nnext line\n')
+check("...and a name that is not a credential at all is untouched",
+      redact.scrub('title = "unclosed heading\nmore prose\n')
+      == 'title = "unclosed heading\nmore prose\n')
+check("...and a value that DOES close is still handled by the ordinary rules",
+      redact.scrub('api_password = "abcdef123456"\nplain text\n')
+      == 'api_password = <REDACTED>\nplain text\n'
+      or redact.scrub('api_password = "abcdef123456"\nplain text\n')
+      == 'api_password = "<REDACTED>"\nplain text\n')
 # 🐛 And the window-extension regex must allow every separator the RULE allows. 1.20.0 shipped it
 # as `[^\S\n]*` — whitespace except a newline — while ASSIGNED_SECRET's own separator is
 # `[\w-]*\s*['"]?\s*[:=]\s*`, which crosses lines and permits a quote around the key. Three of
@@ -9221,6 +9386,22 @@ try:
         '[{"name": "ok", "runs": 3}, "not a dict", 7]', encoding="utf-8")
     check("...and a list with one bad row keeps the rows that are fine",
           tools_index_mod.usage(_ti) == [("ok", 3)])
+    # 🐛 [2026-09-06] The dict guard was added and the FIELD it exists to protect was not: five
+    # readers here subscript `name`, and an entry that is a perfectly good dict without one took
+    # `chamnan-report` down with a KeyError — from the same causes the dict guard itself names, a
+    # hand-edit or a bad merge. The rule applied to some members of a set and not the others, one
+    # level down from where it was first applied. Filtered once in `load()`, not at five call sites.
+    for _row, _label in (('{"runs": 5}', "no name at all"),
+                         ('{"name": 7}', "a name that is not a string"),
+                         ('{"name": ""}', "an empty name")):
+        (_ti / ".chamnan" / "tools" / "index.json").write_text(
+            f'[{{"name": "ok", "runs": 3}}, {_row}]', encoding="utf-8")
+        try:
+            _got = tools_index_mod.usage(_ti)
+        except Exception as _exc:
+            _got = f"raised {type(_exc).__name__}"
+        check(f"AN ENTRY WITH NO USABLE NAME IS DROPPED, NOT A CRASH: {_label}",
+              _got == [("ok", 3)])
 finally:
     _rmtree(_ti, ignore_errors=True)
 
@@ -11398,6 +11579,58 @@ check("a filename cannot close the span it is printed in",
 _many = _ss.where_git_says_you_stopped(_gsroot, limit=1)
 check("the list is bounded and says how many it left out", "_+" in _many)
 _rmtree(_gsroot.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] A session resumed in the middle of a conflicted merge or a rebase was told it had
+# an ordinary dirty tree — a file count and a branch name — and the one fact that changes what the
+# reader does next was dropped: you are stuck, and the way out is `--continue` or `--abort`. git
+# does not put this in `status --porcelain`; a conflicted merge shows as `UU path` and a rebase as
+# an ordinary dirty tree (R6 acc3, unusual repositories). Driven through a REAL conflict rather
+# than by planting a marker file, so the check would notice if git stopped writing one.
+_confl = Path(tempfile.mkdtemp(prefix="chamnan-conflict-"))
+_confenv = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+
+
+def _cgit(*args):
+    return subprocess.run(["git", "-C", str(_confl), "-c", "user.email=t@t",
+                           "-c", "user.name=t", *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", env=_confenv)
+
+
+_cgit("init", "-q", "-b", "main")
+(_confl / "f.txt").write_text("base\n", encoding="utf-8")
+_cgit("add", "-A")
+_cgit("commit", "-qm", "base")
+_cgit("checkout", "-q", "-b", "side")
+(_confl / "f.txt").write_text("side\n", encoding="utf-8")
+_cgit("add", "-A")
+_cgit("commit", "-qm", "side")
+_cgit("checkout", "-q", "main")
+(_confl / "f.txt").write_text("main\n", encoding="utf-8")
+_cgit("add", "-A")
+_cgit("commit", "-qm", "main")
+check("a clean checkout is not reported as interrupted", _ss._interrupted_by(_confl) is None)
+check("the conflict fixture really did conflict", _cgit("merge", "side").returncode != 0)
+_conf_state = _ss._interrupted_by(_confl)
+check("A CONFLICTED MERGE IS NAMED AS ONE, NOT AS AN ORDINARY DIRTY TREE",
+      _conf_state is not None and _conf_state[0] == "a merge")
+_conf_text = _ss.where_git_says_you_stopped(_confl)
+check("...and the block says how to finish it and how to undo it",
+      "git merge --abort" in _conf_text and "in the middle of a merge" in _conf_text)
+_cgit("merge", "--abort")
+check("...and once it is aborted the ordinary wording comes back",
+      _ss._interrupted_by(_confl) is None)
+
+# A rebase leaves BOTH a rebase directory and, for some strategies, merge markers. Naming it a
+# merge would send the reader at `git merge --abort`, which is not what gets them out.
+_cgit("checkout", "-q", "side")
+check("the rebase fixture really did stop on a conflict",
+      _cgit("rebase", "main").returncode != 0)
+_reb_state = _ss._interrupted_by(_confl)
+check("A REBASE STOPPED ON A CONFLICT IS NAMED A REBASE, NOT A MERGE",
+      _reb_state is not None and _reb_state[0] == "a rebase"
+      and _reb_state[2] == "git rebase --abort")
+_cgit("rebase", "--abort")
+_rmtree(_confl, ignore_errors=True)
 
 
 # ------------------------------ the usage report could attach a repo to somebody else's numbers
@@ -14028,6 +14261,177 @@ check("...and every alias is named, so no agent looks unsupported", not _alias_m
 check("...and the README says why Claude Code has none",
       "Claude Code has no adapter" in _readme)
 
+
+# 🐛 [2026-09-06] chamnan decides its root by looking for a `.git` entry. Real git decides
+# differently: an empty `.git/`, a `.git` copied without its contents, an interrupted `git init` --
+# none of those is a repository to git, so `git -C <that dir>` does not fail, it WALKS UP and
+# answers about the nearest real repository above. Twelve call sites assumed otherwise and every
+# one of them reported somebody else's repository: the session block said "10 uncommitted file(s)"
+# for a directory with one file and no commits, `chamnan-map` stamped MAP.md with the ancestor's
+# HEAD, and `--install-git-hook` resolved a RELATIVE hooks path four `../` deep and wrote a live
+# executable pre-commit hook into an unrelated repository, printing success (R6 acc3).
+#
+# Twelve sites in seven files, no shared guard -- the shape this repository keeps paying for. So
+# the check is over the SET: every `git -C` in shipped code sits in a function that consults
+# `workspace.git_owns`, and the thirteenth is caught the day it is written rather than the day
+# somebody's other repository grows a hook nobody installed.
+_GIT_OWNS_EXEMPT = {
+    ("workspace.py", "git_owns"),   # the guard itself; asking it about itself is the recursion
+}
+_ungated_git = []
+for _gp, _gsrc in _runtime_sources():
+    try:
+        _gtree = ast.parse(_gsrc)
+    except (SyntaxError, ValueError):
+        continue
+    _gowner = {}
+    for _gfn in ast.walk(_gtree):
+        if isinstance(_gfn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for _gsub in ast.walk(_gfn):
+                _gowner.setdefault(id(_gsub), _gfn)
+    for _gnode in ast.walk(_gtree):
+        if not isinstance(_gnode, ast.List) or len(_gnode.elts) < 3:
+            continue
+        _head = [getattr(_e, "value", None) for _e in _gnode.elts[:2]]
+        if _head != ["git", "-C"]:
+            continue
+        _fn = _gowner.get(id(_gnode))
+        _name = _fn.name if _fn else "<module>"
+        if (_gp.name, _name) in _GIT_OWNS_EXEMPT:
+            continue
+        _body = ast.get_source_segment(_gsrc, _fn) if _fn else ""
+        if "git_owns" not in (_body or ""):
+            _ungated_git.append(f"{_gp.name}:{_gnode.lineno} in {_name}()")
+check("the git-escalation audit found the call sites it is meant to police",
+      len([1 for _p, _s in _runtime_sources() if '"git", "-C"' in _s]) >= 6)
+check("EVERY `git -C <root>` CALLER FIRST ASKS WHETHER GIT AGREES THAT IS THE REPOSITORY",
+      not _ungated_git)
+for _u in _ungated_git:
+    print("      answers about whatever repository is above it:", _u)
+check("...and the one exemption is the guard itself, which cannot consult itself",
+      _GIT_OWNS_EXEMPT == {("workspace.py", "git_owns")})
+
+# 🐛 [2026-09-06] The three hooks that run on EVERY tool call imported everything they might need
+# at module scope, and most calls need almost none of it: eight early returns stand between
+# `chamnan_bulk_read_notice`'s first line and its first use of `redact`, and an ordinary source
+# file reaches none of them. `redact` alone costs 21.7 ms to import because it compiles 45 regexes
+# doing it. Measured with the two layouts interleaved so machine drift hits both arms equally, best
+# of 13, as milliseconds ABOVE the interpreter's own floor (R7 agent 2):
+#
+#     chamnan_bulk_read_notice   21.3 -> 1.6 ms
+#     chamnan_file_pointer       14.5 -> below the floor's own noise
+#     chamnan_scratch_watch      48.1 -> 27.0 ms
+#
+# Output was proved byte-identical before and after on a fixture with real co-edit history. This
+# check exists because the saving is invisible: a later edit that adds `import redact` back at the
+# top would compile, pass every other test, and silently return the cost.
+_PER_CALL_HOOKS = {
+    "chamnan_bulk_read_notice.py": {"mdblock", "redact", "tokens"},
+    "chamnan_file_pointer.py": {"redact", "impact"},
+    "chamnan_scratch_watch.py": {"candidates", "environments", "mdblock", "sessions",
+                                 "tools_index", "workflows", "coedit"},
+}
+_hoisted = []
+for _hname, _lazy in _PER_CALL_HOOKS.items():
+    _hsrc = (ROOT / "hooks" / _hname).read_text(encoding="utf-8")
+    _htree = ast.parse(_hsrc)
+    _htop = set()
+    for _hn in _htree.body:
+        if isinstance(_hn, ast.Import):
+            _htop |= {_a.name.split(".")[0] for _a in _hn.names}
+        elif isinstance(_hn, ast.ImportFrom) and _hn.module:
+            _htop.add(_hn.module.split(".")[0])
+    for _m in sorted(_lazy & _htop):
+        _hoisted.append(f"{_hname}: {_m}")
+check("the per-call-hook import audit reads all three hooks", len(_PER_CALL_HOOKS) == 3)
+check("A HOOK ON EVERY TOOL CALL IMPORTS ONLY WHAT EVERY CALL NEEDS", not _hoisted)
+for _h in _hoisted:
+    print("      paid on every call, used on almost none:", _h)
+# The other direction: a module moved out of the top must still be imported SOMEWHERE, or the hook
+# raises NameError the first time it reaches that path -- on a user's machine, not here.
+_unbound = []
+for _hname, _lazy in _PER_CALL_HOOKS.items():
+    _hsrc = (ROOT / "hooks" / _hname).read_text(encoding="utf-8")
+    _htree = ast.parse(_hsrc)
+    _bound = set()
+    for _hn in ast.walk(_htree):
+        if isinstance(_hn, ast.Import):
+            _bound |= {(_a.asname or _a.name).split(".")[0] for _a in _hn.names}
+    for _m in sorted(_lazy):
+        if f"{_m}." in _hsrc and _m not in _bound and f"as {_m}" not in _hsrc:
+            _unbound.append(f"{_hname}: {_m}")
+check("...and every deferred module is still imported somewhere in its hook", not _unbound)
+for _u in _unbound:
+    print("      used but never imported:", _u)
+
+# The lint above proves every site ASKS. This proves the answer is right and that the three
+# symptoms are actually gone, on a real nested fixture rather than on a mock: a directory holding
+# one file and an empty `.git/`, four levels inside a real repository with a real commit.
+_esc = Path(tempfile.mkdtemp(prefix="chamnan-esc-"))
+_outer, _inner = _esc / "outer", _esc / "outer" / "a" / "b" / "fresh_repo"
+(_inner / ".git").mkdir(parents=True)
+(_outer / "real.py").write_text("outer = 1\n", encoding="utf-8")
+(_inner / "app.py").write_text("x = 1\n", encoding="utf-8")
+_gitenv = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+
+
+def _git(*args, cwd=None):
+    return subprocess.run(["git", "-C", str(cwd or _outer), *args], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", env=_gitenv)
+
+
+_git("init", "-q")
+_git("add", "-A")
+_git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init")
+_ancestor_head = _git("rev-parse", "--short=12", "HEAD").stdout.strip()
+check("the escalation fixture has a real ancestor repository to escalate INTO",
+      len(_ancestor_head) == 12
+      and _git("rev-parse", "--show-toplevel", cwd=_inner).stdout.strip() != str(_inner))
+
+check("GIT DOES NOT OWN A DIRECTORY WHOSE .git IT REFUSES", not ws.git_owns(_inner))
+check("...while it does own the real repository above it", ws.git_owns(_outer))
+
+_map_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_inner),
+                          capture_output=True, text=True, encoding="utf-8", errors="replace")
+_esc_map = (_inner / ".chamnan" / "MAP.md")
+_esc_head = _esc_map.read_text(encoding="utf-8")[:600] if _esc_map.is_file() else ""
+check("THE INDEX IS NOT STAMPED WITH AN ANCESTOR REPOSITORY'S COMMIT",
+      _ancestor_head not in _esc_head and "Built from" not in _esc_head)
+
+_hook_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"),
+                            "--install-git-hook"], cwd=str(_inner),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("INSTALLING A HOOK NEVER WRITES INTO THE REPOSITORY ABOVE",
+      not (_outer / ".git" / "hooks" / "pre-commit").exists())
+check("...and it says so rather than reporting success",
+      _hook_out.returncode == 1 and "not a git repository" in _hook_out.stderr)
+
+_esc_start = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                            input="{}", cwd=str(_inner), capture_output=True, text=True,
+                            encoding="utf-8", errors="replace",
+                            env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_inner)))
+check("THE SESSION BLOCK REPORTS NO GIT STATE IT DID NOT GET FROM THIS REPOSITORY",
+      "uncommitted file(s)" not in _esc_start.stdout and _ancestor_head not in _esc_start.stdout)
+_rmtree(_esc, ignore_errors=True)
+
+# 🐛 [2026-09-06] docs/verification.md's worked example printed `220/220 checks passed` as the
+# expected output of the suite, and the suite had passed 3,000 by then -- a snapshot from an early
+# release that survived a more than tenfold growth, telling anyone who verified the plugin from a
+# clean clone that a correct run was wrong by an order of magnitude (R1 acc3, untrue docs). Any
+# literal N/N in prose is the same trap: it is a measurement of one moment, written where nothing
+# re-measures it. The docs say N/N now, and this keeps it that way.
+_counted = []
+for _dp in sorted(list((ROOT / "docs").glob("*.md")) + [ROOT / "README.md",
+                                                        ROOT / "CONTRIBUTING.md"]):
+    if not _dp.is_file():
+        continue
+    for _n, _dl in enumerate(_dp.read_text(encoding="utf-8").split("\n"), 1):
+        if re.search(r"\b\d+\s*/\s*\d+\s+checks passed", _dl):
+            _counted.append(f"{_dp.name}:{_n}")
+check("NO DOCUMENT PRINTS A LITERAL SUITE COUNT THAT NOTHING RE-MEASURES", not _counted)
+for _c in _counted:
+    print("      stale the moment a check is added:", _c)
+
 # 🐛 [2026-09-06] `_fence_safe` -- neutralise a body line that is exactly `---` so repository prose
 # cannot close a YAML frontmatter block early -- is defined SIX times, byte-identical, one per
 # frontmatter adapter. Three of the six docstrings argue for the duplication, and for a rendering
@@ -14499,6 +14903,55 @@ check("...while the ordinary file beside it is indexed as usual",
       any(f["path"].endswith("small.py") for f in _mf_files))
 mapper.SKIPPED_TOO_LARGE.clear()
 _rmtree(_mfd, ignore_errors=True)
+
+# 🐛 [2026-09-06] The ceiling above is enforced on `stat()`, and the file is then opened and read
+# nineteen lines later. A file that GREW in between passed a check on a size it no longer had: a
+# 6 MB file was yielded whole against the 2 MB ceiling and SKIPPED_TOO_LARGE stayed EMPTY, so
+# nothing recorded that a limit had been crossed, and every downstream scanner got it as an
+# ordinary small file (R6 acc3). The earlier test above proves the mechanism holds against an
+# inflated CONSTANT; it says nothing about this, because nothing moves the file during it.
+#
+# The race is injected deterministically rather than raced for: the growth happens INSIDE the
+# patched `stat()`, the instant the size check has passed, so this is a reproduction and not a
+# timing gamble.
+_toc = Path(tempfile.mkdtemp(prefix="chamnan-toctou-"))
+_toc_big = _toc / "big.py"
+_toc_big.write_text("x = 1\n", encoding="utf-8")
+_toc_orig_stat = Path.stat
+_toc_grown = threading.Event()
+
+
+def _toc_grow():
+    _toc_big.write_text("y = 2\n" + ("# pad\n" * ((mapper.MAX_FILE_BYTES // 6) * 3)),
+                        encoding="utf-8")
+    _toc_grown.set()
+
+
+def _toc_stat(self, *a, **kw):
+    result = _toc_orig_stat(self, *a, **kw)
+    if self.name == "big.py" and not _toc_grown.is_set():
+        _t = threading.Thread(target=_toc_grow)
+        _t.start()
+        _t.join()
+    return result
+
+
+mapper.SKIPPED_TOO_LARGE.clear()
+Path.stat = _toc_stat
+try:
+    with tree.session():
+        _toc_yielded = [(p.name, len(t)) for p, _l, t in mapper.indexable(_toc, with_text=True)]
+finally:
+    Path.stat = _toc_orig_stat
+check("the growth really did push the fixture past the ceiling",
+      _toc_grown.is_set() and _toc_big.stat().st_size > mapper.MAX_FILE_BYTES)
+check("A FILE THAT GROWS PAST THE CEILING BETWEEN THE SIZE CHECK AND THE READ IS STILL REFUSED",
+      not any(n == "big.py" for n, _ in _toc_yielded))
+check("...and is recorded with the size actually read, not the stale one",
+      any(str(p).endswith("big.py") and n > mapper.MAX_FILE_BYTES
+          for p, n in mapper.SKIPPED_TOO_LARGE))
+mapper.SKIPPED_TOO_LARGE.clear()
+_rmtree(_toc, ignore_errors=True)
 
 # 🐛 Everything above asserts LIBRARY state, and that is exactly how the crash got shipped. The
 # reporting line in bin/chamnan-map that prints this list called `assets._human`, renamed to
@@ -16751,6 +17204,100 @@ check("THE REMEMBER SKILL TELLS THE WRITER TO CHECK THE DIRECTORY FIRST",
       "differs only by case as taken" in _rsk)
 check("...and says why, so it reads as a reason rather than a rule",
       "case-insensitive" in _rsk and "git status" in _rsk)
+
+# 🐛 [2026-09-06] The grouping key was `casefold()` alone, which folds case and does NOT normalise.
+# A precomposed `café` (U+00E9) and its decomposed twin (`e` + U+0301) render identically, collapse
+# into one file on APFS exactly as the case pair does, and hashed to two different keys — so the
+# guard built for precisely this failure returned nothing (R6 acc3, hostile filesystem).
+import unicodedata as _ud  # noqa: E402
+_nfc = _ud.normalize("NFC", "caf\u00e9-strategy")
+_nfd = _ud.normalize("NFD", "caf\u00e9-strategy")
+check("the NFC/NFD fixture really is two different byte strings", _nfc != _nfd)
+check("TWO NAMES THAT DIFFER ONLY BY UNICODE NORMALISATION ARE ONE NAME",
+      len(_mem.case_collisions([Path(f"/x/{_nfc}.md"), Path(f"/x/{_nfd}.md")])) == 1)
+check("...and the case pair the function was written for is still caught",
+      len(_mem.case_collisions([Path("/x/a-b.md"), Path("/x/A-B.md")])) == 1)
+check("...while two genuinely different names are still two",
+      _mem.case_collisions([Path("/x/a.md"), Path("/x/b.md")]) == [])
+# Pure Thai is deliberately NOT the exposure — Thai combining marks have no precomposed form, so
+# NFC and NFD coincide. Pinned so a future round does not go looking in the wrong script.
+_thai = "\u0e19\u0e42\u0e22\u0e1a\u0e32\u0e22-\u0e01\u0e32\u0e23\u0e40\u0e07\u0e34\u0e19"
+check("...and Thai text has no NFC/NFD twin to collide with",
+      _ud.normalize("NFC", _thai) == _ud.normalize("NFD", _thai))
+
+# 🐛 [2026-09-06] All four `slug()` functions ended `... or "session"` / `"entry"` / `"thread"` /
+# `"candidate"` — the same latent bug written four times. The reduction keeps `[a-zA-Z0-9]` and
+# nothing else, so EVERY title with no Latin letters reduced to the empty string and every one of
+# them landed on that single constant. In a Thai-language repository that is the normal case, not
+# an edge case: two Thai-titled sessions on one day both became `<date>-session.md` and the second
+# overwrote the first, and every Thai memory entry ever written collapsed onto one `entry.md`,
+# because memory filenames carry no date to separate them. Reported as dead code (R6 acc3); it is
+# not — this repository's owner writes Thai.
+import sessions as _sess  # noqa: E402
+import timeline as _tlm  # noqa: E402
+import candidates as _cand  # noqa: E402
+_thai_a, _thai_b = "\u0e1a\u0e31\u0e19\u0e17\u0e36\u0e01\u0e07\u0e32\u0e19", "\u0e23\u0e32\u0e22\u0e07\u0e32\u0e19\u0e1c\u0e25"
+for _label, _fn in (("sessions", _sess.slug), ("memory", _mem.slug), ("timeline", _tlm.slug)):
+    check(f"TWO THAI TITLES DO NOT BECOME ONE FILENAME: {_label}",
+          _fn(_thai_a) != _fn(_thai_b))
+    check(f"...and the same title twice is still the same file: {_label}",
+          _fn(_thai_a) == _fn(_thai_a))
+    check(f"...while an ASCII title is untouched by any of this: {_label}",
+          _fn("Fix the auth bug") == "fix-the-auth-bug")
+# The set is what is checked, not three of its four members: a fifth slug() with the old shape is
+# the way this comes back.
+_slug_owners = []
+for _sp, _ssrc in _runtime_sources():
+    try:
+        _stree = ast.parse(_ssrc)
+    except (SyntaxError, ValueError):
+        continue
+    for _sn in ast.walk(_stree):
+        if isinstance(_sn, ast.FunctionDef) and _sn.name == "slug":
+            _sbody = ast.get_source_segment(_ssrc, _sn) or ""
+            _slug_owners.append((_sp.name, "fallback_name" in _sbody))
+check(f"the slug audit found every slug() that ships: {len(_slug_owners)}",
+      len(_slug_owners) >= 4)
+check("EVERY slug() FALLS BACK TO A DISTINCT NAME, NOT A SHARED CONSTANT",
+      all(_ok for _n, _ok in _slug_owners))
+for _n, _ok in _slug_owners:
+    if not _ok:
+        print("      every non-Latin title lands on one filename:", _n)
+# A stem the fallback produces must still be a filename Windows will accept, since that is the
+# other rule these four share.
+_fb = mdblock.fallback_name(_thai_a, "entry")
+check("...and the fallback stem is plain ASCII a filesystem cannot object to",
+      _fb.isascii() and not (set(_fb) & _WINDOWS_FORBIDS))
+check("...and candidates, whose input is a command sequence, is in the set too",
+      _cand.slug(["\u0e17\u0e14\u0e2a\u0e2d\u0e1a"]) != _cand.slug(["\u0e23\u0e32\u0e22\u0e07\u0e32\u0e19"]))
+
+
+# 🐛 [2026-09-06] The session block promises "Nothing writes here unless you ask", and the skills it
+# names had nothing enforcing it. `disable-model-invocation` defaults to false, so Claude Code may
+# load a skill on its own from a description match -- chamnan printed a guarantee in every session
+# that its own frontmatter contradicted (R1 acc3, platform drift). Checked over the SET, keyed off
+# the constant the hook actually names, so a write skill added later cannot be the one that is
+# forgotten -- and the other direction is checked too: a skill that must stay reachable (a
+# regenerable index is not a record) fails if somebody disables it.
+_skill_fm = {}
+for _sp in sorted((ROOT / "skills").glob("*/SKILL.md")):
+    _stext = _sp.read_text(encoding="utf-8")
+    _skill_fm[_sp.parent.name] = (_stext.split("\n---\n", 1)[0] if _stext.startswith("---\n")
+                                  else "")
+check("the skill audit found every skill that ships",
+      set(_skill_fm) >= session_start_mod.SELF_INVOKED_SKILLS and len(_skill_fm) >= 8)
+_invocable = sorted(n for n in session_start_mod.SELF_INVOKED_SKILLS
+                    if "disable-model-invocation: true" not in _skill_fm.get(n, ""))
+check("EVERY SKILL THAT WRITES A RECORD REFUSES TO BE INVOKED BY THE MODEL", not _invocable)
+for _i in _invocable:
+    print("      can still be run unasked:", _i)
+_overreach = sorted(n for n, _fm in _skill_fm.items()
+                    if n not in session_start_mod.SELF_INVOKED_SKILLS
+                    and "disable-model-invocation: true" in _fm)
+check("...and the index and report skills stay reachable, which is the point of them",
+      not _overreach)
+for _o in _overreach:
+    print("      needlessly gated behind a slash command:", _o)
 
 
 # ---------------------------------------------------------------- cleanup

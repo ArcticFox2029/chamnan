@@ -33,7 +33,6 @@ correlation is computed on read, so there is nothing to regenerate, invalidate, 
 """
 import json
 import workspace as ws
-import os
 import time
 from collections import Counter, defaultdict
 import mdblock

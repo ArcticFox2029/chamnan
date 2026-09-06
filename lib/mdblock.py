@@ -243,3 +243,28 @@ def filename_safe(stem):
     so nothing a user typed is altered -- only where chamnan puts its own file.
     """
     return f"_{stem}" if stem.split(".", 1)[0].lower() in _WINDOWS_RESERVED else stem
+
+
+def fallback_name(source, kind):
+    """A distinct, stable stem for a title the ASCII reduction emptied.
+
+    🐛 [2026-09-06] All four `slug()` functions in this package end `... or "session"` / `"entry"` /
+    `"thread"` / `"candidate"` -- the same latent bug written four times. The reduction keeps
+    `[a-zA-Z0-9]` and nothing else, so EVERY title with no Latin letters in it reduces to the empty
+    string and every one of them lands on that single constant name. In a Thai-language repository
+    that is not an edge case, it is the normal case: two Thai-titled session records written on one
+    day both became `<date>-session.md` and the second overwrote the first, and every Thai memory
+    entry ever written collapsed onto one `entry.md`, because memory filenames carry no date to
+    separate them (R6 acc3, hostile filesystem -- reported there as dead code; it is not).
+
+    ASCII-only is kept deliberately, for the reason `sessions.slug` states: these names are read in
+    a directory listing and in a git diff. So the fallback stays ASCII and becomes DISTINCT instead
+    of readable, which is the right trade when the alternative is silent loss. Stable for the same
+    title, so rewriting one record still overwrites itself rather than growing a second file.
+
+    NFC first: a precomposed and a decomposed spelling of the same title are the same title, and
+    hashing the raw bytes would give them two different files. See memory.case_collisions.
+    """
+    import hashlib
+    canonical = " ".join(unicodedata.normalize("NFC", source).split()).casefold()
+    return f"{kind}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:8]}"

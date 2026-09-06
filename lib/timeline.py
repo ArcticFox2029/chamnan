@@ -68,7 +68,8 @@ def slug(title):
     and guessable, and create() disambiguates when it actually has to.
     """
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return mdblock.filename_safe(s[:50].rstrip("-") or "thread")
+    return mdblock.filename_safe(s[:50].rstrip("-")
+                                 or mdblock.fallback_name(title, "thread"))
 
 
 def _distinct_slug(directory_, title):
@@ -260,6 +261,9 @@ def historical_names(root, target):
     if key in _NAMES_CACHE:
         return _NAMES_CACHE[key]
     names = set()
+    if not ws.git_owns(repo):
+        # See workspace.git_owns: an ancestor's log would supply this file's rename history.
+        return _NAMES_CACHE.setdefault(key, names)
     try:
         out = subprocess.run(
             # core.quotePath=false for the same reason rollup._churn sets it: git C-quotes any

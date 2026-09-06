@@ -243,7 +243,7 @@ def _append_entries(log_path, fresh):
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
-def record(log_path, sigs, when, tool=None, interrupted=False):
+def record(log_path, sigs, when, tool=None, interrupted=False, history=None):
     """Append signatures to the bounded log and return the full history.
 
     `tool` and `interrupted` are evidence about the ONE Bash call that produced every signature in
@@ -255,6 +255,17 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
     Every new entry carries `kind: "command"` so a reader can tell it apart from any other record
     shape this log ever holds. An entry already on disk with no `kind` at all reads as `"command"`
     by the readers below — this is not a migration, nothing here rewrites what already exists.
+
+    🐛 [2026-09-06] `history` exists so the one caller that has ALREADY read this file does not pay
+    to read it a second time. The PostToolUse hook reads the log to learn what qualified BEFORE the
+    command, then called this, which read the whole file again — measured at the documented
+    retention ceiling of 9,000 entries, that second parse is 11.4 ms of the 29.4 ms this pair costs,
+    on every single Bash tool call, in the user's critical path (R7 agent 2).
+
+    The trade is stated rather than hidden: reconstructing from the caller's snapshot cannot see an
+    entry another process appended in between, so `repeated()` may miss it for ONE call and catch
+    it on the next. That is the right side for a hint. It is NOT the right side for the trim, which
+    deletes, so the trim below still re-reads inside its own lock exactly as before.
     """
     fresh = []
     for sig in sigs:
@@ -295,7 +306,7 @@ def record(log_path, sigs, when, tool=None, interrupted=False):
         else:
             _append_entries(log_path, fresh)
 
-    history = read(log_path)
+    history = (list(history) + fresh) if history is not None else read(log_path)
     kept = prune(history)
     # Only rewrite once enough surplus has accumulated to be worth the write. The log is therefore
     # allowed to sit up to TRIM_SLACK entries above target, which no reader cares about --

@@ -54,7 +54,6 @@ malformed JSON, an exception mid-walk — injects everything rather than nothing
 """
 import hashlib
 import json
-import os
 import re
 import mdblock
 import time

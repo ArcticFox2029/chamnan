@@ -790,6 +790,56 @@ def _is_a_template_under_a_weak_name(key_part, value):
     return not any(p.search(literal) for p in PATTERNS)
 
 
+# 🐛 [2026-09-06] A quoted value that OPENS after a credential name and never closes leaked every
+# line after the first. `ASSIGNED_SECRET` requires the closing quote and never matched at all, so
+# the text fell through to `ASSIGNED_SECRET_BARE`, which captured the one `\S{6,}` run sitting on
+# the same line as the quote and left the continuation in the clear. Both modes agreed on the wrong
+# answer, so windowing neither caused it nor hid it -- confirmed open by two independent rounds
+# (R1 agent 2 finding 5, R2 agent 2 finding 3) and by the backlog before them.
+#
+# The detection was never the hard part; the STOP was. Redacting to end-of-document eats unrelated
+# content, and an unterminated string is what a truncated paste, a half-finished edit or a merge
+# fragment looks like -- so the run ends at the first thing that cannot be part of a value:
+#
+#   * a blank line, which is where a pasted fragment ends in a document;
+#   * a line that opens a new key of its own, which is where a config resumes;
+#   * the end of the text.
+#
+# Deliberately narrow in the other direction too: the name still has to read as a credential, so
+# `password_file = "path/to` is left exactly as `_looks_like_a_credential_name` already leaves it.
+_RESUMES_AFTER_A_VALUE = re.compile(
+    r"""^[ \t]*(?:[\w.-]+|['"][\w.\- ]+['"])[ \t]*(?:=>|[:=])""")
+
+
+def _close_unterminated_quoted_secrets(text):
+    """Redact from an unclosed quote that follows a credential name to where the value must end."""
+    out, pos = [], 0
+    for hit in _SECRET_WORD_ANYWHERE.finditer(text):
+        if hit.start() < pos:
+            continue
+        opener = _OPENS_A_QUOTED_VALUE.match(text, hit.end())
+        if not opener or text.find(opener.group(1), opener.end()) >= 0:
+            continue                      # no quoted value here, or it closes: the usual rules own it
+        line_start = text.rfind("\n", 0, hit.start()) + 1
+        name = text[line_start:opener.start(1)]
+        if _names_a_mechanism(name, "") or not _looks_like_a_credential_name(name, ""):
+            continue
+        stop = len(text)
+        at = text.find("\n", opener.end())
+        while at >= 0:
+            nxt = text.find("\n", at + 1)
+            line = text[at + 1:nxt if nxt >= 0 else len(text)]
+            if not line.strip() or _RESUMES_AFTER_A_VALUE.match(line):
+                stop = at
+                break
+            at = nxt
+        out.append(text[pos:opener.start(1)])
+        out.append(PLACEHOLDER)
+        pos = stop
+    out.append(text[pos:])
+    return "".join(out)
+
+
 def scrub(text, windowed=True):
     """Every string that leaves chamnan for a written file goes through this.
 
@@ -897,6 +947,10 @@ def scrub(text, windowed=True):
     text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
                               [_spaced, _flag])
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
+    # Before the three rules below, and on the whole text rather than inside a window: an unclosed
+    # value's continuation can sit any distance from the name that opened it, and the rules below
+    # would otherwise consume the opening quote and leave that continuation behind.
+    text = _close_unterminated_quoted_secrets(text)
     text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
                               [_assigned, _call, _bare])
     # Applied after the substitution above rather than inside it, because the amount to swallow is

@@ -72,6 +72,14 @@ def load(root):
 
     Entries that are not dicts are dropped rather than taking the file down with them: a list with
     one bad row is still nine good tools, and losing the file loses the run counters too.
+
+    🐛 [2026-09-06] And an entry with NO `name` is dropped too, which is the same rule one level
+    down. The dict guard above was added and the field it exists to protect was not: `usage()` still
+    did `e["name"]`, and `[{"runs": 5}]` — a hand-edit, a bad merge, a half-written file, the same
+    causes the dict guard names — took `chamnan-report` down with a KeyError instead of reporting.
+    Five readers here subscript that field. Filtered ONCE, here, rather than guarded at each of the
+    five, because guarding five call sites is how this repository keeps arriving back at the same
+    defect: the rule applied to some members of a set and not the others.
     """
     try:
         loaded = json.loads(path(root).read_text(encoding="utf-8"))
@@ -79,7 +87,8 @@ def load(root):
         return []
     if not isinstance(loaded, list):
         return []
-    return [e for e in loaded if isinstance(e, dict)]
+    return [e for e in loaded if isinstance(e, dict) and isinstance(e.get("name"), str)
+            and e["name"]]
 
 
 def _save(root, entries):

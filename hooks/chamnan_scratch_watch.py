@@ -21,13 +21,17 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
-import candidates  # noqa: E402
-import environments  # noqa: E402
-import mdblock  # noqa: E402
+# 🐛 [2026-09-06] Only the two modules every call actually needs are imported here. This hook runs
+# on EVERY Bash, Write and Edit, and importing all nine cost 34.5 ms of the 44 ms this process
+# spends above the interpreter's own 66 ms floor -- paid in front of the user, on every call,
+# whether or not the module was ever touched. Most calls reach none of them: a plain `git status`
+# is not a scratch script, not a promoted tool, and not a workflow crossing its threshold.
+#
+# The rest are imported inside the one function that uses each, and the map is not guesswork: every
+# module below is used in exactly one function (`redact` in two), verified from the AST, so there is
+# no second call site to keep in step. `workspace` stays here because six functions need it and
+# main touches it before anything else can return.
 import redact  # noqa: E402
-import sessions  # noqa: E402
-import tools_index  # noqa: E402
-import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 
 HEREDOC = re.compile(r"<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?\s*\n(.*?)\n\1", re.S)
@@ -112,6 +116,7 @@ SKIP_HEAD = re.compile(r"^\s*(#|//|/\*|\*|import\b|from\b|require\(|use\b|packag
 def headline(text):
     """The first line that says something. The literal first line is usually `import json`, which
     makes every digest entry look identical and tells the reader nothing about which script it was."""
+    import mdblock  # deferred: see the note at the import block
     for line in text.strip().splitlines():
         if not SKIP_HEAD.match(line):
             return mdblock.as_quoted(line, 80)
@@ -199,6 +204,8 @@ def notice_workflow(payload, wsdir, root):
     Returns True when it spoke, so the caller does not also fire the script-repeat hint or the
     resume nudge. Two notices in one turn is how a useful nudge becomes noise.
     """
+    import candidates  # deferred: see the note at the import block
+    import workflows  # deferred: see the note at the import block
     if (payload.get("tool_name") or "") != "Bash":
         return False
     command = str((payload.get("tool_input") or {}).get("command") or "")
@@ -211,8 +218,14 @@ def notice_workflow(payload, wsdir, root):
 
     now = datetime.now().astimezone().isoformat(timespec="seconds")
     log = wsdir / "logs" / "commands.jsonl"
-    before = workflows.repeated(workflows.read(log))
-    history = workflows.record(log, sigs, now, tool="Bash", interrupted=interrupted)
+    # Read ONCE. `record` re-read the same file to build the history it returns, and at the log's
+    # documented retention ceiling that second parse is 11.4 ms of this pair's 29.4 ms -- paid on
+    # every Bash tool call, in front of the user (R7 agent 2). Handing it the snapshot already in
+    # hand is the whole fix; the trade is written down in `record`'s own docstring.
+    known = workflows.read(log)
+    before = workflows.repeated(known)
+    history = workflows.record(log, sigs, now, tool="Bash", interrupted=interrupted,
+                               history=known)
     found = workflows.repeated(history)
     if not found:
         return False
@@ -229,8 +242,17 @@ def notice_workflow(payload, wsdir, root):
     return True
 
 
-_HAS_AS_OF = re.compile(r"^\*\*As-of:\*\*", re.M)
-_HAS_PROVENANCE = re.compile(r"^\*\*Provenance:\*\*", re.M)
+# 🐛 [2026-09-06] These matched any line that merely STARTED with the bold words, so a decision
+# whose own prose opens `**As-of:** last quarter this was reconsidered...` read as already stamped.
+# The stamper then skipped it permanently: that entry never gets a machine-readable date, and
+# nothing reports the gap (R2 agent 4). Fencing was closed separately and does not cover this --
+# the prose is not in a fence, it is the body.
+#
+# The whole LINE has to be the trailer the stamper itself writes: a bare ISO date, or one of the
+# provenance values `candidates.PROVENANCE` allows. Anything with more on the line after it is
+# somebody writing prose, and prose is not a stamp.
+_HAS_AS_OF = re.compile(r"^\*\*As-of:\*\*[ \t]*\d{4}-\d{2}-\d{2}[ \t]*$", re.M)
+_HAS_PROVENANCE = re.compile(r"^\*\*Provenance:\*\*[ \t]*[a-z-]+[ \t]*$", re.M)
 _FENCE = re.compile(r"^\s*(```|~~~)", re.M)
 
 
@@ -326,6 +348,7 @@ def _track_tool_health(payload, root):
 
     Also where `runs` gets incremented (Stage 11 reads it; nothing writes it before this).
     """
+    import tools_index  # deferred: see the note at the import block
     if (payload.get("tool_name") or "") != "Bash":
         return False
     command = str((payload.get("tool_input") or {}).get("command") or "")
@@ -369,6 +392,7 @@ def _environment_notice(payload, wsdir, root):
     the resume nudge uses. A notice that fired on every `kubectl --context prod` call is one
     people learn to scroll past.
     """
+    import environments  # deferred: see the note at the import block
     if not ws.enabled("environments", root):
         return False
     if (payload.get("tool_name") or "") != "Bash":
@@ -416,6 +440,7 @@ def _resume_nudge(payload, wsdir, root):
     a second session on the same day has not seen whatever the first one already said, so it gets
     its own chance to nudge.
     """
+    import sessions  # deferred: see the note at the import block
     if not ws.enabled("ledger", root):
         return False
     session_id = str(payload.get("session_id") or "")

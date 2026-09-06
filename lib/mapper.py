@@ -27,15 +27,13 @@ output above, and running it prints the same thing plain `chamnan-map` does.
 
 Never imports or executes the code it reads.
 """
-import argparse
 import ast
 import fnmatch
+import os
 import subprocess
 import warnings
 import re
 import mdblock
-import unicodedata
-import sys
 from pathlib import Path, PurePosixPath
 
 import assets as assets_mod
@@ -45,6 +43,7 @@ import impact as impact_mod
 import redact
 import schema as schema_mod
 import tokens
+import workspace as ws
 from unicode_marks import mark_aware
 
 # Directories that are never source: dependency trees, build output, VCS internals, caches.
@@ -144,9 +143,10 @@ def _generated_globs(root):
     if key in _GENERATED_GLOBS:
         return _GENERATED_GLOBS[key]
     pats = []
-    for name in (".gitattributes", ".github/.gitattributes"):
+    for holder, name in _gitattributes_files(root):
         try:
-            text = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
+            text = (Path(root) / holder / name if holder
+                    else Path(root) / name).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
         for line in text.splitlines():
@@ -155,9 +155,61 @@ def _generated_globs(root):
                 continue
             if "-linguist-generated" in line:      # an explicit un-marking; leave the file alone
                 continue
-            pats.append(line.split()[0])
+            pats.extend(_scoped(holder, line.split()[0]))
     _GENERATED_GLOBS[key] = tuple(pats)
     return _GENERATED_GLOBS[key]
+
+
+# 🐛 [2026-09-06] Only two fixed paths were read, both anchored at the repository root, and git
+# honours a `.gitattributes` at ANY depth, scoped to its own subtree -- which is exactly how a
+# monorepo package declares its own generated files without write access to a shared root file
+# every team does not have. Reproduced with a location-only A/B: the same declaration, same syntax,
+# same file, moved from the root `.gitattributes` into `packages/sub/.gitattributes`, stopped being
+# honoured -- the generated file was indexed as ordinary source, counted against the `described`
+# percentage, and offered to the commenter agent (R6 acc3, unusual repositories).
+MAX_GITATTRIBUTES = 200          # a bound, not a policy: see the walk below
+
+
+def _gitattributes_files(root):
+    """(directory relative to root, filename) for every `.gitattributes` git would consult.
+
+    The root's own and `.github/`'s come first and unconditionally, so a repository that has only
+    those pays one `is_file()` rather than a walk. Everything below is found by walking, pruned by
+    the same SKIP_DIRS the indexer uses -- a `.gitattributes` inside `node_modules` describes
+    somebody else's package and is not this repository's declaration about itself.
+
+    Bounded at MAX_GITATTRIBUTES because this runs on every map build: a repository with more
+    declarations than that has a shape nobody has measured, and reading the first two hundred in
+    walk order is a better failure than an unbounded walk on a tree of unknown size.
+    """
+    out = [("", ".gitattributes"), (".github", ".gitattributes")]
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(str(root)):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        rel = os.path.relpath(dirpath, str(root)).replace(os.sep, "/")
+        if rel in (".", ".github"):
+            continue
+        if ".gitattributes" in filenames:
+            out.append((rel, ".gitattributes"))
+            seen += 1
+            if seen >= MAX_GITATTRIBUTES:
+                break
+    return out
+
+
+def _scoped(holder, pat):
+    """`pat`, as written in the `.gitattributes` sitting in `holder`, rewritten root-relative.
+
+    git's own two rules. A pattern containing a slash is anchored to the declaring directory. A
+    pattern without one applies at every level BENEATH it, so both the direct child and the deeper
+    form are emitted -- `_is_generated` matches literally and cannot expand one into the other.
+    """
+    if not holder:
+        return [pat]
+    lead = pat[3:] if pat.startswith("**/") else pat
+    if "/" in lead:
+        return [f"{holder}/{lead}"]
+    return [f"{holder}/{lead}", f"{holder}/**/{lead}"]
 
 
 def _is_generated(rel, pats):
@@ -184,6 +236,10 @@ def _tracked_ambiguous(root):
     if key in _TRACKED_AMBIGUOUS:
         return _TRACKED_AMBIGUOUS[key]
     found = set()
+    if not ws.git_owns(root):
+        # See workspace.git_owns: an ANCESTOR's tracked-file list would decide which `build/` or
+        # `dist/` directories in THIS tree are committed source rather than generated output.
+        return _TRACKED_AMBIGUOUS.setdefault(key, found)
     try:
         done = subprocess.run(["git", "-C", key, "ls-files", "-z"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
@@ -1595,6 +1651,18 @@ def indexable(root, nested=None, with_text=False, sniff=True):
                 raw = path.read_bytes()
             except OSError:
                 continue
+            # 🐛 [2026-09-06] The ceiling was enforced on `stat()` nineteen lines above and never on
+            # the bytes actually read, so a file that GREW between the two passed a check on a size
+            # it no longer had. Reproduced deterministically by growing the file inside a patched
+            # `stat()`: a 6 MB file was yielded whole against a 2 MB ceiling and `SKIPPED_TOO_LARGE`
+            # stayed empty, so nothing even recorded that a limit had been crossed (R6 acc3). It
+            # needs no exotic setup -- a code generator mid-write, a build regenerating a `.py`, or
+            # a checkout still being written while the pre-commit hook fires. Re-checked on the
+            # bytes in hand, which is the only measurement that describes what is about to be
+            # indexed. Recorded with the size actually read, not the stale one.
+            if len(raw) > MAX_FILE_BYTES:
+                SKIPPED_TOO_LARGE.append((path, len(raw)))
+                continue
             if b"\x00" in raw[:8192]:
                 SKIPPED_BINARY.append(path)
                 continue
@@ -1759,6 +1827,12 @@ def _built_from(root):
     down: a reader that finds HEAD unchanged and the tree clean knows the map is current without
     asking a clock. Appended after the sentence so `map_claim_check`'s header regex still matches.
     """
+    # 🐛 [2026-09-06] Reproduced: in a directory holding one file and an empty `.git/`, nested
+    # inside a real repository, this stamped `Built from <sha>` into MAP.md with the ANCESTOR's
+    # HEAD -- persisted to disk, describing a zero-commit tree as built from an unrelated
+    # repository's commit, and read back by the staleness check on every later session.
+    if not ws.git_owns(root):
+        return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
