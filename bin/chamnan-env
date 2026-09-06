@@ -85,6 +85,8 @@ def cmd_set(root, name, platform, versions, constraints, checked):
     versions and every constraint, which are the parts nobody else can reconstruct. Anything not
     given is carried forward from what is already recorded; `--platform ""` still clears it, so
     there is a way to say "this really is empty now"."""
+    if ws.refuse_to_write():
+        return 1
     prior = next((e for e in env.entries(root)
                   if e["name"].strip().lower() == name.strip().lower()), None)
     if prior:

@@ -90,6 +90,8 @@ def _find_or_complain(root, ident):
 
 
 def cmd_confirm(root, ident):
+    if ws.refuse_to_write():
+        return 1
     p = _find_or_complain(root, ident)
     if p is None:
         return 1
@@ -102,6 +104,8 @@ def cmd_confirm(root, ident):
 
 
 def cmd_reject(root, ident):
+    if ws.refuse_to_write():
+        return 1
     p = _find_or_complain(root, ident)
     if p is None:
         return 1
@@ -124,6 +128,8 @@ def _sequence_of(fields):
 
 
 def cmd_promote(root, ident, destination=None, name=None):
+    if ws.refuse_to_write():
+        return 1
     p = _find_or_complain(root, ident)
     if p is None:
         return 1
@@ -195,7 +201,7 @@ def cmd_promote(root, ident, destination=None, name=None):
         for i, step in enumerate(sequence, 1):
             lines.append(f"echo 'TODO step {i}: '{shlex.quote(step)} >&2; exit 1"
                          f"  # replace this line")
-        dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        ws.atomic_write_text(dest, "\n".join(lines) + "\n")
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         tools_index.register(root, {
             "name": dest.name,
@@ -228,6 +234,8 @@ def cmd_demote(root, tool_name):
     candidate's "sequence" is the tool's own description, not a reconstruction of the original
     detected steps — precise replay is not recoverable from what the index stores, and a record
     that reminds a reviewer what the tool was for is more honest than pretending otherwise."""
+    if ws.refuse_to_write():
+        return 1
     # 🐛 `ws.workspace(root) / "tools" / tool_name` returns tool_name ITSELF when it is absolute --
     # that is what `/` does with an absolute right-hand side -- so an absolute path here escaped the
     # workspace and the archive step below renamed a file anywhere on disk, then crashed on the

@@ -144,6 +144,24 @@ def resolve(config):
 # want opposite profiles. Guessing between them silently is worse than saying which two.
 MODEL_WINDOWS = {
     "claude": 1_000_000,
+    # 🐛 This table is keyed by FAMILY, which quietly assumed a family's name is what people type.
+    # Anthropic's current models are not called "Claude something" — they are Fable, Opus, Sonnet
+    # and Haiku. Every one of those names fell through to `standard`, so a user on the newest
+    # Claude model was told to size for a small window while running a million-token one. Found by
+    # the R1 vendor check, which exists for exactly this: a table of other people's numbers goes
+    # stale without anything failing.
+    #
+    # These four are from Anthropic's own documentation, checked 2026-09-06 (R2 agent 1). `mythos`
+    # is deliberately NOT here: it is very probably 1M like its siblings, and probably is not a
+    # number. It falls through to `standard` with the table's own "not in the model table, which is
+    # a dated convenience rather than an authority" note, which is the honest answer.
+    #
+    # Haiku is the one that is NOT a million: 200K. Putting it here rather than leaving it to the
+    # family entry is the difference between a right answer and a lucky one.
+    "fable": 1_000_000,
+    "opus": 1_000_000,
+    "sonnet": 1_000_000,
+    "haiku": 200_000,
     "gpt": 400_000,
     "openai": 400_000,
     "gemini": 1_000_000,
