@@ -109,7 +109,7 @@ def _load_hook():
     return module
 
 
-def build(root, profile, ceiling):
+def build(root, profile, ceiling, agent=None):
     """The block, as text. Runs the hook's own `main()` rather than reimplementing any of it.
 
     The hook reads its root from the working directory and its payload from stdin, so both are
@@ -118,11 +118,15 @@ def build(root, profile, ceiling):
     """
     was_cwd, was_stdin = os.getcwd(), sys.stdin
     was_profile = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
+    was_agent = os.environ.get("CHAMNAN_CONTEXT_AGENT")
     was_ceiling = os.environ.get("CHAMNAN_OUTPUT_CEILING")
     buffer = io.StringIO()
     try:
         if profile:
             os.environ["CHAMNAN_CONTEXT_PROFILE"] = profile
+        # Parts of the block are addressed to the reader, and the reader is not always Claude Code.
+        if agent:
+            os.environ["CHAMNAN_CONTEXT_AGENT"] = agent
         os.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling)
         os.chdir(str(root))
         sys.stdin = io.StringIO("{}")
@@ -132,12 +136,43 @@ def build(root, profile, ceiling):
         os.chdir(was_cwd)
         sys.stdin = was_stdin
         for name, previous in (("CHAMNAN_CONTEXT_PROFILE", was_profile),
+                               ("CHAMNAN_CONTEXT_AGENT", was_agent),
                                ("CHAMNAN_OUTPUT_CEILING", was_ceiling)):
             if previous is None:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = previous
     return _stabilise_fence(buffer.getvalue().rstrip("\n"))
+
+
+def _snapshot_note(root, agent):
+    """One line saying how old this file is and how to refresh it.
+
+    Only on the `--write` path. `--emit` prints to stdout for a hook to consume fresh, and a hook's
+    output is never stale by construction -- a note about staleness there would be noise on every
+    session forever.
+    """
+    import datetime
+    import re as _re
+    when = datetime.date.today().isoformat()
+    # The commit comes out of MAP.md's own header, not from asking git. Two reasons, and the second
+    # is the one that matters: this command must not import `subprocess` at all -- on Windows the
+    # hook is an extensionless shebang script that cannot be executed by path, so the pipe imports
+    # it instead, and a guard in the suite enforces that. And the map's stamp is the honest number
+    # anyway: what this file contains is the INDEX, so the commit the index was built from is what
+    # its age should be measured against, not whatever HEAD happens to be now.
+    sha = ""
+    try:
+        head = (Path(root) / ".chamnan" / "MAP.md").read_text(
+            encoding="utf-8", errors="replace")[:600]
+        m = _re.search(r"\bBuilt from ([0-9a-f]{7,40})\.", head)
+        if m:
+            sha = f" from commit {m.group(1)}"
+    except OSError:
+        pass
+    return (f"\n_This file is a snapshot of the repository as it was on {when}{sha}. It does not "
+            f"update itself: run `chamnan-map && chamnan-context --write {agent}` after the shape "
+            f"of the repository changes._")
 
 
 def _budget_notice(body, profile):
@@ -190,8 +225,15 @@ def main():
 
     root = Path(args.root).resolve()
     if not ws.workspace(root).is_dir():
+        # 🐛 This named a Claude Code slash command and nothing else — to a reader who, by the
+        # very fact of running this command in a terminal, may not have Claude Code at all. The
+        # whole point of chamnan-context is setting up the OTHER agents, so the one error a
+        # non-Claude-Code user is most likely to hit sent them to a command they cannot run
+        # (R21 agent 3). `chamnan-map` creates the workspace and the index anywhere.
         sys.stderr.write(f"chamnan: no .chamnan/ workspace at {root}. "
-                         f"Run /chamnan:bootstrap there first.\n")
+                         f"Run `chamnan-map` there first — it creates the workspace and builds "
+                         f"the index. (Inside Claude Code, `/chamnan:bootstrap` does that and "
+                         f"records a baseline.)\n")
         return 1
 
     # --window and --profile answer the same question. Rather than silently preferring one, say so:
@@ -227,8 +269,9 @@ def main():
         emitter = adapters.for_agent(args.emit)
         declared = getattr(emitter, "CEILING", None)
         if declared and args.ceiling == NON_BINDING:
-            args.ceiling = declared
-        print(emitter.render(build(root, profile, args.ceiling)))
+            # --emit prints render()'s output and writes no marker, so only the wrapper counts.
+            args.ceiling = max(1, declared - len(emitter.render("").encode()))
+        print(emitter.render(build(root, profile, args.ceiling, agent=args.emit)))
         return 0
 
     # An adapter that declares its own ceiling knows something this caller does not -- what the
@@ -237,7 +280,10 @@ def main():
     if args.write:
         declared = getattr(adapters.for_agent(args.write), "CEILING", None)
         if declared and args.ceiling == NON_BINDING:
-            args.ceiling = declared
+            # Minus what this adapter wraps around the block. The ceiling is a promise about the
+            # FILE, and the file is the block plus the wrapper plus the marker — sizing the block to
+            # the whole ceiling wrote over it every time the ceiling bound.
+            args.ceiling = max(1, declared - adapters.fixed_overhead(args.write))
             detected["ceiling"] = declared
 
     # Detection was inert: `host.agents()` had one consumer, `--detect`'s JSON dump, and nothing
@@ -262,12 +308,20 @@ def main():
                     f"reads it.\n")
                 break
 
-    body = build(root, profile, args.ceiling)
+    body = build(root, profile, args.ceiling, agent=args.write)
     _notice = _budget_notice(body, profile or profiles.DEFAULT)
     if _notice:
         sys.stderr.write(_notice)
 
     if args.write:
+        # 🐛 A written file is a SNAPSHOT and said nothing about being one. Claude Code and Gemini
+        # CLI get a session hook, so their block is rebuilt every session and cannot go stale; the
+        # other two dozen agents get a file that is exactly as old as the last time somebody ran
+        # this command. The headers said "generated by chamnan, do not edit" -- true, and it is the
+        # other half that matters: an index that has quietly stopped describing the repository is
+        # worse than none, because a reader trusts it. So the file says when it was written, from
+        # which commit, and the one command that refreshes it.
+        body = body.rstrip("\n") + "\n" + _snapshot_note(root, args.write) + "\n"
         # The command the agent will run at session start, spelled absolutely: the agent's working
         # directory when it fires is its own business, and a relative path would resolve against it.
         run = f"{Path(__file__).resolve()} --emit {args.write}"
@@ -291,8 +345,15 @@ def main():
         if limit and written.is_file():
             size = written.stat().st_size
             if size > limit:
+                # 🐛 "truncates silently" was hardcoded and is not true of every agent: CodeBuddy
+                # REJECTS a file past its limit and reads none of it (R12 agent 1). Being told the
+                # index is shortened when it is in fact absent is worse than not being warned, so
+                # the adapter declares which it does.
+                hard = getattr(adapters.for_agent(args.write), "CEILING_IS_HARD", False)
+                what = ("That agent reads NONE of a file past it — the whole file is rejected"
+                        if hard else "That agent truncates silently past it")
                 print(f"  ⚠ {size:,} bytes, over {args.write}'s {limit:,}-byte limit by "
-                      f"{size - limit:,}. That agent truncates silently past it — lower "
+                      f"{size - limit:,}. {what} — lower "
                       f"index_token_budget in .chamnan/config.json, or pass --window smaller.")
         # An agent that does not auto-discover its own context file is only half installed by
         # writing it. Saying so is the difference between a working setup and a file nobody opens.

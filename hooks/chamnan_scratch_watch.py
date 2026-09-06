@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import candidates  # noqa: E402
 import environments  # noqa: E402
+import mdblock  # noqa: E402
 import redact  # noqa: E402
 import sessions  # noqa: E402
 import tools_index  # noqa: E402
@@ -113,8 +114,8 @@ def headline(text):
     makes every digest entry look identical and tells the reader nothing about which script it was."""
     for line in text.strip().splitlines():
         if not SKIP_HEAD.match(line):
-            return " ".join(line.split())[:80]
-    return " ".join(text.strip().splitlines()[0].split())[:80] if text.strip() else ""
+            return mdblock.as_quoted(line, 80)
+    return mdblock.as_quoted(text.strip().splitlines()[0], 80) if text.strip() else ""
 
 
 

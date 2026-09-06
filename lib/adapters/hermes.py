@@ -14,10 +14,13 @@ via `llms-full.txt` rather than the rendered page):
     CLAUDE.md                also detected, working directory only
     .cursorrules             also detected, working directory only
 
-Three of those chamnan already writes, so Hermes has been reading chamnan's block since the adapter
-set shipped — through `generic`'s AGENTS.md, and through CLAUDE.md wherever Claude Code is also in
-use. This adapter exists for the one above them: `.hermes.md` is the file Hermes gives highest
-priority, and nothing was writing it.
+That list is a PRECEDENCE, and the correction matters: first match wins, they are not combined
+(R8 agent 1, against the same docs). So writing `AGENTS.md` did not mean Hermes was also reading it
+wherever a higher entry existed — and `install()` below, which refuses a `.hermes.md` it did not
+write, has always had this right while these opening lines implied the tiers stacked.
+
+This adapter exists for the entry above all the others: `.hermes.md` is what Hermes reads first and
+stops at, and nothing was writing it.
 
 `.hermes.md` and not `HERMES.md`, though the docs list both: the dotted name keeps it out of the way
 in a repository that already has a README and an AGENTS.md at the root, and Hermes treats the two

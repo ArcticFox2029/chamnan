@@ -46,7 +46,6 @@ from . import generic
 from . import iflow
 from . import junie
 from . import kiro
-from . import mistral
 from . import qwen
 from . import replit
 from . import roo
@@ -75,7 +74,6 @@ ADAPTERS = {
     iflow.NAME: iflow,
     junie.NAME: junie,
     kiro.NAME: kiro,
-    mistral.NAME: mistral,
     qwen.NAME: qwen,
     replit.NAME: replit,
     roo.NAME: roo,
@@ -112,6 +110,17 @@ ALIASES = {
     "deepseek": generic.NAME,
     "kimi": generic.NAME,
     "muse": generic.NAME,
+
+    # 🐛 Mistral Vibe was a MODULE writing `.vibe/AGENTS.md`, on the reading that Vibe wants its
+    # AGENTS.md inside `.vibe/` rather than at the root. Everything chamnan wrote for Vibe was
+    # therefore read by nothing, and the suite asserted the wrong target as firmly as the code did.
+    # Settled against the vendor's own source rather than its README (mistralai/mistral-vibe, `main`
+    # at 6c79ef0, 2026-09-05): `vibe/utils/paths.py` sets `_DEFAULT_VIBE_HOME = Path.home()/".vibe"`,
+    # so `.vibe/` is the USER'S HOME; `_harness_manager.py`'s project tier reads a bare `AGENTS.md`
+    # at the repository root and upward, and its user tier reads `~/.vibe/AGENTS.md`. Neither reads
+    # a `.vibe/AGENTS.md` inside a checkout. An alias and not a module, for the reason every name
+    # above is: two modules writing one path would give that path two owners.
+    "mistral": generic.NAME,
 }
 
 
@@ -367,6 +376,86 @@ def _exists_at(target):
         return False
 
 
+# Written into every file the shared writer produces, and the first thing `_looks_generated` looks
+# for. A person does not type this by accident, which is the entire property a heading lacked.
+MARKER = "<!-- chamnan:generated — safe to delete; `chamnan-context --write` recreates it -->"
+
+
+def _looks_generated(text):
+    """Whether `text` is chamnan's own previous output.
+
+    🐛 Two versions of this have now been wrong in the same direction, and the second is worth
+    stating because it looked careful. It required the first non-frontmatter line to BE
+    `## chamnan` — and a per-tool rules document a person writes by hand looks exactly like that:
+
+        ---
+        description: Our team's coding rules
+        ---
+
+        ## chamnan
+        We use chamnan for the index. Do not edit .chamnan/ by hand.
+
+        ## deploy checklist
+        ...
+
+    Reproduced through `install()` on aider, qwen and replit: the deploy checklist was gone. A
+    heading cannot tell "chamnan wrote this" from "a person wrote ABOUT chamnan", because both
+    start the same way.
+
+    So the file says so itself. `MARKER` is emitted by every shared-writer install and is not
+    something anybody types by accident. The structural fallback is kept for files chamnan wrote
+    before the marker existed -- refusing those would break `--write` for everyone who already ran
+    it -- but it is narrowed by the thing that actually separates the two cases: chamnan's own
+    output carries exactly ONE `## ` heading, its own. A document with a second section is a
+    document somebody is keeping.
+    """
+    # 🐛 This was `if MARKER in text` — anywhere in the document. The marker is a public string
+    # printed in every file chamnan writes, so anybody can paste it, and a hand-written file that
+    # merely QUOTES it (a rules doc explaining what the line means, say) was destroyed on the next
+    # `--write`. That is the exact class the marker was added hours earlier to close, reopened by
+    # the laxest possible test for it (R12 agent 2).
+    #
+    # Where it sits is the evidence, not that it appears: `install()` writes it as the LAST line.
+    # A marker anywhere else is somebody quoting it.
+    if text.rstrip().endswith(MARKER):
+        return True
+    body = text.lstrip("\ufeff").lstrip()
+    if body.startswith("---"):
+        end = body.find("\n---", 3)
+        if end < 0:
+            return False
+        body = body[end + 4:].lstrip()
+    if not body.startswith("## chamnan"):
+        return False
+    return [ln for ln in body.splitlines() if ln.startswith("## ")] == ["## chamnan"]
+
+
+def fixed_overhead(agent):
+    """Bytes an adapter adds around the block: its wrapper, plus the provenance marker.
+
+    🐛 A declared CEILING was passed straight to the block builder, and then `render()` wrapped the
+    result and `install()` appended the marker — so a block sized exactly to the ceiling was WRITTEN
+    over it, every time the ceiling actually bound. Measured: windsurf +0.96%, antigravity +0.73%,
+    generic +0.50%, codebuddy +0.22% (R12 agent 4, and worse since the marker was added).
+    
+    A fraction of a percent sounds harmless and is not: CodeBuddy REJECTS a file past its limit
+    rather than reading a prefix, so an 87-byte overshoot costs the whole index. Measured here
+    rather than assumed, because the wrapper differs per adapter and the marker is shared.
+    """
+    adapter = for_agent(agent)
+    if adapter is None or not hasattr(adapter, "render"):
+        return 0
+    try:
+        empty = adapter.render("")
+    except Exception:
+        return 0
+    # The marker is written by the SHARED writer only. An adapter with its own install() wraps the
+    # block its own way and does not get one, so counting it there would shrink the block for bytes
+    # that never arrive.
+    marker = 0 if hasattr(adapter, "install") else len(f"\n\n{MARKER}\n".encode())
+    return len(empty.encode()) + marker
+
+
 def install(root, agent, body, command=""):
     """Write `body` through `agent`'s adapter. Returns the path written, or None.
 
@@ -394,7 +483,32 @@ def install(root, agent, body, command=""):
     if hasattr(adapter, "install"):
         return adapter.install(root, body, command)
     with held_target(root, adapter.TARGET) as target:
-        write_target(target, adapter.render(body))
+        # 🐛 Six adapters -- trae, replit, codebuddy, qwen, iflow, aider -- write to one predictable
+        # filename a developer could plausibly have written by hand before installing chamnan, and
+        # this line replaced that file with O_TRUNC and printed a plain success. Reproduced: a
+        # hand-written `.trae/rules/project_rules.md` gone, no trace it had existed. zed, hermes and
+        # generic each refused in their OWN install(); the shared writer, which every other adapter
+        # goes through, never did -- a guard on some members of a set. It lives here now, so an
+        # adapter gets it by not defining install() rather than by remembering to.
+        #
+        # 🐛 Recognition was "the word chamnan appears in the first 400 characters", and R8 agent 2
+        # defeated it with one line of ordinary prose -- `# We also use chamnan for the index.` in a
+        # hand-written file was enough to have that file destroyed, which is the exact outcome this
+        # guard exists to prevent. A file that MENTIONS a tool is not a file that tool wrote.
+        #
+        # Structure instead, and no marker: every shared-writer adapter's render() emits either
+        # `## chamnan` as its first line or a `---` frontmatter block whose body then opens with it.
+        # A hand-written file has to literally begin that way to be replaced, at which point it is
+        # chamnan's own output. Nothing needs migrating, and no format gains a byte it cannot parse.
+        existing = read_target(target)
+        if existing is not None and not _looks_generated(existing):
+            raise ValueError(
+                f"{target.path} exists and was not written by chamnan, so it is not replaced. "
+                f"Move it aside -- or fold what it says into `.chamnan/memory/rules/`, where every "
+                f"adapter's output will carry it -- and run this again.")
+        # The marker goes LAST: several targets require YAML frontmatter as their first bytes, and
+        # a provenance line ahead of that would break the format it is meant to protect.
+        write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n")
     return target.path
 
 

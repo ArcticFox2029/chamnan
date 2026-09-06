@@ -13,6 +13,7 @@ import time
 import contextlib
 import pathlib
 import os
+import sys
 from pathlib import Path
 
 WORKSPACE_DIRNAME = ".chamnan"
@@ -300,7 +301,8 @@ def enabled(part, root=None):
 # have deleted the whole feature after seven quiet days — the identical failure the comment
 # below describes being fixed for its two siblings. A log that bounds itself by record must
 # say so here, or the directory sweep bounds it by date instead.
-SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl")
+SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl",
+                    "subagent_start.jsonl")
 
 
 def expiring_logs(root=None, within_days=1.0):
@@ -343,6 +345,56 @@ def expiring_logs(root=None, within_days=1.0):
     return sorted(out, key=lambda r: r[1])
 
 
+# A crashed `atomic_write_text` leaves its per-process staging file behind. Nothing swept them:
+# `prune_logs` only walks `logs/`, and these land beside whatever was being written, anywhere in the
+# workspace. Reproduced by killing a write with SIGKILL (R11b agent 3) — the file persisted and
+# every later prune removed nothing.
+#
+# An hour, and the shape `<name>.<pid>.tmp`, because both bounds have to be wrong before this can
+# touch a write in progress: a real staging file exists for the milliseconds between open and
+# os.replace, and a name without a numeric middle segment was not written by this module.
+_ORPHAN_TEMP_AGE = 3600
+_ORPHAN_TEMP = re.compile(r"\.\d+\.tmp$")
+
+
+def prune_orphaned_temps(root=None):
+    """Remove staging files a killed write left behind. Best effort and silent, like every prune.
+
+    Rate-limited by a stamp, because the sweep walks the whole workspace and the thing it looks for
+    is rare: a staging file only survives a process being killed mid-write. Measured at 12.8 ms on
+    this repository, paid by every `chamnan-map`, `chamnan-report` and session start — against an
+    orphan that appears perhaps never. Once an hour finds one just as surely, since nothing is
+    removed until it is an hour old anyway.
+    """
+    import time
+    ws_dir = workspace(root)
+    if not ws_dir.is_dir():
+        return 0
+    stamp = ws_dir / "state" / ".temps-swept"
+    try:
+        if stamp.is_file() and time.time() - stamp.stat().st_mtime < _ORPHAN_TEMP_AGE:
+            return 0
+    except OSError:
+        pass
+    cutoff = time.time() - _ORPHAN_TEMP_AGE
+    removed = 0
+    for path in ws_dir.rglob("*.tmp"):
+        try:
+            if not _ORPHAN_TEMP.search(path.name) or path.is_symlink() or not path.is_file():
+                continue
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+    except OSError:
+        pass
+    return removed
+
+
 def prune_logs(root=None):
     """Delete files under logs/ older than the retention window. Best-effort and silent: a
     housekeeping failure must never be the reason a command the user asked for fails.
@@ -361,12 +413,53 @@ def prune_logs(root=None):
         try:
             if path.name in SELF_PRUNING_LOGS:
                 continue
-            if path.is_file() and path.stat().st_mtime < cutoff:
-                path.unlink()
-                removed += 1
+            if path.is_file():
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    removed += 1
+                continue
+            # 🐛 `is_file()` was the whole test, so a DIRECTORY under logs/ was invisible to
+            # retention forever, at any age. That is not a corner case: a multi-file scratch dump is
+            # exactly what a research agent reaches for, and measured on this repository 7.6 MB of
+            # the workspace's 10 MB logs/ sat in two such directories with seven more beside them.
+            # A separate incident the same day left 339 MB and 82,558 files there, one of them a
+            # symlink to `/` that sent a Python 3.9 rglob across the whole machine.
+            #
+            # Judged by the NEWEST file inside, not by the directory's own mtime: a directory being
+            # written to right now has a fresh file in it, while its own mtime says only when an
+            # entry was last added or removed. A directory whose every file is past the window is
+            # finished work, and one holding nothing at all is a leftover -- neither is history the
+            # record-level rules are keeping on purpose.
+            if path.is_dir() and not path.is_symlink():
+                inside = [f for f in path.rglob("*") if f.is_file()]
+                newest = max((f.stat().st_mtime for f in inside), default=0)
+                if newest < cutoff:
+                    _rmtree_quietly(path)
+                    removed += 1
         except OSError:
             continue
     return removed
+
+
+def _rmtree_quietly(path):
+    """Remove a directory tree without following symlinks out of it, and without raising.
+
+    `shutil.rmtree` is not used: it is the one call in this module that could act on a path outside
+    the workspace if a link inside pointed there, and retention is best-effort housekeeping that
+    must never be the reason a command the user asked for fails.
+    """
+    for child in sorted(path.rglob("*"), key=lambda c: len(c.parts), reverse=True):
+        try:
+            if child.is_symlink() or child.is_file():
+                child.unlink()
+            elif child.is_dir():
+                child.rmdir()
+        except OSError:
+            pass
+    try:
+        path.rmdir()
+    except OSError:
+        pass
 
 
 def prune_sessions(root=None):
@@ -456,8 +549,54 @@ class NotAWorkspace(Exception):
 
 
 
+_ESCAPE_WARNED = set()
+
+
+def _warn_if_workspace_escapes(ws, root):
+    """Say so when `.chamnan` is a symlink whose target is outside the repository.
+
+    tree.py already refuses to follow a scanned file out of the tree; the workspace root itself was
+    the one path with no such guard, and it is the one that decides whether any of this is committed.
+    """
+    try:
+        if not ws.is_symlink():
+            return
+        target = ws.resolve()
+        base = root.resolve()
+    except OSError:
+        return
+    if target == base or base in target.parents:
+        return
+    key = str(ws)
+    if key in _ESCAPE_WARNED:
+        return
+    _ESCAPE_WARNED.add(key)
+    print(f"chamnan: {ws} is a symlink to {target}, which is outside {base}.\n"
+          f"  Everything chamnan writes — the index, memory, session records — lands there, and git\n"
+          f"  in this repository sees only the link. Nothing here is being committed with the code.",
+          file=sys.stderr)
+
+
+# A command that has told the user it writes nothing must be able to keep that promise even when
+# what it runs, to answer the question, is the hook that sets the workspace up.
+READ_ONLY_ENV = "CHAMNAN_READ_ONLY"
+
+
+def read_only():
+    """True when this process has been asked to look without touching anything."""
+    return bool(os.environ.get(READ_ONLY_ENV))
+
+
 def ensure(root=None):
     ws = workspace(root)
+    # 🐛 `chamnan-map --preview`'s own --help says it "writes nothing", and in a repository that had
+    # never run chamnan it created the entire workspace — 14 entries including .gitignore and
+    # .gitattributes — because what it runs to answer the question is the SessionStart hook, and
+    # the hook sets the workspace up. The user asked to SEE what they would get and was given it
+    # instead (R21 agent 3). Returning the path unchanged is the honest read-only answer: every
+    # reader below already copes with a workspace that does not exist yet.
+    if read_only():
+        return ws
     # Checked before anything is attempted. A plain file named `.chamnan` -- a bad merge, a stray
     # download -- made the first mkdir succeed-by-exist_ok and then killed the run several lines
     # later on a NotADirectoryError from write_text, with a traceback naming config.json rather
@@ -466,7 +605,23 @@ def ensure(root=None):
         raise NotAWorkspace(
             f"{ws} exists and is not a directory. chamnan's workspace has to be a folder at that "
             f"path — move or delete the file, then run this again.")
-    for sub in ("", "skills", "tools", "logs", "sessions", "threads",
+    # 🐛 A `.chamnan` symlink pointing outside the repository is followed in silence, and everything
+    # chamnan exists to do lands somewhere git is not looking. Reproduced: the map, the memory, the
+    # session records all written to the target, while `git status` shows one untracked SYMLINK --
+    # so `git add .chamnan` commits a pointer and the content it points at is never versioned at
+    # all. The whole premise is markdown committed beside the code, so this is worth saying.
+    #
+    # Said, not refused. Someone sharing one workspace across git worktrees has a reason, and this
+    # runs on every write path -- a hard failure there would break a deliberate setup with no way to
+    # opt out. Warned once per process instead, because ensure() is called many times per run.
+    _warn_if_workspace_escapes(ws, find_root(root))
+    # 🐛 `state` was missing from this list, and it is the directory CLAUDE.md calls "what the
+    # tooling READS". `notice_due()` writes its counter there through `exclusive()`, whose lock file
+    # cannot be created when the parent does not exist — so the lock was never held, the function
+    # returned True unconditionally, and every "shown three times, then stops" tip showed forever on
+    # a freshly bootstrapped workspace. Reproduced through the plugin's own `ensure()`, five calls,
+    # five Trues (R12 agent 5).
+    for sub in ("", "skills", "tools", "logs", "sessions", "threads", "state",
                 "memory", "memory/decisions", "memory/lessons", "memory/rules"):
         try:
             (ws / sub).mkdir(parents=True, exist_ok=True)
@@ -545,6 +700,11 @@ GENERATED_NOTE = ("# chamnan: MAP.md is generated from the source on every remap
                   "# if you would rather see the diff.\n")
 
 
+# Lines appended to .chamnan/.gitattributes by the last `_mark_generated` that changed it,
+# so a caller can say it happened — same reason its sibling keeps one.
+LAST_GENERATED_RULES_ADDED = []
+
+
 def _mark_generated(root):
     """Tell git that MAP.md is a generated file, so a rebuild does not drown a pull request.
 
@@ -582,6 +742,9 @@ def _mark_generated(root):
 
     Appended, never rewritten, since a user may have put their own rules in this file too.
     """
+    if read_only():
+        return None
+    del LAST_GENERATED_RULES_ADDED[:]
     try:
         if not root or not (Path(root) / ".git").exists():
             return
@@ -589,12 +752,26 @@ def _mark_generated(root):
         if not ga.parent.is_dir():
             return
         existing = ga.read_text(encoding="utf-8", errors="replace") if ga.is_file() else ""
-        if "MAP.md linguist-generated" in existing:
+        # 🐛 The presence test was `if "MAP.md linguist-generated" in existing: return` — a single
+        # sentinel line, which is the exact trap `_mark_ignored` a few functions down was rewritten
+        # to escape and whose comment says why: a rule added to the constant afterwards reaches NEW
+        # workspaces only, and every existing one keeps whatever it had. `MAP.md -diff` was added
+        # after that sentinel and never arrived here. Measured on this repository: the committed file
+        # carries one of the two lines, so `git diff`, `git log -p`, `git blame` and every IDE have
+        # been printing a 285 KB regenerated file in full the whole time (R13 agent 4).
+        #
+        # Same answer as its sibling: compare the rules present against the rules that should be and
+        # append only what is missing. Self-maintaining however a future line is ordered.
+        have = {ln.strip() for ln in existing.splitlines()}
+        missing = [ln for ln in GENERATED_ATTR.splitlines() if ln.strip() and ln not in have]
+        if not missing:
             return
         with ga.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
-            fh.write(("\n" if existing else "") + GENERATED_NOTE + GENERATED_ATTR)
+            note = GENERATED_NOTE if not existing else ""
+            fh.write(("\n" if existing else "") + note + "\n".join(missing) + "\n")
+        LAST_GENERATED_RULES_ADDED.extend(missing)
     except OSError:
         pass          # a nicety must never break workspace creation
 
@@ -659,6 +836,8 @@ def reconcile_version(root, running):
     An upgrade is silent — it just updates the record. Only going backwards is worth interrupting
     for, because that is the one direction the user did not intend.
     """
+    if read_only():
+        return ""
     if not running:
         return ""
     path = workspace(root) / VERSION_FILE
@@ -678,6 +857,21 @@ def reconcile_version(root, running):
     # rather than quoted — the banner's job is to say a newer build touched this workspace, and
     # the exact string is not needed to say it.
     if seen and not _VERSION_SHAPE.match(seen):
+        # 🐛 ...and REPAIRED, not merely reported. This branch returned here, before the write
+        # below, so a `.version` that stopped being version-shaped stayed that way forever: every
+        # session afterwards said "an unreadable version" and none of them fixed it. Measured over
+        # five consecutive calls — the self-heal on the last line of this function was unreachable
+        # from the one state that needs it (R11b agent 3).
+        #
+        # Overwriting is the right recovery and not a loss: this file is a generated marker, not
+        # anybody's content. It is also the disinfectant — the planted-banner attack above works by
+        # PERSISTING, and a payload that is overwritten on first sight has one session to act
+        # instead of every session forever. What is given up is knowing which version was recorded,
+        # and that was already unknowable: the string could not be parsed.
+        try:
+            path.write_text(running + "\n", encoding="utf-8")
+        except OSError:
+            pass
         return "an unreadable version"
     if seen and _as_tuple(running) < _as_tuple(seen):
         return seen
@@ -700,6 +894,15 @@ def available_update(plugin_root):
 
     It reports. It never installs. Upgrading someone's tooling because they opened a session is the
     behaviour this is meant to prevent, not perform: the user is told, and decides.
+
+    "Beside the installed copy" is TWO conventions, not one, and reading only the first is how this
+    check went blind on the machine that develops it. `plugins/marketplaces/<name>/` is where a git
+    marketplace is cloned; a marketplace added from a local path is never copied there at all, and
+    lives wherever the user's disk already had it — recorded only in `known_marketplaces.json`. A
+    path install is exactly the case that most needs the notice, because `claude plugin update` will
+    not refresh it while the version string is unchanged, so the user's only signal that they are
+    behind is this line. Both conventions are read, and a stale clone left over from a source that
+    has since changed is simply one more candidate that reports nothing.
     """
     try:
         root = Path(plugin_root).resolve()
@@ -708,23 +911,124 @@ def available_update(plugin_root):
             return ""
         name = json.loads((root / ".claude-plugin" / "plugin.json")
                           .read_text(encoding="utf-8")).get("name", "")
+        best = ""
         for ancestor in root.parents:
             if ancestor.name != "plugins":
                 continue
-            for entry in sorted((ancestor / "marketplaces").iterdir()):
-                manifest = entry / ".claude-plugin" / "plugin.json"
-                if not manifest.is_file():
-                    continue
-                data = json.loads(manifest.read_text(encoding="utf-8"))
-                if name and data.get("name") != name:
-                    continue
-                offered = str(data.get("version", ""))
-                if offered and _as_tuple(offered) > _as_tuple(running):
-                    return offered
+            for entry in _marketplace_dirs(ancestor):
+                for manifest in _plugin_manifests_under(entry):
+                    try:
+                        data = json.loads(manifest.read_text(encoding="utf-8"))
+                    except (OSError, ValueError, RecursionError):
+                        continue
+                    if not isinstance(data, dict):
+                        continue
+                    if name and data.get("name") != name:
+                        continue
+                    offered = str(data.get("version", ""))
+                    if not offered or _as_tuple(offered) <= _as_tuple(running):
+                        continue
+                    # The highest on offer, not the first found. With two registered sources for the
+                    # same plugin — the usual shape of a path install that was once a git one — the
+                    # order they happen to be read in must not decide which version is reported.
+                    if not best or _as_tuple(offered) > _as_tuple(best):
+                        best = offered
             break
+        return best
     except (OSError, ValueError, TypeError, RecursionError):
         pass
     return ""
+
+
+# A marketplace registered from a local path is never copied under `plugins/marketplaces/`, so
+# listing that directory is only half the set. `known_marketplaces.json` is the other half, and it
+# is written by Claude Code rather than by anything here.
+MAX_MARKETPLACES = 64
+
+
+def _marketplace_dirs(plugins_dir):
+    """Every directory that could hold a marketplace's plugins: cloned ones and registered paths."""
+    found, seen = [], set()
+
+    def offer(path):
+        try:
+            resolved = Path(path).resolve()
+        except (OSError, ValueError, RuntimeError):
+            return
+        if resolved in seen or not resolved.is_dir():
+            return
+        seen.add(resolved)
+        found.append(resolved)
+
+    try:
+        for entry in sorted((plugins_dir / "marketplaces").iterdir()):
+            offer(entry)
+    except OSError:
+        pass
+    try:
+        known = json.loads((plugins_dir / "known_marketplaces.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        known = None
+    if isinstance(known, dict):
+        for record in list(known.values())[:MAX_MARKETPLACES]:
+            if not isinstance(record, dict):
+                continue
+            source = record.get("source")
+            for candidate in (record.get("installLocation"),
+                              source.get("path") if isinstance(source, dict) else None):
+                if isinstance(candidate, str) and candidate:
+                    offer(candidate)
+    return found[:MAX_MARKETPLACES]
+
+
+# How many plugins one marketplace may declare. A marketplace.json is a manifest, not a filesystem
+# walk — a repository holding a handful of plugins is the shape this exists for.
+MAX_PLUGINS_PER_MARKETPLACE = 32
+
+
+def _plugin_manifests_under(market):
+    """The plugin.json files a marketplace directory offers — its own, and each one it declares.
+
+    A single-plugin marketplace puts the manifest at its root, which is what chamnan does and what
+    this only ever looked for. A marketplace carrying several plugins declares each one's directory
+    in `.claude-plugin/marketplace.json` instead, and those manifests were invisible here.
+    """
+    out, seen = [], set()
+
+    def offer(path):
+        try:
+            resolved = Path(path).resolve()
+        except (OSError, ValueError, RuntimeError):
+            return
+        # Confined to the marketplace it was declared by: a `source` is a relative path inside that
+        # repository, and one climbing out of it is reading a manifest nobody offered.
+        if resolved != market and market not in resolved.parents:
+            return
+        manifest = resolved / ".claude-plugin" / "plugin.json"
+        if manifest in seen or not manifest.is_file():
+            return
+        seen.add(manifest)
+        out.append(manifest)
+
+    offer(market)
+    # A document nested past the interpreter's recursion limit raises RecursionError, not
+    # ValueError, and the suite walks every json.loads in this package asserting all three are
+    # caught — a marketplace manifest is a file on disk that this code did not write.
+    try:
+        declared = json.loads((market / ".claude-plugin" / "marketplace.json")
+                              .read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError):
+        return out
+    entries = declared.get("plugins") if isinstance(declared, dict) else None
+    if not isinstance(entries, list):
+        return out
+    for item in entries[:MAX_PLUGINS_PER_MARKETPLACE]:
+        source = item.get("source") if isinstance(item, dict) else None
+        # Only a relative path inside the marketplace. A dict source names another repository
+        # entirely, which is not on this disk and is not this function's question.
+        if isinstance(source, str) and source and not Path(source).is_absolute():
+            offer(market / source)
+    return out
 
 
 # What chamnan writes that must not be committed, and why each one is on the list.
@@ -754,8 +1058,17 @@ IGNORE_LINES = [
     "logs/nudge/",
     "logs/nudge_state.json",
     "logs/pointer_seen*.json",
-    "logs/*.lock",
     "logs/repeat_digest.json",
+    "",
+    "# chamnan: mutex files. `exclusive()` creates `<target>.lock` beside whatever it is guarding",
+    "# and unlinks it on the way out; one left behind is a crash, not a record, and is reclaimed",
+    "# after LOCK_STALE seconds. This used to read `logs/*.lock` and covered exactly the two lock",
+    "# sites somebody enumerated -- `tools/index.json.lock` (written on every Bash call) and",
+    "# `state/notices.json.lock` escaped it, and the next lock site added would have escaped it too.",
+    "# One rule for the whole workspace instead: inside `.chamnan/` a `.lock` is always chamnan's,",
+    "# and a package manager's lockfile lives outside it, where this file does not reach.",
+    "**/*.lock",
+    "*.lock",
     "",
     "# Derived, not recorded: rebuilt from git history whenever HEAD moves. Committing it would put",
     "# a 40 KB file that changes on every commit into every diff, and merge it for no reason — the",
@@ -764,8 +1077,23 @@ IGNORE_LINES = [
 ]
 
 
+# Rules appended to .chamnan/.gitignore by the last `_mark_ignored` that changed it, so a caller can
+# SAY it happened. Module-level because ensure() is several frames below whatever the user ran.
+LAST_IGNORE_RULES_ADDED = []
+
+
 def _mark_ignored(root):
-    """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation."""
+    """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation.
+
+    🐛 It appended to a file the user may be about to commit and said nothing at all — measured by
+    R11 agent 1, who ran a command and then found the working tree dirty with no idea which command
+    did it. Self-maintaining is the right behaviour (a rule added to IGNORE_LINES has to reach
+    workspaces that already exist); doing it in silence is not, because the person is left to
+    discover it from `git status` and guess.
+    """
+    if read_only():
+        return None
+    del LAST_IGNORE_RULES_ADDED[:]
     try:
         if not root or not (Path(root) / ".git").exists():
             return
@@ -773,12 +1101,35 @@ def _mark_ignored(root):
         if not gi.parent.is_dir():
             return
         existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
-        if "logs/*.jsonl" in existing:
+        # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
+        # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
+        # workspaces only, and every existing one kept leaking whatever the new rule was for. Moving
+        # the sentinel to "the last line" was the same trap one step along: today's rule was inserted
+        # mid-list and the last line did not change, so nothing appended.
+        #
+        # No sentinel. The rules actually present are compared against the rules that should be, and
+        # only the missing ones are appended -- self-maintaining, idempotent, and correct however a
+        # future rule is ordered. Comments and blanks are not rules and are only carried along when
+        # they introduce a rule that is being added.
+        have = {ln.strip() for ln in existing.splitlines()}
+        missing, pending = [], []
+        for line in IGNORE_LINES:
+            if not line.strip() or line.lstrip().startswith("#"):
+                pending.append(line)
+                continue
+            if line in have:
+                pending = []
+                continue
+            missing.extend(pending + [line])
+            pending = []
+        if not missing:
             return
         with gi.open("a", encoding="utf-8") as fh:
             if existing and not existing.endswith("\n"):
                 fh.write("\n")
-            fh.write(("\n" if existing else "") + "\n".join(IGNORE_LINES) + "\n")
+            fh.write(("\n" if existing else "") + "\n".join(missing).strip("\n") + "\n")
+        LAST_IGNORE_RULES_ADDED.extend(ln for ln in missing if ln.strip()
+                                       and not ln.lstrip().startswith("#"))
     except OSError:
         pass
 
@@ -873,6 +1224,8 @@ def atomic_write_text(dest, text, encoding="utf-8"):
     Returns True on success. Best-effort by default: a workspace on a read-only checkout must still
     let a session start, so the caller decides whether a failed write is worth reporting.
     """
+    if read_only():
+        return None
     tmp = None
     try:
         dest = pathlib.Path(dest)

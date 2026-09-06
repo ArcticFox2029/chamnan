@@ -5,7 +5,9 @@ the folding at session start, and chamnan-map, which has to tell the user what t
 separate estimate in the reporting path was wrong by 2.4x the first time it was tried — close enough
 to look plausible, far enough to make the decision on bad numbers. One implementation, called twice.
 """
+import re
 import json
+import mdblock
 import os
 import subprocess
 
@@ -181,9 +183,16 @@ def _disambiguate(path, name, top):
     return rel if "/" in rel else name
 
 
-# How deep the directory roll-up may go looking for a split that separates. Three is far enough to
-# get past src/main/java without turning a line into a path nobody can read.
+# How many SPLITS the directory roll-up may take looking for a grouping that separates. Counted in
+# splits, not path segments: a Maven tree does not branch until segment seven
+# (`src/main/java/com/company/product/moduleNN`), and the earlier reading of this constant -- "three
+# is far enough to get past src/main/java" -- stopped at `src/` with one line for 300 files, because
+# it gave up the moment the NEXT segment failed to separate. Non-branching segments are skipped, up to
+# MAX_SPINE_SEGMENTS, and only a segment that separates counts as a split.
 MAX_GROUP_DEPTH = 3
+# The longest non-branching prefix the roll-up will walk down looking for a split. Past this, a
+# tree that still has not branched is one directory deep in a way no grouping will improve.
+MAX_SPINE_SEGMENTS = 12
 # Below this, one line per top-level directory is already a fine summary and deepening is noise.
 MIN_FILES_TO_DEEPEN = 40
 # One directory holding this share of everything means the depth is too shallow to be telling
@@ -302,16 +311,25 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
 
     groups = at_depth(1)
     depth = 1
-    while depth < MAX_GROUP_DEPTH and len(paths) > MIN_FILES_TO_DEEPEN:
+    splits = 0
+    while splits < MAX_GROUP_DEPTH and len(paths) > MIN_FILES_TO_DEEPEN:
         biggest = max((len(v) for v in groups.values()), default=0)
         if biggest <= len(paths) * DOMINANT_SHARE:
             break
-        deeper = at_depth(depth + 1)
-        # Only if it actually separates. A directory of 500 files with one subdirectory splits into
-        # the same single group one level down, and taking it would spend a longer name for nothing.
+        # 🐛 Only if it actually separates -- but LOOK for the depth that does, rather than testing
+        # the very next one and giving up. `src/main/java/com/company/product/module01/...` has six
+        # segments that each yield the same single group; the old loop tried depth 2, saw one group
+        # again, and broke, leaving 60 modules as one `src/` line whose eight sample names all came
+        # from module01 -- which looked like a distinction had been made when none had. Reproduced
+        # on a 300-file Maven fixture: 1 group named out of 60.
+        look = depth + 1
+        deeper = at_depth(look)
+        while len(deeper) <= len(groups) and look < MAX_SPINE_SEGMENTS:
+            look += 1
+            deeper = at_depth(look)
         if len(deeper) <= len(groups):
-            break
-        groups, depth = deeper, depth + 1
+            break          # nothing separates within the spine limit: a longer name for nothing
+        groups, depth, splits = deeper, look, splits + 1
     if not groups:
         # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an
         # older chamnan, or -- the case that actually happened -- an index that has already been
@@ -321,6 +339,10 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         return _enforce(index, map_rel, budget) if budget else index
     folded = [f"_{len(rows)} files. Rolled up by directory to stay inside the session budget —"
               f" read `{map_rel}` for any one of them in full._", ""]
+    # Where the per-directory lines start. `folded` opens with a header and a blank, so the counts
+    # collected below align with `folded[first:]` and not with `folded` itself.
+    first = len(folded)
+    meta = []          # (group key, file count) per directory line, same order as folded[first:]
     churn = _churn(root)
     for top, entries in sorted(groups.items()):
         names = [n for _, n in entries]
@@ -364,9 +386,74 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
         # "+N more" is only meaningful next to names it is more THAN. With none shown the count
         # already says how many there are, and repeating it as "(12) +12 more" reads as a bug.
         more = f" _+{hidden} more_" if hidden and picked else ""
-        folded.append(f"- **{top}/** ({len(names)})" + (f" — {shown}{more}" if shown else ""))
+        # 🐛 as_quoted, not one_line: `one_line` folds newlines and strips control characters
+        # but leaves BACKTICKS, and this line wraps nothing in a code span itself -- a
+        # directory named ``code`` closed the span the caller opens and rendered as chamnan
+        # speaking. Verified end to end, chamnan-map -> MAP.md -> the injected block.
+        folded.append(f"- **{mdblock.as_quoted(top, 80)}/** ({len(names)})"
+                      + (f" — {shown}{more}" if shown else ""))
+        # 🐛 Carried as DATA beside the line, never re-extracted from it. The overflow fold used to
+        # regex this count back out of the markdown above, and a directory named `evil** (99999)`
+        # survives `as_quoted` — which strips backticks, not asterisks or parentheses — to be
+        # matched FIRST by that regex. The repository could dictate the figure chamnan printed in
+        # its own voice. Re-parsing your own output is the whole defect; the count never leaves
+        # Python now.
+        meta.append((top, len(names)))
     out = "\n".join(head + folded + tail)
+    if budget:
+        out = _fold_the_overflow(head, folded, first, meta, tail, map_rel, budget)
     return _enforce(out, map_rel, budget) if budget else out
+
+
+def _fold_the_overflow(head, folded, first, meta, tail, map_rel, budget):
+    """One more level of folding, for when the directory lines THEMSELVES do not fit.
+
+    🐛 Measured on 300 sibling packages -- a Lerna/Nx/Turborepo/Go-multi-module layout, and the shape
+    a package-per-service team has: `per_dir=0` named 212 of them and the other 88 were the tail
+    `_enforce` cut off. The block then said "Quick Index is cut short", which is true and useless: it
+    names no directory, gives no count, and the reader cannot tell whether three are missing or three
+    hundred. `collapse`'s own docstring promises "coarse and complete beats detailed and arbitrarily
+    half-missing", and past ~200 groups it was delivering exactly the arbitrary half.
+
+    So the overflow is folded one level UP rather than dropped: the leftover groups are gathered by
+    their parent and each parent gets a line saying how many directories and files are under it. The
+    reader learns that `packages/` holds 88 more, which is the difference between a known gap and an
+    invisible one. Nothing is silently lost, and the cost is one line per parent.
+    """
+    if tokens.estimate("\n".join(head + folded + tail)) <= budget:
+        return "\n".join(head + folded + tail)
+
+    def parent_of(top):
+        return top.rsplit("/", 1)[0] if "/" in top else ""
+
+    # 🐛 `kept` stepped by a stride under `while kept > 0`, so it walked PAST zero without ever
+    # evaluating it — and zero is the maximally folded, smallest, most useful candidate. For any
+    # budget tight enough to need full folding, this fell through to returning the raw unfolded
+    # dump: the exact failure the function exists to prevent, hidden because `_enforce` runs
+    # afterward and cuts the tail, so the block looked merely truncated rather than unfolded.
+    # The candidates are enumerated explicitly now, and the last one is 0.
+    # Down to ONE named group, never to zero. R10 agent 2 called zero "the maximally folded,
+    # smallest, most useful candidate"; driving it showed the opposite — on an index whose bulk is
+    # the sections AFTER the file rows, folding every group away hands the reader a single summary
+    # line where ten named directories would have survived `_enforce`'s tail cut. Folding is only
+    # ever an improvement while something is still named.
+    stride = max(1, len(meta) // 40)
+    for keep_n in sorted({*range(len(meta), 0, -stride), 1}, reverse=True):
+        summary = []
+        for par in dict.fromkeys(parent_of(top) for top, _ in meta[keep_n:]):
+            rows = [(top, n) for top, n in meta[keep_n:] if parent_of(top) == par]
+            where = f"`{mdblock.as_quoted(par, 60)}/`" if par else "the repository root"
+            summary.append(f"- _{len(rows)} more director{'y' if len(rows) == 1 else 'ies'} under "
+                           f"{where}, {sum(n for _, n in rows):,} files, not named here — "
+                           f"grep `{map_rel}`_")
+        candidate = "\n".join(head + folded[:first + keep_n] + summary + tail)
+        if tokens.estimate(candidate) <= budget:
+            return candidate
+    # Nothing fits even with one group named, which means the budget is being spent somewhere other
+    # than these lines. Hand back the unfolded text and let `_enforce` cut the tail, which is what it
+    # did before this function existed — folding further would only delete the part still worth
+    # having.
+    return "\n".join(head + folded + tail)
 
 
 def _enforce(out, map_rel, budget):

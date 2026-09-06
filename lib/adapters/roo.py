@@ -19,6 +19,11 @@ never has to be reasoned about.
 
 Kilo Code is a fork of Roo and reads the same tiers under its own directory name; it gets its own
 module rather than an alias, because "a fork today" is not a promise about tomorrow.
+
+**The extension was archived on 2026-05-15** (RooCodeInc/Roo-Code, `archived: true`, confirmed via
+the GitHub API 2026-09-05). Kept rather than removed: an archived extension still runs for everyone
+who has it installed, and deleting the adapter would take chamnan's block away from them to save one
+small module. Recorded here so the next vendor sweep does not spend a search rediscovering it.
 """
 
 NAME = "roo"

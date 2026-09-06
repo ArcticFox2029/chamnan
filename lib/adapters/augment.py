@@ -8,7 +8,11 @@ where the root file is shared with every other agent that reads it.
 
 NAME = "augment"
 TARGET = ".augment/rules/chamnan.md"
-CEILING = None
+# 49,512 characters, from Augment's own documentation: the limit is COMBINED across Workspace
+# Guidelines and Rules, and chamnan's rules file counts against it. It was `None`, so nothing shrank
+# toward it and nothing warned (R20 agent 1). Not a hard reject like CodeBuddy's — no evidence
+# either way on what Augment does past it, so the default soft wording stands.
+CEILING = 49_512
 
 
 def render(body):
