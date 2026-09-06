@@ -9169,6 +9169,63 @@ for _lbl, _text in (("an email in prose", "write to alice@example.com about it")
                     ("a digest-pinned image", "registry.example.com/team/app@sha256:abcd1234")):
     check(f"...and it leaves alone: {_lbl}", redact.scrub(_text) == _text)
 
+# 🐛 `mdblock.filename_safe`'s own docstring says "both slug() functions in this codebase" — there
+# are FIVE that turn free text into a filename, and three never called it: workspace.safe_tool_name,
+# memory.slug and sessions.slug. A record titled "CON" or "nul" becomes `con.md` or `nul.md`, which
+# on Windows are the console and the bit-bucket: the write does not fail, it goes to the DEVICE and
+# the record is gone, while the index records it as written. R2 agent 1 found one; walking the set
+# found the other two — which is why this asserts over every such function rather than naming one.
+import memory as memory_mod  # noqa: E402
+import sessions as sessions_mod  # noqa: E402
+import timeline as timeline_mod  # noqa: E402
+import candidates as candidates_mod  # noqa: E402
+_NAMERS = (("mdblock.filename_safe", mdblock.filename_safe),
+           ("workspace.safe_tool_name", ws.safe_tool_name),
+           ("memory.slug", memory_mod.slug),
+           ("sessions.slug", sessions_mod.slug),
+           ("timeline.slug", timeline_mod.slug),
+           ("candidates.slug", candidates_mod.slug))
+for _device in ("con", "NUL", "lpt1", "aux", "prn", "com3"):
+    _unsafe = [n for n, fn in _NAMERS
+               if str(fn(_device)).split(".", 1)[0].lower() in mdblock._WINDOWS_RESERVED]
+    if _unsafe:
+        print("      still a device name after: " + ", ".join(_unsafe))
+    check(f"NO NAME-BUILDER TURNS A TITLE INTO A WINDOWS DEVICE: {_device}", _unsafe == [])
+check("...and an ordinary title is untouched by any of them",
+      all(str(fn("normal")).replace("-", "") == "normal" for _, fn in _NAMERS))
+
+# 🐛 Path.write_text goes through TextIOWrapper, whose default translates every \n to os.linesep —
+# so on native Windows three script writers produced a SHELL SCRIPT with CRLF endings, and
+# `#!/bin/sh\r` is not a shebang any shell recognises. atomic_write_text passes newline="" for
+# exactly that reason; they never called it (R2 agent 1). Asserted on the bytes, since a text-mode
+# read would hide the very thing being checked.
+_crlf = Path(tempfile.mkdtemp(prefix="chamnan-crlf-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_crlf, capture_output=True)
+    (_crlf / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+                   cwd=_crlf, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _hook = _crlf / ".git" / "hooks" / "pre-commit"
+    check("AN INSTALLED SHELL SCRIPT CARRIES LF ENDINGS, WHATEVER PLATFORM WROTE IT",
+          _hook.is_file() and b"\r\n" not in _hook.read_bytes())
+    check("...and its shebang is the first bytes of the file, unbroken",
+          _hook.is_file() and _hook.read_bytes().startswith(b"#!/bin/sh\n"))
+finally:
+    _rmtree(_crlf, ignore_errors=True)
+# ...and routing those writers through the helper must not have changed what they write ABOUT: a
+# rename replaces the file, taking its permissions with it, and three of them chmod an executable
+# script before rewriting it to add a shebang.
+_mode = Path(tempfile.mkdtemp(prefix="chamnan-mode-"))
+try:
+    _mf = _mode / "keeps.sh"
+    _mf.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
+    _mf.chmod(0o755)
+    ws.atomic_write_text(_mf, "#!/bin/sh\necho two\n")
+    check("AN ATOMIC WRITE IS A WRITE, NOT ALSO A PERMISSIONS CHANGE",
+          _mf.stat().st_mode & 0o111 != 0)
+finally:
+    _rmtree(_mode, ignore_errors=True)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402

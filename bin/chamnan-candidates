@@ -201,7 +201,7 @@ def cmd_promote(root, ident, destination=None, name=None):
         for i, step in enumerate(sequence, 1):
             lines.append(f"echo 'TODO step {i}: '{shlex.quote(step)} >&2; exit 1"
                          f"  # replace this line")
-        dest.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        ws.atomic_write_text(dest, "\n".join(lines) + "\n")
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         tools_index.register(root, {
             "name": dest.name,
