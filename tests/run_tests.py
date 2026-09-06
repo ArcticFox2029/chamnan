@@ -8310,6 +8310,44 @@ check("...while the session line still says nothing about a check that merely co
       "could not run" not in _rh_line and "no readable file" not in _rh_line)
 _rmtree(_rh.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] Nothing ever asked whether the pre-commit hook that keeps MAP.md fresh is
+# installed. Only `chamnan-map --install-git-hook` could answer it, because the detection lived
+# inside that command as a private function — so a repository whose index goes quietly stale on
+# every commit looked exactly like one whose hook is working, and this repository turned out to be
+# the former (R14 agent 5). `_hooks_dir` moved to `workspace.git_hooks_dir` so the report asks the
+# same question the installer asks, with the same three subtleties handled: core.hooksPath,
+# worktrees, and git walking UP out of a broken `.git`.
+_gh = Path(tempfile.mkdtemp(prefix="chamnan-hookstate-")) / "r"
+_gh.mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_gh, capture_output=True)
+(_gh / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+check("A REPOSITORY WITH NO PRE-COMMIT HOOK SAYS SO", ws.git_hook_state(_gh) == "absent")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+               cwd=_gh, capture_output=True)
+check("...and one carrying chamnan's own is recognised", ws.git_hook_state(_gh) == "installed")
+# Somebody else's hook is a FACT, not a problem: chamnan's own installer refuses to touch one it
+# did not write, so reporting it as a defect would contradict the installer.
+(ws.git_hooks_dir(_gh) / "pre-commit").write_text("#!/bin/sh\necho theirs\n", encoding="utf-8")
+check("...and somebody else's is told apart from both", ws.git_hook_state(_gh) == "theirs")
+_gh_none = Path(tempfile.mkdtemp(prefix="chamnan-nogit-"))
+check("...while a directory git does not own is not asked the question at all",
+      ws.git_hook_state(_gh_none) is None)
+_rmtree(_gh_none, ignore_errors=True)
+# And the report says it where a person is looking at workspace health — silent once installed,
+# like every other signal in that section.
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_gh, capture_output=True)
+(ws.git_hooks_dir(_gh) / "pre-commit").unlink()
+_gh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_gh,
+                         capture_output=True, text=True).stdout
+check("AND THE HEALTH REPORT NAMES A MISSING HOOK, WITH THE COMMAND THAT ADDS IT",
+      "not refreshed on commit" in _gh_out and "--install-git-hook" in _gh_out)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+               cwd=_gh, capture_output=True)
+_gh_quiet = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_gh,
+                           capture_output=True, text=True).stdout
+check("...and says nothing once it is there", "not refreshed on commit" not in _gh_quiet)
+_rmtree(_gh.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
