@@ -25,6 +25,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import aging  # noqa: E402
+import environments  # noqa: E402
 import ledger  # noqa: E402
 # 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
 # neither of these two commands imported mdblock at all. Every value below is repository-
@@ -356,6 +358,35 @@ def print_inventory(root):
         print(f"  {without} of "
               f"{_agree(without, decisions_total, 'decision', 'decisions', 'has', 'have')} "
               f"no `Rejected:` — a trade-off nobody wrote down")
+
+    # 🐛 [2026-09-06] `aging.check()` was reachable from `chamnan-age` and from nowhere else, so a
+    # stored lesson naming a version no environment declares was visible in one command and
+    # invisible in the one people actually run to ask "is this workspace healthy". Every other
+    # health signal in this section is here for exactly that reason (R12 agent 5).
+    #
+    # A COUNT and a pointer, not the findings themselves: `chamnan-age` exists, prints them in
+    # full, and this section is a list of one-line signals. Duplicating its output here would make
+    # the report longer than the thing it summarises.
+    if ws.enabled("environments", root):
+        try:
+            _age_found, _age_unver, _age_refusal = aging.check(root)
+        except Exception:
+            _age_found, _age_unver, _age_refusal = [], [], None
+        # The refusal is reported as a refusal, never as an empty result -- the distinction this
+        # whole module exists to keep. A workspace with no environments.md at all is not a finding
+        # and not a refusal worth a line; it is the common case.
+        if _age_refusal and environments.path(root).is_file():
+            print(f"\n  version aging not checked — {mdblock.as_quoted(_age_refusal, 120)}")
+        elif _age_found or _age_unver:
+            if _age_found:
+                _n = len(_age_found)
+                print(f"\n  {_n} stored entr{'y' if _n == 1 else 'ies'} name"
+                      f"{'s' if _n == 1 else ''} a version no fresh environment declares")
+            if _age_unver:
+                _u = len(_age_unver)
+                print(f"  {_u} more can{'' if _u == 1 else 'not'} be checked at all — the only "
+                      f"environment declaring that version has gone cold")
+            print("    `chamnan-age` names them, with what is declared beside each claim.")
 
     # A pointer to knowledge that was never written. Same shape as a MAP.md entry naming a file that
     # is gone, and reported in the same spirit: here, where a person looks at workspace health,

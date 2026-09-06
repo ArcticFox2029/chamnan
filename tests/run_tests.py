@@ -2914,10 +2914,12 @@ inv = ledger.inventory(mem)
 inv_by_label = {label: (count, ts) for label, count, ts in inv}
 # `skills/` joined this set on 2026-09-06: it is a real store the session block lists and
 # `/chamnan:capture` writes into, and it was the one the inventory never mentioned.
+# `environments.md` joined it the same day, missed by that same fix — a store the session block
+# reads, `chamnan-env` writes, and `chamnan-age` refuses to run without (R12 agent 5).
 check("inventory counts every store, in a fixed set of labels",
       set(inv_by_label) == {"sessions/", "memory/decisions/", "memory/lessons/",
                             "memory/rules/", "milestones.md", "candidates/", "threads/",
-                            "skills/"})
+                            "skills/", "environments.md"})
 check("inventory counts the one decision", inv_by_label["memory/decisions/"][0] == 1)
 check("inventory counts the one lesson", inv_by_label["memory/lessons/"][0] == 1)
 check("A STORE THAT DOES NOT EXIST YET SHOWS 0, NOT AN ERROR", inv_by_label["candidates/"] == (0, None))
@@ -8062,6 +8064,53 @@ check("A COLLIDING DECISION FILENAME IS MARKED, NOT LISTED AS AN ORDINARY ENTRY"
 check("...and an entry with no collision is untouched",
       [t for _c, t, n in _col_rows if n == "ordinary.md"] == ["Ordinary decision"])
 _rmtree(_col.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] Two stores were reachable from one command and invisible from the one people run
+# to ask "is this workspace healthy" (R12 agent 5).
+#
+# `environments.md` was the eighth store `ledger.inventory()` never mentioned — the same gap R8
+# agent 5 closed for `skills/`, in a store that fix did not cover. It is a store by every test this
+# list applies: a write skill creates it, `chamnan-env` writes it, the session block reads it, and
+# `chamnan-age` refuses to run without it.
+#
+# And `aging.check()` was reachable from `chamnan-age` alone, so a lesson naming a version no
+# environment declares was visible in one command and invisible in the other.
+_agr = Path(tempfile.mkdtemp(prefix="chamnan-agerep-")) / "r"
+(_agr / ".git").mkdir(parents=True)
+(_agr / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_agr, capture_output=True)
+_agr_today = datetime.date.today().isoformat()
+(_agr / ".chamnan" / "environments.md").write_text(
+    f"# Environments\n\n## production\n\n**Versions:** postgres 17\n"
+    f"**Checked:** {_agr_today}\n\n## staging\n\n**Versions:** postgres 17\n"
+    f"**Checked:** {_agr_today}\n", encoding="utf-8")
+(_agr / ".chamnan" / "memory" / "lessons").mkdir(parents=True, exist_ok=True)
+(_agr / ".chamnan" / "memory" / "lessons" / "upsert.md").write_text(
+    "# Production upsert syntax\n\nProduction runs postgres 13, so use the old ON CONFLICT "
+    "form.\n", encoding="utf-8")
+_agr_inv = dict((label, count) for label, count, _ts in ledger.inventory(_agr))
+check("EVERY STORE THE WORKSPACE HAS IS IN THE INVENTORY, environments.md INCLUDED",
+      _agr_inv.get("environments.md") == 2)
+# Counted by ENTRY, like milestones.md, not by file — it is one file holding N of them.
+check("...counted by entry rather than as one file", _agr_inv.get("environments.md") != 1)
+_agr_rep = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_agr,
+                          capture_output=True, text=True).stdout
+check("AND THE HEALTH REPORT NAMES WHAT chamnan-age WOULD FIND",
+      "names a version no fresh environment declares" in _agr_rep
+      and "`chamnan-age` names them" in _agr_rep)
+# A count and a pointer, not the findings themselves: chamnan-age prints those in full, and this
+# section is a list of one-line signals.
+check("...as a count and a pointer, not by repeating chamnan-age's output",
+      "postgres 13" not in _agr_rep)
+# The half that makes it meaningful: a healthy workspace says nothing here at all.
+(_agr / ".chamnan" / "memory" / "lessons" / "upsert.md").write_text(
+    "# Production upsert syntax\n\nProduction runs postgres 17, so use the new form.\n",
+    encoding="utf-8")
+_agr_clean = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_agr,
+                            capture_output=True, text=True).stdout
+check("...and a workspace with nothing to say says nothing",
+      "names a version no fresh environment declares" not in _agr_clean)
+_rmtree(_agr.parent, ignore_errors=True)
 
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
