@@ -7289,6 +7289,36 @@ check("...and the bad value is dropped rather than kept",
 check("...while a legitimate value is still honoured",
       ws.load_config(_cfgr) is not None)
 
+# 🐛 [2026-09-06] `0` meant OPPOSITE things in two settings three lines apart in DEFAULT_CONFIG.
+# `session_retention_days: 0` disables pruning, and so do `state_stale_days` and the ledger's own
+# window — three of the four places read 0 as "keep everything". The log sweeper made `cutoff`
+# equal to NOW, so a user writing 0 to mean what the other three mean lost every log they had
+# (R8 agent 4). Three against one is an omission, not a design.
+_ret = Path(tempfile.mkdtemp()) / "r"
+(_ret / ".chamnan" / "logs").mkdir(parents=True)
+(_ret / ".chamnan" / "sessions").mkdir(parents=True)
+_ancient = _time.time() - 400 * 86400
+for _sub, _name in (("logs", "old.md"), ("sessions", "2020-01-01-x.md")):
+    _f = _ret / ".chamnan" / _sub / _name
+    _f.write_text("# x\n", encoding="utf-8")
+    _os.utime(_f, (_ancient, _ancient))
+(_ret / ".chamnan" / "config.json").write_text(
+    json.dumps({"log_retention_days": 0, "session_retention_days": 0}), encoding="utf-8")
+ws.prune_logs(_ret)
+check("ZERO MEANS KEEP EVERYTHING IN BOTH RETENTION SETTINGS, NOT ONE OF THEM",
+      (_ret / ".chamnan" / "logs" / "old.md").is_file()
+      and sessions.prune(_ret, 0) == 0
+      and (_ret / ".chamnan" / "sessions" / "2020-01-01-x.md").is_file())
+check("...and nothing is reported as about to expire either",
+      ws.expiring_logs(_ret) == [])
+# A real window must still delete, or "keep everything" would be the only behaviour there is.
+(_ret / ".chamnan" / "config.json").write_text(
+    json.dumps({"log_retention_days": 7, "session_retention_days": 7}), encoding="utf-8")
+ws.prune_logs(_ret)
+check("...while a real window still prunes both",
+      not (_ret / ".chamnan" / "logs" / "old.md").is_file() and sessions.prune(_ret, 7) == 1)
+_rmtree(_ret.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
