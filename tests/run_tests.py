@@ -5796,6 +5796,37 @@ check("the quantifier is parsed, not guessed from the glob",
 check("...and a trailer without it still parses as aggregate",
       rulecheck.parse(_present)[0][3] is False)
 
+# 🐛 [2026-09-06] `memory.py` catches two SYNTACTIC self-contradictions — a git merge marker inside
+# one file, and two filenames colliding by case — and nothing catches two cleanly written rules that
+# flatly disagree. "Always run the full suite before every commit" and "Never run the test suite
+# locally" are both injected, back to back, as equally authoritative fact (R8 agent 3).
+#
+# A general contradiction detector needs judgement a grep cannot have. This is the one shape the
+# plugin already holds the data for: same pattern, same glob, one `present` and one `absent`. They
+# cannot both hold, so one is already reported BROKEN every session — what was missing is the
+# REASON, which is the other rule, and which staring at the broken one never reveals.
+_clash_rules = [("Always keep a timeout", "**Check:** present `timeout:` in `config/*.yaml`"),
+                ("Timeouts come from the platform",
+                 "**Check:** absent `timeout:` in `config/*.yaml`"),
+                ("Unrelated", "**Check:** present `x` in `src/*.py`")]
+_clashes = rulecheck.contradictions(_clash_rules)
+check("TWO RULES DEMANDING OPPOSITE THINGS ABOUT THE SAME FILES ARE DETECTED",
+      len(_clashes) == 1 and _clashes[0][2] == "timeout:" and _clashes[0][3] == "config/*.yaml")
+check("...and both titles are named, because the reader has to pick one",
+      {_clashes[0][0], _clashes[0][1]} == {"Always keep a timeout", "Timeouts come from the platform"})
+check("...while rules about different files are not a pair",
+      rulecheck.contradictions(_clash_rules[:1] + _clash_rules[2:]) == [])
+check("...and a rule that agrees with itself is not a pair either",
+      rulecheck.contradictions([("R", "**Check:** present `x` in `src/*.py`"),
+                                ("S", "**Check:** present `x` in `src/*.py`")]) == [])
+check("...and the injected line names the pair and says the choice is not its to make",
+      "opposite things" in rulecheck.line([], _clashes)
+      and "Always keep a timeout" in rulecheck.line([], _clashes))
+check("...while silence still holds when there is nothing to say",
+      rulecheck.line([], []) == "")
+check("...and `line()` keeps working for every caller that passes no clashes at all",
+      rulecheck.line([]) == "")
+
 # "I could not check" and "this is violated" are different facts, and collapsing them turns the
 # report into noise that gets ignored.
 check("a glob matching nothing is unverifiable, not broken",

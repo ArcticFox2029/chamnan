@@ -1090,8 +1090,12 @@ def main():
                 # it says something else.
                 # Rule titles and their Check trailers are repository-authored and this line
                 # prints them outside the fence, so it gets the same scrub every section has.
+                # Read the rules ONCE: `run()` and `contradictions()` both want them, and this is
+                # the session's critical path.
+                _titled = memory.rules_with_titles(root)
                 broken = redact.scrub(
-                    rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root))))
+                    rulecheck.line(rulecheck.run(root, _titled),
+                                   rulecheck.contradictions(_titled)))
                 if broken:
                     out.append(broken)
             # Decisions and lessons are looked up when the question comes round, so they contribute a

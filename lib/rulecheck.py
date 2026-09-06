@@ -345,11 +345,46 @@ def run(root, rules):
     return out
 
 
-def line(results):
+def contradictions(rules):
+    """Pairs of rules whose Check trailers point at the same thing and demand opposite outcomes.
+
+    🐛 [2026-09-06] `memory.py` catches two SYNTACTIC self-contradictions -- a git merge marker
+    inside one file, and two filenames colliding by case -- and nothing at all catches two cleanly
+    written rules that flatly disagree. "Always run the full suite before every commit" and "Never
+    run the test suite locally" are both injected, back to back, as equally authoritative fact
+    (R8 agent 3).
+    #
+    A general contradiction detector needs judgement a grep cannot have, and is not what this is.
+    This is the one shape the plugin already holds the data for: two trailers with the same pattern
+    and the same glob, one saying `present` and the other `absent`. They cannot both hold, so one
+    of them is already reported BROKEN every session -- what was missing is the REASON, which is
+    the other rule, and which no amount of staring at the broken one reveals.
+
+    Returns [(title_a, title_b, pattern, glob)], each pair once, in a stable order.
+    """
+    seen = {}
+    for title, text in rules:
+        for mode, pattern, glob, _per_file in parse(text):
+            seen.setdefault((pattern, glob), {}).setdefault(mode, []).append(title)
+    out = []
+    for (pattern, glob), by_mode in sorted(seen.items()):
+        for a in sorted(set(by_mode.get("present", []))):
+            for b in sorted(set(by_mode.get("absent", []))):
+                # A rule that contradicts ITSELF -- both trailers in one file -- is a real mistake
+                # too, and naming it once is clearer than naming it as a pair with itself.
+                out.append((a, b, pattern, glob))
+    return out
+
+
+def line(results, clashes=()):
     """One line for the injected block. Silent when every check holds and none is unverifiable.
 
     Silence is the point. A session that reads "all rules hold" every time learns to skip the line,
     and then does not read it on the day it says something else.
+
+    `clashes` is `contradictions()`'s output. Optional and defaulting to empty so every existing
+    caller keeps working unchanged; a caller that has the rules to hand should pass it, because a
+    contradiction is the REASON behind a BROKEN line rather than a second complaint about it.
     """
     broken = [r for r in results if r[1] == "BROKEN"]
     # 🐛 A typo in a `**Check:**` trailer (wrong case, "for" instead of "in", a missing backtick)
@@ -358,7 +393,7 @@ def line(results):
     # meant to be mechanically checked." Reported here under its own line so it can't be confused
     # with either "holds" or "not meant to be checked."
     malformed_ = [r for r in results if r[1] == "malformed"]
-    if not broken and not malformed_:
+    if not broken and not malformed_ and not clashes:
         return ""
     # Rule titles and their `**Check:**` trailers are written by whoever wrote the repository, and
     # this line prints them in chamnan's own voice, outside the fence. Made inert first; the caller
@@ -376,4 +411,13 @@ def line(results):
         more = f" _(+{len(malformed_) - 3} more)_" if len(malformed_) > 3 else ""
         parts.append(f"⚠ {len(malformed_)} **Check:** trailer(s) do not parse and have never run: "
                      f"{named}{more}. Fix the syntax or the rule is not actually verified.")
+    if clashes:
+        named = "; ".join(
+            f"**{mdblock.as_quoted(a)}** vs **{mdblock.as_quoted(b)}** "
+            f"(`{mdblock.as_quoted(pattern, 40)}` in `{mdblock.as_quoted(glob, 40)}`)"
+            for a, b, pattern, glob in clashes[:3])
+        more = f" _(+{len(clashes) - 3} more)_" if len(clashes) > 3 else ""
+        parts.append(f"⚠ {len(clashes)} pair(s) of recorded rules demand opposite things about the "
+                     f"same files, so one of them cannot be met: {named}{more}. One of the pair is "
+                     f"wrong; deciding which is not something this can do for you.")
     return "\n_" + "_\n\n_".join(parts) + "_\n"
