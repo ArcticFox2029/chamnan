@@ -37,6 +37,7 @@ import ledger  # noqa: E402
 # `lib/`, `hooks/` and two bin commands by example, and these two were never in the examples
 # (R13 agent 3).
 import mdblock  # noqa: E402
+import rulecheck  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -358,6 +359,37 @@ def print_inventory(root):
         print(f"  {without} of "
               f"{_agree(without, decisions_total, 'decision', 'decisions', 'has', 'have')} "
               f"no `Rejected:` — a trade-off nobody wrote down")
+
+    # 🐛 [2026-09-06] `rulecheck.line()` is SILENT by design when every check holds — "a line that
+    # always says all good stops being read before the day it says something else" — and it reports
+    # only BROKEN, malformed and contradictions. So "unverifiable" reaches nobody at all: a glob
+    # that matches no file, a pattern the guards refuse, or a check past MAX_CHECKS looks exactly
+    # like a rule with no check trailer, which is the silent-failure class this whole module exists
+    # to close, one layer up (R12 agent 5).
+    #
+    # Here, where a person is asking about workspace health, the count that is silent in a session
+    # is the one worth saying — including how many DO hold, because that is the number that makes
+    # "3 unverifiable" mean something.
+    try:
+        _rc_titled = memory.rules_with_titles(root)
+        _rc_results = rulecheck.run(root, _rc_titled) if _rc_titled else []
+    except Exception:
+        _rc_results = []
+    if _rc_results:
+        _rc_hold = sum(1 for r in _rc_results if r[1] == "holds")
+        _rc_broken = sum(1 for r in _rc_results if r[1] == "BROKEN")
+        _rc_unver = sum(1 for r in _rc_results if r[1] == "unverifiable")
+        _rc_bad = sum(1 for r in _rc_results if r[1] == "malformed")
+        print(f"\n  {len(_rc_results)} mechanical rule check(s): {_rc_hold} hold"
+              + (f", {_rc_broken} BROKEN" if _rc_broken else "")
+              + (f", {_rc_bad} malformed" if _rc_bad else "")
+              + (f", {_rc_unver} could not run" if _rc_unver else ""))
+        if _rc_unver or _rc_bad:
+            # Named, not counted: a check that cannot run is indistinguishable from a rule nobody
+            # meant to check mechanically, and the name is what tells the two apart.
+            for _t, _st, _d in _rc_results:
+                if _st in ("unverifiable", "malformed"):
+                    print(f"    `{mdblock.as_quoted(_t, 60)}` — {mdblock.as_quoted(_d, 110)}")
 
     # 🐛 [2026-09-06] `aging.check()` was reachable from `chamnan-age` and from nowhere else, so a
     # stored lesson naming a version no environment declares was visible in one command and
