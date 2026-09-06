@@ -162,8 +162,17 @@ MODEL_WINDOWS = {
     "opus": 1_000_000,
     "sonnet": 1_000_000,
     "haiku": 200_000,
-    "gpt": 400_000,
-    "openai": 400_000,
+    # 🐛 400,000 was GPT-4.1's number and outlived it. OpenAI's own model documentation, read
+    # 2026-09-06, gives 1.05M for every current flagship — GPT-6 Astra and the three GPT-5.6
+    # builds. A round earlier raised the possibility that 400,000 was deliberately matching Codex
+    # CLI's practical cap rather than the API's window; that page states no Codex figure, and
+    # nothing in this file ever claimed it, so the guess is not what the table was recording.
+    #
+    # It changes no profile today: both numbers are over the large-window boundary. Corrected
+    # because a table of other people's numbers is either accurate or it is decoration, and the
+    # next boundary this feeds may not sit where this one does (R3 agent 1).
+    "gpt": 1_050_000,
+    "openai": 1_050_000,
     "gemini": 1_000_000,
     "kimi": 2_000_000,
     "grok": 256_000,

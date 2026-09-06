@@ -6468,9 +6468,22 @@ if _loop_made:
 # A Check trailer is a path written in repository text, and this module is the one place such a
 # path turns into an open(). `root.glob()` follows `..`, so a rule shipped in a clone read a real
 # file outside the repository and reported its match count into the session.
-_esc = _rc.run(_hz, [("evil", "r\n\n**Check:** present `localhost` in `../../../../../../etc/hosts`")])
+# 🐛 This used six `../` and `/etc/hosts`, which only escapes to a real file when the fixture
+# happens to sit three directories deep. On Linux `tempfile.mkdtemp()` gives `/tmp/xxxx/hz` and it
+# does; on macOS it gives `/var/folders/../T/xxxx/hz`, seven deep, so the path clamped to
+# `/private/var/etc/hosts` — which does not exist, so the check passed because the FILE was absent
+# rather than because containment worked. Gutting the containment guard left the suite green on
+# macOS, including macos-latest in this project's own CI matrix (R1 agent 3, by mutation).
+#
+# The target is now one level up from the fixture and really there, so the escape is real on every
+# platform and the only thing that can stop it is the guard.
+_outside = _hz.parent / "outside_the_repo.txt"
+_outside.write_text("localhost is here\n", encoding="utf-8")
+_esc = _rc.run(_hz, [("evil", f"r\n\n**Check:** present `localhost` in `../{_outside.name}`")])
 check("A CHECK GLOB CANNOT READ OUTSIDE THE REPOSITORY",
       _esc and _esc[0][1] == "unverifiable")
+check("...and the file it was aimed at really is outside, and really exists",
+      _outside.is_file() and _hz.resolve() not in _outside.resolve().parents)
 (_hz / "id_rsa").write_text("-----BEGIN RSA PRIVATE KEY-----\nx\n", encoding="utf-8")
 _blocked = _rc.run(_hz, [("k", "r\n\n**Check:** present `PRIVATE KEY` in `id_rsa`")])
 check("...and it does not open a file the redactor never opens",
@@ -9634,6 +9647,25 @@ finally:
 _flagged = "Deploy checklist " + "x" * memory_mod.MAX_TITLE_CHARS + "\U0001F1F9\U0001F1ED"
 check("A TITLE CUT FOR THE BLOCK NEVER ENDS MID-GRAPHEME",
       not mdblock.whole_graphemes(_flagged[:memory_mod.MAX_TITLE_CHARS]).endswith("\U0001F1F9"))
+
+# 🐛 The memory stamper decided "this file already has its dated trailer" by matching anywhere in
+# the file, so a rule that DOCUMENTS the convention — a fenced sample showing `**As-of:** <date>` —
+# looked stamped and was skipped permanently. chamnan's own memory files are full of examples of
+# chamnan's own conventions, so it fired hardest on the repositories using the feature most
+# (R2 agent 4).
+_sw_spec = importlib.util.spec_from_file_location(
+    "chamnan_scratch_watch_probe", ROOT / "hooks" / "chamnan_scratch_watch.py")
+_sw_mod = importlib.util.module_from_spec(_sw_spec)
+_sw_spec.loader.exec_module(_sw_mod)
+for _label, _text, _wants_stamp in (
+        ("a real trailer", "# Rule\n\nbody\n\n**As-of:** 2026-09-06\n", False),
+        ("a fenced example of one",
+         "# Rule\n\n```markdown\n**As-of:** <the date>\n```\n\nThat is the rule.\n", True),
+        ("a fenced example and nothing else",
+         "# Rule\n\n```\n**As-of:** 2026-01-01\n**Provenance:** ai-drafted\n```\n", True)):
+    _real = _sw_mod._outside_fences(_text)
+    _needs = not _sw_mod._HAS_AS_OF.search(_real)
+    check(f"AN EXAMPLE OF THE STAMP IS NOT MISTAKEN FOR THE STAMP: {_label}", _needs == _wants_stamp)
 
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
