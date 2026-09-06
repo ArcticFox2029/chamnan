@@ -749,7 +749,7 @@ chamnan-context --write cursor   set that agent up to read it
 chamnan-context --model kimi     size it for the context window the model actually has
 ```
 
-**35 agent names can be written**, from 24 adapters. Where an agent has a
+**35 agent names can be written**, from 23 adapters. Where an agent has a
 file of its own, chamnan writes that file; where several agents read the same one, they share it
 rather than each getting a copy that drifts.
 

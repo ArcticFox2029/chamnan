@@ -15,6 +15,15 @@ So each adapter is a plain module with the same four names and no inheritance be
 A new agent is a new file. Nothing here has to change for one to be added, and nothing an
 existing adapter does can be altered by adding one.
 
+**"No shared base class" is about RENDERING, and only about rendering.** Writing is the opposite:
+`safe_target` / `held_target` / `read_target` / `write_target` are one funnel every adapter goes
+through, including the four with a custom `install()` (`generic`, `gemini`, `hermes`, `zed`).
+That funnel is what closed the symlink-escape and silent-write-failure classes, and `safe_target`'s
+own docstring says why it had to be central -- it was the ninth time a guard had been added to some
+members of a set and forgotten in the others. So: no shared render logic, one shared write funnel.
+Read as a blanket principle, the paragraph above would point a new adapter at hand-rolling its own
+`install()`, which is exactly the mistake the funnel exists to make impossible.
+
 **What every adapter writes is generated and per-developer, and none of it should be committed.**
 Two people on one repository may use two different agents, and neither wants the other's context
 file in their tree. `install()` adds the target to `.chamnan/.gitignore` rather than assuming.
