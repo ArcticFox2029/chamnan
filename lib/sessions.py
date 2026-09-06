@@ -329,7 +329,13 @@ def carry_forward(root):
 
     when = newest.group(1) if newest else found[0].stem
     if len(carried) == 1:
-        head = f"_Last session ({when}) — {carried[0][0]}_"
+        # 🐛 The title went in raw HERE and through `one_line` in the branch below -- the same
+        # value, two lines apart, guarded on one path and not the other. A record whose `# Title`
+        # carried an ESC/OSC terminal-title sequence and a bidi override reached the injected
+        # block byte-for-byte, and only when the repository had exactly ONE unfinished record,
+        # which is the common case. The suite never saw it because the hostile fixture's record
+        # was dated old enough for retention to delete it before the hook read anything.
+        head = f"_Last session ({when}) — {mdblock.one_line(carried[0][0])}_"
         body = carried[0][1]
     else:
         head = f"_Last session ({when}) — {len(carried)} records, all unfinished_"
@@ -364,7 +370,9 @@ def prune(root, days):
         return 0
     cutoff = time.time() - days * 86400
     removed = 0
-    for path in d.glob("*.md"):
+    candidates = [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)]
+    doomed = []
+    for path in candidates:
         try:
             if not path.is_file():
                 continue
@@ -389,11 +397,17 @@ def prune(root, days):
                     age = None      # an impossible date is not a date; fall back to mtime
             if age is not None:
                 if age > days * 86400:
-                    path.unlink()
-                    removed += 1
+                    doomed.append(path)
             elif path.stat().st_mtime < cutoff:
-                path.unlink()
-                removed += 1
+                doomed.append(path)
+        except OSError:
+            continue
+    # See workspace.keep_the_newest: a pass that would take EVERY record is a clock fault, not
+    # retention, and a session record is committed work rather than cache.
+    for path in ws.keep_the_newest(candidates, doomed):
+        try:
+            path.unlink()
+            removed += 1
         except OSError:
             continue
     return removed

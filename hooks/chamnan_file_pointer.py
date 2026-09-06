@@ -117,9 +117,14 @@ def main():
     #
     # Scrubbed here rather than in `pointer.render`, because this is the one place the text leaves
     # the process, and it also covers the `coedit.line` tail appended above it.
+    # 🐛 `scrub` removes credentials and has never removed CONTROL characters. `json.dumps`
+    # escapes them, so the raw-stdout sweep that guards every other reader sees nothing --
+    # and the harness decodes them straight back into the model's context. See
+    # `redact.for_a_terminal`.
     import redact  # deferred; see the import block
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "additionalContext": redact.scrub(block)}}))
+        "hookEventName": "PreToolUse",
+        "additionalContext": redact.for_a_terminal(redact.scrub(block))}}))
     return 0
 
 

@@ -43,6 +43,14 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 import mdblock  # noqa: E402
 import memory  # noqa: E402
 import redact  # noqa: E402
+
+# 🐛 Every `bin/` command shadows `print` with `redact.emit`; no hook did, and the hooks emit more
+# repository text than any of them. The credential half is deliberately NOT repeated here -- each
+# section is scrubbed at the point it is read, ahead of the token cut, so a second pass over the
+# assembled block would buy nothing. The control-character half had no default at all, and one
+# missing `one_line` in `sessions.carry_forward` put an ESC/OSC sequence and a bidi override into
+# the injected block. See `redact.emit_prescrubbed`.
+print = redact.emit_prescrubbed  # noqa: A001
 import workspace as ws  # noqa: E402
 
 # A hard cap, and small on purpose: this is paid once per subagent, and a session spawns many.
