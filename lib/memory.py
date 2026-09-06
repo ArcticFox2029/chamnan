@@ -364,8 +364,23 @@ def titles(root):
     """
     found = []
     for category in ("decisions", "lessons"):
-        for path in entries(root, category):
-            found.append((category, title_of(path), path.name))
+        paths = entries(root, category)
+        # 🐛 [2026-09-06] `case_collisions` was wired into `rules_text` and nowhere else. Decisions
+        # and lessons are the same mechanism -- one file per entry, named from its title -- and got
+        # no collision detection at all (R12 agent 1). The consequence is quieter than a rule's and
+        # not smaller: a colliding pair leaves ONE file on APFS or NTFS holding the SECOND entry's
+        # body under the FIRST entry's name, so this listing tells a reader a decision exists, they
+        # open it, and they get a different one. Marked rather than dropped, for the reason the
+        # rules branch already gives: an entry that vanishes is indistinguishable from one nobody
+        # wrote.
+        collided = {q for g in case_collisions(paths) for q in g}
+        for path in paths:
+            title = title_of(path)
+            if path in collided:
+                title = ("⚠ " + title + " — this filename collides with another in the same store, "
+                         "differing only by case or Unicode form; one of the two files may hold the "
+                         "other's body. Read them before trusting either.")
+            found.append((category, title, path.name))
     return found
 
 

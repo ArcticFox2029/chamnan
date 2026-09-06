@@ -558,10 +558,27 @@ def prune_logs(root=None):
             # entry was last added or removed. A directory whose every file is past the window is
             # finished work, and one holding nothing at all is a leftover -- neither is history the
             # record-level rules are keeping on purpose.
+            #
+            # 🐛 [2026-09-06] This built the WHOLE list and stat'd every file in it to compute a max
+            # it only ever compares against one number. A 409 MB, 6,870-file scratch directory that
+            # an earlier research round left here cost 120 ms of EVERY SessionStart firing on this
+            # repository -- 34% of the hook's 349 ms -- and the directory was fresh, so the walk
+            # could have stopped on its first file (R12 agent 1). Third occurrence of this shape:
+            # the two above it are named in this same function's comments.
+            #
+            # One fresh file is the whole answer, so the loop stops at it. A directory being written
+            # to right now has one immediately; a directory that is genuinely finished is walked in
+            # full exactly once and then deleted.
             if path.is_dir() and not path.is_symlink():
-                inside = [f for f in path.rglob("*") if f.is_file()]
-                newest = max((f.stat().st_mtime for f in inside), default=0)
-                if newest < cutoff:
+                fresh = False
+                for f in path.rglob("*"):
+                    if not f.is_file():
+                        continue
+                    mt = _mtime_or_none(f)
+                    if mt is not None and mt >= cutoff:
+                        fresh = True
+                        break
+                if not fresh:
                     _rmtree_quietly(path)
                     removed += 1
         except OSError:
