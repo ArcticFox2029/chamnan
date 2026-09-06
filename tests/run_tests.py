@@ -9325,6 +9325,68 @@ try:
 finally:
     _rmtree(_sap, ignore_errors=True)
 
+# 🐛 `write_target` returns True on success — its own docstring says so — and not one of its seven
+# call sites looked. A target the user had made read-only was left untouched while every adapter
+# reported success and `chamnan-context --write` printed `-> <path>` and exited 0: same inode, same
+# bytes, a stale file the user now believes is current (R3 agent 4).
+#
+# 🐛 And `_looks_generated`'s structural fallback destroyed a person's own file for the third time
+# in the same direction. "Only heading is `## chamnan`" is exactly the shape of an ordinary note
+# written ABOUT chamnan — the natural heading for one. The MARKER would settle it but only shipped
+# in 1.20.0, so requiring it would refuse to update a file written by 1.17-1.19. What every
+# generated block has and a person's note does not is its first line under the heading: chamnan's
+# own voice, an italic aside or a `###` section. A note someone typed opens with prose.
+_aw = Path(tempfile.mkdtemp(prefix="chamnan-adapterwrite-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_aw, capture_output=True)
+    (_aw / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_aw, capture_output=True)
+    # Every adapter must still recognise its OWN previous output, or an upgrade stops updating.
+    _cannot_update = []
+    for _agent in sorted(adapters_mod.ADAPTERS):
+        if subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"), "--write", _agent],
+                          cwd=_aw, capture_output=True).returncode != 0:
+            continue
+        if subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"), "--write", _agent],
+                          cwd=_aw, capture_output=True).returncode != 0:
+            _cannot_update.append(_agent)
+    if _cannot_update:
+        print("      could not rewrite their own output: " + ", ".join(_cannot_update))
+    check("EVERY ADAPTER STILL RECOGNISES ITS OWN PREVIOUS OUTPUT", _cannot_update == [])
+
+    # ...and a file a person wrote is never replaced, whatever heading they chose.
+    for _label, _text in (
+            ("only heading is ## chamnan", "## chamnan\n\nMy own notes on how we use chamnan.\n"),
+            ("with frontmatter", "---\ntitle: notes\n---\n\n## chamnan\n\nMy own notes.\n"),
+            ("two headings", "## chamnan\n\nmine\n\n## deploy\n\nalso mine\n")):
+        check(f"A FILE A PERSON WROTE IS NOT MISTAKEN FOR CHAMNAN'S OUTPUT: {_label}",
+              not adapters_mod._looks_generated(_text))
+    check("...while a pre-1.20 generated file, which carries no marker, still is",
+          adapters_mod._looks_generated(
+              "## chamnan\n_chamnan · 2 records · last write today_\n\n### Rules\nsomething\n"))
+
+    # A target the user made read-only: refused, and SAID so rather than reporting success.
+    _t = _aw / "AGENTS.md"
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"), "--write", "generic"],
+                   cwd=_aw, capture_output=True)
+    if _t.is_file():
+        _before = _t.read_bytes()
+        os.chmod(_t, 0o444)
+        try:
+            (_aw / "b.py").write_text("def g():\n    return 2\n", encoding="utf-8")
+            subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_aw,
+                           capture_output=True)
+            _rw = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"),
+                                  "--write", "generic"], cwd=_aw, capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace")
+            _changed = _t.read_bytes() != _before
+            check("A WRITE THAT DID NOT HAPPEN IS NOT REPORTED AS SUCCESS",
+                  _changed or _rw.returncode != 0)
+        finally:
+            os.chmod(_t, 0o644)
+finally:
+    _rmtree(_aw, ignore_errors=True)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
