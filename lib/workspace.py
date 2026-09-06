@@ -1178,7 +1178,13 @@ def safe_tool_name(name):
     # that is really a flag is a mistake being recorded, not a choice being made.
     if name.startswith("-"):
         return None
-    return name
+    # 🐛 `mdblock.filename_safe` exists because a tool named "con" or "nul" becomes `con.sh` or
+    # `nul.sh`, which on Windows are the console and the bit-bucket: the write does not fail, it
+    # goes to the DEVICE and the tool is gone, while `tools/index.json` records it as promoted.
+    # Its docstring says "both slug() functions in this codebase" — there are five, and this was
+    # one of the three that never called it (R2 agent 1).
+    import mdblock
+    return mdblock.filename_safe(name)
 
 
 # A mutex built from os.open(O_CREAT|O_EXCL), which is atomic on POSIX and on Windows alike, so it
@@ -1272,6 +1278,17 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # own line endings; nothing here wants the platform's opinion.
         with tmp.open("w", encoding=encoding, newline="") as fh:
             fh.write(text)
+        # 🐛 A rename REPLACES the file, so the destination's permissions go with it — and three of
+        # the callers here write executable scripts, chmod them, then rewrite them to add a
+        # shebang. Routing those through this function silently un-executabled every promoted tool
+        # (caught immediately by an existing test, which is the only reason this is a note rather
+        # than a shipped defect). The mode is carried over so an atomic write is a write, not also
+        # a permissions change.
+        try:
+            if dest.exists():
+                os.chmod(tmp, os.stat(dest).st_mode & 0o7777)
+        except OSError:
+            pass
         _replace_with_retry(tmp, dest)
         return True
     except Exception:

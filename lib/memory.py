@@ -391,8 +391,13 @@ def counts(root):
 
 
 def slug(title):
+    # 🐛 `mdblock.filename_safe` exists because a record titled "CON" or "nul" becomes
+    # `con.md` or `nul.md`, which on Windows are the console and the bit-bucket: the write
+    # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
+    # "both slug() functions in this codebase" — there are five, and three never called it
+    # (R2 agent 1 found one; the set walk found the other two).
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return (s[:50].rstrip("-") or "entry")
+    return mdblock.filename_safe(s[:50].rstrip("-") or "entry")
 
 
 def filename(title):

@@ -337,8 +337,13 @@ def prune(root, days):
 def slug(title):
     """A filename fragment from a title. ASCII-only and short, because these names are read in a
     directory listing and in git diffs."""
+    # 🐛 `mdblock.filename_safe` exists because a record titled "CON" or "nul" becomes
+    # `con.md` or `nul.md`, which on Windows are the console and the bit-bucket: the write
+    # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
+    # "both slug() functions in this codebase" — there are five, and three never called it
+    # (R2 agent 1 found one; the set walk found the other two).
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return (s[:40].rstrip("-") or "session")
+    return mdblock.filename_safe(s[:40].rstrip("-") or "session")
 
 
 def filename(date, title):
