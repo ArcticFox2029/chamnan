@@ -197,9 +197,13 @@ def read(log_path):
     out = []
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
-            out.append(json.loads(line))
+            entry = json.loads(line)
         except (json.JSONDecodeError, RecursionError):
             continue
+        # A line holding `[]` or `42` is valid JSON and every caller here calls .get on it. Skipped
+        # like a malformed line, which is what it is for this log's purposes (R4 agent 1).
+        if isinstance(entry, dict):
+            out.append(entry)
     return out
 
 

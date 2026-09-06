@@ -300,7 +300,16 @@ def already_pointed(wsdir, session_id, rel_path):
         d = json.loads(_seen_path(wsdir, session_id).read_text(encoding="utf-8"))
     except Exception:
         return False
-    return rel_path in (d.get("paths") or [])
+    # 🐛 A freshly parsed JSON value was used as a dict with no check that it was one. A file
+    # holding `[]`, `42` or `null` is valid JSON, so it parsed, and `.get` then raised
+    # AttributeError. coedit.py and chamnan_scratch_watch.py guard the identical shape with a
+    # comment naming this exact bug; these siblings did not (R4 agent 1).
+    if not isinstance(d, dict):
+        return False
+    paths = d.get("paths")
+    # `{"paths": 7}` is a dict AND valid JSON, so the shape check above passes and `in` then raises
+    # TypeError. The value's own shape has to be checked too, not just its container's.
+    return rel_path in paths if isinstance(paths, list) else False
 
 
 def mark_pointed(wsdir, session_id, rel_path):
@@ -308,6 +317,8 @@ def mark_pointed(wsdir, session_id, rel_path):
     try:
         d = json.loads(p.read_text(encoding="utf-8"))
     except Exception:
+        d = {"session": str(session_id), "paths": []}
+    if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):
         d = {"session": str(session_id), "paths": []}
     if rel_path in d.get("paths", []):
         return

@@ -359,7 +359,11 @@ def render_titles(found):
         return ""
 
     def _cap(title):
-        return title if len(title) <= MAX_TITLE_CHARS else title[:MAX_TITLE_CHARS].rstrip() + "…"
+        # whole_graphemes, as every other cutter in this codebase: a title ending in a flag emoji
+        # cut mid-cluster left one regional indicator behind, rendering as a stray letter box in
+        # the injected block (R4 agent 1).
+        return (title if len(title) <= MAX_TITLE_CHARS
+                else mdblock.whole_graphemes(title[:MAX_TITLE_CHARS]).rstrip() + "…")
 
     # 🐛 The cap was applied to the concatenation, which is in category-then-filename order — so a
     # repository with ten decisions and two lessons sent NO LESSON to the session at all, under a
