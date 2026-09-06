@@ -8,11 +8,11 @@ to look plausible, far enough to make the decision on bad numbers. One implement
 import re
 import json
 import mdblock
-import os
 import subprocess
 from pathlib import Path
 
 import tokens
+import workspace as ws
 
 # Below this, the history is too thin to rank with. Measured elsewhere: commit-history memory
 # degrades localization by 13.1pp on repos with sparse history (arXiv:2510.01003), so a young repo
@@ -77,6 +77,11 @@ def _head(root):
     from_disk = _head_from_disk(root)
     if from_disk:
         return from_disk
+    if not ws.git_owns(root):
+        # A directory holding a `.git` git itself refuses is not a repository to git: the call
+        # below would walk up and return an ANCESTOR's HEAD, which then gets stamped into MAP.md
+        # as the commit this index was built from (R6 acc3, first ten minutes).
+        return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
@@ -145,6 +150,9 @@ def _churn(root, window=CHURN_WINDOW):
         cached = _read_disk_cache(disk, head)
         if cached is not None:
             return _CHURN_CACHE.setdefault(key, cached)
+    if not ws.git_owns(root):
+        # See git_owns: an ancestor's churn would rank THIS repository's files.
+        return _CHURN_CACHE.setdefault(key, {})
     try:
         out = subprocess.run(
             # --name-status -M, not --name-only. Without rename detection a file that has been
@@ -251,6 +259,17 @@ MIN_FILES_TO_DEEPEN = 40
 DOMINANT_SHARE = 0.45
 
 
+def _is_a_directory_heading(line):
+    """A bare `**`path/`**` line -- a Quick Index directory heading and nothing else.
+
+    Matched on the whole stripped line rather than a prefix, so a sentence that merely begins with a
+    bolded path is not mistaken for a heading and deleted.
+    """
+    stripped = line.strip()
+    return (stripped.startswith("**`") and stripped.endswith("`**")
+            and stripped.count("**") == 2)
+
+
 def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     """Fold a too-large index down to one line per directory instead of cutting its tail off.
 
@@ -312,6 +331,31 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     rows = [lines[i] for i in row_at]
     head = lines[:row_at[0]] if row_at else lines
     tail = lines[row_at[-1] + 1:] if row_at else []
+    # 🐛 [2026-09-06] The last line of `head` is the directory heading the FIRST row happened to sit
+    # under in the un-rolled index, and everything below is about to be regrouped -- so that heading
+    # is left standing over a list it does not describe. On this repository's real block, at the
+    # production default budget, `**`.chamnan/tests/`**` headed twenty directories from six
+    # different trees. It is a false claim in the one section three rounds have called the reason
+    # the block is a pointer rather than content, and it is in every session's context.
+    #
+    # Recorded as a low-budget artefact in the backlog ("orphaned-heading artefact at the cliff",
+    # 350-500 tokens) and independently reproduced there by R3 agent 3, which concluded the cliff
+    # was unreachable in practice. Both were right about the cliff and wrong about the scope: the
+    # heading is dropped only when the whole SECTION goes, so the cliff is where the symptom
+    # disappears, not where it starts. Gated on folding actually happening, not on the budget
+    # (R7 agent 1).
+    # Trailing blanks first: whether a blank line separates the heading from the first row is a
+    # detail of how MAP.md was rendered, not of whether the heading is orphaned. Checking `head[-1]`
+    # before stripping them made the fix work on the real index (no blank there) and silently do
+    # nothing on a fixture that had one -- which is the shape of a guard that only looks where it
+    # expects the problem, and this file has paid for that twice already.
+    if row_at:
+        while head and not head[-1].strip():
+            head = head[:-1]
+        if head and _is_a_directory_heading(head[-1]):
+            head = head[:-1]
+            while head and not head[-1].strip():
+                head = head[:-1]
     # Grouped at whatever depth actually separates this repository, not always at depth 1. Most
     # repositories keep their source under one directory -- src/, app/, lib/ -- and grouping by the
     # first segment then yields ONE line reading `src/ (528)`, which is a roll-up in shape only: it

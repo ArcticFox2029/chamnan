@@ -25,6 +25,7 @@ import impact  # for is_test — see the guard in the file loops below
 import redact
 import tokens
 import tree
+import workspace as ws
 
 # PROTOTYPE (R8 agent A, .../scratchpad/R8A_work/R8_agentA.md): count caps and mdblock.as_quoted's
 # per-entry length cap bound quantity and size separately, and nothing bounds their product — 32-60
@@ -579,12 +580,18 @@ def render_routes(routes):
 # .git/info/exclude. Ask it, and fall back to reading the files only when it cannot answer.
 def _is_ignored(root, path):
     """Is `path` ignored by git? Authoritative when git can answer, best-effort when it cannot."""
+    # 🐛 [2026-09-06] Guarded, not merely tried: a directory holding a `.git` that git itself
+    # refuses is not a repository to git, so this call walked UP and let an ANCESTOR's .gitignore
+    # decide this repository's answer -- a path ignored there reported ignored here. Falls through
+    # to the file walk below rather than answering False, which is the documented degrade path and
+    # the right one when git cannot speak for this directory (R6 acc3, first ten minutes).
     try:
-        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=10)
-        if r.returncode in (0, 1):
-            return r.returncode == 0
+        if ws.git_owns(root):
+            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=10)
+            if r.returncode in (0, 1):
+                return r.returncode == 0
     except (OSError, subprocess.SubprocessError):
         pass
     # No git, or not a repository. Walk the .gitignore files from the file's own directory upward,

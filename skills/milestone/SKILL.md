@@ -1,5 +1,6 @@
 ---
 description: Record a change that reshaped the repository — what moved, why it was worth doing, and which areas it touched. Use after a migration, a rewrite, or a decision that changed how part of the system works.
+disable-model-invocation: true
 ---
 
 # Record a milestone

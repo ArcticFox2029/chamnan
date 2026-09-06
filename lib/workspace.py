@@ -1475,3 +1475,69 @@ def _config_problem(path):
                       int: "number", float: "number", type(None): "null"}
         return f"is a JSON {_JSON_NAME.get(type(parsed), 'value')}, not an object"
     return ""
+
+
+# ---------------------------------------------------------------------------------------------
+# 🐛 [2026-09-06] chamnan decides what its root is by looking for a `.git`, `.hg` or `.svn` entry.
+# Real git decides differently: a `.git` that is an empty directory, or a directory copied without
+# its contents, or an interrupted `git init`, is not a repository to git — so `git -C <that dir>`
+# does not fail. It WALKS UP and answers about the nearest real repository above it.
+#
+# Twelve call sites shelled out to `git -C root ...` on that assumption and every one of them was
+# reporting somebody else's repository (R6 acc3, first ten minutes). Reproduced: in a directory
+# holding one file and an empty `.git/`, nested inside a real repository, the session-start block
+# said "10 uncommitted file(s)" and named a branch — the ANCESTOR's status; `chamnan-map` stamped
+# `Built from <sha>` into MAP.md with the ancestor's HEAD; and `--install-git-hook` resolved
+# `rev-parse --git-path hooks` to `../../../.git/hooks`, joined it onto root, and wrote a real
+# executable pre-commit hook into the unrelated ancestor repository, printing success.
+#
+# So the question every one of those sites has to ask first is not "does a .git exist" — which is
+# chamnan's own root rule and stays as it is, because a workspace inside a half-made repository is
+# still that directory's workspace — but "does GIT agree this directory is the repository". Asked
+# once per root and cached: a subprocess per call site would be twelve of them at session start.
+_GIT_OWNS = {}
+
+
+def git_owns(root):
+    """True when git itself resolves `root` AS the repository, not as a directory inside one.
+
+    CALLERS MUST CHECK THE RESULT: every `git -C <root>` in this package is only meaningful when
+    this is True. False means either "not a repository at all" or, far worse, "a repository, but a
+    different one further up" — and those two are indistinguishable from a return code.
+
+    True for an ordinary checkout, a linked worktree and a submodule (git's own `--show-toplevel`
+    is the working tree's root in all three), and for a bare repository, which has no working tree
+    and answers with its own directory instead. False for anything that merely sits inside one.
+    """
+    key = str(Path(root).resolve())
+    if key in _GIT_OWNS:
+        return _GIT_OWNS[key]
+    answer = False
+    try:
+        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            answer = Path(out.stdout.strip()).resolve() == Path(root).resolve()
+        else:
+            # No working tree: a bare repository is still "this directory IS the repository", and
+            # refusing one here would take the specific bare-repo refusals with it.
+            bare = _subprocess().run(
+                ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+            if bare.returncode == 0 and bare.stdout.strip():
+                answer = Path(bare.stdout.strip()).resolve() == Path(root).resolve()
+    except (OSError, ValueError) as exc:  # git missing, or an unresolvable path
+        del exc
+        answer = False
+    except Exception:                     # noqa: BLE001 — subprocess timeouts and friends
+        answer = False
+    _GIT_OWNS[key] = answer
+    return answer
+
+
+def _subprocess():
+    """Imported here rather than at module scope: `workspace` is the module every other one loads,
+    and it has stayed free of anything that runs a process at import time."""
+    import subprocess
+    return subprocess

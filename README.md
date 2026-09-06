@@ -448,7 +448,7 @@ Everything lives in one directory at the repository root, and nothing outside it
 │   └── rules/      standing constraints — injected every session
 ├── skills/         procedures you chose to keep     (starts empty)
 ├── tools/          scratch scripts you kept         (starts empty)
-├── candidates/     detected sequences, awaiting review (starts empty, and stays empty on every real log measured — see `chamnan-candidates`)
+├── candidates/     detected sequences, awaiting review (starts empty; see `chamnan-candidates`)
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 

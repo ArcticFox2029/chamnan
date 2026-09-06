@@ -90,12 +90,27 @@ def _read_bounded(path, ceiling):
 # the sentence stays a single planned read, not five. Checked against skills/ at runtime (see
 # write_skills_line) so a skill that is removed silently stops being named, rather than the line
 # going stale.
+#
+# 🐛 [2026-09-06] "Nothing writes here unless you ask" is a promise about INVOCATION, and none of
+# these skills was keeping it. A SKILL.md with no `disable-model-invocation` takes the platform's
+# documented default of `false`, which means Claude Code may load and run the skill on its own from
+# a description match -- so chamnan printed a guarantee in every session that its own frontmatter
+# contradicted (R1 acc3, platform drift). All five record-writing skills now set it to true; the
+# index-building ones (bootstrap, remap) deliberately do not, because a regenerable index is not a
+# record and CLAUDE.md asks for it to be rebuilt without being told. `SELF_INVOKED_SKILLS` is the
+# set-wide form: a new write skill added without the field fails the suite rather than quietly
+# widening what runs unasked.
 WRITE_SKILLS = (
     ("resume", "session record"),
     ("remember", "decision, lesson, or rule"),
     ("milestone", None),
     ("capture", "a procedure worth keeping"),
 )
+
+# Every skill that writes a durable record or tool into the workspace, which is what the promise
+# above covers. `promote` is here and not in WRITE_SKILLS because it writes a tool rather than a
+# record -- the sentence does not name it, the guarantee still has to hold for it.
+SELF_INVOKED_SKILLS = frozenset(name for name, _ in WRITE_SKILLS) | {"promote"}
 
 
 def write_skills_line(plugin_root):
@@ -384,6 +399,12 @@ def _map_is_current_by_git(root, map_path):
     Anything unconfirmable -- no git, no stamp, an unknown stamp, a real source change -- returns
     False, and the mtime path decides exactly as it did before this existed.
     """
+    if not ws.git_owns(root):
+        # See workspace.git_owns. Without this the diff below runs against an ANCESTOR repository,
+        # where the stamped sha is either unknown (128, read as "no git") or -- worse -- a real
+        # commit of somebody else's history, and the map is then declared current or stale on
+        # evidence from a repository this index does not describe (R6 acc3, first ten minutes).
+        return False
     try:
         head_text = map_path.read_text(encoding="utf-8", errors="replace")[:600]
         m = _BUILT_FROM.search(head_text)

@@ -136,7 +136,17 @@ def _hooks_dir(root):
 
     `git rev-parse --git-path hooks` resolves both, and returns the shared hooks directory for a
     worktree, which is where hooks actually live.
+
+    🐛 [2026-09-06] And it resolves something else if nobody checks first. In a directory holding a
+    `.git` git itself refuses -- an interrupted `git init`, a `.git` copied without its contents --
+    git walks UP, and this call returned the ANCESTOR repository's hooks path as a RELATIVE string,
+    `../../../.git/hooks`. Line below joins a relative answer onto `root`, so it resolved straight
+    into an unrelated real repository, and `--install-git-hook` wrote a live executable pre-commit
+    hook there and printed success. The only clue was a path four `../` deep in the success line
+    (R6 acc3, first ten minutes). `git_owns` is the question that had to be asked first.
     """
+    if not ws.git_owns(root):
+        return None
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
@@ -187,7 +197,13 @@ def _show(path, root):
 
 
 def _is_bare(root):
-    """True when this repository has no working tree, so a pre-commit hook could never fire."""
+    """True when this repository has no working tree, so a pre-commit hook could never fire.
+
+    Guarded the same way as `_hooks_dir`: without it, a directory git does not recognise reports
+    the ANCESTOR repository's bareness, and this refusal would be made on somebody else's repo.
+    """
+    if not ws.git_owns(root):
+        return False
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-bare-repository"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",

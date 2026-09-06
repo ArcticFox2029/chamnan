@@ -20,11 +20,9 @@ says so instead of guessing.
 import binascii
 import codecs
 import csv
-import io
 import json
 import re
 import struct
-import sys
 import zipfile
 from collections import Counter
 from pathlib import Path
