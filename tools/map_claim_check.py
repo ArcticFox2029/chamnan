@@ -208,7 +208,11 @@ def main():
             print(f"\n  {kind} — {c - k} false claim(s), first {len(bad)}:")
             for b in bad[: (40 if verbose else 8)]:
                 print(f"    {b}")
-    return 0
+    # 🐛 [2026-09-06] This returned 0 whatever it found, so it could not gate anything -- which is
+    # half of why "nothing runs this file" was true for three days while its own parser was broken.
+    # A checker that cannot fail is a report nobody is obliged to read. `chamnan-map --verify` is
+    # the other half: it is now reachable by name instead of only by knowing the path (R17 agent 5).
+    return 0 if ok == tot else 1
 
 
 if __name__ == "__main__":

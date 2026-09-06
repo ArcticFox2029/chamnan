@@ -8627,6 +8627,37 @@ for _nine in ("((a|a))+c", "(?:(a|a))*c", "((a|)){18}c", "((?:a|a))+c", "(?:(?:a
 for _plain in (r"^((foo|bar))$", r"(?:(\d{4}))-\d{2}", r"((a))", r"(?:(GET|POST))"):
     check(f"...while an ordinary nested group is untouched: {_plain}", not _fz_refuse(_plain))
 
+# 🐛 [2026-09-06] `tools/map_claim_check.py` checks every mechanical claim in MAP.md against the
+# tree — a path exists, a line count matches, a named function is still defined there — and its own
+# comment says why nobody knew it was broken for three days: "nothing runs this file". It was
+# reachable only by knowing its path, and it returned 0 whatever it found, so it could gate nothing
+# either (R17 agent 5). Both halves are closed: `chamnan-map --verify`, and an exit code.
+_vf = Path(tempfile.mkdtemp(prefix="chamnan-verify-")) / "r"
+(_vf / "src").mkdir(parents=True)
+(_vf / ".git").mkdir(parents=True)
+(_vf / "src" / "a.py").write_text(
+    '"""Does a thing."""\ndef alpha():\n    return 1\n\n\ndef beta():\n    return 2\n',
+    encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_vf, capture_output=True)
+_vf_fresh = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--verify"],
+                           cwd=_vf, capture_output=True, text=True)
+check("A FRESH INDEX VERIFIES CLEAN, AND SAYS SO WITH AN EXIT CODE",
+      _vf_fresh.returncode == 0 and "100.0%" in _vf_fresh.stdout)
+# The half that makes it a gate: a map that has drifted has to FAIL, not merely print a number.
+(_vf / "src" / "a.py").write_text(
+    '"""Does a thing."""\ndef alpha():\n    return 1\n', encoding="utf-8")
+_vf_stale = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--verify"],
+                           cwd=_vf, capture_output=True, text=True)
+check("...while an index the tree has moved past exits non-zero",
+      _vf_stale.returncode == 1 and "false claim(s)" in _vf_stale.stdout)
+check("...and names the claim that is no longer true",
+      "beta" in _vf_stale.stdout or "a.py" in _vf_stale.stdout)
+# Discoverable, like every other flag: --help derives its list from KNOWN_FLAGS.
+_vf_help = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--help"],
+                          cwd=_vf, capture_output=True, text=True).stdout
+check("...and --verify appears in --help", "--verify" in _vf_help)
+_rmtree(_vf.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
