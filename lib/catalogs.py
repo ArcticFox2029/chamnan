@@ -684,6 +684,19 @@ def render_env(pairs, unsafe):
     # new place: chamnan cannot know M without a reader for every language, and some real idioms
     # never appear in code at all — Spring's `${VAR}` in a YAML file is a live example. What it can
     # state is its own boundary, which is checkable and does not pretend to a denominator.
+    #
+    # 🐛 [2026-09-07] MEASURED AND KEPT AT FULL LENGTH. This sentence is 128.8 tokens, 7.9% of the
+    # delivered block on this repository — the single most expensive static string chamnan injects
+    # (R2 agent 6). Shortening the prose around the pattern list was tried and saves 20.5 tokens,
+    # 1.2% of the block, because the sentence is MOSTLY the pattern names and those are the part
+    # that makes the boundary checkable. Trading the clarity of a caveat that exists to stop an
+    # agent treating an incomplete list as complete, for 1.2%, is not a trade worth making.
+    #
+    # A measurement note for whoever revisits this: editing MAP.md to isolate a section changes its
+    # mtime, which silently toggles a SECOND, unrelated staleness warning off through
+    # `index_is_behind()`. The first attempt at this measurement read 585 bytes saved; pinning mtime
+    # with `os.utime` gave the real 297-byte figure. Half of that "saving" was a different section
+    # disappearing.
     out.append("")
     out.append("_Found by matching `os.environ`/`os.getenv`, `process.env`, `ENV[…]`, Go's "
                "`os.Getenv`/`os.LookupEnv`, and Rust's `env::var`. A variable read some other way "

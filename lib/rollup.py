@@ -481,7 +481,14 @@ def _collapse(index, map_rel, budget=None, root=None, per_dir=8):
         # 3,000 tokens of index and got 3,000 tokens of directory names. The real question is
         # whether a budget spent on 200 bare directory names beats one spent on 40 directories with
         # filenames under them, and that is a judgement about what a reader wants, not a defect.
-        # Left alone until somebody measures which of the two answers a session actually uses.
+        #
+        # 🐛 [2026-09-07] And that question CANNOT be answered from what is on disk, which is worth
+        # writing down so the next round does not go looking. R2 agent 6 read every candidate log's
+        # writer: `pointer.jsonl` records knowledge-base matches on a file open, not what the index
+        # looked like when the session opened it; the churn cache is a rendering INPUT, not a usage
+        # record; and the hook never persists its own output. Nothing on disk ties "what the block
+        # showed" to "what the session went on to read", so the comparison has no evidence available
+        # to it short of instrumenting sessions, which is a different feature.
         groups, depth, splits = deeper, look, splits + 1
     if not groups:
         # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an
