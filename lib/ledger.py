@@ -258,6 +258,19 @@ def inventory(root, now=None):
     # never mentioned. Someone asking `chamnan-report` "what does this workspace hold" was told
     # about six stores and silently not about the seventh (R8 agent 5).
     skl = _files(root, "skills") or []
+    # 🐛 [2026-09-06] And `environments.md` was the eighth, missed by the same fix. It is a store
+    # by every test this list applies: a write skill creates it, `chamnan-env` writes it, the
+    # session block reads it, and `chamnan-age` refuses to run without it. Someone asking
+    # `chamnan-report` what the workspace holds was told about seven and silently not the eighth
+    # (R12 agent 5). One file holding N entries, so it is counted the way `milestones.md` is --
+    # by ENTRY, not by file -- and dated by its newest `Checked:`, which is the field that says how
+    # much of it is still worth trusting.
+    from environments import entries as env_entries, path as env_path
+    try:
+        envs = env_entries(root)
+    except OSError:
+        envs = []
+    env_ts = [e["checked_ts"] for e in envs if e.get("checked_ts")]
     ms = milestone_entries(root)
 
     def last(ts):
@@ -274,6 +287,10 @@ def inventory(root, now=None):
         # By mtime, not by an As-of trailer: a skill is a procedure, not a dated claim, and the
         # write skills do not stamp one on it.
         ("skills/", len(skl), last(_mtimes(skl))),
+        # None when nothing in it carries a Checked: date, which is the honest answer -- an
+        # environment nobody has confirmed has no last-write worth reporting, and `chamnan-env`
+        # says so in its own words.
+        ("environments.md", len(envs), last(env_ts)),
     ]
 
 
