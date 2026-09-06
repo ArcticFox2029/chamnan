@@ -248,6 +248,33 @@ _ANY_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)")
 _GROUP_PREFIX = re.compile(r"^\?(?:P<[^>]*>|P=[^|)]*|[aiLmsux]*(?:-[aiLmsux]+)?:|:|=|!|<[=!]|>)")
 
 
+# 🐛 [2026-09-06] The NINTH family, and the first one this repository found with a generator rather
+# than by hand: `((a|a))+c`. An ambiguous alternation wrapped in a redundant inner group is
+# invisible to both alternation patterns, because neither can look inside nested parentheses --
+# `[^()|]*` stops at the first `(`. The outer group carries the quantifier and the inner one carries
+# none, so `_quantified_group_over_quantifier` does not fire either. Measured: 0.692s on 22
+# characters, against 0.000s for the same pattern with the redundant layer removed.
+#
+# Rather than teach the two patterns to parse nesting -- which is the thing a regex cannot do, and
+# the reason the quantifier guard is a hand-written scanner -- the redundant layer is REMOVED before
+# they are asked. `((X))` and `(?:(X))` mean exactly what `(X)` means, so this cannot make a guard
+# answer differently about any pattern that was already visible to it; it can only make more
+# patterns visible. Bounded to four passes: each one removes a layer, and a pattern nested deeper
+# than that is refused by `_too_many_quantifiers` or is not something anyone typed on purpose.
+_REDUNDANT_NESTING = re.compile(r"\((?:\?:|\?P<\w+>|\?[aiLmsux]*(?:-[aiLmsux]+)?:)?"
+                                r"(\((?:\?:|\?P<\w+>|\?[aiLmsux]*(?:-[aiLmsux]+)?:)?[^()]*\))\)")
+
+
+def _unwrapped(pattern):
+    """`pattern` with groups that wrap nothing but one other group collapsed onto it."""
+    for _ in range(4):
+        flat = _REDUNDANT_NESTING.sub(r"\1", pattern)
+        if flat == pattern:
+            break
+        pattern = flat
+    return pattern
+
+
 def _branches(content):
     """The alternation's branches, with any group modifier dropped off the first one.
 
@@ -276,7 +303,7 @@ def _branches_overlap(branches):
 def _ambiguous(pattern):
     """True for an alternation whose branches can match the same text under a quantifier."""
     return any(_branches_overlap(_branches(m.group(1)))
-               for m in _AMBIGUOUS_ALTERNATION.finditer(pattern))
+               for m in _AMBIGUOUS_ALTERNATION.finditer(_unwrapped(pattern)))
 
 
 def _overlapping_alternations(pattern):
@@ -288,7 +315,7 @@ def _overlapping_alternations(pattern):
     which is what a real `**Check:**` pattern looks like when it has one at all -- is not counted,
     because the engine picks one branch per position and never comes back to it.
     """
-    return sum(1 for m in _ANY_ALTERNATION.finditer(pattern)
+    return sum(1 for m in _ANY_ALTERNATION.finditer(_unwrapped(pattern))
                if _branches_overlap(_branches(m.group(1))))
 
 
