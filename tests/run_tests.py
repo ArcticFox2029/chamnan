@@ -8380,6 +8380,80 @@ _cf_none = _cf_write([])
 check("...nor when there are no candidates at all", "none has been reviewed" not in _cf_none)
 _rmtree(_cf.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] "no .chamnan workspace here" was a dead end in six of the ten commands.
+# `chamnan-context` was given the way out on 2026-09-05 and its siblings were not, and
+# `chamnan-impact` carried BOTH — the dead end, and the actionable sentence 46 lines below it for a
+# near-identical condition — so which of the two a user got depended on whether `.chamnan/` happened
+# to exist yet. No test ran any of the six against a directory that genuinely has no workspace;
+# `chamnan-impact`'s own test pre-creates one with `ws.ensure()`, which hid the dead branch
+# entirely (R15 agent 3). DERIVED from bin/, so a command added later is covered by existing.
+_de = Path(tempfile.mkdtemp(prefix="chamnan-deadend-")) / "r"
+(_de / ".git").mkdir(parents=True)
+(_de / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+_de_argv = {"chamnan-impact": ["a.py"], "chamnan-timeline": ["list"], "chamnan-env": ["check"],
+            "chamnan-context": ["--emit", "cursor"]}
+_de_silent = {
+    # Creates the workspace rather than complaining about its absence -- that is its whole job.
+    "chamnan-map": "creates the workspace",
+    # Takes a file to promote and refuses on the argument long before it looks for a workspace.
+    "chamnan-promote": "refuses on its arguments first",
+    # 🐛 Nearly "fixed" into a dead end by this very check. `chamnan-peek <file>` reads ONE file and
+    # summarises it; it needs no workspace and works correctly without one, so demanding the
+    # create-a-workspace sentence of it would have added an error to a command that had none. A
+    # derived sweep is only as right as its exemption list, and an exemption needs a reason.
+    "chamnan-peek": "reads one file and needs no workspace at all",
+}
+_de_missing = []
+for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
+                   if p.is_file() and p.suffix == "" and p.name.startswith("chamnan-")):
+    if _cmd.name in _de_silent:
+        continue
+    _de_run = subprocess.run([sys.executable, str(_cmd)] + _de_argv.get(_cmd.name, []),
+                             cwd=_de, capture_output=True, text=True)
+    if "Run `chamnan-map` there first" not in (_de_run.stderr + _de_run.stdout):
+        _de_missing.append(_cmd.name)
+if _de_missing:
+    print("      dead-ends on a workspace-less directory: " + ", ".join(_de_missing))
+check("EVERY COMMAND SAYS WHAT TO DO WHEN THERE IS NO WORKSPACE", _de_missing == [])
+_rmtree(_de.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] `atomic_write_text` caught the real OSError and threw it away, so every caller
+# could say was "could not write X". Reproduced live: a read-only FILE, a read-only DIRECTORY and a
+# full disk produced the identical sentence, and the first two need different fixes. The existing
+# regression test asserted only that the filename appears — a codified acceptance of the gap
+# (R15 agent 3).
+_we = Path(tempfile.mkdtemp(prefix="chamnan-whyfail-"))
+_we_f = _we / "x.md"
+_we_f.write_text("old\n", encoding="utf-8")
+os.chmod(_we_f, 0o444)
+try:
+    ws.LAST_WRITE_ERROR[:] = []
+    check("A WRITE REFUSED BY A FILE'S OWN PERMISSIONS SAYS SO",
+          ws.atomic_write_text(_we_f, "new\n") is False
+          and "not writable" in (ws.LAST_WRITE_ERROR[0] if ws.LAST_WRITE_ERROR else ""))
+    try:
+        ws.write_or_raise(_we_f, "new\n")
+        _we_msg = ""
+    except OSError as _err:
+        _we_msg = str(_err)
+    check("...and the raising wrapper puts the reason in the message, not just the path",
+          "x.md" in _we_msg and "not writable" in _we_msg)
+finally:
+    os.chmod(_we_f, 0o644)
+# A read-only DIRECTORY is a different failure and must read differently, or the fix has only
+# renamed the one sentence.
+_we_d = _we / "ro"
+_we_d.mkdir()
+os.chmod(_we_d, 0o555)
+try:
+    ws.LAST_WRITE_ERROR[:] = []
+    ws.atomic_write_text(_we_d / "y.md", "new\n")
+    check("...while a directory that refuses the write names the errno instead",
+          "PermissionError" in (ws.LAST_WRITE_ERROR[0] if ws.LAST_WRITE_ERROR else ""))
+finally:
+    os.chmod(_we_d, 0o755)
+_rmtree(_we, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
