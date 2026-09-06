@@ -37,6 +37,7 @@ import ledger  # noqa: E402
 # `lib/`, `hooks/` and two bin commands by example, and these two were never in the examples
 # (R13 agent 3).
 import mdblock  # noqa: E402
+import candidates  # noqa: E402
 import rulecheck  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
@@ -359,6 +360,44 @@ def print_inventory(root):
         print(f"  {without} of "
               f"{_agree(without, decisions_total, 'decision', 'decisions', 'has', 'have')} "
               f"no `Rejected:` — a trade-off nobody wrote down")
+
+    # 🐛 [2026-09-06] The ledger counts `candidates/` as a directory and stops there. What it never
+    # said is where those candidates are in the pipeline `lib/candidates.py`'s own docstring
+    # describes — evidence, candidate, human confirm, memory — so a workspace whose candidates are
+    # all machine-detected and never reviewed reports the same "4" as one where four were confirmed
+    # and promoted. Measured on this repository: 4 candidates, all `ai-inferred`, none ever promoted
+    # (R14 agent 5). That is the fact somebody deciding whether the workflow is worth using needs,
+    # and a raw count actively hides it.
+    #
+    # Said only when there is something to say: a workspace where every candidate has been looked at
+    # gets no line, like every other signal here.
+    try:
+        _cd = candidates.entries(root)
+    except Exception:
+        _cd = []
+    if _cd:
+        _cd_prov = {}
+        for _c in _cd:
+            try:
+                _f = candidates._fields(_c.read_text(encoding="utf-8-sig", errors="replace"))
+            except OSError:
+                continue
+            _cd_prov[_f.get("provenance", "unstated")] = \
+                _cd_prov.get(_f.get("provenance", "unstated"), 0) + 1
+        # "Nobody has looked at these yet" is exactly the machine-written provenances with none of
+        # the human ones beside them. `imported` and `deprecated` are somebody's decision either way.
+        _cd_unseen = _cd_prov.get("ai-inferred", 0) + _cd_prov.get("ai-drafted", 0)
+        _cd_seen = sum(v for k, v in _cd_prov.items() if k in ("user", "ai-confirmed"))
+        try:
+            _cd_promoted = len({str(e.get("origin", "")) for e in tools_index.load(root)
+                                if str(e.get("origin", "")).startswith("candidate:")})
+        except Exception:
+            _cd_promoted = 0
+        if _cd_unseen and not _cd_seen and not _cd_promoted:
+            print(f"\n  {_cd_unseen} of {len(_cd)} candidate(s) were detected by chamnan and none "
+                  f"has been reviewed")
+            print("    `chamnan-candidates` lists them; confirming or rejecting one is what moves "
+                  "it out of\n    the queue. Nothing here is acted on until a person says so.")
 
     # 🐛 [2026-09-06] Nothing ever asked whether the pre-commit hook that keeps MAP.md fresh is
     # actually installed. Only `chamnan-map --install-git-hook` could answer it, because the
