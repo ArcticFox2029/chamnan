@@ -261,7 +261,7 @@ def install_git_hook(root):
 
 
 KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure",
-               "--undocumented", "-h", "--help")
+               "--undocumented", "--verify", "-h", "--help")
 
 
 def _paths_being_dropped(map_path, files, root):
@@ -333,6 +333,33 @@ def list_undocumented(root):
     return 0
 
 
+
+def verify_map(root):
+    """Check every mechanical claim in MAP.md against the tree. Exit 1 if any is false.
+
+    🐛 [2026-09-06] `tools/map_claim_check.py` has done this since it was written and its own
+    comment says why nobody knew: "Three days passed before anybody noticed, because nothing runs
+    this file" -- said about a parser bug that made it report a correct map as 83.6% true. It was
+    reachable only by knowing its path, and it returned 0 whatever it found, so it could gate
+    nothing either (R17 agent 5).
+
+    The claims are mechanical -- a path exists, a line count matches, a named function is still
+    defined there -- so this needs no model and no network, which is the whole reason the index can
+    be checked at all. Measured: 445 ms for 326 files on the real Lumin-App index, 326/326 true.
+    """
+    checker = HERE.parent / "tools" / "map_claim_check.py"
+    if not checker.is_file():
+        print("chamnan: tools/map_claim_check.py is not installed with this copy of the plugin",
+              file=sys.stderr)
+        return 1
+    target = ws.workspace(root) / "MAP.md"
+    if not target.is_file():
+        print(f"chamnan: no index at {_show(target, root)} — run `chamnan-map` first",
+              file=sys.stderr)
+        return 1
+    return subprocess.run([sys.executable, str(checker), str(target)]).returncode
+
+
 def main(argv):
     # 🐛 There was no `--help`, and this command treats any non-flag argument as a directory to
     # scan — so `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the
@@ -357,6 +384,7 @@ def main(argv):
                 ("--explain", "where the session-start block's tokens go, section by section"),
                 ("--measure", "what this index costs against the session budget"),
                 ("--undocumented", "every file with no opening comment, one path per line"),
+                ("--verify", "check the index's claims against the tree; exit 1 if any is false"),
                 ("--install-git-hook", "rebuild the map on every commit (opt-in, never destructive)"),
                 ("-h, --help", "this text")):
             print(f"  {_flag:<20} {_what}")
@@ -377,6 +405,8 @@ def main(argv):
         return install_git_hook(root)
     if "--undocumented" in argv:
         return list_undocumented(root)
+    if "--verify" in argv:
+        return verify_map(root)
     if "--explain" in argv:
         return preview(root, explain=True)
     if "--preview" in argv:
