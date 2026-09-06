@@ -8658,6 +8658,42 @@ _vf_help = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "-
 check("...and --verify appears in --help", "--verify" in _vf_help)
 _rmtree(_vf.parent, ignore_errors=True)
 
+# 🐛 [2026-09-07] `chamnan-timeline add --files <absolute path>` wrote the machine path verbatim
+# into a TRACKED `.chamnan/threads/*.md`, so a commit carried one developer's directory layout —
+# meaningless to everyone who pulls it, and to the same person on another machine. `_relativise` is
+# defined forty lines above the write and already used by `for` and by chamnan-impact, but only on
+# the QUERY side; the WRITE side, which is what reaches the commit, was never wired to it. Claude
+# Code requires absolute paths for Read and Edit, so an agent recording what it touched types
+# exactly the shape that breaks. The sibling `chamnan-promote` had the same bug fixed on 2026-09-04
+# (R18 agent 3).
+_ap = Path(tempfile.mkdtemp(prefix="chamnan-abspath-")) / "r"
+(_ap / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_ap, capture_output=True)
+(_ap / "src" / "app.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ap, capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new", "the migration"],
+               cwd=_ap, capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "add", "the-migration",
+                "touched the entry point", "--files", str(_ap / "src" / "app.py")],
+               cwd=_ap, capture_output=True)
+_ap_body = (_ap / ".chamnan" / "threads" / "the-migration.md").read_text(encoding="utf-8")
+check("AN ABSOLUTE PATH IS NOT WRITTEN INTO A FILE THAT GETS COMMITTED",
+      str(_ap) not in _ap_body and "`src/app.py`" in _ap_body)
+# A path OUTSIDE the repository cannot be made relative to it, and must survive rather than be
+# mangled into something that looks like a repository path.
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "add", "the-migration",
+                "read something elsewhere", "--files", "/etc/hosts"],
+               cwd=_ap, capture_output=True)
+_ap_out = (_ap / ".chamnan" / "threads" / "the-migration.md").read_text(encoding="utf-8")
+check("...while a path outside the repository is left as it was typed", "/etc/hosts" in _ap_out)
+# And a relative path, which is what somebody typing by hand writes, is unchanged.
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "add", "the-migration",
+                "an ordinary note", "--files", "src/app.py"], cwd=_ap, capture_output=True)
+check("...and a relative path is untouched",
+      (_ap / ".chamnan" / "threads" / "the-migration.md").read_text(
+          encoding="utf-8").count("`src/app.py`") == 2)
+_rmtree(_ap.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
