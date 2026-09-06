@@ -26,6 +26,7 @@ import subprocess
 import importlib.util as _ilu
 import sys
 import tempfile
+import hashlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -283,6 +284,55 @@ if _tag:
               f"refresh and the stale-build banner stays dark.")
     check("the version is semver and the tag it matches is a real one",
           bool(re.fullmatch(r"v?\d+\.\d+\.\d+", _tag)))
+
+# 🐛 The version string is the ONLY thing the stale-build banner compares, so two different builds
+# sharing one are invisible to it — and that is not hypothetical. Measured on this machine while
+# writing this: both installed copies reported "1.21.0" and neither was this code; the installed
+# one was five commits behind and missing the adapter data-loss fix that had just shipped. A path
+# marketplace installs by version string, so a build published without a bump is simply never
+# fetched, and nothing anywhere says so (R3 agent 5, R4 agent 2).
+#
+# A build has an identity the version string does not: a digest of the code itself. It costs 10ms
+# and is NOT paid per session — a user who installed 1.21.0 from the marketplace has exactly
+# 1.21.0, and hashing the plugin on every session start would spend real time to tell them
+# something they already know. It is paid here, before a release, by the one person for whom the
+# question is live.
+def _build_id(_root):
+    _h = hashlib.blake2s(digest_size=6)
+    for _d in ("lib", "bin", "hooks", ".claude-plugin"):
+        _p = Path(_root) / _d
+        if not _p.is_dir():
+            continue
+        for _f in sorted(_p.rglob("*")):
+            if _f.is_file() and "__pycache__" not in _f.parts:
+                _h.update(_f.relative_to(_root).as_posix().encode())
+                _h.update(_f.read_bytes())
+    return _h.hexdigest()
+
+
+_installed_drift = []
+try:
+    _mine = _build_id(ROOT)
+    for _cfg in (Path.home() / ".claude", Path.home() / ".config" / "claude-account2"):
+        _rec = _cfg / "plugins" / "installed_plugins.json"
+        if not _rec.is_file():
+            continue
+        for _key, _entries in json.loads(_rec.read_text(encoding="utf-8")).get("plugins", {}).items():
+            if "chamnan" not in _key:
+                continue
+            for _e in _entries:
+                _p = Path(_e.get("installPath", ""))
+                if _p.is_dir() and _build_id(_p) != _mine:
+                    _installed_drift.append(f"{_cfg.name} says v{_e.get('version')}")
+except Exception as _exc:
+    # Not swallowed. A check that goes quiet when it breaks is the defect this whole release has
+    # been about; if this one cannot answer, it says why rather than reading as "no drift".
+    print(f"  NOTE  could not compare the installed build with this checkout: "
+          f"{type(_exc).__name__}: {_exc}")
+    _installed_drift = []
+if _installed_drift:
+    print(f"  NOTE  the copy Claude Code would run is NOT this code — {', '.join(_installed_drift)}, "
+          f"same version string, different build. `claude plugin update chamnan` after releasing.")
 else:
     # 🐛 `if _tag:` with no else meant that where no tag is reachable, this check and the drift
     # notice both vanished in silence — which is every CI run, because actions/checkout clones at
