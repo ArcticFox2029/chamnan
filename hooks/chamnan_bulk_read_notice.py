@@ -243,9 +243,14 @@ def main():
     # as_quoted makes a value inert; it does not make it non-secret, and its own docstring says the
     # caller still has to scrub the finished line. `peek` already scrubs the shape it returns, so
     # this covers the half that was not covered -- the header line built from the name.
+    # 🐛 `scrub` removes credentials and has never removed CONTROL characters. `json.dumps`
+    # escapes them, so the raw-stdout sweep that guards every other reader sees nothing --
+    # and the harness decodes them straight back into the model's context. See
+    # `redact.for_a_terminal`.
     import redact  # deferred; see the import block
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "additionalContext": redact.scrub(note)}}))
+        "hookEventName": "PreToolUse",
+        "additionalContext": redact.for_a_terminal(redact.scrub(note))}}))
     return 0
 
 

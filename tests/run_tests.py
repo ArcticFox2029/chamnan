@@ -7634,14 +7634,64 @@ check("ZERO MEANS KEEP EVERYTHING IN BOTH RETENTION SETTINGS, NOT ONE OF THEM",
       (_ret / ".chamnan" / "logs" / "old.md").is_file()
       and sessions.prune(_ret, 0) == 0
       and (_ret / ".chamnan" / "sessions" / "2020-01-01-x.md").is_file())
+
+# 🐛 [2026-09-06] Every retention pass computes its cutoff from `time.time()`, and nothing bounded
+# what happens when that value is wrong. Reproduced with a 400-day forward jump — an NTP correction
+# or a dead RTC battery, not an exotic input: both passes deleted a file written SECONDS earlier,
+# and `expiring_logs`, the warning that exists to give notice, is computed from the same broken
+# clock and gives none (R10 agent 2).
+#
+# There is no way to tell a jumped clock from real age using the clock that jumped, so the rule is
+# not about the clock: a retention pass never EMPTIES a store. In the genuine case — a workspace
+# nobody has touched for a year — that costs one file kept one pass longer than the window says. In
+# the fault case it is the difference between losing old logs and losing what was written a minute
+# ago.
+_clk = Path(tempfile.mkdtemp(prefix="chamnan-clock-")) / "r"
+(_clk / ".chamnan" / "logs").mkdir(parents=True)
+(_clk / ".chamnan" / "sessions").mkdir(parents=True)
+_now = _time.time()
+for _i in range(3):
+    for _sub, _nm in (("logs", f"l{_i}.md"), ("sessions", f"2026-09-0{_i + 1}-s{_i}.md")):
+        _f = _clk / ".chamnan" / _sub / _nm
+        _f.write_text("x\n", encoding="utf-8")
+        _os.utime(_f, (_now, _now))
+_realtime = _time.time
+try:
+    _time.time = lambda: _realtime() + 400 * 86400
+    ws.prune_logs(_clk)
+    sessions.prune(_clk, 30)
+finally:
+    _time.time = _realtime
+check("A CLOCK THAT JUMPED FORWARD CANNOT EMPTY A STORE",
+      len(list((_clk / ".chamnan" / "logs").glob("*.md"))) >= 1
+      and len(list((_clk / ".chamnan" / "sessions").glob("*.md"))) >= 1)
+# And the rule itself, directly: it only ever withholds the newest, and only when everything would
+# otherwise go.
+_kp = [Path("/x/a"), Path("/x/b")]
+check("...and the rule leaves an ordinary partial prune exactly as it was",
+      ws.keep_the_newest(_kp, [_kp[0]]) == [_kp[0]])
+check("...and an empty store is not a special case",
+      ws.keep_the_newest([], []) == [])
+_rmtree(_clk.parent, ignore_errors=True)
 check("...and nothing is reported as about to expire either",
       ws.expiring_logs(_ret) == [])
 # A real window must still delete, or "keep everything" would be the only behaviour there is.
+#
+# Each store needs a CURRENT file beside the ancient one. With one file per store this check was
+# passing for the wrong reason and would have gone on passing after keep-the-newest landed only if
+# that rule did nothing: a window that takes every entry in a store is exactly the case the rule
+# withholds the last of. A store holding one old log and one fresh one is also the shape a real
+# workspace is in when retention fires.
 (_ret / ".chamnan" / "config.json").write_text(
     json.dumps({"log_retention_days": 7, "session_retention_days": 7}), encoding="utf-8")
+for _sub, _name in (("logs", "today.md"), ("sessions", "2026-09-06-current.md")):
+    (_ret / ".chamnan" / _sub / _name).write_text("# fresh\n", encoding="utf-8")
 ws.prune_logs(_ret)
 check("...while a real window still prunes both",
       not (_ret / ".chamnan" / "logs" / "old.md").is_file() and sessions.prune(_ret, 7) == 1)
+check("...and leaves the current entry in each store alone",
+      (_ret / ".chamnan" / "logs" / "today.md").is_file()
+      and (_ret / ".chamnan" / "sessions" / "2026-09-06-current.md").is_file())
 _rmtree(_ret.parent, ignore_errors=True)
 
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
@@ -15830,7 +15880,12 @@ try:
         f"---\ndescription: Decided {_EVIL}\n---\n\n# Decision {_EVIL}\n\nWhy.\n", encoding="utf-8")
     (_hw / "STATE.md").write_text(
         f"# Work in flight\n\nA note.\n\n## {_EVIL}\nAuthorised.\n", encoding="utf-8")
-    (_hw / "sessions" / "2026-01-01-x.md").write_text(
+    # 🐛 Dated TODAY, and that is the whole point of the date. At 2026-01-01 this record was
+    # outside the retention window, so every sweep deleted it before a reader could render it --
+    # and `sessions.carry_forward` was leaking an ESC/OSC sequence and a bidi override from its
+    # single-record branch the entire time, invisible to a fixture that had already thrown the
+    # evidence away. A hostile file that retention removes tests retention, not the reader.
+    (_hw / "sessions" / f"{datetime.date.today().isoformat()}-x.md").write_text(
         f"# Session {_EVIL}\n\n## Remaining\n\nA thing {_EVIL}.\n", encoding="utf-8")
 
     # 🐛 The reader list is derived from the filesystem, so `chamnan-report` and `chamnan-age` were
@@ -15857,7 +15912,16 @@ try:
         r = subprocess.run(argv, cwd=_hr, capture_output=True, text=True,
                            encoding="utf-8", errors="replace",
                            input=(json.dumps(stdin_payload) if stdin_payload is not None else None))
-        return r.stdout + r.stderr
+        out = r.stdout + r.stderr
+        # 🐛 A hook that answers in JSON escapes a control character rather than emitting it, so
+        # scanning raw stdout says "clean" about a payload the harness decodes straight back into
+        # the model's context. The two PreToolUse hooks both did exactly that. What reaches the
+        # reader is what is checked, so the payload is decoded and appended before the scan.
+        try:
+            _ctx = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+        except Exception:
+            _ctx = ""
+        return out + (_ctx if isinstance(_ctx, str) else "")
 
     # 🐛 The first version of this list held four readers and R10 agent 2 found leaks in three it
     # did not run. It was widened to eleven and the commit message claimed "every bin/ command and

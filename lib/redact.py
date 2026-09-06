@@ -1077,6 +1077,24 @@ def emit(*args, **kwargs):
 _print = print
 
 
+def emit_prescrubbed(*args, **kwargs):
+    """`print` for the hooks: control characters removed, credentials assumed already gone.
+
+    The `bin/` commands shadow `print` with `emit`, which does both halves. A hook cannot use that
+    one. It scrubs every section AT THE POINT IT IS READ and before the token budget cuts it, on
+    purpose -- a hostname inside a pinned section that the cut would have dropped still has to be
+    redacted, and running the credential pass again over the assembled block would be a second full
+    pass over text that is already clean. What the hooks had NO default for is the other half: the
+    control characters, which cost one `str.translate` and which every section was relying on its
+    own quoting helper to remove. `sessions.carry_forward` had two branches printing the same
+    title, one quoted and one not, and the unquoted one was the common case (R11).
+
+    Non-string arguments are left alone, same as `emit`.
+    """
+    return _print(*(for_a_terminal(a) if isinstance(a, str) else a for a in args), **kwargs)
+
+
+
 def _speak_utf8():
     """Make this process write UTF-8 on stdout and stderr, whatever the machine's code page says.
 

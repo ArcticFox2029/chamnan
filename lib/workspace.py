@@ -135,6 +135,41 @@ DEFAULT_CONFIG = {
 # to the model by its own first prose line, which explains what the folder is rather than what a
 # procedure does (R8 agent 5). One predicate rather than a check at each listing, because there are
 # eight of those and this is exactly the shape this repository keeps rediscovering.
+# 🐛 [2026-09-06] Every retention pass computes its cutoff from `time.time()`, and nothing bounds
+# what happens when that value is wrong. Reproduced with a 400-day forward jump — an NTP correction
+# or a dead RTC battery, not an exotic input: `prune_logs` and `sessions.prune` each deleted a file
+# written SECONDS earlier, and `expiring_logs`, the warning that exists to give notice, is computed
+# from the same broken clock and gives none (R10 agent 2).
+#
+# There is no way to tell a jumped clock from real age using the clock that jumped. So the rule is
+# not about the clock at all: a retention pass never empties a store. Whatever it believes about
+# time, the newest entry survives. In the genuine case — a workspace nobody has touched for a year —
+# that costs one file, kept one pass longer than the window says. In the fault case it is the
+# difference between losing old logs and losing the session record written a minute ago.
+def _mtime_or_none(path):
+    """`path`'s mtime, or None when it cannot be read. A file that vanished mid-pass is not old."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def keep_the_newest(paths, doomed):
+    """`doomed` minus the newest entry, when `doomed` would take every one of `paths`.
+
+    CALLERS MUST CHECK THE RESULT: this returns the list to delete, not a flag. Passing `doomed`
+    through unchanged whenever anything survives keeps the ordinary path exactly as it was.
+    """
+    paths, doomed = list(paths), list(doomed)
+    if not paths or len(doomed) < len(paths):
+        return doomed
+    try:
+        newest = max(paths, key=lambda q: q.stat().st_mtime)
+    except (OSError, ValueError):
+        return doomed
+    return [q for q in doomed if q != newest]
+
+
 def is_store_index(path):
     """True when `path` is a store's own README rather than an entry in it."""
     return pathlib.Path(path).name.lower() in ("readme.md", "index.md")
@@ -439,13 +474,19 @@ def prune_logs(root=None):
     if not days or days <= 0:
         return 0
     cutoff = time.time() - days * 86400
+    # See keep_the_newest: a pass that would take EVERY file is a clock fault, not retention.
+    _files = [q for q in logs.iterdir()
+              if q.is_file() and q.name not in SELF_PRUNING_LOGS]
+    _doomed = set(keep_the_newest(
+        _files, [q for q in _files if _mtime_or_none(q) is not None
+                 and _mtime_or_none(q) < cutoff]))
     removed = 0
     for path in logs.iterdir():
         try:
             if path.name in SELF_PRUNING_LOGS:
                 continue
             if path.is_file():
-                if path.stat().st_mtime < cutoff:
+                if path in _doomed:
                     path.unlink()
                     removed += 1
                 continue
