@@ -11,6 +11,13 @@ a version history is the one thing a first-time reader never needs.
 
 ## What's new in 1.20.0
 
+**There is no 1.19.** The releases jump 1.18.1 to 1.20.0 on purpose. 1.19.0 and 1.19.1 were version
+bumps made during this work and never published — no tag, no release, no announcement. They exist
+because Claude Code installs a plugin from a local directory BY VERSION STRING, so raising the
+number is the only way to make an unchanged path marketplace copy itself again, and two were spent
+doing that in one evening. Everything they contained is in 1.20.0 below.
+
+
 Thirty-nine commits, and most of them are the same shape: a rule applied to some members of a set
 and not the identical ones beside them. That is this repository's own recurring defect, so these
 were found by walking each set programmatically rather than by reading code, and each is held by a
