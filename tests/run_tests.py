@@ -38,6 +38,25 @@ _POSIX = os.name != "nt"
 # needed it earliest raised NameError when it lived further down.
 _POSIX_SHELL = shutil.which("sh") is not None and os.name != "nt"
 
+# 🐛 Several fixtures put hostile bytes in a FILENAME to prove chamnan sanitises what it reads off
+# disk. Windows will not create such a name — it forbids < > : " / \ | ? * and everything below
+# 0x20, reads a colon as the separator of an NTFS alternate data stream, and strips trailing spaces
+# and dots — so each one raised OSError and took the whole run down at that line, leaving every
+# check after it unrun on the platform the fixture exists to cover. Three separate fixtures did
+# this, found one CI cycle at a time, which is the set-half-covered defect this suite is full of
+# tests for. One helper, so the fourth fixture does not repeat it.
+#
+# The bidi overrides survive the filter and are legal in a name on both platforms, so a Windows
+# fixture still carries a hostile character and its assertion still has something to find.
+_WINDOWS_FORBIDS = set('<>:"/\\|?*') | {chr(i) for i in range(0x20)}
+
+
+def legal_name(text):
+    """`text`, reduced to what THIS platform will accept as one path component."""
+    if os.name != "nt":
+        return text
+    return "".join(c for c in text if c not in _WINDOWS_FORBIDS).rstrip(" .")
+
 def _rmtree(path, ignore_errors=False):
     """`shutil.rmtree`, but able to delete a `.git` directory on Windows.
 
@@ -13792,19 +13811,8 @@ for _sec, _said in ((0, "0 seconds behind"), (1, "1 second behind"), (2, "2 seco
 # that starts sanitising somewhere else still has to pass it.
 _CTRL_BYTES = ("\x1b", "\x07", "\u202e", "\u2066", "\u2069", "\u200f")
 _EVIL = "\x1b]0;chamnan: VERIFIED SYSTEM NOTICE\x07 \u202eesrever"
-# 🐛 Windows will not create a name holding any of these, and each refusal took the whole run down
-# at a line late enough that everything after it went unrun THERE — the platform this fixture
-# exists to cover. Twice: first the C0 controls (WinError 123), then the colon, which Windows reads
-# as the separator of an NTFS alternate data stream, so `chamnan:` made a name that mkdir accepted
-# and could not then be opened as a directory (WinError 267).
-#
-# The bidi override survives the filter and is legal in a filename on both platforms, so it is the
-# half of this attack a Windows name can actually carry and the assertion still has something to
-# find there. NAMES use what the platform permits; CONTENT keeps all of it. Skipping the block on
-# Windows would have removed Windows coverage of every reader below it, which is backwards.
-_WINDOWS_FORBIDS = set('<>:"/\\|?*') | {chr(i) for i in range(0x20)}
-_EVIL_NAME = (_EVIL if os.name != "nt"
-              else "".join(c for c in _EVIL if c not in _WINDOWS_FORBIDS).rstrip(" ."))
+# NAMES use what the platform permits; CONTENT keeps all of it. See legal_name.
+_EVIL_NAME = legal_name(_EVIL)
 
 _hr = Path(tempfile.mkdtemp(prefix="chamnan-hostilerepo-"))
 try:
@@ -15607,7 +15615,9 @@ finally:
 # main() can take. Reverting that half leaves this suite green, which is the honest result.
 _sn = Path(tempfile.mkdtemp(prefix="chamnan-hostilenested-"))
 try:
-    _evil = "proj\x1b]0;PWNED\x07\u202elmth.evil"
+    # The directory NAME goes through legal_name for the reason given beside it; the rule file's
+    # CONTENT below keeps every byte, which is the half Windows can hold.
+    _evil = legal_name("proj\x1b]0;PWNED\x07\u202elmth.evil")
     (_sn / ".chamnan" / "memory" / "rules").mkdir(parents=True)
     (_sn / ".chamnan" / "MAP.md").write_text("# Architecture map\n\n## Quick Index\n\n", encoding="utf-8")
     (_sn / ".chamnan" / "memory" / "rules" / "r.md").write_text(
