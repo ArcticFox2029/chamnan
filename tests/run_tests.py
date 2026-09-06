@@ -8517,6 +8517,44 @@ check("...while four different per_dir values still give four different roll-ups
       len({rollup.collapse(_rc_idx, "MAP.md", 3000, None, pd) for pd in (8, 4, 2, 0)}) == 4)
 rollup._COLLAPSE_CACHE.clear()
 
+# 🐛 [2026-09-06] `bootstrap/SKILL.md` and `remap/SKILL.md` both tell the session to add comments to
+# "the files that lack one", and the only list of those was the eight the rebuild prints as
+# examples — capped at `[:8]`, with no flag to get the rest and no instruction to go looking. A
+# session following the shipped instructions literally fixed eight and reported before/after as
+# though the gap were handled: 15 undocumented files meant 53% invisible, 40 meant 80%, and this
+# codebase's own recorded flask example (76 missing) would have hidden 89% (R16 agent 4).
+_ud = Path(tempfile.mkdtemp(prefix="chamnan-undoc-")) / "r"
+(_ud / "src").mkdir(parents=True)
+(_ud / ".git").mkdir(parents=True)
+for _i in range(15):
+    (_ud / "src" / f"m{_i:02d}.py").write_text(f"def f{_i}():\n    return {_i}\n", encoding="utf-8")
+(_ud / "src" / "documented.py").write_text(
+    '"""This one says what it does."""\ndef g(): ...\n', encoding="utf-8")
+_ud_run = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--undocumented"],
+                         cwd=_ud, capture_output=True, text=True)
+_ud_lines = [l.strip() for l in _ud_run.stdout.splitlines() if l.strip()]
+check("EVERY UNDOCUMENTED FILE IS LISTED, NOT THE FIRST EIGHT", len(_ud_lines) == 15)
+# The filter has to be the same one the suggestion uses, or the list sends an agent at files it
+# should not touch.
+check("...and a file that HAS an opening comment is not in the list",
+      "src/documented.py" not in _ud_lines)
+# Discoverable, or it is a flag nobody finds. --help derives its list from KNOWN_FLAGS.
+_ud_help = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--help"],
+                          cwd=_ud, capture_output=True, text=True).stdout
+check("...and the flag appears in --help rather than being undocumented itself",
+      "--undocumented" in _ud_help)
+# And the rebuild's own advice points at it, instead of at the eight names above it.
+_ud_build = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ud,
+                           capture_output=True, text=True).stdout
+check("...and the rebuild says how many it did NOT name, and where the rest are",
+      "more — `chamnan-map --undocumented` lists every one" in _ud_build)
+# The two shipped skills have to say it too — they are what an orchestrating session reads.
+for _sk in ("bootstrap", "remap"):
+    _sk_text = (ROOT / "skills" / _sk / "SKILL.md").read_text(encoding="utf-8-sig")
+    check(f"...and {_sk}/SKILL.md sends the session to the full list",
+          "chamnan-map --undocumented" in _sk_text)
+_rmtree(_ud.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
