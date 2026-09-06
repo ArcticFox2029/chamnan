@@ -9431,6 +9431,46 @@ _folded = _folded[0] if isinstance(_folded, tuple) else _folded
 check("A DOMINANT DIRECTORY IS SPLIT RATHER THAN FOLDED INTO ONE OPAQUE BUCKET",
       "w/tests/" in _folded and "w/tools/" in _folded)
 
+# 🐛 The defect this repository keeps producing is one rule applied to some members of a set. Today
+# it appeared in name-builders, script writers, read-only gating — and in seven call sites that
+# threw away a result the function's own docstring promised, so a write that did not happen was
+# reported as success. Fixing the seven does not stop an eighth. This is the class, made
+# mechanical: a function whose docstring says CALLERS MUST CHECK THE RESULT cannot be called as a
+# bare statement anywhere in the package (R3 agent 6's first proposal).
+#
+# Deliberately opt-IN. `ws.atomic_write_text` also returns a bool and 22 call sites ignore it on
+# purpose — it is best-effort by contract, because a failed write must not stop a session
+# starting. A lint that flagged those would be noise, and a noisy check is one people learn to
+# skip.
+_MUST_CHECK = "CALLERS MUST CHECK THE RESULT"
+_must_check_mc_fns, _unchecked = set(), []
+_mc_sources = (sorted((ROOT / "lib").rglob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+               + [q for q in sorted((ROOT / "bin").iterdir()) if q.is_file() and not q.suffix])
+for _mc_src in _mc_sources:
+    try:
+        _mc_tree = ast.parse(_mc_src.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        continue
+    for _mc_node in ast.walk(_mc_tree):
+        if isinstance(_mc_node, ast.FunctionDef) and _MUST_CHECK in (ast.get_docstring(_mc_node) or ""):
+            _must_check_mc_fns.add(_mc_node.name)
+check("A FUNCTION DECLARES WHEN ITS RESULT MUST BE CHECKED, SO THE RULE IS MECHANICAL",
+      "write_target" in _must_check_mc_fns)
+for _mc_src in _mc_sources:
+    try:
+        _mc_tree = ast.parse(_mc_src.read_text(encoding="utf-8"))
+    except (SyntaxError, UnicodeDecodeError):
+        continue
+    for _mc_node in ast.walk(_mc_tree):
+        if isinstance(_mc_node, ast.Expr) and isinstance(_mc_node.value, ast.Call):
+            _mc_fn = _mc_node.value.func
+            _mc_name = getattr(_mc_fn, "attr", None) or getattr(_mc_fn, "id", None)
+            if _mc_name in _must_check_mc_fns:
+                _unchecked.append(f"{_mc_src.name}:{_mc_node.lineno} {_mc_name}()")
+if _unchecked:
+    print("      result discarded at: " + ", ".join(_unchecked))
+check("...AND NO CALL SITE THROWS THAT RESULT AWAY", _unchecked == [])
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
