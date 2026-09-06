@@ -218,7 +218,24 @@ _NOT_A_CREDENTIAL_NAME = re.compile(
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
     # all, which is the normal form for both, and a one-or-more group never matched them.
-    r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]*):([^\s@/]{3,})@")
+    #
+    # 🐛 The password class was `[^\s@/]{3,}` — no `@` — so a password CONTAINING one stopped the
+    # match at the first `@` and the rule either failed entirely or redacted half. `@` is an
+    # ordinary character in a generated password and RFC 3986 only asks that it be percent-encoded,
+    # which real connection strings routinely do not do. Measured: `amqp://svc:a@b@rabbit/vhost`
+    # and `mongodb://root:x@y%40z@cluster/admin` passed through whole, and
+    # `postgres://admin:Hunter2@Pass@db/main` was redacted down to `<REDACTED>@Pass@db/main`,
+    # leaving half the password beside the marker that says it was handled (R2 agent 2).
+    #
+    # `/` and whitespace still end the password, so the match cannot run past the authority into a
+    # path — and being greedy, it takes the LAST `@` before that boundary, which is the one that
+    # separates credentials from host. The lookahead requires something host-shaped after it, so a
+    # bare `scheme://a:b@` with nothing following is not treated as a credential.
+    #
+    # The scheme now admits one nested layer, because `jdbc:postgresql://` and `jdbc:mysql://` are
+    # how every JVM connection string is written and the single-scheme form never matched them.
+    r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
+    r":([^\s/]{3,})@(?=[^\s/@]+)")
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 ASSIGNED_SECRET = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)

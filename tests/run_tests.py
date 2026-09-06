@@ -9146,6 +9146,29 @@ try:
 finally:
     _rmtree(_fsb, ignore_errors=True)
 
+PLACEHOLDER_TEXT = redact.PLACEHOLDER
+# 🐛 CREDENTIALED_URL's password class excluded `@`, so a password CONTAINING one stopped the match
+# at the first `@` — the rule then either failed entirely or redacted half, leaving the rest of the
+# password beside the marker that says it was handled. `@` is ordinary in a generated password and
+# real connection strings do not percent-encode it. The scheme also admitted only one layer, so no
+# `jdbc:postgresql://` URL ever matched (R2 agent 2).
+for _lbl, _url, _needle in (
+        ("plain", "postgres://admin:Hunter2Pass@db.internal/main", "Hunter2"),
+        ("@ inside the password", "postgres://admin:Hunter2@Pass@db.internal/main", "Hunter2"),
+        ("jdbc nested scheme", "jdbc:postgresql://user:p@ss@w0rd@host:5432/db", "p@ss"),
+        ("amqp", "amqp://svc:a@b@rabbit.internal:5672/vhost", "a@b"),
+        ("mongodb", "mongodb://root:x@y%40z@cluster0.mongodb.net/admin", "x@y"),
+        ("redis, no username", "redis://:s3cr3t@cache.internal:6379/0", "s3cr3t")):
+    check(f"A CONNECTION STRING'S PASSWORD GOES WHOLE: {_lbl}",
+          _needle not in redact.scrub(_url) and PLACEHOLDER_TEXT in redact.scrub(_url))
+# ...and the other half of the trade, which a greedier pattern is exactly how you lose.
+for _lbl, _text in (("an email in prose", "write to alice@example.com about it"),
+                    ("a URL with no credentials", "see https://docs.example.com/guide/a@b"),
+                    ("a git ssh remote", "git@github.com:ArcticFox2029/chamnan.git"),
+                    ("nothing after the @", "postgres://admin:abc@"),
+                    ("a digest-pinned image", "registry.example.com/team/app@sha256:abcd1234")):
+    check(f"...and it leaves alone: {_lbl}", redact.scrub(_text) == _text)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
