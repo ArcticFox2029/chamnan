@@ -210,7 +210,17 @@ def _quantified_group_over_quantifier(pattern):
 # no inner quantifier at all -- `(a|a)*`, `(x|xy)+`, `(\s|\s)*`. Measured here: `(a|a)*$` against
 # 20 identical characters took 0.25s, 24 took 4.2s, and 28 had not finished after five seconds.
 # It sailed straight through a guard whose whole reason for existing is that hang.
-_AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)\s*[+*{]")
+# 🐛 [2026-09-06] `[^()|]+` required at least one character on EACH side of the `|`, so an EMPTY
+# branch never registered as an alternation at all -- `(a|){20}b` was invisible to both this and
+# `_ANY_ALTERNATION` below, while its sibling `(a|a){20}b` was caught. That is the eighth family,
+# and a distinct root cause from the seventh: nullable through an empty branch rather than through
+# a `?`. Measured: N=18 0.247s, N=20 0.943s, N=22 3.560s, the same 4.4x per +2, and through the
+# real hook N=28 did not return inside 20 seconds (R17 agent 2).
+#
+# `*` rather than `+`, and `_branches_overlap`'s prefix test already answers correctly once an
+# empty branch reaches it -- "" is a prefix of everything, which is exactly why the group is
+# nullable and exactly what makes it a hazard.
+_AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)\s*[+*{]")
 # 🐛 [2026-09-06] The fifth family, and the module's own comment below predicted one. The same
 # alternation with NO quantifier at all -- `(a|aa)(a|aa)(a|aa)…` -- is invisible to every guard
 # here, because all four require either a nested quantifier or a trailing `+`/`*`/`{` on the group.
@@ -220,7 +230,7 @@ _AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)\s*[+*{]")
 # k=20 0.338s, k=26 over 15 seconds -- roughly 4.4x per +2, which is 2^k. Reproduced end to end
 # against the real SessionStart hook, which hung indefinitely on a 157-character `**Check:**` line
 # in one committed rule file (R11 agent 2).
-_ANY_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)")
+_ANY_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)")
 
 
 # 🐛 [2026-09-06] Both alternation detectors captured a group's RAW content and split it on `|`
