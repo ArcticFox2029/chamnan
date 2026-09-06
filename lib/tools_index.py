@@ -82,7 +82,7 @@ def load(root):
     defect: the rule applied to some members of a set and not the others.
     """
     try:
-        loaded = json.loads(path(root).read_text(encoding="utf-8"))
+        loaded = json.loads(path(root).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, RecursionError):
         return []
     if not isinstance(loaded, list):

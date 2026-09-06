@@ -79,7 +79,7 @@ def _read_bounded(path, ceiling):
     `Path.read_text()` takes no size argument, so it loads the whole file before any caller-side
     budget can say no. Reading through a file object means the OS never hands back more than asked.
     """
-    with path.open("r", encoding="utf-8", errors="replace") as f:
+    with path.open("r", encoding="utf-8-sig", errors="replace") as f:
         text = f.read(ceiling)
     # 🐛 The caller's truncation marker counts what it was GIVEN, not what exists. STATE.md is read
     # at a 2 MB ceiling, so on a 50 MB file the marker said "…2 MB more" when 48 MB was unread — an
@@ -172,7 +172,7 @@ def describe(path):
     the file was never migrated to `---\\ndescription: ...\\n---`.
     """
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
     head = text[:1200]
@@ -429,7 +429,7 @@ def _map_is_current_by_git(root, map_path):
         # evidence from a repository this index does not describe (R6 acc3, first ten minutes).
         return False
     try:
-        head_text = map_path.read_text(encoding="utf-8", errors="replace")[:600]
+        head_text = map_path.read_text(encoding="utf-8-sig", errors="replace")[:600]
         m = _BUILT_FROM.search(head_text)
         if not m:
             return False
@@ -527,7 +527,7 @@ def rebuild_hook_installed(root):
     """
     try:
         hook = Path(root) / ".git" / "hooks" / "pre-commit"
-        return HOOK_MARKER in hook.read_text(encoding="utf-8", errors="replace")
+        return HOOK_MARKER in hook.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return False
 
@@ -1201,7 +1201,7 @@ def main():
 
         if cfg.get("promote", True):
             try:
-                tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8"))
+                tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8-sig"))
             except Exception:
                 tools = []
             # 🐛 index.json arrives with a clone like anything else, and nothing checked that an
@@ -1287,7 +1287,7 @@ def main():
             if digest_path.is_file():
                 lines = []
                 try:
-                    data = json.loads(digest_path.read_text(encoding="utf-8"))
+                    data = json.loads(digest_path.read_text(encoding="utf-8-sig"))
                     if isinstance(data, dict):
                         lines = [str(x) for x in (data.get("lines") or [])][:6]
                 except (OSError, json.JSONDecodeError, RecursionError):

@@ -685,7 +685,7 @@ def _env_names(path):
     """The variable names an env file declares, and nothing to the right of the `=`."""
     names = []
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue

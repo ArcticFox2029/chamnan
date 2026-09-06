@@ -79,7 +79,7 @@ def main(argv):
     edges = None
     resolved = None
     if map_path.is_file():
-        text = map_path.read_text(encoding="utf-8", errors="replace")
+        text = map_path.read_text(encoding="utf-8-sig", errors="replace")
         resolved, edges = impact_mod.lookup(text, target)
     # 🐛 This returned before the thread join below, so in a repository where chamnan-map has not
     # been run — which is every repository on day one — asking "what happened last time this

@@ -86,7 +86,7 @@ def entries(root):
     if not p.is_file():
         return []
     try:
-        text = p.read_text(encoding="utf-8", errors="replace")
+        text = p.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return []
 
@@ -201,7 +201,7 @@ def upsert(root, name, entry_text):
     """
     p = path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    text = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    text = p.read_text(encoding="utf-8-sig", errors="replace") if p.is_file() else ""
     if not text.strip():
         text = HEADER + "\n"
 

@@ -59,7 +59,7 @@ CONFIRMED_PROVENANCE = ("ai-confirmed", "user")
 
 
 def _title(path):
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     for line in text.splitlines():
         if line.startswith("# "):
             return line[2:].strip()

@@ -109,7 +109,7 @@ def _dated(paths):
     for p in paths:
         ts = None
         try:
-            m = _AS_OF.search(p.read_text(encoding="utf-8", errors="replace"))
+            m = _AS_OF.search(p.read_text(encoding="utf-8-sig", errors="replace"))
             if m:
                 ts = _ymd_to_ts(*m.groups())
             if ts is None:
@@ -333,7 +333,7 @@ def entries_naming_no_file(root, category="lessons"):
     for path in memory_entries(root, category):
         total += 1
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             naming_none += 1
             continue
@@ -361,7 +361,7 @@ def decisions_without_rejected(root):
     for path in memory_entries(root, "decisions"):
         total += 1
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             without += 1
             continue

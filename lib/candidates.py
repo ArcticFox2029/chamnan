@@ -108,7 +108,7 @@ def read(root, sequence):
     if not p.is_file():
         return None
     try:
-        fields = _fields(p.read_text(encoding="utf-8", errors="replace"))
+        fields = _fields(p.read_text(encoding="utf-8-sig", errors="replace"))
     except OSError:
         return None
     if "observed" not in fields:
@@ -132,7 +132,7 @@ def fields_of(path):
     than the sequence `read()` needs. `{}` for a missing or unreadable file -- a review tool
     listing candidates should show what it can, not crash on one bad file."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return {}
     return _fields(text)
@@ -161,7 +161,7 @@ def set_provenance(path, provenance):
     a reviewer confirming or rejecting a candidate is still bound by the closed enum."""
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     new_line = f"**Provenance:** {provenance}"
     if _FIELD.search(text) and "provenance" in _fields(text):
         text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)

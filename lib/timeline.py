@@ -131,7 +131,7 @@ def title_of(path, text=None):
     """
     if text is None:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             return path.stem.replace("-", " ")
     for line in text.splitlines():
@@ -149,7 +149,7 @@ def status_of(path, text=None):
     """
     if text is None:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             return OPEN
     # Masked, because this searches the WHOLE file for the first match. A thread whose body quotes
@@ -172,7 +172,7 @@ def entries_of(path, text=None):
     """
     if text is None:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             return []
     # Scanned over a copy with fenced lines blanked; offsets are preserved, so every slice below
@@ -236,7 +236,7 @@ def append(root, ident, date, note, files=None):
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")
-    existing = path.read_text(encoding="utf-8", errors="replace").rstrip("\n")
+    existing = path.read_text(encoding="utf-8-sig", errors="replace").rstrip("\n")
     ws.write_or_raise(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
     return path
 
@@ -248,7 +248,7 @@ def set_status(root, ident, status):
     path = resolve(root, ident)
     if path is None:
         return None
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     if _STATUS.search(text):
         text = _STATUS.sub(f"**Status:** {status}", text, count=1)
     else:
@@ -349,7 +349,7 @@ def open_titles(root, count=INJECT_OPEN):
     texts = {}
     for path in threads(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             text = ""
         texts[path] = text

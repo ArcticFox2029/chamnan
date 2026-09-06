@@ -268,7 +268,7 @@ def _key(chunk):
 
 def _load_ages(wsdir):
     try:
-        data = json.loads((wsdir / AGES_PATH).read_text(encoding="utf-8"))
+        data = json.loads((wsdir / AGES_PATH).read_text(encoding="utf-8-sig"))
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}

@@ -64,7 +64,7 @@ def entries(root):
     if not p.is_file():
         return []
     try:
-        text = p.read_text(encoding="utf-8", errors="replace")
+        text = p.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return []
 
@@ -120,7 +120,7 @@ def append(root, entry_text):
     existing = ""
     if p.is_file():
         try:
-            existing = p.read_text(encoding="utf-8", errors="replace")
+            existing = p.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             existing = ""
     if not existing.strip():

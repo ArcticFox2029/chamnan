@@ -59,7 +59,7 @@ def _interrupted_by(root):
     if git_dir.is_file():
         # A linked worktree: `.git` is a file holding `gitdir: <path>`, and the state lives there.
         try:
-            pointed = git_dir.read_text(encoding="utf-8", errors="replace").strip()
+            pointed = git_dir.read_text(encoding="utf-8-sig", errors="replace").strip()
         except OSError:
             return None
         if not pointed.startswith("gitdir:"):
@@ -163,7 +163,7 @@ def _sections(text):
 
 
 def title_of(path, text=None):
-    text = text if text is not None else path.read_text(encoding="utf-8", errors="replace")
+    text = text if text is not None else path.read_text(encoding="utf-8-sig", errors="replace")
     for line in text.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
@@ -281,7 +281,7 @@ MAX_CARRIED_RECORDS = 3
 def _outstanding(path):
     """(title, body) of what one record leaves unfinished, or None when it leaves nothing."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
     found = _sections(text)

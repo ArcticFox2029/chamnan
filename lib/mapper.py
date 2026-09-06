@@ -168,7 +168,7 @@ def _generated_globs(root):
     for holder, name in _gitattributes_files(root):
         try:
             text = (Path(root) / holder / name if holder
-                    else Path(root) / name).read_text(encoding="utf-8", errors="replace")
+                    else Path(root) / name).read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         for line in text.splitlines():

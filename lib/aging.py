@@ -115,7 +115,7 @@ def check(root, now=None):
     for category in memory.CATEGORIES:
         for path in memory.entries(root, category):
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
             seen = set()

@@ -232,7 +232,7 @@ def install_git_hook(root):
     target = hooks / "pre-commit"
     body = HOOK_BODY.format(marker=HOOK_MARKER)
     if target.exists():
-        existing = target.read_text(encoding="utf-8", errors="replace")
+        existing = target.read_text(encoding="utf-8-sig", errors="replace")
         if HOOK_MARKER in existing:
             print(f"chamnan: already installed in {_show(target, root)}")
             return 0
@@ -304,7 +304,7 @@ def _paths_being_dropped(map_path, files, root):
     or a corrupt one, is not something to warn about here.
     """
     try:
-        text = map_path.read_text(encoding="utf-8", errors="replace")
+        text = map_path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return 0
     # 🐛 Only the Quick Index. Later sections reuse the `- **`name`**` row shape for different

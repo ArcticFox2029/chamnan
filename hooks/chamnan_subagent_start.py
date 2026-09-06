@@ -116,7 +116,7 @@ def _record_a_firing(root, agent_type, size, outcome="delivered"):
                  "outcome": outcome}
         lines = []
         if path.is_file():
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-(MAX_FIRINGS - 1):]
+            lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()[-(MAX_FIRINGS - 1):]
         lines.append(json.dumps(entry, ensure_ascii=False))
         ws.atomic_write_text(path, "\n".join(lines) + "\n")
     except Exception:

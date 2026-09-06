@@ -208,7 +208,7 @@ def _grpc(root):
         if any(q in SKIP_PARTS for q in _rel_parts(path, root)) or not _outside(path, _nest):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         for m in PROTO_SERVICE.finditer(text):
@@ -222,7 +222,7 @@ def _grpc_source(root, service):
     for path in tree.by_suffix(root, ".proto"):
         try:
             if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
-                         path.read_text(encoding="utf-8", errors="replace"), re.M):
+                         path.read_text(encoding="utf-8-sig", errors="replace"), re.M):
                 return str(path.relative_to(root).as_posix())
         except OSError:
             continue
@@ -266,7 +266,7 @@ def _spec_files(root):
         if not (named or in_spec_dir):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         if not SPEC_HEAD.search(text[:4000]):
@@ -288,7 +288,7 @@ def _readable(root, patterns):
                 continue
             seen.add(path)
             try:
-                yield path, path.read_text(encoding="utf-8", errors="replace")
+                yield path, path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
 
@@ -329,7 +329,7 @@ def _django_mounts(root, files):
         text = f.get("_source")
         if text is None:
             try:
-                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+                text = (root / f["path"]).read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
         if "include" not in text:
@@ -381,7 +381,7 @@ def scan_routes(root, files):
         text = f.get("_source")
         if text is None:
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
         # `APIRouter` and `Blueprint` are FastAPI and Flask, so these two patterns can only ever
@@ -594,7 +594,7 @@ def _ignored_by_files(root, path):
             rel = path.relative_to(d).as_posix()
         except ValueError:
             continue
-        for line in gi.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in gi.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -647,7 +647,7 @@ def scan_env(root, files):
         text = f.get("_source")
         if text is None:
             try:
-                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+                text = (root / f["path"]).read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
         for m in ENV_IN_CODE.finditer(text):

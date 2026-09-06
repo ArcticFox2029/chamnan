@@ -158,7 +158,7 @@ def _nudge_path(wsdir, session_id):
 
 def _nudge_read(wsdir, session_id):
     try:
-        d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8"))
+        d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, RecursionError):
         return {"calls": 0, "nudged": False}
     # Valid JSON of the wrong shape is not a missing file: a list here raised AttributeError on
@@ -327,7 +327,7 @@ def _stamp_memory_entry(payload, root):
 
 def _stamp_under_lock(resolved):
     try:
-        text = resolved.read_text(encoding="utf-8", errors="replace")
+        text = resolved.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return
     if not text.strip():
@@ -601,7 +601,7 @@ def main():
             return 0
         prior = []
         if log.is_file():
-            for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
                 try:
                     _rec = json.loads(line)
                     # A line that is valid JSON but not an object -- a stray number left by a
