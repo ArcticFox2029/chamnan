@@ -9667,6 +9667,41 @@ for _label, _text, _wants_stamp in (
     _needs = not _sw_mod._HAS_AS_OF.search(_real)
     check(f"AN EXAMPLE OF THE STAMP IS NOT MISTAKEN FOR THE STAMP: {_label}", _needs == _wants_stamp)
 
+# 🐛 `--install-git-hook` wrote a pre-commit hook into a BARE repository and reported success. A
+# bare repo receives pushes and never commits, so the hook can never fire, and there is no working
+# tree for the map it would rebuild to read (R21 agent 5).
+_bare = Path(tempfile.mkdtemp(prefix="chamnan-bare-"))
+try:
+    subprocess.run(["git", "init", "--bare", "-q", str(_bare)], capture_output=True)
+    _br = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+                         cwd=_bare, capture_output=True, text=True, encoding="utf-8",
+                         errors="replace")
+    check("A HOOK IS NOT INSTALLED WHERE IT COULD NEVER FIRE",
+          _br.returncode != 0 and not (_bare / "hooks" / "pre-commit").is_file())
+    check("...and the refusal says why, not just that it refused",
+          "bare repository" in (_br.stderr + _br.stdout))
+finally:
+    _rmtree(_bare, ignore_errors=True)
+
+# 🐛 The ignore rules are appended and never corrected — right for a RULE, wrong for the sentences
+# beside them. The comment shipped before scratch.jsonl was routed through the redactor says the
+# opposite of what the code does: "neither passes through the redactor ... a credential typed into a
+# one-off script lands in these files intact." That is a false security claim sitting committed in
+# every workspace written before the change (R3 agent 5).
+_stale_gi = ("# chamnan: runtime logs. NOT summaries — scratch.jsonl keeps the opening line of each\n"
+             "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither\n"
+             "# passes through the redactor (that guards MAP.md and the injected block, a different path).\n"
+             "# A credential typed into a one-off script lands in these files intact.\n"
+             "logs/*.jsonl\n"
+             "# a line the user added themselves\n"
+             "their-own-rule/\n")
+_corrected = ws._correct_stale_ignore_claims(_stale_gi)
+check("A FALSE SECURITY CLAIM IN AN ALREADY-COMMITTED IGNORE FILE IS CORRECTED",
+      "lands in these files intact" not in _corrected
+      and "scrubbed by the same redactor" in _corrected)
+check("...and nothing the user wrote themselves is touched",
+      "their-own-rule/" in _corrected and "# a line the user added themselves" in _corrected)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402

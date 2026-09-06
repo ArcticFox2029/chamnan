@@ -1100,6 +1100,39 @@ IGNORE_LINES = [
 LAST_IGNORE_RULES_ADDED = []
 
 
+# 🐛 The rules here are appended and never corrected, which is right for a RULE — a workspace that
+# already exists must gain a new one — and wrong for the sentences beside them. The comment block
+# shipped before `scratch.jsonl` was routed through the redactor says the opposite of what the code
+# now does: "neither passes through the redactor ... a credential typed into a one-off script lands
+# in these files intact." That is a security claim, it is false, and it is sitting committed in
+# every workspace written before the change (R3 agent 5).
+#
+# Only lines chamnan itself wrote are replaced, matched literally, so nothing a person added is
+# touched. A stale claim about redaction is worth this; ordinary wording drift is not, and this list
+# should stay short enough to read.
+_STALE_IGNORE_CLAIMS = {
+    "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither":
+        "# throwaway script, scrubbed by the same redactor MAP.md uses. commands.jsonl keeps",
+    "# passes through the redactor (that guards MAP.md and the injected block, a different path).":
+        "# command signatures verbatim — the program name only, never its arguments, so a secret",
+    "# A credential typed into a one-off script lands in these files intact.":
+        "# passed as an argument is not captured here in the first place.",
+}
+
+
+def _correct_stale_ignore_claims(text):
+    """`text` with chamnan's own outdated comment lines replaced by what is true now."""
+    if not text:
+        return text
+    out = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        replacement = _STALE_IGNORE_CLAIMS.get(stripped)
+        out.append((replacement + "\n" if line.endswith("\n") else replacement)
+                   if replacement is not None else line)
+    return "".join(out)
+
+
 def _mark_ignored(root):
     """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation.
 
@@ -1119,6 +1152,7 @@ def _mark_ignored(root):
         if not gi.parent.is_dir():
             return
         existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
+        existing = _correct_stale_ignore_claims(existing)
         # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
         # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
         # workspaces only, and every existing one kept leaking whatever the new rule was for. Moving

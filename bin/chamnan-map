@@ -186,11 +186,31 @@ def _show(path, root):
         return str(path)
 
 
+def _is_bare(root):
+    """True when this repository has no working tree, so a pre-commit hook could never fire."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-bare-repository"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return out.returncode == 0 and out.stdout.strip() == "true"
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
     if hooks is None:
         print("chamnan: not a git repository — nothing to install into", file=sys.stderr)
+        return 1
+    # 🐛 A bare repository has hooks, so this installed one and reported success — into a repository
+    # that never commits. A bare repo receives pushes; `pre-commit` cannot fire there, and the map
+    # it would rebuild has no working tree to read. Refused with the reason rather than written and
+    # forgotten (R21 agent 5).
+    if _is_bare(root):
+        print("chamnan: this is a bare repository — it receives pushes and never commits, so a "
+              "pre-commit hook here could never run. Install it in a working clone instead.",
+              file=sys.stderr)
         return 1
     hooks.mkdir(parents=True, exist_ok=True)
     target = hooks / "pre-commit"
