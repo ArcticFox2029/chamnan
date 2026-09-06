@@ -94,6 +94,22 @@ being weighed — not when there was one and it felt obvious at the time; obviou
 exactly what stops being obvious later. `chamnan-report` counts decisions with nothing here, so a
 gap is visible rather than silent.
 
+### Give a rule a `**Check:**` when it can have one
+
+A rule that is only prose is statistically hard to tell apart from no rule at all. If the rule can
+be checked mechanically, add one line and it is verified every session instead of read and forgotten:
+
+```
+**Check:** present `PATTERN` in `GLOB`
+**Check:** absent `PATTERN` in `GLOB`
+**Check:** present `PATTERN` in every `GLOB`
+```
+
+**Say `every` whenever the rule means "each one".** Without it the check is aggregate across the
+whole glob — `present X in config/*.yaml` is upheld while ANY one file matches, so adding a config
+that violates the rule still reports `holds`. That is the trap; `every` is how you avoid it, and it
+names the offending file when it breaks.
+
 ### `As-of:` and `Provenance:` are not yours to write
 
 A hook adds these automatically the first time a file under `.chamnan/memory/` is written or

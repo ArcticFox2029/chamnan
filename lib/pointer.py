@@ -158,7 +158,7 @@ def _governs(text, rel_path):
     except ImportError:
         return False
     rel = str(rel_path).replace("\\", "/")
-    for _mode, _pattern, glob in rulecheck.parse(text):
+    for _mode, _pattern, glob, _per_file in rulecheck.parse(text):
         # Matched the way rulecheck RESOLVES it, not the way fnmatch reads it. fnmatch's `*`
         # crosses `/`; Path.glob's does not, and rulecheck -- the module that actually runs the
         # check -- uses Path.glob. So `src/*.py` had the pointer telling a session that

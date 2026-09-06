@@ -14,8 +14,17 @@ So a rule may carry an optional trailer:
 
     **Check:** present `PATTERN` in `GLOB`
     **Check:** absent `PATTERN` in `GLOB`
+    **Check:** present `PATTERN` in every `GLOB`
+    **Check:** absent `PATTERN` in every `GLOB`
 
 PATTERN is a plain regular expression and GLOB is a path pattern relative to the repository root.
+Without `every`, both are AGGREGATE across the whole glob: `present` is upheld while at least one
+file matches, `absent` while none do. With `every`, they are per-file: `present ... in every`
+requires each file to match and `absent ... in every` requires none of them to, and the failure
+message names the files rather than a count. Say `every` whenever the rule means "each one" -- the
+aggregate form will report a violated per-file invariant as holding, which is the trap this grammar
+word exists to remove.
+
 `present` means the rule is upheld while at least one match exists; `absent` means it is upheld
 while none does. A rule with no Check is unchanged and unaffected -- most rules are about judgement
 and cannot be reduced to a grep, which is the reason this is optional and always will be.
@@ -30,7 +39,20 @@ import re
 
 from pathlib import Path
 
-CHECK = re.compile(r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+`(.+?)`\s*$", re.M)
+# 🐛 [2026-09-06] `present X in GLOB` is an AGGREGATE test -- upheld while at least one file in the
+# glob matches -- and that is the wrong quantifier for the commonest real rule there is. Written the
+# natural way, "every service config declares a timeout" became
+# ``**Check:** present `timeout:` in `config/*.yaml` ``; adding a second config with no timeout at
+# all, the exact regression the rule exists to prevent, still reported `holds — 1/2 file(s)`,
+# because one OTHER file matched (R8 agent 3). This module's own docstring says collapsing "I could
+# not check" into "this is violated" is how a check becomes noise; collapsing "violated" into
+# "holds" is the same failure and worse, and it had no name here.
+#
+# `in every GLOB` is the per-file quantifier. The aggregate form is unchanged, so no existing rule
+# moves; a rule author who means "each one" can now say it, and the BROKEN message names the files
+# that fail rather than a count they have to go and diff themselves.
+CHECK = re.compile(
+    r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+(every\s+)?`(.+?)`\s*$", re.M)
 
 # 🐛 CHECK's grammar is exact: wrong case (`**check:**`), the wrong keyword ("for" instead of
 # "in"), a missing backtick -- any of it makes `CHECK.finditer()` find nothing, and `parse()`
@@ -49,8 +71,9 @@ MAX_BYTES = 400_000
 
 
 def parse(text):
-    """Every Check trailer in one rule's text, as (mode, pattern, glob)."""
-    return [(m.group(1), m.group(2), m.group(3)) for m in CHECK.finditer(text)]
+    """Every Check trailer in one rule's text, as (mode, pattern, glob, per_file)."""
+    return [(m.group(1), m.group(2), m.group(4), bool(m.group(3)))
+            for m in CHECK.finditer(text)]
 
 
 def malformed(text):
@@ -220,7 +243,7 @@ def _too_many_quantifiers(pattern):
 
 
 def _matches(root, pattern, glob):
-    """(files_scanned, files_matching) or None when the check cannot be run at all."""
+    """(files_scanned, files_matching, files_not_matching), or None when it cannot run."""
     if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
             or _ambiguous(pattern) or _too_many_quantifiers(pattern)):
         return None
@@ -254,16 +277,20 @@ def _matches(root, pattern, glob):
     paths = inside
     if not paths:
         return None
-    hits = 0
+    hits, missing = 0, []
     for p in paths:
         try:
             if p.stat().st_size > MAX_BYTES:
                 continue
             if rx.search(p.read_text(encoding="utf-8", errors="replace")):
                 hits += 1
+            else:
+                missing.append(p)
         except OSError:
             continue
-    return len(paths), hits
+    # The files that did NOT match come back too, so a per-file check can name them instead of
+    # handing the reader a count and leaving them to diff the glob themselves.
+    return len(paths), hits, missing
 
 
 def run(root, rules):
@@ -274,21 +301,38 @@ def run(root, rules):
     """
     out = []
     for title, text in rules:
-        for mode, pattern, glob in parse(text):
+        for mode, pattern, glob, per_file in parse(text):
             got = _matches(Path(root), pattern, glob)
             if got is None:
                 out.append((title, "unverifiable",
                             f"nothing to check: `{glob}` matched no readable file, "
                             f"or `{pattern}` is not a valid pattern"))
                 continue
-            scanned, hits = got
-            ok = hits > 0 if mode == "present" else hits == 0
+            scanned, hits, missing = got
+            where = f"every `{glob}`" if per_file else f"`{glob}`"
+            if per_file:
+                ok = hits == scanned if mode == "present" else hits == 0
+                offenders = missing if mode == "present" else [
+                    q for q in Path(root).glob(glob) if q.is_file() and q not in missing]
+            else:
+                ok = hits > 0 if mode == "present" else hits == 0
+                offenders = []
             if ok:
                 out.append((title, "holds",
-                            f"{mode} `{pattern}` in `{glob}` — {hits}/{scanned} file(s)"))
+                            f"{mode} `{pattern}` in {where} — {hits}/{scanned} file(s)"))
+            elif per_file:
+                # Named, not counted: the whole reason to say `every` is that the reader wants to
+                # know WHICH file broke it, and a count is the thing they would have to go and
+                # work out for themselves.
+                _named = ", ".join(f"`{q.name}`" for q in sorted(offenders)[:4])
+                _more = len(offenders) - 4
+                out.append((title, "BROKEN",
+                            f"expected {mode} `{pattern}` in {where} — {hits}/{scanned} file(s); "
+                            + (f"{_named}" + (f" +{_more} more" if _more > 0 else "")
+                               if _named else "no file matched")))
             else:
                 out.append((title, "BROKEN",
-                            f"expected {mode} `{pattern}` in `{glob}`, "
+                            f"expected {mode} `{pattern}` in {where}, "
                             f"found {hits} match(es) across {scanned} file(s)"))
         # A distinct status from "unverifiable": that one means "the grammar is fine, the check
         # just can't run right now" (a glob matching nothing yet). This means the grammar itself
@@ -297,7 +341,7 @@ def run(root, rules):
         for bad_line in malformed(text):
             out.append((title, "malformed",
                         f"looks like an attempted **Check:** trailer but does not match the "
-                        f"required form (present|absent `PATTERN` in `GLOB`): `{bad_line}`"))
+                        f"required form (present|absent `PATTERN` in [every] `GLOB`): `{bad_line}`"))
     return out
 
 
