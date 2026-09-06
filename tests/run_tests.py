@@ -8487,6 +8487,36 @@ check("...and an edit to the workspace itself is not counted as the user's",
       sessions.where_git_says_you_stopped(_st) == "")
 _rmtree(_st.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] The SessionStart hook calls `rollup.collapse` from two places — once to pick the
+# per_dir with the best coverage, and again if the assembled block is still over the byte ceiling —
+# and both step through the same `(8, 4, 2, 0)` on the same index and budget. Counted on a real run
+# against the 2,544-file repository: 8 calls, 4 distinct argument tuples. The comment at the second
+# call site claimed re-rolling "returns the same text for one cached lookup", which was true of the
+# CHURN lookup inside and not of this function (R16 agent 1).
+_rc_calls = []
+_rc_inner = rollup._collapse
+def _rc_counted(index, map_rel, budget=None, root=None, per_dir=8):
+    _rc_calls.append(per_dir)
+    return _rc_inner(index, map_rel, budget, root, per_dir)
+_rc_idx = "## Quick Index\n\n" + "".join(
+    f"- **`src/pkg{i % 6}/m{i:03d}.py`** — does a thing\n" for i in range(120))
+rollup._COLLAPSE_CACHE.clear()
+rollup._collapse = _rc_counted
+try:
+    _rc_out = [rollup.collapse(_rc_idx, "MAP.md", 3000, None, pd)
+               for pd in (8, 4, 2, 0, 8, 4, 2, 0)]
+finally:
+    rollup._collapse = _rc_inner
+check("A ROLL-UP ASKED FOR TWICE IS COMPUTED ONCE", len(_rc_calls) == 4)
+# The half that makes it a cache and not a bug: the answer has to be the same answer.
+check("...and the second answer is the first one, byte for byte", _rc_out[:4] == _rc_out[4:])
+# Different arguments must still compute — a cache keyed too coarsely would pass the check above
+# by returning one wrong answer four times.
+rollup._COLLAPSE_CACHE.clear()
+check("...while four different per_dir values still give four different roll-ups",
+      len({rollup.collapse(_rc_idx, "MAP.md", 3000, None, pd) for pd in (8, 4, 2, 0)}) == 4)
+rollup._COLLAPSE_CACHE.clear()
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"

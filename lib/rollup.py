@@ -270,7 +270,46 @@ def _is_a_directory_heading(line):
             and stripped.count("**") == 2)
 
 
+# 🐛 [2026-09-06] The SessionStart hook calls `collapse` from two places -- once to choose the
+# per_dir that gives the best coverage, and again if the assembled block is still over the byte
+# ceiling -- and both step through the same `(8, 4, 2, 0)` on the same index and budget. Counted on
+# a real run against this 2,544-file repository: 8 calls, 4 distinct argument tuples. The comment at
+# the second call site said re-rolling "returns the same text for one cached lookup", which was
+# true of the CHURN lookup inside and not of this function, so half the work was done twice.
+#
+# The saving R16 agent 1 reported for this -- 7.69 ms per call, 5.3% of the hook -- does NOT
+# reproduce, and the honest number is worth more than the change. Measured end to end on this
+# repository, 15 runs each, CPU time rather than wall clock: 88.2 ms -> 87.7 ms. Half a millisecond,
+# inside the run-to-run spread. Their figure came from a cProfile run, and a profiler charges per
+# CALL, so removing four calls to a function that makes many internal ones looks far larger under
+# the profiler than it is without one.
+#
+# What IS measured: this hook passes a 48,404-character Quick Index, and one collapse of it costs
+# 1.1-2.0 ms, so the duplicated half is a few milliseconds and grows with the index. The change is
+# kept because it removes work that is provably redundant and its output is byte-identical, not
+# because the profile said 5%.
+#
+# Per PROCESS and unbounded on purpose: a hook process makes at most eight of these calls and then
+# exits, so there is nothing to evict, and `index` is one string this module was handed rather than
+# one it builds.
+_COLLAPSE_CACHE = {}
+
+
 def collapse(index, map_rel, budget=None, root=None, per_dir=8):
+    # 🐛 The first version of this key held the arguments and nothing else, and the arguments do not
+    # determine the answer: the file names on each line are ranked by git churn, which moves with
+    # HEAD. Two commits into a test's fixture, the same arguments returned the ranking from before
+    # the commit — caught by the suite's own churn tests, which is exactly what they are for. The
+    # hook could never have hit it (one process, one moment), and "correct in the one caller I was
+    # thinking about" is not correct.
+    key = (index, str(map_rel), budget, str(root), per_dir, _head(root) if root else "")
+    if key in _COLLAPSE_CACHE:
+        return _COLLAPSE_CACHE[key]
+    _COLLAPSE_CACHE[key] = out = _collapse(index, map_rel, budget, root, per_dir)
+    return out
+
+
+def _collapse(index, map_rel, budget=None, root=None, per_dir=8):
     """Fold a too-large index down to one line per directory instead of cutting its tail off.
 
     Truncating at a byte offset drops whatever sorts last, so on a 196-file repo everything from
