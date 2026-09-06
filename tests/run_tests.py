@@ -9750,6 +9750,34 @@ if _undocumented_agents:
     print("      agents shipped and never documented: " + ", ".join(_undocumented_agents))
 check("...and every agent the plugin ships is named in the README", _undocumented_agents == [])
 
+# 🐛 The AWS rule matched `AKIA` alone. AWS issues access key IDs under four prefixes, and the
+# commonest one in CI is `ASIA` — the temporary credential every assumed role hands out (R5 agent 2,
+# against gitleaks' and detect-secrets' own fixtures). The principal-id prefixes are deliberately
+# NOT covered: they appear in ARNs and policy documents as a matter of course and are not
+# credentials.
+for _pre in ("AKIA", "ASIA", "ABIA", "ACCA"):
+    check(f"AN AWS ACCESS KEY ID IS REDACTED WHATEVER PREFIX IT CARRIES: {_pre}",
+          redact.scrub(_pre + "IOSFODNN7EXAMPLE") != _pre + "IOSFODNN7EXAMPLE")
+_arn = "arn:aws:sts::123456789012:assumed-role/deploy/AROAIOSFODNN7EXAMPLE"
+check("...and a role principal id in an ARN is left readable, because it is not a credential",
+      redact.scrub(_arn) == _arn)
+
+# 🐛 A name ending in `key` assigned an f-string TEMPLATE was redacted as a credential — session
+# keys, cache keys, widget ids. 49 lines changed across a real 33-file application. A value carrying
+# a runtime interpolation is not a literal credential: it does not exist until the program runs.
+#
+# The first version of this exemption traded the false positive for a LEAK — `f"sk-{tail}"` is a
+# template too, and its literal half is a real provider prefix sitting under every length threshold
+# in PATTERNS. Both directions are pinned here for that reason.
+for _tmpl in ('history_key = f"chat_history_{mode}"', 'retry_key = f"last_failed_prompt_{mode}"',
+              'cache_key = f"{user}:{page}"'):
+    check(f"A RUNTIME TEMPLATE UNDER A WEAK NAME IS NOT A CREDENTIAL: {_tmpl[:28]}",
+          redact.scrub(_tmpl) == _tmpl)
+for _split in ('api_key = f"sk-{tail}"', 'aws_key = f"AKIA{rest}IOSFODNN7"',
+               'api_key = f"ghp_{rest}"', 'password = f"hunter2{n}"'):
+    check(f"...but splitting a key across an interpolation is not a way through: {_split[:26]}",
+          PLACEHOLDER_TEXT in redact.scrub(_split))
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402

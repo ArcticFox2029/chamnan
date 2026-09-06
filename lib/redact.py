@@ -98,7 +98,16 @@ PATTERNS = [
     re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{10,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])AKIA[0-9A-Z]{16}\b"),
+    # 🐛 `AKIA` alone. AWS issues access key IDs under four prefixes and the commonest one in CI is
+    # `ASIA` — the temporary credential every assumed role hands out — which sailed straight through
+    # (R5 agent 2, against gitleaks' and detect-secrets' own fixtures).
+    #
+    # Only the KEY prefixes are here. `AROA`, `AIDA`, `AGPA`, `ANPA` and friends are principal ids
+    # for roles, users and groups: they appear in ARNs and policy documents as a matter of course,
+    # they are not credentials, and redacting them would cost the index real information for nothing.
+    # Two comparable tools redact them anyway; that is the precision half of this module's trade
+    # being spent without being noticed.
+    re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b"),
     re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,}"),
     re.compile(r"(?<![A-Za-z0-9_-])(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{16,}"),
@@ -743,6 +752,44 @@ def _apply_in_windows(text, spans, steps):
     return "".join(pieces)
 
 
+# 🐛 A name ending in `key` assigned an f-string TEMPLATE was redacted as a credential. Measured on
+# a real 33-file application: `history_key = f"chat_history_{mode}"`, `retry_key =
+# f"last_failed_prompt_{mode}"`, `container_key = "attach_" + ...` — session-state keys, cache keys,
+# widget ids, all replaced by <REDACTED>. 49 lines changed in one sweep (R5 agent 2).
+#
+# A value carrying a runtime interpolation is not a literal credential: whatever the real secret is,
+# it is not this text, because this text does not exist until the program runs. Narrow on purpose —
+# it applies only to the weakest of the secret words. `key` is the one that appears in
+# `history_key`; `password`, `secret`, `token` and `credential` are not exempted, so
+# `password = f"hunter2{n}"` is still redacted and the literal half never gets a pass.
+_TEMPLATED = re.compile(r"\{[^{}]*\}")
+# A provider prefix is recognisable long before the pattern that matches a whole key can fire:
+# `f"sk-{tail}"` leaves the literal `sk-`, four characters, under every length threshold in
+# PATTERNS. Splitting a key across an interpolation must not be a way through, so the prefix alone
+# disqualifies the exemption.
+_CREDENTIAL_PREFIX = re.compile(
+    r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprs]-|"
+    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_)", re.I)
+_WEAK_SECRET_WORD = re.compile(r"(?:^|[^A-Za-z])keys?\s*$", re.I)
+
+
+def _is_a_template_under_a_weak_name(key_part, value):
+    """True when `key` names something built at runtime rather than a credential written down.
+
+    The interpolation is not enough on its own. `api_key = f"sk-{tail}"` is a template AND carries a
+    real provider prefix in its literal half — exempting it would have traded a false positive for a
+    leak, which the first version of this did. So the literal text, with the interpolations removed,
+    has to carry nothing credential-shaped for the exemption to apply.
+    """
+    name = key_part.rstrip().rstrip("=:").rstrip().strip("\"'` ")
+    if not _WEAK_SECRET_WORD.search(name) or not _TEMPLATED.search(value):
+        return False
+    literal = _TEMPLATED.sub("", value)
+    if _LONG_MIXED_VALUE.search(literal) or _CREDENTIAL_PREFIX.search(literal):
+        return False
+    return not any(p.search(literal) for p in PATTERNS)
+
+
 def scrub(text, windowed=True):
     """Every string that leaves chamnan for a written file goes through this.
 
@@ -838,6 +885,7 @@ def scrub(text, windowed=True):
         or m.group(2).lower() in SCHEME_WORDS
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
         or _value_is_the_key_itself(_full_key_at(m), m.group(2))
+        or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
         + " " * 0, chunk)
 
