@@ -385,7 +385,14 @@ def _exists_at(target):
 
 # Written into every file the shared writer produces, and the first thing `_looks_generated` looks
 # for. A person does not type this by accident, which is the entire property a heading lacked.
-MARKER = "<!-- chamnan:generated — safe to delete; `chamnan-context --write` recreates it -->"
+# 🐛 This line used to read "safe to delete; `chamnan-context --write` recreates it", and
+# doing exactly what it said broke the thing it describes. The marker IS the provenance: with
+# it gone, chamnan can no longer tell its own output from a file somebody wrote, so the next
+# `--write` refuses rather than recreating — which is the cautious behaviour and the right
+# one, since guessing is what destroyed a user's notes twice. What was wrong was the sentence
+# (R3 agent 4). It now says what actually happens, and names the one move that does work.
+MARKER = ("<!-- chamnan:generated — this line is how chamnan knows it wrote this file. "
+          "Delete the whole file to start over; `chamnan-context --write` then recreates it. -->")
 
 
 def _looks_generated(text):
