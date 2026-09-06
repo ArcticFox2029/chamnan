@@ -101,7 +101,7 @@ def _read(root):
             if nested and any(parent.resolve() in nested for parent in path.parents):
                 continue
             try:
-                yield path, path.read_text(encoding="utf-8", errors="replace")
+                yield path, path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
 

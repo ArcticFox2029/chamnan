@@ -196,7 +196,7 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
             try:
                 if f.stat().st_size > MAX_BYTES:
                     continue
-                text = f.read_text(encoding="utf-8", errors="replace")
+                text = f.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
             for tier, needle in enumerate(wanted):
@@ -296,7 +296,7 @@ def _sweep_seen(wsdir, keep):
 def already_pointed(wsdir, session_id, rel_path):
     """True if this session has already been shown this file."""
     try:
-        d = json.loads(_seen_path(wsdir, session_id).read_text(encoding="utf-8"))
+        d = json.loads(_seen_path(wsdir, session_id).read_text(encoding="utf-8-sig"))
     except Exception:
         return False
     # 🐛 A freshly parsed JSON value was used as a dict with no check that it was one. A file
@@ -314,7 +314,7 @@ def already_pointed(wsdir, session_id, rel_path):
 def mark_pointed(wsdir, session_id, rel_path):
     p = _seen_path(wsdir, session_id)
     try:
-        d = json.loads(p.read_text(encoding="utf-8"))
+        d = json.loads(p.read_text(encoding="utf-8-sig"))
     except Exception:
         d = {"session": str(session_id), "paths": []}
     if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):

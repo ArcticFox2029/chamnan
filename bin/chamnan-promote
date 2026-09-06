@@ -181,7 +181,7 @@ def main(argv):
     _line = _SHEBANG.get(dest.suffix)
     if _line:
         try:
-            _body = dest.read_text(encoding="utf-8")
+            _body = dest.read_text(encoding="utf-8-sig")
             if not _body.startswith("#!"):
                 ws.write_or_raise(dest, _line + "\n" + _body)
         except (OSError, UnicodeDecodeError):

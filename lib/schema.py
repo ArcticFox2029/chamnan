@@ -262,7 +262,7 @@ def scan(root, files):
                 or redact.is_blocked(path):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         rel = str(path.relative_to(root).as_posix())
@@ -315,7 +315,7 @@ def scan(root, files):
         if not _looks_relevant(path):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         # 🐛 These read `raw`, which is bound only inside the SQL loop above. A repository with an

@@ -214,7 +214,7 @@ def read(log_path):
     if not log_path.is_file():
         return []
     out = []
-    for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in log_path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         if not line.strip():
             continue
         try:

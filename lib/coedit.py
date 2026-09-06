@@ -113,7 +113,7 @@ def _trim(dest):
         # only ever fire early, which costs one read, never late, which costs the cap.
         if dest.stat().st_size < TRIM_AT * 20:
             return
-        lines = dest.read_text(encoding="utf-8", errors="replace").splitlines(True)
+        lines = dest.read_text(encoding="utf-8-sig", errors="replace").splitlines(True)
         if len(lines) <= TRIM_AT:
             return
         ws.atomic_write_text(dest, "".join(lines[-MAX_LINES:]))
@@ -125,7 +125,7 @@ def _sequence(wsdir):
     cutoff = time.time() - MAX_AGE_DAYS * 86400
     out = []
     try:
-        with (wsdir / LOG).open(encoding="utf-8", errors="replace") as fh:
+        with (wsdir / LOG).open(encoding="utf-8-sig", errors="replace") as fh:
             for line in fh:
                 try:
                     rec = json.loads(line)

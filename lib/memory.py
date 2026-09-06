@@ -119,7 +119,7 @@ def dangling_citations(root):
     found = {}
     for _, f in sorted(sources, key=lambda r: r[0]):
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            text = f.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         # Scanned over the WHOLE text, with the line derived from the match offset. Matching
@@ -175,13 +175,21 @@ def case_collisions(paths):
 def title_of(path, text=None):
     """The entry's `# ` heading, falling back to a readable form of the filename."""
     try:
-        text = text if text is not None else path.read_text(encoding="utf-8", errors="replace")
+        text = text if text is not None else path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return path.stem.replace("-", " ")
     # 🐛 A UTF-8 BOM sits before the `#`, so `startswith("# ")` was False on the first line and the
     # real title was unreachable: `# Why Postgres over SQLite` was injected as `why postgres`, the
-    # de-slugged filename. Editors on Windows write a BOM by default, and this is the only place a
-    # BOM could change what a session is told.
+    # de-slugged filename. Editors on Windows write a BOM by default.
+    #
+    # 🐛 [2026-09-06] "this is the only place a BOM could change what a session is told" is what
+    # this comment used to say, and it was wrong in the way this repository is always wrong -- one
+    # member of a set fixed, the identical ones beside it left. `timeline.title_of` reads a thread
+    # the same way, and a BOM there made `_distinct_slug` fork a thread's history into a second
+    # file; `sessions.title_of` lost the "last session" title the same way (R11 agent 1). So the
+    # BOM is stripped at the READ now -- every `read_text` in lib/, bin/ and hooks/ decodes
+    # `utf-8-sig`, which is plain UTF-8 plus "drop a leading BOM if there is one" -- and this
+    # `lstrip` stays only because `text` may be passed in by a caller that read it itself.
     for line in text.lstrip("\ufeff").splitlines():
         if line.startswith("# "):
             return line[2:].strip()
@@ -239,7 +247,7 @@ def rules_text(root):
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
     for path in rule_paths:
         try:
-            body = path.read_text(encoding="utf-8", errors="replace").strip()
+            body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
         except OSError:
             continue
         group = collision_of.get(path)
@@ -325,7 +333,7 @@ def rules_with_titles(root):
     out = []
     for path in entries(root, "rules"):
         try:
-            body = path.read_text(encoding="utf-8", errors="replace").strip()
+            body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
         except OSError:
             continue
         if body:

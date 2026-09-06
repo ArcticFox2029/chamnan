@@ -658,7 +658,7 @@ def load_json(path, want=dict):
         # for the read, which is the cost being avoided. A file over the ceiling is not truncated
         # into a parse -- `read(n)` of a bigger file yields invalid JSON and lands in the `except`
         # below, which returns the empty store, the same degraded answer as a missing file.
-        with pathlib.Path(path).open(encoding="utf-8") as fh:
+        with pathlib.Path(path).open(encoding="utf-8-sig") as fh:
             data = json.loads(fh.read(JSON_READ_CEILING))
     except (OSError, json.JSONDecodeError, ValueError, RecursionError, UnicodeDecodeError):
         return want()
@@ -890,7 +890,7 @@ def _mark_generated(root):
         ga = Path(root) / WORKSPACE_DIRNAME / ".gitattributes"
         if not ga.parent.is_dir():
             return
-        existing = ga.read_text(encoding="utf-8", errors="replace") if ga.is_file() else ""
+        existing = ga.read_text(encoding="utf-8-sig", errors="replace") if ga.is_file() else ""
         # 🐛 The presence test was `if "MAP.md linguist-generated" in existing: return` — a single
         # sentinel line, which is the exact trap `_mark_ignored` a few functions down was rewritten
         # to escape and whose comment says why: a rule added to the constant afterwards reaches NEW
@@ -924,7 +924,7 @@ def plugin_version(plugin_root):
     """The running plugin's own version, from the manifest beside it. "" if it cannot be read."""
     try:
         data = json.loads((Path(plugin_root) / ".claude-plugin" / "plugin.json")
-                          .read_text(encoding="utf-8"))
+                          .read_text(encoding="utf-8-sig"))
         return str(data.get("version", ""))
     except (OSError, ValueError, TypeError, RecursionError):
         return ""
@@ -981,7 +981,7 @@ def reconcile_version(root, running):
         return ""
     path = workspace(root) / VERSION_FILE
     try:
-        seen = path.read_text(encoding="utf-8").strip()
+        seen = path.read_text(encoding="utf-8-sig").strip()
     except OSError:
         seen = ""
     # 🐛 `seen` is the raw contents of a COMMITTED file, and the caller interpolates it into a bold
@@ -1049,7 +1049,7 @@ def available_update(plugin_root):
         if not running:
             return ""
         name = json.loads((root / ".claude-plugin" / "plugin.json")
-                          .read_text(encoding="utf-8")).get("name", "")
+                          .read_text(encoding="utf-8-sig")).get("name", "")
         best = ""
         for ancestor in root.parents:
             if ancestor.name != "plugins":
@@ -1057,7 +1057,7 @@ def available_update(plugin_root):
             for entry in _marketplace_dirs(ancestor):
                 for manifest in _plugin_manifests_under(entry):
                     try:
-                        data = json.loads(manifest.read_text(encoding="utf-8"))
+                        data = json.loads(manifest.read_text(encoding="utf-8-sig"))
                     except (OSError, ValueError, RecursionError):
                         continue
                     if not isinstance(data, dict):
@@ -1105,7 +1105,7 @@ def _marketplace_dirs(plugins_dir):
     except OSError:
         pass
     try:
-        known = json.loads((plugins_dir / "known_marketplaces.json").read_text(encoding="utf-8"))
+        known = json.loads((plugins_dir / "known_marketplaces.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         known = None
     if isinstance(known, dict):
@@ -1155,7 +1155,7 @@ def _plugin_manifests_under(market):
     # caught — a marketplace manifest is a file on disk that this code did not write.
     try:
         declared = json.loads((market / ".claude-plugin" / "marketplace.json")
-                              .read_text(encoding="utf-8"))
+                              .read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         return out
     entries = declared.get("plugins") if isinstance(declared, dict) else None
@@ -1272,7 +1272,7 @@ def _mark_ignored(root):
         gi = Path(root) / WORKSPACE_DIRNAME / ".gitignore"
         if not gi.parent.is_dir():
             return
-        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
+        existing = gi.read_text(encoding="utf-8-sig", errors="replace") if gi.is_file() else ""
         existing = _correct_stale_ignore_claims(existing)
         # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
         # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
@@ -1602,7 +1602,7 @@ def _config_problem(path):
     so it is answered in one place.
     """
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
     if not text.strip():

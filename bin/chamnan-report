@@ -403,7 +403,7 @@ def command_summaries():
     out = {}
     for name in known_commands():
         try:
-            head = (HERE / name).read_text(encoding="utf-8", errors="replace")[:400]
+            head = (HERE / name).read_text(encoding="utf-8-sig", errors="replace")[:400]
         except OSError:
             continue
         for line in head.splitlines():
@@ -500,7 +500,7 @@ def _read_pointer_log(root):
         return 0, {}
     fired, named = 0, {}
     try:
-        for line in log.read_text(encoding="utf-8").splitlines():
+        for line in log.read_text(encoding="utf-8-sig").splitlines():
             try:
                 rec = json.loads(line)
             except (ValueError, RecursionError):

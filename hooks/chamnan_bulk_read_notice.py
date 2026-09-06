@@ -104,7 +104,7 @@ def _estimate(path, size):
     built in memory to price a file nobody is going to read.
     """
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
             head = fh.read(SAMPLE_BYTES)
     except OSError:
         return 0.0

@@ -161,21 +161,50 @@ def _quantified_group_over_quantifier(pattern):
 # 20 identical characters took 0.25s, 24 took 4.2s, and 28 had not finished after five seconds.
 # It sailed straight through a guard whose whole reason for existing is that hang.
 _AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)\s*[+*{]")
+# 🐛 [2026-09-06] The fifth family, and the module's own comment below predicted one. The same
+# alternation with NO quantifier at all -- `(a|aa)(a|aa)(a|aa)…` -- is invisible to every guard
+# here, because all four require either a nested quantifier or a trailing `+`/`*`/`{` on the group.
+# Concatenation supplies the exponent instead: k groups placed side by side give the backtracking
+# engine 2^k parse paths to try when the tail fails. Measured against Python's own `re`, with 52
+# `a` characters and a trailing `b` that never matches: k=14 0.004s, k=16 0.018s, k=18 0.078s,
+# k=20 0.338s, k=26 over 15 seconds -- roughly 4.4x per +2, which is 2^k. Reproduced end to end
+# against the real SessionStart hook, which hung indefinitely on a 157-character `**Check:**` line
+# in one committed rule file (R11 agent 2).
+_ANY_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)")
+
+
+def _branches_overlap(branches):
+    """True when two branches of one alternation can consume the same text.
+
+    Duplicates are the unmistakable case; a prefix relation (`(x|xy)`) is the same hazard, because
+    the engine has two ways to consume the same input and must try both.
+    """
+    if len(set(branches)) != len(branches):
+        return True
+    for i, a in enumerate(branches):
+        for b in branches[i + 1:]:
+            if a.startswith(b) or b.startswith(a):
+                return True
+    return False
 
 
 def _ambiguous(pattern):
     """True for an alternation whose branches can match the same text under a quantifier."""
-    for m in _AMBIGUOUS_ALTERNATION.finditer(pattern):
-        branches = m.group(1).split("|")
-        # Duplicates are the unmistakable case; a prefix relation ((x|xy)+) is the same hazard,
-        # because the engine has two ways to consume the same input and must try both.
-        if len(set(branches)) != len(branches):
-            return True
-        for i, a in enumerate(branches):
-            for b in branches[i + 1:]:
-                if a.startswith(b) or b.startswith(a):
-                    return True
-    return False
+    return any(_branches_overlap(m.group(1).split("|"))
+               for m in _AMBIGUOUS_ALTERNATION.finditer(pattern))
+
+
+def _overlapping_alternations(pattern):
+    """How many alternation groups in `pattern` have branches that can match the same text.
+
+    Quantified or not. ONE of these is a single choice point and costs nothing; what turns the
+    curve is how many of them the engine has to try together, and concatenation multiplies them
+    exactly as a quantifier does. An alternation whose branches are distinct -- `(GET|POST|PUT)`,
+    which is what a real `**Check:**` pattern looks like when it has one at all -- is not counted,
+    because the engine picks one branch per position and never comes back to it.
+    """
+    return sum(1 for m in _ANY_ALTERNATION.finditer(pattern)
+               if _branches_overlap(m.group(1).split("|")))
 
 
 # 🐛 The third shape, and the one all three guards above are blind to by construction: they every
@@ -244,8 +273,14 @@ def _too_many_quantifiers(pattern):
 
 def _matches(root, pattern, glob):
     """(files_scanned, files_matching, files_not_matching), or None when it cannot run."""
+    # The count is on CHOICE POINTS, not on any one shape: an unbounded quantifier and an
+    # overlapping alternation are the same hazard to a backtracking engine, and the fifth family
+    # was found by supplying the exponent through concatenation rather than through repetition.
+    # Counting them against one budget closes that dimension for every arrangement of them --
+    # nested, quantified, or side by side -- instead of adding a fifth shape and inviting a sixth.
     if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
-            or _ambiguous(pattern) or _too_many_quantifiers(pattern)):
+            or _ambiguous(pattern) or _too_many_quantifiers(pattern)
+            or _overlapping_alternations(pattern) > MAX_QUANTIFIERS):
         return None
     try:
         rx = re.compile(pattern)
@@ -282,7 +317,7 @@ def _matches(root, pattern, glob):
         try:
             if p.stat().st_size > MAX_BYTES:
                 continue
-            if rx.search(p.read_text(encoding="utf-8", errors="replace")):
+            if rx.search(p.read_text(encoding="utf-8-sig", errors="replace")):
                 hits += 1
             else:
                 missing.append(p)

@@ -80,7 +80,7 @@ def main():
         mp = wsdir / "MAP.md"
         try:
             if mp.is_file() and mp.stat().st_size <= MAP_MAX_BYTES:
-                _, edges = impact_mod.lookup(mp.read_text(encoding="utf-8", errors="replace"), rel)
+                _, edges = impact_mod.lookup(mp.read_text(encoding="utf-8-sig", errors="replace"), rel)
         except (OSError, ValueError):
             edges = None
 

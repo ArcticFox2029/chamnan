@@ -322,7 +322,7 @@ def read_target(target):
     """
     if target.dir_fd is None:
         try:
-            return target.path.read_text(encoding="utf-8")
+            return target.path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
             return None
     try:
@@ -336,7 +336,7 @@ def read_target(target):
                 f"outside the repository, and this adapter merges what it reads into a file it "
                 f"then writes here.") from exc
         raise
-    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+    with os.fdopen(fd, "r", encoding="utf-8-sig") as fh:
         return fh.read()
 
 

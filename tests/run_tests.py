@@ -7784,6 +7784,39 @@ check("...and the reason names the file rather than only failing",
       "could not write" in _wr_run.stderr and "a-thread-nobody-can-write" in _wr_run.stderr)
 _rmtree(_wr.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] `memory.title_of` was given a BOM strip on 2026-09-05 with a comment saying it
+# was "the only place a BOM could change what a session is told". It was not. `timeline.title_of`
+# reads a thread's `# ` heading the same way, so a BOM — what PowerShell 5.1's `Out-File` and
+# Notepad's plain "UTF-8" both write by default — made `title_of` fall back to the de-slugged
+# filename and `_distinct_slug` fork the thread's history into a SECOND file; `sessions.title_of`
+# lost the "last session" title the same way (R11 agent 1). Fixed at the READ rather than in the
+# three parsers: every `read_text` in lib/, bin/ and hooks/ decodes `utf-8-sig`, which is UTF-8
+# plus "drop a leading BOM if there is one" and is a no-op on a file that has none.
+_bom = Path(tempfile.mkdtemp(prefix="chamnan-bom-")) / "r"
+(_bom / ".chamnan" / "threads").mkdir(parents=True)
+(_bom / ".chamnan" / "sessions").mkdir(parents=True)
+(_bom / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+_bom_t = _bom / ".chamnan" / "threads" / "the-migration.md"
+_bom_t.write_text("\ufeff# The migration\n\n**Status:** open\n\n## 2026-09-06 — note\n\nx\n",
+                  encoding="utf-8")
+_bom_s = _bom / ".chamnan" / "sessions" / "2026-09-06-x.md"
+_bom_s.write_text("\ufeff# Wired up the importer\n\n## Remaining\n\n- finish the retry path\n",
+                  encoding="utf-8")
+(_bom / ".chamnan" / "memory" / "rules" / "r.md").write_text(
+    "\ufeff# Why Postgres over SQLite\n\nBecause.\n", encoding="utf-8")
+check("A BOM DOES NOT COST A THREAD ITS TITLE", timeline.title_of(_bom_t) == "The migration")
+check("...nor a session record its title", sessions.title_of(_bom_s) == "Wired up the importer")
+check("...nor a rule its title",
+      memory_mod.title_of(_bom / ".chamnan" / "memory" / "rules" / "r.md") == "Why Postgres over SQLite")
+# The consequence, not just the parse: a title that reads as different forks the file.
+_bom_p, _bom_new = timeline.create(_bom, "The migration", "2026-09-06")
+check("...and declaring the same thread again continues it rather than forking a second file",
+      _bom_p.resolve() == _bom_t.resolve() and _bom_new is False
+      and len(list((_bom / ".chamnan" / "threads").glob("*.md"))) == 1)
+check("...and the Status line is still read, so the thread is not silently reopened",
+      timeline.status_of(_bom_t) == timeline.OPEN)
+_rmtree(_bom.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
@@ -10673,10 +10706,14 @@ import tools_index as _ti2  # noqa: E402
 # `re` has no timeout. The flat guard could not look inside a nested group: `((a+)b?)+$`,
 # `(([a-z])+)+$` and `(?:(a+))+$` took 3.1s, 3.6s and 7.6s on twenty-odd characters.
 def _would_refuse(pat):
+    # Mirrors `_matches`. 🐛 It stopped mirroring it once already: a guard added to the module and
+    # not to this helper is a guard the suite never exercises, which is how the fifth family below
+    # reached a released build.
     return bool(_rc2._NESTED_QUANTIFIER.search(pat)
                 or _rc2._quantified_group_over_quantifier(pat)
                 or _rc2._ambiguous(pat)
-                or _rc2._too_many_quantifiers(pat))
+                or _rc2._too_many_quantifiers(pat)
+                or _rc2._overlapping_alternations(pat) > _rc2.MAX_QUANTIFIERS)
 
 
 # All three of the guards above require a literal `(` before they will look at a pattern, so a flat
@@ -10684,7 +10721,14 @@ def _would_refuse(pat):
 # k=4 is 0.081s and k=5 is 1.311s, k=7 is 27s — which is where MAX_QUANTIFIERS = 4 comes from.
 for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(x*)*$",
              "((ab)*)+$", "a*a*a*a*a*a*a*a*a*a*a*a*b", "a*a*a*a*a*b",
-             "x{2,}y{2,}z{2,}w{2,}v{2,}"):
+             "x{2,}y{2,}z{2,}w{2,}v{2,}",
+             # 🐛 [2026-09-06] The fifth family the comment above predicted: the SAME ambiguous
+             # alternation with no quantifier anywhere, repeated by CONCATENATION instead. Every
+             # guard here required a nested quantifier or a trailing `+`/`*`/`{` on the group, so
+             # all four passed it. 157 characters in one committed rule file hung the real
+             # SessionStart hook past 15 seconds; measured 0.004s at k=14 and 4.4x per further
+             # two, which is 2^k (R11 agent 2).
+             "(a|aa)" * 26 + "b", "(a|aa)" * 5 + "b", "(x|xy)(x|xy)(x|xy)(x|xy)(x|xy)z"):
     check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
 # ...and the guard must not refuse the patterns a rule would actually be written with.
 for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
@@ -10694,6 +10738,15 @@ for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.
 check("an escaped paren is not a group", not _would_refuse(r"\(a\)+"))
 check("...and a character class of quantifier characters is not one either",
       not _would_refuse(r"([+*])"))
+# The count is on CHOICE POINTS, so an alternation whose branches are DISTINCT is not one: the
+# engine picks a branch per position and never comes back to it. Twenty of them are ordinary.
+check("distinct alternations are not choice points, however many",
+      not _would_refuse("(GET|POST)" * 20))
+# And the worst case the budget still admits has to be fast, or the budget is the wrong number.
+_redos_t0 = _time.time()
+re.compile("(a|aa)" * _rc2.MAX_QUANTIFIERS + "b").search("a" * 4000)
+check("...and the worst pattern still allowed runs in milliseconds on the largest input",
+      _time.time() - _redos_t0 < 0.5)
 # ------------------------------ every bin/ command guards what it prints
 # Five findings running had the same shape: one store, several readers, and only some guarded. The
 # case-by-case judgement about which commands "only print numbers" was wrong every time, so the
@@ -10706,6 +10759,25 @@ for _cmd in sorted(p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix):
     _src = _cmd.read_text(encoding="utf-8")
     check(f"EVERY COMMAND SCRUBS WHAT IT PRINTS: {_cmd.name}",
           "print = redact.emit" in _src and "import redact" in _src)
+# 🐛 [2026-09-06] And the same rule for the hooks, which had none — the sibling half of the very
+# check above, in the family that emits MORE repository text than any command. The credential half
+# is deliberately not repeated there (each section is scrubbed at the point it is read, ahead of
+# the token cut); what had no default at all was the control-character half, and one missing
+# `one_line` in `sessions.carry_forward` put an ESC/OSC sequence into the injected block.
+for _hk in sorted((ROOT / "hooks").glob("chamnan_*.py")):
+    _hsrc = _hk.read_text(encoding="utf-8")
+    if "print(json.dumps(" in _hsrc and "print = redact" not in _hsrc:
+        # A hook that answers only in JSON is covered where it builds the payload instead.
+        check(f"EVERY HOOK STRIPS CONTROL CHARACTERS: {_hk.name}",
+              "redact.for_a_terminal(" in _hsrc)
+        continue
+    # A hook that never prints needs no guard. Asked of the SOURCE with the comments removed,
+    # because chamnan_session_end.py's own comment says why it does not print, and matching that
+    # sentence would demand a print guard of a file with nothing to guard.
+    _hcode = "\n".join(ln.split("#", 1)[0] for ln in _hsrc.splitlines())
+    check(f"EVERY HOOK STRIPS CONTROL CHARACTERS: {_hk.name}",
+          "print = redact.emit_prescrubbed" in _hsrc or "print = redact.emit" in _hsrc
+          or "print(" not in _hcode)
 
 # `--explain` billed sections that `fit.shrink` had left out of the block, so its own remainder
 # line printed NEGATIVE — the parts adding to more than the total they were subtracted from. The

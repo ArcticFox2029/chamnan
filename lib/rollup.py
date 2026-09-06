@@ -52,7 +52,7 @@ def _head_from_disk(root):
         git_dir = Path(root) / ".git"
         if not git_dir.is_dir():          # a worktree or submodule: `.git` is a FILE
             return ""
-        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        head = (git_dir / "HEAD").read_text(encoding="utf-8-sig").strip()
         if _SHA.match(head):
             return head                   # detached
         if not head.startswith("ref: "):
@@ -60,7 +60,7 @@ def _head_from_disk(root):
         ref = git_dir / head[5:].strip()
         if not ref.is_file():
             return ""                     # packed-refs, or an unborn branch
-        value = ref.read_text(encoding="utf-8").strip()
+        value = ref.read_text(encoding="utf-8-sig").strip()
         return value if _SHA.match(value) else ""
     except (OSError, ValueError, UnicodeDecodeError):
         return ""
@@ -102,7 +102,7 @@ def _disk_cache_path(root, window):
 def _read_disk_cache(path, head):
     """The stored counts when they belong to this commit, else None. Never raises."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return None
     if not isinstance(data, dict) or data.get("head") != head:

@@ -63,7 +63,7 @@ def main():
 
     cutoff = datetime.now().astimezone() - timedelta(hours=WINDOW_HOURS)
     recent = []
-    for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+    for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
         try:
             rec = json.loads(line)
             when = datetime.fromisoformat(rec["at"])
