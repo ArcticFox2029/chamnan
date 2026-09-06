@@ -4301,6 +4301,16 @@ check("...while the real fence still opens and closes exactly once",
       and _forged.rstrip().endswith(_hookmod.CLOSE_MARK))
 check("...and ordinary text that merely mentions the word is untouched",
       "see the repo: notes" in _hookmod.section("T", "see the repo: notes"))
+
+# 🐛 [2026-09-06] And the sibling hook was left as the PRE-FIX version of this same guard, in the
+# same package, on the same day (R9 agent 2) — which is the shape this repository keeps paying for.
+# Checked over BOTH hooks rather than the one that was widened, so the next divergence fails here.
+for _hname in ("chamnan_session_start.py", "chamnan_subagent_start.py"):
+    _hsrc = (ROOT / "hooks" / _hname).read_text(encoding="utf-8")
+    check(f"EVERY HOOK THAT FENCES REPOSITORY TEXT NEUTRALISES THE SHAPE, NOT ONE NONCE: {_hname}",
+          "_FENCE_SHAPED" in _hsrc and "repo:escaped" in _hsrc)
+    check(f"...and none of them still escapes only its own close mark: {_hname}",
+          'replace(CLOSE_MARK, "[/repo:escaped]")' not in _hsrc)
 check("the framing line names both marks",
       _hookmod.OPEN_MARK in _hookmod.FRAMING and _hookmod.CLOSE_MARK in _hookmod.FRAMING)
 _rmtree(fence.parent, ignore_errors=True)
