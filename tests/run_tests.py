@@ -8004,6 +8004,65 @@ for _src in ("compact", "clear", "startup"):
           "Architecture index" in _rs_fire(_src, _rs_tp))
 _rmtree(_rs.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] The directory branch of prune_logs built the WHOLE file list and stat'd every
+# entry to compute a max it only ever compares against one number. A 409 MB, 6,870-file scratch
+# directory an earlier research round left in this repository's own logs/ cost 120 ms of EVERY
+# SessionStart firing — 34% of the hook's 349 ms wall time — and it was FRESH, so the walk could
+# have stopped on its first file (R12 agent 1). One fresh file is the whole answer.
+_pw = Path(tempfile.mkdtemp(prefix="chamnan-prunewalk-")) / "r"
+(_pw / ".chamnan" / "logs").mkdir(parents=True)
+(_pw / ".chamnan" / "config.json").write_text('{"log_retention_days": 5}', encoding="utf-8")
+_pw_big = _pw / ".chamnan" / "logs" / "scratch"
+for _i in range(20):
+    (_pw_big / f"d{_i:02d}").mkdir(parents=True)
+    for _j in range(50):
+        (_pw_big / f"d{_i:02d}" / f"f{_j:03d}.txt").write_text("x" * 200, encoding="utf-8")
+_pw_t0 = _time.time()
+check("A FRESH SCRATCH DIRECTORY IS NOT WALKED IN FULL ON EVERY COMMAND",
+      ws.prune_logs(_pw) == 0 and _pw_big.is_dir())
+# 1,000 files. The old code stat'd every one; the measurement that matters is that the time does
+# not scale with the count, so the bar is set far below what a full walk of this fixture costs.
+check("...and it costs milliseconds rather than scaling with the file count",
+      (_time.time() - _pw_t0) < 0.05)
+# The half that makes it meaningful: a directory that really is finished still goes.
+_pw_old = _time.time() - 30 * 86400
+for _f in _pw_big.rglob("*"):
+    os.utime(_f, (_pw_old, _pw_old))
+check("...while a scratch directory whose every file is past the window is still removed",
+      ws.prune_logs(_pw) == 1 and not _pw_big.exists())
+_rmtree(_pw.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] `case_collisions` was wired into `rules_text` and nowhere else. Decisions and
+# lessons are the same mechanism — one file per entry, named from its title — and had no collision
+# detection at all (R12 agent 1). The consequence is quieter than a rule's and not smaller: on APFS
+# or NTFS the pair leaves ONE file holding the SECOND entry's body under the FIRST entry's name, so
+# the listing tells a reader a decision exists, they open it, and they get a different one.
+#
+# Driven through a substituted `entries`, because the two files cannot coexist on the filesystem
+# this suite runs on — which is the entire reason the guard exists. On a case-sensitive checkout
+# they both arrive, and that is the case being pinned.
+_col = Path(tempfile.mkdtemp(prefix="chamnan-collide-")) / "r"
+(_col / ".chamnan" / "memory" / "decisions").mkdir(parents=True)
+_col_d = _col / ".chamnan" / "memory" / "decisions"
+(_col_d / "no-force-push.md").write_text("# No force push\n\nBecause.\n", encoding="utf-8")
+(_col_d / "ordinary.md").write_text("# Ordinary decision\n\nx\n", encoding="utf-8")
+_col_real = memory_mod.entries
+def _col_entries(root, category="rules"):
+    if category == "decisions":
+        return [_col_d / "no-force-push.md", _col_d / "No-Force-Push.md", _col_d / "ordinary.md"]
+    return _col_real(root, category)
+try:
+    memory_mod.entries = _col_entries
+    _col_rows = memory_mod.titles(_col)
+finally:
+    memory_mod.entries = _col_real
+_col_marked = [t for _c, t, n in _col_rows if n.lower() == "no-force-push.md"]
+check("A COLLIDING DECISION FILENAME IS MARKED, NOT LISTED AS AN ORDINARY ENTRY",
+      len(_col_marked) == 2 and all("collides with another" in t for t in _col_marked))
+check("...and an entry with no collision is untouched",
+      [t for _c, t, n in _col_rows if n == "ordinary.md"] == ["Ordinary decision"])
+_rmtree(_col.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
