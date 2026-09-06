@@ -126,5 +126,5 @@ def append(root, entry_text):
     if not existing.strip():
         existing = HEADER + "\n"
     body = existing.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
-    ws.atomic_write_text(p, body)
+    ws.write_or_raise(p, body)
     return p

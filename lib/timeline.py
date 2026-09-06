@@ -199,8 +199,8 @@ def create(root, title, today):
     path = d / f"{_distinct_slug(d, title)}.md"
     if path.is_file():
         return path, False
-    ws.atomic_write_text(path, f"# {mdblock.one_line(title)}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
-                    encoding="utf-8")
+    ws.write_or_raise(path, f"# {mdblock.one_line(title)}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
+                      encoding="utf-8")
     return path, True
 
 
@@ -237,7 +237,7 @@ def append(root, ident, date, note, files=None):
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")
     existing = path.read_text(encoding="utf-8", errors="replace").rstrip("\n")
-    ws.atomic_write_text(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
+    ws.write_or_raise(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
     return path
 
 
@@ -256,7 +256,7 @@ def set_status(root, ident, status):
         at = 1 if lines and lines[0].startswith("# ") else 0
         lines.insert(at, f"\n**Status:** {status}")
         text = "\n".join(lines)
-    ws.atomic_write_text(path, text.rstrip("\n") + "\n")
+    ws.write_or_raise(path, text.rstrip("\n") + "\n")
     return path
 
 

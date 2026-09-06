@@ -183,7 +183,7 @@ def main(argv):
         try:
             _body = dest.read_text(encoding="utf-8")
             if not _body.startswith("#!"):
-                ws.atomic_write_text(dest, _line + "\n" + _body)
+                ws.write_or_raise(dest, _line + "\n" + _body)
         except (OSError, UnicodeDecodeError):
             pass          # unreadable as text: leave it alone rather than corrupt it
 
@@ -222,4 +222,10 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    # The copy of the promoted file now raises on a failed write the same way the index
+    # registration above already did -- see `workspace.write_or_raise`.
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OSError as _err:
+        print(f"chamnan: {_err} — nothing was written", file=sys.stderr)
+        sys.exit(1)

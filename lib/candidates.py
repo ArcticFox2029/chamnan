@@ -167,7 +167,7 @@ def set_provenance(path, provenance):
         text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)
     else:
         text = text.rstrip("\n") + f"\n{new_line}\n"
-    ws.atomic_write_text(path, text)
+    ws.write_or_raise(path, text)
 
 
 def count(root):
