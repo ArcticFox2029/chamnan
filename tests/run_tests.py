@@ -7817,6 +7817,43 @@ check("...and the Status line is still read, so the thread is not silently reope
       timeline.status_of(_bom_t) == timeline.OPEN)
 _rmtree(_bom.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] The third place in workspace.py where a forward clock jump inverted a bound, and
+# the one with the worst consequence: `exclusive()` reclaimed a lock whose mtime was more than
+# LOCK_STALE seconds old, so a skew past 30 seconds let a second process take a lock a LIVE process
+# was still holding — the mutex handing one shared file to two writers, which is the exact lost
+# update it exists to prevent (R11 agent 2). The holder's PID goes in the lock now, as a second
+# bound the clock cannot move.
+_lk = Path(tempfile.mkdtemp(prefix="chamnan-lock-"))
+_lk_target = _lk / "index.json"
+_lk_target.write_text("{}", encoding="utf-8")
+with ws.exclusive(_lk_target) as _lk_first:
+    _lk_real = _time.time
+    try:
+        _time.time = lambda: _lk_real() + 400 * 86400
+        with ws.exclusive(_lk_target) as _lk_stolen:
+            pass
+    finally:
+        _time.time = _lk_real
+check("A SKEWED CLOCK CANNOT STEAL A LOCK A LIVE PROCESS HOLDS",
+      _lk_first is True and _lk_stolen is False)
+# And the age rule must still do its job, or the fix would be "never reclaim".
+_lk_lock = Path(str(_lk_target) + ".lock")
+_lk_proc = subprocess.Popen([sys.executable, "-c", "pass"])
+_lk_proc.wait()
+_lk_lock.write_text(f"{_lk_proc.pid}\n", encoding="utf-8")
+os.utime(_lk_lock, (_time.time() - 3600, _time.time() - 3600))
+with ws.exclusive(_lk_target) as _lk_reclaimed:
+    pass
+check("...while a lock a killed process left behind is still reclaimed", _lk_reclaimed is True)
+# A lock written by a version that did not record a PID has to keep ageing out, or an upgrade
+# deadlocks on a file the previous build left.
+_lk_lock.write_text("", encoding="utf-8")
+os.utime(_lk_lock, (_time.time() - 3600, _time.time() - 3600))
+with ws.exclusive(_lk_target) as _lk_old:
+    pass
+check("...and one written before this recorded a PID still ages out", _lk_old is True)
+_rmtree(_lk, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
