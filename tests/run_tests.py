@@ -11485,7 +11485,15 @@ for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(
              # N=22 3.513s, and through the real SessionStart hook N=28 was still running after 90
              # seconds. The control `(a){24}b`, the same shape without the `?`, is 0.00008s, which
              # isolates the hazard to the nullable atom and not the bounded count (R14 agent 2).
-             "(a?){20}b", "(a?){24}b", "(a?)+b", "(a?)*b", r"(\s?){30}x", "(?:a?){20}b"):
+             "(a?){20}b", "(a?){24}b", "(a?)+b", "(a?)*b", r"(\s?){30}x", "(?:a?){20}b",
+             # 🐛 [2026-09-06] The EIGHTH family, and a distinct root cause from the seventh:
+             # nullable through an EMPTY ALTERNATION BRANCH rather than through a `?`. Both
+             # alternation patterns required `[^()|]+` on each side of the `|`, so an empty branch
+             # never registered as an alternation at all — `(a|){20}b` was invisible while its
+             # sibling `(a|a){20}b` was caught. Measured: N=18 0.247s, N=20 0.943s, N=22 3.560s,
+             # the same 4.4x per +2, and through the real hook N=28 did not return inside 20
+             # seconds (R17 agent 2).
+             "(a|){20}b", "(|a){20}b", "(a|){22}b", "(a|)+b", "(a|)*b", "(?:a|){20}b"):
     check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
 # ...and the guard must not refuse the patterns a rule would actually be written with.
 for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
@@ -11510,6 +11518,11 @@ for _grp in ("(?:GET|POST)*x", r"(?:import|from)\s", r"^(?:\d{4})-(?:\d{2})$", r
     check(f"A GROUP OPENER'S `?` IS NOT A QUANTIFIER: {_grp}", not _would_refuse(_grp))
 # The flat chain the module measured as harmless on CPython must stay allowed, or the fix above
 # has quietly reversed a recorded measurement.
+# Widening `[^()|]+` to `[^()|]*` lets an EMPTY group and an empty-ish alternation reach the
+# branch test, so the ordinary shapes that now pass through it are checked too — `()` and
+# `^(a|b|c)$` are not hazards and must not start reading as ones.
+for _empty in (r"()", r"^(a|b|c)$", r"(foo|bar)baz", r"(GET|POST|PUT)", r"^\s*$"):
+    check(f"AN EMPTY OR ORDINARY GROUP IS NOT A HAZARD: {_empty}", not _would_refuse(_empty))
 for _nul in ("a?a?a?a?a?a?b", r"(\w+)?", "colou?r", r"https?://[^\s]+"):
     check(f"...and a nullable atom OUTSIDE a quantified group still is not a hazard: {_nul}",
           not _would_refuse(_nul))
