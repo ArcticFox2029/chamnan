@@ -29,6 +29,11 @@ Give the agent the specific file list, not the whole repo, **and tell it which l
 in** — read `language` from `.chamnan/config.json` (default `en`). The agent writes English unless
 you name something else, so this has to be passed explicitly.
 
+**Get that list from `chamnan-map --undocumented`, which prints every one of them, one path per
+line.** The names the rebuild itself prints are capped at eight and labelled "for example" — acting
+on those alone fixes eight files and reports a before/after as though the gap were handled. On a
+repository with forty undocumented files that leaves 80% of them untouched and unmentioned.
+
 Mention to the user that the setting exists and that changing it is one sentence: "use Thai for the
 comments" is enough, and you edit `.chamnan/config.json` for them. English costs fewer tokens on
 every session, but that is a default worth overriding for a team that will not read English

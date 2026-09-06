@@ -260,7 +260,8 @@ def install_git_hook(root):
     return 0
 
 
-KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure", "-h", "--help")
+KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure",
+               "--undocumented", "-h", "--help")
 
 
 def _paths_being_dropped(map_path, files, root):
@@ -301,6 +302,37 @@ def _paths_being_dropped(map_path, files, root):
     return len(had - now)
 
 
+
+def list_undocumented(root):
+    """Every file with no opening comment, one path per line, and nothing else on stdout.
+
+    🐛 [2026-09-06] `bootstrap/SKILL.md` and `remap/SKILL.md` both tell the session to add comments
+    to "the files that lack one", and the only list of those was the eight the rebuild prints as
+    examples — capped at `[:8]`, with no flag to get the rest and no instruction to go looking. A
+    session following the shipped instructions literally fixed eight and reported before/after as
+    though it had handled the gap: measured on fixtures, 15 undocumented files meant 53% invisible
+    and 40 meant 80%, and this codebase's own recorded flask example (76 missing) would have hidden
+    89% (R16 agent 4).
+
+    Plain lines rather than a table, because the caller is an agent that has to open each one. The
+    same filters the suggestion uses: nothing generated, nothing chamnan installed under
+    `.chamnan/`, nothing the indexer cannot describe anyway.
+    """
+    mapper.reset_skips()
+    missing = []
+    for f in mapper.scan(root):
+        rel = str((root / f["path"]).relative_to(root).as_posix())
+        if (not f["doc"] and f.get("describable", True) and not f.get("generated")
+                and not rel.startswith(".chamnan/")):
+            missing.append(rel)
+    for path in sorted(missing):
+        print(mdblock.as_quoted(path, 200))
+    if not missing:
+        print("chamnan: every file the index can describe already has an opening comment",
+              file=sys.stderr)
+    return 0
+
+
 def main(argv):
     # 🐛 There was no `--help`, and this command treats any non-flag argument as a directory to
     # scan — so `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the
@@ -324,6 +356,7 @@ def main(argv):
                 ("--preview", "print the index that WOULD be built, and write nothing"),
                 ("--explain", "where the session-start block's tokens go, section by section"),
                 ("--measure", "what this index costs against the session budget"),
+                ("--undocumented", "every file with no opening comment, one path per line"),
                 ("--install-git-hook", "rebuild the map on every commit (opt-in, never destructive)"),
                 ("-h, --help", "this text")):
             print(f"  {_flag:<20} {_what}")
@@ -342,6 +375,8 @@ def main(argv):
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
+    if "--undocumented" in argv:
+        return list_undocumented(root)
     if "--explain" in argv:
         return preview(root, explain=True)
     if "--preview" in argv:
@@ -719,8 +754,16 @@ def main(argv):
         # the size line instead, so this one was never exercised. Same names, same terminal.
         for m in missing:
             print(f"    - {mdblock.as_quoted(m, 80)}")
+        # 🐛 [2026-09-06] "the files chamnan listed" meant the eight above, and both skills told the
+        # session to act on "the files that lack one" — so it fixed eight and reported before/after
+        # as though the gap were handled. Measured on fixtures: 15 undocumented meant 53% invisible,
+        # 40 meant 80% (R16 agent 4). The list exists now, and the sentence points at it.
+        if len(missing) < total - have:
+            print(f"    …and {total - have - len(missing)} more — "
+                  f"`chamnan-map --undocumented` lists every one, a path per line.")
         if ws.enabled("agents", root):
-            print(f"  Ask Claude: \"add a one-line opening comment to the files chamnan listed\"")
+            print(f"  Ask Claude: \"add a one-line opening comment to every file "
+                  f"`chamnan-map --undocumented` lists\"")
             print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")
         else:
             # agents are switched off, so pointing at an agent the user disabled would be noise.
