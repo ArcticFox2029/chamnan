@@ -587,6 +587,24 @@ def read_only():
     return bool(os.environ.get(READ_ONLY_ENV))
 
 
+def refuse_to_write(stream=None):
+    """Say that this command writes and will not, and return True — or return False and carry on.
+
+    🐛 The writers were made to no-op under CHAMNAN_READ_ONLY and the commands calling them were
+    not told, so `chamnan-timeline new` printed "declared — .chamnan/threads/a-thread.md" with the
+    variable set and nothing on disk. A silent no-op under a flag the user set is defensible; a
+    success message for it is not, and it is the same untruth `--preview` was fixed for one layer
+    down. Refusing where the command ANNOUNCES, rather than where the bytes are written, is what
+    lets the message name the command the user actually ran.
+    """
+    if not read_only():
+        return False
+    import sys as _sys
+    print(f"chamnan: {READ_ONLY_ENV} is set, so nothing was written.",
+          file=stream or _sys.stderr)
+    return True
+
+
 def ensure(root=None):
     ws = workspace(root)
     # 🐛 `chamnan-map --preview`'s own --help says it "writes nothing", and in a repository that had
@@ -1209,6 +1227,12 @@ def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
 def atomic_write_text(dest, text, encoding="utf-8"):
     """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
 
+    🐛 The CHAMNAN_READ_ONLY guard returned None where every other exit returns a bool, so a caller
+    testing the result saw a refusal as a failure it could not distinguish from a full disk — and
+    the callers that ignore it announced writes that never happened. `chamnan-timeline new` printed
+    "declared — .chamnan/threads/a-thread.md" with the variable set and no file on disk, which is
+    `--preview` claiming to write nothing while creating a workspace, one layer down.
+
     🐛 Two halves, and having only one is worse than having neither, because it looks correct.
     `os.replace` is atomic and was never the problem; a STAGING NAME SHARED BETWEEN PROCESSES is.
     Two writers put their content into the same `x.tmp` and then each replaced `x` with whatever
@@ -1225,7 +1249,7 @@ def atomic_write_text(dest, text, encoding="utf-8"):
     let a session start, so the caller decides whether a failed write is worth reporting.
     """
     if read_only():
-        return None
+        return False
     tmp = None
     try:
         dest = pathlib.Path(dest)

@@ -29,6 +29,7 @@ session.
 """
 import re
 import mdblock
+import workspace as ws  # noqa: E402
 
 FILENAME = "milestones.md"
 HEADER = "# Project milestones\n"
@@ -125,5 +126,5 @@ def append(root, entry_text):
     if not existing.strip():
         existing = HEADER + "\n"
     body = existing.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
-    p.write_text(body, encoding="utf-8")
+    ws.atomic_write_text(p, body)
     return p

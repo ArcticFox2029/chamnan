@@ -82,6 +82,8 @@ def cmd_show(root, ident):
 
 
 def cmd_new(root, title):
+    if ws.refuse_to_write():
+        return 1
     path, is_new = timeline.create(root, title, _today())
     rel = path.relative_to(root).as_posix()
     if not is_new:
@@ -94,6 +96,8 @@ def cmd_new(root, title):
 
 
 def cmd_add(root, ident, note, files):
+    if ws.refuse_to_write():
+        return 1
     path = timeline.append(root, ident, _today(), note, files)
     if path is None:
         _resolve_or_complain(root, ident)
@@ -104,6 +108,8 @@ def cmd_add(root, ident, note, files):
 
 
 def cmd_status(root, ident, status):
+    if ws.refuse_to_write():
+        return 1
     path = timeline.set_status(root, ident, status)
     if path is None:
         _resolve_or_complain(root, ident)

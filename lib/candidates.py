@@ -30,6 +30,7 @@ distinct days), so a write here is idempotent when nothing changed and correct w
 """
 import re
 import mdblock
+import workspace as ws  # noqa: E402
 
 DIRNAME = "candidates"
 
@@ -88,7 +89,7 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred"):
     p = path_for(root, sequence)
     is_new = not p.is_file()
     p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(render(sequence, observed, when, provenance), encoding="utf-8")
+    ws.atomic_write_text(p, render(sequence, observed, when, provenance))
     return p, is_new
 
 
@@ -156,7 +157,7 @@ def set_provenance(path, provenance):
         text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)
     else:
         text = text.rstrip("\n") + f"\n{new_line}\n"
-    path.write_text(text, encoding="utf-8")
+    ws.atomic_write_text(path, text)
 
 
 def count(root):

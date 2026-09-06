@@ -32,6 +32,7 @@ worth keeping — and why a `Checked:` date is the only honest way to say how mu
 import datetime
 import re
 import mdblock
+import workspace as ws  # noqa: E402
 
 FILENAME = "environments.md"
 HEADER = "# Environments\n"
@@ -210,10 +211,10 @@ def upsert(root, name, entry_text):
             continue
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
         text = text[:m.start()] + entry_text.strip() + "\n\n" + text[end:]
-        p.write_text(text.rstrip("\n") + "\n", encoding="utf-8")
+        ws.atomic_write_text(p, text.rstrip("\n") + "\n")
         return p, True
 
-    p.write_text(text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n", encoding="utf-8")
+    ws.atomic_write_text(p, text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n")
     return p, False
 
 
