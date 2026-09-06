@@ -305,10 +305,25 @@ def display(path, root):
         return Path(path).name
 
 
+# Any `[repo:xxxxxx]` or `[/repo:xxxxxx]`, whatever the six hex digits are -- see section().
+_FENCE_SHAPED = re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+
+
 def section(title, body, source=""):
     if not body.strip():
         return ""
-    fenced = body.rstrip().replace(CLOSE_MARK, f"[/repo:escaped]")
+    # 🐛 [2026-09-06] This escaped exactly ONE string: the literal close mark of the session in
+    # force. A body carrying `[repo:aaaaaa]` or `[/repo:aaaaaa]` -- any six hex digits that are not
+    # this session's -- passed through byte-for-byte, so a rule could print something shaped exactly
+    # like a fence right next to the real ones. It does not achieve breakout, and R3 agent 2 proved
+    # that separately: the reader is told to match the nonce, and a wrong one does not match. But a
+    # reader skimming sees a closing fence where none closed, and the whole mechanism rests on the
+    # marker meaning one thing. Every fence-SHAPED marker is neutralised now, not only ours.
+    #
+    # Deliberately not `re.escape(NONCE)`: the point is that a marker the reader might mistake for
+    # a fence cannot appear inside one, and that is a question about the SHAPE, not about which
+    # nonce it carries.
+    fenced = _FENCE_SHAPED.sub(lambda m: f"[{m.group(1)}repo:escaped]", body.rstrip())
     # A body that opens a ``` or ~~~ block and never closes it -- whether that is how the file was
     # written, or how a budget cut left it -- swallows everything after it into what a renderer
     # treats as one unterminated code block: the `[/repo:nonce]` mark below, and every section

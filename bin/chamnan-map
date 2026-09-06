@@ -451,6 +451,9 @@ def main(argv):
             why.append("under directories that look like build output: "
                        + ", ".join(mdblock.as_quoted(d, 60)
                                    for d in sorted(mapper.SKIPPED_BUILD_DIR)[:6]))
+        if mapper.SKIPPED_TOO_MANY_LINES:
+            why.append(f"{len(mapper.SKIPPED_TOO_MANY_LINES)} over the line limit "
+                       f"({mapper.MAX_FILE_LINES:,} lines)")
         if mapper.SKIPPED_BINARY:
             why.append(f"{len(mapper.SKIPPED_BINARY)} binary behind a source extension")
         if mapper.SKIPPED_GENERATED:
@@ -587,6 +590,12 @@ def main(argv):
                          for p, sz in mapper.SKIPPED_TOO_LARGE[:4])
         _more = len(mapper.SKIPPED_TOO_LARGE) - 4
         print(f"  not indexed, over the size limit: {_big}" + (f" +{_more} more" if _more > 0 else ""))
+    if mapper.SKIPPED_TOO_MANY_LINES:
+        _many = ", ".join(f"{mdblock.as_quoted(p.name, 60)} ({n:,} lines)"
+                          for p, n in mapper.SKIPPED_TOO_MANY_LINES[:4])
+        _more = len(mapper.SKIPPED_TOO_MANY_LINES) - 4
+        print(f"  not indexed, over the line limit: {_many}"
+              + (f" +{_more} more" if _more > 0 else ""))
     if mapper.SKIPPED_BINARY:
         print(f"  not indexed, binary content behind a source extension: "
               f"{len(mapper.SKIPPED_BINARY)} file(s)")

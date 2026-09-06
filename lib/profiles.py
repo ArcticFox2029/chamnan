@@ -174,10 +174,30 @@ MODEL_WINDOWS = {
     "gpt": 1_050_000,
     "openai": 1_050_000,
     "gemini": 1_000_000,
-    "kimi": 2_000_000,
-    "grok": 256_000,
-    "deepseek": 128_000,
-    "glm": 200_000,
+    # 🐛 [2026-09-06] Four entries checked against each vendor's OWN current documentation, not
+    # against a listicle (R8 agent 1). Three were stale toward the small number and one toward the
+    # large, which is what tells you they aged separately rather than all being copied from one
+    # outdated source. The `kimi` direction is the one that matters: a window stated LARGER than the
+    # model really has is the only error in this table that can make chamnan ship a block the model
+    # cannot hold, and it was overstated by 2x.
+    #
+    #   kimi      2,000,000 -> 1,000,000   Moonshot's own pricing/chat docs: K3, the current
+    #                                      flagship, is 1M. The 2M figure's origin was not chased
+    #                                      and is not guessed at here.
+    #   grok        256,000 ->   500,000   xAI's own model page: grok-4.6, the current flagship, is
+    #                                      500K. 256K survives only on one narrow build.
+    #   deepseek    128,000 -> 1,000,000   DeepSeek's own models table: all three current models
+    #                                      share 1M, so this is not SKU ambiguity.
+    #   glm         200,000 -> 1,000,000   200K was an exact match for GLM-4.6; the vendor has
+    #                                      since shipped GLM-5.3 at 1M.
+    #
+    # `mistral` and `codestral` are deliberately NOT touched: their docs render client-side and two
+    # rounds could not read a number out of the vendor's own page. An unverified guess in a table
+    # whose whole value is that it was verified would be worse than a stale entry that says so.
+    "kimi": 1_000_000,
+    "grok": 500_000,
+    "deepseek": 1_000_000,
+    "glm": 1_000_000,
     "gemma": 128_000,
     "mistral": 128_000,
     # 32K was this family's window at its May-2024 launch. The January-2025 refresh moved it to

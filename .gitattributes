@@ -1,0 +1,34 @@
+# 🐛 [2026-09-06] This file did not exist, and the one shell script in the plugin is the one the
+# README tells Windows users to run. `core.autocrlf=true` is the setting GitHub's own documentation
+# recommends to Windows users, and under it git rewrites every text file's LF to CRLF on checkout —
+# so `install/chamnan-check.sh` arrived with `#!/bin/sh\r`, which no shell recognises as a shebang,
+# and died on its first `case ... in` with `syntax error near unexpected token 'in'`. Reproduced end
+# to end: the checkout transform in a throwaway repo, then the transformed script actually run
+# through `sh` (R8 agent 1). The `.cmd` shims are unaffected — they are read by cmd.exe, which is
+# happy with CRLF — and the `.py` files are unaffected because a Python interpreter reads them, not
+# a shell.
+#
+# Marked by CONTENT, not by extension alone: the commands in `bin/` have no extension at all, and
+# they carry `#!/usr/bin/env python3`, so a CRLF checkout breaks them the same way the moment
+# anything invokes them directly rather than through the shim. That is the member of the set the
+# extension-based rule would have missed.
+*.sh        text eol=lf
+*.py        text eol=lf
+*.command   text eol=lf
+
+# The extensionless entry points. Listed one by one rather than by a glob, because `bin/*` would
+# also claim the `.cmd` shims beside them, and those must keep CRLF.
+bin/chamnan-age         text eol=lf
+bin/chamnan-candidates  text eol=lf
+bin/chamnan-context     text eol=lf
+bin/chamnan-env         text eol=lf
+bin/chamnan-impact      text eol=lf
+bin/chamnan-map         text eol=lf
+bin/chamnan-peek        text eol=lf
+bin/chamnan-promote     text eol=lf
+bin/chamnan-report      text eol=lf
+bin/chamnan-timeline    text eol=lf
+
+# cmd.exe is the one reader here that WANTS CRLF, and a `.cmd` file with bare LF has been reported
+# to mis-parse multi-line blocks on some Windows builds. Stated rather than left to the default.
+*.cmd       text eol=crlf

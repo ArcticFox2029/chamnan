@@ -246,14 +246,44 @@ CREDENTIALED_URL = re.compile(
     r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
     r":([^\s/]{3,})@(?=[^\s/@]+)")
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
+# 🐛 [2026-09-06] What sits immediately after the separator is not always the value. Three shapes
+# put something else there, and the rules below captured THAT and stopped:
+#
+#     val apiPassword: String = "hunter2..."      -> `String` was redacted, the secret was not
+#     api_password: &shared_pw "hunter2..."       -> the ANCHOR was redacted, the secret was not
+#     apiKey: string = "sk-..."                   -> same, in every C-family and JVM language
+#
+# The second half of that is the dangerous half: the line comes back carrying a `<REDACTED>` marker,
+# so a reader — or a later automated check — sees the redactor having fired and the credential
+# sitting in the clear beside it. Measured by R8 agent 2 across five language idioms; adding these
+# to `tools/redactor_recall.py`'s corpus drops recall from 97.4% to 88.1% without this.
+#
+# Stepped over rather than matched: an annotation is only an annotation when a real `=` follows it,
+# and a YAML anchor only when whitespace and a value follow. `api_key = os.environ["X"]` has
+# neither, so the optional group does not fire and the existing rules decide as before.
+_BETWEEN_NAME_AND_VALUE = (
+    r"(?:"
+    r"[A-Za-z_][\w.]*(?:\[[^\]\n]*\]|<[^>\n]*>)?[ \t]*=[ \t]*"   # a type, then the real `=`
+    r"|&[\w.-]+[ \t]+"                                              # a YAML anchor
+    r")?")
+
+# Go, and every other language that writes the type between the name and the `=` with no separator
+# at all: `var apiPassword string = "..."`. There is no `:` for the rules' own separator to find, so
+# this is a second name-side shape rather than something that can be stepped over after one.
+# Narrower than it looks: a single identifier-shaped word, then `=`, then a value that still has to
+# clear the six-character floor and `_looks_like_a_credential_name`. Precision is what decides
+# whether this is worth having, and it is measured -- `tools/redactor_recall.py` reports it.
+_TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*"
+
 ASSIGNED_SECRET = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE
+    + r"|" + _TYPE_BEFORE_ASSIGN + r"))(['\"])([^'\"]{6,})\2", re.I)
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
 # single unbroken run of characters so a prose comment ("password: ask the platform team") is not
 # eaten, and to six characters so token_ttl=3600 is not either.
 ASSIGNED_SECRET_BARE = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE + r")"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
     # a now-broken line -- a leak and a corruption from one missing character.
@@ -840,6 +870,20 @@ def _close_unterminated_quoted_secrets(text):
     return "".join(out)
 
 
+def _is_only_a_template(value):
+    """True when `value` is nothing but an interpolation placeholder — no secret hiding beside one.
+
+    Both spellings that appear in a checked-in example file: `${VAR}` and `{{ var }}` from every
+    shell/compose/Helm/Jinja idiom, and the bare `{var}` Python format string. Anything with real
+    characters outside the braces is NOT exempt: `${PREFIX}hunter2` is a secret with a template
+    stuck to the front of it, and this rule is not a way through.
+    """
+    stripped = (value or "").strip()
+    if not stripped:
+        return False
+    return bool(re.fullmatch(r"\$?\{\{?[^{}]*\}\}?", stripped))
+
+
 def scrub(text, windowed=True):
     """Every string that leaves chamnan for a written file goes through this.
 
@@ -864,7 +908,16 @@ def scrub(text, windowed=True):
                 text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
         else:
             text = pattern.sub(PLACEHOLDER, text)
-    text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
+    # 🐛 [2026-09-06] A template PLACEHOLDER where the password goes is not a password, and this
+    # rule redacted it as one. `postgres://user:${DB_PASSWORD}@db/app` is the shape a checked-in
+    # `.env.example` or `docker-compose.yml` is written in, so the redactor was damaging exactly the
+    # documentation whose whole job is to show the shape without the secret. `{{ password }}` came
+    # out worse still — the marker swallowed the closing braces and the rest of the line with them
+    # (R8 agent 2). `_TEMPLATED` is the module's existing answer to this question; the URL rule was
+    # the one place that did not ask it.
+    text = CREDENTIALED_URL.sub(
+        lambda m: m.group(0) if _is_only_a_template(m.group(2))
+        else f"{m.group(1)}:{PLACEHOLDER}@", text)
     # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
     # and running them first means a value they take is not left for a looser rule to half-capture.
     text = XML_SECRET.sub(
