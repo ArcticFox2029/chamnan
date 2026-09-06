@@ -159,6 +159,22 @@ def render(text, budget, path_for_marker):
     """
     import tokens
 
+    # 🐛 [2026-09-06] A committed, badly-resolved merge leaves `<<<<<<< HEAD` in STATE.md, and this
+    # injected BOTH sides as settled fact — two contradictory 📌-pinned lines, inside the fence that
+    # tells the reader the text comes from the repository, with nothing marking either as disputed.
+    # The fix already existed one file away: `memory.unresolved_conflict()` guards rules against
+    # exactly this and was never called from here, so the same rule was applied to one of two stores
+    # (R9 agent 3). Its own docstring says why a rule in conflict is not a rule — a plan in conflict
+    # is not a plan either, and the honest injection is that the file needs resolving.
+    #
+    # Said instead of the content, not beside it: the point is that neither side is trustworthy, and
+    # printing them under a warning invites the reader to pick one, which is the failure.
+    import memory
+    if memory.unresolved_conflict(text):
+        return ("**`STATE.md` is mid-merge and both sides are still in the file.** Nothing from it "
+                "is injected this session, because neither side of an unresolved conflict is what "
+                "this repository decided. Resolve the conflict markers and it comes back.", "")
+
     pinned_text, unpinned_text = split_pinned(text)
     pinned_cost = tokens.estimate(pinned_text)
     remaining = max(0, budget - pinned_cost)
