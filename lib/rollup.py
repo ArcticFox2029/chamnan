@@ -197,7 +197,18 @@ MAX_SPINE_SEGMENTS = 12
 MIN_FILES_TO_DEEPEN = 40
 # One directory holding this share of everything means the depth is too shallow to be telling
 # anyone anything.
-DOMINANT_SHARE = 0.6
+#
+# 🐛 0.6 was too permissive to catch the case it exists for. Measured on this repository's own
+# index: `.chamnan/` is 48.6% of all files — under the threshold — so it stayed one bucket, and
+# `.chamnan/tests/` (118 files) and `.chamnan/tools/` (40) were folded together into a single
+# `.chamnan/ (158)` line. `tools/` is the directory the block itself tells an agent to prefer over
+# writing a new script, so hiding it inside a bucket dominated by the test suite loses exactly the
+# distinction a reader of this workspace needs (R3 agent 3).
+#
+# 0.45 separates them: the roll-up goes 1,509 to 2,293 tokens against a 3,000 budget, so it still
+# fits with a quarter to spare. MIN_FILES_TO_DEEPEN and MAX_GROUP_DEPTH still bound how far this
+# can go on a repository shaped differently.
+DOMINANT_SHARE = 0.45
 
 
 def collapse(index, map_rel, budget=None, root=None, per_dir=8):
