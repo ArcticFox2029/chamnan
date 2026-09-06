@@ -334,8 +334,11 @@ def expiring_logs(root=None, within_days=1.0):
     logs = workspace(root) / "logs"
     if not logs.is_dir():
         return []
-    window = load_config(root).get("log_retention_days", 7) * 86400
-    cutoff = time.time() - window
+    # Same rule as the sweeper below: 0 means "keep everything", so nothing is ever about to expire.
+    days = load_config(root).get("log_retention_days", 7)
+    if not days or days <= 0:
+        return []
+    cutoff = time.time() - days * 86400
     soon = cutoff + within_days * 86400
     out = []
     for path in logs.iterdir():
@@ -414,7 +417,17 @@ def prune_logs(root=None):
     logs = ws_dir / "logs"
     if not logs.is_dir():
         return 0
-    cutoff = time.time() - load_config(root).get("log_retention_days", 7) * 86400
+    days = load_config(root).get("log_retention_days", 7)
+    # 🐛 [2026-09-06] `0` meant OPPOSITE things in two settings sitting three lines apart in
+    # DEFAULT_CONFIG. `session_retention_days: 0` disables pruning (`sessions.prune`: `if not
+    # days`), and so does `state_stale_days` (`state.py`: "days <= 0 disables the whole pass") and
+    # the ledger's own window. Here it made `cutoff` equal to NOW, so every log older than this
+    # instant was deleted — a user writing 0 to mean "keep everything", the reading three of the
+    # four places already have, lost the lot (R8 agent 4). Three against one is not a design, it is
+    # an omission; this is the one that was out of step.
+    if not days or days <= 0:
+        return 0
+    cutoff = time.time() - days * 86400
     removed = 0
     for path in logs.iterdir():
         try:

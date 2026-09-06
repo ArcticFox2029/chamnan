@@ -650,6 +650,11 @@ def unindexed(root, map_text):
         return 0, []
 
 
+# The profile name asked for and not recognised, from the last `_with_profile`. A list so the
+# caller can tell "not asked yet" from "asked and fine", and empty in the ordinary case.
+UNKNOWN_PROFILE = []
+
+
 def _with_profile(cfg):
     """`cfg` with the context profile's budgets folded in, resolved ONCE.
 
@@ -673,6 +678,14 @@ def _with_profile(cfg):
         for key in ("index_token_budget", "state_token_budget"):
             cfg.pop(key, None)
     _name, budgets = profiles.resolve(cfg)
+    # 🐛 [2026-09-06] The chosen name was resolved and thrown away, and `profiles.explain()` -- a
+    # function whose entire docstring is "what was chosen, and whether the name was recognised" --
+    # was called by nothing in the package. So a typo fell back to the default profile in total
+    # silence: the user asks for a bigger block, gets the standard one, and concludes the feature
+    # does not work, which is exactly the conclusion the inert-config bug above already earned once
+    # (R8 agent 4). Recorded rather than printed here, because this function returns a config; the
+    # caller that owns the session's warning line decides whether to say it.
+    UNKNOWN_PROFILE[:] = [] if _name in profiles.PROFILES else [_name]
     out = dict(cfg)
     out.update(budgets)
     return out
@@ -1324,6 +1337,15 @@ def main():
                        "builds one, and inside Claude Code `/chamnan:bootstrap` builds it and "
                        "records a baseline._\n")
 
+        if UNKNOWN_PROFILE:
+            # Said once, on a session that asked for something that does not exist. Not recurring
+            # noise: in ordinary operation this list is empty, and the alternative is a setting that
+            # silently does nothing -- the failure this whole area was just fixed for.
+            out.insert(0, f"_⚠ context profile "
+                          f"`{mdblock.as_quoted(UNKNOWN_PROFILE[0], 40)}` is not one of "
+                          f"{', '.join('`' + n + '`' for n in profiles.names())}. This session is "
+                          f"running on `{profiles.DEFAULT}`; fix `context_profile` in "
+                          f"`.chamnan/config.json` or `CHAMNAN_CONTEXT_PROFILE`._\n")
         if _bad_cfg:
             # 🐛 [2026-09-04] The reason used to be assumed rather than reported: one sentence about
             # "a stray comma or quote", printed for the only case this could detect. A config that
