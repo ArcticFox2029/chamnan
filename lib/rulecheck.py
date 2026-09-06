@@ -127,6 +127,25 @@ _NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*{]")
 # scanner asks the question about the character after a `)`, which is "" at the end of a pattern.
 _QUANTIFIERS = frozenset("+*{")
 
+# 🐛 [2026-09-06] The SEVENTH family: `(a?){20}b`. A bounded repetition over a NULLABLE atom. Every
+# guard passed it -- `?` is deliberately not a quantifier for `_too_many_quantifiers` (the flat
+# `a?a?a?…` chain is measured flat on CPython, and counting it would refuse ordinary patterns), and
+# this scanner's inner marker set was the same frozenset, so a `?` inside the group set nothing.
+# Measured on the real engine: N=18 0.244s, N=20 0.896s, N=22 3.513s, about 4.3x per +2 -- and
+# through the real SessionStart hook, N=28 was still running after 90 seconds. The control
+# `(a){24}b`, the same shape without the `?`, is 0.00008s, which isolates the hazard to the nullable
+# atom rather than to the bounded count (R14 agent 2). Under 30 characters in one committed rule
+# file: a colleague's `git pull` is enough to deliver it.
+#
+# So `?` counts as an INNER marker and nowhere else. A group holding a nullable atom AND carrying a
+# quantifier of its own is the hazard; a flat chain of `?` outside any group still is not, and the
+# measurement that says so is untouched.
+_INNER_MARKERS = frozenset("+*{?")
+
+# The group-opening syntax, matched at a position rather than anchored: `_GROUP_PREFIX` above does
+# the same job for a captured string and cannot be used with `.match(text, pos)` because of its `^`.
+_GROUP_OPENER = re.compile(r"\?(?:P<[^>]*>|P=[^|)]*|[aiLmsux]*(?:-[aiLmsux]+)?:|:|=|!|<[=!]|>)")
+
 
 def _quantified_group_over_quantifier(pattern):
     """True when a quantified group contains a quantifier anywhere inside it, at any depth.
@@ -158,6 +177,15 @@ def _quantified_group_over_quantifier(pattern):
             starts.append(i)
             inner.append(False)
             depth += 1
+            # 🐛 The `?` in `(?:`, `(?P<x>`, `(?i:` and every lookaround opens the GROUP; it is not
+            # a quantifier on anything. Counting `?` as an inner marker without skipping these
+            # refused `(?:GET|POST)*x` — an ordinary pattern — which is the false positive the
+            # seventh family's fix would have shipped with. Caught by running the allowed list
+            # beside the refused one, not by reading the change.
+            opener = _GROUP_OPENER.match(pattern, i + 1)
+            if opener:
+                i = opener.end()
+                continue
         elif ch == ")" and depth:
             depth -= 1
             starts.pop()
@@ -174,7 +202,7 @@ def _quantified_group_over_quantifier(pattern):
                 return True
             if inner and (had or nxt in _QUANTIFIERS):
                 inner[-1] = True
-        elif ch in _QUANTIFIERS and inner:
+        elif ch in _INNER_MARKERS and inner:
             inner[-1] = True
         i += 1
     return False
