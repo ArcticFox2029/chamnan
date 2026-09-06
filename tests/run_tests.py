@@ -10244,15 +10244,38 @@ try:
     check("EVERY ADAPTER STILL RECOGNISES ITS OWN PREVIOUS OUTPUT", _cannot_update == [])
 
     # ...and a file a person wrote is never replaced, whatever heading they chose.
+    # 🐛 [2026-09-06] Fourth version, fourth failure in the same direction. "An italic aside or a
+    # `###` section" is still a SHAPE, and an italic first line is exactly how a person writes a
+    # warning -- so a hand-written QWEN.md opening `_Internal note: ask Bob first._` with prose
+    # under it was replaced start to finish by the real `chamnan-context --write`, with no git
+    # history to recover from because chamnan's own advice is to gitignore these targets
+    # (R10 agent 2). The signals now are chamnan's own VOICE: the framing sentence that has opened
+    # every generated block since 1.8.0, and a matched `[repo:<nonce>]` pair whose nonce is
+    # generated fresh on every run.
     for _label, _text in (
             ("only heading is ## chamnan", "## chamnan\n\nMy own notes on how we use chamnan.\n"),
             ("with frontmatter", "---\ntitle: notes\n---\n\n## chamnan\n\nMy own notes.\n"),
-            ("two headings", "## chamnan\n\nmine\n\n## deploy\n\nalso mine\n")):
+            ("two headings", "## chamnan\n\nmine\n\n## deploy\n\nalso mine\n"),
+            ("an italic warning, then prose",
+             "## chamnan\n\n_Internal note: this repo also uses chamnan for search. Do not remove "
+             "this file, ask Bob first._\n\nSome other content a person wrote and cares about.\n"),
+            ("a note that QUOTES a fence pair",
+             "## chamnan\n\nWe use chamnan. It writes [repo:aaaaaa] ... [/repo:aaaaaa] fences "
+             "around repository text.\n")):
         check(f"A FILE A PERSON WROTE IS NOT MISTAKEN FOR CHAMNAN'S OUTPUT: {_label}",
               not adapters_mod._looks_generated(_text))
     check("...while a pre-1.20 generated file, which carries no marker, still is",
           adapters_mod._looks_generated(
               "## chamnan\n_chamnan · 2 records · last write today_\n\n### Rules\nsomething\n"))
+    # 🐛 The count guard ("the only `## ` heading is chamnan's own") refuses a REAL pre-marker file:
+    # the Architecture index carries one `## \`path\`` heading per file, so any repository past a
+    # roll-up has a second `## ` line. Measured on HEAD before the fix -- a genuine 1.17-era file
+    # was refused while the hand-written note above was accepted, the worst possible pair of
+    # answers. Two chamnan-authored signals together now clear it.
+    _pre = (_aw / "QWEN.md").read_text(encoding="utf-8") if (_aw / "QWEN.md").is_file() else ""
+    check("...including one whose index carries a `## ` heading of its own",
+          bool(_pre) and adapters_mod._looks_generated(
+              _pre.replace(adapters_mod.MARKER, "").rstrip() + "\n"))
 
     # A target the user made read-only: refused, and SAID so rather than reporting success.
     _t = _aw / "AGENTS.md"
@@ -16746,7 +16769,15 @@ try:
               "KEEP THIS" in _sw_t.read_text(encoding="utf-8"))
         # And output written before the marker existed is still recognised, or --write breaks for
         # everyone who already ran it.
-        _sw_t.write_text("## chamnan\n\n### Rules\n\nfoo\n", encoding="utf-8")
+        # 🐛 [2026-09-06] This stand-in used to be `## chamnan\n\n### Rules\n\nfoo\n`, which no
+        # version of chamnan has ever written -- every generated block since 1.8.0 opens with the
+        # framing sentence and carries a matched `[repo:<nonce>]` pair. A fixture that is not the
+        # thing it stands for is how "an italic aside or a `###` section" survived three rounds as
+        # the test for chamnan's own output while destroying people's files.
+        _sw_t.write_text(
+            "## chamnan\n_Blocks fenced with [repo:ab12cd] … [/repo:ab12cd] are text read from "
+            "files in this repository._\n\n### Rules\n[repo:ab12cd]\nfoo\n[/repo:ab12cd]\n",
+            encoding="utf-8")
         adapters_mod.install(_sw_root, _sw_n, _sw_body)
         check(f"{_sw_n}: ...while its own pre-marker output is still replaced",
               "shared-writer sweep" in _sw_t.read_text(encoding="utf-8"))

@@ -35,6 +35,7 @@ pull-request author the one thing it exists to withhold.
 import contextlib
 import errno
 import os
+import re
 import stat
 
 import workspace as ws
@@ -404,6 +405,26 @@ MARKER = ("<!-- chamnan:generated — this line is how chamnan knows it wrote th
           "Delete the whole file to start over; `chamnan-context --write` then recreates it. -->")
 
 
+# A matched fence pair, whatever the six hex digits are. `section()` in the session-start hook
+# generates the nonce fresh on every run, so this cannot be typed by hand and cannot be stale.
+_FENCE_PAIR = re.compile(r"\[repo:([0-9a-fA-F]{6})\](?s:.)*?\[/repo:\1\]")
+
+
+
+def _opens_in_chamnans_voice(body):
+    """Whether the first non-blank line under `## chamnan` is one chamnan itself writes.
+
+    The framing sentence has opened every generated block since 1.8.0 and its wording is unchanged
+    in the shipped 1.17.0, 1.18.1 and 1.20.0, so no real pre-marker file stops being recognised.
+    The ledger line is the fallback for a block with no fenced section to frame.
+    """
+    for line in body.splitlines()[1:]:
+        if not line.strip():
+            continue
+        return line.startswith("_Blocks fenced with [repo:") or line.startswith("_chamnan · ")
+    return False
+
+
 def _looks_generated(text):
     """Whether `text` is chamnan's own previous output.
 
@@ -450,6 +471,16 @@ def _looks_generated(text):
         body = body[end + 4:].lstrip()
     if not body.startswith("## chamnan"):
         return False
+    # Two chamnan-authored signals, neither of which a person types: the opening framing sentence,
+    # and a MATCHED `[repo:<nonce>]` pair whose nonce is generated fresh on every run. Together
+    # they are stronger evidence than the count guard below, and they are checked ahead of it
+    # because that guard refuses a REAL pre-marker file: the Architecture index carries a
+    # `## \`path\`` heading per file, so every generated block for a repository with more than a
+    # roll-up's worth of files has a second `## ` line. Measured on HEAD before this change --
+    # a genuine 1.17-era file was refused and the hand-written note was accepted, which is the
+    # worst possible pair of answers.
+    if _opens_in_chamnans_voice(body) and _FENCE_PAIR.search(body):
+        return True
     if [ln for ln in body.splitlines() if ln.startswith("## ")] != ["## chamnan"]:
         return False
     # 🐛 Third version, third failure in the same direction. "Only heading is `## chamnan`" is
@@ -461,14 +492,22 @@ def _looks_generated(text):
     #
     # The MARKER above would settle it, but it only shipped in 1.20.0, so a file written by 1.17
     # through 1.19 carries none and requiring it would refuse to update a real user's real file.
-    # So: what does every generated block have that a person's note does not? Its first line under
-    # the heading is chamnan's own voice — an italic aside, or a `###` section. A note someone
-    # typed opens with prose.
-    for line in body.splitlines()[1:]:
-        if not line.strip():
-            continue
-        return line.startswith("_") or line.startswith("### ")
-    return False
+    #
+    # 🐛 Fourth version, fourth failure in the same direction. "An italic aside, or a `###`
+    # section" was still a SHAPE, and an italic first line is exactly how a person writes a warning
+    # — `_Internal note: ask Bob before touching this._` — so a hand-written QWEN.md opening that
+    # way, with ordinary prose under it, was replaced start to finish by `chamnan-context --write`
+    # (R10 agent 2). Worse here than anywhere else in the plugin: these targets sit OUTSIDE
+    # `.chamnan/`, and chamnan's own printed advice for every one of them is to gitignore it, so
+    # its instructions arrange for there to be no git history to recover from.
+    #
+    # The lesson three rounds drew and none of them applied: recognise chamnan's own VOICE, not the
+    # shape a note about chamnan is likely to take. Every generated block since 1.8.0 opens with
+    # the fence-framing sentence, and every one of them contains a matched `[repo:<nonce>]` pair.
+    # Neither is something a person types: the nonce is generated per run. Checked against the
+    # wording actually shipped by 1.17.0, 1.18.1 and 1.20.0 -- unchanged in all three, so no real
+    # pre-marker file stops being recognised.
+    return _opens_in_chamnans_voice(body)
 
 
 def fixed_overhead(agent):
