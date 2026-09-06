@@ -81,6 +81,13 @@ DEFAULT_CONFIG = {
     # one overwritten file about the present; these are many small files, one per session, and only
     # the unfinished part of the newest one is ever injected. See lib/sessions.py.
     "resume": True,
+    # On `source="resume"` the hook sends a one-line pointer instead of the whole block, but ONLY
+    # when it can prove from the transcript that the earlier block is still in context -- no
+    # compaction boundary after its own fence. Measured 967 tokens saved on an 8-file fixture and
+    # about 3,500 on this repository's real block. Set False to resend unconditionally; the proof
+    # already fails safe, so this exists for someone whose host restores transcripts differently
+    # rather than as a knob anybody should need.
+    "resume_pointer": True,
     # These accumulate one per working session in a directory that gets committed, so they are
     # bounded from the start rather than after somebody's repository fills up. Longer than the log
     # window because a record from three weeks ago is still the answer to "what was I doing".

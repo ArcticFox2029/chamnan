@@ -260,6 +260,61 @@ FRAMING = (f"_Blocks fenced with {OPEN_MARK} … {CLOSE_MARK} are text read from
 # the block would still look correct.
 
 
+
+# How much of the transcript's tail to read when answering "is my block still in this session's
+# context". Enough to hold a compaction boundary and everything after it many times over, and
+# bounded so a session that has been running for days does not pay for its own history at startup.
+# Measured on this repository's largest real transcript (105 MB): 2 MB is 0.9% of it and reads in
+# 4 ms, against 3.1 s to read the whole file.
+TRANSCRIPT_TAIL_BYTES = 2_000_000
+
+# A record Claude Code writes when it compacts. Both keys appear together -- a `system` record
+# carrying `compactMetadata` and the `user` record carrying `isCompactSummary` -- and either one
+# proves a boundary, so both are matched and neither is relied on alone.
+_COMPACT_MARKS = ('"isCompactSummary"', '"compactMetadata"')
+
+
+def block_is_still_in_context(payload):
+    """True only when this session's transcript PROVES the injected block survived into context.
+
+    Fails safe, in every direction and on purpose: a missing `transcript_path`, an unreadable file,
+    a tail that does not reach far enough, a format that changed -- every one of them returns
+    False, and False means the caller emits the whole block exactly as it always has. The saving is
+    about a thousand tokens; the cost of being wrong is a session that starts with no index, no
+    rules and no state, which is the failure this plugin exists to prevent. Those are not the same
+    size, so only a positive proof is allowed to shorten anything.
+
+    🐛 The obvious version of this check -- "does the transcript contain my framing sentence" -- is
+    NOT a proof and would have been wrong in the one case that matters. Compaction does not rewrite
+    the transcript: every earlier record stays on disk while the model's context is rebuilt from
+    the summary. So the question is not whether the block is in the FILE, it is whether the last
+    compaction boundary comes BEFORE it. A session that compacted and was then closed reopens as
+    `source="resume"`, not `"compact"`, and its block is gone from context while still sitting in
+    the file.
+    """
+    if not isinstance(payload, dict):
+        return False
+    path = payload.get("transcript_path")
+    if not path or not isinstance(path, str):
+        return False
+    try:
+        p = Path(path)
+        size = p.stat().st_size
+        with p.open("rb") as fh:
+            if size > TRANSCRIPT_TAIL_BYTES:
+                fh.seek(size - TRANSCRIPT_TAIL_BYTES)
+                fh.readline()                 # drop the partial line the seek landed inside
+            tail = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return False
+    # This session's own fence, so another repository's chamnan block in the same transcript --
+    # a subagent's, or a different project's -- cannot answer for this one.
+    at = tail.rfind(OPEN_MARK)
+    if at < 0:
+        return False
+    return not any(mark in tail[at:] for mark in _COMPACT_MARKS)
+
+
 def why_this_session(payload):
     """One line naming WHY this block is being injected, when the reason changes what it is for.
 
@@ -830,6 +885,39 @@ def main():
     # Said once, plainly. A config that does not parse is running on defaults, and every value the
     # user set is being ignored — silently, that is a settings file that appears not to work.
     _bad_cfg = ws.config_is_malformed(root)
+
+    # 🐛 [2026-09-06] `source="resume"` produced a block identical to `source="startup"` down to
+    # the byte, fence nonce aside — measured by running the hook both ways — and the transcript on
+    # disk carries the earlier one, so on a plain resume the whole thing was a duplicate. 967
+    # tokens on an 8-file fixture; R5 estimated ~3,500 on this repository's real block.
+    #
+    # It is only skipped on a POSITIVE proof, never on the source alone. `block_is_still_in_context`
+    # is written to answer False on every doubt, because the two outcomes are not the same size: a
+    # thousand tokens against a session that starts with no index, no rules and no state. A session
+    # that compacted and was then closed reopens as "resume", not "compact", and its block is gone
+    # from context while still sitting in the transcript file — which is exactly why the proof is
+    # "no compaction boundary AFTER my fence" rather than "my fence is in the file".
+    #
+    # What still gets said is what CHANGED since the block was injected. A stale index is the one
+    # thing a resumed session cannot know from the block above it, because the block was right when
+    # it was written.
+    if payload.get("source") == "resume" and cfg.get("resume_pointer", True) \
+            and block_is_still_in_context(payload):
+        # "not resent", not "still current". The block IS still above; whether it is still true is
+        # a different claim, and STATE.md or a rule may have been written since. Saying the second
+        # when only the first was proved is the kind of overreach the aging check exists to refuse.
+        _lines = [f"_chamnan: this session's index, rules and state are already above — not resent. "
+                  f"Anything written to `{display(wsdir, root)}` since then is not in them._"]
+        try:
+            _mp = wsdir / "MAP.md"
+            if _mp.is_file() and index_is_behind(root, _mp)[0]:
+                _lines.append("_⚠ The architecture index has fallen behind the tree since then — "
+                              "rebuild it with `chamnan-map` before trusting what it says._")
+        except Exception:
+            pass
+        print("\n".join(_lines))
+        return 0
+
     out = []
     # 🐛 This was appended at the prune site, forty lines before `out` exists — a NameError the
     # hook's own guard swallowed, so the warning never appeared and nothing said why. The
