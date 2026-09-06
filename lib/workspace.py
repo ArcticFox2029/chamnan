@@ -1409,6 +1409,12 @@ def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
             time.sleep(pause)
 
 
+# Why the last `atomic_write_text` failed, for `write_or_raise` to put in its message. A list rather
+# than a return value because the bool IS the contract here and every caller tests it; same shape as
+# LAST_UNREAD, and read only immediately after a False.
+LAST_WRITE_ERROR = []
+
+
 def atomic_write_text(dest, text, encoding="utf-8"):
     """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
 
@@ -1435,6 +1441,7 @@ def atomic_write_text(dest, text, encoding="utf-8"):
     `write_or_raise` below is that decision made for the writes a user asked for by name.
     """
     if read_only():
+        LAST_WRITE_ERROR[:] = ["CHAMNAN_READ_ONLY is set, so nothing is written anywhere"]
         return False
     tmp = None
     try:
@@ -1445,6 +1452,9 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # roll back the file it already copied rather than leave an unregistered executable behind.
         # Checked explicitly, because the filesystem will not check it for us any more.
         if dest.exists() and not os.access(dest, os.W_OK):
+            # Named, like the exception path below: this refusal and a full disk are the two
+            # answers a caller used to get as one identical sentence, and they need opposite fixes.
+            LAST_WRITE_ERROR[:] = ["the file is not writable — its permissions refuse this write"]
             return False
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Per-process, and `.tmp` last so a suffix-matching reader never mistakes it for the real
@@ -1471,7 +1481,14 @@ def atomic_write_text(dest, text, encoding="utf-8"):
             pass
         _replace_with_retry(tmp, dest)
         return True
-    except Exception:
+    except Exception as err:
+        # 🐛 [2026-09-06] The reason was caught here and thrown away, so every caller could say was
+        # "could not write X". Reproduced live with `chmod 444` and `chmod 555`: a read-only FILE, a
+        # read-only DIRECTORY and a full disk all produced the identical sentence, and the first two
+        # need different fixes (R15 agent 3). The bool return stays the contract -- every caller
+        # tests it -- so the reason goes in a module-level slot the raising wrapper reads, the same
+        # shape `LAST_UNREAD` already uses for the read ceiling.
+        LAST_WRITE_ERROR[:] = [f"{type(err).__name__}: {err}"]
         if tmp is not None:
             try:
                 tmp.unlink()
@@ -1500,9 +1517,11 @@ def write_or_raise(dest, text, encoding="utf-8"):
     tool is a thing somebody typed a command to get, and telling them it happened when it did not
     is worse than failing.
     """
+    LAST_WRITE_ERROR[:] = []
     if not atomic_write_text(dest, text, encoding=encoding):
-        raise OSError(f"could not write {dest}"
-                      + (" (CHAMNAN_READ_ONLY is set)" if read_only() else ""))
+        why = (" (CHAMNAN_READ_ONLY is set)" if read_only()
+               else f" — {LAST_WRITE_ERROR[0]}" if LAST_WRITE_ERROR else "")
+        raise OSError(f"could not write {dest}{why}")
     return True
 
 def notice_due(root, key, times=NOTICE_TIMES):

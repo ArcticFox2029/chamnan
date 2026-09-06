@@ -147,7 +147,15 @@ def cmd_for(root, target):
 def main(argv):
     root = ws.find_root()
     if not ws.workspace(root).is_dir():
-        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        # 🐛 [2026-09-06] A dead end in six of ten commands. `chamnan-context` was given the way
+        # out on 2026-09-05 and its siblings were not, and `chamnan-impact` carried BOTH — this
+        # sentence, and the actionable one 46 lines below it for a near-identical condition — so
+        # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
+        # ordering accident rather than anything they controlled. No test ran any of the six
+        # against a directory that genuinely has no workspace (R15 agent 3).
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
         return 1
     if not ws.enabled("timeline", root):
         print("chamnan: timeline is disabled in .chamnan/config.json")
