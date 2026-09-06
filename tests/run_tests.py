@@ -9702,6 +9702,54 @@ check("A FALSE SECURITY CLAIM IN AN ALREADY-COMMITTED IGNORE FILE IS CORRECTED",
 check("...and nothing the user wrote themselves is touched",
       "their-own-rule/" in _corrected and "# a line the user added themselves" in _corrected)
 
+_NUMBER_WORDS = {1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+                 6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten"}
+# 🐛 Six documentation claims were counted against the code and every one was wrong: the config
+# table enumerated 18 of 22 keys, the Requirements row said four hook events where five are
+# registered, CONTRIBUTING said four commands where there are ten and "there is no CI" beside a
+# workflow that runs on every commit, and two docs still said chamnan "never invokes git" — a claim
+# the README had already corrected, left standing in its siblings (R1 acc3). Prose does not fail a
+# test on its own, so the numbers are held against their source here, the way CLAUDE.md's retention
+# figures already are.
+_readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+_contrib = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+_undocumented_keys = sorted(k for k in ws.DEFAULT_CONFIG if f"`{k}`" not in _readme_text)
+if _undocumented_keys:
+    print("      config keys the README never names: " + ", ".join(_undocumented_keys))
+check("EVERY CONFIG KEY THE CODE HAS IS NAMED IN THE README", _undocumented_keys == [])
+
+_hooks_json = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_events = sorted(k for k in _hooks_json.get("hooks", _hooks_json) if not k.startswith("_"))
+check("...and the README's hook-event count is the number actually registered",
+      f"{_NUMBER_WORDS[len(_events)]} hook events" in _readme_text)
+for _ev in _events:
+    check(f"...and it names {_ev}", f"`{_ev}`" in _readme_text)
+
+_cmds = sorted(q.name for q in (ROOT / "bin").iterdir() if q.is_file() and not q.suffix)
+check("...and CONTRIBUTING's command count is the number shipped",
+      f"The {len(_cmds)} commands" in _contrib)
+check("...and it does not claim there is no CI while a workflow runs on every commit",
+      not ("no CI" in _contrib and (ROOT / ".github" / "workflows").is_dir()))
+
+# The claim is false in the code's own terms: these modules shell out to git.
+_git_callers = sorted(q.name for q in (ROOT / "lib").glob("*.py")
+                      if '"git"' in q.read_text(encoding="utf-8"))
+_denials = [q.name for q in (ROOT / "docs").glob("*.md")
+            if "never invokes `git`" in q.read_text(encoding="utf-8")
+            or "does not invoke `git`" in q.read_text(encoding="utf-8")]
+if _denials:
+    print(f"      still deny it while {len(_git_callers)} lib modules call git: " + ", ".join(_denials))
+check("NO DOCUMENT CLAIMS CHAMNAN NEVER INVOKES GIT WHILE SIX MODULES DO",
+      _denials == [] and len(_git_callers) >= 5)
+
+# 🐛 `librarian` shipped in the plugin for several releases and was named in no documentation at
+# all, so nobody who had it installed could know it existed.
+_undocumented_agents = sorted(q.stem for q in (ROOT / "agents").glob("*.md")
+                              if q.stem not in _readme_text)
+if _undocumented_agents:
+    print("      agents shipped and never documented: " + ", ".join(_undocumented_agents))
+check("...and every agent the plugin ships is named in the README", _undocumented_agents == [])
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
