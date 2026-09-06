@@ -9471,6 +9471,25 @@ if _unchecked:
     print("      result discarded at: " + ", ".join(_unchecked))
 check("...AND NO CALL SITE THROWS THAT RESULT AWAY", _unchecked == [])
 
+# 🐛 The marker said "safe to delete; `chamnan-context --write` recreates it", and doing exactly
+# what it said broke the thing it describes: the marker IS the provenance, so with it gone the next
+# write refuses rather than recreating. Refusing is right — guessing is what destroyed a user's
+# notes twice — so the sentence was what was wrong (R3 agent 4).
+check("THE MARKER DOES NOT PROMISE SOMETHING DELETING IT MAKES FALSE",
+      "safe to delete" not in adapters_mod.MARKER)
+check("...and it names the move that does work", "Delete the whole file" in adapters_mod.MARKER)
+
+# 🐛 "1 of 2 decision has no Rejected". The noun agrees with the TOTAL and the verb with the count;
+# both were keyed to the count. The line beside it had the other half of the same bug — a fixed
+# plural, so one lesson out of one read "1 of 1 lessons name" (R2 agent 4).
+_report_src = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+check("BOTH LEDGER SENTENCES AGREE IN NUMBER, THROUGH ONE HELPER",
+      _report_src.count("def _agree(") == 1 and _report_src.count("_agree(") == 3)
+
+# mapper's standalone entry point had no caller anywhere and still carried the pre-atomic-write and
+# pre-newline="" defects, so it was a second, worse copy of chamnan-map that nothing ran.
+check("THE UNREACHABLE SECOND ENTRY POINT IS GONE", not hasattr(mapper, "main"))
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402

@@ -317,14 +317,25 @@ def print_inventory(root):
         noun = "entry" if count == 1 else "entries"
         print(f"  {label:<{width}}   {count:>3} {noun:<8}   last write {ledger.humanize_age(last_ts)}")
 
+    # 🐛 "1 of 2 decision has no Rejected". The noun agrees with the TOTAL and the verb with the
+    # count — `plural` was keyed to the count for both, so one decision out of two made the noun
+    # singular. The line above it had the opposite half of the same bug: `lessons name` is fixed
+    # plural, so one lesson out of one read "1 of 1 lessons name". Two adjacent sentences, one
+    # helper wrong and one missing, which is this repository's own recurring shape (R2 agent 4).
+    def _agree(count, total, singular, plural, verb_singular, verb_plural):
+        return f"{total} {singular if total == 1 else plural} {verb_singular if count == 1 else verb_plural}"
+
     naming_none, lessons_total = ledger.entries_naming_no_file(root, "lessons")
     if lessons_total:
-        print(f"\n  {naming_none} of {lessons_total} lessons name no file in this repository")
+        print(f"\n  {naming_none} of "
+              f"{_agree(naming_none, lessons_total, 'lesson', 'lessons', 'names', 'name')} "
+              f"no file in this repository")
 
     without, decisions_total = ledger.decisions_without_rejected(root)
     if decisions_total:
-        plural = "decision has" if without == 1 else "decisions have"
-        print(f"  {without} of {decisions_total} {plural} no `Rejected:` — a trade-off nobody wrote down")
+        print(f"  {without} of "
+              f"{_agree(without, decisions_total, 'decision', 'decisions', 'has', 'have')} "
+              f"no `Rejected:` — a trade-off nobody wrote down")
 
     # A pointer to knowledge that was never written. Same shape as a MAP.md entry naming a file that
     # is gone, and reported in the same spirit: here, where a person looks at workspace health,
