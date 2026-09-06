@@ -120,21 +120,31 @@ git ls-remote --tags origin
 An annotated tag appears twice — the tag object, and a `^{}` line dereferencing to the commit. The
 second one is the commit the release actually ships.
 
-**7. Publish the release from the tag that already exists.**
+**7. Tag the release, and publish from it.**
+
+There are TWO tags per release and they are not interchangeable. `chamnan--v{version}` is the one
+Claude Code reads to resolve a plugin version, and step 5 creates it. `v{version}` is the one the
+releases page is built on, which every release from 1.14.0 onward has used. Both point at the same
+commit.
 
 ```bash
-gh release create chamnan--v{version} --verify-tag --notes-file <your-notes> --latest
+git tag -a v{version} -m "chamnan {version}" && git push origin refs/tags/v{version}
+gh release create v{version} --verify-tag --notes-file <your-notes> --latest
 ```
 
 `--verify-tag` makes the command fail rather than invent a tag if the name is wrong — which is the
 behaviour you want when the tag name is the thing most likely to be mistyped.
+
+🐛 This step named `chamnan--v{version}` from 2026-08-20 until 1.20.0, while every release actually
+published in that time used `v{version}`. Following the checklist as written would have put one
+release on a tag no other release uses.
 
 `.github/release-template.md` is a starting point for the notes.
 
 **8. Verify what was published.**
 
 ```bash
-gh release view chamnan--v{version} --json tagName,isDraft,isPrerelease,publishedAt,url
+gh release view v{version} --json tagName,isDraft,isPrerelease,publishedAt,url
 ```
 
 Expect `isDraft: false` and `isPrerelease: false`, and a `tagName` matching step 5.
