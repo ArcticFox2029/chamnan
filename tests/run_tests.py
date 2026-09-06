@@ -272,8 +272,20 @@ check("marketplace has a description", bool(market.get("description")))
 # repository's life — it means nothing has been released since — and a check that fails on that
 # would be red between every pair of releases, which is how a check stops being read. What is worth
 # saying out loud is the DRIFT, at the moment somebody runs the suite before releasing.
-_tag = subprocess.run(["git", "describe", "--tags", "--abbrev=0"], capture_output=True,
-                      text=True, encoding="utf-8", errors="replace", cwd=str(ROOT)).stdout.strip()
+# 🐛 [2026-09-06] `git describe --tags --abbrev=0` returns whichever tag is NEAREST, and a release
+# here writes TWO on the same commit: `chamnan--v<version>` for the marketplace and `v<version>` for
+# the release, about three seconds apart. `chamnan--v1.21.0` is not semver and never was meant to
+# be, so whenever CI's checkout landed inside that three-second gap the suite failed the semver
+# check — on a correct release, for a tag that is doing its job. It happened on the real 1.21.0 run:
+# 2 of 5 matrix jobs, confirmed against the tags' own timestamps (R9 agent 1).
+#
+# The question this check asks is "does the RELEASE tag look like a release", so it asks git for
+# release-shaped tags rather than for the nearest one of any shape. A repository that has only ever
+# written the marketplace tag now reports no tag at all, which is the honest answer and takes the
+# same SKIP branch as a shallow clone.
+_tag = subprocess.run(["git", "tag", "--list", "v[0-9]*", "--sort=-v:refname",
+                       "--merged", "HEAD"], capture_output=True, text=True, encoding="utf-8",
+                      errors="replace", cwd=str(ROOT)).stdout.strip().split("\n")[0].strip()
 if _tag:
     _ahead = subprocess.run(["git", "log", "--oneline", f"{_tag}..HEAD"], capture_output=True,
                             text=True, encoding="utf-8", errors="replace", cwd=str(ROOT)).stdout.split("\n")
@@ -284,6 +296,38 @@ if _tag:
               f"refresh and the stale-build banner stays dark.")
     check("the version is semver and the tag it matches is a real one",
           bool(re.fullmatch(r"v?\d+\.\d+\.\d+", _tag)))
+
+    # The release writes TWO tags on one commit, and only one of them is meant to be semver. Driven
+    # against a fixture with both, in both orders, because the failure was a RACE: CI's checkout
+    # landing inside the three seconds between the two pushes saw only the marketplace one.
+    _tagfix = Path(tempfile.mkdtemp(prefix="chamnan-tags-"))
+    _tagenv = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
+
+    def _tgit(*args):
+        return subprocess.run(["git", "-C", str(_tagfix), "-c", "user.email=t@t",
+                               "-c", "user.name=t", *args], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", env=_tagenv)
+
+    def _release_tag():
+        return _tgit("tag", "--list", "v[0-9]*", "--sort=-v:refname",
+                     "--merged", "HEAD").stdout.strip().split("\n")[0].strip()
+
+    _tgit("init", "-q", "-b", "main")
+    (_tagfix / "f.txt").write_text("x\n", encoding="utf-8")
+    _tgit("add", "-A")
+    _tgit("commit", "-qm", "release")
+    _tgit("tag", "chamnan--v1.21.0")
+    check("A MARKETPLACE TAG ALONE IS NOT MISTAKEN FOR A MALFORMED RELEASE TAG",
+          _release_tag() == "")
+    _tgit("tag", "v1.21.0")
+    check("...and once the release tag lands it is the one that is checked",
+          _release_tag() == "v1.21.0"
+          and re.fullmatch(r"v?\d+\.\d+\.\d+", _release_tag()))
+    # The other order, because a race has two sides.
+    _tgit("tag", "-d", "chamnan--v1.21.0")
+    check("...whichever of the two landed first",
+          _release_tag() == "v1.21.0")
+    _rmtree(_tagfix, ignore_errors=True)
 
 # 🐛 The version string is the ONLY thing the stale-build banner compares, so two different builds
 # sharing one are invisible to it — and that is not hypothetical. Measured on this machine while
