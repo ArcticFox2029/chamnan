@@ -68,6 +68,16 @@ _CHECK_LIKE = re.compile(r"^\*\*check:\*\*.*$", re.M | re.I)
 # would turn a health report into a reason to uninstall.
 MAX_FILES = 400
 MAX_BYTES = 400_000
+# 🐛 [2026-09-06] The two above bound ONE check. Nothing bounded the SUM, and the sum is what a
+# session start actually pays: measured ~90-100 ms per check at those caps' own worst case, so 50
+# ordinary non-adversarial trailers cost 4.5 s -- whether spread over 50 rule files or written into
+# one (R12 agent 2). The count is the third dimension of the same product the ReDoS guards bound in
+# the other two, and it was the one nobody had a number on.
+#
+# 25, because a repository with more rule checks than that has stopped using them as rules. The
+# ones past the cap are reported as unrun rather than dropped: a check that quietly does not
+# execute is the failure `_CHECK_LIKE` above exists to prevent, one layer down.
+MAX_CHECKS = 25
 
 
 def parse(text):
@@ -372,8 +382,15 @@ def run(root, rules):
     {"holds", "BROKEN", "unverifiable", "malformed"}.
     """
     out = []
+    ran = 0
     for title, text in rules:
         for mode, pattern, glob, per_file in parse(text):
+            if ran >= MAX_CHECKS:
+                out.append((title, "unverifiable",
+                            f"not run: this repository declares more than {MAX_CHECKS} checks, "
+                            f"and they are evaluated at every session start"))
+                continue
+            ran += 1
             got = _matches(Path(root), pattern, glob)
             if got is None:
                 out.append((title, "unverifiable",
