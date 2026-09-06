@@ -8912,6 +8912,27 @@ check("A CHINESE LEADING COMMENT REACHES THE INDEX INTACT",
       _zhmap.count(_zhdesc) >= 20)
 check("...and is not cut mid-character on the way",
       "\ufffd" not in _zhmap and _zhmap == _zhmap.encode().decode())
+
+# 🐛 [2026-09-06] And the OTHER half of that question, which this check does not ask and which has
+# the opposite answer. The check above asks whether a CJK repository gets LESS INFORMATION than an
+# English one — it does not, and that was deliberate. It does, however, PAY MORE for the same
+# information: `mapper._clip` bounds a description by CHARACTERS while every other budget in this
+# package counts tokens. Measured on a six-file repository small enough for its rows to reach the
+# injected block, same content in both scripts:
+#
+#     thai descriptions      602 tokens
+#     english descriptions   348 tokens        — 73% more, every session, for the same rows
+#
+# Moving `_clip` onto `tokens.cut_at` was written and measured: English is untouched (110 Latin
+# characters price at ~44 tokens either way) and Thai drops from 602 to 315. It also cuts the
+# Chinese description above, which is exactly what the check above was written to prevent.
+#
+# So this is a decision, not a defect: equal COST and equal INFORMATION cannot both hold across
+# scripts, and one round already chose information. Reverted rather than flipped, and recorded here
+# with both numbers so whoever decides has them (R10 acc3, non-English repositories). The thing that
+# must NOT happen is this being changed back and forth by successive rounds each seeing one half.
+check("the clip is still bounded by characters, which is the recorded choice",
+      "def _clip(text, limit=110)" in (ROOT / "lib" / "mapper.py").read_text(encoding="utf-8"))
 (_zh / ".chamnan" / "memory" / "rules").mkdir(parents=True, exist_ok=True)
 (_zh / ".chamnan" / "memory" / "rules" / "r.md").write_text(
     "# A standing rule\n\n" + "It applies every session. " * 30, encoding="utf-8")
@@ -14937,6 +14958,23 @@ for _dp in sorted(list((ROOT / "docs").glob("*.md")) + [ROOT / "README.md",
         if re.search(r"\b\d+\s*/\s*\d+\s+checks passed", _dl):
             _counted.append(f"{_dp.name}:{_n}")
 check("NO DOCUMENT PRINTS A LITERAL SUITE COUNT THAT NOTHING RE-MEASURES", not _counted)
+
+# 🐛 [2026-09-06] The same trap one step over: the "In one screen" summary told a skimmer the page
+# was 1,900 lines when it was 2,329 — 21.5% out, and drifting further with every section added. On
+# a page where every other number carries a citation and a re-run command, the one number describing
+# the page itself was the one nobody kept in sync (R10 acc3). It reads "two thousand lines" now,
+# which is a scale rather than a measurement and cannot go stale the same way.
+_self_count = []
+for _dp in sorted(list((ROOT / "docs").glob("*.md")) + [ROOT / "README.md"]):
+    if not _dp.is_file():
+        continue
+    _dtext = _dp.read_text(encoding="utf-8")
+    for _n, _dl in enumerate(_dtext.split("\n"), 1):
+        if re.search(r"\b\d{3,}(?:,\d{3})*\s+lines\b", _dl):
+            _self_count.append(f"{_dp.name}:{_n}")
+check("NO DOCUMENT STATES ITS OWN LENGTH AS A NUMBER NOTHING RE-COUNTS", not _self_count)
+for _c in _self_count:
+    print("      stale the moment a section is added:", _c)
 for _c in _counted:
     print("      stale the moment a check is added:", _c)
 

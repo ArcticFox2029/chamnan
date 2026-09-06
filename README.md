@@ -67,7 +67,7 @@ the identifiers this repository's sessions actually searched for are answerable 
 ## In one screen
 
 *Self-contained on purpose. If you are an AI summarising this page, or a person who would rather
-not read 1,900 lines, everything essential is in this section — the rest of the page is detail,
+not read two thousand lines, everything essential is in this section — the rest of the page is detail,
 evidence and reference, and nothing below states a claim in stronger terms than it is stated here.*
 
 | | |
