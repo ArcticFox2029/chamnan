@@ -9,6 +9,42 @@ a version history is the one thing a first-time reader never needs.
 
 ---
 
+## What's new in 1.20.1
+
+**A secret whose `=` is on the next line was left in the clear.** 1.20.0 made `redact.scrub()`
+faster by running five rules only inside windows around each secret word, and the regex that
+decides how far such a window must reach was written as `[^\S\n]*` — whitespace *except* a
+newline. `ASSIGNED_SECRET`'s own separator is `[\w-]*\s*['"]?\s*[:=]\s*`, which crosses lines
+and permits a quote around the key. So three ordinary shapes —
+
+```
+api_password
+  = "<40 lines of base64>"
+
+api_password =
+  "<40 lines>"
+
+api_password
+: "<40 lines>"
+```
+
+— found no opening quote, took an un-extended window, and left **39 of 40 lines of the secret
+unredacted**, while the same document scanned whole was redacted completely. Found by an
+adversarial review the morning after the release.
+
+The direction of that error is the lesson, and it is now written beside the regex: this pattern
+decides how far a window *reaches*, so matching too much makes a window larger — slower, never
+wrong — and matching too little leaks. It is deliberately more permissive than any rule it
+protects.
+
+The differential fuzz that was supposed to catch this generated 400 documents and put every key
+and its operator on one line, so it agreed with itself. It now generates line-crossing separators,
+and the five shapes above are pinned individually.
+
+Upgrade if you are on 1.20.0.
+
+---
+
 ## What's new in 1.20.0
 
 **There is no 1.19.** The releases jump 1.18.1 to 1.20.0 on purpose. 1.19.0 and 1.19.1 were version
