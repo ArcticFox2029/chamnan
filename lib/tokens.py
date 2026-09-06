@@ -179,3 +179,53 @@ def cut_at(text, budget):
 def fits(text, budget):
     """True when `text` is within `budget` tokens."""
     return estimate(text) <= budget
+
+
+# 🐛 [2026-09-06] These two lived in `catalogs.py` as `_section_budget` / `_fill_by_budget`, and
+# the module's own comment beside them names the failure they exist to stop: "count caps and
+# mdblock.as_quoted's per-entry length cap bound quantity and size separately, and nothing bounds
+# their product". `deploy.py` renders into the SAME budgeted index from the SAME two primitives --
+# `MAX_PER_GROUP = 14` and `as_quoted(n, 80)` -- and never got the fix. Measured on eight kinds of
+# twenty objects with 73-character names, the length a GitOps monorepo reaches once environment and
+# region suffixes are on it: 4,059 tokens for the deployment section alone, against a default
+# `index_token_budget` of 3,000, while the count cap reported nothing wrong (R10 acc3).
+#
+# The rule is here, in the module both of them already import, rather than exported from one
+# renderer to the other -- a section renderer added next year needs the budget available where it
+# looks for token arithmetic, not in whichever sibling happened to be fixed first.
+def section_budget(share, configured=None):
+    """A section's token budget as a share of the index budget the user actually configured.
+
+    A user who raises `index_token_budget` to 6,000 has asked for a bigger index and should not
+    still get a section sized for 3,000; one who lowers it to 1,500 should not have a single
+    optional section eat most of the whole budget. The floor of 120 keeps a section from
+    collapsing to nothing on a very small budget -- one entry is a summary, zero rows is not.
+    """
+    if configured is None:
+        try:
+            import workspace as _ws
+            configured = _ws.load_config().get("index_token_budget", 3000)
+        except Exception:
+            configured = 3000
+    return max(int(configured * share), 120)
+
+
+def fill_by_budget(entries, render_one, token_budget, count_cap):
+    """Keep `entries` in order until either the token budget or the count cap is spent.
+
+    Returns (kept_render_lines, kept_count). At least one entry is always kept when the list is
+    non-empty, even if it alone exceeds the budget -- a budget of zero rows is not a summary, and
+    `mdblock.as_quoted`'s own per-entry cap already bounds how bad the single worst case can be.
+    """
+    lines = []
+    spent = 0.0
+    for e in entries:
+        if len(lines) >= count_cap:
+            break
+        line = render_one(e)
+        cost = estimate(line)
+        if lines and spent + cost > token_budget:
+            break
+        lines.append(line)
+        spent += cost
+    return lines, len(lines)

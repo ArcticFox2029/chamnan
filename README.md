@@ -77,8 +77,8 @@ evidence and reference, and nothing below states a claim in stronger terms than 
 | **How it works** | A scanner walks the tree and writes `.chamnan/MAP.md` — a Quick Index plus per-file detail. A SessionStart hook injects a bounded slice of it, plus whatever has been recorded, into the session. Commands and skills write the rest as you work. |
 | **What it is built from** | Python's standard library, and nothing else. **No network calls at runtime, no database, no daemon, no background process, no embedding model, no API key.** |
 | **What it produces** | Plain markdown and JSON inside `.chamnan/`, committed beside the code. Readable and editable by hand; deletable without breaking anything. |
-| **The one write outside `.chamnan/`** | An optional pre-commit Git hook, installed only if you say yes, that keeps the index in step with the tree. |
-| **What it never does** | Rewrite your source, call out to a network, run anything in the background, or send a repository anywhere. It reports; it does not edit code. |
+| **The two writes outside `.chamnan/`** | Both opt-in, both only if you say yes: a pre-commit Git hook that keeps the index in step with the tree, and the `commenter` agent, which adds one opening comment line to source files that have none. |
+| **What it never does** | Rewrite your source, call out to a network, run anything in the background, or send a repository anywhere. It reports; nothing it does on its own edits code — the single exception is the opt-in `commenter` agent in the row above, which adds one comment line per file and nothing else. |
 | **Requirements** | Claude Code, Python 3.8+, Git. macOS, Linux or Windows. |
 | **Install** | `/plugin marketplace add ArcticFox2029/chamnan` then `/plugin install chamnan`, then `/chamnan:bootstrap` in a repository. |
 | **Cost of being wrong** | An index entry that is stale is worse than one that is missing — that finding is measured, stated up front, and is why the index is regenerated rather than hand-edited, and why staleness is announced. |
@@ -556,7 +556,9 @@ they never open a source file for writing.
 | `.chamnan/MAP.md` | rewritten on every index run |
 | `.chamnan/logs/` contents | pruned on every command, per `log_retention_days` |
 
-Nothing outside `.chamnan/` is written without you asking. There is one opt-in exception, below.
+Nothing outside `.chamnan/` is written without you asking. There are two opt-in exceptions, both
+below: the pre-commit hook, and the `commenter` agent that adds one opening comment line to source
+files that have none.
 
 ### Optional, and only after you say yes
 
