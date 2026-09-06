@@ -58,7 +58,15 @@ KEYWORDS = {
 
 MIN_LENGTH = 3        # distinct signatures before a run counts as a workflow
 REPEAT_AT = 3         # say something on the third occurrence, matching scratch_watch
-WINDOW = 12           # how far back a run is assembled from
+MAX_LENGTH = 8        # longest sequence worth reporting, and the ceiling on the level walk
+# There is deliberately no window on how far back a day is read. The cap above is on the length of
+# the ANSWER, not on the evidence: a routine run in the morning and again after lunch is the same
+# routine, and a window that only ever saw the afternoon called it neither. Eight is where the
+# notice stops being readable -- `describe()` prints every step joined by arrows -- and it is also
+# where the cost stops mattering. Measured against the retention ceiling (KEEP_DAYS x KEEP_PER_DAY
+# = 9,000 entries) with a pathological log that is one 20-step routine repeated all day, every day:
+# 8 costs 17.5 ms, 12 costs 30.2 ms, 20 costs 61.0 ms. This workspace's real 1,308-record log takes
+# 1.8 ms, and a PostToolUse hook calls this twice per Bash tool call.
 
 # 🐛 [2026-08-28] Retention is a CALENDAR window with a per-day cap, not a flat entry count.
 # The `KEEP_ENTRIES = 400` this replaces was bounded, but it bounded the wrong axis: measured on
@@ -400,33 +408,50 @@ def repeated(history):
 
     Returns (sequence, count). Ordered and contiguous within a day — "these steps, in this order",
     which is what makes it a workflow rather than a set of tools somebody happens to use.
+
+    🐛 [2026-09-06] This used to enumerate every contiguous slice of the last WINDOW = 12 entries
+    of each day, which is O(w²) work for a fraction of the evidence. Measured on this workspace's
+    real log — 1,304 records — the window covered 48 commands, 4% of the file, and the detector had
+    never fired once. The whole-day answer was sitting in the other 96%: `python3 → git add →
+    git commit`, on three separate days. Raising WINDOW was not the fix; the cost curve made that
+    unaffordable (12 → 0.3ms, 120 → 48ms, 400 → 809ms, and a PostToolUse hook calls this TWICE per
+    Bash tool call). Counting n-grams level by level instead reads every command of every day for
+    0.6 ms, because each level is one linear pass and only sequences that already qualify are
+    extended: a longer sequence cannot appear on more days than its own prefix does.
     """
     runs = _runs(history)
     if len(runs) < REPEAT_AT:
         return None
 
-    seen = {}
-    for i, run in enumerate(runs):
-        window = run[-WINDOW:]
-        # Every contiguous slice of at least MIN_LENGTH, recorded once per day so a sequence
-        # repeated twice in one sitting does not count as two days' evidence.
-        local = set()
-        for start in range(len(window)):
-            for end in range(start + MIN_LENGTH, len(window) + 1):
-                slice_ = tuple(window[start:end])
-                if len(set(slice_)) < MIN_LENGTH:
+    best = None
+    # Level k holds every k-long slice that still occurs on REPEAT_AT distinct days. Level
+    # MIN_LENGTH is built by scanning; every level after it extends only survivors by one step.
+    # Note the distinctness rule (at least MIN_LENGTH DIFFERENT signatures) is applied when
+    # choosing an answer, never when deciding what to extend — `a a b c` qualifies while its own
+    # prefix `a a b` does not, and pruning on it would lose the longer sequence.
+    surviving = None
+    for length in range(MIN_LENGTH, MAX_LENGTH + 1):
+        counts = {}
+        for i, run in enumerate(runs):
+            if len(run) < length:
+                continue
+            for start in range(len(run) - length + 1):
+                slice_ = tuple(run[start:start + length])
+                if surviving is not None and slice_[:-1] not in surviving:
                     continue
-                local.add(slice_)
-        for slice_ in local:
-            seen.setdefault(slice_, set()).add(i)
-
-    qualifying = [(s, days) for s, days in seen.items() if len(days) >= REPEAT_AT]
-    if not qualifying:
+                counts.setdefault(slice_, set()).add(i)
+        surviving = {s: days for s, days in counts.items() if len(days) >= REPEAT_AT}
+        if not surviving:
+            break
+        qualifying = [(s, days) for s, days in surviving.items()
+                      if len(set(s)) >= MIN_LENGTH]
+        if qualifying:
+            # Longest wins: the fuller sequence is the more useful thing to write down, and a
+            # shorter one contained inside it says less. Levels ascend, so a later one replaces.
+            best = max(qualifying, key=lambda kv: (len(kv[0]), len(kv[1])))
+    if best is None:
         return None
-    # Longest wins: the fuller sequence is the more useful thing to write down, and a shorter one
-    # contained inside it says less.
-    best, days = max(qualifying, key=lambda kv: (len(kv[0]), len(kv[1])))
-    return list(best), len(days)
+    return list(best[0]), len(best[1])
 
 
 def describe(sequence, count, candidate_path=None):

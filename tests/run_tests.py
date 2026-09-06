@@ -3474,6 +3474,49 @@ longer = ["docker compose", "alembic", "pytest", "kubectl apply"]
 best = workflows.repeated(_day(1, longer) + _day(2, longer) + _day(3, longer))
 check("the LONGEST qualifying sequence is chosen", best[0] == longer)
 
+# 🐛 [2026-09-06] The detector had never fired -- not on a fixture, on 1,308 real records in this
+# workspace's own log. It read `run[-WINDOW:]` with WINDOW = 12, which on that log meant 48 of the
+# 1,308 commands, 4%. The answer was in the other 96%: `python3 -> git add -> git commit`, on three
+# separate days. This is that shape -- a real routine at the START of a day, with an afternoon of
+# unrelated work after it -- and the windowed version returned None on it.
+_buried = ["docker compose", "alembic", "pytest"]
+# Each day's afternoon is DIFFERENT work, which is what makes the morning routine the only thing
+# the three days share -- a fixture whose filler repeated verbatim would make the filler a routine
+# too, and the longest-wins rule would correctly report that instead.
+check("A ROUTINE IS FOUND WHEN THE REST OF THE DAY BURIES IT",
+      workflows.repeated(_day(1, _buried + [f"d1tool{i}" for i in range(100)])
+                         + _day(2, _buried + [f"d2tool{i}" for i in range(100)])
+                         + _day(3, _buried + [f"d3tool{i}" for i in range(100)]))
+      == (_buried, 3))
+
+# Levels extend only sequences that already qualify, which is sound on frequency alone -- but NOT
+# on the "at least MIN_LENGTH distinct signatures" rule, because that rule is not inherited by a
+# prefix. `pytest pytest git-add git-commit` has three distinct signatures; its own three-long
+# prefix has two. Pruning on distinctness would have thrown the parent away to reach the child.
+_uneven = ["pytest", "pytest", "git add", "git commit"]
+check("A SEQUENCE WHOSE PREFIX IS TOO REPETITIVE IS STILL REACHED",
+      workflows.repeated(_day(1, _uneven) + _day(2, _uneven) + _day(3, _uneven))
+      == (_uneven, 3))
+
+# MAX_LENGTH bounds the ANSWER, not the evidence -- describe() prints every step joined by arrows,
+# and past eight the notice is not something anyone reads.
+_long_routine = [f"step{i}" for i in range(workflows.MAX_LENGTH + 5)]
+_capped = workflows.repeated(_day(1, _long_routine) + _day(2, _long_routine)
+                             + _day(3, _long_routine))
+check("a sequence longer than MAX_LENGTH is reported up to the cap",
+      len(_capped[0]) == workflows.MAX_LENGTH)
+
+# This runs twice per Bash tool call, so its worst case is a latency budget, not a benchmark.
+# The worst case is the retention ceiling holding one long routine repeated all day, every day.
+_ceiling = []
+_routine = [f"step{i}" for i in range(20)] * (workflows.KEEP_PER_DAY // 20)
+for _d in range(1, workflows.KEEP_DAYS + 1):
+    _ceiling += [{"at": f"2026-08-{_d:02d}T10:00:00+07:00", "sig": _s} for _s in _routine]
+_t0 = time.perf_counter()
+workflows.repeated(_ceiling)
+_ms = (time.perf_counter() - _t0) * 1000
+check(f"THE WORST CASE STAYS UNDER 150ms: {len(_ceiling)} entries in {_ms:.1f}ms", _ms < 150)
+
 msg = workflows.describe(seq, 3)
 check("the notice names the sequence", "docker compose" in msg and "pytest" in msg)
 check("the notice points at the capture skill", "/chamnan:capture" in msg)
@@ -3491,13 +3534,15 @@ check("one day is capped at KEEP_PER_DAY ordinary commands",
 check("a malformed line does not break reading",
       len(workflows.read(wf)) == workflows.KEEP_PER_DAY)
 
-# The cap drops from the HEAD of a day. repeated() reads run[-WINDOW:], so the tail it sees must be
-# bit-for-bit what it would have seen had nothing been pruned.
+# The cap drops from the HEAD of a day, so the newest work is what survives it. That mattered
+# absolutely while repeated() read only `run[-WINDOW:]`; now that it reads the whole day the head
+# drop can genuinely cost evidence, and this check is the weaker claim that is still true: what a
+# day ends with is never what gets evicted to make room.
 tail = Path(tempfile.mkdtemp(prefix="chamnan-tail-")) / "commands.jsonl"
 workflows.record(tail, ["noise"] * over, "2026-08-01T09:00:00+07:00")
 tail_hist = workflows.record(tail, ["git status", "pytest", "docker compose"],
                              "2026-08-01T10:00:00+07:00")
-check("pruning never touches the tail repeated() reads",
+check("pruning never touches the end of the day",
       [e["sig"] for e in tail_hist[-3:]] == ["git status", "pytest", "docker compose"])
 _rmtree(tail.parent, ignore_errors=True)
 
@@ -11951,6 +11996,36 @@ check("...and an upgraded plugin path is corrected in place",
       any(h.get("command", "").startswith("/NEW/PATH")
           for g in _again["hooks"]["SessionStart"] for h in g["hooks"]))
 
+# 🐛 [2026-09-06] Registered on "startup" alone, so a Gemini user got the block on a cold start and
+# never on `--resume` or after `/clear` -- and `/clear` is the moment the index is most wanted,
+# because `/clear` is what just discarded it. `matcher` on a lifecycle event is an EXACT string in
+# Gemini's own reference, and SessionStart's documented sources are startup | resume | clear.
+# chamnan's Claude Code registration sets no matcher at all, i.e. every source; this is that same
+# rule, reaching the other member of the set (R1 acc3, adapter targets).
+_gemsrcs = {g.get("matcher") for g in _again["hooks"]["SessionStart"]
+            if any(h.get("name") == "chamnan-context" for h in g.get("hooks", []))}
+check(f"EVERY SessionStart SOURCE GEMINI DOCUMENTS IS REGISTERED: {sorted(_gemsrcs)}",
+      _gemsrcs == set(_gem.SOURCES) and _gemsrcs == {"startup", "resume", "clear"})
+# Upgrading from the one-group registration leaves three, not one corrected and two appended.
+_oldstyle = Path(tempfile.mkdtemp())
+(_oldstyle / ".gemini").mkdir()
+(_oldstyle / ".gemini" / "settings.json").write_text(
+    json.dumps({"hooks": {"SessionStart": [
+        {"matcher": "startup", "hooks": [{"name": "chamnan-context", "type": "command",
+                                          "command": "/OLD/chamnan-context --emit gemini"}]},
+        {"matcher": "startup", "hooks": [{"name": "theirs", "type": "command",
+                                          "command": "echo hi"}]}]}}),
+    encoding="utf-8")
+adapters_mod.install(_oldstyle, "gemini", "body", "/NEW/chamnan-context --emit gemini")
+_up = json.loads((_oldstyle / ".gemini" / "settings.json").read_text(encoding="utf-8"))
+_upsrcs = [g["matcher"] for g in _up["hooks"]["SessionStart"]
+           if any(h.get("name") == "chamnan-context" for h in g["hooks"])]
+check("upgrading a 1.21.x single-source registration leaves exactly one group per source",
+      sorted(_upsrcs) == sorted(_gem.SOURCES))
+check("...and the user's own hook is still there afterwards",
+      any(h["name"] == "theirs" for g in _up["hooks"]["SessionStart"] for h in g["hooks"]))
+_rmtree(_oldstyle, ignore_errors=True)
+
 # A settings.json that will not parse must stop the install. Writing a fresh one would silently
 # discard the user's security policy, and they would have no reason to look here for it.
 _badroot = Path(tempfile.mkdtemp())
@@ -12942,50 +13017,6 @@ for _u in sorted(set(_assign_then_render))[:6]:
     print("     ", _u)
 
 
-# `ws.exclusive` YIELDS whether the lock was taken; it does not raise. A caller that ignores the
-# value runs its critical section unlocked and cannot know it did. R43 raised this as a hypothesis
-# about tools_index.remove/record_call and never reproduced it -- and it is not true of them: all
-# three of their sites bind `held` and branch on it. Auditing by hand found exactly one caller that
-# discards the value, and that one is deliberate and says so in six lines of comment above itself.
-#
-# Pinned rather than re-audited. The exemption is by NAME, so a second unlocked caller is a failure
-# here instead of a paragraph in a report nobody re-checks.
-_LOCK_PROCEEDS_UNHELD = {("state.py", "age_out")}   # an ages file is a staleness hint, not data
-_unchecked_locks = []
-for _path, _src in _runtime_sources():
-    try:
-        _tree = ast.parse(_src)
-    except SyntaxError:
-        continue
-    _fn_at = {}
-    for _node in ast.walk(_tree):
-        if isinstance(_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for _sub in ast.walk(_node):
-                _fn_at[id(_sub)] = _node.name
-    for _node in ast.walk(_tree):
-        if not isinstance(_node, ast.With):
-            continue
-        for _lockitem in _node.items:
-            _lockctx = _lockitem.context_expr
-            if not (isinstance(_lockctx, ast.Call) and isinstance(_lockctx.func, ast.Attribute)
-                    and _lockctx.func.attr == "exclusive"):
-                continue
-            _owner = _fn_at.get(id(_node), "<module>")
-            if (_path.name, _owner) in _LOCK_PROCEEDS_UNHELD:
-                continue
-            _lockvar = _lockitem.optional_vars
-            _name = _lockvar.id if isinstance(_lockvar, ast.Name) else None
-            _used = _name is not None and any(
-                isinstance(_x, ast.Name) and _x.id == _name
-                for _stmt in _node.body for _x in ast.walk(_stmt))
-            if not _used:
-                _unchecked_locks.append(f"{_path.name}:{_node.lineno} in {_owner}()")
-check("EVERY ws.exclusive CALLER ACTS ON WHETHER IT ACTUALLY GOT THE LOCK",
-      not _unchecked_locks)
-for _u in _unchecked_locks[:6]:
-    print("     ", _u)
-check("...and the one documented exception still exists, so the exemption is not stale",
-      "def age_out" in (ROOT / "lib" / "state.py").read_text(encoding="utf-8"))
 
 # --- INVARIANT 9: a shim is never mistaken for a command -------------------------------------
 # 🐛 `chamnan-report`'s Usage table listed `chamnan-map` and `chamnan-map.cmd` as two commands
@@ -13988,7 +14019,7 @@ _undocumented = [n for n in sorted(adapters_mod.ADAPTERS)
 check("EVERY ADAPTER'S TARGET IS NAMED IN THE README", not _undocumented)
 for _u in _undocumented[:6]:
     print("     missing from README:", _u)
-# The aliases are named too, or eleven agents look unsupported.
+# The aliases are named too, or twelve agents look unsupported.
 _alias_missing = [a for a in adapters_mod.ALIASES if f"`{a}`" not in _readme]
 check("...and every alias is named, so no agent looks unsupported", not _alias_missing)
 
@@ -13996,6 +14027,68 @@ check("...and every alias is named, so no agent looks unsupported", not _alias_m
 # oversight — which is what a reader would reasonably conclude from a table of everything else.
 check("...and the README says why Claude Code has none",
       "Claude Code has no adapter" in _readme)
+
+# 🐛 [2026-09-06] `_fence_safe` -- neutralise a body line that is exactly `---` so repository prose
+# cannot close a YAML frontmatter block early -- is defined SIX times, byte-identical, one per
+# frontmatter adapter. Three of the six docstrings argue for the duplication, and for a rendering
+# difference that argument is right: frontmatter FIELDS genuinely differ per agent, and a shared
+# base class would make a change for one silently change the others. This is not that. The hazard
+# and the fix are fixed by YAML itself, not chosen per adapter, and this repository has twice paid
+# for the same bet -- `mapper._clip()` and `write_target`'s discarded return, both "simple, stable,
+# per-caller copies are fine", both wrong (R5 agent 3).
+#
+# The adapters stay independent; what is closed is SILENT divergence. Two properties: the six
+# bodies are textually identical, and each one actually neutralises the line it exists for -- so
+# six copies that agree with each other and are all broken fails too.
+_fence_bodies = {}
+for _ap in sorted((ROOT / "lib" / "adapters").glob("*.py")):
+    _atext = _ap.read_text(encoding="utf-8")
+    for _an in ast.walk(ast.parse(_atext)):
+        if isinstance(_an, ast.FunctionDef) and _an.name == "_fence_safe":
+            _stmts = [_x for _x in _an.body
+                      if not (isinstance(_x, ast.Expr) and isinstance(_x.value, ast.Constant))]
+            _fence_bodies[_ap.name] = "\n".join(
+                (ast.get_source_segment(_atext, _x) or "").strip() for _x in _stmts)
+check(f"the fence-guard audit found the copies it is meant to police: {len(_fence_bodies)}",
+      len(_fence_bodies) >= 6)
+_fence_variants = sorted(set(_fence_bodies.values()))
+check("EVERY COPY OF _fence_safe IS THE SAME CODE", len(_fence_variants) == 1)
+if len(_fence_variants) > 1:
+    for _v in _fence_variants:
+        print("      variant in:", sorted(k for k, b in _fence_bodies.items() if b == _v))
+# Reached through the registry rather than by turning a filename into an agent name -- the module
+# is `continuedev.py` and the agent is `continue`, so a filename-derived lookup would quietly skip
+# one of the six and still report a pass.
+_fence_live, _fence_seen = [], set()
+for _agent in sorted(adapters_mod.ADAPTERS):
+    _mod = adapters_mod.for_agent(_agent)
+    _fn = getattr(_mod, "_fence_safe", None)
+    if _fn is None:
+        continue
+    _fence_seen.add(Path(_mod.__file__).name)
+    if "---" in _fn("a\n---\nb"):
+        _fence_live.append(_agent)
+check("every file with a _fence_safe is reachable through the registry",
+      _fence_seen == set(_fence_bodies))
+check("...and none of them lets a bare --- line through", not _fence_live)
+for _f in _fence_live:
+    print("      still closes the frontmatter:", _f)
+
+# 🐛 [2026-09-06] The checks above verify that every adapter is PRESENT in the README. Nothing
+# verified the number the README states out loud, so `**35 agent names can be written**, from 24
+# adapters` sat there being wrong for as long as the registry held 23 -- every individual adapter
+# documented, the sentence summarising them false (R5 agent 3). A count in prose is a claim like
+# any other; this reads both numbers back out of the sentence and compares them to `len()`.
+_counts = re.search(r"\*\*(\d+) agent names can be written\*\*, from (\d+) adapters", _readme)
+check("the README still states both counts in the form this check reads", _counts is not None)
+if _counts:
+    _named, _n_adapters = int(_counts.group(1)), int(_counts.group(2))
+    check(f"THE README'S ADAPTER COUNT MATCHES THE REGISTRY: says {_n_adapters}, "
+          f"registry has {len(adapters_mod.ADAPTERS)}",
+          _n_adapters == len(adapters_mod.ADAPTERS))
+    _all_names = set(adapters_mod.ADAPTERS) | set(adapters_mod.ALIASES)
+    check(f"...and its agent-name count matches too: says {_named}, real {len(_all_names)}",
+          _named == len(_all_names))
 
 
 # ------------------- a Ruby method with a non-ASCII name was invisible, not mis-spelled
@@ -14063,10 +14156,20 @@ else:
 # race -- but it means the guard is invisible: a writer that ignores the yielded flag looks exactly
 # like one that honours it, and it is a read-modify-write with no serialisation at all.
 #
-# Two checks above already assert this, one for workflows.py by exact string and one for
-# tools_index.py by counting three call sites. Both are per-module, which is the disease this
+# Two per-module checks asserted this before, one for workflows.py by exact string and one for
+# tools_index.py by counting three call sites. Both were per-module, which is the disease this
 # repository keeps rediscovering: a new module with the same shape passes every check here while
 # holding no lock. This walks the SET instead, so the next one is caught the day it is written.
+#
+# 🐛 [2026-09-06] And then the cure caught the disease. TWO set-wide walkers for this one invariant
+# were live in this file at once, ~1,100 lines apart, neither aware of the other (R5 agent 3):
+# an older one over `_runtime_sources()` keyed `("state.py", "age_out")`, and this one over a
+# hand-rolled `lib/*.py` + `hooks/*.py` glob keyed `("lib/state.py", "age_out")` -- same rule, two
+# implementations, two exemption key shapes, and two DIFFERENT file universes. The newer glob was
+# not recursive, so it could not see `lib/adapters/`, and it never looked in `bin/` at all; nothing
+# was being missed today only because neither directory happens to contain an `exclusive()` call
+# yet. The older walker is deleted and this one now reads `_runtime_sources()` -- the same file
+# universe every other set-wide check in this suite uses, so "the set" means one thing here.
 #
 # state.age_out is the one deliberate exception, and its reasoning is in a comment at the call site:
 # an ages file is a staleness hint, and a session that refuses to start over one is a worse failure
@@ -14092,12 +14195,16 @@ _LOCK_EXEMPT = {("lib/state.py", "age_out")}
 
 
 def _lock_sites():
-    """(file, enclosing function, checked?) for every `with ws.exclusive(...)` in shipped code."""
-    for _p in sorted(list((ROOT / "lib").glob("*.py")) + list((ROOT / "hooks").glob("*.py"))):
+    """(file, enclosing function, checked?) for every `with ws.exclusive(...)` in shipped code.
+
+    The file universe is `_runtime_sources()` -- lib/, hooks/ and bin/, recursively, extensionless
+    commands included -- because a check that says EVERY has to mean the same set every other
+    EVERY-check in this file means.
+    """
+    for _p, _text in _runtime_sources():
         try:
-            _text = _p.read_text(encoding="utf-8")
             _tree = _lockast.parse(_text)
-        except (SyntaxError, OSError):
+        except (SyntaxError, ValueError):
             continue
         _owner = {}
         for _fn in _lockast.walk(_tree):
@@ -14108,7 +14215,12 @@ def _lock_sites():
             if not isinstance(_n, (_lockast.With, _lockast.AsyncWith)):
                 continue
             for _it in _n.items:
-                if "exclusive(" not in _node_src(_it.context_expr, _text):
+                # Matched on the AST rather than on the source text: `not_exclusive(` contains
+                # `exclusive(`, and a substring test would police a call this rule is not about.
+                _call = _it.context_expr
+                if not (isinstance(_call, _lockast.Call)
+                        and isinstance(_call.func, _lockast.Attribute)
+                        and _call.func.attr == "exclusive"):
                     continue
                 _var = _node_src(_it.optional_vars, _text) if _it.optional_vars else ""
                 _seen = False
