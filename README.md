@@ -328,7 +328,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 
 | | |
 |---|---|
-| **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses four hook events: `SessionStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
+| **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses five hook events: `SessionStart`, `SubagentStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
 | **Python 3.8 or newer** | Required, and it must be on `PATH` as `python3`. The hooks are launched by path, relying on their `#!/usr/bin/env python3` line and executable bit. 3.8 is the floor because the assignment expression (`:=`) is the newest syntax used; nothing later appears anywhere in the plugin. |
 | **Third-party packages** | None. Standard library only — `ast`, `pathlib`, `re`, `json`, `csv`, `sqlite3`, `zipfile`, `tarfile`, `zlib`, `struct`, `subprocess`. Nothing to install, nothing to keep updated, and no virtualenv. |
 | **Git** | Not required for any feature, with one thing to know: the automatic first-session setup only creates `.chamnan/` inside a directory that has a `.git`, `.hg` or `.svn` marker (anything else would leave a folder in whatever directory a session happened to open). In a project with no version control, the session-start block says so and tells you to run `chamnan-map` once; after that every session behaves exactly as in a repository. The rest of this row is about the `git` binary — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Nine paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git rev-parse HEAD` to know whether that ranking is still current, `git rev-parse HEAD` again to stamp `MAP.md` with the commit it was built from, and that stamp checked at session start with `git rev-parse HEAD` and `git status --porcelain` so a current map is trusted over a clock — `git checkout` writes files in tree order, and the map's mtime alone called a current index stale after every branch switch, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, `git status` to say where the last session stopped when nobody wrote it down, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
@@ -581,6 +581,22 @@ code" rules are instructions to a model, and a model following instructions is n
 as a guarantee: review the diff, as you would for any change you did not type. It is one line per
 file, so the diff is easy to read.
 
+### The other agent: `librarian`
+
+`commenter` is dispatched for you. `librarian` is not — it is on-demand, and it exists because
+nothing else checks whether the workspace still describes the repository. Ask for it by name
+("run the librarian") and it reports: whether the index is stale, whether a recorded procedure
+still points at files that exist, whether STATE.md is describing work that finished long ago.
+
+| | |
+|---|---|
+| Tools | `Read`, `Glob`, `Grep`, `Bash` |
+| Model | `haiku` |
+| Writes | nothing. It reports; every fix is yours to make |
+
+It shipped in the plugin for several releases with no mention in any documentation, so nobody who
+had it installed had a way to know it was there.
+
 Prefer it never asks? Set `"agents": false` in `.chamnan/config.json`. chamnan then lists the files
 missing a comment and leaves them to you.
 
@@ -691,6 +707,10 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `promote` | `true` | `true` / `false` | Noticing a scratch script written for the third time, offering to keep it in `.chamnan/tools/`, and listing kept tools at session start. |
 | `report` | `true` | `true` / `false` | The `chamnan-report` before/after measurement. |
 | `agents` | `true` | `true` / `false` | Whether chamnan may dispatch its own cheap-model agents. With `false`, low coverage is reported and the files are left to you. |
+| `pointer` | `true` | `true` / `false` | The file pointer: before a file is edited, naming the rules and impact edges that govern it. Fires on every tool call, so it is the switch to reach for if the notices are too frequent. |
+| `timeline` | `true` | `true` / `false` | `chamnan-timeline`, and injecting open threads at session start. |
+| `environments` | `true` | `true` / `false` | `chamnan-env`, and injecting the environment constraints at session start. |
+| `state_stale_days` | `14` | integer, days | How long an unpinned section of `STATE.md` is injected before it is treated as stale. A pinned section is never aged out. |
 | `log_retention_days` | `7` | integer, days | Files under `.chamnan/logs/` older than this are deleted on every command. Best-effort and silent — housekeeping never fails a command you asked for. |
 | `language` | `"en"` | any language, e.g. `"th"` | The language chamnan **writes in** when it generates file comments and records procedures. It never rewrites anything already written, and it never affects the language of replies to you. |
 | `index_token_budget` | `3000` | integer, tokens | Ceiling on the part of `MAP.md` injected every session. Over budget, the index is rolled up by directory rather than truncated, so nothing disappears silently. |
@@ -751,7 +771,7 @@ rather than each getting a copy that drifts.
 | `iflow` | `IFLOW.md` |
 | `junie` | `.junie/AGENTS.md` |
 | `kiro` | `.kiro/steering/chamnan.md` |
-| `mistral` | `.vibe/AGENTS.md` |
+| `mistral` | `AGENTS.md` (an alias for `generic` — the `.vibe/` path had no reader left) |
 | `qwen` | `QWEN.md` |
 | `replit` | `replit.md` |
 | `roo` | `.roo/rules/chamnan.md` |

@@ -81,7 +81,10 @@ All of it. chamnan is Python scripts on your machine, run by Claude Code as hook
 shell commands. There is no service to sign up for, no daemon, and no account.
 
 It uses the Python standard library and nothing else — no third-party packages at install time or
-run time. It makes no network calls of its own, and it never invokes `git`. The one exception to
+run time. It makes no network calls of its own. It DOES invoke `git`, read-only, from six
+modules — the claim that it never does was false and was corrected in the README while these
+two pages kept it; see the Git row there for the nine paths and their fallbacks. The one
+exception to
 "nothing outside `.chamnan/`" is opt-in: `chamnan-map --install-git-hook` writes a `pre-commit`
 hook, and only when you ask for it.
 
