@@ -68,8 +68,14 @@ def render(sequence, observed, last_seen, provenance):
     the point of writing, never stored, per the closed enum this whole module exists to enforce."""
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
-    title = " · ".join(sequence)
-    steps = ", ".join(sequence)
+    # 🐛 `title` was folded and `steps` was not — the same data, one line apart. A step carrying a
+    # newline and a `## chamnan` heading, or an ANSI escape, therefore landed raw in a file that
+    # gets COMMITTED, and the heading opened a section every later reader treats as real. Reachable
+    # end to end from `chamnan-promote --desc` through `tools/index.json` to
+    # `chamnan-candidates demote` (R2 agent 2). Folded per step rather than after joining, so a
+    # newline inside one step cannot survive by hiding next to the separator.
+    title = " · ".join(mdblock.one_line(s) for s in sequence)
+    steps = ", ".join(mdblock.one_line(s) for s in sequence)
     return (f"# {mdblock.one_line(title)}\n\n"
             f"**Sequence:** {steps}\n"
             f"**Observed:** {observed}\n"
