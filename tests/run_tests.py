@@ -2735,9 +2735,12 @@ check("filename adds the extension",
 # `Rejected:`, and one lesson with no backtick-quoted file reference at all.
 inv = ledger.inventory(mem)
 inv_by_label = {label: (count, ts) for label, count, ts in inv}
+# `skills/` joined this set on 2026-09-06: it is a real store the session block lists and
+# `/chamnan:capture` writes into, and it was the one the inventory never mentioned.
 check("inventory counts every store, in a fixed set of labels",
       set(inv_by_label) == {"sessions/", "memory/decisions/", "memory/lessons/",
-                            "memory/rules/", "milestones.md", "candidates/", "threads/"})
+                            "memory/rules/", "milestones.md", "candidates/", "threads/",
+                            "skills/"})
 check("inventory counts the one decision", inv_by_label["memory/decisions/"][0] == 1)
 check("inventory counts the one lesson", inv_by_label["memory/lessons/"][0] == 1)
 check("A STORE THAT DOES NOT EXIST YET SHOWS 0, NOT AN ERROR", inv_by_label["candidates/"] == (0, None))
@@ -5836,6 +5839,33 @@ check("...and `line()` keeps working for every caller that passes no clashes at 
 check("a store's own README is recognised as its index, not an entry",
       ws.is_store_index("x/README.md") and ws.is_store_index("x/index.md")
       and not ws.is_store_index("x/main_app_memory_system.md"))
+
+# 🐛 [2026-09-06] `skills/` is a real store — the session block lists it, `/chamnan:capture` writes
+# into it, housekeeping keeps it forever — and it was the one store `chamnan-report`'s inventory
+# never mentioned. On the development workspace it is the LARGEST store there is, 19 entries, and
+# someone asking what the workspace holds was told about six stores and silently not the seventh
+# (R8 agent 5).
+import ledger as _ledinv  # noqa: E402
+_inv_labels = [lbl for lbl, _n, _ts in _ledinv.inventory(ROOT)]
+check("EVERY STORE THE WORKSPACE SCAFFOLDS APPEARS IN THE INVENTORY",
+      "skills/" in _inv_labels)
+_scaffolded = {"sessions/", "memory/decisions/", "memory/lessons/", "memory/rules/",
+               "candidates/", "threads/", "skills/"}
+check("...and none of the others went missing while it was added",
+      _scaffolded <= set(_inv_labels))
+check("...and the inventory still reports a count and a timestamp slot for each",
+      all(isinstance(n, int) for _l, n, _t in _ledinv.inventory(ROOT)))
+
+# 🐛 [2026-09-06] The index told a reader to "grep the one heading you need", and `grep -A N` cuts a
+# long section off at N lines and says nothing. Measured on the development workspace's real index:
+# the median Full Detail section is 10 lines, so `-A 20` returns the whole of 285 of 326 files and
+# silently truncates the other 41; the longest is 472 lines, where `-A 20` shows 4% (R8 agent 6). A
+# range read cannot truncate, so that is what the instruction names now.
+check("the index tells a reader to read a section by RANGE, not by a line count",
+      "sed -n" in mapper._TOO_BIG_TO_READ_IN_FULL
+      and "grep -A" in mapper._TOO_BIG_TO_READ_IN_FULL)
+check("...and says why, so it reads as a reason rather than a preference",
+      "says nothing about it" in mapper._TOO_BIG_TO_READ_IN_FULL)
 _idx = Path(tempfile.mkdtemp(prefix="chamnan-storeidx-")) / "repo"
 (_idx / ".git").mkdir(parents=True)
 ws.ensure(_idx)

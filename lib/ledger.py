@@ -253,6 +253,11 @@ def inventory(root, now=None):
     rules = _files(root, "memory", "rules") or []
     cand = _files(root, "candidates") or []
     thr = _files(root, "threads") or []
+    # 🐛 [2026-09-06] `skills/` is a real store — the session block lists it, `/chamnan:capture`
+    # writes into it, and housekeeping keeps it forever — and it was the one store this inventory
+    # never mentioned. Someone asking `chamnan-report` "what does this workspace hold" was told
+    # about six stores and silently not about the seventh (R8 agent 5).
+    skl = _files(root, "skills") or []
     ms = milestone_entries(root)
 
     def last(ts):
@@ -266,6 +271,9 @@ def inventory(root, now=None):
         ("milestones.md", len(ms), last(_milestone_timestamps(root))),
         ("candidates/", len(cand), last(_mtimes(cand))),
         ("threads/", len(thr), last(_mtimes(thr))),
+        # By mtime, not by an As-of trailer: a skill is a procedure, not a dated claim, and the
+        # write skills do not stamp one on it.
+        ("skills/", len(skl), last(_mtimes(skl))),
     ]
 
 

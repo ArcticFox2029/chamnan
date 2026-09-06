@@ -1836,9 +1836,20 @@ _HOW_TO_READ = ("**Read the Quick Index in full. Do NOT read the Full Detail sec
                 "this file:\n"
                 "the index is a fraction of the detail, and the detail is a fraction of the source.")
 
+# 🐛 [2026-09-06] The instruction said "grep the one heading you need", and a reader following it
+# with `grep -A N` gets a SILENTLY truncated answer whenever the section is longer than N. Measured
+# on this repository's real index: the median Full Detail section is 10 lines, so `-A 20` returns
+# the whole of 285 of 326 files — and cuts the other 41 with nothing saying so. The longest is 472
+# lines, and at `-A 20` a reader sees 4% of it and cannot tell (R8 agent 6).
+#
+# A RANGE read cannot truncate, and it is one line of instruction rather than a number every reader
+# has to guess. `grep` is still named first because it is what a reader reaches for and it is right
+# for finding WHICH heading; the range is what to use once they know.
 _TOO_BIG_TO_READ_IN_FULL = (
     "**This index is too large to read in full — grep BOTH sections, never read either whole.**\n"
-    "Look for the one heading you need (`## \\`path\\``), or read one directory's block at a time.\n"
+    "Find the heading you need with `grep -n '^## \\`path\\`'`, then read that section with a RANGE:\n"
+    "`sed -n '/^## \\`path\\`/,/^## /p' MAP.md`. A `grep -A N` cuts a long section off at N lines and\n"
+    "says nothing about it — the longest section in a real index of this size is over 400 lines.\n"
     "This repository has enough files that summarising them all costs what reading them would: the\n"
     "session-start block rolls this up to one line per directory, and this file is the place to\n"
     "come when you need one of them in full.")
