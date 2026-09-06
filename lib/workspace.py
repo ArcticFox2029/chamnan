@@ -1613,6 +1613,64 @@ def exclusive(path):
                 pass
 
 
+
+# The pre-commit hook chamnan installs marks itself with this line, so a hook somebody wrote by
+# hand and one chamnan wrote are told apart by the file's own content rather than by its name.
+GIT_HOOK_MARKER = "# >>> chamnan"
+
+
+def git_hooks_dir(root):
+    """Where git will ACTUALLY look for hooks, or None when this is not a repository git owns.
+
+    Not `.git/hooks`. `core.hooksPath` relocates hooks entirely -- pre-commit, Husky and lefthook
+    all set it -- and in a worktree `.git` is a FILE containing `gitdir: …`. `git rev-parse
+    --git-path hooks` resolves both.
+
+    🐛 And it resolves something ELSE if nobody checks first: in a directory holding a `.git` git
+    itself refuses, git walks UP and returns the ANCESTOR repository's hooks path as a relative
+    string. `git_owns` is the question that has to be asked before this one.
+
+    🐛 [2026-09-06] Lived in `bin/chamnan-map` as a private function, so the only code that could
+    ask "is the hook installed" was the code that installs it -- and nothing ever asked. A
+    repository whose index quietly goes stale on every commit looks exactly like one whose hook is
+    working (R14 agent 5). Moved here so the report can ask the same question the installer does,
+    with the same three subtleties handled, rather than checking `.git/hooks/pre-commit` and being
+    wrong in all three.
+    """
+    if not git_owns(root):
+        return None
+    sp = _subprocess()           # deferred, like every other git call in this module
+    try:
+        out = sp.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
+                     capture_output=True, text=True, encoding="utf-8",
+                     errors="replace", timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            found = pathlib.Path(out.stdout.strip())
+            return found if found.is_absolute() else (pathlib.Path(root) / found)
+    except (OSError, sp.SubprocessError):
+        pass
+    return None
+
+
+def git_hook_state(root):
+    """"installed", "absent", "theirs", or None when the question does not apply here.
+
+    "theirs" means a pre-commit hook exists and is not chamnan's -- which is not a problem and must
+    not be reported as one. The distinction matters because the advice differs: an absent hook can
+    be offered, and somebody else's cannot be touched.
+    """
+    hooks = git_hooks_dir(root)
+    if hooks is None:
+        return None
+    target = pathlib.Path(hooks) / "pre-commit"
+    if not target.is_file():
+        return "absent"
+    try:
+        return ("installed" if GIT_HOOK_MARKER in
+                target.read_text(encoding="utf-8-sig", errors="replace") else "theirs")
+    except OSError:
+        return None
+
 def config_is_malformed(root):
     """Why config.json will not be used, as a short reason — or "" when it will be.
 

@@ -360,6 +360,23 @@ def print_inventory(root):
               f"{_agree(without, decisions_total, 'decision', 'decisions', 'has', 'have')} "
               f"no `Rejected:` — a trade-off nobody wrote down")
 
+    # 🐛 [2026-09-06] Nothing ever asked whether the pre-commit hook that keeps MAP.md fresh is
+    # actually installed. Only `chamnan-map --install-git-hook` could answer it, because the
+    # detection lived inside that command as a private function — so a repository whose index goes
+    # quietly stale on every commit looks exactly like one whose hook is working, and this
+    # repository turned out to be the former (R14 agent 5).
+    #
+    # Someone else's pre-commit hook is reported as a fact and NOT as a problem: chamnan does not
+    # edit a hook it did not write, and its own installer refuses to, so the advice differs.
+    _hook_state = ws.git_hook_state(root)
+    if _hook_state == "absent":
+        print("\n  the index is not refreshed on commit — no pre-commit hook is installed")
+        print("    `chamnan-map --install-git-hook` adds one; it rebuilds the index when a file "
+              "is added,\n    deleted or renamed, which is about one commit in six.")
+    elif _hook_state == "theirs":
+        print("\n  a pre-commit hook is installed and is not chamnan's — left alone, as it should "
+              "be.\n    The index is refreshed only when `chamnan-map` is run by hand.")
+
     # 🐛 [2026-09-06] `rulecheck.line()` is SILENT by design when every check holds — "a line that
     # always says all good stops being read before the day it says something else" — and it reports
     # only BROKEN, malformed and contradictions. So "unverifiable" reaches nobody at all: a glob

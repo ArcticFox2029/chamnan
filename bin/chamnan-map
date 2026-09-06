@@ -54,7 +54,7 @@ def generated_count(files):
     return len([f for f in files if f.get("generated")])
 
 
-HOOK_MARKER = "# >>> chamnan"
+HOOK_MARKER = ws.GIT_HOOK_MARKER  # defined in lib/workspace.py; see git_hook_state
 HOOK_BODY = """{marker}
 # Keeps .chamnan/MAP.md in step with the code. A stale index is worse than none: it is confidently
 # wrong, and the next session believes it. Never fails a commit — if chamnan errors, the commit
@@ -120,42 +120,9 @@ def preview(root, explain=False):
     return 0
 
 
-def _hooks_dir(root):
-    """Where git will ACTUALLY look for hooks, which is not always `.git/hooks`.
-
-    Two states break the obvious guess, and both are ordinary rather than exotic:
-
-    `core.hooksPath` relocates hooks entirely — pre-commit, Husky and lefthook all set it. A hook
-    written to `.git/hooks/pre-commit` in such a repository is a **dead file**: git runs the other
-    directory, the commit succeeds, and nothing reports that the hook installed a moment ago will
-    never fire.
-
-    And in a **worktree**, `.git` is a *file* containing `gitdir: …`, not a directory. Testing
-    `(root / ".git").is_dir()` calls a perfectly good repository "not a git repository" and refuses
-    to install at all.
-
-    `git rev-parse --git-path hooks` resolves both, and returns the shared hooks directory for a
-    worktree, which is where hooks actually live.
-
-    🐛 [2026-09-06] And it resolves something else if nobody checks first. In a directory holding a
-    `.git` git itself refuses -- an interrupted `git init`, a `.git` copied without its contents --
-    git walks UP, and this call returned the ANCESTOR repository's hooks path as a RELATIVE string,
-    `../../../.git/hooks`. Line below joins a relative answer onto `root`, so it resolved straight
-    into an unrelated real repository, and `--install-git-hook` wrote a live executable pre-commit
-    hook there and printed success. The only clue was a path four `../` deep in the success line
-    (R6 acc3, first ten minutes). `git_owns` is the question that had to be asked first.
-    """
-    if not ws.git_owns(root):
-        return None
-    try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
-                             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
-        if out.returncode == 0 and out.stdout.strip():
-            p = Path(out.stdout.strip())
-            return p if p.is_absolute() else (root / p)
-    except (OSError, subprocess.SubprocessError):
-        pass
-    return None
+# `_hooks_dir` moved to `workspace.git_hooks_dir` so `chamnan-report` can ask the same
+# question this installer asks, with the same three subtleties handled.
+_hooks_dir = ws.git_hooks_dir
 
 
 _UNREACHABLE_TAIL = re.compile(r"^\s*exit\s+\d*\s*$")
