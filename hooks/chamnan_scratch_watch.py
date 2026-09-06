@@ -231,6 +231,27 @@ def notice_workflow(payload, wsdir, root):
 
 _HAS_AS_OF = re.compile(r"^\*\*As-of:\*\*", re.M)
 _HAS_PROVENANCE = re.compile(r"^\*\*Provenance:\*\*", re.M)
+_FENCE = re.compile(r"^\s*(```|~~~)", re.M)
+
+
+def _outside_fences(text):
+    """`text` with fenced code blocks removed, so an EXAMPLE is not read as the real thing.
+
+    🐛 These two patterns matched anywhere in the file, and a rule that DOCUMENTS the convention —
+    a fenced markdown sample showing `**As-of:** <date>`, or prose quoting it — therefore looked
+    like it already carried the stamp. The stamper then skipped it permanently: the file never gets
+    its real dated trailer, and nothing says why. chamnan's own memory files are full of examples
+    of chamnan's own conventions, so this fires on exactly the repositories that use the feature
+    most (R2 agent 4).
+    """
+    out, fenced = [], False
+    for line in text.splitlines():
+        if _FENCE.match(line):
+            fenced = not fenced
+            continue
+        if not fenced:
+            out.append(line)
+    return "\n".join(out)
 
 
 def _stamp_memory_entry(payload, root):
@@ -282,11 +303,14 @@ def _stamp_under_lock(resolved):
     if not text.strip():
         return
 
+    # Judged on the text with fenced examples removed: what matters is whether the FILE carries the
+    # trailer, not whether it happens to show one.
+    real = _outside_fences(text)
     additions = []
-    if not _HAS_AS_OF.search(text):
+    if not _HAS_AS_OF.search(real):
         today = datetime.now().astimezone().strftime("%Y-%m-%d")
         additions.append(f"**As-of:** {today}")
-    if not _HAS_PROVENANCE.search(text):
+    if not _HAS_PROVENANCE.search(real):
         additions.append("**Provenance:** ai-drafted")
     if not additions:
         return
