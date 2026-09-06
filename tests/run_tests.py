@@ -8454,6 +8454,39 @@ finally:
     os.chmod(_we_d, 0o755)
 _rmtree(_we, ignore_errors=True)
 
+# 🐛 [2026-09-06] chamnan's OWN workspace was counted as the user's uncommitted work. git folds an
+# entirely-untracked directory into one `??` line, so the scaffold this plugin creates on its first
+# run — .gitattributes, .gitignore, .version, config.json, no user content at all — added exactly +1
+# on every session until somebody committed `.chamnan/`, which nothing ever tells them to do. On a
+# CLEAN tree it did worse than inflate: it produced the whole section, reading "1 uncommitted
+# file(s), and nobody recorded what for", which is flatly false. Measured on the assembled block:
+# 574.2 -> 461.2 tokens on the first-week case (R15 agent 6).
+_st = Path(tempfile.mkdtemp(prefix="chamnan-stopcount-")) / "r"
+_st.mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_st, capture_output=True)
+(_st / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run(["git", "add", "-A"], cwd=_st, capture_output=True)
+subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+               cwd=_st, capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_st, capture_output=True)
+check("A CLEAN TREE IS NOT REPORTED AS HAVING UNCOMMITTED WORK",
+      sessions.where_git_says_you_stopped(_st) == "")
+# The half that makes it a fix rather than a mute: real work is still counted, and counted right.
+(_st / "b.py").write_text("x = 1\n", encoding="utf-8")
+_st_one = sessions.where_git_says_you_stopped(_st)
+check("...while one real uncommitted file is still reported, as one",
+      "1 uncommitted file(s)" in _st_one and "`b.py`" in _st_one)
+# And a workspace the user HAS committed and then edited is still not their outstanding work —
+# STATE.md changes every session, and this section answers "where did I stop".
+(_st / ".chamnan" / "STATE.md").write_text("# Work in flight\n\nedited\n", encoding="utf-8")
+subprocess.run(["git", "add", "-A"], cwd=_st, capture_output=True)
+subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "y"],
+               cwd=_st, capture_output=True)
+(_st / ".chamnan" / "STATE.md").write_text("# Work in flight\n\nedited again\n", encoding="utf-8")
+check("...and an edit to the workspace itself is not counted as the user's",
+      sessions.where_git_says_you_stopped(_st) == "")
+_rmtree(_st.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
