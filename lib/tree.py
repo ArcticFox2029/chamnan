@@ -39,7 +39,12 @@ from pathlib import Path
 # chamnan-map. A set, because one walk may hit the same parent repeatedly.
 UNREADABLE = set()
 
-PRUNE_DIRS = {".git", "node_modules", "vendor", "__pycache__", ".venv"}
+# 🐛 `.git` was the only version-control directory in this set, while workspace.VCS_MARKERS has
+# treated `.git`, `.hg` and `.svn` as equals since the beginning — so `find_root` calls a Mercurial
+# or Subversion checkout a repository and the walker calls its internal store ordinary source. An
+# `.svn/pristine` tree is every file in the working copy a second time (R21 agent 5).
+VCS_DIRS = (".git", ".hg", ".svn")
+PRUNE_DIRS = {"node_modules", "vendor", "__pycache__", ".venv", *VCS_DIRS}
 
 _CACHE = {}
 
@@ -94,8 +99,9 @@ def _walk(root):
         # repository's own, which is the exact failure the nested-checkout exclusion exists to
         # prevent; it was closed for the directory case and left open for the two commonest ways
         # a checkout is actually nested.
-        if ".git" in dirnames or ".git" in filenames:
-            gits.append(rel_dir / ".git")
+        for _vcs in VCS_DIRS:
+            if _vcs in dirnames or _vcs in filenames:
+                gits.append(rel_dir / _vcs)
         # In place, and before descending: this is the whole point of the module.
         dirnames[:] = [d for d in dirnames if d not in PRUNE_DIRS]
         for name in filenames:
@@ -190,8 +196,8 @@ def files(root):
     return [base / rel for rel in _entries(root)[0]]
 
 
-def git_dirs(root):
-    """Every `.git` found, including inside otherwise-skipped trees — see _walk."""
+def vcs_dirs(root):
+    """Every VCS_DIRS marker found, including inside otherwise-skipped trees — see _walk."""
     base = Path(root)
     return [base / rel for rel in _entries(root)[1]]
 
@@ -217,3 +223,7 @@ def matching(root, pattern):
             out.append(base / rel)
     return out
 
+
+
+# The old name for `vcs_dirs`, kept because it is what the one external caller and the suite say.
+git_dirs = vcs_dirs

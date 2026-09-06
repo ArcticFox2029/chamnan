@@ -1,11 +1,14 @@
 {
   "_comment": [
-    "Every command string is prefixed with the plugin name, and that is not decoration.",
-    "Claude Code deduplicates hooks by the RAW command string, before ${CLAUDE_PLUGIN_ROOT} is",
-    "expanded (anthropics/claude-code#29724, a re-report of #16954, closed without a linked fix).",
-    "So two plugins both registering \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\" collide and",
-    "one is silently dropped -- and session_start.py is the name any plugin author would choose.",
-    "For chamnan the dropped hook would be its entire delivery path, with no error anywhere."
+    "Every command string is prefixed with the plugin name. Claude Code before 2.1.69 deduplicated",
+    "hooks by the RAW command string, before ${CLAUDE_PLUGIN_ROOT} was expanded, so two plugins both",
+    "registering \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.py\" collided and one was silently",
+    "dropped (anthropics/claude-code#16954, #21659, #23281; #29724 was a re-report). Fixed in 2.1.69,",
+    "changelog line 'silently dropped when two plugins use the same command' -- and the current hooks",
+    "reference says outright that a plugin's copy of the same handler stays separate. The prefix is",
+    "kept anyway: chamnan declares no minimum Claude Code version, and for the one hook that is its",
+    "entire delivery path a filename costs nothing. An earlier version of this comment said the",
+    "issue was closed without a fix; that was wrong, and this is the correction (R7 agent 3)."
   ],
   "hooks": {
     "SessionStart": [

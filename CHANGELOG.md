@@ -1,11 +1,80 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1181), and every one of these is on the
+[README](README.md#whats-new-in-1200), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.20.0
+
+Thirty-nine commits, and most of them are the same shape: a rule applied to some members of a set
+and not the identical ones beside them. That is this repository's own recurring defect, so these
+were found by walking each set programmatically rather than by reading code, and each is held by a
+test that asserts the whole set.
+
+### The redactor got faster without getting looser
+
+Five of its rules cannot match text with no secret word in it, so one cheap scan now tells the
+other five where not to look. `scrub()` on the 293 KB index goes 277ms to 216ms, byte-identical on
+that file, on the test corpus, and on 400 randomised adversarial documents.
+
+Two earlier attempts at this are now regression tests rather than history. The first used a raw
+±8192-character window that merged into 77.7% of the real document and was slower than not
+windowing at all. The second snapped every boundary to a line ending and argued that made it safe,
+because no value class in those rules permits a newline — true of four of the five. `ASSIGNED_SECRET`
+delimits its value with quotes, not with the line, so `api_password = "<40 lines of base64>"` — a
+PEM key pasted into a config — was left entirely in the clear: the window held the opening quote
+without the closing one, so the rule did not match short, it did not match at all.
+
+`scrub(text, windowed=False)` runs every rule over everything, and the suite holds the two against
+each other. An optimisation that cannot be checked against the thing it optimises is a claim.
+
+### Output is guarded against what it says, not only what it contains
+
+Every command already prints through the redactor, which removed credentials. A committed file
+holding `\x1b[2K\x1b[G` still erased the line the reader had just seen and wrote its own, and
+U+202E still reversed what followed — enough to make one command's output read as another's.
+`chamnan-timeline show` prints a whole thread body and `chamnan-candidates` prints a title lifted
+from a file's first heading, so that text is the repository's, not chamnan's.
+
+### `--preview` writes nothing, which is what it always said it did
+
+In a repository that had never run chamnan it created the entire workspace — fourteen entries,
+`.gitignore` and `.gitattributes` included — before telling you what you would get, because what it
+runs to answer the question is the hook that sets the workspace up. `CHAMNAN_READ_ONLY` is how it
+now asks that hook to look without touching, and the test counts what is on disk afterwards rather
+than reading the code.
+
+### It stopped telling other agents to type Claude Code commands
+
+`/chamnan:remember` and its three siblings are Claude Code slash commands, and the line naming them
+went into AGENTS.md, `.cursorrules` and the twenty-one other adapter files, because nothing asked
+who the reader was. That line exists precisely to tell an agent it is allowed to write, so it
+failed worst for the reader it was aimed at. The same went for the first error a terminal user
+hits — no workspace here — which sent them to `/chamnan:bootstrap`.
+
+Both now name `chamnan-map`, which works everywhere. And the README says how to get `bin/` onto
+`PATH`, without which every example in it is "command not found" — the line it documents picks the
+newest installed version rather than naming one, so it does not rot on the next release.
+
+### Smaller things
+
+- A Mercurial or Subversion checkout nested inside a repository is somebody else's code, as a Git
+  one always was; its internal store is no longer walked as source. An `.svn/pristine` tree is
+  every file in the working copy a second time.
+- `chamnan-report` was the one of nine commands that reported on a directory with no workspace in
+  it, printing "0 entries, last write never" — which is what a real but empty workspace prints too.
+- The update notice can see a plugin installed from a local path, the convention this project is
+  developed under, and one `claude plugin update` does not refresh while the version is unchanged.
+  Three installs on the machine that writes chamnan sat 25 commits behind while the check that
+  exists to say so read a stale copy of a different directory.
+- The SubagentStart firing log records every gate with the reason it stopped, so an empty log can
+  finally distinguish "never fires" from "fires and finds nothing" — the question it was added to
+  answer. It no longer creates a workspace in whatever directory a subagent happened to start in.
 
 ---
 

@@ -51,6 +51,13 @@ matters to what every session costs.
 A short, specific filename: `postgres-over-sqlite.md`, not `database.md`. The filename is what
 appears in the session listing beside the title, so it should be recognisable on its own.
 
+**Check the directory before you write, and treat a name that differs only by case as taken.**
+macOS and Windows have case-insensitive filesystems by default, so writing `No-Force-Push.md` where
+`no-force-push.md` already exists does not create a second file — it leaves one file carrying the
+first name and the second entry's content, with nothing on disk recording that anything was lost.
+`git status` shows it as an ordinary edit, so there is no second chance to notice. If the name is
+taken in any casing, either update that entry or choose a different slug.
+
 ## The format
 
 ```markdown

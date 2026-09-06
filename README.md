@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.17.0](#whats-new-in-1181) · [Commands](#commands)
+[What's new in 1.20.0](#whats-new-in-1200) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -331,7 +331,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses four hook events: `SessionStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
 | **Python 3.8 or newer** | Required, and it must be on `PATH` as `python3`. The hooks are launched by path, relying on their `#!/usr/bin/env python3` line and executable bit. 3.8 is the floor because the assignment expression (`:=`) is the newest syntax used; nothing later appears anywhere in the plugin. |
 | **Third-party packages** | None. Standard library only — `ast`, `pathlib`, `re`, `json`, `csv`, `sqlite3`, `zipfile`, `tarfile`, `zlib`, `struct`, `subprocess`. Nothing to install, nothing to keep updated, and no virtualenv. |
-| **Git** | Not required, and everything works without it — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Seven paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git rev-parse HEAD` to know whether that ranking is still current, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, `git status` to say where the last session stopped when nobody wrote it down, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
+| **Git** | Not required for any feature, with one thing to know: the automatic first-session setup only creates `.chamnan/` inside a directory that has a `.git`, `.hg` or `.svn` marker (anything else would leave a folder in whatever directory a session happened to open). In a project with no version control, the session-start block says so and tells you to run `chamnan-map` once; after that every session behaves exactly as in a repository. The rest of this row is about the `git` binary — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Nine paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git rev-parse HEAD` to know whether that ranking is still current, `git rev-parse HEAD` again to stamp `MAP.md` with the commit it was built from, and that stamp checked at session start with `git rev-parse HEAD` and `git status --porcelain` so a current map is trusted over a clock — `git checkout` writes files in tree order, and the map's mtime alone called a current index stale after every branch switch, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, `git status` to say where the last session stopped when nobody wrote it down, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
 | **Disk** | Whatever `.chamnan/` holds — an index, a state file, a config file, and logs pruned on a retention window. Nothing outside the repository. |
 
 ### Platforms
@@ -346,6 +346,30 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 
 The plugin itself is the same everywhere — standard library only, no packages, no virtualenv. What
 differs is how the commands are launched.
+
+**First, put `bin/` on your `PATH`.** Nothing does this for you, and every command below assumes it:
+without it `chamnan-map` is simply "command not found". The plugin installs under Claude Code's
+plugin cache, one directory per version:
+
+```bash
+# macOS and Linux — add to ~/.zshrc or ~/.bashrc.
+# The installed path carries the version, so this picks the newest rather than naming one.
+export PATH="$(ls -d "$HOME"/.claude/plugins/cache/chamnan/chamnan/*/bin | sort -V | tail -1):$PATH"
+```
+
+```
+:: Windows PowerShell
+$bin = (Get-ChildItem "$env:USERPROFILE\.claude\plugins\cache\chamnan\chamnan\*\bin" |
+        Sort-Object Name | Select-Object -Last 1).FullName
+setx PATH "$bin;$env:PATH"
+```
+
+Or skip `PATH` entirely: clone this repository anywhere and run `bin/chamnan-map` from the
+checkout. The commands need nothing installed and work from any copy.
+
+**Inside Claude Code you do not need any of this**: the skills invoke the commands by their own
+path, so `/chamnan:bootstrap` and the rest work the moment the plugin is installed. The `PATH`
+entry is for driving chamnan from a terminal, or from an agent that is not Claude Code.
 
 **macOS and Linux.** Nothing special. `bin/` holds extensionless scripts with a
 `#!/usr/bin/env python3` line and the executable bit, so they run directly:
@@ -451,44 +475,44 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.18.1
+## What's new in 1.20.0
 
-**It now says what it works with — and says it in every language it speaks.** 1.17.0 shipped
-twenty-three adapters and a README that still opened with "a Claude Code plugin"; someone searching
-*does chamnan work with Cursor* would have read that and concluded no.
+**Thirty-nine commits, and most of them are the same shape: a rule that was applied to some
+members of a set and not the identical ones beside them.** That is this repository's own recurring
+defect, so the fixes below were found by walking each set programmatically rather than by reading
+code, and each is held by a test that asserts the whole set rather than the member that broke.
 
-The English page gained instructions rather than claims: how to install it for each kind of tool,
-how to use it with Hermes Agent, how to point it at a different model, and how to run it on each
-operating system. All thirty-two translated pages gained the same ground, and each of them now names
-every model family `--model` recognises, the two left out on purpose, and the exact escape hatch for
-one that is not listed. They still carry no figures — that rule exists because measurements change
-every release and a translation does not, and family names are proper nouns rather than
-measurements. A test fails if a family is added to the code and any page falls behind.
+**The redactor got faster without getting looser.** Five of its rules cannot match text that has no
+secret word in it, so one cheap scan now tells the other five where not to look: `scrub()` on the
+293 KB index goes 277ms to 216ms, byte-identical on that file, on the test corpus, and on 400
+randomised adversarial documents. Two earlier attempts at this were wrong and both are now
+regression tests — including one whose safety argument held for four of the five rules and left a
+40-line quoted secret, the shape of a PEM key in a config file, entirely in the clear.
 
-### `llms.txt`
+**Output is guarded against what it says, not just what it contains.** Every command already routed
+its output through the redactor, which removed credentials. A committed file holding an ANSI erase
+sequence could still rewrite the line a reader had just seen, and a right-to-left override could
+make one command's output read as another's. Both are stripped now, at the single point every
+command already prints through.
 
-A short structured description for the assistants that read this page and answer from it. Generated
-from the code rather than written by hand — the adapters and their targets, the model families, the
-commands, the translated pages — with a test that fails when it and the code disagree, when an
-adapter is missing from it, or when an anchor it points at is not a real heading.
+**`--preview` writes nothing, which is what it always said it did.** In a repository that had never
+run chamnan it created the entire workspace — fourteen entries — before telling you what you would
+get, because what it runs to answer the question is the hook that sets the workspace up.
 
-### Hermes Agent
+**It stopped telling other agents to type Claude Code commands.** Twenty-three adapters wrote
+`/chamnan:remember` and its siblings into AGENTS.md, `.cursorrules` and the rest, and that line
+exists precisely to tell an agent it is allowed to write — so it failed worst for the readers it
+was aimed at. The same went for the first error a terminal user hits. Both now name a command that
+works everywhere, and the README finally says how to get `bin/` onto `PATH`, without which every
+example in it is "command not found".
 
-Hermes is a self-hosted agent that also drives other coding agents, so a repository set up for it
-usually means several tools reading one index. It reads project instructions in a fixed order and
-chamnan already wrote three of the files in it; the new adapter writes the one above them all,
-sized to the cap Hermes documents and refusing to overwrite a file it did not write.
+**A Mercurial or Subversion checkout nested inside a repository is now somebody else's code**, as a
+Git one always was, and its internal store is no longer walked as source.
 
-### Two more things the index was wrong about
-
-A hash-named minified bundle carries no header saying it is generated, so it was indexed as
-hand-written source — counted in the coverage denominator and offered to the commenter agent to
-describe. Both new rules come from GitHub Linguist's own source and are kept as narrow as Linguist
-keeps them, because calling a long-lined Python file generated would be the more expensive mistake.
-
-And `chamnan-map <dir>` replaced the map in silence: reproduced on a real one, three hundred and
-twenty files became a hundred and fifty-three with nothing printed and exit zero. Replacing is the
-documented behaviour and is unchanged; it now says what it is about to drop, and how to get it back.
+**The update notice can see a plugin installed from a local path** — the convention this project is
+itself developed under, and one that `claude plugin update` does not refresh while the version
+string is unchanged. Three installs on the machine that writes chamnan sat twenty-five commits
+behind while the check that exists to say so read a stale copy of a different directory.
 
 ## Bootstrap does not rewrite your code
 

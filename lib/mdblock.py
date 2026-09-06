@@ -175,8 +175,18 @@ def demote_headings(text):
     structure. A `#` inside a fenced code block is left alone -- it is a comment in the example,
     not a heading of the entry.
     """
+    # 🐛 This made a heading inert and let everything ELSE through. It sat on the sanitiser
+    # allow-list of the structural audit -- "the multi-line sibling of as_quoted", says the docstring
+    # above -- and it did not have as_quoted's control-character table. So a rule whose heading
+    # carried an ESC/OSC terminal-title sequence and a bidi-override triple arrived in the injected
+    # block byte-for-byte, reproduced end to end through the real session-start hook, and reachable
+    # from a freshly cloned repository with no local history: session records and rules are files in
+    # git. Every line is translated through the table one_line uses, before the heading logic runs,
+    # so the two siblings finally agree on what "inert" means. Fenced lines too: a code block is
+    # still text a model reads.
     out = []
     for line, in_fence in fenced_lines(text):
+        line = line.translate(_CONTROLS)
         if in_fence or not line.startswith("#"):
             out.append(line)
         elif line.startswith("# "):
@@ -212,3 +222,24 @@ def masked(text):
         out.append(" " * len(line) if in_fence else line)
     tail = "\n" if text.endswith("\n") else ""
     return "\n".join(out) + tail
+
+# Microsoft's list, from "Naming Files, Paths, and Namespaces" (learn.microsoft.com), fetched
+# 2026-09-05: CON, PRN, AUX, NUL, COM1-COM9, LPT1-LPT9, plus the superscript variants COM¹ COM² COM³
+# LPT¹ LPT² LPT³ -- and "avoid these names followed immediately by an extension; NUL.txt and
+# NUL.tar.gz are both equivalent to NUL." So the check is on the stem before the first dot, and it
+# is case-insensitive because Windows is.
+_WINDOWS_RESERVED = frozenset(
+    ["con", "prn", "aux", "nul"]
+    + [f"com{i}" for i in "123456789¹²³"] + [f"lpt{i}" for i in "123456789¹²³"])
+
+
+def filename_safe(stem):
+    """`stem`, or `_stem` when Windows would treat it as a device rather than a file.
+
+    🐛 Both slug() functions in this codebase reduce a title to `[a-z0-9-]` and use it as a filename.
+    A thread called "CON" or a candidate sequence "nul" therefore produced `con.md` and `nul.md`,
+    which on Windows are the console and the bit-bucket: the write does not fail, it goes to the
+    device, and the record is gone. Applied to the stem chamnan chose, never to a name it was given,
+    so nothing a user typed is altered -- only where chamnan puts its own file.
+    """
+    return f"_{stem}" if stem.split(".", 1)[0].lower() in _WINDOWS_RESERVED else stem

@@ -162,7 +162,14 @@ SECRET_WORDS = (
     #
     # Bounded as components like the rest, so `passphraseless` and `credible` are untouched --
     # the whole reason these are components and not substrings.
-    r"(?<![A-Za-z])(?:password|passwd|pwd|passphrase|secret|credential|cred)s?(?![A-Za-z])"
+    #
+    # `storepass` and `keypass` are Java's keytool flags and are single words, so the component
+    # boundary that protects everything else works against them: the `pass` in `storepass` is
+    # preceded by a letter and the lookbehind refuses it. Named in full instead. Measured missed:
+    # `keytool -storepass hunter2 -keypass hunter2` passed through whole — a real shape in any
+    # repository that signs an Android build or a JAR.
+    r"(?<![A-Za-z])(?:password|passwd|pwd|passphrase|secret|credential|cred|storepass|keypass)"
+    r"s?(?![A-Za-z])"
     # `token` needs a component beside it, for the same reason `key` does: a bare `token` in source
     # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
     # the identifier family this module's own docstring says was already fixed once. The credential
@@ -260,6 +267,16 @@ YAML_BLOCK_SECRET = re.compile(
 # neither refusal list, so peek opens both.
 SPACED_SECRET = re.compile(
     r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})$", re.I | re.M)
+# A command-line FLAG and its value: `-storepass hunter2`, `--password hunter2`. SPACED_SECRET
+# cannot reach these because it anchors the value at end-of-line, and that anchor is not negotiable
+# — it is what stops the weakest rule in this file from eating prose, which it has done before.
+#
+# A leading dash is the discriminator, and it is a strong one: `-storepass hunter2` is not a
+# sentence anybody writes, so this rule needs no plain-word guard the way the adjacency rules do.
+# Bounded to a value with no whitespace, and the flag must be the whole token, so `--password-file
+# creds.txt` (a PATH, not a secret) still has to be handled by the value shape rather than by luck.
+FLAG_SECRET = re.compile(
+    r"((?:^|[ \t])--?[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(?!-)([^\s]{4,})", re.I | re.M)
 PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)$", re.M)
 
 ASSIGNED_SECRET_CALL = re.compile(
@@ -424,7 +441,7 @@ def _redact_literals_in(expr):
     return "".join(out)
 
 
-def _looks_like_a_credential_name(key):
+def _looks_like_a_credential_name(key, value=None):
     """False when the name's own tail says it is something other than a credential.
 
     Complements `_names_a_mechanism` below, which reads a curated suffix list. This one reads the
@@ -432,13 +449,55 @@ def _looks_like_a_credential_name(key):
     header or an ordering, and no value it holds is a secret.
     """
     bare = re.sub(r"['\"\s:=]+$", "", (key or "").strip())
-    return not _NOT_A_CREDENTIAL_NAME.search(bare)
+    if not _NOT_A_CREDENTIAL_NAME.search(bare):
+        return True
+    # 🐛 The tail decided alone, so ~50 ordinary endings — `id`, `type`, `name`, `field` — exempted
+    # the value whatever it was. Reproduced end to end through `bin/chamnan-peek --find`:
+    # `api_secret_id = "AKIAIOSFODNN7EXAMPLE1234"` and `db_password_type = "tr0ub4dor3horsebattery"`
+    # printed in full (R12 agent 2). The exemption is still needed — `secret_name` and
+    # `api_key_path` genuinely name things, and redacting those is the noise that gets a redactor
+    # switched off — so the name still decides unless the VALUE settles it.
+    return _value_overrides_the_name(value)
 
 
-def _names_a_mechanism(key):
-    """True when the key is describing HOW a credential is handled, not holding one."""
+# A value that no name should be trusted against: nothing whose tail says "this holds a path" or
+# "this holds a type" ever holds THIS. Long, mixed, and not a word or a path — the same evidence
+# the adjacency rules use, applied in the other direction.
+# 🐛 Named `_CREDENTIAL_SHAPED` when it was added, which is ALSO the name of an existing constant
+# further down this file — so Python bound the later one and this rule silently ran against a
+# different pattern than the one written beside it (R13 agent 2). A collision at module scope is
+# invisible: no error, no warning, and the code reads correctly.
+_LONG_MIXED_VALUE = re.compile(r"^[A-Za-z0-9+/=_\-.]{16,}$")
+
+
+def _value_overrides_the_name(value):
+    """Whether the VALUE is credential-shaped enough to ignore a reassuring key name."""
+    v = (value or "").strip().strip("\"'").strip(",;)]}\"' ")
+    if not _LONG_MIXED_VALUE.match(v) or "/" in v or v.startswith("."):
+        return False
+    # A path, a hyphenated phrase and a dotted module name are all long and mixed; a credential is
+    # the one that carries both letters and digits with no separator doing the work.
+    if _is_a_plain_word(v) or v.count("-") >= 2 or v.count(".") >= 2:
+        return False
+    return any(c.isdigit() for c in v) and any(c.isalpha() for c in v)
+
+
+def _names_a_mechanism(key, value=None):
+    """True when the key is describing HOW a credential is handled, not holding one.
+
+    🐛 It read the key and nothing else, so ~50 ordinary tails — `name`, `id`, `type`, `field`,
+    `path` — exempted the value whatever it was. Reproduced end to end through
+    `bin/chamnan-peek --find`: `api_secret_id = "AKIAIOSFODNN7EXAMPLE1234"` and
+    `db_password_type = "tr0ub4dor3horsebattery"` printed in full (R12 agent 2).
+    
+    The exemption is still right and still needed — `secret_name = "the-name-of-my-secret"` and
+    `api_key_path = "/etc/keys/prod.pem"` genuinely name things, and redacting those is the noise
+    that gets a redactor switched off. So the name still decides, unless the VALUE settles it.
+    """
     tail = key.rstrip(": =\t").lower().rsplit("_", 1)[-1].rsplit("-", 1)[-1]
-    return tail in NAMING_SUFFIXES
+    if tail not in NAMING_SUFFIXES:
+        return False
+    return not _value_overrides_the_name(value)
 
 
 # 🐛 [2026-09-04, R14 agent 2 finding 02, verified before acting] A value that continued past a
@@ -484,8 +543,156 @@ def _swallow_trailing_credential_runs(text, start):
         end += gap.end() + run.end()
 
 
-def scrub(text):
-    """Every string that leaves chamnan for a written file goes through this."""
+def _full_key_at(match):
+    """The whole identifier the match began inside, not just the part the pattern captured.
+
+    🐛 These patterns start AT the secret word, so `"s_secrets":` is captured as `secrets":` and the
+    `s_` prefix — the very thing that distinguishes a translation key from a bare `password` — is
+    outside the group. Walked back from the match position over identifier characters instead.
+    """
+    text, i = match.string, match.start()
+    j = i
+    while j > 0 and (text[j - 1].isalnum() or text[j - 1] in "_-"):
+        j -= 1
+    return text[j:i] + (match.group(1) or "")
+
+
+def _value_is_the_key_itself(key_part, value):
+    """Whether the value is just the key's own name — a label, never a credential.
+
+    🐛 `"s_secrets": "Secrets"` in this repository's own committed translation table was redacted:
+    an explicit assignment whose key carries a secret word, which is the strongest evidence the
+    assignment rules have and normally right (`api_key = correcthorse` IS the secret). It is wrong
+    for exactly one shape, and the shape is narrow enough to name: a value that is the key spelled
+    as a word. A translation table, an enum, a form label and a column heading all look like this,
+    and nobody has ever set a password to the name of the field holding it.
+
+    Deliberately not a general softening of the assignment rules — a plain-word value there is
+    still redacted, because that is where a weak password actually lives.
+    """
+    # Stripped of quotes AND of the punctuation a value carries in real source: `"Secrets",` is
+    # what the bare rule captures, trailing comma included, and an earlier version of this checked
+    # `isalpha()` on that and answered False — the guard was written, wired into both rules, and
+    # still did nothing. Its own test caught it.
+    word = value.strip().strip("\"'").strip(",;:)]}\"' ").lower()
+    if not word or not word.isalpha():
+        return False
+    parts = re.sub(r"[^a-z]+", " ", key_part.lower()).split()
+    if word not in parts:
+        return False
+    # 🐛 ...and only when the key says something BESIDES the secret word. `password = "password"` is
+    # the commonest weak credential there is, and this exemption was letting it through as a label
+    # (R13 agent 2). A label's key carries another component — `s_secrets`, `password_label`,
+    # `secret_name` — because it is naming a thing, not holding one. A key that is only the secret
+    # word, with a value that repeats it, is a password somebody did not choose.
+    if any(other != word for other in parts):
+        return True
+    # The key is only the secret word. An ALL-CAPS one assigned its own lowercase name is the enum
+    # idiom — `class Kind: CREDENTIAL = "credential"` — and redacting it is noise in the output a
+    # reader is scanning for real findings. A lowercase one is a variable holding a value, and
+    # `password = "password"` is a password somebody did not choose. Case is the whole difference,
+    # and it is a convention both languages this module sees actually follow.
+    bare = re.sub(r"[^A-Za-z]+$", "", key_part.strip())
+    return bare.isupper()
+
+
+# The five rules below — SPACED_SECRET, FLAG_SECRET and the three ASSIGNED_SECRET* — cannot match
+# any text that does not contain a SECRET_WORDS occurrence, because every one of them begins with
+# that alternation. So one cheap scan for the word can tell the other five where NOT to look, and
+# on the real 293 KB MAP.md that is most of the document.
+#
+# 🐛 The version of this that was written and reverted in 0a4605c used a raw ±8192-character window
+# and two things were wrong with it. The window was so wide that its spans merged into 77.7% of the
+# real document — measurably SLOWER than not windowing at all — and it cut at raw character
+# offsets, which under re.M makes the cut itself a `^`/`$` position and can truncate a value.
+#
+# 🐛 And the correction that came back from research still leaked, which is why this is not that
+# diff either. Its argument was that snapping every boundary to a line ending makes the window safe
+# "as long as the value does not itself contain a newline, which none of these patterns permit".
+# ASSIGNED_SECRET permits exactly that: its value is delimited by quotes, not by the line, so
+# `api_password = "<40 lines of base64>"` is one match. Measured against the design as proposed: the
+# windowed path left all 40 lines in the clear, because the window held the opening quote and not
+# the closing one, so the rule did not match AT ALL rather than matching short. A PEM key pasted
+# into a config file is that shape, and the full-document path redacts it today.
+#
+# So a window ends where a line ends AND where no quoted value opened by this occurrence is still
+# open. Past the cap, windowing is abandoned for the whole document rather than narrowed — a
+# redactor that is slow is a cost, and one that is nearly right is a leak.
+_SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
+_WINDOW = 512
+_WINDOW_LOOKBACK = 64
+# Past this, windowing has stopped being an optimisation and is only a chance to be wrong.
+_MAX_WINDOW = 200_000
+# The `key = "` of an assignment, from the end of the secret word: the rest of the key's own
+# characters, the operator, then the quote that opens a value the line may not close.
+_OPENS_A_QUOTED_VALUE = re.compile(r"[\w-]*[^\S\n]*(?:=>|[:=])[^\S\n]*([\"'])")
+
+
+def _windows_around_secret_words(text):
+    """Merged [start, end) spans covering every SECRET_WORDS occurrence — or None for "all of it".
+
+    Every boundary sits on a line ending, so a `^` or `$` inside a window means what it would have
+    meant in the whole document. Returning None is always safe: it means scan everything.
+    """
+    hits = list(_SECRET_WORD_ANYWHERE.finditer(text))
+    if not hits:
+        return []
+    spans = []
+    for hit in hits:
+        i = hit.start()
+        lo = max(0, i - _WINDOW_LOOKBACK)
+        hi = min(len(text), i + _WINDOW)
+        # A quoted value opened here can run over any number of lines, and cutting between its two
+        # quotes does not shorten the match — it removes it.
+        opener = _OPENS_A_QUOTED_VALUE.match(text, hit.end())
+        if opener:
+            closing = text.find(opener.group(1), opener.end())
+            if closing < 0:
+                return None
+            hi = max(hi, closing + 1)
+        nl = text.rfind("\n", 0, lo)
+        lo = nl + 1 if nl >= 0 else 0
+        nl = text.find("\n", hi)
+        hi = nl + 1 if nl >= 0 else len(text)
+        if hi - lo > _MAX_WINDOW:
+            return None
+        if spans and lo <= spans[-1][1]:
+            spans[-1] = (spans[-1][0], max(spans[-1][1], hi))
+        else:
+            spans.append((lo, hi))
+    return spans
+
+
+def _apply_in_windows(text, spans, steps):
+    """Run `steps` in order over each window and splice the results back into the whole.
+
+    `spans is None` means the caller could not establish a safe window, so everything is scanned.
+    """
+    if spans is None:
+        for step in steps:
+            text = step(text)
+        return text
+    pieces, pos = [], 0
+    for lo, hi in spans:
+        pieces.append(text[pos:lo])
+        chunk = text[lo:hi]
+        for step in steps:
+            chunk = step(chunk)
+        pieces.append(chunk)
+        pos = hi
+    pieces.append(text[pos:])
+    return "".join(pieces)
+
+
+def scrub(text, windowed=True):
+    """Every string that leaves chamnan for a written file goes through this.
+
+    `windowed=False` runs every rule over the whole document, which is what this did before the
+    windows below existed and is still the DEFINITION of a correct result — the suite holds the two
+    against each other on a corpus built to land on window boundaries. Nothing in the plugin passes
+    it; an optimisation that cannot be checked against the thing it optimises is a claim, not a
+    measurement.
+    """
     if not text:
         return text
     for pattern in PATTERNS + LATE_PREFIXES:
@@ -505,7 +712,7 @@ def scrub(text):
     # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
     # and running them first means a value they take is not left for a looser rule to half-capture.
     text = XML_SECRET.sub(
-        lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+        lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
     # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
     # pattern cannot match a document that does not contain those two characters. The word list in
@@ -518,7 +725,7 @@ def scrub(text):
     # (38 secrets, 30 decoys) before and after — identical results, not merely a similar score.
     if "=>" in text:
         text = ROCKET_SECRET.sub(
-            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
             else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
     # 🐛 The first version of this gate tested `"|" in text or ">" in text`, which is TRUE on any
     # markdown document — a table uses `|` and a blockquote uses `>` — so it skipped nothing and the
@@ -529,34 +736,62 @@ def scrub(text):
     # newline. That cannot be faked by a table row.
     if _YAML_BLOCK_OPENER.search(text):
         text = YAML_BLOCK_SECRET.sub(
-            lambda m: m.group(0) if _names_a_mechanism(m.group(1))
+            lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
             else f"{m.group(1)}  {PLACEHOLDER}\n", text)
-    text = SPACED_SECRET.sub(
+    _spaced = lambda chunk: SPACED_SECRET.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        # 🐛 The next FLAG is not this flag's value: `tool --password --verbose` means no password
+        # was given on the command line at all, and redacting `--verbose` is pure noise in exactly
+        # the output a reader is scanning for real findings. Pre-existing; found while adding the
+        # CLI-flag rule beside this one.
+        if m.group(2).startswith("-") else m.group(0)
+        if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
-        else f"{m.group(1)}{PLACEHOLDER}", text)
-    text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
-    text = ASSIGNED_SECRET.sub(
+        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+    _flag = lambda chunk: FLAG_SECRET.sub(
+        lambda m: m.group(0) if PLACEHOLDER in m.group(2)
+        # The next FLAG is not this flag's value. `tool --password --verbose` means the password
+        # was not given on the command line at all; redacting `--verbose` would be pure noise.
+        # A lookahead in the pattern was tried first and let this through, so it is asserted here.
+        or m.group(2).startswith("-")
+        # A flag naming a FILE that holds the secret is not the secret. `--password-file creds.txt`
+        # and `-storepass:file x.txt` name a path the reader may need; redacting it hides which
+        # file to go and protect.
+        or m.group(1).rstrip().endswith("-file") or "/" in m.group(2) or m.group(2).endswith(".txt")
+        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+    _assigned = lambda chunk: ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
-        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", text)
+        if _names_a_mechanism(m.group(1), m.group(3)) or not _looks_like_a_credential_name(m.group(1), m.group(3))
+        or _value_is_the_key_itself(_full_key_at(m), m.group(3))
+        else f"{m.group(1)}{m.group(2)}{PLACEHOLDER}{m.group(2)}", chunk)
     # Before the bare rule, which would otherwise capture the callee and leave the argument.
-    text = ASSIGNED_SECRET_CALL.sub(
+    _call = lambda chunk: ASSIGNED_SECRET_CALL.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
-        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", text)
-    text = ASSIGNED_SECRET_BARE.sub(
+        if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
+        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}", chunk)
+    _bare = lambda chunk: ASSIGNED_SECRET_BARE.sub(
         lambda m: m.group(0)
-        if _names_a_mechanism(m.group(1)) or not _looks_like_a_credential_name(m.group(1))
+        if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         # An earlier, more specific rule already replaced this value. Re-matching it swallowed the
         # `<REDACTED>` and everything after: `'password' => '<REDACTED>',` collapsed to
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
+        or _value_is_the_key_itself(_full_key_at(m), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
-        + " " * 0, text)
+        + " " * 0, chunk)
+
+    # The five rules above are the whole of what SECRET_WORDS-anchored scanning costs, and on the
+    # real map most of the document cannot match any of them. Windows are computed twice because
+    # PGPASS_LINE runs between the two groups and keeps its position: it is the one rule here that
+    # does not key off a secret word, so moving it would change what the rules after it see, and a
+    # second cheap scan is a smaller price than a reordering nobody has a corpus for.
+    text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
+                              [_spaced, _flag])
+    text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
+    text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
+                              [_assigned, _call, _bare])
     # Applied after the substitution above rather than inside it, because the amount to swallow is
     # decided from the text FOLLOWING the match and a `sub` callback cannot consume beyond its own
     # span. Walks the result, and at each placeholder removes any credential-shaped runs that
@@ -571,6 +806,37 @@ def scrub(text):
         out.append(text[pos:stop])
         pos = stop + _swallow_trailing_credential_runs(text, stop)
     return "".join(out)
+
+
+# 🐛 `scrub` removes credentials. It has never removed CONTROL characters, and repository text
+# reaches a terminal — and an agent's context — through the same commands. `mapper` already says
+# this about the map ("leaves ESC and the bidi overrides untouched, so a docstring carrying
+# `\x1b[31m` or U+202E ..."), and `mdblock.one_line` already strips them for the single-line
+# fields written INTO shared files. What had no guard was the other direction: everything the
+# `bin/` commands print straight out of a committed file. `chamnan-timeline show` prints a whole
+# thread body; `chamnan-candidates` prints a title lifted from a candidate's first heading. A
+# committed file holding `\x1b[2K\x1b[G` erases the line the reader just saw and rewrites it, and
+# U+202E reverses what follows — enough to make one command's output read as another's (R21 agent 2).
+#
+# Here rather than at each call site, for the reason `emit` itself exists: a per-call rule is one
+# every future print has to remember, and the misses are silent.
+#
+# `\n` and `\t` are kept — they are the layout of every table and every multi-line body this
+# prints. Everything else in C0, DEL, the bidi overrides and isolates, and the two invisible
+# space characters go.
+_TERMINAL_SAFE = str.maketrans({
+    **{chr(i): None for i in range(0x20) if chr(i) not in "\n\t"},
+    chr(0x7F): None,
+    **{chr(i): None for i in range(0x202A, 0x202F)},
+    **{chr(i): None for i in range(0x2066, 0x206A)},
+    "\u200b": None,
+    "\ufeff": None,
+})
+
+
+def for_a_terminal(text):
+    """Repository text with the characters that rewrite what a reader sees removed."""
+    return text.translate(_TERMINAL_SAFE)
 
 
 def emit(*args, **kwargs):
@@ -590,7 +856,7 @@ def emit(*args, **kwargs):
     Non-string arguments are left alone — a caller printing an int or a Path means it, and coercing
     everything to str here would change what those commands output.
     """
-    return _print(*(scrub(a) if isinstance(a, str) else a for a in args), **kwargs)
+    return _print(*(for_a_terminal(scrub(a)) if isinstance(a, str) else a for a in args), **kwargs)
 
 
 # Captured before any module shadows the name, so `emit` still reaches the real builtin.

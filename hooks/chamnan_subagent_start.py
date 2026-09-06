@@ -31,11 +31,13 @@ Unlike SessionStart, a plain `print()` is NOT context here -- SubagentStart requ
 `hookSpecificOutput.additionalContext` form. Available from Claude Code 2.0.43.
 """
 import json
+from datetime import datetime, timezone
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import mdblock  # noqa: E402
 import memory  # noqa: E402
 import redact  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -43,6 +45,54 @@ import workspace as ws  # noqa: E402
 # A hard cap, and small on purpose: this is paid once per subagent, and a session spawns many.
 # Measured against the SessionStart block's own 9,000-byte ceiling, this is under 5% of it.
 MAX_BYTES = 1_400
+
+
+# 🐛 This hook has never once been OBSERVED to deliver, across 297 real subagent transcripts
+# spanning three accounts and three weeks — while the same recording mechanism reliably captures
+# this plugin's other hooks in the identical dataset, and this one produces correct output when
+# invoked directly (R12 agent 6). Two explanations fit: SubagentStart is not firing in production,
+# or it fires and nothing records that it did. Nothing in the code could tell them apart, because
+# the hook kept no account of its own firings.
+#
+# So it keeps one. This is instrumentation to settle a question before anybody changes behaviour on
+# a guess — the dead-ends file records Angle 33 as "reopened and shipped", and the honest reading is
+# now "shipped, unverified in production". One line per firing, self-pruning by record like
+# `commands.jsonl` beside it, and never a reason for the hook to fail.
+FIRINGS = "logs/subagent_start.jsonl"
+MAX_FIRINGS = 400
+
+
+def _record_a_firing(root, agent_type, size, outcome="delivered"):
+    """Append one line saying this hook ran, and what came of it.
+
+    🐛 `outcome` is here because the first version wrote the line AFTER four early returns — a fork
+    dispatch, no workspace, the feature disabled, an empty block — none of which are about whether
+    the hook FIRED. So a chronically empty log still could not separate "never fires" from "fires
+    and produces nothing", which is the one question the log exists to answer (R20 agent 2).
+    """
+    try:
+        import mdblock as _md
+        path = ws.workspace(root) / FIRINGS
+        # 🐛 Recording NEVER scaffolds. `find_root` falls back to the directory it was given when
+        # nothing above it is a repository, so writing unconditionally created a `.chamnan/` in
+        # whatever directory a subagent happened to start in — one turned up in $TMPDIR within an
+        # hour of this recording at every gate, and broke the suite by making the temp directory
+        # look like a workspace to every fixture created under it. A firing with nowhere of its own
+        # to write is the one outcome that stays unobservable, and littering somebody else's
+        # directory is not a fair price for seeing it.
+        if not path.parent.parent.is_dir():
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                 "agent_type": _md.one_line(agent_type or "")[:60], "bytes": size,
+                 "outcome": outcome}
+        lines = []
+        if path.is_file():
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-(MAX_FIRINGS - 1):]
+        lines.append(json.dumps(entry, ensure_ascii=False))
+        ws.atomic_write_text(path, "\n".join(lines) + "\n")
+    except Exception:
+        pass
 
 
 def _block(root):
@@ -67,12 +117,23 @@ def _block(root):
         # that is silent and one that looks empty.
         try:
             import mapper
-            nested = sorted(d.relative_to(root).as_posix()
+            # _nested_repo_dirs returns RESOLVED paths. main() gets `root` from ws.find_root, which
+            # resolves, so the two sides match today and this is not a live defect. It is one call
+            # site away from being one: any caller that hands _block an unresolved path -- /tmp on
+            # macOS, a symlinked checkout -- makes relative_to raise, and the bare except below turns
+            # that into "no nested checkouts" rather than an error. Resolve on both sides so the
+            # subtraction cannot depend on the caller.
+            _base = root.resolve()
+            nested = sorted(d.relative_to(_base).as_posix()
                             for d in mapper._nested_repo_dirs(root))
         except Exception:
             nested = []
         if nested:
-            shown = ", ".join(f"`{n}`" for n in nested[:4])
+            # Each name through one_line, for the reason the rule titles below are: a DIRECTORY NAME
+            # is repository text too, and redact.scrub strips credentials, not control characters.
+            # The sibling line was wrapped and this one was not, which is this repository's own
+            # recurring disease -- a fix applied to some members of a set.
+            shown = ", ".join(f"`{mdblock.one_line(n)}`" for n in nested[:4])
             parts.append(
                 f"That index does NOT cover the checkouts nested inside this one — {shown}"
                 + (f" and {len(nested) - 4} more" if len(nested) > 4 else "")
@@ -87,7 +148,9 @@ def _block(root):
     if rules:
         titles = [ln.lstrip("# ").strip() for ln in rules.splitlines()
                   if ln.startswith("# ") or ln.startswith("**")]
-        shown = [t.strip("*") for t in titles if t][:4]
+        # Each title through one_line: a rule TITLE is repository text, and this is paid into every
+        # subagent. redact.scrub below strips credentials, not control characters.
+        shown = [mdblock.one_line(t.strip("*")) for t in titles if t][:4]
         if shown:
             parts.append("Rules this repository works under, in `.chamnan/memory/rules/` — "
                          "read the one that matches before assuming: "
@@ -109,23 +172,43 @@ def main():
     # A fork inherits the parent's whole conversation, session-start block included, so the pointer
     # would be a second copy of something already in its context. Measured over 22 historical fork
     # dispatches in this repository: none of them ever opened MAP.md, and none of them needed to.
-    if (payload.get("agent_type") or "").lower() == "fork":
-        return 0
+    _agent_type = payload.get("agent_type")
+    # The root is resolved BEFORE the first gate, so every gate has somewhere to record that the
+    # hook ran. Resolving it after the fork check meant a fork had no workspace to write to and the
+    # one outcome that is deliberate went unrecorded — which is the same blindness one step along.
     root = ws.find_root(Path(payload.get("cwd") or "."))
-    if root is None:
+    if (_agent_type or "").lower() == "fork":
+        # A fork is a firing, and one that produces nothing on purpose: it already carries the
+        # parent's whole conversation.
+        _record_a_firing(root, _agent_type, 0, "fork")
+        return 0
+    # `find_root` returns the directory it was given when nothing above it is a repository, so it
+    # is never None and this gate spent its first evening unreachable — asking the wrong question of
+    # a function that cannot answer it. What "no workspace" means is that the root it settled on has
+    # none, which is a thing that can actually be checked.
+    if not (root / ws.WORKSPACE_DIRNAME).is_dir():
+        _record_a_firing(root, _agent_type, 0, "no-workspace")
         return 0
     # Default-on, switchable off in .chamnan/config.json like every other section.
     if not ws.enabled("subagent_pointer", root):
+        _record_a_firing(root, _agent_type, 0, "disabled")
         return 0
 
     text = _block(Path(root))
     if not text:
+        _record_a_firing(root, _agent_type, 0, "nothing-to-point-at")
         return 0
     # Scrubbed at the one place it leaves the process, as chamnan_file_pointer.py does: a rule
     # TITLE is repository text, and a title has carried a live credential before.
     text = redact.scrub(text)
     if len(text.encode("utf-8")) > MAX_BYTES:
-        text = text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip() + " …"
+        # decode(errors="ignore") already drops a half-written CODE POINT; it knows nothing about a
+        # grapheme spanning several of them, so a cut landing inside a flag or a skin-toned emoji
+        # left a stray regional indicator or a bare modifier behind. Same guard `as_quoted` and
+        # `_clip` already apply -- this was the third cutter in the set and the one without it.
+        text = mdblock.whole_graphemes(
+            text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
+    _record_a_firing(root, _agent_type, len(text.encode()), "delivered")
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SubagentStart", "additionalContext": text}}))
     return 0

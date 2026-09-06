@@ -26,6 +26,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import ledger  # noqa: E402
+# 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
+# neither of these two commands imported mdblock at all. Every value below is repository-
+# authored — an environment heading, a promoted tool name, a path the pointer hook recorded —
+# and this is stdout, which is a terminal or an agent's Bash output that becomes transcript.
+# The same path value is already wrapped in `one_line` where lib/pointer.py speaks to the
+# model; these readers of the same data were missed because four rounds of this sweep named
+# `lib/`, `hooks/` and two bin commands by example, and these two were never in the examples
+# (R13 agent 3).
+import mdblock  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -39,7 +48,22 @@ import redact  # noqa: E402
 # correct-per-file. See redact.emit.
 print = redact.emit  # noqa: A001
 
-PROJECT_ROOT = Path.home() / ".claude" / "projects"
+def _home_or_none():
+    """`Path.home()`, or None when it cannot be resolved.
+
+    🐛 This was `Path.home()` at MODULE level, so on a machine where neither $HOME nor a passwd
+    entry resolves, importing this file raised — and the command died with a raw traceback before
+    argument parsing, taking `--help` with it. A command that reports on a workspace should not
+    need a home directory to explain itself (R20 agent 1).
+    """
+    try:
+        return Path.home()
+    except (RuntimeError, OSError):
+        return None
+
+
+_HOME = _home_or_none()
+PROJECT_ROOT = (_HOME / ".claude" / "projects") if _HOME else None
 
 
 def _project_roots():
@@ -65,7 +89,9 @@ def _project_roots():
     # PROJECT_ROOT stays the default and the single seam a test can move; the environment variable
     # adds the second tree rather than replacing it, because a machine running two accounts has
     # work in both and the question "how much context did this repo cost" spans them.
-    for d in ([Path(cfg) / "projects"] if cfg else []) + [PROJECT_ROOT]:
+    # PROJECT_ROOT is None where no home directory resolves; the CLAUDE_CONFIG_DIR tree may still
+    # be there, and a report over that alone is a real answer rather than a crash.
+    for d in ([Path(cfg) / "projects"] if cfg else []) + ([PROJECT_ROOT] if PROJECT_ROOT else []):
         if d.is_dir() and str(d) not in seen:
             seen.add(str(d))
             roots.append(d)
@@ -390,7 +416,8 @@ def print_usage(root):
         print("\nPromoted tools")
         twidth = max(len(name) for name, _ in tools)
         for name, runs in tools:
-            print(f"  {name:<{twidth}}   {runs:>3} run{'s' if runs != 1 else ''}")
+            print(f"  {mdblock.as_quoted(name, 60):<{twidth}}   "
+                  f"{runs:>3} run{'s' if runs != 1 else ''}")
     print()
 
 
@@ -473,7 +500,7 @@ def print_pointer(fired, named, opened):
     print(f"  fired                {fired:>4} time(s), naming {len(named)} distinct entr(ies)")
     print(f"  later opened         {len(followed):>4} of those {len(named)}")
     for path in followed[:6]:
-        print(f"      {path}")
+        print(f"      {mdblock.as_quoted(path, 100)}")
     if len(followed) > 6:
         print(f"      …and {len(followed) - 6} more")
     print("  (an observation, not a score: knowledge can be acted on without the file being")
@@ -490,6 +517,15 @@ def main(argv):
         print(__doc__.strip())
         return 0
     root = ws.find_root()
+    # 🐛 The one of nine `bin/` commands that reported on a directory with no workspace in it.
+    # `find_root` returns the directory it was given when nothing above it is a repository, so
+    # running this anywhere printed a complete inventory reading "0 entries, last write never" —
+    # which is exactly what a real workspace nobody has written to yet also prints. The reader
+    # cannot tell "you are in the wrong directory" from "your workspace is empty", and those call
+    # for opposite next steps (R21 agent 5).
+    if not ws.workspace(root).is_dir():
+        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        return 1
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
@@ -524,6 +560,7 @@ def main(argv):
     # the records that the marker computation, 170 lines later, could no longer see.
     marker_early = _workspace_created(ws.workspace(root))
     ws.prune_logs(root)
+    ws.prune_orphaned_temps(root)
     ws.prune_sessions(root)
     if not entries:
         print("chamnan: transcripts found but no usage records yet")

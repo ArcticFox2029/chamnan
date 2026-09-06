@@ -47,8 +47,13 @@ chamnan-map --preview
 ```
 
 That prints exactly what a session in that repository would receive at start-up, followed by its
-token count. It writes nothing. If it prints `nothing to inject yet — run chamnan-map first`, the
-index was not built.
+token count, and it writes nothing — including in a repository that has never run chamnan, where it
+previously created the whole workspace before telling you what you would get.
+
+Read the block itself for the answer: a repository with no index says so in it, in a line naming
+`chamnan-map`. The older instruction here — look for `nothing to inject yet — run chamnan-map
+first` — described a fallback that only fires when the hook produces no output at all, which it no
+longer does; that string is still in the code and is no longer the signal to watch for.
 
 ## Release checklist
 

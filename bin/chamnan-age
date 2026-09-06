@@ -24,6 +24,15 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import aging  # noqa: E402
 import workspace as ws  # noqa: E402
+# 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
+# neither of these two commands imported mdblock at all. Every value below is repository-
+# authored — an environment heading, a promoted tool name, a path the pointer hook recorded —
+# and this is stdout, which is a terminal or an agent's Bash output that becomes transcript.
+# The same path value is already wrapped in `one_line` where lib/pointer.py speaks to the
+# model; these readers of the same data were missed because four rounds of this sweep named
+# `lib/`, `hooks/` and two bin commands by example, and these two were never in the examples
+# (R13 agent 3).
+import mdblock  # noqa: E402
 import redact  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
@@ -53,7 +62,8 @@ def main(argv):
     # The refusal is printed INSTEAD of a result, never alongside an empty one: "no findings" and
     # "no check happened" are different answers and must not read the same.
     if refusal:
-        print(f"chamnan: not checked — {refusal}")
+        # The refusal text names an environment, which is a repository-authored heading.
+        print(f"chamnan: not checked — {mdblock.as_quoted(refusal, 200)}")
         return 0
 
     if not findings and not unverifiable:
@@ -65,9 +75,11 @@ def main(argv):
         print(f"{len(findings)} entr{'y' if one else 'ies'} name{'s' if one else ''} a version "
               f"no environment declares\n")
         for category, name, subject, claimed, declared in findings:
-            where = ", ".join(f"{env} {ver}" for env, ver in declared) or "nothing"
-            print(f"  memory/{category}/{name}")
-            print(f"    says {subject} {claimed} · declared: {where}")
+            where = ", ".join(f"{mdblock.as_quoted(env, 40)} {mdblock.as_quoted(ver, 24)}"
+                              for env, ver in declared) or "nothing"
+            print(f"  memory/{mdblock.as_quoted(category, 30)}/{mdblock.as_quoted(name, 60)}")
+            print(f"    says {mdblock.as_quoted(subject, 40)} "
+                  f"{mdblock.as_quoted(claimed, 30)} · declared: {where}")
         print("\n  Nothing is edited. An entry can name an old version correctly — "
               "\"we chose this BECAUSE we were on 13\" is history, not a mistake.")
         print("  Fix the entry, or `chamnan-env set <name> --versions \"…\"` if the "
@@ -79,8 +91,9 @@ def main(argv):
         print(f"{len(unverifiable)} could not be checked — the only environment declaring that "
               f"version has gone cold\n")
         for category, name, subject, claimed, cold in unverifiable:
-            print(f"  memory/{category}/{name}")
-            print(f"    says {subject} {claimed} · only {cold} declares it, and {cold} is unconfirmed")
+            print(f"  memory/{mdblock.as_quoted(category, 30)}/{mdblock.as_quoted(name, 60)}")
+            print(f"    says {mdblock.as_quoted(subject, 40)} {mdblock.as_quoted(claimed, 30)}"
+                  f" · only {mdblock.as_quoted(cold, 40)} declares it, and it is unconfirmed")
         print("\n  `chamnan-env check` says what to re-confirm; these are not findings, "
               "they are unknowns.")
     return 0

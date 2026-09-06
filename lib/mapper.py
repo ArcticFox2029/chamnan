@@ -972,7 +972,14 @@ def extract_python(source, path, lang='py'):
 REGEX_RULES = {
     "js": [
         ("func", r"^(?:export\s+)?(?:async\s+)?function\s*\*?\s+(\w+)\s*\(([^)]*)\)"),
-        ("func", r"^(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^)]*)\)\s*(?::[^=]*?)?=>"),
+        # 🐛 `[^)]*` let a `(` into the parameter capture, so `const I18N = (() => {...})()` -- a
+        # module-scoped IIFE, the standard shape for a lazily-built singleton -- matched as a
+        # function named I18N with the parameter list `(`, and MAP.md carried `I18N(()`, `Audio(()`
+        # and `NoSleepVideo(()`: three of 2,710 symbols, but three of three of that pattern's real
+        # occurrences. A real arrow's parameter list never contains an unbalanced `(`, and a default
+        # value that CALLS something (`(a = f()) =>`) was already not captured by this rule, so
+        # `[^()]*` loses nothing that was ever found.
+        ("func", r"^(?:export\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(([^()]*)\)\s*(?::[^=]*?)?=>"),
         ("func", r"^\s{2,}(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+)*"
                  r"(?:async\s+)?(?!if|for|while|switch|catch|return|constructor\b)"
                  r"(\w+)\s*\(([^)]*)\)\s*(?::\s*[\w<>\[\], |]+\s*)?\{"),
@@ -1353,6 +1360,40 @@ _SHEBANG_LANG = {"python": "py", "python2": "py", "python3": "py", "node": "js",
                  "ruby": "rb", "perl": "pl", "php": "php"}
 
 
+# `.m` is Objective-C, and it is also MATLAB, Mercury, MUF, M, Wolfram and Limbo. The suffix alone
+# was mapped straight to the C extractor, so a MATLAB solver came through as describable C with an
+# empty summary -- counted as "missing a comment", offered to the commenter agent, and invisible to
+# the "cannot index" section at the same time, because that section keys on extensions chamnan has
+# no reader for and `.m` has one. Wrong on every honesty mechanism at once, which is worse than being
+# honestly unreadable.
+#
+# The two patterns are GitHub Linguist's, from lib/linguist/heuristics.yml, quoted rather than
+# invented. Objective-C is the default when neither fires: that is today's behaviour, and the change
+# is only allowed to move a file OUT of the C extractor on positive evidence, never into it.
+_OBJC_MARK = re.compile(
+    r"^\s*(@(interface|class|protocol|property|end|synchronised|selector|implementation)\b"
+    r"|#import\s+.+\.h[\">])", re.M)
+_MATLAB_MARK = re.compile(r"^\s*%", re.M)
+_DOT_M_PROBE_BYTES = 4_000
+
+
+def _dot_m_is_objective_c(path):
+    """True unless the file positively looks like MATLAB and not at all like Objective-C.
+
+    Only the first few kilobytes are read, the way `_lang_from_shebang` reads only its first line:
+    an `@implementation` or `#import` sits at the top of an Objective-C file or nowhere, and a
+    MATLAB file opens with a `%` comment block by convention.
+    """
+    try:
+        with path.open("rb") as fh:
+            head = fh.read(_DOT_M_PROBE_BYTES).decode("utf-8", errors="replace")
+    except OSError:
+        return True
+    if _OBJC_MARK.search(head):
+        return True
+    return not _MATLAB_MARK.search(head)
+
+
 def _lang_from_shebang(path):
     """The language of an extensionless executable, from its first line, or None.
 
@@ -1482,6 +1523,12 @@ def indexable(root, nested=None, with_text=False, sniff=True):
         if redact.is_blocked(path):
             continue          # private keys, certificates, local databases — never opened at all
         lang = EXT_LANG.get(path.suffix.lower())
+        if lang == "c" and path.suffix.lower() == ".m" and not _dot_m_is_objective_c(path):
+            # Positively MATLAB-shaped. There is no extractor for it, so it belongs in the
+            # "cannot index" count under a key that says which of `.m`'s languages it was --
+            # a bare `.m` in that list would read as "chamnan cannot read Objective-C".
+            SKIPPED_UNKNOWN_EXT[".m (MATLAB)"] += 1
+            continue
         if not lang and not path.suffix:
             # 🐛 chamnan's own `bin/` was invisible to chamnan's own index, from the first commit.
             # Nine extensionless shebang scripts — every command-line entry point it has — 2,382
@@ -1685,12 +1732,35 @@ _TOO_BIG_TO_READ_IN_FULL = (
     "come when you need one of them in full.")
 
 
+def _built_from(root):
+    """` Built from <sha>.` when the tree is a git checkout, else "" -- the commit this map describes.
+
+    🐛 The session-start staleness check compared MAP.md's mtime against the newest source file's.
+    `git checkout` writes files in tree order, not at once, so on a branch whose MAP.md was committed
+    IN THE SAME COMMIT as the source it describes, the map landed a few milliseconds before `src/`
+    did -- 5 of 5 trials -- and every later session on that checkout reported the index "1 minute
+    behind" until somebody rebuilt it by hand. A warning that fires on a current map teaches the
+    reader to ignore it. The commit hash is what the mtime was standing in for, so it is written
+    down: a reader that finds HEAD unchanged and the tree clean knows the map is current without
+    asking a clock. Appended after the sentence so `map_claim_check`'s header regex still matches.
+    """
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    sha = out.stdout.strip()
+    return f" Built from {sha}." if out.returncode == 0 and sha else ""
+
+
 def _render(files, root):
     total_chars = sum(f["chars"] for f in files)
     lines = [
         f"# Architecture map — {mdblock.one_line(root.name)}",
         "",
-        f"Generated by chamnan. {len(files)} source file(s), {total_chars:,} characters.",
+        f"Generated by chamnan. {len(files)} source file(s), {total_chars:,} characters."
+        + _built_from(root),
         "",
         _HOW_TO_READ,
         "",

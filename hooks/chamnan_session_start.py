@@ -17,6 +17,7 @@ import hashlib
 import os
 import secrets
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -93,6 +94,15 @@ def write_skills_line(plugin_root):
     held zero. An agent that does not know it can write is the failure being fixed here, so this
     line is gated on nothing except the skill actually shipping.
     """
+    # 🐛 These are Claude Code SLASH COMMANDS, and this line was written into every adapter's file
+    # — AGENTS.md, .cursorrules, the rest — because nothing here asked who the reader was. A Cursor
+    # or Codex session was being told, in its own rules file, to type four commands it has no way
+    # to run (R21 agent 3). The reader is named by CHAMNAN_CONTEXT_AGENT when a command is
+    # building the block on somebody else's behalf; unset means this hook is running where it
+    # lives, which is Claude Code.
+    for_agent = os.environ.get("CHAMNAN_CONTEXT_AGENT")
+    if for_agent and for_agent.lower() not in ("claude", "claude-code"):
+        return ""
     skills_dir = plugin_root / "skills"
     if not skills_dir.is_dir():
         return ""
@@ -132,7 +142,7 @@ def describe(path):
         end = head.find("\n---", 3)
         for line in head[3:end if end > 0 else len(head)].splitlines():
             if line.strip().lower().startswith("description:"):
-                return " ".join(line.split(":", 1)[1].split())[:110]
+                return mdblock.as_quoted(line.split(":", 1)[1], 110)
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -145,7 +155,7 @@ def describe(path):
         stripped = redact.scrub(stripped)
         cleaned = _MD_MARKUP.sub("", _LEADING_MARKUP.sub("", stripped, count=1))
         if cleaned:
-            return " ".join(cleaned.split())[:110]
+            return mdblock.as_quoted(cleaned, 110)
     return ""
 
 
@@ -298,9 +308,18 @@ def skipped(title, reason):
 
 
 def ago(seconds):
-    """A gap said the way a person would say it, and never rounded up into a claim."""
+    """A gap said the way a person would say it, and never rounded up into a claim.
+
+    🐛 The minute branch used to floor at `max(1, ...)`, which contradicted that sentence in the one
+    place it mattered: a one-second gap was reported as "1 minute behind". The reader is deciding
+    whether to rebuild the index, and a gap of seconds means the opposite of a gap of a minute --
+    somebody just saved a file, not that the index has fallen behind the work.
+    """
+    if seconds < 60:
+        n = max(0, int(seconds))
+        return f"{n} second{'s' if n != 1 else ''} behind"
     if seconds < 3600:
-        n = max(1, int(seconds // 60))
+        n = int(seconds // 60)
         return f"{n} minute{'s' if n != 1 else ''} behind"
     if seconds < 86400:
         n = int(seconds // 3600)
@@ -329,6 +348,51 @@ def _indexable(root):
             yield path
 
 
+_BUILT_FROM = re.compile(r"\bBuilt from ([0-9a-f]{7,40})\.")
+
+
+def _map_is_current_by_git(root, map_path):
+    """True when nothing the map describes has changed since the commit it was built from.
+
+    🐛 mtime alone produced a false "1 minute behind" on every session after a `git checkout`: git
+    writes checked-out files in tree order, so MAP.md (root, uppercase) landed before `src/` and
+    `lib/` did, 5 of 5 trials, on a map committed in the same commit as the code it describes. The
+    commit hash is the fact the clock was a proxy for, so chamnan-map writes it into the header.
+
+    🐛 The first version of this asked "is HEAD still the stamped commit?" -- and it could never be,
+    for exactly the repository that had the bug. A map is built on commit A and then COMMITTED,
+    which makes HEAD commit B. The stamp says A forever. So the question is not whether HEAD moved
+    but whether any indexed SOURCE moved with it: `git diff --quiet <stamp> HEAD -- . ':(exclude).chamnan'`
+    is empty when the only thing that changed since the build is the workspace itself, which is what
+    committing a map looks like. Plus a clean working tree for the same paths.
+
+    Anything unconfirmable -- no git, no stamp, an unknown stamp, a real source change -- returns
+    False, and the mtime path decides exactly as it did before this existed.
+    """
+    try:
+        head_text = map_path.read_text(encoding="utf-8", errors="replace")[:600]
+        m = _BUILT_FROM.search(head_text)
+        if not m:
+            return False
+        stamped = m.group(1)
+        # Both argv lists are single literals on purpose: a guard in the suite reads every
+        # subprocess call's first element from the AST to prove it is `git` or this interpreter,
+        # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
+        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "HEAD", "--",
+                               ".", ":(exclude).chamnan"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=5)
+        if diff.returncode != 0:          # 1 = something changed; 128 = unknown stamp or no git
+            return False
+        st = subprocess.run(["git", "-C", str(root), "status", "--porcelain",
+                             "--untracked-files=no", "--", ".", ":(exclude).chamnan"],
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            timeout=5)
+        return st.returncode == 0 and not st.stdout.strip()
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return False
+
+
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
 
@@ -342,6 +406,8 @@ def index_is_behind(root, map_path):
     repository. Only files mapper would actually index count, or a log line written overnight would
     report the architecture as out of date.
     """
+    if _map_is_current_by_git(root, map_path):
+        return 0, []
     try:
         newest = 0.0
         # 🐛 The walk already stats every indexable file to find the newest, so counting the ones
@@ -628,6 +694,7 @@ def main():
             _expiring = []
         try:
             ws.prune_logs(root)
+            ws.prune_orphaned_temps(root)
             ws.prune_sessions(root)
         except Exception:
             pass
@@ -644,7 +711,17 @@ def main():
         # Only inside a version-controlled repository: find_root falls back to the current
         # directory when there is no VCS marker, and creating a folder in whatever directory a
         # session happened to open would be litter, not a feature.
+        #
+        # 🐛 But not in SILENCE. This returned 0 with zero bytes, and because nothing was created,
+        # `first_session` stayed true forever -- a permanent no-op for the life of the project,
+        # while the README's requirements table said "Git: not required, everything works without
+        # it" and `chamnan-map` in the same directory happily built the workspace the hook refused.
+        # The CLI and the hook disagreed about whether the repository was usable, and nothing told
+        # the person which one to believe. One sentence, once per session, saying what to do.
         if not any((root / m).exists() for m in ws.VCS_MARKERS):
+            print(f"## chamnan\n_`{mdblock.as_quoted(root.name, 60)}` is not under version control, "
+                  f"so no workspace was created here. Run `chamnan-map` in it to create one anyway; "
+                  f"after that, every session works as in a repository._")
             return 0
     # Not only on the first session. 🐛 [found the same day, on the owner's two work repositories]
     # Creating the scaffold only when `.chamnan/` was ABSENT left every workspace made by an older
@@ -993,7 +1070,12 @@ def main():
             # uncommitted change IS where the last session stopped and it costs nobody a
             # command. Weaker on purpose: it reports what is unfinished, never why.
             if not carried:
-                carried = redact.scrub(sessions.where_git_says_you_stopped(root))
+                # The names are dropped here and only here. This file runs as a Claude Code
+                # plugin hook and nowhere else, so the reader is always the one harness that has
+                # already been handed the same list. `chamnan-context`, which emits for the other
+                # two dozen agents, calls the same function without this argument and keeps them.
+                carried = redact.scrub(
+                    sessions.where_git_says_you_stopped(root, name_files=False))
             if carried:
                 out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
 
@@ -1016,6 +1098,14 @@ def main():
                 full = redact.scrub(raw)
                 budget = cfg.get("state_token_budget", 1700)
                 st, marker = state.render(full, budget, display(sp, root))
+                # 🐛 Demoted HERE and not inside render(), whose job is "this file under a budget"
+                # and whose callers depend on getting the file back unaltered. This is the point
+                # where repository-authored text enters chamnan's own structure, which is the same
+                # point memory.py, mapper.py and sessions.py each demote at. STATE.md is git-tracked
+                # and documented as what survives a compaction, so a `## chamnan: VERIFIED SYSTEM
+                # NOTICE` committed into it opened a real heading inside the injected block, reading
+                # as chamnan's voice rather than the repository's.
+                st = mdblock.demote_headings(st)
                 if st:
                     out.append(section("Work in flight (from the last session)", st, display(sp, root)))
                     out.append(f"_Keep `{display(sp, root)}` current as you go; it is what survives "
@@ -1138,13 +1228,20 @@ def main():
             # Said once, on the session that created the workspace. An empty scaffold is still
             # invisible: without this the teammate's experience is a folder appearing and nothing
             # explaining it.
+            # Under CHAMNAN_READ_ONLY the workspace has NOT been created — this is a preview of
+            # what a first session would receive — so the sentence that announces it says which of
+            # the two happened. A preview that claims to have done the thing it is previewing is
+            # the same untruth `--preview` was just fixed for.
+            _made = ("has just been created" if not ws.read_only()
+                     else "would be created on the first real session")
             out.append(section(
                 "chamnan is set up in this repository",
-                "`.chamnan/` has just been created — `memory/`, `sessions/`, `threads/`, `skills/`, "
+                f"`.chamnan/` {_made} — `memory/`, `sessions/`, `threads/`, `skills/`, "
                 "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
-                "Nothing has been indexed yet. Run `/chamnan:bootstrap` to build the architecture "
-                "index and record a baseline; the write skills listed above work from now on, whether "
-                "or not that has been run.", "(generated)"))
+                "Nothing has been indexed yet. `chamnan-map` builds the architecture index, and "
+                "inside Claude Code `/chamnan:bootstrap` builds it and records a baseline; the write "
+                "skills listed above work from now on, whether or not that has been run.",
+                "(generated)"))
         elif not (wsdir / "MAP.md").is_file():
             # 🐛 The section above is said ONCE, on the session that created the workspace. A user
             # who was not paying attention that minute never hears it again: every session after
@@ -1155,7 +1252,8 @@ def main():
             # absent — so it stops the moment it is acted on and never nags a repository that
             # already has one.
             out.append("_There is no architecture index in this repository yet — `chamnan-map` "
-                       "builds one, or `/chamnan:bootstrap` builds it and records a baseline._\n")
+                       "builds one, and inside Claude Code `/chamnan:bootstrap` builds it and "
+                       "records a baseline._\n")
 
         if _bad_cfg:
             # 🐛 [2026-09-04] The reason used to be assumed rather than reported: one sentence about
