@@ -962,6 +962,19 @@ def main():
         # An update that is already downloaded, reported and never acted on. The user decides: a tool
         # that upgrades itself because someone opened a session is doing something they did not ask
         # for, and doing it silently is worse than not doing it at all.
+        # The long trailing sentence below ("every other repository brings its own workspace up to
+        # date by itself") is one-time knowledge, and R1_acc3 proposed deleting it, R13 agent 6
+        # proposed gating it to the session's first firing. Measured at 332 bytes / 138.8 tokens,
+        # confirmed by an actual firing against a real pending-update fixture rather than a read of
+        # the source -- and it is stated nowhere else in the block, so deleting it loses a fact.
+        #
+        # Neither is built, and the reason is that the firing this would have saved is already
+        # saved. The resume short-circuit above returns before this line, so a session whose block
+        # is provably still in context never reaches the banner at all. What is left is `startup`,
+        # where this IS the first firing, and `compact`/`clear`, where the context was erased and
+        # the sentence is wanted again. Gating past those would mean session-scoped state on disk,
+        # written from the one code path that must never fail a session, to save a sentence in a
+        # case that mostly does not occur.
         offered = ws.available_update(HERE.parent)
         if offered:
             out.append(f"\n**chamnan {offered} is available** — this session is running "
