@@ -9490,6 +9490,64 @@ check("BOTH LEDGER SENTENCES AGREE IN NUMBER, THROUGH ONE HELPER",
 # pre-newline="" defects, so it was a second, worse copy of chamnan-map that nothing ran.
 check("THE UNREACHABLE SECOND ENTRY POINT IS GONE", not hasattr(mapper, "main"))
 
+# Two costs every session pays, and the answers must be identical to what they replace.
+# `git diff <A> -- <pathspec>` with a SINGLE ref already compares that commit against the working
+# tree, so the `diff <A> HEAD` plus `status --porcelain` pair was one question in two processes.
+# And HEAD is two small file reads in the ordinary case, against a ~50ms subprocess — but it is a
+# CACHE KEY, so a wrong answer would serve a stale churn ranking as current, and every shape that
+# is not unambiguous still asks git (R3 agent 1).
+_gh = Path(tempfile.mkdtemp(prefix="chamnan-headshape-"))
+try:
+    def _mkrepo(_name):
+        _r = _gh / _name
+        _r.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=_r, capture_output=True)
+        (_r / "a.py").write_text("x = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=_r, capture_output=True)
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"],
+                       cwd=_r, capture_output=True)
+        return _r
+
+    def _git_head(_r):
+        _o = subprocess.run(["git", "-C", str(_r), "rev-parse", "HEAD"], capture_output=True,
+                            text=True, encoding="utf-8", errors="replace")
+        return _o.stdout.strip() if _o.returncode == 0 else ""
+
+    _shapes = []
+    _shapes.append(("normal branch", _mkrepo("normal")))
+    _packed = _mkrepo("packed")
+    subprocess.run(["git", "gc", "-q", "--prune=now"], cwd=_packed, capture_output=True)
+    _shapes.append(("packed refs", _packed))
+    _det = _mkrepo("detached")
+    subprocess.run(["git", "checkout", "-q", _git_head(_det)], cwd=_det, capture_output=True)
+    _shapes.append(("detached HEAD", _det))
+    _wtb = _mkrepo("wtbase")
+    subprocess.run(["git", "worktree", "add", "-q", "--detach", str(_gh / "wt")], cwd=_wtb,
+                   capture_output=True)
+    _shapes.append(("worktree", _gh / "wt"))
+    _unborn = _gh / "unborn"
+    _unborn.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=_unborn, capture_output=True)
+    _shapes.append(("unborn HEAD", _unborn))
+    (_gh / "plain").mkdir()
+    _shapes.append(("not a repository", _gh / "plain"))
+
+    _wrong = [n for n, r in _shapes if rollup._head(r) != _git_head(r)]
+    if _wrong:
+        print("      disagreed with git for: " + ", ".join(_wrong))
+    check("THE CHURN CACHE KEY IS WHAT GIT WOULD SAY, IN EVERY REPOSITORY SHAPE", _wrong == [])
+    check("...and the ordinary case is answered without spawning git at all",
+          bool(rollup._head_from_disk(_shapes[0][1])))
+    check("...while a packed ref or a worktree falls back rather than guessing",
+          not rollup._head_from_disk(_packed) and not rollup._head_from_disk(_gh / "wt"))
+finally:
+    subprocess.run(["git", "worktree", "prune"], cwd=_gh / "wtbase", capture_output=True)
+    _rmtree(_gh, ignore_errors=True)
+
+check("THE MAP-FRESHNESS CHECK ASKS GIT ONCE, NOT TWICE",
+      (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+      .count('"status", "--porcelain",\n                             "--untracked-files=no"') == 0)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402

@@ -10,6 +10,7 @@ import json
 import mdblock
 import os
 import subprocess
+from pathlib import Path
 
 import tokens
 
@@ -35,8 +36,47 @@ def forget_churn():
     _CHURN_CACHE.clear()
 
 
+_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def _head_from_disk(root):
+    """HEAD read straight off the filesystem, or "" when the layout is anything but the plain case.
+
+    This value is a CACHE KEY, so a wrong one is worse than a slow one — it would serve a stale
+    churn ranking as if it were current. Every branch here therefore returns "" rather than a guess,
+    and the caller falls back to asking git. Handles the two ordinary shapes: a detached HEAD, which
+    holds the sha itself, and a symref to a loose ref. A packed ref, a worktree's `.git` file, or
+    anything unexpected is left to the subprocess.
+    """
+    try:
+        git_dir = Path(root) / ".git"
+        if not git_dir.is_dir():          # a worktree or submodule: `.git` is a FILE
+            return ""
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if _SHA.match(head):
+            return head                   # detached
+        if not head.startswith("ref: "):
+            return ""
+        ref = git_dir / head[5:].strip()
+        if not ref.is_file():
+            return ""                     # packed-refs, or an unborn branch
+        value = ref.read_text(encoding="utf-8").strip()
+        return value if _SHA.match(value) else ""
+    except (OSError, ValueError, UnicodeDecodeError):
+        return ""
+
+
 def _head(root):
-    """The commit the churn answer belongs to, or "" when git cannot say."""
+    """The commit the churn answer belongs to, or "" when git cannot say.
+
+    🐛 A subprocess for a value that is usually two small file reads. Measured 19-65ms against
+    ~0.1ms, and the whole SessionStart hook 0.517s to 0.457s, on every session (R3 agent 1). The
+    filesystem answer is used only when it is unambiguous; everything else still asks git, so the
+    result is identical either way.
+    """
+    from_disk = _head_from_disk(root)
+    if from_disk:
+        return from_disk
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)

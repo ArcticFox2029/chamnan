@@ -378,17 +378,18 @@ def _map_is_current_by_git(root, map_path):
         # Both argv lists are single literals on purpose: a guard in the suite reads every
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
-        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "HEAD", "--",
+        # One call, not two. `git diff <A> -- <pathspec>` with a SINGLE ref already compares
+        # commit A against the working tree — committed history since A and uncommitted changes
+        # together — which is exactly the question, and what the `diff <A> HEAD` plus `status`
+        # pair was spelling out in two processes. Verified equivalent across a clean tree, an
+        # uncommitted edit, that edit committed, a workspace-only change, a new untracked source
+        # file, and a staged-but-uncommitted edit; measured 0.192s to 0.110s on the whole hook,
+        # and every session pays this (R3 agent 1).
+        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "--",
                                ".", ":(exclude).chamnan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=5)
-        if diff.returncode != 0:          # 1 = something changed; 128 = unknown stamp or no git
-            return False
-        st = subprocess.run(["git", "-C", str(root), "status", "--porcelain",
-                             "--untracked-files=no", "--", ".", ":(exclude).chamnan"],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace",
-                            timeout=5)
-        return st.returncode == 0 and not st.stdout.strip()
+        return diff.returncode == 0      # 1 = something changed; 128 = unknown stamp or no git
     except (OSError, subprocess.SubprocessError, ValueError):
         return False
 
