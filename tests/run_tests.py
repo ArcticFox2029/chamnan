@@ -157,6 +157,7 @@ import candidates  # noqa: E402
 import host as host_mod  # noqa: E402
 import profiles as profiles_mod  # noqa: E402
 import adapters as adapters_mod  # noqa: E402
+import workflows as workflows  # noqa: E402
 import tools_index as tools_index_mod  # noqa: E402
 import ledger  # noqa: E402
 import tools_index  # noqa: E402
@@ -9547,6 +9548,42 @@ finally:
 check("THE MAP-FRESHNESS CHECK ASKS GIT ONCE, NOT TWICE",
       (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
       .count('"status", "--porcelain",\n                             "--untracked-files=no"') == 0)
+
+# 🐛 Three JSON-store readers called `.get` on a freshly parsed value with no check it was a dict,
+# while two siblings guard the identical shape with a comment naming this exact bug. A file holding
+# `[]`, `42` or `null` is valid JSON, so it parsed and then raised AttributeError. And a dict is not
+# enough on its own: `{"paths": 7}` passes a container check and raises TypeError on the `in`
+# (R4 agent 1).
+_shape = Path(tempfile.mkdtemp(prefix="chamnan-jsonshape-"))
+try:
+    _sws = _shape / ".chamnan"
+    (_sws / "logs").mkdir(parents=True)
+    _survived = []
+    for _bad in ("[]", "42", "null", '"text"', '{"paths": 7}', '{"paths": "x"}'):
+        _seen = pointer_mod._seen_path(_sws, "s1")
+        _seen.parent.mkdir(parents=True, exist_ok=True)
+        _seen.write_text(_bad, encoding="utf-8")
+        try:
+            pointer_mod.already_pointed(_sws, "s1", "x.py")
+            pointer_mod.mark_pointed(_sws, "s1", "x.py")
+            _survived.append(pointer_mod.already_pointed(_sws, "s1", "x.py") is True)
+        except Exception:
+            _survived.append(False)
+    check("A WRONGLY SHAPED POINTER LOG IS READ AS EMPTY AND THEN REPAIRED, NEVER RAISED",
+          all(_survived))
+    _log = _sws / "logs" / "commands.jsonl"
+    _log.write_text('{"cmd": "a"}\n[]\n42\nnull\n{"cmd": "b"}\n', encoding="utf-8")
+    check("...and a log line that is valid JSON but not a record is skipped like a torn one",
+          workflows.read(_log) == [{"cmd": "a"}, {"cmd": "b"}])
+finally:
+    _rmtree(_shape, ignore_errors=True)
+
+# 🐛 Every cutter in this codebase goes through whole_graphemes because a cut landing inside a
+# cluster leaves a stray regional indicator behind — and memory.render_titles, which feeds the
+# injected block, did not. Two peek.py sites shared the shape (R4 agent 1).
+_flagged = "Deploy checklist " + "x" * memory_mod.MAX_TITLE_CHARS + "\U0001F1F9\U0001F1ED"
+check("A TITLE CUT FOR THE BLOCK NEVER ENDS MID-GRAPHEME",
+      not mdblock.whole_graphemes(_flagged[:memory_mod.MAX_TITLE_CHARS]).endswith("\U0001F1F9"))
 
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402

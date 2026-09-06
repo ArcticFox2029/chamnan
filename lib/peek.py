@@ -248,10 +248,11 @@ def peek_csv(path, find=None):
     if find:
         tail = "" if len(hits) < HIT_CAP else f" — the first {HIT_CAP}; there may be more"
         out.append(f"\nrows matching {find!r} ({len(hits)} shown{tail}):")
-        out += [f"  line {n}: " + " | ".join(c[:28] for c in r[:8]) for n, r in hits]
+        out += [f"  line {n}: " + " | ".join(mdblock.whole_graphemes(c[:28]) for c in r[:8])
+                for n, r in hits]
     else:
         out.append("\nfirst rows:")
-        out += ["  " + " | ".join(c[:28] for c in r[:8]) for r in rows]
+        out += ["  " + " | ".join(mdblock.whole_graphemes(c[:28]) for c in r[:8]) for r in rows]
     return out
 
 
@@ -329,7 +330,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
     if find:
         tail = "" if len(hits) < HIT_CAP else f" — the first {HIT_CAP}; there may be more"
         out.append(f"\nrecords matching {find!r} ({len(hits)} shown{tail}):")
-        out += [f"  line {n}: " + r[:110] for n, r in hits]
+        out += [f"  line {n}: " + mdblock.whole_graphemes(r[:110]) for n, r in hits]
     return out
 
 

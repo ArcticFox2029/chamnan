@@ -478,6 +478,8 @@ def _read_pointer_log(root):
                 rec = json.loads(line)
             except (ValueError, RecursionError):
                 continue
+            if not isinstance(rec, dict):
+                continue
             fired += 1
             for path in rec.get("named") or []:
                 named.setdefault(path, set()).add(rec.get("session"))

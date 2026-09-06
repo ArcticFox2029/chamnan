@@ -6,7 +6,7 @@ the exact same read/append/format logic instead of a second, slightly different 
 JSON-append implementations drifting apart is exactly the kind of bug this repo has been burned by
 before with concurrent writers of a shared file — see `main_app_concurrent_file_writes.md` in the
 repo this plugin is developed against, though that specific failure mode (two threads writing at
-once) does not apply here, since both callers are short-lived CLI invocations, never long-running.
+once) does not apply here, since every caller is a short-lived CLI invocation, never long-running.
 
 The schema is deliberately small: `name`, `desc`, `added` (ISO timestamp), `origin` (where the
 content came from — a file path for a promoted script, `"candidate:<slug>"` for one generated from
