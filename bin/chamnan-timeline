@@ -197,7 +197,15 @@ def main(argv):
     files = []
     if "--files" in note_parts:
         at = note_parts.index("--files")
-        files = [f for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
+        # 🐛 [2026-09-07] These land in a TRACKED `.chamnan/threads/*.md` file, and an absolute path
+        # was written verbatim — so a commit carried one developer's machine layout, meaningless to
+        # everyone who pulls it and to the same person on another machine. `_relativise` is defined
+        # forty lines above and already used by `for` and by chamnan-impact, but only on the QUERY
+        # side; the WRITE side, which is what reaches the commit, was never wired to it. Claude Code
+        # requires absolute paths for Read and Edit, so an agent recording what it touched types
+        # exactly the shape that breaks. The sibling command `chamnan-promote` had this same bug
+        # fixed on 2026-09-04 (R18 agent 3).
+        files = [_relativise(root, f) for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
         note_parts = note_parts[:at]
     if not note_parts:
         print("chamnan: add needs a note — chamnan-timeline add <id> \"<what happened>\"",
