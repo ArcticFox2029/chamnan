@@ -8223,6 +8223,47 @@ subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_df, cap
 check("...and an image with no tag is not read as a version", aging.deploy_drift(_df) == [])
 _rmtree(_df.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] "do not read them all" restates what the rules sentence one line above already
+# established for the sibling directory. Measured end to end on the real subagent hook: 855 -> 833
+# bytes, ~9 tokens, and this hook's own docstring records one real session spawning fifteen
+# subagents in an afternoon (R13 agent 6).
+#
+# Dropped only when that sentence ACTUALLY FIRED, which is the condition the finding put on itself:
+# most real workspaces here have no rule files, and then nothing earlier in the block has said it.
+_sb = Path(tempfile.mkdtemp(prefix="chamnan-subtrim-")) / "r"
+(_sb / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_sb, capture_output=True)
+(_sb / "src" / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sb, capture_output=True)
+(_sb / ".chamnan" / "memory" / "decisions").mkdir(parents=True, exist_ok=True)
+(_sb / ".chamnan" / "memory" / "decisions" / "d.md").write_text(
+    "# A decision\n\nWhy.\n", encoding="utf-8")
+def _sb_fire():
+    _r = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
+                        input=json.dumps({"cwd": str(_sb), "agent_type": "general-purpose",
+                                          "session_id": "fixedsession1"}),
+                        capture_output=True, text=True, cwd=_sb,
+                        env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_sb)))
+    try:
+        return json.loads(_r.stdout)["hookSpecificOutput"]["additionalContext"]
+    except Exception:
+        return _r.stdout
+_sb_norules = _sb_fire()
+check("WITH NO RULES, THE SUBAGENT IS STILL TOLD NOT TO READ A WHOLE STORE",
+      "do not read them all" in _sb_norules)
+(_sb / ".chamnan" / "memory" / "rules").mkdir(parents=True, exist_ok=True)
+(_sb / ".chamnan" / "memory" / "rules" / "r.md").write_text(
+    "# Never call the network in a hook\n\nBecause.\n", encoding="utf-8")
+_sb_rules = _sb_fire()
+check("...and once the rules sentence has said it, it is not said twice",
+      "do not read them all" not in _sb_rules
+      and "read the one that matches before assuming" in _sb_rules)
+# The half that makes it a saving rather than a deletion: the pointer itself still arrives.
+check("...while the pointer into .chamnan/memory/ is still there",
+      "Recorded decisions and lessons are in `.chamnan/memory/`" in _sb_rules
+      and "Read the one whose title matches" in _sb_rules)
+_rmtree(_sb.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
