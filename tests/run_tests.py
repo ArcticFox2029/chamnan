@@ -11231,7 +11231,16 @@ for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(
              # is 0.088s, 24 is 1.381s, 26 is 5.500s, while the capturing twin was refused
              # outright (R12 agent 2).
              "(?:a|a)*$", "(?P<x>a|a)*$", "(?i:a|a)*$", "(?im-s:a|a)*$", "(?:x|xy)+$",
-             "(?:a|aa)" * 26 + "b"):
+             "(?:a|aa)" * 26 + "b",
+             # 🐛 [2026-09-06] The SEVENTH family: a bounded repetition over a NULLABLE atom.
+             # `?` is deliberately not a quantifier for `_too_many_quantifiers` — the flat
+             # `a?a?a?…` chain is measured flat on CPython and counting it would refuse ordinary
+             # patterns — and the inner-marker scanner used the same set, so a `?` INSIDE a
+             # quantified group set nothing. Measured on the real engine: N=18 0.244s, N=20 0.896s,
+             # N=22 3.513s, and through the real SessionStart hook N=28 was still running after 90
+             # seconds. The control `(a){24}b`, the same shape without the `?`, is 0.00008s, which
+             # isolates the hazard to the nullable atom and not the bounded count (R14 agent 2).
+             "(a?){20}b", "(a?){24}b", "(a?)+b", "(a?)*b", r"(\s?){30}x", "(?:a?){20}b"):
     check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
 # ...and the guard must not refuse the patterns a rule would actually be written with.
 for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
@@ -11247,6 +11256,18 @@ check("distinct alternations are not choice points, however many",
       not _would_refuse("(GET|POST)" * 20))
 check("...and a non-capturing group of distinct branches is still ordinary",
       not _would_refuse("(?:GET|POST)*x") and not _would_refuse(r"(?:import|from)\s"))
+# 🐛 The `?` in `(?:`, `(?P<x>`, `(?i:` and every lookaround opens the GROUP and quantifies
+# nothing. Counting `?` as an inner marker without skipping those refused `(?:GET|POST)*x`, an
+# ordinary pattern — the false positive the seventh family's fix would have shipped with, caught by
+# running the allowed list beside the refused one rather than by reading the change.
+for _grp in ("(?:GET|POST)*x", r"(?:import|from)\s", r"^(?:\d{4})-(?:\d{2})$", r"(?i:TODO)",
+             r"(?P<year>\d{4})"):
+    check(f"A GROUP OPENER'S `?` IS NOT A QUANTIFIER: {_grp}", not _would_refuse(_grp))
+# The flat chain the module measured as harmless on CPython must stay allowed, or the fix above
+# has quietly reversed a recorded measurement.
+for _nul in ("a?a?a?a?a?a?b", r"(\w+)?", "colou?r", r"https?://[^\s]+"):
+    check(f"...and a nullable atom OUTSIDE a quantified group still is not a hazard: {_nul}",
+          not _would_refuse(_nul))
 # 🐛 [2026-09-06] `nxt` is "" at the end of a pattern, and `"" in "+*{"` is TRUE — the empty
 # string is a substring of every string. So a group holding any quantifier and CLOSING the pattern
 # read as a quantified group over a quantifier, and `(\d{4})` and `(\d+)` — the most ordinary
