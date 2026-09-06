@@ -463,6 +463,25 @@ def _collapse(index, map_rel, budget=None, root=None, per_dir=8):
             deeper = at_depth(look)
         if len(deeper) <= len(groups):
             break          # nothing separates within the spine limit: a longer name for nothing
+        # 🐛 [2026-09-07] MEASURED AND NOT CHANGED, which is the useful part. R18 agent 6 varied the
+        # one dimension every earlier sweep held fixed -- directory layout at a constant file count.
+        # 400 identical files delivered 904 tokens in 4 directories, 2,331 in 41, and 3,155 in 401:
+        # a 3.5x multiplier for the same code, from a choice a user makes for reasons that have
+        # nothing to do with chamnan.
+        #
+        # The obvious fix is to refuse a split whose groups average fewer than two files, and it was
+        # built and measured before being rejected: it takes the 401-directory case from 3,155 to
+        # 731 tokens and leaves 4 and 41 untouched, but it puts a CLIFF at exactly 200 groups. 200
+        # directories delivered 2,997 tokens and 200 named rows; 201 delivered 731 and ONE row. A
+        # repository that adds one directory would lose its entire directory listing, which is a
+        # worse answer than the cost it removes.
+        #
+        # What the numbers actually say: at 200 groups the block is INSIDE its 3,000-token index
+        # budget, so `_fold_the_overflow` never runs and nothing is wrong -- the user asked for
+        # 3,000 tokens of index and got 3,000 tokens of directory names. The real question is
+        # whether a budget spent on 200 bare directory names beats one spent on 40 directories with
+        # filenames under them, and that is a judgement about what a reader wants, not a defect.
+        # Left alone until somebody measures which of the two answers a session actually uses.
         groups, depth, splits = deeper, look, splits + 1
     if not groups:
         # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an
