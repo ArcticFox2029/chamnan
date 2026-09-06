@@ -317,6 +317,26 @@ def print_inventory(root):
         noun = "entry" if count == 1 else "entries"
         print(f"  {label:<{width}}   {count:>3} {noun:<8}   last write {ledger.humanize_age(last_ts)}")
 
+    # 🐛 [2026-09-06] Nothing anywhere showed which settings this repository had actually changed.
+    # Two config defects found today were both invisible for the same reason: `context_profile` set
+    # in the file did nothing at all, and `log_retention_days: 0` deleted every log while the three
+    # settings beside it read 0 as "keep everything". In each case a person could read their own
+    # config.json and still not know what chamnan was doing with it (R9 agent 5).
+    #
+    # Only the DIFFERENCES, and only here rather than in the injected block: a list of 23 defaults
+    # nobody changed is the kind of always-true output that stops being read, and on an untouched
+    # workspace this says one short line and moves on.
+    _cfg = ws.load_config(root)
+    _changed = sorted(k for k, v in _cfg.items()
+                      if k in ws.DEFAULT_CONFIG and v != ws.DEFAULT_CONFIG[k])
+    print("\nSettings this repository has changed")
+    if not _changed:
+        print(f"  none — all {len(ws.DEFAULT_CONFIG)} settings are at their shipped defaults")
+    else:
+        _w = max(len(k) for k in _changed)
+        for _k in _changed:
+            print(f"  {_k:<{_w}}   {_cfg[_k]!r}   (default {ws.DEFAULT_CONFIG[_k]!r})")
+
     # 🐛 "1 of 2 decision has no Rejected". The noun agrees with the TOTAL and the verb with the
     # count — `plural` was keyed to the count for both, so one decision out of two made the noun
     # singular. The line above it had the opposite half of the same bug: `lessons name` is fixed

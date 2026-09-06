@@ -401,6 +401,63 @@ check("...while a tree with nothing in it at all still refuses, as it always did
       _map_run(_bare) == (1, ""))
 _rmtree(_ncroot, ignore_errors=True)
 
+# 🐛 [2026-09-06] Nothing anywhere showed which settings a repository had actually CHANGED. The two
+# config defects found today were both invisible for that reason: `context_profile` set in the file
+# did nothing at all, and `log_retention_days: 0` deleted every log while the three settings beside
+# it read 0 as "keep everything". A person could read their own config.json and still not know what
+# chamnan was doing with it (R9 agent 5). Only the differences, because a list of 23 unchanged
+# defaults is the kind of always-true output that stops being read.
+_cfgrep = Path(tempfile.mkdtemp(prefix="chamnan-cfgrep-")) / "r"
+(_cfgrep / ".git").mkdir(parents=True)
+(_cfgrep / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_cfgrep),
+               capture_output=True)
+
+
+def _report_text(where):
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=str(where),
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace").stdout
+
+
+_untouched = _report_text(_cfgrep)
+check("an untouched workspace says so in one line, not in twenty-three",
+      "all 23 settings are at their shipped defaults" in _untouched)
+_cfgpath = _cfgrep / ".chamnan" / "config.json"
+_blob = json.loads(_cfgpath.read_text(encoding="utf-8"))
+_blob["log_retention_days"] = 90
+_blob["context_profile"] = "large-window"
+_cfgpath.write_text(json.dumps(_blob), encoding="utf-8")
+_drifted = _report_text(_cfgrep)
+check("A SETTING THIS REPOSITORY CHANGED IS NAMED, WITH THE DEFAULT BESIDE IT",
+      "log_retention_days" in _drifted and "90" in _drifted and "default 7" in _drifted)
+check("...and so is every other one that differs",
+      "context_profile" in _drifted and "large-window" in _drifted)
+check("...while the settings nobody touched are not listed",
+      "state_token_budget" not in _drifted.split("Settings this repository has changed")[1][:400])
+_rmtree(_cfgrep.parent, ignore_errors=True)
+
+# MEASURED AND NOT DONE, so the next round does not spend a slot on it. `chamnan-peek` was reported
+# to cost more than a plain Read on 38% of files under 2,000 bytes, and reproducing it gave 62% —
+# but the comparison was against a BARE read with no envelope, and no tool that says what it did can
+# beat that on a tiny file. Building the substitution and measuring properly, as assembled output
+# against assembled output, it flipped ONE of five realistic small-text shapes and saved ONE token.
+#
+# So the excess on a small file is peek's envelope — its name, size and cost note, about 55 tokens —
+# and not a bad summarisation choice. That envelope is what a reader needs to know what they were
+# handed. The change was written, measured, and reverted (R9 agent 6, refuted).
+_pk = Path(tempfile.mkdtemp(prefix="chamnan-peekfloor-"))
+(_pk / "tiny.md").write_text("# A short note\n\nTwo lines and nothing more.\n", encoding="utf-8")
+check("PEEK'S COST ON A SMALL TEXT FILE IS ITS ENVELOPE, NOT A BAD SUMMARY",
+      tokens.estimate(peek_mod.peek(_pk / "tiny.md"))
+      - tokens.estimate((_pk / "tiny.md").read_text(encoding="utf-8")) < 60)
+# The property that actually matters, and the one an over-wide version of that fix broke: a format
+# whose summary HIDES something must never be replaced by the file itself.
+(_pk / "values.json").write_text('{"password": "hunter2hunter2"}\n', encoding="utf-8")
+check("...and a small JSON file's values still never reach the session",
+      "hunter2hunter2" not in peek_mod.peek(_pk / "values.json"))
+_rmtree(_pk, ignore_errors=True)
+
 # 🐛 The version string is the ONLY thing the stale-build banner compares, so two different builds
 # sharing one are invisible to it — and that is not hypothetical. Measured on this machine while
 # writing this: both installed copies reported "1.21.0" and neither was this code; the installed
