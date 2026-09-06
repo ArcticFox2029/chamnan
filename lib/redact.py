@@ -704,6 +704,25 @@ def _value_is_the_key_itself(key_part, value):
 # So a window ends where a line ends AND where no quoted value opened by this occurrence is still
 # open. Past the cap, windowing is abandoned for the whole document rather than narrowed — a
 # redactor that is slow is a cost, and one that is nearly right is a leak.
+# Profiled on the real 2,544-file repository at 2026-09-06, not on a fixture, because the previous
+# profile was fixture-specific and said something that is not true here. R7 agent 2 reported
+# chamnan's regex work as "an order of magnitude below" the wait on git; measured in-process with
+# cProfile against the actual tree, git-wait is 37-42% of the hook's wall time and redaction is
+# 23-25% -- 1.5-1.8x apart, not 10x (R13 agent 1). The reason is this repository specifically: its
+# own MAP.md discusses keys, secrets and tokens constantly, so `SECRET_WORDS` matches 139 times in
+# 295,447 characters, and the windows those hits produce cover 15.4% of the document.
+#
+# Windowing is still a clear win and is not in question: 268.1 ms against 328.9 ms for the whole
+# document on that same file. What the corrected number changes is where a future round should
+# look, which is here rather than at the regexes downstream.
+#
+# Measured and NOT taken: the 51.9 ms this scan costs is the scan itself -- the per-hit work is
+# 0.2 ms of it -- and a cheap literal pre-filter over the same text ("pass", "pwd", "secret",
+# "cred", "token", "key", "auth", which every branch below requires one of) runs in 8.2 ms, so
+# chunking the document and running this only over chunks that contain one would save about 44 ms.
+# It is not built. Chunk boundaries must not split a match, the case-sensitive branches below make
+# the pre-filter's own casing load-bearing, and this module's own rule settles it: a redactor that
+# is slow is a cost, and one that is nearly right is a leak.
 _SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
 _WINDOW = 512
 _WINDOW_LOOKBACK = 64
