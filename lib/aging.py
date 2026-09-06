@@ -172,3 +172,65 @@ def check(root, now=None):
                     findings.append((category, path.name, name, claimed,
                                      fresh_versions.get(name, [])))
     return findings, unverifiable, None
+
+
+def deploy_drift(root):
+    """[(name, declared_env, declared_version, manifest_version)] where `environments.md` and the
+    repository's own deployment manifests disagree about a version.
+
+    A QUESTION, never a verdict, and the wording at every call site has to keep it one. A Compose
+    file may be for local development, a Helm values override is invisible to a static scan, and a
+    tag like `latest` or a digest names no version at all. What this can honestly say is that two
+    things in the same repository disagree and one of them is worth a look.
+
+    Why it is worth having anyway: `environments.md`'s own docstring names its central risk --
+    "the oracle has to be maintained, or this reports nothing" -- and until now the only thing
+    keeping it honest was somebody re-typing a `Checked:` date from memory. A date proves a person
+    looked once. A manifest disagreeing with the declaration proves the CONTENT is wrong right now,
+    and `deploy.scan()` has been extracting exactly that set of `name:tag` strings all along, for
+    MAP.md's Deployment section, with nothing ever comparing them to anything (R12 agent 5).
+
+    Only FRESH environments are compared. A declaration nobody has confirmed in months is already
+    reported by `stale_environments()`, and reporting it twice under a second heading would make
+    the loud thing the stale one rather than the wrong one.
+    """
+    import environments
+    try:
+        envs = environments.entries(root)
+    except OSError:
+        return []
+    stale = {n for n, _days in environments.stale_environments(root, envs=envs)}
+    fresh = [e for e in envs if e["name"] not in stale]
+    if not fresh:
+        return []
+    try:
+        import deploy
+        images = deploy.scan(root).get("images") or []
+    except Exception:
+        return []
+
+    running = {}
+    for image in images:
+        # `postgres:17`, `ghcr.io/org/postgres:17`, `postgres` with no tag at all. The name is the
+        # last path segment before the tag, because a registry and an org are not the software.
+        ref = str(image)
+        if ref.count(":") != 1:              # no tag, or a digest/port -- nothing to compare
+            continue
+        name, _, tag = ref.partition(":")
+        name = name.rsplit("/", 1)[-1].strip().lower()
+        pairs = version_pairs(f"{name} {tag.strip()}")
+        if len(pairs) == 1 and pairs[0][0].lower() == name:
+            running.setdefault(name, set()).add(pairs[0][1])
+
+    out = []
+    for env in fresh:
+        for name, declared in env["versions"].items():
+            seen = running.get(name.lower())
+            if not seen:
+                continue
+            # Covered by ANY tag the manifests carry: a repository legitimately runs two tags of the
+            # same image (a migration, a canary), and disagreeing with one of them is not drift.
+            if any(_covers(declared, tag) or _covers(tag, declared) for tag in seen):
+                continue
+            out.append((name, env["name"], declared, ", ".join(sorted(seen))))
+    return out

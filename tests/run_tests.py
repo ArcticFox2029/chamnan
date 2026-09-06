@@ -8182,6 +8182,47 @@ check("...while the description itself still arrives",
       "does a thing" in _pl_out and "real.sh" in _pl_out)
 _rmtree(_pl.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] `environments.md`'s own docstring names its central risk — "the oracle has to be
+# maintained, or this reports nothing" — and the only thing keeping it honest was somebody
+# re-typing a `Checked:` date from memory. A date proves a person looked once. `deploy.scan()` has
+# been extracting this repository's own `name:tag` strings all along for MAP.md's Deployment
+# section, and nothing ever compared the two halves of the same fact (R12 agent 5).
+_df = Path(tempfile.mkdtemp(prefix="chamnan-drift-")) / "r"
+(_df / ".git").mkdir(parents=True)
+(_df / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+(_df / "docker-compose.yml").write_text(
+    "services:\n  db:\n    image: postgres:17\n  cache:\n    image: redis:7.2\n",
+    encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_df, capture_output=True)
+_df_today = datetime.date.today().isoformat()
+(_df / ".chamnan" / "environments.md").write_text(
+    f"# Environments\n\n## production\n\n**Versions:** postgres 13, redis 7.2\n"
+    f"**Checked:** {_df_today}\n", encoding="utf-8")
+_df_drift = aging.deploy_drift(_df)
+check("A DECLARED VERSION THAT THE REPOSITORY'S OWN MANIFESTS CONTRADICT IS REPORTED",
+      [(n, e, d, s) for n, e, d, s in _df_drift] == [("postgres", "production", "13", "17")])
+# The half that makes it meaningful: agreement is silent, or every repository reports drift.
+check("...and a version the manifests agree with is silent", "redis" not in str(_df_drift))
+_df_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-age")], cwd=_df,
+                         capture_output=True, text=True).stdout
+check("...and chamnan-age words it as a question, not a verdict",
+      "disagree" in _df_out and "not a verdict" in _df_out and "Nothing is edited" in _df_out)
+# An environment nobody has confirmed is already reported by stale_environments; reporting it
+# twice would make the loud thing the stale one rather than the wrong one.
+(_df / ".chamnan" / "environments.md").write_text(
+    "# Environments\n\n## production\n\n**Versions:** postgres 13\n"
+    "**Checked:** 2020-01-01\n", encoding="utf-8")
+check("...and a COLD environment is not compared at all", aging.deploy_drift(_df) == [])
+# A manifest with no tag, or a digest, names no version and must not be guessed at.
+(_df / "docker-compose.yml").write_text(
+    "services:\n  db:\n    image: postgres\n", encoding="utf-8")
+(_df / ".chamnan" / "environments.md").write_text(
+    f"# Environments\n\n## production\n\n**Versions:** postgres 13\n"
+    f"**Checked:** {_df_today}\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_df, capture_output=True)
+check("...and an image with no tag is not read as a version", aging.deploy_drift(_df) == [])
+_rmtree(_df.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"

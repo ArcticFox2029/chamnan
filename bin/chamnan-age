@@ -66,7 +66,33 @@ def main(argv):
         print(f"chamnan: not checked — {mdblock.as_quoted(refusal, 200)}")
         return 0
 
+    # 🐛 [2026-09-06] `environments.md`'s own docstring names its central risk — "the oracle has to
+    # be maintained, or this reports nothing" — and until now the only thing keeping it honest was
+    # somebody re-typing a `Checked:` date. `deploy.scan()` has been extracting the repository's own
+    # `name:tag` strings all along for MAP.md, and nothing ever compared the two (R12 agent 5).
+    # A date proves a person looked once; a manifest disagreeing proves the content is wrong now.
+    #
+    # Printed FIRST, because it is the strongest of the three signals here, and worded as a
+    # question: a Compose file may be for local development and a Helm override is invisible to a
+    # static scan, so what this can honestly say is that two things in this repository disagree.
+    drift = aging.deploy_drift(root)
+    if drift:
+        one = len(drift) == 1
+        print(f"{len(drift)} declared version{'' if one else 's'} disagree"
+              f"{'s' if one else ''} with this repository's own deployment manifests\n")
+        for name, env, declared, seen in drift:
+            print(f"  {mdblock.as_quoted(name, 40)}")
+            print(f"    environments.md says {mdblock.as_quoted(env, 40)} "
+                  f"{mdblock.as_quoted(declared, 24)} · the manifests say "
+                  f"{mdblock.as_quoted(seen, 60)}")
+        print("\n  Worth a look, not a verdict: a manifest can be for local development, and a "
+              "Helm\n  override is invisible to a static scan. Nothing is edited either way.")
+        if findings or unverifiable:
+            print()
+
     if not findings and not unverifiable:
+        if drift:
+            return 0
         # 🐛 [2026-09-06] This read as a completeness claim the check cannot make. Every fresh
         # environment's declared versions are pooled, so a claim matching ANY of them is cleared --
         # and a note explicitly about the environment that DID move on is cleared by an unrelated
