@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.20.0](#whats-new-in-1200) · [Commands](#commands)
+[What's new in 1.20.0](#whats-new-in-1210) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -475,44 +475,65 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.20.0
+## What's new in 1.21.0
 
-**Thirty-nine commits, and most of them are the same shape: a rule that was applied to some
-members of a set and not the identical ones beside them.** That is this repository's own recurring
-defect, so the fixes below were found by walking each set programmatically rather than by reading
-code, and each is held by a test that asserts the whole set rather than the member that broke.
+### Credentials that were reaching the index
 
-**The redactor got faster without getting looser.** Five of its rules cannot match text that has no
-secret word in it, so one cheap scan now tells the other five where not to look: `scrub()` on the
-293 KB index goes 277ms to 216ms, byte-identical on that file, on the test corpus, and on 400
-randomised adversarial documents. Two earlier attempts at this were wrong and both are now
-regression tests — including one whose safety argument held for four of the five rules and left a
-40-line quoted secret, the shape of a PEM key in a config file, entirely in the clear.
+A connection string whose password contains `@` leaked. The rule's password class excluded `@`, so
+it stopped at the first one: `amqp://svc:a@b@rabbit/vhost` and `mongodb://root:x@y%40z@cluster/admin`
+passed through whole, and `postgres://admin:Hunter2@Pass@db/main` came out as
+`<REDACTED>@Pass@db/main` — half the password beside the marker that says it was handled. `@` is
+ordinary in a generated password and real connection strings do not percent-encode it. No
+`jdbc:postgresql://` URL had ever matched either, because the scheme admitted only one layer.
 
-**Output is guarded against what it says, not just what it contains.** Every command already routed
-its output through the redactor, which removed credentials. A committed file holding an ANSI erase
-sequence could still rewrite the line a reader had just seen, and a right-to-left override could
-make one command's output read as another's. Both are stripped now, at the single point every
-command already prints through.
+A symlink with an innocent name walked past the "never open this file" refusal. Both refusals judged
+the name they were handed rather than the file that gets opened, and opening follows a link — so
+`safe_data.bin` pointing at `release.jks` was opened and its readable strings printed, alias and
+password-shaped fragment included.
 
-**`--preview` writes nothing, which is what it always said it did.** In a repository that had never
-run chamnan it created the entire workspace — fourteen entries — before telling you what you would
-get, because what it runs to answer the question is the hook that sets the workspace up.
+### Files that were silently lost
 
-**It stopped telling other agents to type Claude Code commands.** Twenty-three adapters wrote
-`/chamnan:remember` and its siblings into AGENTS.md, `.cursorrules` and the rest, and that line
-exists precisely to tell an agent it is allowed to write — so it failed worst for the readers it
-was aimed at. The same went for the first error a terminal user hits. Both now name a command that
-works everywhere, and the README finally says how to get `bin/` onto `PATH`, without which every
-example in it is "command not found".
+Five functions turn free text into a filename and three never passed it through the guard that
+exists for this: a record titled `CON` or `nul` becomes `con.md` or `nul.md`, which on Windows are
+the console and the bit-bucket. The write does not fail, it goes to the device, the record is gone,
+and the index says it was written.
 
-**A Mercurial or Subversion checkout nested inside a repository is now somebody else's code**, as a
-Git one always was, and its internal store is no longer walked as source.
+The memory stamper read a file, decided, and wrote it back with nothing holding it in between,
+while firing on every Write and Edit — so a second write landing in that gap was overwritten by the
+stamped copy of the older text.
 
-**The update notice can see a plugin installed from a local path** — the convention this project is
-itself developed under, and one that `claude plugin update` does not refresh while the version
-string is unchanged. Three installs on the machine that writes chamnan sat twenty-five commits
-behind while the check that exists to say so read a stale copy of a different directory.
+Three generated shell scripts were written with the platform's line endings, so on Windows the
+installed git hook and both generated tool scripts began `#!/bin/sh\r`, which no shell recognises.
+
+### Files that were never described
+
+A destructured JavaScript import spanning several lines ate the comment below it, so the file went
+into the index with no description at all. Brackets were counted; braces were not.
+
+### Sizing, and honesty about it
+
+`--model fable`, `opus`, `sonnet` and `haiku` now size correctly. Anthropic's current models are not
+called "Claude *n*", so every one of those names fell through to the default profile — a user on a
+million-token model told to size for a small window. The four numbers come from Anthropic's own
+documentation; `mythos` is deliberately absent, because "probably a million" is not a number, and it
+falls through with the table's own note that it is a dated convenience rather than an authority.
+
+`CHAMNAN_READ_ONLY` reached five call sites and no others, so every store kept writing with it
+set — including the one a background hook fires on ordinary Bash calls. And the commands were not
+told: `chamnan-timeline new` reported "declared — .chamnan/threads/a-thread.md" with nothing on
+disk. The first-session banner had the same fault against a repository that is simply not writable,
+announcing a workspace it had failed to create.
+
+A `tools/index.json` holding `{}` — a hand-edit, a bad merge — took `chamnan-report` down with a
+TypeError rather than reading as empty.
+
+### The suite
+
+Its version-drift check had never run on CI, on any platform: the checkout fetches no tags, `git
+describe` finds nothing, and the whole block vanished inside an `if` with no `else`. A check that
+skips itself in silence is worse than an absent one, because the green total counts it as passed.
+
+3,215 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
 
 ## Bootstrap does not rewrite your code
 

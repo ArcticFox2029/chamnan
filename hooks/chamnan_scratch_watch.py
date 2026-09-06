@@ -260,6 +260,21 @@ def _stamp_memory_entry(payload, root):
         return
     if memory_dir not in resolved.parents or resolved.suffix != ".md":
         return
+    # 🐛 Read, decide, write — with nothing holding the file in between, while this hook fires on
+    # every Write and Edit. A second write landing inside that gap was overwritten by the stamped
+    # copy of the text this call had already read, losing the newer content silently. Every sibling
+    # writer in this codebase takes ws.exclusive and goes through atomic_write_text; this one did
+    # neither, which is the shape of defect the rest of this file is full of notes about
+    # (R2 agent 4). The whole read-decide-write now happens under the lock, and a lock that cannot
+    # be taken means skipping the stamp rather than racing for it — the stamp is a convenience and
+    # the user's text is not.
+    with ws.exclusive(resolved) as held:
+        if not held:
+            return
+        _stamp_under_lock(resolved)
+
+
+def _stamp_under_lock(resolved):
     try:
         text = resolved.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -276,11 +291,7 @@ def _stamp_memory_entry(payload, root):
     if not additions:
         return
 
-    stamped = text.rstrip("\n") + "\n\n" + "\n".join(additions) + "\n"
-    try:
-        resolved.write_text(stamped, encoding="utf-8")
-    except OSError:
-        pass
+    ws.atomic_write_text(resolved, text.rstrip("\n") + "\n\n" + "\n".join(additions) + "\n")
 
 
 def _track_tool_health(payload, root):
