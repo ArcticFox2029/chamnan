@@ -722,6 +722,7 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `memory` | `true` | `true` / `false` | `.chamnan/memory/`. Rules are injected in full; decisions and lessons contribute a title and are read on demand. **Not pruned by age** — a session record stops mattering, a decision does not. |
 | `milestones` | `true` | `true` / `false` | `.chamnan/milestones.md`. Only the two most recent titles are injected, so the file's length costs nothing per session. |
 | `ledger` | `true` | `true` / `false` | The write-skills line and the ledger line at the top of every session — naming the plugin's write skills, and a count of what each store holds. ~112–128 tokens together. Also gates the once-per-session resume nudge. |
+| `context_profile` | `standard` | one of `small-window`, `standard`, `large-window` | Sizes the injected block for the model reading it. A budget you set yourself still wins over the profile; one left at its default does not, so choosing a profile actually moves both numbers. `CHAMNAN_CONTEXT_PROFILE` overrides this per run without editing a file the repository commits. |
 | `state_token_budget` | `1700` | integer, tokens | Ceiling on `STATE.md`'s injection, in tokens rather than characters. A section whose heading ends in 📌 is injected in full first, regardless of this budget or where in the file it falls. |
 
 Each part is independent — switching one off does not affect the others.

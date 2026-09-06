@@ -113,16 +113,56 @@ def explain(name):
 def resolve(config):
     """`(name, budgets)` from a loaded config dict.
 
-    An explicit `index_token_budget` in the config WINS over the profile, and does so silently by
-    design: someone who tuned a number by hand has measured something on their own repository, and
+    A HAND-TUNED `index_token_budget` in the config WINS over the profile, and does so silently by
+    design: someone who set a number themselves has measured something on their own repository, and
     a profile added later must not quietly undo it.
+
+    🐛 [2026-09-06] "Explicit" used to mean `key in config`, and `load_config()` merges DEFAULT_CONFIG
+    into every config it returns — so both budget keys are ALWAYS present and the profile could
+    never move either of them. Choosing `large-window` in the file did nothing at all. The one path
+    that worked, the environment variable, worked only because its caller popped the two keys first,
+    which is the same fix spelled at one call site instead of here where the precedence lives
+    (R8 agent 4).
+    #
+    A value still equal to its own default was not tuned by anybody, so it does not outrank a
+    profile the user chose. A value they changed still does.
     """
     name = str(config.get("context_profile", DEFAULT))
     chosen = budgets(name)
     for key in ("index_token_budget", "state_token_budget"):
-        if key in config:
+        if key in config and config[key] != _default_for(key):
             chosen[key] = config[key]
     return name, chosen
+
+
+def _default_for(key):
+    """The shipped default for `key`, or a sentinel that equals nothing when it cannot be read.
+
+    Imported here rather than at module scope: `workspace` is the module everything else loads, and
+    a cycle between the two would be paid at every import in the package. A missing default must
+    read as "no default", so an unreadable one leaves the old behaviour rather than silently making
+    every hand-tuned number stop counting.
+    """
+    try:
+        import workspace as _ws
+        return _ws.DEFAULT_CONFIG.get(key, _NO_DEFAULT)
+    except Exception:                       # noqa: BLE001 — a config question must not raise
+        return _NO_DEFAULT
+
+
+class _NoDefault:
+    """Equal to nothing, including itself, so `config[key] != _NO_DEFAULT` is always true."""
+
+    def __eq__(self, other):
+        return False
+
+    def __ne__(self, other):
+        return True
+
+    __hash__ = None
+
+
+_NO_DEFAULT = _NoDefault()
 
 
 # ---------------------------------------------------------------------------------------------

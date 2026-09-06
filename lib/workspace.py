@@ -121,6 +121,13 @@ DEFAULT_CONFIG = {
     # is a re-pricing, not a cut. A heading ending in the pin marker (see lib/state.py) is injected
     # in full ahead of this budget and is never dropped by it.
     "state_token_budget": 1700,
+    # 🐛 [2026-09-06] `lib/profiles.py`'s own opening line says the profile is "CHOSEN, in
+    # `.chamnan/config.json`, not sniffed" -- and it was not a key here, so `load_config()`'s
+    # allowlist dropped it before `profiles.resolve()` ever saw it. Setting it in the file the
+    # module names did precisely nothing, silently; only the environment variable worked, and the
+    # module does not mention one (R8 agent 4). The two budget keys beside it still WIN over the
+    # profile when set by hand, which `resolve()` documents and does not change.
+    "context_profile": "standard",
 }
 VCS_MARKERS = (".git", ".hg", ".svn")
 
