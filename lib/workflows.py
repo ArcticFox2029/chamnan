@@ -186,24 +186,40 @@ def signatures(command_text):
     return out
 
 
+# Lines `read()` could not use, from its last call. A list rather than a count so a caller can show
+# one if it ever needs to; today only the length is used.
+LAST_SKIPPED = []
+
+
 def read(log_path):
     """Every entry currently on disk, in order, malformed lines skipped. Read-only, and public
     because the PostToolUse hook needs exactly this: the history as it stood BEFORE the command it
     is about to record. It used to get that by calling `record()` with an empty list -- which, back
     when `record()` rewrote the whole file unconditionally, cost two full rewrites of the log per
     Bash call. Reading is now a read."""
+    # 🐛 Malformed lines are skipped, which is right — a torn last line is what a killed process
+    # leaves behind — but the count was thrown away, and `chamnan-report` prints "these counts are
+    # exact for that window" over the result. Exact is a strong word and this could not back it.
+    # Recorded the way workspace.py records LAST_IGNORE_RULES_ADDED, so the caller can say so
+    # without every caller having to change shape (R1 agent 4).
+    del LAST_SKIPPED[:]
     if not log_path.is_file():
         return []
     out = []
     for line in log_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
         try:
             entry = json.loads(line)
         except (json.JSONDecodeError, RecursionError):
+            LAST_SKIPPED.append(line[:80])
             continue
         # A line holding `[]` or `42` is valid JSON and every caller here calls .get on it. Skipped
         # like a malformed line, which is what it is for this log's purposes (R4 agent 1).
         if isinstance(entry, dict):
             out.append(entry)
+        else:
+            LAST_SKIPPED.append(line[:80])
     return out
 
 

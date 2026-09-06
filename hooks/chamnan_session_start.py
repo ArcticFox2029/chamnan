@@ -61,6 +61,10 @@ STATE_READ_CEILING = 2_000_000    # bytes
 MAP_READ_CEILING = 8_000_000      # bytes
 
 
+# Bytes the last `_read_bounded` call did not read, because the ceiling stopped it.
+LAST_UNREAD = []
+
+
 def _read_bounded(path, ceiling):
     """`path`'s text, cut at `ceiling` bytes, without ever reading past it.
 
@@ -68,7 +72,18 @@ def _read_bounded(path, ceiling):
     budget can say no. Reading through a file object means the OS never hands back more than asked.
     """
     with path.open("r", encoding="utf-8", errors="replace") as f:
-        return f.read(ceiling)
+        text = f.read(ceiling)
+    # 🐛 The caller's truncation marker counts what it was GIVEN, not what exists. STATE.md is read
+    # at a 2 MB ceiling, so on a 50 MB file the marker said "…2 MB more" when 48 MB was unread — an
+    # undercount of about 25x, on exactly the size of file the ceiling exists for (R1 agent 4).
+    # Recorded here because this is the only place that knows both numbers.
+    del LAST_UNREAD[:]
+    try:
+        unread = max(0, path.stat().st_size - len(text.encode("utf-8", "replace")))
+    except OSError:
+        unread = 0
+    LAST_UNREAD.append(unread)
+    return text
 
 # The plugin's own write skills, in the order they should be named. `note` is the description
 # fragment used only when the skill is present -- kept here rather than read from each SKILL.md so
@@ -1099,6 +1114,13 @@ def main():
                 full = redact.scrub(raw)
                 budget = cfg.get("state_token_budget", 1700)
                 st, marker = state.render(full, budget, display(sp, root))
+                # The marker describes the budget cut. Anything the READ ceiling left behind is on
+                # top of that, and only this scope knows both numbers.
+                _unread = LAST_UNREAD[0] if LAST_UNREAD else 0
+                if _unread and marker:
+                    marker += (f"\n_…and {_unread // 1024:,} KB of `{display(sp, root)}` was never "
+                               f"read: it is larger than the {STATE_READ_CEILING // 1_000_000} MB "
+                               f"this hook will load._")
                 # 🐛 Demoted HERE and not inside render(), whose job is "this file under a budget"
                 # and whose callers depend on getting the file back unaltered. This is the point
                 # where repository-authored text enters chamnan's own structure, which is the same
