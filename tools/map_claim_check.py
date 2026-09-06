@@ -39,6 +39,19 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+import redact  # noqa: E402
+
+# 🐛 [2026-09-07] Every `bin/` command shadows `print` with `redact.emit`, and the suite has a
+# derived check that fails if one of them stops. This file is not in `bin/`, so it was outside that
+# sweep -- and `chamnan-map --verify` shells out to it, which made it the one path in the CLI that
+# printed repository text unredacted. What it prints is rows of `.chamnan/MAP.md`, which is a
+# committed file that arrives with a clone: a credential written into an opening comment reached
+# stdout byte for byte, and `redact.scrub` was confirmed to mask that exact string had it run
+# (R1 agent 2, 2026-09-07). Found in code added the same day it was reported -- new surfaces are
+# where the sweep's blind spots are.
+print = redact.emit  # noqa: A001
+
 # 🐛 [2026-09-06] The README credits this path inside the PLUGIN for "2,329 of 2,329 true", and the
 # file lived only in the workspace chamnan is developed in -- a number a reader was asked to trust,
 # from a tool they could not run. It ships here now and defaults to the repository it is run from,

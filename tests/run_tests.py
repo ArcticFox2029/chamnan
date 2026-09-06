@@ -8694,6 +8694,36 @@ check("...and a relative path is untouched",
           encoding="utf-8").count("`src/app.py`") == 2)
 _rmtree(_ap.parent, ignore_errors=True)
 
+# 🐛 [2026-09-07] One workflow produced FIVE candidate files in this repository's own queue:
+# `python3, git add, git commit`, the same three rotated two ways, and two more with an extra
+# `python3` on the end. `repeated()` slides a window over a command log, so one habit performed at
+# slightly different offsets is detected as several sequences and each got its own file — five
+# review decisions for one habit, and a queue count saying five things are waiting when one is.
+# R12 agent 5 predicted this; the queue then produced it.
+_hb = Path(tempfile.mkdtemp(prefix="chamnan-habit-")) / "r"
+(_hb / ".chamnan" / "candidates").mkdir(parents=True)
+for _seq in (["python3", "git add", "git commit"],
+             ["git add", "git commit", "python3"],
+             ["python3", "git add", "git commit", "python3"],
+             ["git add", "git commit", "python3", "python3"]):
+    _csym.upsert(_hb, _seq, 3, "2026-09-07")
+_hb_files = sorted(x.name for x in (_hb / ".chamnan" / "candidates").glob("*.md"))
+check("ONE HABIT DETECTED AT FOUR OFFSETS IS ONE CANDIDATE, NOT FOUR", len(_hb_files) == 1)
+# The longer sequence is the better description of the habit, so it is the one kept.
+check("...and the sequence kept is the longest of them",
+      _hb_files == ["python3-git-add-git-commit-python3.md"])
+# The count is the larger of the two, never their sum: they are the same events counted twice.
+_hb_read = _csym.read(_hb, ["python3", "git add", "git commit", "python3"])
+check("...and the count is not inflated by counting the same events again",
+      _hb_read is not None and int(str(_hb_read[0]).strip()) == 3)
+# The half that makes it a merge and not a swallow: an unrelated sequence is still its own
+# candidate, however many commands it happens to share.
+_csym.upsert(_hb, ["make", "docker build", "kubectl apply"], 3, "2026-09-07")
+_csym.upsert(_hb, ["git add", "make", "git commit"], 3, "2026-09-07")
+check("...while a different sequence is still a different candidate",
+      len(list((_hb / ".chamnan" / "candidates").glob("*.md"))) == 3)
+_rmtree(_hb.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
@@ -11703,6 +11733,25 @@ for _cmd in sorted(p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix):
     _src = _cmd.read_text(encoding="utf-8")
     check(f"EVERY COMMAND SCRUBS WHAT IT PRINTS: {_cmd.name}",
           "print = redact.emit" in _src and "import redact" in _src)
+# 🐛 [2026-09-07] And for anything OUTSIDE bin/ that a chamnan command runs. `chamnan-map --verify`
+# shells out to `tools/map_claim_check.py`, which is not in bin/ and was therefore outside the sweep
+# above — the one path in the CLI that printed repository text unredacted. What it prints is rows of
+# `.chamnan/MAP.md`, a committed file that arrives with a clone: reproduced with a credentialed URL
+# written into a row, on stdout byte for byte before, `<REDACTED>` after (R1 agent 2, 2026-09-07).
+# Found in code added the same day it was reported — a new surface is where a derived sweep's blind
+# spot is, so the sweep is derived from what the commands INVOKE, not only from where they live.
+_invoked = set()
+for _cmd in sorted(p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix):
+    for _m in re.finditer(r'HERE\.parent\s*/\s*"tools"\s*/\s*"([\w.]+\.py)"',
+                          _cmd.read_text(encoding="utf-8-sig")):
+        _invoked.add(_m.group(1))
+check("the sweep found the tool chamnan-map runs, rather than being told about it",
+      "map_claim_check.py" in _invoked)
+for _tool in sorted(_invoked):
+    _tsrc = (ROOT / "tools" / _tool).read_text(encoding="utf-8-sig")
+    check(f"A TOOL A COMMAND SHELLS OUT TO SCRUBS WHAT IT PRINTS: {_tool}",
+          "print = redact.emit" in _tsrc and "import redact" in _tsrc)
+
 # 🐛 [2026-09-06] And the same rule for the hooks, which had none — the sibling half of the very
 # check above, in the family that emits MORE repository text than any command. The credential half
 # is deliberately not repeated there (each section is scrubbed at the point it is read, ahead of
