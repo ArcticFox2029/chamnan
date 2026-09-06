@@ -9778,6 +9778,45 @@ for _split in ('api_key = f"sk-{tail}"', 'aws_key = f"AKIA{rest}IOSFODNN7"',
     check(f"...but splitting a key across an interpolation is not a way through: {_split[:26]}",
           PLACEHOLDER_TEXT in redact.scrub(_split))
 
+# 🐛 `workflows.read` skips a malformed line — right, a torn last line is what a killed process
+# leaves — and threw the count away, while `chamnan-report` printed "these counts are exact for that
+# window" over the result. Exact is a strong word and the number could not back it (R1 agent 4).
+_torn = Path(tempfile.mkdtemp(prefix="chamnan-torn-"))
+try:
+    _tl = _torn / "commands.jsonl"
+    _tl.write_text('{"cmd": "a"}\n{"cmd": "b"}\n', encoding="utf-8")
+    check("A CLEAN LOG REPORTS NOTHING SKIPPED",
+          len(workflows.read(_tl)) == 2 and workflows.LAST_SKIPPED == [])
+    _tl.write_text('{"cmd": "a"}\n{"cmd": "b"}\n{"cmd": "c", "incompl', encoding="utf-8")
+    check("...and a line torn by a killed process is counted, not just dropped",
+          len(workflows.read(_tl)) == 2 and len(workflows.LAST_SKIPPED) == 1)
+    _tl.write_text('{"cmd": "a"}\n[]\n42\n', encoding="utf-8")
+    check("...as is a line that is valid JSON but not a record",
+          len(workflows.read(_tl)) == 1 and len(workflows.LAST_SKIPPED) == 2)
+finally:
+    _rmtree(_torn, ignore_errors=True)
+check("...and the report only says 'exact' when it can back the word",
+      "so these counts are a floor" in (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8"))
+
+# 🐛 STATE.md is read at a 2 MB ceiling and the truncation marker counted what it was GIVEN, so on
+# a 50 MB file it said "…2 MB more" while 48 MB went unread — an undercount of about 25x, on
+# exactly the size of file the ceiling exists for (R1 agent 4).
+_big = Path(tempfile.mkdtemp(prefix="chamnan-bigstate-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_big, capture_output=True)
+    (_big / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_big, capture_output=True)
+    (_big / ".chamnan" / "STATE.md").write_text(
+        "# Work in flight\n\n" + "".join(f"## Thread {_i}\n\nbody for {_i}.\n\n"
+                                          for _i in range(60_000)), encoding="utf-8")
+    _bs = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                         cwd=_big, input="{}", capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    check("A FILE TOO LARGE TO READ SAYS SO, RATHER THAN COUNTING ONLY WHAT IT READ",
+          "was never read" in _bs.stdout)
+finally:
+    _rmtree(_big, ignore_errors=True)
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402

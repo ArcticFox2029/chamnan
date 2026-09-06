@@ -416,9 +416,16 @@ def print_usage(root):
             what = f"  — {what[:58]}" + ("…" if len(what) > 58 else "")
         print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}{what}")
     if oldest and newest:
+        # 🐛 "exact" was printed whatever the log held. A line a killed process tore in half is
+        # skipped by `workflows.read` — correctly — and the count of those was thrown away, so the
+        # sentence claimed a precision the number did not have (R1 agent 4).
+        _torn = len(workflows.LAST_SKIPPED)
+        _exact = (f"so these counts are exact for that window" if not _torn
+                  else f"and {_torn} unreadable line{'s' if _torn != 1 else ''} "
+                       f"{'were' if _torn != 1 else 'was'} skipped, so these counts are a floor")
         print(f"  (from the calls currently logged, {oldest[:10]} to {newest[:10]} — "
               f"commands.jsonl keeps {workflows.KEEP_DAYS} days; chamnan's own commands are never "
-              f"evicted, so these counts are exact for that window)")
+              f"evicted, {_exact})")
     else:
         print("  (nothing logged yet)")
 
