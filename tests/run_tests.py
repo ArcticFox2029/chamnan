@@ -8841,6 +8841,21 @@ check("A QUOTED SECRET RUNNING OVER FORTY LINES IS STILL REDACTED WHOLE",
 _unterminated = 'api_password = "' + _multiline_secret + "\n"
 check("...and an unterminated quoted value is treated exactly as it was before windowing",
       redact.scrub(_unterminated) == redact.scrub(_unterminated, windowed=False))
+# 🐛 And the window-extension regex must allow every separator the RULE allows. 1.20.0 shipped it
+# as `[^\S\n]*` — whitespace except a newline — while ASSIGNED_SECRET's own separator is
+# `[\w-]*\s*['"]?\s*[:=]\s*`, which crosses lines and permits a quote around the key. Three of
+# these four shapes left 39 of 40 lines of the secret in the clear while the unwindowed pass
+# redacted all of them (R22 agent 2, the morning after the release). The fuzz above did not catch
+# it because every document it generates puts the key and its operator on ONE line.
+for _shape, _doc in (
+        ("operator on the next line", 'api_password\n  = "' + _multiline_secret + '"\n'),
+        ("quote on the next line", 'api_password =\n  "' + _multiline_secret + '"\n'),
+        ("key, newline, colon", 'api_password\n: "' + _multiline_secret + '"\n'),
+        ("quoted key, JSON shape", '"api_password"\n  : "' + _multiline_secret + '"\n'),
+        ("rocket on the next line", "api_password\n  => '" + _multiline_secret + "'\n")):
+    check(f"A SECRET WHOSE OPERATOR IS ON ANOTHER LINE IS STILL REDACTED WHOLE: {_shape}",
+          "QUJDREVG" not in redact.scrub(_doc)
+          and redact.scrub(_doc) == redact.scrub(_doc, windowed=False))
 # Windowing is an optimisation, so its ONLY correct output is what scanning everything produces.
 # Held against a corpus built to land on window boundaries: long prose lines full of apostrophes,
 # .pgpass lines (the one rule here that is not SECRET_WORDS-anchored, and which runs between the
@@ -8862,7 +8877,10 @@ for _t in range(60):
             _q = _r.choice(['"', "'", ""])
             _v = ("\n".join("QUJDRE" + str(_r.randrange(10 ** 6)) for _ in range(_r.randrange(1, 40)))
                   if _r.randrange(3) == 0 else "x" * _r.randrange(1, 2000))
-            _lines.append(f"{_r.choice(_win_keys)}{_r.choice([' = ', '=', ': ', ' => '])}{_q}{_v}{_q}")
+            # Separators that cross a line, because the rules allow them and the first version of
+            # this fuzz did not generate them — which is why it passed over a real leak.
+            _sep = _r.choice([" = ", "=", ": ", " => ", "\n  = ", " =\n  ", "\n: ", "\n  => "])
+            _lines.append(f"{_r.choice(_win_keys)}{_sep}{_q}{_v}{_q}")
         elif _k == 3:
             _lines.append(f"tool --{_r.choice(_win_keys)} " + "y" * _r.randrange(1, 900))
         else:
