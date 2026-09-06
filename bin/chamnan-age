@@ -67,7 +67,17 @@ def main(argv):
         return 0
 
     if not findings and not unverifiable:
-        print("chamnan: no stored knowledge names a version that has moved on")
+        # 🐛 [2026-09-06] This read as a completeness claim the check cannot make. Every fresh
+        # environment's declared versions are pooled, so a claim matching ANY of them is cleared --
+        # and a note explicitly about the environment that DID move on is cleared by an unrelated
+        # one that happens to still run the old version. That pooling is deliberate (two
+        # environments legitimately differ, which is why environments.md exists) and this module
+        # has no way to read which environment a sentence is about. So the sentence says what was
+        # actually checked (R11 agent 3).
+        print("chamnan: every version named in stored knowledge is still declared by some "
+              "environment")
+        print("  This does not read which environment an entry is ABOUT: a note about one that "
+              "moved on\n  is cleared by another that still runs the old version.")
         return 0
 
     if findings:
