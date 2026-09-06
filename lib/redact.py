@@ -625,7 +625,19 @@ _WINDOW_LOOKBACK = 64
 _MAX_WINDOW = 200_000
 # The `key = "` of an assignment, from the end of the secret word: the rest of the key's own
 # characters, the operator, then the quote that opens a value the line may not close.
-_OPENS_A_QUOTED_VALUE = re.compile(r"[\w-]*[^\S\n]*(?:=>|[:=])[^\S\n]*([\"'])")
+#
+# 🐛 Shipped in 1.20.0 as `[^\S\n]*` — whitespace EXCEPT a newline — while ASSIGNED_SECRET's own
+# separator is `[\w-]*\s*['"]?\s*[:=]\s*`, which crosses lines and allows a quote around the key.
+# So `api_password\n  = "<40 lines>"`, `api_password =\n  "..."` and the YAML-ish `key\n: "..."`
+# each found no opening quote, took the un-extended window, and left 39 of 40 lines of the secret
+# in the clear — while the unwindowed pass redacted all of them. Three of four shapes, found by
+# R22 agent 2 the morning after the release.
+#
+# The direction of the error is the lesson. This regex decides how far a window REACHES, so
+# matching too much only makes a window larger — slower, never wrong — and matching too little
+# leaks. It is deliberately more permissive than any rule it protects: every separator any of them
+# accepts, plus `=>`, and `\s*` throughout.
+_OPENS_A_QUOTED_VALUE = re.compile(r"""[\w-]*\s*['"]?\s*(?:=>|[:=])\s*(['"])""")
 
 
 def _windows_around_secret_words(text):
