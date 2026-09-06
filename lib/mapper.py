@@ -83,9 +83,31 @@ SKIP_DIRS = {
 # rule.
 MAX_FILE_BYTES = 2_000_000
 
+# 🐛 [2026-09-06] The byte ceiling assumes cost is roughly proportional to file SIZE, and for
+# ordinary source it is. For a file that is mostly newlines separating trivial statements it is
+# wrong by three orders of magnitude, because `ast.parse` allocates per STATEMENT, not per byte.
+# Measured on this machine, one file, through `scan()`:
+#
+#     50,000 lines   0.10 MB    115 MB peak RSS
+#    200,000 lines   0.40 MB    393 MB
+#    500,000 lines   1.00 MB    943 MB
+#    900,000 lines   1.80 MB  1,674 MB
+#
+# Every one of those passes MAX_FILE_BYTES cleanly. A 1.8 MB file — entirely plausible as generated
+# or data-shaped source — takes 1.7 GB, which OOM-kills `chamnan-map` on any CI container capped
+# under 2 GB, and the byte ceiling never sees it coming (R5 agent 1). Peak memory does NOT
+# accumulate across files (the AST is released between them), so bounding the single worst file
+# bounds the run.
+#
+# 200,000 is where the curve is still under 400 MB — an order of magnitude above what an ordinary
+# corpus costs and an order of magnitude below where a container dies. Counted on the BYTES, before
+# any decode, for the same reason the size check happens before the read.
+MAX_FILE_LINES = 200_000
+
 # What the last scan left out and why. Populated by indexable(), read by the caller that
 # reports coverage, so a skipped file is a number someone can see rather than an absence.
 SKIPPED_TOO_LARGE = []
+SKIPPED_TOO_MANY_LINES = []
 SKIPPED_BINARY = []
 # 🐛 Eight names in SKIP_DIRS are ORDINARY SOURCE DIRECTORY NAMES as well as build-output names,
 # and the list could not tell the two apart. Measured: coveragepy's index contained 130 files and
@@ -1663,6 +1685,12 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             if len(raw) > MAX_FILE_BYTES:
                 SKIPPED_TOO_LARGE.append((path, len(raw)))
                 continue
+            # Counted on the bytes rather than after decoding: the decode of a pathological file is
+            # itself part of what this is refusing to spend. See MAX_FILE_LINES for the measurement.
+            lines_here = raw.count(b"\n") + (1 if raw and not raw.endswith(b"\n") else 0)
+            if lines_here > MAX_FILE_LINES:
+                SKIPPED_TOO_MANY_LINES.append((path, lines_here))
+                continue
             if b"\x00" in raw[:8192]:
                 SKIPPED_BINARY.append(path)
                 continue
@@ -1690,7 +1718,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
 
 
 def reset_skips():
-    """Empty the five "what did not make it into the index" lists. Call once per REPORT, not per scan.
+    """Empty the six "what did not make it into the index" lists. Call once per REPORT, not per scan.
 
     🐛 `_scan` used to clear four of them on entry, which is wrong the moment a run scans more than
     one directory: `chamnan-map <a> <b>` calls scan() per target, so the second call wiped the first
@@ -1708,6 +1736,7 @@ def reset_skips():
     file vanishing from a report that claims to be complete.
     """
     SKIPPED_TOO_LARGE.clear()
+    SKIPPED_TOO_MANY_LINES.clear()
     SKIPPED_BINARY.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()

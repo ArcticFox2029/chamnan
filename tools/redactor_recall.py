@@ -89,6 +89,15 @@ POSITIVES = [
     ("aws presigned url",    f"https://s3.amazonaws.com/b/k?X-Amz-Signature={_F}{_F}", f"{_F}{_F}"),
     ("camelCase password",   f'dbPassword = "{_F}{_F}"', f"{_F}{_F}"),
     ("plural token name",    f"API_TOKENS={_F}{_F}", f"{_F}{_F}"),
+    # 🐛 [2026-09-06] What sits after the separator is not always the value. A type annotation or a
+    # YAML anchor stands between the name and the secret in five ordinary language idioms, and the
+    # rules captured THAT and stopped -- redacting the type and leaving the credential beside a
+    # marker that says it was handled. Adding these four dropped recall from 97.4% to 88.1% before
+    # the fix, which is the number that made the case for it (R8 agent 2).
+    ("kotlin annotated",     f'val apiPassword: String = "{_F}{_F}"', f"{_F}{_F}"),
+    ("typescript annotated", f'const apiKey: string = "{_F}{_F}";', f"{_F}{_F}"),
+    ("yaml anchor",          f'api_password: &shared_pw "{_F}{_F}"', f"{_F}{_F}"),
+    ("go typed var",         f'var apiPassword string = "{_F}{_F}"', f"{_F}{_F}"),
 ]
 
 # Must survive untouched. An index full of <REDACTED> is not an index.
