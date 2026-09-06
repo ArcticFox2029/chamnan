@@ -250,6 +250,12 @@ def rules_text(root):
             body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
         except OSError:
             continue
+        # 🐛 [2026-09-06] `title_of(path)` was called with no body, at five sites in this loop, so
+        # every rule file was read a further FOUR times to recover a heading the caller already had
+        # in `body`. Measured by instrumenting the real hook sequence: 1,500 `read_text` calls for
+        # 500 rule files, where 500 is the whole requirement. The parameter to pass it exists and
+        # its docstring says what it is for (R12 agent 3).
+        title = title_of(path, body)
         group = collision_of.get(path)
         if group:
             # Same reasoning as the merge-conflict branch below, same shape of injection: a rule
@@ -257,18 +263,18 @@ def rules_text(root):
             # checkout the sibling file is real content nobody meant to inject as fact, and on the
             # case-insensitive machine that wrote it, it already silently ate the other one's body.
             others = ", ".join(f"`{mdblock.as_quoted(p.name)}`" for p in group if p != path)
-            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule's filename collides with {others}, "
+            out.append(f"**{mdblock.one_line(title)}** — ⚠ this rule's filename collides with {others}, "
                        f"differing only by case. Filesystems disagree on whether these are one file "
                        f"or two, so it is NOT in force until the files are merged or renamed apart; "
                        f"do not act on either side.")
-            titles.append(title_of(path))
+            titles.append(title)
         elif body and unresolved_conflict(body):
             # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
             # was never written, and the point is to get this file resolved.
-            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule is mid-merge and both sides are still "
+            out.append(f"**{mdblock.one_line(title)}** — ⚠ this rule is mid-merge and both sides are still "
                        f"in `{mdblock.as_quoted(path.name)}`. It is NOT in force until someone "
                        f"resolves it; do not act on either side.")
-            titles.append(title_of(path))
+            titles.append(title)
         elif body:
             # Closed per RULE, not only once around the finished section. A fence left open
             # in one rule's own file otherwise runs to the end of the whole section, and
@@ -277,7 +283,7 @@ def rules_text(root):
             # rules after the broken one swallowed exactly as before. Balancing here also
             # means both cuts below operate on text whose fences already match.
             out.append(mdblock.close_dangling_fence(_flatten(body)))
-            titles.append(title_of(path))
+            titles.append(title)
     if not out:
         return ""
     joined = "\n\n".join(out)
