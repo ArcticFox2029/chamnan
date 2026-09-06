@@ -12709,6 +12709,33 @@ check(f"a small window lands in standard: {_small_family} "
 check("...and the table still holds both kinds, or neither check above means anything",
       any(w >= 1_000_000 for w in profiles_mod.MODEL_WINDOWS.values())
       and any(w <= 200_000 for w in profiles_mod.MODEL_WINDOWS.values()))
+
+# 🐛 [2026-09-06] `profiles.py`'s own opening line says the profile is "CHOSEN, in
+# `.chamnan/config.json`, not sniffed" — and `context_profile` was not a key in DEFAULT_CONFIG, so
+# `load_config()`'s allowlist dropped it before `resolve()` ever saw it. Setting it in the file the
+# module names did nothing, silently. Making the key real was only half the fix: `resolve()` let any
+# "explicit" budget outrank the profile, and `load_config()` merges the defaults in, so both budget
+# keys are ALWAYS present and a chosen profile could never move either. The one path that worked,
+# the environment variable, worked only because its caller popped the two keys first (R8 agent 4).
+import workspace as _pws  # noqa: E402
+check("context_profile is a real key, so load_config keeps it",
+      "context_profile" in _pws.DEFAULT_CONFIG)
+_pbase = _pws.DEFAULT_CONFIG["index_token_budget"]
+_psbase = _pws.DEFAULT_CONFIG["state_token_budget"]
+_pchosen = profiles_mod.resolve({**_pws.DEFAULT_CONFIG, "context_profile": "large-window"})
+check("A PROFILE CHOSEN IN THE CONFIG FILE ACTUALLY CHANGES THE BUDGET",
+      _pchosen[0] == "large-window"
+      and _pchosen[1]["index_token_budget"] != _pbase
+      and _pchosen[1]["state_token_budget"] != _psbase)
+# The pair is the interesting part: a number the user tuned must still win over the profile, and a
+# number left at its shipped default must not.
+_ptuned = profiles_mod.resolve({**_pws.DEFAULT_CONFIG, "context_profile": "large-window",
+                                "index_token_budget": 1234})
+check("...while a budget the user tuned by hand still outranks it",
+      _ptuned[1]["index_token_budget"] == 1234
+      and _ptuned[1]["state_token_budget"] == _pchosen[1]["state_token_budget"])
+check("...and with nothing chosen the defaults are what reach the block",
+      profiles_mod.resolve(dict(_pws.DEFAULT_CONFIG))[1]["index_token_budget"] == _pbase)
 # 🐛 codestral carried its May-2024 launch number (32K) through a January-2025 refresh to 256K --
 # eight months stale by the time anyone re-derived it, and silently sending every codestral user's
 # index to small-window's budget instead of standard's. The check moves with the correction rather
