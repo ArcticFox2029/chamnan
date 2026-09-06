@@ -329,6 +329,78 @@ if _tag:
           _release_tag() == "v1.21.0")
     _rmtree(_tagfix, ignore_errors=True)
 
+# 🐛 [2026-09-06] A committed, badly-resolved merge leaves `<<<<<<< HEAD` in STATE.md, and both
+# sides were injected as settled fact — two contradictory pinned lines inside the fence that tells
+# the reader this came from the repository. `memory.unresolved_conflict()` guards RULES against
+# exactly this and was never called from `state.render()`: the same rule applied to one of two
+# stores (R9 agent 3). Said instead of the content, not beside it — printing both under a warning
+# invites the reader to pick one, which is the failure.
+import state as _confstate  # noqa: E402
+_conf_state = ("# Work in flight\n\n<<<<<<< HEAD\n→ Deploy only on Tuesdays 📌\n"
+               "=======\n→ Deploy whenever CI is green 📌\n>>>>>>> other-branch\n")
+_conf_out, _ = _confstate.render(_conf_state, 1700, "STATE.md")
+check("A MID-MERGE STATE.md INJECTS NEITHER SIDE AS FACT",
+      "Tuesdays" not in _conf_out and "CI is green" not in _conf_out)
+check("...and says what is wrong and what fixes it",
+      "mid-merge" in _conf_out and "Resolve the conflict markers" in _conf_out)
+check("...while an ordinary STATE.md is injected exactly as before",
+      "an ordinary pinned line"
+      in _confstate.render("# Work in flight\n\n→ an ordinary pinned line 📌\n",
+                    1700, "STATE.md")[0])
+# The guard must not fire on a document that merely QUOTES the markers, which is why
+# `unresolved_conflict` requires both an opener and a closer.
+check("...and a file that only mentions one marker is not accused",
+      "a note about <<<<<<< in a diff"
+      in _confstate.render("# Work in flight\n\na note about <<<<<<< in a diff\n",
+                    1700, "STATE.md")[0])
+
+# 🐛 [2026-09-06] `chamnan-map` returned 1 before `mapper.render()` whenever nothing matched
+# EXT_LANG — and `render()` is the ONLY caller of `deploy.scan/render` (the Kubernetes shape) and of
+# `assets.scan/render` (the "written to be read" and "source chamnan cannot index" sections), both
+# built for exactly this repository. So a GitOps tree of nothing but manifests, and a documentation
+# tree, each got no workspace at all, no map, exit 1 — while `render([], root)` on the same tree
+# produces a correct Deployment section naming every image (R9 agent 4). "No recognised SOURCE" and
+# "nothing to say about this repository" are different facts.
+_ncroot = Path(tempfile.mkdtemp(prefix="chamnan-nocode-"))
+
+
+def _map_run(where):
+    _r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(where),
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _m = where / ".chamnan" / "MAP.md"
+    return _r.returncode, (_m.read_text(encoding="utf-8") if _m.is_file() else "")
+
+
+_gitops = _ncroot / "gitops"
+(_gitops / ".git").mkdir(parents=True)
+(_gitops / "manifests").mkdir()
+for _i in range(4):
+    (_gitops / "manifests" / f"s{_i}.yaml").write_text(
+        "apiVersion: apps/v1\nkind: Deployment\nspec:\n  template:\n    spec:\n"
+        f"      containers:\n      - image: reg.example/s{_i}:1.0\n", encoding="utf-8")
+_gcode, _gmap = _map_run(_gitops)
+check("A REPOSITORY OF NOTHING BUT MANIFESTS STILL GETS AN INDEX",
+      _gcode == 0 and "## Deployment" in _gmap)
+check("...and it names what runs, which is the whole point of that section",
+      "Kubernetes object(s)" in _gmap and "Deployment" in _gmap)
+
+_docs = _ncroot / "docs-only"
+(_docs / ".git").mkdir(parents=True)
+(_docs / "docs").mkdir()
+for _i in range(12):
+    (_docs / "docs" / f"p{_i}.md").write_text(f"# Page {_i}\n\nprose.\n" * 20, encoding="utf-8")
+_dcode, _dmap = _map_run(_docs)
+check("...and so does a repository of nothing but documentation",
+      _dcode == 0 and "written to be read" in _dmap)
+
+# The other direction: a tree chamnan genuinely has nothing to say about must still say so and
+# exit 1, or this has turned "no source" into "always write a map".
+_bare = _ncroot / "bare"
+(_bare / ".git").mkdir(parents=True)
+check("...while a tree with nothing in it at all still refuses, as it always did",
+      _map_run(_bare) == (1, ""))
+_rmtree(_ncroot, ignore_errors=True)
+
 # 🐛 The version string is the ONLY thing the stale-build banner compares, so two different builds
 # sharing one are invisible to it — and that is not hypothetical. Measured on this machine while
 # writing this: both installed copies reported "1.21.0" and neither was this code; the installed

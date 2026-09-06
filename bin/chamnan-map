@@ -468,7 +468,23 @@ def main(argv):
         if not why:
             print("  nothing was excluded either: the tree holds no files chamnan indexes.",
                   file=sys.stderr)
-        return 1
+        # 🐛 [2026-09-06] And then it STOPPED, which threw away the two subsystems built for exactly
+        # this repository. `mapper.render()` is the only caller of `deploy.scan/render` (the
+        # Kubernetes shape) and of `assets.scan/render` (the "written to be read" and "source
+        # chamnan cannot index" sections), and this return sat in front of it. A GitOps repository
+        # of nothing but manifests, a documentation repository, a notebook-heavy data repository:
+        # each got no workspace at all, no MAP.md, exit 1 — while `render([], root)` on the same
+        # tree produces a correct Deployment section naming every image (R9 agent 4).
+        #
+        # "No recognised SOURCE" and "nothing to say about this repository" are different facts.
+        # The reasons above are still printed, because they are still true and still what a reader
+        # needs; what changes is that a tree chamnan can describe by another route gets described.
+        _anyway = mapper.render(files, root)
+        if not any(h in _anyway for h in ("## Deployment", "## Stored material",
+                                          "## Source chamnan cannot index")):
+            return 1
+        print("  chamnan can still describe this tree by another route — writing the map.",
+              file=sys.stderr)
     text = mapper.render(files, root)
     try:
         out = ws.ensure(root) / "MAP.md"
