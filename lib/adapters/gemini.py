@@ -129,5 +129,6 @@ def install(root, body, command):
         if not replaced:
             groups.append(_entry(command))
 
-        write_target(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+        if not write_target(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n"):
+            raise OSError(f"{target.path} could not be written")
         return path

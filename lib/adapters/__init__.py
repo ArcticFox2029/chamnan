@@ -427,7 +427,25 @@ def _looks_generated(text):
         body = body[end + 4:].lstrip()
     if not body.startswith("## chamnan"):
         return False
-    return [ln for ln in body.splitlines() if ln.startswith("## ")] == ["## chamnan"]
+    if [ln for ln in body.splitlines() if ln.startswith("## ")] != ["## chamnan"]:
+        return False
+    # 🐛 Third version, third failure in the same direction. "Only heading is `## chamnan`" is
+    # exactly the shape of an ordinary note a person writes ABOUT chamnan — it is the natural
+    # heading for one — so a hand-written file saying "My own notes about how we use chamnan here"
+    # was replaced without warning, frontmatter and all (R3 agent 4). The comment above argues that
+    # a human file "has to literally begin that way to be replaced, at which point it is chamnan's
+    # own output". That does not follow, and this is what it cost.
+    #
+    # The MARKER above would settle it, but it only shipped in 1.20.0, so a file written by 1.17
+    # through 1.19 carries none and requiring it would refuse to update a real user's real file.
+    # So: what does every generated block have that a person's note does not? Its first line under
+    # the heading is chamnan's own voice — an italic aside, or a `###` section. A note someone
+    # typed opens with prose.
+    for line in body.splitlines()[1:]:
+        if not line.strip():
+            continue
+        return line.startswith("_") or line.startswith("### ")
+    return False
 
 
 def fixed_overhead(agent):
@@ -508,7 +526,15 @@ def install(root, agent, body, command=""):
                 f"adapter's output will carry it -- and run this again.")
         # The marker goes LAST: several targets require YAML frontmatter as their first bytes, and
         # a provenance line ahead of that would break the format it is meant to protect.
-        write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n")
+    # 🐛 `write_target` returns True on success and its own docstring says so, and not one of the
+    # seven call sites looked. A target the user had made read-only was left untouched while every
+    # adapter reported success and `chamnan-context --write` printed `-> <path>` and exited 0 —
+    # same inode, same bytes, a stale file the user now believes is current. That is the untruth
+    # this release has already fixed twice elsewhere, in the writer nobody had checked
+    # (R3 agent 4). The result travels back to the caller now, and a failure is said out loud.
+        if not write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n"):
+            raise OSError(f"{target.path} could not be written — it may be read-only, or on a "
+                          f"filesystem that refused the replace.")
     return target.path
 
 
