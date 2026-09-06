@@ -117,7 +117,8 @@ def records(root):
         except OSError:
             mtime = 0.0
         return (bool(m), m.group(0) if m else "", mtime)
-    return sorted((p for p in d.glob("*.md") if p.is_file()), key=_key, reverse=True)
+    return sorted((p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p)),
+                  key=_key, reverse=True)
 
 
 def latest(root):

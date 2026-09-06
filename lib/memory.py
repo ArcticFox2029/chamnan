@@ -66,7 +66,8 @@ def entries(root, category):
     except (OSError, ValueError, RuntimeError):
         return []
     return sorted(p for p in d.glob("*.md")
-                  if p.is_file() and ws.inside(p, root, _resolved_root=root_resolved))
+                  if p.is_file() and not ws.is_store_index(p)
+                  and ws.inside(p, root, _resolved_root=root_resolved))
 
 
 # `see memory `slug``, `memory: `slug``, or a bare ``slug`` next to the word memory. Written by

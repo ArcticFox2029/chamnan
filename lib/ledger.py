@@ -18,6 +18,8 @@ with no further change here.
 import re
 import time
 
+import workspace as ws
+
 WEEK = 7 * 86400
 
 # Matches the date convention sessions.py documents for its own filenames: "sorted by filename,
@@ -41,7 +43,7 @@ def _files(root, *parts):
         d = d / p
     if not d.is_dir():
         return None
-    return sorted(p for p in d.glob("*.md") if p.is_file())
+    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p))
 
 
 def _mtimes(paths):

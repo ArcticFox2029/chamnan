@@ -5827,6 +5827,37 @@ check("...while silence still holds when there is nothing to say",
 check("...and `line()` keeps working for every caller that passes no clashes at all",
       rulecheck.line([]) == "")
 
+# 🐛 [2026-09-06] A directory's own README is that directory's INDEX, not a member of it, and every
+# store here is listed by globbing `*.md`. In the development workspace `.chamnan/skills/README.md`
+# sorts SECOND of twenty, so with a twelve-slot listing it took a real skill's place — and was
+# described to the model by its own first prose line, which says what the folder is rather than what
+# a procedure does (R8 agent 5). Checked over the SET: eight listings glob `*.md`, and fixing the
+# one that was reported is how this repository keeps arriving back at the same defect.
+check("a store's own README is recognised as its index, not an entry",
+      ws.is_store_index("x/README.md") and ws.is_store_index("x/index.md")
+      and not ws.is_store_index("x/main_app_memory_system.md"))
+_idx = Path(tempfile.mkdtemp(prefix="chamnan-storeidx-")) / "repo"
+(_idx / ".git").mkdir(parents=True)
+ws.ensure(_idx)
+_wsd = _idx / ".chamnan"
+for _sub, _entry in (("skills", "a-real-procedure.md"), ("memory/rules", "a-real-rule.md"),
+                     ("sessions", "2026-09-06-a-real-session.md"), ("threads", "a-thread.md"),
+                     ("candidates", "a-candidate.md")):
+    _d = _wsd / _sub
+    _d.mkdir(parents=True, exist_ok=True)
+    (_d / _entry).write_text("# Real\n\nbody\n", encoding="utf-8")
+    (_d / "README.md").write_text("# What this folder is\n\nprose about the folder\n",
+                                  encoding="utf-8")
+import memory as _midx, sessions as _sidx, timeline as _tidx, candidates as _cidx  # noqa: E402
+import ledger as _lidx  # noqa: E402
+for _label, _got in (("memory rules", _midx.entries(_idx, "rules")),
+                     ("sessions", _sidx.records(_idx)),
+                     ("threads", _tidx.threads(_idx)),
+                     ("candidates", _cidx.entries(_idx))):
+    check(f"A STORE'S OWN README IS NOT LISTED AS ONE OF ITS ENTRIES: {_label}",
+          all(p.name != "README.md" for p in _got) and len(_got) == 1)
+_rmtree(_idx.parent, ignore_errors=True)
+
 # "I could not check" and "this is violated" are different facts, and collapsing them turns the
 # report into noise that gets ignored.
 check("a glob matching nothing is unverifiable, not broken",

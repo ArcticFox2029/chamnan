@@ -1244,7 +1244,11 @@ def main():
             # file's content into the block — reproduced with `~/.ssh/id_rsa` behind a `.md`
             # name. The workspace arrives with a clone, so the link is the repository's
             # choice and not the reader's.
-            skills = ([p for p in sorted((wsdir / "skills").glob("*.md")) if ws.inside(p, root)]
+            # `ws.is_store_index` drops the directory's own README: it is the index OF this
+            # store, not a procedure in it, and here it sorted second of twenty and spent one of
+            # twelve slots describing what the folder is (R8 agent 5).
+            skills = ([p for p in sorted((wsdir / "skills").glob("*.md"))
+                       if ws.inside(p, root) and not ws.is_store_index(p)]
                       if (wsdir / "skills").is_dir() else [])
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
