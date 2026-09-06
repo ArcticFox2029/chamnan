@@ -11023,7 +11023,17 @@ for _bad in ("((a+)b?)+$", "(([a-z])+)+$", "(?:(a+))+$", "(a+)+$", "(a|a)*$", "(
              # all four passed it. 157 characters in one committed rule file hung the real
              # SessionStart hook past 15 seconds; measured 0.004s at k=14 and 4.4x per further
              # two, which is 2^k (R11 agent 2).
-             "(a|aa)" * 26 + "b", "(a|aa)" * 5 + "b", "(x|xy)(x|xy)(x|xy)(x|xy)(x|xy)z"):
+             "(a|aa)" * 26 + "b", "(a|aa)" * 5 + "b", "(x|xy)(x|xy)(x|xy)(x|xy)(x|xy)z",
+             # 🐛 [2026-09-06] The SIXTH family, and the least exotic of the six. Both alternation
+             # detectors captured a group's RAW content and split it on `|` straight away, so
+             # `(?:a|a)*` gave the branches `["?:a", "a"]` — not duplicates, no prefix relation,
+             # guard says safe. A non-capturing group is simply what somebody writes when they do
+             # not want the capture, so this is likelier to be written by accident than any of the
+             # five before it. Measured on the real engine: `(?:a|a)*$` against 20 `a`s and a `b`
+             # is 0.088s, 24 is 1.381s, 26 is 5.500s, while the capturing twin was refused
+             # outright (R12 agent 2).
+             "(?:a|a)*$", "(?P<x>a|a)*$", "(?i:a|a)*$", "(?im-s:a|a)*$", "(?:x|xy)+$",
+             "(?:a|aa)" * 26 + "b"):
     check("A CATASTROPHIC PATTERN IS REFUSED: " + _bad, _would_refuse(_bad))
 # ...and the guard must not refuse the patterns a rule would actually be written with.
 for _ok in (r"^\d{4}-\d{2}-\d{2}$", r"TODO|FIXME", r"^(import|from)\s", r"^## (.+)$",
@@ -11037,6 +11047,19 @@ check("...and a character class of quantifier characters is not one either",
 # engine picks a branch per position and never comes back to it. Twenty of them are ordinary.
 check("distinct alternations are not choice points, however many",
       not _would_refuse("(GET|POST)" * 20))
+check("...and a non-capturing group of distinct branches is still ordinary",
+      not _would_refuse("(?:GET|POST)*x") and not _would_refuse(r"(?:import|from)\s"))
+# 🐛 [2026-09-06] `nxt` is "" at the end of a pattern, and `"" in "+*{"` is TRUE — the empty
+# string is a substring of every string. So a group holding any quantifier and CLOSING the pattern
+# read as a quantified group over a quantifier, and `(\d{4})` and `(\d+)` — the most ordinary
+# regexes there are — were refused outright, every rule written that way silently never running.
+# Found while checking the sixth family's fix for false positives; the leak and the over-refusal
+# were in adjacent lines.
+for _plain in (r"(\d{4})", r"(\d+)", r"(?P<year>\d{4})", r"(\w{2,})"):
+    check(f"A GROUP THAT MERELY ENDS THE PATTERN IS NOT A NESTED QUANTIFIER: {_plain}",
+          not _would_refuse(_plain))
+# ...and the same pattern WITH a quantifier on the group is still the real hazard.
+check("...while the same group actually quantified still is", _would_refuse(r"(\d{4})+"))
 # And the worst case the budget still admits has to be fast, or the budget is the wrong number.
 _redos_t0 = _time.time()
 re.compile("(a|aa)" * _rc2.MAX_QUANTIFIERS + "b").search("a" * 4000)

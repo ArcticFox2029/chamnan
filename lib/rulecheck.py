@@ -113,6 +113,11 @@ def malformed(text):
 _NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*{]")
 
 
+# A frozenset, not the string "+*{": `ch in "+*{"` answers True for the EMPTY string, and this
+# scanner asks the question about the character after a `)`, which is "" at the end of a pattern.
+_QUANTIFIERS = frozenset("+*{")
+
+
 def _quantified_group_over_quantifier(pattern):
     """True when a quantified group contains a quantifier anywhere inside it, at any depth.
 
@@ -147,12 +152,19 @@ def _quantified_group_over_quantifier(pattern):
             depth -= 1
             starts.pop()
             had = inner.pop()
+            # 🐛 [2026-09-06] `nxt` is "" at the end of the pattern, and `"" in "+*{"` is TRUE --
+            # the empty string is a substring of every string. So a group holding any quantifier
+            # and CLOSING the pattern read as a quantified group over a quantifier: `(\d{4})` and
+            # `(\d+)`, the most ordinary regexes there are, were refused outright and every
+            # `**Check:**` rule written that way had silently never run. A frozenset cannot be
+            # asked this question wrongly. Found while checking the sixth ReDoS family's fix for
+            # false positives -- the leak and the over-refusal sat in adjacent lines.
             nxt = pattern[i + 1] if i + 1 < n else ""
-            if had and nxt in "+*{":
+            if had and nxt in _QUANTIFIERS:
                 return True
-            if inner and (had or nxt in "+*{"):
+            if inner and (had or nxt in _QUANTIFIERS):
                 inner[-1] = True
-        elif ch in "+*{" and inner:
+        elif ch in _QUANTIFIERS and inner:
             inner[-1] = True
         i += 1
     return False
@@ -173,6 +185,31 @@ _AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)\s*[+*{]")
 _ANY_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)")
 
 
+# 🐛 [2026-09-06] Both alternation detectors captured a group's RAW content and split it on `|`
+# straight away, so `(?:a|a)*` produced the branches `["?:a", "a"]` -- not duplicates, no prefix
+# relation, and the guard said the pattern was safe. `(?P<x>a|a)*` and `(?i:a|a)*` slipped through
+# the same way. That is not an exotic shape: a non-capturing group is what somebody writes when
+# they do not want the capture, so this family is MORE likely to be written by accident than the
+# five already caught. Measured on the real engine: `(?:a|a)*$` against 20 `a`s and a `b` takes
+# 0.088s, 24 takes 1.381s, 26 takes 5.500s, while the capturing twin was refused outright
+# (R12 agent 2).
+#
+# Stripped rather than matched, and stripped in ONE place both detectors go through -- the two are
+# deliberately the same question asked about differently-quantified groups, and this repository's
+# most-repeated defect is a fix applied to one of a matched pair.
+_GROUP_PREFIX = re.compile(r"^\?(?:P<[^>]*>|P=[^|)]*|[aiLmsux]*(?:-[aiLmsux]+)?:|:|=|!|<[=!]|>)")
+
+
+def _branches(content):
+    """The alternation's branches, with any group modifier dropped off the first one.
+
+    `(?:`, `(?P<name>`, `(?i:`, a lookaround -- every one of them puts characters at the front of
+    the captured content that belong to the GROUP and not to the first branch. Leaving them there
+    made two branches that are the same text look different.
+    """
+    return _GROUP_PREFIX.sub("", content, count=1).split("|")
+
+
 def _branches_overlap(branches):
     """True when two branches of one alternation can consume the same text.
 
@@ -190,7 +227,7 @@ def _branches_overlap(branches):
 
 def _ambiguous(pattern):
     """True for an alternation whose branches can match the same text under a quantifier."""
-    return any(_branches_overlap(m.group(1).split("|"))
+    return any(_branches_overlap(_branches(m.group(1)))
                for m in _AMBIGUOUS_ALTERNATION.finditer(pattern))
 
 
@@ -204,7 +241,7 @@ def _overlapping_alternations(pattern):
     because the engine picks one branch per position and never comes back to it.
     """
     return sum(1 for m in _ANY_ALTERNATION.finditer(pattern)
-               if _branches_overlap(m.group(1).split("|")))
+               if _branches_overlap(_branches(m.group(1))))
 
 
 # 🐛 The third shape, and the one all three guards above are blind to by construction: they every
