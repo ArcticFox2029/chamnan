@@ -1513,6 +1513,24 @@ def notice_due(root, key, times=NOTICE_TIMES):
     return True
 
 
+
+def _lock_holder_is_alive(lock):
+    """True when the process named inside `lock` still exists.
+
+    Read as a SECOND bound beside the age one, never instead of it: a lock written by an older
+    version carries no PID, and an unreadable or unparseable one falls back to "not alive" so the
+    age rule decides on its own exactly as it used to. The age bound alone is the one a wrong
+    clock can invert; the pair cannot both be wrong at once.
+    """
+    try:
+        first = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+    except OSError:
+        return False
+    if not first or not first[0].strip().isdigit():
+        return False
+    return _pid_is_alive(int(first[0].strip()))
+
+
 @contextlib.contextmanager
 def exclusive(path):
     """Hold a lock beside `path` for the duration of the block. Yields True when it was acquired."""
@@ -1521,10 +1539,20 @@ def exclusive(path):
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            # 🐛 [2026-09-06] The holder's PID goes IN the lock, for the reason `_pid_is_alive`
+            # exists: `time.time() - mtime > LOCK_STALE` is the third place in this module where a
+            # forward clock jump inverted a bound. Skew the clock by more than 30 seconds and a
+            # second process reads a lock a live process is still holding as abandoned, unlinks it
+            # and takes it -- so the mutex hands the same shared file to two writers at once, which
+            # is exactly the lost update it exists to prevent (R11 agent 2).
+            try:
+                os.write(fd, f"{os.getpid()}\n".encode())
+            except OSError:
+                pass
             break
         except FileExistsError:
             try:
-                if time.time() - lock.stat().st_mtime > LOCK_STALE:
+                if time.time() - lock.stat().st_mtime > LOCK_STALE and not _lock_holder_is_alive(lock):
                     lock.unlink()
                     continue
             except OSError:
