@@ -626,13 +626,28 @@ def _is_authorship_line(line):
 
 def _skip_continuation(lines, i):
     """Index just past the directive at `lines[i]`, following it across lines if it is unclosed."""
-    depth = lines[i].count("(") - lines[i].count(")") + lines[i].count("[") - lines[i].count("]")
+    # 🐛 `{` and `}` were not counted, and a destructured JS import is the commonest multi-line
+    # directive there is:
+    #
+    #     import {
+    #       alpha,
+    #     } from "./mod.js";
+    #
+    # The opening line never balanced, so the skip stopped one line in, and the comment BELOW the
+    # import — the file's real description — was consumed as part of the directive. Reproduced on
+    # a live file in this repository, and it accounts for one of the corpus's four undescribed
+    # files (R2 agent 3).
+    def _depth(line):
+        return (line.count("(") - line.count(")")
+                + line.count("[") - line.count("]")
+                + line.count("{") - line.count("}"))
+
+    depth = _depth(lines[i])
     i += 1
     # Bounded: a file whose brackets never balance must not consume the whole file looking.
     limit = min(len(lines), i + 40)
     while depth > 0 and i < limit:
-        depth += (lines[i].count("(") - lines[i].count(")")
-                  + lines[i].count("[") - lines[i].count("]"))
+        depth += _depth(lines[i])
         i += 1
     return i
 

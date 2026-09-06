@@ -9226,6 +9226,24 @@ try:
 finally:
     _rmtree(_mode, ignore_errors=True)
 
+# 🐛 `_skip_continuation` counted `(` and `[` and not `{`, so a destructured JS import — the
+# commonest multi-line directive there is — never balanced, the skip stopped one line in, and the
+# comment BELOW it was eaten as part of the directive. The file then had no description at all
+# (R2 agent 3, reproduced on a live file in this repository).
+for _lang, _src, _want in (
+        ("javascript",
+         'import {\n  alpha,\n  beta,\n} from "./mod.js";\n\n'
+         '// Routes messages between the popup and the content script.\nexport function run() {}\n',
+         "Routes messages"),
+        ("javascript",
+         'import { a, b } from "./m";\n\n// One line, already balanced.\n',
+         "One line"),
+        ("python",
+         'from mod import (\n    alpha,\n    beta,\n)\n\n# Charges cards and records the result.\n',
+         "Charges cards")):
+    check(f"A MULTI-LINE IMPORT DOES NOT EAT THE DESCRIPTION BELOW IT: {_want}",
+          _want in (mapper.leading_comment(_src, _lang) or ""))
+
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
 import tools_index as _ti2  # noqa: E402
