@@ -834,8 +834,7 @@ share a path share the file rather than each keeping a copy that drifts apart.
 **`--model` recognises these families by name**, matching on the first word and ignoring case,
 separators and version numbers, so `Qwen3-Coder`, `qwen 3` and `QWEN` all land in the same place:
 
-`claude` · `codestral` · `deepseek` · `gemini` · `gemma` · `glm` · `gpt` · `grok` · `kimi` ·
-`mistral` · `openai`
+`claude` · `codestral` · `deepseek` · `fable` · `gemini` · `gemma` · `glm` · `gpt` · `grok` · `haiku` · `kimi` · `mistral` · `openai` · `opus` · `sonnet`
 
 `llama` and `qwen` are deliberately **not** in that table. Both ship in sizes that want different
 budgets, so naming one of them gets you the default profile and a line saying which two sizes it

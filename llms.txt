@@ -13,7 +13,7 @@ chamnan is delivered as a Claude Code plugin and as a plain command-line tool. T
 ## What it works with
 
 - **Operating systems**: macOS, Linux, Windows and WSL, all exercised in CI on every commit. See [Running it on each operating system](https://arcticfox2029.github.io/chamnan#running-it-on-each-operating-system).
-- **Models**: any. `--model` recognises `claude`, `codestral`, `deepseek`, `gemini`, `gemma`, `glm`, `gpt`, `grok`, `kimi`, `mistral`, `openai` by name; `llama` and `qwen` ship in several sizes and are deliberately left out; anything unrecognised still works and `--window` takes an exact number.
+- **Models**: any. `--model` recognises `claude`, `codestral`, `deepseek`, `fable`, `gemini`, `gemma`, `glm`, `gpt`, `grok`, `haiku`, `kimi`, `mistral`, `openai`, `opus`, `sonnet` by name; `llama` and `qwen` ship in several sizes and are deliberately left out; anything unrecognised still works and `--window` takes an exact number.
 - **Agents**: 23 adapters. Claude Code and Gemini CLI receive a real session hook; every other agent receives a file at the path it reads.
 - **Hermes Agent**: writes `.hermes.md`, the project-instruction file Hermes gives highest priority. See [Using it with Hermes Agent](https://arcticfox2029.github.io/chamnan#using-it-with-hermes-agent).
 
