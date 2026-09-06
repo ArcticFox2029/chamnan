@@ -421,8 +421,12 @@ def _report_text(where):
 
 
 _untouched = _report_text(_cfgrep)
-check("an untouched workspace says so in one line, not in twenty-three",
-      "all 23 settings are at their shipped defaults" in _untouched)
+# 🐛 The count was written as the literal 23, so adding a setting failed this check for a reason
+# that has nothing to do with what it tests — which is that an untouched workspace gets ONE line
+# rather than a list of every default. Derived from DEFAULT_CONFIG, which is where the number
+# comes from in the code too.
+check("an untouched workspace says so in one line, not in one per setting",
+      f"all {len(ws.DEFAULT_CONFIG)} settings are at their shipped defaults" in _untouched)
 _cfgpath = _cfgrep / ".chamnan" / "config.json"
 _blob = json.loads(_cfgpath.read_text(encoding="utf-8"))
 _blob["log_retention_days"] = 90
@@ -7940,6 +7944,65 @@ check("...and the vaguer-minor decision this did not change still holds",
       aging._covers("3.11.2", "3.11") is False)
 check("...and a more precise claim than the environment is still covered",
       aging._covers("3.11", "3.11.2") is True)
+
+# 🐛 [2026-09-06] `source="resume"` produced a block identical to `source="startup"` down to the
+# byte, fence nonce aside, and the transcript on disk carries the earlier one — so the whole thing
+# was a duplicate on every plain resume. Skipped ONLY on a positive proof, never on the source
+# alone: a session that compacted and was then closed reopens as "resume", not "compact", and its
+# block is gone from context while still sitting in the transcript file. So the proof is "no
+# compaction boundary AFTER my own fence", not "my fence is in the file" (R5, R11 agent 6).
+_rs = Path(tempfile.mkdtemp(prefix="chamnan-resume-")) / "r"
+(_rs / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_rs, capture_output=True)
+for _i in range(12):
+    (_rs / "src" / f"m{_i:02d}.py").write_text(
+        f'"""Module {_i} does a job."""\ndef r{_i}(): ...\n', encoding="utf-8")
+subprocess.run(["git", "add", "-A"], cwd=_rs, capture_output=True)
+subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+               cwd=_rs, capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_rs, capture_output=True)
+_rs_env = dict(os.environ, CLAUDE_PROJECT_DIR=str(_rs))
+_rs_sid = "abc12345-0000-0000-0000-000000000000"
+def _rs_fire(source, transcript=None):
+    _p = {"hook_event_name": "SessionStart", "source": source, "session_id": _rs_sid,
+          "cwd": str(_rs)}
+    if transcript is not None:
+        _p["transcript_path"] = str(transcript)
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          input=json.dumps(_p), capture_output=True, text=True,
+                          cwd=_rs, env=_rs_env).stdout
+_rs_full = _rs_fire("startup")
+_rs_tp = _rs / "t.jsonl"
+_rs_tp.write_text(json.dumps({"type": "assistant", "message": _rs_full}) + "\n", encoding="utf-8")
+_rs_short = _rs_fire("resume", _rs_tp)
+check("A RESUME WHOSE BLOCK IS PROVABLY STILL IN CONTEXT IS NOT RESENT",
+      tokens.estimate(_rs_short) < tokens.estimate(_rs_full) / 5
+      and "not resent" in _rs_short and "Architecture index" not in _rs_short)
+# Every way the proof can fail has to fall back to the whole block. These are the cases where
+# being wrong costs a session its index, so each one is checked rather than reasoned about.
+_rs_tp.write_text(json.dumps({"type": "assistant", "message": _rs_full}) + "\n"
+                  + json.dumps({"type": "user", "isCompactSummary": True, "message": "s"}) + "\n",
+                  encoding="utf-8")
+check("...but a compaction AFTER the block means it is gone, whatever the source says",
+      "Architecture index" in _rs_fire("resume", _rs_tp))
+check("...and a transcript this hook was never told about proves nothing",
+      "Architecture index" in _rs_fire("resume"))
+check("...nor one that is not there",
+      "Architecture index" in _rs_fire("resume", _rs / "nope.jsonl"))
+_rs_tp.write_text("not json at all\n", encoding="utf-8")
+check("...nor one that does not parse", "Architecture index" in _rs_fire("resume", _rs_tp))
+# Another repository's chamnan block in the same transcript must not answer for this one.
+_rs_tp.write_text(json.dumps({"type": "assistant",
+                              "message": _rs_full.replace("[repo:", "[xepo:")}) + "\n",
+                  encoding="utf-8")
+check("...nor a block carrying a fence that is not this session's",
+      "Architecture index" in _rs_fire("resume", _rs_tp))
+# And the sources that mean the context really is gone are never shortened, proof or no proof.
+_rs_tp.write_text(json.dumps({"type": "assistant", "message": _rs_full}) + "\n", encoding="utf-8")
+for _src in ("compact", "clear", "startup"):
+    check(f"...and `{_src}` is never shortened, whatever the transcript holds",
+          "Architecture index" in _rs_fire(_src, _rs_tp))
+_rmtree(_rs.parent, ignore_errors=True)
 
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
