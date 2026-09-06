@@ -211,10 +211,10 @@ def upsert(root, name, entry_text):
             continue
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
         text = text[:m.start()] + entry_text.strip() + "\n\n" + text[end:]
-        ws.atomic_write_text(p, text.rstrip("\n") + "\n")
+        ws.write_or_raise(p, text.rstrip("\n") + "\n")
         return p, True
 
-    ws.atomic_write_text(p, text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n")
+    ws.write_or_raise(p, text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n")
     return p, False
 
 

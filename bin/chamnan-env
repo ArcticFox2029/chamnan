@@ -195,4 +195,13 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    # 🐛 [2026-09-06] A write the user asked for by name now RAISES rather than being discarded --
+    # see `workspace.write_or_raise`. Caught here rather than at each command, so the message is
+    # the same one everywhere and a command added later is covered without knowing this exists.
+    # What it replaces: `chamnan-timeline new` on a read-only directory printed "declared", named
+    # the file, printed the follow-up command to add to it, and exited 0, with nothing on disk.
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OSError as _err:
+        print(f"chamnan: {_err} — nothing was written", file=sys.stderr)
+        sys.exit(1)

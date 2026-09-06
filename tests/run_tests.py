@@ -7727,6 +7727,63 @@ _dep_small = deploy_mod.render(_dep_found(2, 3, namelen=20))
 check("...and a small manifest set is not truncated at all",
       _dep_small.count("`") == 2 * 6 and " _+" not in _dep_small)
 
+# 🐛 [2026-09-06] `prune_orphaned_temps` bounded an abandoned staging file by age alone, and the
+# same forward clock jump above makes a file written milliseconds ago look an hour old.
+# `atomic_write_text` flushes its content and THEN calls os.replace; delete the staging file
+# between those two and the new content is gone while the destination keeps the old — the
+# atomicity working exactly as designed, around a write that silently did not happen (R10 agent 2).
+# The second bound is now one the clock cannot move: the filename already carries the writing PID.
+_tmp_r = Path(tempfile.mkdtemp(prefix="chamnan-temps-")) / "r"
+(_tmp_r / ".chamnan" / "state").mkdir(parents=True)
+_tmp_dest = _tmp_r / ".chamnan" / "state" / "important.json"
+_tmp_dest.write_text('{"old":true}', encoding="utf-8")
+_tmp_live = _tmp_dest.with_name(f"{_tmp_dest.name}.{os.getpid()}.tmp")
+_tmp_live.write_text('{"new":true}', encoding="utf-8")
+_tmp_proc = subprocess.Popen([sys.executable, "-c", "pass"])
+_tmp_proc.wait()
+_tmp_dead = _tmp_dest.with_name(f"{_tmp_dest.name}.{_tmp_proc.pid}.tmp")
+_tmp_dead.write_text("x", encoding="utf-8")
+_tmp_real = _time.time
+try:
+    _time.time = lambda: _tmp_real() + 400 * 86400
+    _tmp_removed = ws.prune_orphaned_temps(_tmp_r)
+finally:
+    _time.time = _tmp_real
+check("A SKEWED CLOCK CANNOT DELETE THE STAGING FILE OF A WRITE IN PROGRESS",
+      _tmp_live.is_file())
+# And the sweep still does its job, or the fix would be "never prune".
+check("...while a staging file whose writer is gone is still swept",
+      _tmp_removed == 1 and not _tmp_dead.is_file())
+os.replace(str(_tmp_live), str(_tmp_dest))
+check("...so the interrupted write completes with its own content",
+      _tmp_dest.read_text(encoding="utf-8") == '{"new":true}')
+_rmtree(_tmp_r.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] `atomic_write_text` is best-effort and returns a bool; of two dozen call sites
+# only two ever read it. So `chamnan-timeline new` on a directory it cannot write printed
+# "declared", named the file, printed the follow-up command to add to it, and exited 0 — with
+# nothing on disk. `workspace.write_or_raise` draws the line `tools_index._save` already drew: a
+# log line or a pointer stays best-effort, a thing somebody typed a command to get does not.
+_wr = Path(tempfile.mkdtemp(prefix="chamnan-wraise-")) / "r"
+(_wr / ".git").mkdir(parents=True)
+(_wr / "a.py").write_text('"""A."""\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_wr, capture_output=True)
+_wr_threads = _wr / ".chamnan" / "threads"
+_wr_threads.mkdir(parents=True, exist_ok=True)
+os.chmod(_wr_threads, 0o555)
+try:
+    _wr_run = subprocess.run(
+        [sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new", "a thread nobody can write"],
+        cwd=_wr, capture_output=True, text=True)
+finally:
+    os.chmod(_wr_threads, 0o755)
+check("A WRITE THE USER ASKED FOR IS NOT REPORTED AS DONE WHEN IT FAILED",
+      _wr_run.returncode == 1 and "declared" not in _wr_run.stdout
+      and not any(_wr_threads.iterdir()))
+check("...and the reason names the file rather than only failing",
+      "could not write" in _wr_run.stderr and "a-thread-nobody-can-write" in _wr_run.stderr)
+_rmtree(_wr.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"

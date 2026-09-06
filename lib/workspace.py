@@ -410,7 +410,51 @@ def expiring_logs(root=None, within_days=1.0):
 # touch a write in progress: a real staging file exists for the milliseconds between open and
 # os.replace, and a name without a numeric middle segment was not written by this module.
 _ORPHAN_TEMP_AGE = 3600
-_ORPHAN_TEMP = re.compile(r"\.\d+\.tmp$")
+_ORPHAN_TEMP = re.compile(r"\.(\d+)\.tmp$")
+
+
+def _pid_is_alive(pid):
+    """True when a process with `pid` exists. Unknown answers are reported as ALIVE.
+
+    🐛 [2026-09-06] The age bound above is computed from `time.time()`, and the same 400-day clock
+    jump that empties a retention store makes a staging file written milliseconds ago look an hour
+    old. `atomic_write_text` flushes its content and then calls `os.replace`; delete the staging
+    file between those two and the write is lost -- the destination keeps its old content, which is
+    the atomicity working, and the NEW content is simply gone. The comment above says "both bounds
+    have to be wrong before this can touch a write in progress", and the second bound was the
+    NAME's shape, which a live writer's staging file matches exactly (R10 agent 2).
+
+    So the second bound becomes one the clock cannot move: the filename already carries the PID
+    that wrote it. A recycled PID means an orphan lingers until that unrelated process exits, and
+    that is the direction to be wrong in -- a stray 40-byte file against a lost write.
+
+    `os.kill(pid, 0)` is POSIX-only for this purpose and must NOT be used on Windows: CPython's
+    `os.kill` there calls TerminateProcess for every signal but CTRL_C_EVENT and CTRL_BREAK_EVENT,
+    so the liveness probe would kill the process it asked about.
+    """
+    if pid <= 0:
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+            _SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            # ERROR_ACCESS_DENIED (5): the process exists, this one may not open it.
+            return ctypes.windll.kernel32.GetLastError() == 5
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                       # exists, owned by somebody else
+    except OSError:
+        return True
 
 
 def prune_orphaned_temps(root=None):
@@ -436,12 +480,17 @@ def prune_orphaned_temps(root=None):
     removed = 0
     for path in ws_dir.rglob("*.tmp"):
         try:
-            if not _ORPHAN_TEMP.search(path.name) or path.is_symlink() or not path.is_file():
+            match = _ORPHAN_TEMP.search(path.name)
+            if not match or path.is_symlink() or not path.is_file():
+                continue
+            # The PID bound before the age bound, and deliberately so: age is the one a wrong
+            # clock can invert, liveness is not. See _pid_is_alive.
+            if _pid_is_alive(int(match.group(1))):
                 continue
             if path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1
-        except OSError:
+        except (OSError, ValueError):
             continue
     try:
         stamp.parent.mkdir(parents=True, exist_ok=True)
@@ -1359,6 +1408,7 @@ def atomic_write_text(dest, text, encoding="utf-8"):
 
     Returns True on success. Best-effort by default: a workspace on a read-only checkout must still
     let a session start, so the caller decides whether a failed write is worth reporting.
+    `write_or_raise` below is that decision made for the writes a user asked for by name.
     """
     if read_only():
         return False
@@ -1408,6 +1458,28 @@ def atomic_write_text(dest, text, encoding="utf-8"):
 
 NOTICE_TIMES = 3
 
+
+
+def write_or_raise(dest, text, encoding="utf-8"):
+    """`atomic_write_text`, for a write the user asked for by name. Raises instead of returning.
+
+    🐛 [2026-09-06] `atomic_write_text` is best-effort on purpose and returns a bool, and of its
+    two dozen call sites only `tools_index._save` and `chamnan-map` ever looked at it. The bug
+    named two paragraphs above -- `chamnan-timeline new` printing "declared -- .chamnan/threads/
+    a-thread.md" with no file on disk -- was fixed only in this function's own return value; the
+    caller went on discarding it, so the same output came back for a read-only directory, a full
+    disk, and the staging-file race in `prune_orphaned_temps` (R10 agent 2).
+
+    The line is the one `tools_index._save`'s comment already draws: a log line, a pointer, a
+    rollup cache is housekeeping and stays silent, because a workspace that cannot be written must
+    not stop a session from starting. A thread, a milestone, an environment entry or a promoted
+    tool is a thing somebody typed a command to get, and telling them it happened when it did not
+    is worse than failing.
+    """
+    if not atomic_write_text(dest, text, encoding=encoding):
+        raise OSError(f"could not write {dest}"
+                      + (" (CHAMNAN_READ_ONLY is set)" if read_only() else ""))
+    return True
 
 def notice_due(root, key, times=NOTICE_TIMES):
     """True while a one-off piece of advice still has something to teach, and record the showing.
