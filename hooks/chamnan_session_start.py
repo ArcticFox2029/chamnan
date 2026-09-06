@@ -1228,12 +1228,22 @@ def main():
             # Said once, on the session that created the workspace. An empty scaffold is still
             # invisible: without this the teammate's experience is a folder appearing and nothing
             # explaining it.
-            # Under CHAMNAN_READ_ONLY the workspace has NOT been created — this is a preview of
-            # what a first session would receive — so the sentence that announces it says which of
-            # the two happened. A preview that claims to have done the thing it is previewing is
-            # the same untruth `--preview` was just fixed for.
-            _made = ("has just been created" if not ws.read_only()
-                     else "would be created on the first real session")
+            # 🐛 This sentence announced a creation rather than reporting one, so it was true only
+            # when the creation had worked. Under CHAMNAN_READ_ONLY nothing is created, and that
+            # was handled — but on a repository that is genuinely NOT WRITABLE, `ensure()` fails,
+            # the directory never appears, and the banner still said `.chamnan/` "has just been
+            # created ... ready to write to" with no such directory on disk. Checked against the
+            # filesystem instead of against intent, which is the only version that cannot drift
+            # from what happened (R1 agent 4).
+            # Three states, three sentences. Collapsing the last two would tell a `--preview`
+            # reader their repository is unwritable, which is a different problem from the one
+            # they have and would send them to fix the wrong thing.
+            if wsdir.is_dir():
+                _made = "has just been created"
+            elif ws.read_only():
+                _made = "would be created on the first real session — this is a preview, so it was not"
+            else:
+                _made = "could not be created, because this repository is not writable"
             out.append(section(
                 "chamnan is set up in this repository",
                 f"`.chamnan/` {_made} — `memory/`, `sessions/`, `threads/`, `skills/`, "

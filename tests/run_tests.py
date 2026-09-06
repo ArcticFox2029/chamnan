@@ -157,6 +157,7 @@ import candidates  # noqa: E402
 import host as host_mod  # noqa: E402
 import profiles as profiles_mod  # noqa: E402
 import adapters as adapters_mod  # noqa: E402
+import tools_index as tools_index_mod  # noqa: E402
 import ledger  # noqa: E402
 import tools_index  # noqa: E402
 import memory as memory_mod  # noqa: E402
@@ -281,6 +282,13 @@ if _tag:
               f"refresh and the stale-build banner stays dark.")
     check("the version is semver and the tag it matches is a real one",
           bool(re.fullmatch(r"v?\d+\.\d+\.\d+", _tag)))
+else:
+    # 🐛 `if _tag:` with no else meant that where no tag is reachable, this check and the drift
+    # notice both vanished in silence — which is every CI run, because actions/checkout clones at
+    # depth 1 with no tags. A check that skips itself quietly is worse than one that is absent: the
+    # green total counts it as passed. Said out loud, and the workflow now fetches tags.
+    print("  SKIP  no tag reachable, so version drift was not checked "
+          "(a shallow clone; `git fetch --tags` makes this run)")
 
 # ---------------------------------------------------------------- fixture repo
 fixture = Path(tempfile.mkdtemp(prefix="chamnan-test-")).resolve()
@@ -8987,6 +8995,276 @@ try:
           "/chamnan:" in _hook_out.stdout)
 finally:
     _rmtree(_ad, ignore_errors=True)
+
+# 🐛 Both "never open this file" refusals judged `path.name` — the name of the string handed in,
+# not of the file that gets opened, and opening follows a symlink. A link named `safe_data.bin`
+# pointing at a keystore sailed past the deny-list and chamnan-peek printed the keystore's readable
+# strings, password-shaped fragment included. A PEM key survived by luck, because its text still
+# matched the BEGIN/END pattern; a binary keystore is exactly what the never-opened list exists for
+# and its extracted strings carry no `=` for any rule to key on (R1 agent 2).
+_sym = Path(tempfile.mkdtemp(prefix="chamnan-symrefuse-"))
+try:
+    (_sym / "keystore").mkdir()
+    _jks = _sym / "keystore" / "release.jks"
+    _jks.write_bytes(os.urandom(200) + b"storepasswordissomethingrandom9x" + os.urandom(200))
+    (_sym / "notes.md").write_text("ordinary\n", encoding="utf-8")
+    os.symlink(_jks, _sym / "safe_data.bin")
+    os.symlink(_sym / "gone.jks", _sym / "dangling.jks")
+    os.symlink(_sym / "notes.md", _sym / "also_fine.md")
+    check("A REFUSED FILE STAYS REFUSED THROUGH A SYMLINK WITH AN INNOCENT NAME",
+          redact.is_never_opened(_sym / "safe_data.bin")
+          and redact.is_blocked(_sym / "safe_data.bin"))
+    check("...and a dangling link is still judged by its own name, having no target to judge",
+          redact.is_never_opened(_sym / "dangling.jks"))
+    check("...while an ordinary file, and a link to one, are still readable",
+          not redact.is_never_opened(_sym / "notes.md")
+          and not redact.is_never_opened(_sym / "also_fine.md"))
+    _pk = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-peek"),
+                          str(_sym / "safe_data.bin")], capture_output=True, text=True,
+                         encoding="utf-8", errors="replace")
+    check("...and peek prints none of the keystore's contents through that link",
+          "storepasswordissomethingrandom9x" not in (_pk.stdout + _pk.stderr))
+finally:
+    _rmtree(_sym, ignore_errors=True)
+
+# 🐛 CHAMNAN_READ_ONLY was checked at five call sites in workspace.py and nowhere else, so every
+# other store kept writing with it set — including candidates.upsert, which a background hook fires
+# on ordinary Bash calls, making the one writer the user never asked for the least bound by their
+# instruction not to write. Asserted by DRIVING each store with the variable set and looking at the
+# disk, and by walking the set of writers so a new store cannot quietly join the wrong half.
+_ro2 = Path(tempfile.mkdtemp(prefix="chamnan-readonly2-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_ro2, capture_output=True)
+    (_ro2 / ".chamnan").mkdir()
+    _ro_env = dict(os.environ, CHAMNAN_READ_ONLY="1")
+    for _cmd, _argv in (("chamnan-timeline", ["new", "a thread"]),
+                        ("chamnan-timeline", ["add", "a-thread", "a note"]),
+                        ("chamnan-env", ["add", "staging", "--note", "x"])):
+        subprocess.run([sys.executable, str(ROOT / "bin" / _cmd)] + _argv, cwd=_ro2,
+                       capture_output=True, text=True, encoding="utf-8", errors="replace",
+                       env=_ro_env)
+    _left = sorted(q.relative_to(_ro2).as_posix() for q in (_ro2 / ".chamnan").rglob("*")
+                   if q.is_file())
+    check("NO STORE WRITES WHILE CHAMNAN_READ_ONLY IS SET", _left == [])
+    _before = set((_ro2 / ".chamnan").rglob("*"))
+    # 🐛 ...and no command CLAIMS to have written. The writers were made to no-op under the flag
+    # and the commands calling them were not told, so `chamnan-timeline new` printed
+    # "declared — .chamnan/threads/a-thread.md" with nothing on disk — the untruth `--preview` was
+    # fixed for, one layer down. Every writing subcommand is walked, because this is the shape of
+    # defect that gets fixed in one place and left in the sibling beside it.
+    # The precondition each writing subcommand needs, created with the flag OFF — otherwise
+    # `status` fails on a thread `new` was refused permission to create, and the check passes for
+    # the wrong reason. A fixture that withholds the precondition is how a test stops testing.
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new", "a thread"],
+                   cwd=_ro2, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _claims = []
+    for _cmd, _argv in (("chamnan-timeline", ["new", "another thread"]),
+                        ("chamnan-timeline", ["add", "a-thread", "a note"]),
+                        ("chamnan-timeline", ["close", "a-thread"]),
+                        ("chamnan-timeline", ["reopen", "a-thread"]),
+                        ("chamnan-candidates", ["confirm", "c1"]),
+                        ("chamnan-candidates", ["reject", "c1"]),
+                        ("chamnan-env", ["set", "staging", "--platform", "linux"])):
+        _r = subprocess.run([sys.executable, str(ROOT / "bin" / _cmd)] + _argv, cwd=_ro2,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace",
+                            env=_ro_env)
+        if "CHAMNAN_READ_ONLY" not in (_r.stdout + _r.stderr):
+            _claims.append(f"{_cmd} {' '.join(_argv)}")
+    if _claims:
+        print("      said nothing about being read-only: " + "; ".join(_claims))
+    check("...and every writing subcommand says so rather than reporting success", _claims == [])
+    check("...and none of them changed the workspace while saying it",
+          {q for q in (_ro2 / ".chamnan").rglob("*")} - _before
+          <= {_ro2 / ".chamnan" / "threads", _ro2 / ".chamnan" / "threads" / "a-thread.md"})
+    # ...and the set is walked, not sampled: every module that writes into the workspace reaches
+    # the one helper that refuses, rather than calling write_text itself.
+    _raw = []
+    for _mod in sorted((ROOT / "lib").glob("*.py")):
+        if _mod.name in ("workspace.py", "mapper.py"):
+            continue                     # workspace IS the helper; mapper's is a --out CLI path
+        for _i, _ln in enumerate(_mod.read_text(encoding="utf-8").splitlines(), 1):
+            if ".write_text(" in _ln and "atomic_write_text" not in _ln:
+                _raw.append(f"{_mod.name}:{_i}")
+    if _raw:
+        print("      raw write_text outside the guarded helper: " + ", ".join(_raw))
+    check("...and no library module writes into the workspace without going through it", _raw == [])
+finally:
+    _rmtree(_ro2, ignore_errors=True)
+
+# 🐛 `tools/index.json` holding `{}` — a hand-edit, a bad merge, a half-written file — made
+# `usage()` iterate the dict's KEYS and subscript a string, so `chamnan-report` died with a
+# TypeError instead of reporting. Three sibling readers of other stores already guard their shape
+# and this one did not (R1 agent 4). Guarded in `load()`, so all five readers are covered rather
+# than the one that happened to crash.
+_ti = Path(tempfile.mkdtemp(prefix="chamnan-toolsindex-"))
+try:
+    (_ti / ".chamnan" / "tools").mkdir(parents=True)
+    for _shape in ('{}', '{"tools": {"a": {}}}', '"text"', '42', 'null', '[]', 'not json at all'):
+        (_ti / ".chamnan" / "tools" / "index.json").write_text(_shape, encoding="utf-8")
+        try:
+            tools_index_mod.usage(_ti)
+            _ok = True
+        except Exception:
+            _ok = False
+        check(f"A WRONGLY SHAPED tools/index.json IS READ AS EMPTY, NOT A CRASH: {_shape[:18]}", _ok)
+    # ...and one bad row does not cost the good ones, because losing the file loses the counters.
+    (_ti / ".chamnan" / "tools" / "index.json").write_text(
+        '[{"name": "ok", "runs": 3}, "not a dict", 7]', encoding="utf-8")
+    check("...and a list with one bad row keeps the rows that are fine",
+          tools_index_mod.usage(_ti) == [("ok", 3)])
+finally:
+    _rmtree(_ti, ignore_errors=True)
+
+# 🐛 The first-session banner ANNOUNCED a creation rather than reporting one, so it was true only
+# when the creation had worked. On a repository that is not writable, `ensure()` fails, no
+# directory appears, and it still said `.chamnan/` "has just been created ... ready to write to"
+# (R1 agent 4). Three states, three sentences: collapsing the last two would tell a `--preview`
+# reader their repository is unwritable, which is a different problem from the one they have.
+_fsb = Path(tempfile.mkdtemp(prefix="chamnan-banner-"))
+try:
+    # Windows does not honour `chmod 0o555` against the file's owner, so the unwritable leg cannot
+    # be POSED there — the directory stays writable and the banner is right to say so. Probed
+    # rather than assumed, the way the rest of this file handles capability gaps.
+    _probe = _fsb / "probe"
+    _probe.mkdir(parents=True)
+    os.chmod(_probe, 0o555)
+    try:
+        (_probe / "x").write_text("x", encoding="utf-8")
+        _chmod_bites = False
+    except OSError:
+        _chmod_bites = True
+    finally:
+        os.chmod(_probe, 0o755)
+    if not _chmod_bites:
+        print("  [SKIP] unwritable-repository banner check — this platform does not honour "
+              "chmod against the owner")
+    for _label, _ro_fs, _extra, _want in (
+            ("writable", False, {}, "has just been created"),
+            ("unwritable", True, {}, "not writable"),
+            ("preview", False, {"CHAMNAN_READ_ONLY": "1"}, "this is a preview")):
+        if _ro_fs and not _chmod_bites:
+            continue
+        _bd = _fsb / _label
+        _bd.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=_bd, capture_output=True)
+        (_bd / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        if _ro_fs:
+            os.chmod(_bd, 0o555)
+        try:
+            _br = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                                 cwd=_bd, input="{}", capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace",
+                                 env=dict(os.environ, **_extra))
+            check(f"THE FIRST-SESSION BANNER REPORTS WHAT HAPPENED, NOT WHAT WAS ATTEMPTED: {_label}",
+                  _want in _br.stdout
+                  and (("has just been created" in _br.stdout) == (_bd / ".chamnan").is_dir()))
+        finally:
+            if _ro_fs:
+                os.chmod(_bd, 0o755)
+finally:
+    _rmtree(_fsb, ignore_errors=True)
+
+PLACEHOLDER_TEXT = redact.PLACEHOLDER
+# 🐛 CREDENTIALED_URL's password class excluded `@`, so a password CONTAINING one stopped the match
+# at the first `@` — the rule then either failed entirely or redacted half, leaving the rest of the
+# password beside the marker that says it was handled. `@` is ordinary in a generated password and
+# real connection strings do not percent-encode it. The scheme also admitted only one layer, so no
+# `jdbc:postgresql://` URL ever matched (R2 agent 2).
+for _lbl, _url, _needle in (
+        ("plain", "postgres://admin:Hunter2Pass@db.internal/main", "Hunter2"),
+        ("@ inside the password", "postgres://admin:Hunter2@Pass@db.internal/main", "Hunter2"),
+        ("jdbc nested scheme", "jdbc:postgresql://user:p@ss@w0rd@host:5432/db", "p@ss"),
+        ("amqp", "amqp://svc:a@b@rabbit.internal:5672/vhost", "a@b"),
+        ("mongodb", "mongodb://root:x@y%40z@cluster0.mongodb.net/admin", "x@y"),
+        ("redis, no username", "redis://:s3cr3t@cache.internal:6379/0", "s3cr3t")):
+    check(f"A CONNECTION STRING'S PASSWORD GOES WHOLE: {_lbl}",
+          _needle not in redact.scrub(_url) and PLACEHOLDER_TEXT in redact.scrub(_url))
+# ...and the other half of the trade, which a greedier pattern is exactly how you lose.
+for _lbl, _text in (("an email in prose", "write to alice@example.com about it"),
+                    ("a URL with no credentials", "see https://docs.example.com/guide/a@b"),
+                    ("a git ssh remote", "git@github.com:ArcticFox2029/chamnan.git"),
+                    ("nothing after the @", "postgres://admin:abc@"),
+                    ("a digest-pinned image", "registry.example.com/team/app@sha256:abcd1234")):
+    check(f"...and it leaves alone: {_lbl}", redact.scrub(_text) == _text)
+
+# 🐛 `mdblock.filename_safe`'s own docstring says "both slug() functions in this codebase" — there
+# are FIVE that turn free text into a filename, and three never called it: workspace.safe_tool_name,
+# memory.slug and sessions.slug. A record titled "CON" or "nul" becomes `con.md` or `nul.md`, which
+# on Windows are the console and the bit-bucket: the write does not fail, it goes to the DEVICE and
+# the record is gone, while the index records it as written. R2 agent 1 found one; walking the set
+# found the other two — which is why this asserts over every such function rather than naming one.
+import memory as memory_mod  # noqa: E402
+import sessions as sessions_mod  # noqa: E402
+import timeline as timeline_mod  # noqa: E402
+import candidates as candidates_mod  # noqa: E402
+_NAMERS = (("mdblock.filename_safe", mdblock.filename_safe),
+           ("workspace.safe_tool_name", ws.safe_tool_name),
+           ("memory.slug", memory_mod.slug),
+           ("sessions.slug", sessions_mod.slug),
+           ("timeline.slug", timeline_mod.slug),
+           ("candidates.slug", candidates_mod.slug))
+for _device in ("con", "NUL", "lpt1", "aux", "prn", "com3"):
+    _unsafe = [n for n, fn in _NAMERS
+               if str(fn(_device)).split(".", 1)[0].lower() in mdblock._WINDOWS_RESERVED]
+    if _unsafe:
+        print("      still a device name after: " + ", ".join(_unsafe))
+    check(f"NO NAME-BUILDER TURNS A TITLE INTO A WINDOWS DEVICE: {_device}", _unsafe == [])
+check("...and an ordinary title is untouched by any of them",
+      all(str(fn("normal")).replace("-", "") == "normal" for _, fn in _NAMERS))
+
+# 🐛 Path.write_text goes through TextIOWrapper, whose default translates every \n to os.linesep —
+# so on native Windows three script writers produced a SHELL SCRIPT with CRLF endings, and
+# `#!/bin/sh\r` is not a shebang any shell recognises. atomic_write_text passes newline="" for
+# exactly that reason; they never called it (R2 agent 1). Asserted on the bytes, since a text-mode
+# read would hide the very thing being checked.
+_crlf = Path(tempfile.mkdtemp(prefix="chamnan-crlf-"))
+try:
+    subprocess.run(["git", "init", "-q"], cwd=_crlf, capture_output=True)
+    (_crlf / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+                   cwd=_crlf, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    _hook = _crlf / ".git" / "hooks" / "pre-commit"
+    check("AN INSTALLED SHELL SCRIPT CARRIES LF ENDINGS, WHATEVER PLATFORM WROTE IT",
+          _hook.is_file() and b"\r\n" not in _hook.read_bytes())
+    check("...and its shebang is the first bytes of the file, unbroken",
+          _hook.is_file() and _hook.read_bytes().startswith(b"#!/bin/sh\n"))
+finally:
+    _rmtree(_crlf, ignore_errors=True)
+# ...and routing those writers through the helper must not have changed what they write ABOUT: a
+# rename replaces the file, taking its permissions with it, and three of them chmod an executable
+# script before rewriting it to add a shebang.
+_mode = Path(tempfile.mkdtemp(prefix="chamnan-mode-"))
+try:
+    _mf = _mode / "keeps.sh"
+    _mf.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
+    _mf.chmod(0o755)
+    # The executable bit is a POSIX concept; Windows does not carry one a rename could drop.
+    if _mf.stat().st_mode & 0o111 == 0:
+        print("  [SKIP] executable-bit check — this platform has no executable bit to preserve")
+    else:
+        ws.atomic_write_text(_mf, "#!/bin/sh\necho two\n")
+        check("AN ATOMIC WRITE IS A WRITE, NOT ALSO A PERMISSIONS CHANGE",
+              _mf.stat().st_mode & 0o111 != 0)
+finally:
+    _rmtree(_mode, ignore_errors=True)
+
+# 🐛 `_skip_continuation` counted `(` and `[` and not `{`, so a destructured JS import — the
+# commonest multi-line directive there is — never balanced, the skip stopped one line in, and the
+# comment BELOW it was eaten as part of the directive. The file then had no description at all
+# (R2 agent 3, reproduced on a live file in this repository).
+for _lang, _src, _want in (
+        ("javascript",
+         'import {\n  alpha,\n  beta,\n} from "./mod.js";\n\n'
+         '// Routes messages between the popup and the content script.\nexport function run() {}\n',
+         "Routes messages"),
+        ("javascript",
+         'import { a, b } from "./m";\n\n// One line, already balanced.\n',
+         "One line"),
+        ("python",
+         'from mod import (\n    alpha,\n    beta,\n)\n\n# Charges cards and records the result.\n',
+         "Charges cards")):
+    check(f"A MULTI-LINE IMPORT DOES NOT EAT THE DESCRIPTION BELOW IT: {_want}",
+          _want in (mapper.leading_comment(_src, _lang) or ""))
 
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402

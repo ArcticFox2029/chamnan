@@ -1,11 +1,73 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1200), and every one of these is on the
+[README](README.md#whats-new-in-1210), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.21.0
+
+### Credentials that were reaching the index
+
+A connection string whose password contains `@` leaked. The rule's password class excluded `@`, so
+it stopped at the first one: `amqp://svc:a@b@rabbit/vhost` and `mongodb://root:x@y%40z@cluster/admin`
+passed through whole, and `postgres://admin:Hunter2@Pass@db/main` came out as
+`<REDACTED>@Pass@db/main` — half the password beside the marker that says it was handled. `@` is
+ordinary in a generated password and real connection strings do not percent-encode it. No
+`jdbc:postgresql://` URL had ever matched either, because the scheme admitted only one layer.
+
+A symlink with an innocent name walked past the "never open this file" refusal. Both refusals judged
+the name they were handed rather than the file that gets opened, and opening follows a link — so
+`safe_data.bin` pointing at `release.jks` was opened and its readable strings printed, alias and
+password-shaped fragment included.
+
+### Files that were silently lost
+
+Five functions turn free text into a filename and three never passed it through the guard that
+exists for this: a record titled `CON` or `nul` becomes `con.md` or `nul.md`, which on Windows are
+the console and the bit-bucket. The write does not fail, it goes to the device, the record is gone,
+and the index says it was written.
+
+The memory stamper read a file, decided, and wrote it back with nothing holding it in between,
+while firing on every Write and Edit — so a second write landing in that gap was overwritten by the
+stamped copy of the older text.
+
+Three generated shell scripts were written with the platform's line endings, so on Windows the
+installed git hook and both generated tool scripts began `#!/bin/sh\r`, which no shell recognises.
+
+### Files that were never described
+
+A destructured JavaScript import spanning several lines ate the comment below it, so the file went
+into the index with no description at all. Brackets were counted; braces were not.
+
+### Sizing, and honesty about it
+
+`--model fable`, `opus`, `sonnet` and `haiku` now size correctly. Anthropic's current models are not
+called "Claude *n*", so every one of those names fell through to the default profile — a user on a
+million-token model told to size for a small window. The four numbers come from Anthropic's own
+documentation; `mythos` is deliberately absent, because "probably a million" is not a number, and it
+falls through with the table's own note that it is a dated convenience rather than an authority.
+
+`CHAMNAN_READ_ONLY` reached five call sites and no others, so every store kept writing with it
+set — including the one a background hook fires on ordinary Bash calls. And the commands were not
+told: `chamnan-timeline new` reported "declared — .chamnan/threads/a-thread.md" with nothing on
+disk. The first-session banner had the same fault against a repository that is simply not writable,
+announcing a workspace it had failed to create.
+
+A `tools/index.json` holding `{}` — a hand-edit, a bad merge — took `chamnan-report` down with a
+TypeError rather than reading as empty.
+
+### The suite
+
+Its version-drift check had never run on CI, on any platform: the checkout fetches no tags, `git
+describe` finds nothing, and the whole block vanished inside an `if` with no `else`. A check that
+skips itself in silence is worse than an absent one, because the green total counts it as passed.
+
+3,215 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
 
 ---
 

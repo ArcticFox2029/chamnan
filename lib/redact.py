@@ -14,7 +14,9 @@ secret assignments. Redacting anything that merely looks high-entropy would eat 
 UUIDs and version strings, and an index full of <REDACTED> is not an index. A missed secret is
 recoverable; an unusable map means the tool gets uninstalled and nothing is protected at all.
 """
+import os
 import re
+from pathlib import Path
 
 PLACEHOLDER = "<REDACTED>"
 
@@ -216,7 +218,24 @@ _NOT_A_CREDENTIAL_NAME = re.compile(
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
     # all, which is the normal form for both, and a one-or-more group never matched them.
-    r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]*):([^\s@/]{3,})@")
+    #
+    # 🐛 The password class was `[^\s@/]{3,}` — no `@` — so a password CONTAINING one stopped the
+    # match at the first `@` and the rule either failed entirely or redacted half. `@` is an
+    # ordinary character in a generated password and RFC 3986 only asks that it be percent-encoded,
+    # which real connection strings routinely do not do. Measured: `amqp://svc:a@b@rabbit/vhost`
+    # and `mongodb://root:x@y%40z@cluster/admin` passed through whole, and
+    # `postgres://admin:Hunter2@Pass@db/main` was redacted down to `<REDACTED>@Pass@db/main`,
+    # leaving half the password beside the marker that says it was handled (R2 agent 2).
+    #
+    # `/` and whitespace still end the password, so the match cannot run past the authority into a
+    # path — and being greedy, it takes the LAST `@` before that boundary, which is the one that
+    # separates credentials from host. The lookahead requires something host-shaped after it, so a
+    # bare `scheme://a:b@` with nothing following is not treated as a credential.
+    #
+    # The scheme now admits one nested layer, because `jdbc:postgresql://` and `jdbc:mysql://` are
+    # how every JVM connection string is written and the single-scheme form never matched them.
+    r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
+    r":([^\s/]{3,})@(?=[^\s/@]+)")
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 ASSIGNED_SECRET = re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
@@ -337,8 +356,33 @@ def _has_source_extension(name):
         return False
 
 
+# 🐛 Both refusals below judged `path.name` — the name of the string handed in, not of the file it
+# opens. Every caller then opens the path, and opening follows a symlink. So a link named
+# `safe_data.bin` pointing at `release.jks` sailed past the deny-list and `chamnan-peek` printed the
+# keystore's readable strings, alias and password-shaped fragment included. A PEM key survived by
+# luck — the greedy BEGIN/END pattern still matched its text — but a BINARY keystore is exactly what
+# NEVER_OPENED_SUFFIXES exists for, and its extracted strings carry no `=` or `:` for any
+# SECRET_WORDS rule to key on, so nothing downstream catches them (R1 agent 2).
+#
+# Judged on BOTH names, not the resolved one alone: a dangling link has no target to resolve and
+# must still be refused by its own name, and a link whose name is innocent must be refused by its
+# target's. The two lists here have drifted apart once before, so this sits in one helper they share
+# rather than being written out twice.
+def _names_to_judge(path):
+    """Every name that should be allowed to condemn this path: its own, and its target's."""
+    names = {path.name.lower()}
+    try:
+        names.add(Path(os.path.realpath(str(path))).name.lower())
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return names
+
+
 def is_blocked(path):
-    name = path.name.lower()
+    return any(_is_blocked_name(n) for n in _names_to_judge(path))
+
+
+def _is_blocked_name(name):
     # The same four is_never_opened checks. These two lists had drifted apart, so a renamed
     # id_dsa_backup was refused by the read-one-file tool and scanned by the indexer.
     if name.startswith(("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")):
@@ -368,7 +412,10 @@ def is_never_opened(path):
     and the comment written to stop it happening again was attached to the function that was
     already right.
     """
-    name = path.name.lower()
+    return any(_is_never_opened_name(n) for n in _names_to_judge(path))
+
+
+def _is_never_opened_name(name):
     if name.startswith(("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")):
         return True
     stem = name.rsplit(".", 1)[0] if "." in name else name

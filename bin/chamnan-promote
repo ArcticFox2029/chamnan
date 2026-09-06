@@ -183,7 +183,7 @@ def main(argv):
         try:
             _body = dest.read_text(encoding="utf-8")
             if not _body.startswith("#!"):
-                dest.write_text(_line + "\n" + _body, encoding="utf-8")
+                ws.atomic_write_text(dest, _line + "\n" + _body)
         except (OSError, UnicodeDecodeError):
             pass          # unreadable as text: leave it alone rather than corrupt it
 

@@ -61,10 +61,25 @@ def path(root):
 
 
 def load(root):
+    """The index, or [] — never a shape a reader has to check for itself.
+
+    🐛 This returned whatever the file happened to parse to, and five readers here index it as a
+    list of dicts. `index.json` holding `{}` — a hand-edit, a bad merge, a half-written file — made
+    `usage()` iterate the dict's KEYS and then subscript a string, so `chamnan-report` died with a
+    TypeError instead of reporting. Three sibling readers of other stores already guard their shape
+    and this one did not, which is this repository's recurring defect: the same rule applied to some
+    members of a set (R1 agent 4).
+
+    Entries that are not dicts are dropped rather than taking the file down with them: a list with
+    one bad row is still nine good tools, and losing the file loses the run counters too.
+    """
     try:
-        return json.loads(path(root).read_text(encoding="utf-8"))
+        loaded = json.loads(path(root).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, RecursionError):
         return []
+    if not isinstance(loaded, list):
+        return []
+    return [e for e in loaded if isinstance(e, dict)]
 
 
 def _save(root, entries):

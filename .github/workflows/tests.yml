@@ -40,6 +40,12 @@ jobs:
             python: "3.8"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # actions/checkout defaults to a depth-1 clone with no tags, so `git describe
+          # --tags` finds nothing and the suite's version-drift check — the one its own
+          # comment calls "the entire safety net" — skipped itself on every CI run, on all
+          # three platforms, without saying so. Found by R1 agent 3.
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

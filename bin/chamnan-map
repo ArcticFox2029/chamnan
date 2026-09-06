@@ -212,10 +212,15 @@ def install_git_hook(root):
             print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
                   file=sys.stderr)
             return 1
-        target.write_text(existing.rstrip() + "\n\n" + body, encoding="utf-8")
+        # 🐛 `Path.write_text` goes through TextIOWrapper, whose default translates every `\n` to
+        # os.linesep — so on native Windows this wrote a SHELL SCRIPT with CRLF endings, and
+        # `#!/bin/sh\r` is not a shebang any shell recognises. `atomic_write_text` passes
+        # newline="" for exactly this reason and its comment says so; three script writers never
+        # called it (R2 agent 1). It also brings the tmp-then-rename these did not have.
+        ws.atomic_write_text(target, existing.rstrip() + "\n\n" + body)
         print(f"chamnan: appended to your existing {_show(target, root)}")
     else:
-        target.write_text("#!/bin/sh\n\n" + body, encoding="utf-8")
+        ws.atomic_write_text(target, "#!/bin/sh\n\n" + body)
         target.chmod(0o755)
         print(f"chamnan: installed {_show(target, root)}")
     # 🐛 This said "on every commit that touches tracked files", which the hook has never done:
