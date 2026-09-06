@@ -7854,6 +7854,70 @@ with ws.exclusive(_lk_target) as _lk_old:
 check("...and one written before this recorded a PID still ages out", _lk_old is True)
 _rmtree(_lk, ignore_errors=True)
 
+# 🐛 [2026-09-06] `lib/ledger.py`'s `_ymd_to_ts` refuses a date in the FUTURE and says why -- a
+# typo'd 2099 makes an age computation report "today". `environments.py`'s function of the same
+# name got the calendar-validity half of that fix and not the future half, so `**Checked:**
+# 2027-01-01` made an entry permanently fresh: `stale_environments()` never named it, and the aging
+# check, whose whole job is to REFUSE to report against an unmaintained source, issued an all-clear
+# from one forever (R11 agent 3).
+_ev = Path(tempfile.mkdtemp(prefix="chamnan-envdate-")) / "r"
+(_ev / ".chamnan").mkdir(parents=True)
+(_ev / ".chamnan" / "environments.md").write_text(
+    "# Environments\n\n## staging\n\n**Versions:** postgres version 16\n"
+    "**Checked:** 2027-01-01\n", encoding="utf-8")
+_ev_entry = envs.entries(_ev)[0]
+check("A CHECKED DATE IN THE FUTURE IS NOT A CHECK", _ev_entry["checked_ts"] is None)
+check("...so the entry is reported as never confirmed rather than permanently fresh",
+      [n for n, _ in envs.stale_environments(_ev)] == ["staging"])
+# 🐛 And the word before the number is not always the software's name. "postgres version 16" read
+# as `("version", "16")`, so `chamnan-env set` declared an environment running `version: 16` and
+# nothing running postgres, while a memory entry phrased "Postgres version 13" produced a claim
+# about `version` that no declared name matched -- silently never checked, reported as an
+# all-clear. Both sides go through one extractor now, so they cannot drift apart again.
+check("...and the filler word between a name and its number is not read as the name",
+      _ev_entry["versions"] == {"postgres": "16"})
+check("...on the claim side too", aging.claims_in("we run Postgres version 13 here")
+      == [("postgres", "13")])
+check("...while a number with no name before it is not a version claim at all",
+      aging.version_pairs("version 16") == [])
+check("...and an ordinary declaration is unchanged",
+      aging.version_pairs("kubernetes 1.28, python v3.11")
+      == [("kubernetes", "1.28"), ("python", "3.11")])
+# A date one day ahead is a timezone, not a typo -- same slack ledger allows.
+(_ev / ".chamnan" / "environments.md").write_text(
+    "# Environments\n\n## staging\n\n**Versions:** postgres 16\n**Checked:** "
+    + datetime.date.fromtimestamp(_time.time() + 43200).isoformat() + "\n", encoding="utf-8")
+check("...and a date inside the one-day slack is still a real check",
+      envs.entries(_ev)[0]["checked_ts"] is not None)
+_rmtree(_ev.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] The tail line after the Architecture index repeated what the index's own header
+# had already said -- "grep it for one heading, never read it whole" -- in every firing. R1 found
+# it and scoped the guard to the literal "too large to read in full", which is the LARGE header
+# variant only; measured on 8-, 150- and 1,200-file fixtures the duplication is unconditional, so
+# that guard would have closed the minority case and left the common one open (R11 agent 6). The
+# path always survives, because a header written inside MAP.md says "this file".
+_tl = Path(tempfile.mkdtemp(prefix="chamnan-tail-")) / "r"
+(_tl / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_tl, capture_output=True)
+for _i in range(12):
+    (_tl / "src" / f"m{_i:02d}.py").write_text(
+        f'"""Module {_i} does a job."""\ndef r{_i}(): ...\n', encoding="utf-8")
+subprocess.run(["git", "add", "-A"], cwd=_tl, capture_output=True)
+subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+               cwd=_tl, capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_tl, capture_output=True)
+_tl_out = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+    input='{"hook_event_name":"SessionStart","source":"startup"}', capture_output=True, text=True,
+    cwd=_tl, env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_tl))).stdout
+check("THE INDEX'S HOW-TO-READ INSTRUCTION IS PAID FOR ONCE, NOT TWICE",
+      "for the one heading you need" in _tl_out
+      and "_Full detail lives in `.chamnan/MAP.md`._" in _tl_out)
+check("...and the path itself still reaches the session",
+      _tl_out.count("`.chamnan/MAP.md`") >= 1)
+_rmtree(_tl.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
@@ -12457,8 +12521,13 @@ import environments as _env  # noqa: E402
 for _bad in ("2026-02-30", "2026-06-31", "2026-13-01", "2026-00-10", "2025-02-29"):
     check(f"an impossible date is refused rather than rolled forward ({_bad})",
           _env._ymd_to_ts(_bad) is None)
-for _good in ("2026-02-28", "2026-12-31", "2024-02-29"):
-    check(f"a real date still parses ({_good})", _env._ymd_to_ts(_good) is not None)
+# 🐛 [2026-09-06] `2026-12-31` used to sit in this list, and it is a real date that has not
+# happened yet -- so the fixture only worked while the suite was run before it. A `Checked:` date
+# in the future is now refused for the reason ledger.py already refused one, so the "still parses"
+# cases have to be dates in the past, which is what a check actually is.
+for _good in ("2026-02-28", "2024-02-29", "2020-01-01"):
+    check(f"a real past date still parses ({_good})", _env._ymd_to_ts(_good) is not None)
+check("a real date that has not happened yet is not a check", _env._ymd_to_ts("2099-01-01") is None)
 
 # 🐛 A new user with one real file was told to add a comment to a file chamnan itself had installed
 # under `.chamnan/tools/`. Only the SUGGESTION is filtered, never the index — on a repository that

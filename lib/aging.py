@@ -41,6 +41,29 @@ import re
 # Same shape environments.py parses declarations with: a name, then a dotted or plain number.
 _CLAIM = re.compile(r"([A-Za-z][\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
 
+# 🐛 [2026-09-06] The word immediately before the number is not always the software's name.
+# "postgres version 16" read as `("version", "16")`, and both sides of this feature were wrong in
+# opposite directions because of it: `chamnan-env set --versions "postgres version 16"` declared an
+# environment running `version: 16` and nothing running postgres, while a memory entry phrased
+# "Postgres version 13" produced a claim about `version` that no declared name ever matched, so it
+# was silently never checked and `chamnan-age` reported an all-clear (R11 agent 3).
+#
+# Removed rather than special-cased in the pattern, and removed in ONE place used by both sides --
+# the declaration parser and the claim parser are deliberately the same shape, and a fix applied to
+# one of a matched pair is this repository's most-repeated defect. A bare "version 16" with no name
+# before it correctly yields nothing at all.
+_FILLER_BEFORE_NUMBER = re.compile(
+    r"\b(?:versions?|v|ver|rev|revision|release|build)\s+(?=v?\d)", re.I)
+
+
+def version_pairs(text):
+    """[(name, version)] for every `name <number>` in `text`, ignoring the word "version".
+
+    Shared by `environments.entries()` (what an environment DECLARES) and `claims_in` below (what a
+    memory entry CLAIMS), so the two cannot drift into disagreeing about what a version claim is.
+    """
+    return _CLAIM.findall(_FILLER_BEFORE_NUMBER.sub("", text or ""))
+
 
 def claims_in(text):
     """[(name, version)] every version-shaped claim in one entry, lowercased by name.
@@ -49,7 +72,7 @@ def claims_in(text):
     A parser that tried to be selective at this stage would have to guess what counts as a version
     claim without knowing what the repository cares about, and the declared list already knows.
     """
-    return [(n.lower(), v) for n, v in _CLAIM.findall(text or "")]
+    return [(n.lower(), v) for n, v in version_pairs(text)]
 
 
 def _covers(declared, claimed):
