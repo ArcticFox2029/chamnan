@@ -9122,10 +9122,28 @@ finally:
 # reader their repository is unwritable, which is a different problem from the one they have.
 _fsb = Path(tempfile.mkdtemp(prefix="chamnan-banner-"))
 try:
+    # Windows does not honour `chmod 0o555` against the file's owner, so the unwritable leg cannot
+    # be POSED there — the directory stays writable and the banner is right to say so. Probed
+    # rather than assumed, the way the rest of this file handles capability gaps.
+    _probe = _fsb / "probe"
+    _probe.mkdir(parents=True)
+    os.chmod(_probe, 0o555)
+    try:
+        (_probe / "x").write_text("x", encoding="utf-8")
+        _chmod_bites = False
+    except OSError:
+        _chmod_bites = True
+    finally:
+        os.chmod(_probe, 0o755)
+    if not _chmod_bites:
+        print("  [SKIP] unwritable-repository banner check — this platform does not honour "
+              "chmod against the owner")
     for _label, _ro_fs, _extra, _want in (
             ("writable", False, {}, "has just been created"),
             ("unwritable", True, {}, "not writable"),
             ("preview", False, {"CHAMNAN_READ_ONLY": "1"}, "this is a preview")):
+        if _ro_fs and not _chmod_bites:
+            continue
         _bd = _fsb / _label
         _bd.mkdir(parents=True)
         subprocess.run(["git", "init", "-q"], cwd=_bd, capture_output=True)
@@ -9220,9 +9238,13 @@ try:
     _mf = _mode / "keeps.sh"
     _mf.write_text("#!/bin/sh\necho one\n", encoding="utf-8")
     _mf.chmod(0o755)
-    ws.atomic_write_text(_mf, "#!/bin/sh\necho two\n")
-    check("AN ATOMIC WRITE IS A WRITE, NOT ALSO A PERMISSIONS CHANGE",
-          _mf.stat().st_mode & 0o111 != 0)
+    # The executable bit is a POSIX concept; Windows does not carry one a rename could drop.
+    if _mf.stat().st_mode & 0o111 == 0:
+        print("  [SKIP] executable-bit check — this platform has no executable bit to preserve")
+    else:
+        ws.atomic_write_text(_mf, "#!/bin/sh\necho two\n")
+        check("AN ATOMIC WRITE IS A WRITE, NOT ALSO A PERMISSIONS CHANGE",
+              _mf.stat().st_mode & 0o111 != 0)
 finally:
     _rmtree(_mode, ignore_errors=True)
 
