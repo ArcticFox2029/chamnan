@@ -8348,6 +8348,38 @@ _gh_quiet = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")
 check("...and says nothing once it is there", "not refreshed on commit" not in _gh_quiet)
 _rmtree(_gh.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] The ledger counts `candidates/` as a directory and stops there, so a workspace
+# whose candidates are all machine-detected and never reviewed reports the same number as one where
+# every candidate was confirmed and promoted. Measured on this repository: 4 candidates, all
+# `ai-inferred`, none ever promoted — which is the fact somebody deciding whether the promotion
+# workflow is worth using actually needs, and a raw count hides it (R14 agent 5).
+_cf = Path(tempfile.mkdtemp(prefix="chamnan-funnel-")) / "r"
+(_cf / ".git").mkdir(parents=True)
+(_cf / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_cf, capture_output=True)
+_cf_dir = _cf / ".chamnan" / "candidates"
+_cf_dir.mkdir(parents=True, exist_ok=True)
+def _cf_write(provs):
+    for _p in _cf_dir.glob("*.md"):
+        _p.unlink()
+    for _i, _prov in enumerate(provs):
+        (_cf_dir / f"c{_i}.md").write_text(
+            _csym.render([f"cmd{_i}", "git-add"], 3, "2026-09-01", _prov), encoding="utf-8")
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_cf,
+                          capture_output=True, text=True).stdout
+_cf_unseen = _cf_write(["ai-inferred"] * 4)
+check("A QUEUE OF CANDIDATES NOBODY HAS LOOKED AT IS REPORTED AS ONE",
+      "4 of 4 candidate(s) were detected by chamnan and none has been reviewed" in _cf_unseen
+      and "chamnan-candidates` lists them" in _cf_unseen)
+# Silent the moment a person has touched any of them — the same rule every other signal in that
+# section follows, and the reason it is worth reading when it does fire.
+_cf_seen = _cf_write(["ai-inferred", "ai-confirmed"])
+check("...and says nothing once somebody has reviewed one",
+      "none has been reviewed" not in _cf_seen)
+_cf_none = _cf_write([])
+check("...nor when there are no candidates at all", "none has been reviewed" not in _cf_none)
+_rmtree(_cf.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
