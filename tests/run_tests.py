@@ -8264,6 +8264,52 @@ check("...while the pointer into .chamnan/memory/ is still there",
       and "Read the one whose title matches" in _sb_rules)
 _rmtree(_sb.parent, ignore_errors=True)
 
+# 🐛 [2026-09-06] `rulecheck.line()` is silent by design when everything holds, and it reports only
+# BROKEN, malformed and contradictions — so "unverifiable" reached nobody at all. A glob matching no
+# file, a pattern the guards refuse, and a check past MAX_CHECKS all looked exactly like a rule
+# nobody meant to check mechanically, which is the silent-failure class this module exists to close
+# one layer up (R12 agent 5).
+#
+# And `_matches` returned None for four different reasons under one sentence — "matched no readable
+# file, or is not a valid pattern" — which need different actions: a refused pattern is a rule to
+# REWRITE, an empty glob is a path to FIX. Nobody noticed while the only consumer was a line that
+# stays quiet; surfacing the count is what made the ambiguity visible.
+_rh = Path(tempfile.mkdtemp(prefix="chamnan-rulehealth-")) / "r"
+(_rh / "src").mkdir(parents=True)
+(_rh / ".git").mkdir(parents=True)
+(_rh / "src" / "a.py").write_text("import os\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_rh, capture_output=True)
+_rh_r = _rh / ".chamnan" / "memory" / "rules"
+_rh_r.mkdir(parents=True, exist_ok=True)
+(_rh_r / "holds.md").write_text(
+    "# Every source file imports os\n\n**Check:** present `import os` in `src/*.py`\n",
+    encoding="utf-8")
+(_rh_r / "noglob.md").write_text(
+    "# Config lives in conf\n\n**Check:** present `debug` in `conf/*.yml`\n", encoding="utf-8")
+(_rh_r / "hazard.md").write_text(
+    "# A refused pattern\n\n**Check:** present `(?:a|a)*` in `src/*.py`\n", encoding="utf-8")
+(_rh_r / "invalid.md").write_text(
+    "# A broken pattern\n\n**Check:** present `foo(` in `src/*.py`\n", encoding="utf-8")
+_rh_res = {t: d for t, st, d in _ckrc.run(_rh, memory_mod.rules_with_titles(_rh))
+           if st == "unverifiable"}
+check("A CHECK THAT CANNOT RUN SAYS WHICH OF THE REASONS IT WAS",
+      _ckrc.WHY_NO_FILES in _rh_res.get("Config lives in conf", "")
+      and _ckrc.WHY_REFUSED in _rh_res.get("A refused pattern", "")
+      and _ckrc.WHY_INVALID in _rh_res.get("A broken pattern", ""))
+_rh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_rh,
+                         capture_output=True, text=True).stdout
+check("AND THE HEALTH REPORT COUNTS THE CHECKS A SESSION IS SILENT ABOUT",
+      "4 mechanical rule check(s)" in _rh_out and "1 hold" in _rh_out
+      and "3 could not run" in _rh_out)
+check("...naming each one, since a check that cannot run looks like a rule nobody meant to check",
+      "A refused pattern" in _rh_out and "Config lives in conf" in _rh_out)
+# The session line stays silent, which is the property that made this invisible in the first place
+# and is deliberately NOT changed.
+_rh_line = _ckrc.line(_ckrc.run(_rh, memory_mod.rules_with_titles(_rh)))
+check("...while the session line still says nothing about a check that merely could not run",
+      "could not run" not in _rh_line and "no readable file" not in _rh_line)
+_rmtree(_rh.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"

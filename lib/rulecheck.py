@@ -318,8 +318,28 @@ def _too_many_quantifiers(pattern):
     return False
 
 
-def _matches(root, pattern, glob):
-    """(files_scanned, files_matching, files_not_matching), or None when it cannot run."""
+# 🐛 [2026-09-06] `_matches` returned None for four different reasons and the caller printed one
+# sentence covering all of them: "matched no readable file, or is not a valid pattern". Those need
+# different actions -- a refused pattern is a rule to REWRITE, an empty glob is a path to FIX, and
+# they read identically. Nobody noticed while the only consumer was a session line that stays
+# silent unless something is broken; surfacing the count in `chamnan-report` is what made the
+# ambiguity visible (R12 agent 5).
+WHY_REFUSED = "the pattern is refused as a backtracking hazard — rewrite it more simply"
+WHY_INVALID = "the pattern is not valid regular expression syntax"
+WHY_NO_FILES = "no readable file inside this repository matched the glob"
+
+
+def _matches(root, pattern, glob, why=None):
+    """(files_scanned, files_matching, files_not_matching), or None when it cannot run.
+
+    `why` is an optional single-element list the caller passes to receive the REASON alongside the
+    None -- a second return value would change this function's shape for every existing caller, and
+    every one of them tests `is None`.
+    """
+    def _no(reason):
+        if why is not None:
+            why[:] = [reason]
+        return None
     # The count is on CHOICE POINTS, not on any one shape: an unbounded quantifier and an
     # overlapping alternation are the same hazard to a backtracking engine, and the fifth family
     # was found by supplying the exponent through concatenation rather than through repetition.
@@ -328,15 +348,15 @@ def _matches(root, pattern, glob):
     if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
             or _ambiguous(pattern) or _too_many_quantifiers(pattern)
             or _overlapping_alternations(pattern) > MAX_QUANTIFIERS):
-        return None
+        return _no(WHY_REFUSED)
     try:
         rx = re.compile(pattern)
     except re.error:
-        return None
+        return _no(WHY_INVALID)
     try:
         paths = [p for p in sorted(root.glob(glob)) if p.is_file()][:MAX_FILES]
     except (ValueError, OSError):
-        return None
+        return _no(WHY_NO_FILES)
     # Containment, checked here rather than trusted from the glob. `root.glob()` follows `..`
     # segments, so a rule whose Check trailer read ``in `../../../../etc/hosts` `` read a real file
     # outside the repository and reported its match count into the session -- a working oracle for
@@ -358,7 +378,7 @@ def _matches(root, pattern, glob):
             continue
     paths = inside
     if not paths:
-        return None
+        return _no(WHY_NO_FILES)
     hits, missing = 0, []
     for p in paths:
         try:
@@ -391,11 +411,14 @@ def run(root, rules):
                             f"and they are evaluated at every session start"))
                 continue
             ran += 1
-            got = _matches(Path(root), pattern, glob)
+            why = []
+            got = _matches(Path(root), pattern, glob, why)
             if got is None:
+                # The REASON, not a sentence covering four of them. A refused pattern is a rule to
+                # rewrite and an empty glob is a path to fix; they used to read identically.
                 out.append((title, "unverifiable",
-                            f"nothing to check: `{glob}` matched no readable file, "
-                            f"or `{pattern}` is not a valid pattern"))
+                            f"nothing to check: {why[0] if why else WHY_NO_FILES} "
+                            f"(`{pattern}` in `{glob}`)"))
                 continue
             scanned, hits, missing = got
             where = f"every `{glob}`" if per_file else f"`{glob}`"
