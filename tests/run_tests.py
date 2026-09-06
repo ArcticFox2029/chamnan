@@ -157,6 +157,7 @@ import candidates  # noqa: E402
 import host as host_mod  # noqa: E402
 import profiles as profiles_mod  # noqa: E402
 import adapters as adapters_mod  # noqa: E402
+import tools_index as tools_index_mod  # noqa: E402
 import ledger  # noqa: E402
 import tools_index  # noqa: E402
 import memory as memory_mod  # noqa: E402
@@ -9089,6 +9090,61 @@ try:
     check("...and no library module writes into the workspace without going through it", _raw == [])
 finally:
     _rmtree(_ro2, ignore_errors=True)
+
+# 🐛 `tools/index.json` holding `{}` — a hand-edit, a bad merge, a half-written file — made
+# `usage()` iterate the dict's KEYS and subscript a string, so `chamnan-report` died with a
+# TypeError instead of reporting. Three sibling readers of other stores already guard their shape
+# and this one did not (R1 agent 4). Guarded in `load()`, so all five readers are covered rather
+# than the one that happened to crash.
+_ti = Path(tempfile.mkdtemp(prefix="chamnan-toolsindex-"))
+try:
+    (_ti / ".chamnan" / "tools").mkdir(parents=True)
+    for _shape in ('{}', '{"tools": {"a": {}}}', '"text"', '42', 'null', '[]', 'not json at all'):
+        (_ti / ".chamnan" / "tools" / "index.json").write_text(_shape, encoding="utf-8")
+        try:
+            tools_index_mod.usage(_ti)
+            _ok = True
+        except Exception:
+            _ok = False
+        check(f"A WRONGLY SHAPED tools/index.json IS READ AS EMPTY, NOT A CRASH: {_shape[:18]}", _ok)
+    # ...and one bad row does not cost the good ones, because losing the file loses the counters.
+    (_ti / ".chamnan" / "tools" / "index.json").write_text(
+        '[{"name": "ok", "runs": 3}, "not a dict", 7]', encoding="utf-8")
+    check("...and a list with one bad row keeps the rows that are fine",
+          tools_index_mod.usage(_ti) == [("ok", 3)])
+finally:
+    _rmtree(_ti, ignore_errors=True)
+
+# 🐛 The first-session banner ANNOUNCED a creation rather than reporting one, so it was true only
+# when the creation had worked. On a repository that is not writable, `ensure()` fails, no
+# directory appears, and it still said `.chamnan/` "has just been created ... ready to write to"
+# (R1 agent 4). Three states, three sentences: collapsing the last two would tell a `--preview`
+# reader their repository is unwritable, which is a different problem from the one they have.
+_fsb = Path(tempfile.mkdtemp(prefix="chamnan-banner-"))
+try:
+    for _label, _ro_fs, _extra, _want in (
+            ("writable", False, {}, "has just been created"),
+            ("unwritable", True, {}, "not writable"),
+            ("preview", False, {"CHAMNAN_READ_ONLY": "1"}, "this is a preview")):
+        _bd = _fsb / _label
+        _bd.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q"], cwd=_bd, capture_output=True)
+        (_bd / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        if _ro_fs:
+            os.chmod(_bd, 0o555)
+        try:
+            _br = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                                 cwd=_bd, input="{}", capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace",
+                                 env=dict(os.environ, **_extra))
+            check(f"THE FIRST-SESSION BANNER REPORTS WHAT HAPPENED, NOT WHAT WAS ATTEMPTED: {_label}",
+                  _want in _br.stdout
+                  and (("has just been created" in _br.stdout) == (_bd / ".chamnan").is_dir()))
+        finally:
+            if _ro_fs:
+                os.chmod(_bd, 0o755)
+finally:
+    _rmtree(_fsb, ignore_errors=True)
 
 # ------------------------------ three guards that were not guarding
 import rulecheck as _rc2  # noqa: E402
