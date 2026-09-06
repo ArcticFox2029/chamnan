@@ -333,6 +333,13 @@ def read_target(target):
 def write_target(target, text):
     """Replace the target atomically, through the held handle. Returns True on success.
 
+    CALLERS MUST CHECK THE RESULT. That sentence is load-bearing: `tests/run_tests.py` walks this
+    package for it and fails on any call site that throws the answer away. It is here because all
+    seven sites did exactly that, so a read-only target was left untouched while every adapter
+    reported success — and adding an eighth unchecked site is the obvious way for that to come
+    back. `ws.atomic_write_text` deliberately carries no such sentence: it is best-effort by
+    contract, a failed write there must not stop a session starting, and the caller decides.
+
     Same two properties `ws.atomic_write_text` carries and for the same reasons -- a per-process
     staging name so two writers never share one, and a refusal to replace a file the user has made
     read-only -- expressed against a directory handle instead of a path.
