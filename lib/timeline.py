@@ -89,7 +89,14 @@ def threads(root):
     d = directory(root)
     if not d.is_dir():
         return []
-    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p))
+    # 🐛 [2026-09-06] `ws.inside` guarded `memory/` and `skills/` and not this. A committed
+    # symlink under `threads/` pointing outside the repository made `chamnan-timeline show` print
+    # the full, unredacted content of whatever it named -- an SSH config, internal prose, anything
+    # the process can read. Nothing about that content is secret-SHAPED, so the redactor cannot
+    # help; the refusal is the only thing that can. The workspace arrives with a clone, so the link
+    # is the repository's choice and not the reader's (R9 agent 2).
+    return sorted(p for p in d.glob("*.md")
+                  if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
 
 
 def resolve(root, ident):
@@ -215,7 +222,17 @@ def append(root, ident, date, note, files=None):
     # belonged to the real entry, and so answered `for_path()` in its place. A date nobody typed,
     # attached to a file it never touched, reading as a resolution.
     body = [f"## {date} — {mdblock.one_line(note)}", ""]
-    named = [f.strip() for f in (files or []) if f.strip()]
+    # 🐛 [2026-09-06] The note above was folded and this was not -- the same fix applied to one
+    # field of a pair, one line apart, which is this repository's most-repeated defect. A path
+    # carrying a newline and a `## chamnan` heading wrote a fabricated section into a file that gets
+    # COMMITTED, and ESC or U+202E in one reached every later reader of the thread. Reachable end to
+    # end from `chamnan-timeline add --files` (R9 agent 2; R2 reported this fixed and it was not --
+    # `git log -S` shows the line untouched since 1.6.0).
+    #
+    # `as_quoted`, not `one_line`: these are rendered INSIDE backticks, and a backtick in the value
+    # closes the span early and drops the rest of the line into chamnan's own voice. `as_quoted` is
+    # the helper that already exists for a value going into a code span.
+    named = [mdblock.as_quoted(f.strip(), 200) for f in (files or []) if f.strip()]
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")

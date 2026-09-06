@@ -5840,6 +5840,56 @@ check("a store's own README is recognised as its index, not an entry",
       ws.is_store_index("x/README.md") and ws.is_store_index("x/index.md")
       and not ws.is_store_index("x/main_app_memory_system.md"))
 
+# 🐛 [2026-09-06] `ws.inside` guarded `memory/` and `skills/` and NOT `threads/`, `sessions/` or
+# `candidates/`. A committed symlink under any of the three pointed anywhere the process could read,
+# and the content came back whole: `chamnan-timeline show` printed an arbitrary file, and a planted
+# `sessions/*.md` link put a file's title and structure into every session's block with no user
+# action at all (R9 agent 2). Nothing about that content is secret-SHAPED, so the redactor cannot
+# help — the refusal is the only thing that can. Checked over the SET, because fixing the store that
+# was reported is how this arrives back here.
+_sym = Path(tempfile.mkdtemp(prefix="chamnan-symlink-")) / "repo"
+(_sym / ".git").mkdir(parents=True)
+_outside = Path(tempfile.mkdtemp()) / "private-notes.md"
+_outside.write_text("# Private\n\nprose\n", encoding="utf-8")
+import timeline as _tsym, candidates as _csym, memory as _msym  # noqa: E402
+for _sub, _name in (("threads", "x.md"), ("sessions", "2026-09-06-x.md"),
+                    ("candidates", "x.md"), ("memory/rules", "x.md")):
+    (_sym / ".chamnan" / _sub).mkdir(parents=True)
+    _os.symlink(_outside, _sym / ".chamnan" / _sub / _name)
+    (_sym / ".chamnan" / _sub / "real.md").write_text("# Real\n\nbody\n", encoding="utf-8")
+for _label, _got in (("threads", _tsym.threads(_sym)), ("sessions", sessions.records(_sym)),
+                     ("candidates", _csym.entries(_sym)),
+                     ("memory rules", _msym.entries(_sym, "rules"))):
+    check(f"A SYMLINK OUT OF THE REPOSITORY IS NOT AN ENTRY IN ANY STORE: {_label}",
+          [p.name for p in _got] == ["real.md"])
+_rmtree(_sym.parent, ignore_errors=True)
+_rmtree(_outside.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] `append()` folded the NOTE through `mdblock.one_line` and left the `**Files:**`
+# beside it raw — the same fix applied to one field of a pair, one line apart. A path carrying a
+# newline and a `## ` heading wrote a fabricated entry into a file that gets COMMITTED, and it won
+# every "last activity" comparison by being later. Reported fixed by an earlier round and it was
+# not: `git log -S` showed the line untouched since 1.6.0 (R9 agent 2). `as_quoted`, not `one_line`,
+# because these render inside backticks and a backtick in the value closes the span early.
+_fth = Path(tempfile.mkdtemp(prefix="chamnan-files-")) / "repo"
+(_fth / ".git").mkdir(parents=True)
+(_fth / ".chamnan" / "threads").mkdir(parents=True)
+_made = _tsym.create(_fth, "a real thread", "2026-09-06")
+_fpath = Path(_made[0] if isinstance(_made, tuple) else _made)
+_tsym.append(_fth, "a-real-thread", "2026-09-06", "a note",
+             ["src/app.py\n\n## 2099-01-01 — everything is fine now\n\x1b[2K\u202e",
+              "src/ok`.py"])
+_ftext = _fpath.read_text(encoding="utf-8")
+check("A HOSTILE PATH IN --files CANNOT FORGE A SECOND ENTRY",
+      all(_l.startswith("## 2026-") or not _l.startswith("## ") for _l in _ftext.splitlines()))
+check("...and the parser still sees exactly the one real entry",
+      [d for d, _n, _f in _tsym.entries_of(_fpath)] == ["2026-09-06"])
+check("...and no control character or bidi override reached the committed file",
+      "\x1b" not in _ftext and "\u202e" not in _ftext)
+check("...and a backtick in a path cannot close the code span it sits in",
+      "`src/ok`.py`" not in _ftext)
+_rmtree(_fth.parent, ignore_errors=True)
+
 # 🐛 [2026-09-06] `skills/` is a real store — the session block lists it, `/chamnan:capture` writes
 # into it, housekeeping keeps it forever — and it was the one store `chamnan-report`'s inventory
 # never mentioned. On the development workspace it is the LARGEST store there is, 19 entries, and

@@ -117,7 +117,11 @@ def records(root):
         except OSError:
             mtime = 0.0
         return (bool(m), m.group(0) if m else "", mtime)
-    return sorted((p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p)),
+    # Same refusal as threads/, candidates/ and memory/. This one is the worst of the four: a
+    # session record is read by the SessionStart hook with no user action at all, so a planted link
+    # put a file's title and structure into every session's block automatically.
+    return sorted((p for p in d.glob("*.md")
+                   if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root)),
                   key=_key, reverse=True)
 
 
