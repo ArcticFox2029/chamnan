@@ -5758,8 +5758,8 @@ _absent_ok = "**Check:** absent `subprocess` in `src/*.py`"
 _absent_bad = "**Check:** absent `os.environ` in `src/*.py`"
 _present_bad = "**Check:** present `requests` in `src/*.py`"
 
-check("a Check trailer parses into mode, pattern and glob",
-      rulecheck.parse(_present) == [("present", "os.environ", "src/*.py")])
+check("a Check trailer parses into mode, pattern, glob and quantifier",
+      rulecheck.parse(_present) == [("present", "os.environ", "src/*.py", False)])
 check("a rule with no Check trailer yields nothing to run",
       rulecheck.parse("# Just a rule\n\nNo trailer here.\n") == [])
 check("both trailers on one rule are found",
@@ -5772,6 +5772,29 @@ check("a rule that holds is reported as holding", _status(_present) == ["holds"]
 check("an absent-check with no matches holds", _status(_absent_ok) == ["holds"])
 check("an absent-check with a match is BROKEN", _status(_absent_bad) == ["BROKEN"])
 check("a present-check with no match is BROKEN", _status(_present_bad) == ["BROKEN"])
+
+# 🐛 [2026-09-06] `present X in GLOB` is AGGREGATE — upheld while any one file in the glob matches —
+# and that is the wrong quantifier for the commonest rule there is. Written the natural way, "every
+# service config declares a timeout" reported `holds — 1/2 file(s)` after a second config with no
+# timeout at all was added: the exact regression the rule exists to prevent, called fine, because
+# one OTHER file matched (R8 agent 3). This module's docstring already says collapsing "I could not
+# check" into "this is violated" is how a check becomes noise; collapsing "violated" into "holds" is
+# the same failure and worse, and it had no name here.
+check("the aggregate form still holds while ANY file matches, which is what it means",
+      _status(_present) == ["holds"])
+_every_ok = "**Check:** present `os.environ` in every `src/*.py`"
+check("A PER-FILE CHECK IS BROKEN THE MOMENT ONE FILE FAILS IT",
+      _status(_every_ok) == ["BROKEN"])
+check("...and the finding NAMES the file, which is the whole reason to say `every`",
+      any(".py`" in d for _t, st, d in rulecheck.run(_rcdir, [("R", _every_ok)]) if st == "BROKEN"))
+check("...while `every` on a rule that really does hold everywhere still holds",
+      _status("**Check:** absent `zzz-not-in-any-file` in every `src/*.py`") == ["holds"])
+check("...and absent-in-every is BROKEN when one file matches",
+      _status("**Check:** absent `os.environ` in every `src/*.py`") == ["BROKEN"])
+check("the quantifier is parsed, not guessed from the glob",
+      rulecheck.parse(_every_ok) == [("present", "os.environ", "src/*.py", True)])
+check("...and a trailer without it still parses as aggregate",
+      rulecheck.parse(_present)[0][3] is False)
 
 # "I could not check" and "this is violated" are different facts, and collapsing them turns the
 # report into noise that gets ignored.
