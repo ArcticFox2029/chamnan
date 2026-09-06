@@ -83,11 +83,27 @@ def _covers(declared, claimed):
     member of it -- flagging that as a contradiction is a false positive on exactly the kind of
     entry the check exists to protect. Prefix on the dotted components, and only in that direction:
     a claim of `3.11` against a declared `3.11.2` is NOT covered, because the entry is then vaguer
-    than the environment and the vagueness is the thing worth noticing.
+    than the environment and the vagueness is the thing worth noticing. That decision stands and is
+    not what changed below.
+
+    🐛 [2026-09-06] A BARE MAJOR version is a different thing from a vaguer minor one, and it hit
+    the same branch. An environment declaring `python 3.11` and a lesson saying "runs on Python 3,
+    no exotic 3.x-only syntax" produced a finding on every single run, with no way to satisfy it
+    short of deleting the sentence or making it more specific than its author meant -- and "Python
+    3" is the most DURABLE claim a lesson can make about a language version, true through every
+    future minor bump. `ledger.py` in this same codebase warns that "a count that never changes is
+    what gets tuned out"; a finding that never clears is that failure mode in the opposite feature,
+    and it teaches a reader to skim past the one finding in ten that is real (R11 agent 3).
+
+    So a single-component claim is covered by any declared version on that line. The tested case
+    the paragraph above describes -- two components against three -- is untouched: it is still the
+    entry being vaguer about a MINOR version, which is a real thing to notice.
     """
     if declared == claimed:
         return True
     d, c = declared.split("."), claimed.split(".")
+    if len(c) == 1:
+        return d[0] == c[0]
     return len(c) > len(d) and c[:len(d)] == d
 
 

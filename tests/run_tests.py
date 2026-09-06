@@ -3266,7 +3266,15 @@ findings, unver, refusal = aging.check(ag_root)
 check("A CLAIM MATCHING EITHER OF TWO FRESH ENVIRONMENTS IS SILENT",
       findings == [] and unver == [])
 out = run_age(ag_root)
-check("and the CLI says so plainly", "no stored knowledge" in out.stdout)
+# 🐛 [2026-09-06] The all-clear used to read "no stored knowledge names a version that has moved
+# on", which is a completeness claim this check cannot make: every fresh environment's versions are
+# pooled, so a note explicitly about the environment that DID move on is cleared by an unrelated
+# one still running the old version. The pooling is deliberate — two environments legitimately
+# differ, which is the reason environments.md exists — and nothing here reads which environment a
+# sentence is about. So the sentence says what was actually checked, and names the gap (R11 agent 3).
+check("and the CLI says what was actually checked, not more",
+      "still declared by some environment" in out.stdout
+      and "does not read which environment an entry is ABOUT" in out.stdout)
 
 # Every memory category is scanned, not just rules.
 _mem(ag_root, "decisions", "d.md", "# A decision\n\nChosen while on redis 2.8.\n")
@@ -7917,6 +7925,21 @@ check("THE INDEX'S HOW-TO-READ INSTRUCTION IS PAID FOR ONCE, NOT TWICE",
 check("...and the path itself still reaches the session",
       _tl_out.count("`.chamnan/MAP.md`") >= 1)
 _rmtree(_tl.parent, ignore_errors=True)
+
+# 🐛 [2026-09-06] A BARE MAJOR version hit the same branch as a vaguer MINOR one, and the two are
+# not the same thing. An environment declaring `python 3.11` and a lesson saying "runs on Python 3,
+# no exotic 3.x-only syntax" produced a finding on every run, with no way to satisfy it short of
+# deleting the sentence — and that is the most durable claim a lesson can make about a language
+# version. `ledger.py` warns in this codebase that "a count that never changes is what gets tuned
+# out"; a finding that never clears teaches a reader to skim past the one in ten that is real
+# (R11 agent 3). The tested two-against-three case is deliberately untouched.
+check("A BARE MAJOR VERSION IS NOT A CONTRADICTION", aging._covers("3.11", "3") is True)
+check("...nor when the environment is more precise still", aging._covers("3.11.2", "3") is True)
+check("...while a DIFFERENT major still is", aging._covers("3.11", "2") is False)
+check("...and the vaguer-minor decision this did not change still holds",
+      aging._covers("3.11.2", "3.11") is False)
+check("...and a more precise claim than the environment is still covered",
+      aging._covers("3.11", "3.11.2") is True)
 
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
