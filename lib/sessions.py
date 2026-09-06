@@ -200,8 +200,20 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
         # commits at all; both numbers were the ancestor's (R6 acc3, first ten minutes).
         return ""
     try:
+        # 🐛 [2026-09-06] chamnan's OWN workspace was counted as the user's uncommitted work. git
+        # folds an entirely-untracked directory into one `??` line, so the scaffold this plugin
+        # creates on its first run -- .gitattributes, .gitignore, .version, config.json, no user
+        # content at all -- added exactly +1 to the count on every session until somebody committed
+        # `.chamnan/`, which nothing ever tells them to do. On a clean tree it did worse than
+        # inflate: it produced the whole section, reading "1 uncommitted file(s), and nobody
+        # recorded what for", which is flatly false (R15 agent 6).
+        #
+        # Excluded rather than counted, and that is the right direction even once `.chamnan/` IS
+        # committed: this section answers "where did I stop", and STATE.md changing every session
+        # is not an answer to it.
+        _ws_rel = ws.workspace(root).name
         st = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
-                             "status", "--porcelain"],
+                             "status", "--porcelain", "--", ".", f":(exclude){_ws_rel}"],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
                             timeout=5)
         if st.returncode != 0:
