@@ -834,6 +834,35 @@ def refuse_to_write(stream=None):
     return True
 
 
+# Keys `ensure()` preserved because a newer build had been here — read by the session-start hook so
+# a downgrade can be reported with what it would otherwise have destroyed.
+LAST_CONFIG_KEYS_KEPT = []
+
+
+def _newer_version_has_been_here(root):
+    """True when `.version` names a build newer than the one running.
+
+    Read-only and never raises: an unreadable or unparseable `.version` answers False, which keeps
+    the existing drop behaviour rather than inventing a reason to preserve junk.
+    """
+    try:
+        seen = (workspace(root) / VERSION_FILE).read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return False
+    if not seen:
+        return False
+    try:
+        running = plugin_version(Path(__file__).resolve().parent.parent)
+    except Exception:
+        return False
+    if not running:
+        return False
+    try:
+        return _as_tuple(seen) > _as_tuple(running)
+    except Exception:
+        return False
+
+
 def ensure(root=None):
     ws = workspace(root)
     # 🐛 `chamnan-map --preview`'s own --help says it "writes nothing", and in a repository that had
@@ -930,6 +959,32 @@ def ensure(root=None):
         merged.update({k: v for k, v in current.items()
                        if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
                        and _in_range(k, v)})
+        # 🐛 [2026-09-07] Dropping a key not in DEFAULT_CONFIG is correct for a RETIRED option — the
+        # comment above says why, and it is right. It is wrong for a key belonging to a NEWER
+        # chamnan that has already run in this workspace, and the two are indistinguishable by
+        # looking at the config alone: both are simply "a key I do not know".
+        #
+        # Reproduced: a workspace set up by HEAD, `output_byte_ceiling` set to 5500 by hand, then
+        # one `chamnan-map` from v1.4.0 — nine keys gone in a single call, silently, including the
+        # one `fit.py`'s own comment calls security-relevant because it keeps the block under the
+        # host's truncation. Running HEAD again "restored" it to the DEFAULT 9000, so the value the
+        # user chose was gone for good and nothing at any point said so (R7 agent 6).
+        #
+        # `.version` already records the newest build that has touched this workspace, for exactly
+        # this class of question, so the evidence needed was on disk and unused. When it names a
+        # version newer than the one running, the unknown keys are that version's and are KEPT.
+        #
+        # This cannot repair the reported case — v1.4.0 predates `.version` and will keep dropping
+        # keys whatever HEAD does. What it fixes is every downgrade from here on, which is the
+        # common shape: two machines, two installs, one shared checkout.
+        kept_newer = []
+        if _newer_version_has_been_here(root):
+            for k, v in current.items():
+                if k not in DEFAULT_CONFIG:
+                    merged[k] = v
+                    kept_newer.append(k)
+        if kept_newer:
+            LAST_CONFIG_KEYS_KEPT[:] = sorted(kept_newer)
         if merged == current:
             return None
         return json.dumps(merged, indent=2) + "\n"
@@ -1981,6 +2036,37 @@ def git_hook_state(root):
 HELP_FLAGS = ("-h", "--help")
 
 
+VERSION_FLAGS = ("--version", "-V")
+
+
+def wants_version(argv):
+    """True when `argv` asks which build this is, wherever the flag sits.
+
+    🐛 [2026-09-07] No command had `--version` at all. Ten commands, zero ways to ask, on a plugin
+    whose own session-start hook prints a downgrade banner about running the wrong build — so the
+    tool could TELL you it was the wrong version and you could not ask it which version it was.
+
+    That gap is why the config-key loss below went unseen for weeks: a workspace silently rewritten
+    by an older install looks identical to one nobody touched, and the first thing anyone would do
+    to check is run `chamnan-map --version` and compare. `-V` as well as `--version` because the
+    short form is what people type, and an unrecognised flag is refused rather than ignored, so
+    typing it and getting "unknown flag" is worse than useless.
+    """
+    return any(a in VERSION_FLAGS for a in (argv or []))
+
+
+def version_line():
+    """One line naming the build, where it lives, and what interpreter is running it.
+
+    All three, because the question behind "which version" is almost always "which INSTALL am I
+    getting" — a machine here carries several under different config directories, and the version
+    string alone cannot tell them apart.
+    """
+    here = Path(__file__).resolve().parent.parent
+    return (f"chamnan {plugin_version(here) or '(version unreadable)'}  "
+            f"{here}  python {sys.version.split()[0]}")
+
+
 def wants_help(argv):
     """True when `argv` asks for help, wherever the flag sits.
 
@@ -2010,7 +2096,7 @@ def unknown_flags(argv, known):
     with nothing on screen to say so. `chamnan-map` has refused unknown flags for this reason since
     it grew its own; the commands beside it accepted anything and ran their default action.
     """
-    allowed = set(known) | set(HELP_FLAGS)
+    allowed = set(known) | set(HELP_FLAGS) | set(VERSION_FLAGS)
     return [a for a in (argv or []) if a.startswith("-") and a not in allowed]
 
 

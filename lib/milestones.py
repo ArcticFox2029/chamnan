@@ -72,7 +72,27 @@ def entries(root):
     out = []
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
-        out.append((m.group(1), m.group(2), text[m.end():end].strip()))
+        title = m.group(2)
+        # 🐛 [2026-09-07] `append()` folds newlines out of a title now, so no NEW entry can be
+        # split in two by one. That says nothing about the entries already in the file, and this
+        # file is COMMITTED — a clone carries whatever its author put there, and an install from
+        # before the fold wrote titles raw. A title holding "\n## <date> — <text>" therefore
+        # produces a second entry that HEAD's own fixed reader trusts completely, and because the
+        # date is attacker-chosen it sorts to the top of the two titles the session is shown.
+        # Reproduced against HEAD today: the planted entry won the "most recent" slot.
+        #
+        # The tell is structural rather than semantic: `render_entry` always leaves a blank line
+        # under its heading, so a heading whose PREVIOUS line is another heading was not written by
+        # this code. Flagged, never dropped — the owner's rule is that nothing here is deleted, and
+        # a reader who is told which line is suspect can fix the file, while a reader who is shown
+        # nothing cannot.
+        before = text[:m.start()].rstrip("\n")
+        split_off = bool(before) and _ENTRY.match(before.rsplit("\n", 1)[-1] + "\n") is not None
+        if split_off:
+            title = (title + " ⚠ this heading follows another with no blank line between them, "
+                     "which is not how chamnan writes one — it may have been split out of the "
+                     "title above by a newline. Check .chamnan/milestones.md.")
+        out.append((m.group(1), title, text[m.end():end].strip()))
     return out
 
 

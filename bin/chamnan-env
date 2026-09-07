@@ -153,6 +153,12 @@ def main(argv):
 
     if not argv or argv[0] in ("list", "-l", "--list"):
         return cmd_list(root)
+    # Before help, and before anything is parsed: "which build is this" must be
+    # answerable from any command, including one that would otherwise refuse the
+    # arguments beside it. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0

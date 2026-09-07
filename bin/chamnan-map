@@ -405,6 +405,12 @@ def main(argv):
     # An unknown flag is refused rather than ignored for the same reason the README already warns
     # about: a misspelt flag used to be dropped in silence and the command did something other than
     # what was asked, with nothing on screen to say so.
+    # Before help, and before anything is parsed: "which build is this" must be
+    # answerable from any command, including one that would otherwise refuse the
+    # arguments beside it. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
     if ws.wants_help(argv):
         print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
         # 🐛 `--help` printed the docstring and stopped, and the docstring explains what the map is
@@ -550,6 +556,23 @@ def main(argv):
         _anyway = mapper.render(files, root)
         if not any(h in _anyway for h in ("## Deployment", "## Stored material",
                                           "## Source chamnan cannot index")):
+            # 🐛 [2026-09-07] This returned 1 in silence, and the silence hides a CLIFF. The
+            # "another route" above is the Stored-material section, which `assets.MIN_FILES`
+            # requires 12 files to open — so a documentation repository of ELEVEN markdown files
+            # gets exit 1 and no map, and the same repository with a twelfth gets a written index.
+            # Measured at exactly that boundary. Both outcomes are defensible; being given one of
+            # them with no way to know the other exists is not, and a docs repo is a shape a new
+            # user arrives with (R7 agent 2).
+            #
+            # The reasons above are true and stay. This adds the one fact that explains the
+            # difference, and only when the tree is actually near the floor — saying it for an
+            # empty directory would be noise.
+            _unread = sum(mapper.SKIPPED_UNKNOWN_EXT.values())
+            if 0 < _unread < assets_mod.MIN_FILES:
+                print(f"  {_unread} file(s) chamnan does not index is below the {assets_mod.MIN_FILES} "
+                      f"it takes to describe a directory as stored material, so there is nothing "
+                      f"to write. A repository of the same files past that count does get a map.",
+                      file=sys.stderr)
             return 1
         print("  chamnan can still describe this tree by another route — writing the map.",
               file=sys.stderr)

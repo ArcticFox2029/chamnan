@@ -1578,6 +1578,19 @@ def is_text_file(path):
         return False
 
 
+def _inside_workspace(path, root):
+    """True when `path` is one of chamnan's own files under `.chamnan/`.
+
+    Its own records are not the repository's source and were never candidates for the index, so
+    counting them as "excluded candidates" describes the tool to the user instead of their code.
+    """
+    try:
+        from workspace import WORKSPACE_DIRNAME
+        return WORKSPACE_DIRNAME in path.relative_to(root).parts
+    except (ValueError, ImportError):
+        return False
+
+
 def indexable(root, nested=None, with_text=False, sniff=True):
     """Yield (path, lang) for exactly the files that belong in this repository's index, or
     (path, lang, text) when `with_text` asks for the content too.
@@ -1666,7 +1679,21 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # Counted by extension rather than by path: the useful sentence is "4,540 .svelte files
             # were not read", not a list of names, and a repository is full of `.json`, `.lock` and
             # `.png` that nobody expects an index to cover. The caller decides what is worth saying.
-            SKIPPED_UNKNOWN_EXT[path.suffix.lower() or "(no extension)"] += 1
+            # 🐛 [2026-09-07] chamnan's OWN bookkeeping was counted here as though it were the
+            # repository's source. On a brand-new repo holding one README, `chamnan-map` reported
+            # "extensions chamnan does not read: (no extension) x4, .json x1, .md x1" — six files,
+            # five of them `.gitignore`, `.gitattributes`, `.version`, `config.json` and MAP.md,
+            # every one written by chamnan itself minutes earlier. The first thing a new user is
+            # told about their repository is a complaint about files they did not create
+            # (R7 agent 2).
+            #
+            # Narrower than skipping `.chamnan/` outright, which would be wrong: this repository
+            # keeps real indexed Python under `.chamnan/tools/` and `.chamnan/tests/`, and those
+            # have extensions chamnan reads so they never reach this branch. What is silenced is
+            # only the unreadable-extension TALLY for files inside the workspace — chamnan's own
+            # records, which were never candidates for the index in the first place.
+            if not _inside_workspace(path, root):
+                SKIPPED_UNKNOWN_EXT[path.suffix.lower() or "(no extension)"] += 1
             continue
         try:
             size = path.stat().st_size

@@ -50,7 +50,7 @@ index is worth sending, never where anything goes.
 | *"does it work on Windows"* | Yes, and on macOS, Linux and WSL — all four run in CI on every commit. [Per-OS instructions](#running-it-on-each-operating-system) |
 | *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
 | *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **97.4% recall / 100% precision** on a 38-secret, 30-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **98.2% recall / 100% precision** on a 55-secret, 43-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
@@ -1107,12 +1107,12 @@ No credential scanner wins both axes. The published head-to-head over 818 reposi
 true secrets puts **Gitleaks at 46% precision / 88% recall**, **GitHub's own scanner at 75% / 6%**,
 and **git-secrets at 1% / 23%**. "Credentials are stripped" with no pair of numbers beside it is a
 claim nobody has measured, so here is the pair, from `tools/redactor_recall.py` against a labelled
-corpus of 38 secret shapes and 22 ordinary strings that must survive:
+corpus of 55 secret shapes and 43 ordinary strings that must survive:
 
 | | |
 |---|---|
-| recall | **97.4%** — 37 of 38 secret shapes redacted |
-| precision, on the corpus | **100%** — 0 of 30 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
+| recall | **98.2%** — 54 of 55 secret and personal-data shapes redacted |
+| precision, on the corpus | **100%** — 0 of 43 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
 | precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |
 | `scrub()` applied to whole source files | **69 lines damaged**, down from 144 |
 
@@ -1608,8 +1608,8 @@ Sources: [arXiv:2601.09832](https://arxiv.org/abs/2601.09832); [arXiv:1907.00376
 | | |
 |---|---|
 | chamnan's redactor, **before** | **66.7%** recall / **81.8%** precision |
-| chamnan's redactor, **after** | **97.4%** recall / **100%** precision |
-| corpus | 38 secret shapes, 22 ordinary strings that must survive |
+| chamnan's redactor, **after** | **98.2%** recall / **100%** precision |
+| corpus | 55 secret shapes, 43 ordinary strings that must survive |
 | **the ceiling it cannot reach** | verification by live API call: TruffleHog **6% → 90%** precision |
 
 **The worst bug was not a miss.** `Authorization: Bearer <token>` matched the bare-assignment rule,
@@ -1708,7 +1708,7 @@ question is not whether it participates — it does — but whether the chain ca
 | link | chamnan |
 |---|---|
 | 1. repo content reaches the agent | **yes, by design** — mitigated only by the fence below, which is worth about a halving |
-| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **97.4% recall / 100% precision** |
+| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **98.2% recall / 100% precision** |
 | 3. it is written into something that configures or executes | **no**, and this is now pinned by tests |
 | 4. a capability turns that into network activity | **no** — pinned by the tests in §9 |
 

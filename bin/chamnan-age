@@ -47,6 +47,12 @@ KNOWN_FLAGS = ()
 
 
 def main(argv):
+    # Before help, and before anything is parsed: "which build is this" must be
+    # answerable from any command, including one that would otherwise refuse the
+    # arguments beside it. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
