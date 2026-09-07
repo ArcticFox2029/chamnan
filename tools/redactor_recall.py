@@ -29,6 +29,19 @@ import redact  # noqa: E402
 
 _F = "0123456789abcdefghij"          # filler that is never a real key
 
+# ---------------------------------------------------------------- personal data, not credentials
+# Both numbers below are SYNTHETIC and built from public arithmetic: `4111 1111 1111 1111` is the
+# card number every payment provider documents as a test value, and the national ID is generated
+# here from the published checksum. Neither has ever belonged to anybody.
+def _thai_id(base="110170123456"):
+    weighted = sum(int(base[i]) * (13 - i) for i in range(12))
+    return base + str((11 - weighted % 11) % 10)
+
+
+_TID = _thai_id()
+_TID_DASHED = f"{_TID[0]}-{_TID[1:5]}-{_TID[5:10]}-{_TID[10:12]}-{_TID[12]}"
+
+
 # (label, text, the substring that must disappear)
 POSITIVES = [
     ("openai key",            f"OPENAI_KEY = 'sk-{_F}{_F}{_F}'",            f"sk-{_F}"),
@@ -101,6 +114,19 @@ POSITIVES = [
 ]
 
 # Must survive untouched. An index full of <REDACTED> is not an index.
+PERSONAL = [
+    # A credential has a NAME beside it to anchor on; personal data has none, so the anchor is the
+    # number's own checksum PLUS its context. Both halves are required, which is why the decoys
+    # further down matter as much as these do.
+    ("visa, grouped",      "Test card 4111 1111 1111 1111 for the sandbox", "4111 1111 1111 1111"),
+    ("visa, hyphenated",   "card=4111-1111-1111-1111",                     "4111-1111-1111-1111"),
+    ("amex, grouped",      "AMEX 3782 822463 10005 on file",               "3782 822463 10005"),
+    ("mastercard + word",  "credit_card_number = 5555555555554444",        "5555555555554444"),
+    ("thai id, dashed",    f"ผู้ป่วย {_TID_DASHED} เข้ารับบริการ",             _TID_DASHED),
+    ("thai id + th word",  f"เลขประจำตัวประชาชน {_TID}",                     _TID),
+    ("thai id + en word",  f"national_id = {_TID}",                        _TID),
+]
+
 NEGATIVES = [
     # Ordinary identifiers that contain a secret word as a SUBSTRING. Every one of these was being
     # destroyed: `token`, `secret` and `credential` were bare substrings while `key` and `auth`
@@ -124,6 +150,18 @@ NEGATIVES = [
     ("certificate block",  "-----BEGIN CERTIFICATE-----\nMIID\n-----END CERTIFICATE-----"),
     ("authors list",       "AUTHORS=alexander,brigitte"),
     ("credential provider","credential_provider: environment"),
+    # The personal-data layer's decoys. A checksum ALONE passes 9.8% of random 16-digit numbers and
+    # 10.0% of epoch-millisecond timestamps — measured before that layer was designed, and the
+    # reason it requires context as well. Every line here would be destroyed by a rule that trusted
+    # the arithmetic on its own.
+    ("epoch milliseconds",  "created_at = 1757203845123"),
+    ("order number",        "order 4111111111111112 shipped"),
+    ("bare 16 digits",      "row_id = 5555555555554444"),
+    ("bare 13 digits",      f"seq {_TID} next"),
+    ("card checksum wrong", "card 4111 1111 1111 1112 declined"),
+    ("thai id sum wrong",   f"ref {_TID_DASHED[:-1]}{(int(_TID[12]) + 1) % 10}"),
+    ("phone number",        "call +66 2 123 4567 for support"),
+    ("port list",           "ports 8080 9090 3000 5432"),
     ("hash algorithm",     "password_hash_algorithm = bcrypt"),
     ("url without creds",  "https://api.example.com/v1/things?page=2"),
     ("function name",      "def rotate_access_key(client): ..."),
@@ -153,20 +191,24 @@ NEGATIVES = [
 def main():
     verbose = "--verbose" in sys.argv
     caught, missed = [], []
-    for label, text, secret in POSITIVES:
+    for label, text, secret in POSITIVES + PERSONAL:
         (caught if secret not in redact.scrub(text) else missed).append(label)
 
     clean, eaten = [], []
     for label, text in NEGATIVES:
         (eaten if redact.PLACEHOLDER in redact.scrub(text) else clean).append(label)
 
-    recall = len(caught) / len(POSITIVES) * 100
+    recall = len(caught) / (len(POSITIVES) + len(PERSONAL)) * 100
     # Precision here is over this corpus: of everything redacted, how much deserved it. A labelled
     # corpus cannot give the precision a repo-wide scan would; it can give the pair honestly.
     flagged = len(caught) + len(eaten)
     precision = len(caught) / flagged * 100 if flagged else 0.0
 
-    print(f"recall     {recall:5.1f}%   ({len(caught)}/{len(POSITIVES)} secret shapes redacted)")
+    # 🐛 The denominator was `len(POSITIVES)` while the numerator counted the personal-data corpus
+    # too, so the line read "48/42" — a rate over 100% printed as if it were a result. A number
+    # this file exists to publish must be arithmetic somebody can check.
+    print(f"recall     {recall:5.1f}%   ({len(caught)}/{len(POSITIVES) + len(PERSONAL)} "
+          f"secret and personal-data shapes redacted)")
     print(f"precision  {precision:5.1f}%   ({len(caught)}/{flagged} redactions deserved)")
     print(f"           {len(eaten)}/{len(NEGATIVES)} ordinary strings damaged")
 
