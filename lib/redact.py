@@ -1174,6 +1174,14 @@ _CARD_BARE = re.compile(r"(?<![0-9A-Za-z_-])(" + _CARD_BRANDS + r")(?![0-9A-Za-z
 # way this module can test. Roughly one in ten arbitrary dash-grouped 16-digit identifiers will
 # satisfy the checksum by chance, and there is no signal left that separates them.
 #
+# 🐛 [2026-09-07] And this paragraph was written in ASCII while the SAME COMMIT added `_DIGIT_FOLD`,
+# which makes the identical no-context false positive reachable in Thai, Arabic-Indic, Persian,
+# Devanagari, Tamil and fullwidth digits too. Six times the surface, described as if it were one —
+# a risk accepted on a measurement that had already stopped being the whole measurement by the time
+# it was committed (R9 agent 3). The acceptance below still holds, and it now covers what it says
+# it covers: an identifier written in ANY of those scripts is judged by the same shape test, so a
+# Thai-numeral device id is as redactable as an ASCII one, and for the same reason.
+#
 # Kept, and the reason is what this redactor guards. It is not a repository-wide scanner that
 # rewrites source — it scrubs chamnan's OWN generated text: MAP.md, the injected block, a command's
 # stdout. A false positive costs a model one opaque `<REDACTED>` where a device id used to be, in a

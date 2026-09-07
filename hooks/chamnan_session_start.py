@@ -534,20 +534,41 @@ def index_is_behind(root, map_path):
     against 0.659s on an 8,000-file fixture, inside the noise, because the two extra git processes
     cost about what they saved.
 
-    The premise was wrong, and this is where the time actually goes on that fixture:
+    The premise was wrong. Restricting WHICH files are considered cannot help, because the costs
+    that dominate are per-ROOT, not per-file: `mapper.indexable` computes `_nested_repo_dirs`,
+    `_tracked_ambiguous` and `_generated_globs` for the whole tree before it looks at a single path,
+    and they run identically whether the answer concerns one file or fifty thousand.
 
-        tree.files (the walk itself)      0.005 s      <- what the fix was aimed at
-        _nested_repo_dirs                 0.144 s
-        _tracked_ambiguous                0.084 s
-        _generated_globs                  0.034 s
-        the per-file stat and filter      the rest
+    🐛 A FIRST VERSION OF THIS NOTE PUBLISHED A TABLE THAT MIS-READ ITS OWN MEASUREMENT, and the
+    correction is the useful part. It said the walk costs 0.005 s while `_nested_repo_dirs` costs
+    0.144 s. Both numbers were real and the attribution was not: `tree.session()` caches the walk on
+    FIRST USE, and `indexable()` happens to call `_nested_repo_dirs` before its own loop — so
+    whichever function is called first is billed for the walk. Swap the order and the numbers swap
+    with it, while the total does not move:
 
-    The walk is already nearly free because `tree.session()` caches it. Restricting WHICH files are
-    considered cannot help while the per-root setup runs either way, so a real fix has to attack
-    that setup — a HEAD-keyed disk cache for `_nested_repo_dirs`, the way `rollup` caches churn —
-    and that is a new cache with its own staleness risk, deliberately not started here on the way
-    past. Anyone picking it up: `rollup`'s memo once omitted HEAD from its key and served a stale
-    ranking, which is the failure mode to design against first.
+        called nested-first (the real order)   _nested_repo_dirs 0.121 s   tree.files 0.005 s
+        called walk-first                      _nested_repo_dirs 0.000 s   tree.files 0.120 s
+
+    `_nested_repo_dirs`'s own logic is sub-millisecond. There is nothing in it to make cheaper, and
+    a table that says otherwise sends the next person to optimise a function that does no work
+    (R9 agent 1).
+
+    THE CACHE THIS NOTE ORIGINALLY FLOATED DOES NOT WORK EITHER, for three separate reasons, all
+    measured: a HEAD-keyed disk cache in `rollup`'s style is sound only because churn is derived
+    from commit history and nothing else, and none of these three meets that precondition.
+    `_nested_repo_dirs` depends on a `.git` directory EXISTING — creating a nested checkout does not
+    move the host repo's HEAD. `_tracked_ambiguous` reads `git ls-files`, which is the INDEX: `git
+    add` with no commit changes the answer while HEAD stands still. `_generated_globs` reads
+    `.gitattributes` off the working tree without going through git at all, so an unstaged edit
+    changes it and no git-derived key can see that.
+
+    What is left, and is real: `_generated_globs` runs its OWN `os.walk` outside `tree`'s cache — a
+    genuine second walk, measured 0.110 s at 50,000 files and additive — and the dominant per-file
+    cost is not in this module at all. `redact.is_blocked` was 53% of the loop at 50,000 files,
+    because `_names_to_judge` calls `os.path.realpath()` on every path without first asking whether
+    it is a symlink; gating that measured 8-9x on a tree with no symlinks. Neither is started here;
+    both are recorded so the next attempt begins where the evidence points rather than where the
+    first report guessed.
     """
     if _map_is_current_by_git(root, map_path):
         return 0, []
