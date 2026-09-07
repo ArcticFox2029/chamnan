@@ -8796,7 +8796,12 @@ _rmtree(_hb.parent, ignore_errors=True)
 # Derived, so the twenty-third cannot be forgotten: every `subprocess.run` here that captures text
 # must say what encoding to decode it with.
 _enc_pat = re.compile(r"subprocess\.run\((?:[^()]|\([^()]*\))*?\)", re.S)
-_enc_src = Path(__file__).read_text(encoding="utf-8-sig")
+# 🐛 `Path(__file__)` is NOT absolute on Python 3.8 — it is whatever was typed, and CI types
+# `python3 tests/run_tests.py` — so by the time this line runs, after fixtures have moved the
+# working directory, the relative path resolves to nothing. Absolute since 3.9 and not before,
+# which is why it passed on 3.13 and died on 3.8. `ROOT` is computed at import time and is the
+# constant the rest of this file already uses for exactly this reason.
+_enc_src = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8-sig")
 _enc_bad = []
 for _m in _enc_pat.finditer(_enc_src):
     _call = _m.group(0)
