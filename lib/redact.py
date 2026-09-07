@@ -1145,7 +1145,21 @@ _TERMINAL_SAFE = str.maketrans({
     **{chr(i): None for i in range(0x20) if chr(i) not in "\n\t"},
     chr(0x7F): None,
     **{chr(i): None for i in range(0x202A, 0x202F)},
-    **{chr(i): None for i in range(0x2066, 0x206A)},
+    # 🐛 [2026-09-07] Extended from 0x206A to 0x2070, and the four before it added, after deriving
+    # the full set: 66 format code points survived this table. Most of them stay, deliberately.
+    # ZWJ and ZWNJ hold a family emoji together and separate a Persian verb prefix; the bidi marks,
+    # the Arabic number signs and the Hangul fillers are ordinary letters in languages this tool
+    # indexes. Stripping those corrupts real source in exchange for closing a channel the tag-
+    # character range above already closes -- certain damage against a marginal gain, which is the
+    # wrong trade for a filter that runs over every repository's own text.
+    #
+    # What is added here is the set with no legitimate role in prose: 2061-2064 are invisible MATH
+    # operators (FUNCTION APPLICATION, INVISIBLE TIMES/SEPARATOR/PLUS), and 206A-206F are deprecated
+    # by Unicode itself. FFF9-FFFB are interlinear annotation, which Unicode says is not for plain
+    # text interchange. None of these appears in a comment anybody wrote on purpose (R12 agent 2).
+    **{chr(i): None for i in range(0x2061, 0x2065)},
+    **{chr(i): None for i in range(0x2066, 0x2070)},
+    **{chr(i): None for i in range(0xFFF9, 0xFFFC)},
     "\u200b": None,
     "\ufeff": None,
     **{chr(i): None for i in range(0xE0000, 0xE0080)},

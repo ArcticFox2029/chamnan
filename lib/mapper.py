@@ -132,6 +132,27 @@ SKIPPED_BUILD_DIR = set()
 
 # {".svelte": 4540, …} — files whose extension chamnan has no reader for. See indexable().
 SKIPPED_UNKNOWN_EXT = __import__("collections").Counter()
+# 🐛 [2026-09-07] The same skips, counted by TOP-LEVEL DIRECTORY instead of by extension, because
+# that is how `assets.scan()` groups them and the two have to agree. `chamnan-map`'s explanation of
+# the `assets.MIN_FILES` cliff summed the extension counter, which is global; the gate it explains
+# is per directory. Twelve unreadable files split six-and-six across two directories summed to 12 --
+# not below the floor -- so the explanation stayed silent while neither directory had cleared the
+# floor and the command still exited 1 with nothing to go on. A counter keyed the way the gate is
+# keyed is the only version of this that cannot drift back apart (R12 agent 2).
+SKIPPED_UNKNOWN_DIR = __import__("collections").Counter()
+
+
+def _top_level(path, root):
+    """The first path segment of `path` under `root` — how `assets.scan()` groups a file.
+
+    `assets.scan()` does `rel.split("/")[0]` on the same relative path. Spelled once here so the
+    diagnostic and the gate cannot disagree about what a directory is.
+    """
+    try:
+        rel = path.relative_to(root).as_posix()
+    except ValueError:
+        return "(root)"
+    return rel.split("/")[0] if "/" in rel else "(root)"
 _TRACKED_AMBIGUOUS = {}
 _GENERATED_GLOBS = {}
 SKIPPED_GENERATED = set()
@@ -1652,6 +1673,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # "cannot index" count under a key that says which of `.m`'s languages it was --
             # a bare `.m` in that list would read as "chamnan cannot read Objective-C".
             SKIPPED_UNKNOWN_EXT[".m (MATLAB)"] += 1
+            SKIPPED_UNKNOWN_DIR[_top_level(path, root)] += 1
             continue
         if not lang and not path.suffix:
             # 🐛 chamnan's own `bin/` was invisible to chamnan's own index, from the first commit.
@@ -1694,6 +1716,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # records, which were never candidates for the index in the first place.
             if not _inside_workspace(path, root):
                 SKIPPED_UNKNOWN_EXT[path.suffix.lower() or "(no extension)"] += 1
+                SKIPPED_UNKNOWN_DIR[_top_level(path, root)] += 1
             continue
         try:
             size = path.stat().st_size
@@ -1786,6 +1809,7 @@ def reset_skips():
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
     SKIPPED_UNKNOWN_EXT.clear()
+    SKIPPED_UNKNOWN_DIR.clear()
     PARSE_WARNINGS.clear()
 
 

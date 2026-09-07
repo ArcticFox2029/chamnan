@@ -20540,12 +20540,91 @@ check("A DOCS REPO BELOW THE FLOOR IS TOLD THE FLOOR EXISTS",
       and "stored material" in _md11.stderr)
 check("...and the same repo past it gets a map, which is what makes the sentence worth printing",
       _md12.returncode == 0 and (_md12_dir / ".chamnan" / "MAP.md").is_file())
+
+# 🐛 [2026-09-07] Both fixtures above put every file in ONE directory, which is the half that
+# already worked. `assets.scan()` applies the floor per top-level directory (`rel.split("/")[0]`);
+# the explanation summed `SKIPPED_UNKNOWN_EXT`, which is global. Split the same twelve files
+# six-and-six and the sum is 12 — not below the floor — so the branch never fired, while neither
+# directory had cleared the floor and the command still exited 1 in silence. A repository's
+# non-source material is rarely all in one folder, so this is arguably the commoner shape
+# (R12 agent 2).
+_mdsplit = Path(tempfile.mkdtemp(prefix="chamnan-mdsplit-")) / "r"
+_mdsplit.mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_mdsplit)], check=True)
+for _i in range(assets_mod.MIN_FILES // 2):
+    for _sub in ("dirA", "dirB"):
+        (_mdsplit / _sub).mkdir(exist_ok=True)
+        (_mdsplit / _sub / f"doc{_i}.md").write_text(f"# Doc {_i}\n\nprose.\n", encoding="utf-8")
+_mds = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_mdsplit),
+                      capture_output=True, text=True, encoding="utf-8", errors="replace")
+check("THE FLOOR IS PER DIRECTORY, AND THE EXPLANATION SAYS SO WHEN FILES ARE SPLIT",
+      _mds.returncode == 1 and "stored material" in _mds.stderr
+      and str(assets_mod.MIN_FILES) in _mds.stderr)
+# And it says the thing the reader needs to act: spreading them out lowered the count.
+check("...and names the total, so the reader is not told 6 when they can see 12",
+      "in total" in _mds.stderr)
+# The fixture must be genuinely split, or this is the one-directory case again.
+check("the split fixture really spans two directories",
+      (_mdsplit / "dirA").is_dir() and (_mdsplit / "dirB").is_dir())
+_rmtree(_mdsplit.parent, ignore_errors=True)
 _rmtree(_nu2.parent, ignore_errors=True)
 _rmtree(_md11_dir.parent, ignore_errors=True)
 _rmtree(_md12_dir.parent, ignore_errors=True)
 
 
+# ------------------------------------------- the README's router claim, checked against the code
+# 🎯 [2026-09-07] The README tells someone running a model router that chamnan needs no setup, and
+# gives the reason: it makes no model call and reads no endpoint variable. That is a claim about the
+# CODE, so it is checked against the code rather than believed. A reader acts on it — they install
+# and move on — and a claim like that going stale is worse than never having made it.
+_rt_src = "\n".join(
+    _f.read_text(encoding="utf-8")
+    for _d in ("lib", "bin", "hooks")
+    for _f in sorted((ROOT / _d).iterdir())
+    if _f.is_file() and _f.suffix in ("", ".py") and _f.name != "redact.py")
+_rt_named = [_v for _v in ("ANTHROPIC_BASE_URL", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY",
+                          "OPENAI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "HTTPS_PROXY")
+             if _v in _rt_src]
+if _rt_named:
+    print(f"      DETAIL  gateway/credential variables now referenced: {_rt_named}")
+check("chamnan reads no endpoint or API-key variable, as the router section claims", not _rt_named)
+# redact.py is excluded above because it holds PATTERNS for these names in order to redact them —
+# the one file where finding the string is the point, and the one file where a match is not a
+# gateway call. Nothing else in the tree gets that exemption.
+# The sweep has to have read the library, or "no matches" means "no files".
+check("the router-claim sweep actually read the source", len(_rt_src) > 100_000)
+
 # ------------------------------------------- instructions with no rendered width at all
+# 🎯 [2026-09-07] What this filter must NOT strip, and why the list is short on purpose.
+#
+# Deriving every format code point that survives `for_a_terminal` returns 66 of them, and the
+# tempting reading is that all 66 are holes. They are not. ZWJ is what holds a family emoji
+# together and ZWNJ is what separates a Persian verb prefix; the bidi marks, the Arabic number
+# signs and the Hangul fillers are ordinary letters in languages this tool indexes. Stripping them
+# corrupts real source, in every repository, forever — against closing a channel the tag-character
+# range already closes. This check pins the decision so a later sweep does not "finish the job"
+# and quietly break every non-Latin repository chamnan supports (R12 agent 2).
+_inv_keep = {
+    "family emoji held together by ZWJ": "\U0001F468\u200d\U0001F469\u200d\U0001F467",
+    "Persian mi-ravam, separated by ZWNJ": "\u0645\u06cc\u200c\u0631\u0648\u0645",
+    "Arabic number sign": "\u0600",
+    "Hangul choseong filler": "\u115f",
+    "right-to-left mark in a bidi line": "a\u200fb",
+}
+_inv_lost = [_n for _n, _t in _inv_keep.items() if _rd.for_a_terminal(_t) != _t]
+for _il in _inv_lost:
+    print(f"      DETAIL  corrupted legitimate text: {_il}")
+check("THE FILTER LEAVES CHARACTERS THAT CARRY MEANING IN REAL LANGUAGES", not _inv_lost)
+
+# And the ones with no role in prose do go: invisible math operators, the range Unicode itself
+# deprecates, and interlinear annotation, which Unicode says is not for plain text interchange.
+_inv_drop = {"invisible times U+2062": "\u2062", "deprecated U+206C": "\u206c",
+             "interlinear anchor U+FFF9": "\ufff9", "invisible plus U+2064": "\u2064"}
+_inv_kept = [_n for _n, _t in _inv_drop.items() if _rd.for_a_terminal(f"a{_t}b") != "ab"]
+for _ik in _inv_kept:
+    print(f"      DETAIL  survived and should not have: {_ik}")
+check("...while the ones with no role in prose are removed", not _inv_kept)
+
 # 🐛 [2026-09-07] `_TERMINAL_SAFE` exists to strip "characters that make text lie", and it was
 # written against characters that lie by REORDERING or ERASING what is on screen. It missed the two
 # blocks whose purpose is text that is not on screen at all — both documented attacks against LLM

@@ -567,12 +567,22 @@ def main(argv):
             # The reasons above are true and stay. This adds the one fact that explains the
             # difference, and only when the tree is actually near the floor — saying it for an
             # empty directory would be noise.
-            _unread = sum(mapper.SKIPPED_UNKNOWN_EXT.values())
+            # 🐛 [2026-09-07] The BIGGEST directory's count, not the global sum. `assets.scan()`
+            # applies the floor per top-level directory, so the question that decides whether a map
+            # gets written is "did any ONE directory clear it", and a global sum answers a different
+            # one: twelve unreadable files split six-and-six across two directories summed to 12,
+            # skipped this branch, and left the user with the silent exit 1 this exists to explain
+            # (R12 agent 2).
+            _unread = max(mapper.SKIPPED_UNKNOWN_DIR.values(), default=0)
+            _total = sum(mapper.SKIPPED_UNKNOWN_DIR.values())
             if 0 < _unread < assets_mod.MIN_FILES:
-                print(f"  {_unread} file(s) chamnan does not index is below the {assets_mod.MIN_FILES} "
-                      f"it takes to describe a directory as stored material, so there is nothing "
-                      f"to write. A repository of the same files past that count does get a map.",
-                      file=sys.stderr)
+                _spread = ("" if _total == _unread else
+                           f" ({_total} in total, but the count is per directory, so spreading them "
+                           f"across directories lowers it rather than raising it)")
+                print(f"  {_unread} file(s) chamnan does not index in any one directory{_spread} is "
+                      f"below the {assets_mod.MIN_FILES} it takes to describe a directory as stored "
+                      f"material, so there is nothing to write. A repository with that many in one "
+                      f"directory does get a map.", file=sys.stderr)
             return 1
         print("  chamnan can still describe this tree by another route — writing the map.",
               file=sys.stderr)
