@@ -185,10 +185,22 @@ def register(root, entry):
         pass
     with ws.exclusive(path(root)) as held:
         if not held:
-            # Registering matters more than serialising it: a promotion the user asked for that
-            # silently does nothing is worse than a rare lost update, and the file is written
-            # atomically either way.
-            return _register_locked(root, entry)
+            # 🐛 [2026-09-07] This used to fall through and write UNLOCKED, on the reasoning that
+            # "the file is written atomically either way" — which is the exact misconception
+            # `record_call`'s own docstring names and rejects three functions away: an atomic write
+            # stops a reader seeing a torn file and says nothing about which of two writers' snapshot
+            # wins. So the one writer that was hardened LAST reintroduced the race the other two were
+            # hardened against, and `record_call` fires from a PostToolUse hook on every Bash call —
+            # which is exactly the window a promotion runs in (R5 acc3).
+            #
+            # `remove()` already answers this correctly by raising, and `TimeoutError` is an
+            # `OSError`, so `chamnan-promote`'s existing handler catches it, deletes the executable
+            # it had already copied, and says nothing was left behind. A promotion that fails
+            # cleanly and can be retried beats one that silently loses the registration and leaves
+            # the file on disk — which is the outcome the old comment was trying to avoid and
+            # produced instead.
+            raise TimeoutError(
+                f"could not lock {path(root).name}; another process is writing it")
         return _register_locked(root, entry)
 
 
