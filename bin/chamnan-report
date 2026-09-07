@@ -667,14 +667,27 @@ def print_pointer(fired, named, opened):
     print()
 
 
+KNOWN_FLAGS = ()
+
+
 def main(argv):
     # 🐛 argv was never read, so `chamnan-report --help` ran the full report — and because this is
     # the one command that prunes, it also deleted session records older than 30 days. Every
     # sibling command handles -h/--help; this one answered a question about itself by mutating the
     # workspace.
-    if any(a in ("-h", "--help") for a in argv):
+    if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+    # 🐛 [2026-09-07] Any unrecognised flag was accepted in silence and the full report ran — and
+    # this is the command that PRUNES, so a misspelt flag did not merely do the wrong thing, it
+    # deleted session records past the retention window while appearing to answer a question about
+    # itself. The paragraph above records the same shape for `--help` and this half was left
+    # (R6 acc3). `chamnan-map` has refused unknown flags all along.
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if _bad:
+        print(f"chamnan: unknown option {_bad[0]!r} — this command takes no options",
+              file=sys.stderr)
+        return 2
     root = ws.find_root()
     # 🐛 The one of nine `bin/` commands that reported on a directory with no workspace in it.
     # `find_root` returns the directory it was given when nothing above it is a repository, so

@@ -116,7 +116,7 @@ def _origin_for(src, root):
 
 
 def main(argv):
-    if not argv or argv[0] in ("-h", "--help"):
+    if not argv or ws.wants_help(argv):
         # Same reason as chamnan-map: this command COPIES a file, so the flag a cautious
         # user tries first must not be the one that does it.
         print(__doc__.strip() if __doc__ else
