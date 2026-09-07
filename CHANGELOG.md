@@ -137,11 +137,41 @@ alongside their own scripts; the CI workflow says out loud that `"3.8"` resolves
 interpreters per OS; and the release checklist in `docs/verification.md` now states what every
 release note must carry, starting with the number of checks that passed.
 
+### The file lock kept its promise on Linux and macOS and broke it on Windows
+
+Every session's bookkeeping goes through one mutex, and under real contention on Windows it was
+handing the same file to two writers. Eight processes making four hundred increments recorded
+forty-one of them. Nothing raised, nothing corrupted a file; the running total was simply wrong
+afterwards, permanently, because nothing recomputes it.
+
+The mechanism was in the waiter rather than in any timeout. Checking who holds a lock means reading
+the lock, the poll did that every ten milliseconds, and **Windows refuses to delete a file another
+process holds open** — Python's `open()` there does not grant delete sharing. So the holder's own
+release failed silently and the lock outlived its owner, and nothing could break it afterwards:
+the age rule spares a lock whose PID is still alive, and that PID belonged to a process that was
+alive and had simply moved on. Every other writer then waited out its ceiling and wrote unguarded.
+
+The poll uses `os.stat` now, which does not pin the file, and opens the lock only once it is older
+than a quarter-second — a critical section here is a few milliseconds, so in a healthy workspace no
+waiter ever opens it, while a lock left by a crashed process still gets read and broken. The
+release retries its delete twelve times over a quarter-second, and a waiter's deadline now resets
+whenever the lock changes hands, because a queue that is moving is one worth staying in.
+
+This is one defect and it produced five different numbers — 31, 41, 83, 187 and 207 of 400 — which
+is what a collision rate looks like when it is reported as a count.
+
+Two checks were added so the next one is found on a laptop rather than in CI: the concurrency suite
+re-runs its storm under a ceiling scaled to what one lock cycle costs **on the machine running it**,
+and a session start is now measured for the number of processes it spawns, because a correct probe
+added to that path once took the Windows job from 4m16s to 9m25s and nothing was counting.
+
 ---
 
-**3,844 of 3,844 checks passed** on macOS 15 / Python 3.14.7, and the CI matrix runs the same suite
-on ubuntu-latest, macos-latest and windows-latest at Python 3.8 and 3.13. The demo page's sample
-table was re-measured through the page itself on 2026-09-07: all twelve repositories reproduce.
+**3,846 of 3,846 checks passed** on macOS 15 / Python 3.14.7, concurrency 34 of 34, and the CI
+matrix runs the same suite on ubuntu-latest, macos-latest and windows-latest at Python 3.8 and 3.13
+— all five green. The demo page's sample table was re-measured on 2026-09-08 by `site/remeasure.py`,
+which reproduces the browser without one: ten of thirteen rows came back identical to the byte, and
+`psf/requests`, `rust-lang/mdBook` and `torvalds/linux` moved and carry their new figures.
 
 ---
 
