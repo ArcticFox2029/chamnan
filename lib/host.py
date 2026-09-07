@@ -196,3 +196,36 @@ def primary(root=None, env=None, home=None):
     """
     ranked = agents(root=root, env=env, home=home)
     return ranked[0] if ranked else ("generic", "")
+
+
+# The context files that sit BESIDE chamnan's block and are loaded whole on every session.
+#
+# 🎯 [2026-09-07] chamnan budgets itself to the byte -- `output_byte_ceiling` is 9,000 and
+# `fit.shrink` enforces it section by section -- and said nothing at all about the file next to it.
+# Measured on this repository the day this was written: chamnan's block 8,925 bytes against its own
+# ceiling, `CLAUDE.md` 17,116 bytes with no budget of any kind. Nearly twice the size, same context,
+# never mentioned. A tool whose whole argument is context economy should not have a blind spot
+# shaped exactly like its own subject (R5 acc3 new_ideas #2).
+#
+# Derived from `_AGENTS` rather than listing `CLAUDE.md`, because the same blind spot exists for
+# every other vendor's file and a hardcoded name would cover one of twenty-four.
+def context_files(root):
+    """Every agent context FILE present in `root`, as [(path, bytes)], largest first.
+
+    Directory markers are skipped: `.claude/` is a directory of configuration, not a file loaded
+    into the prompt, and counting it would answer a different question.
+    """
+    root = Path(root)
+    seen, out = set(), []
+    for spec in _AGENTS.values():
+        for marker in spec.get("repo", ()):
+            if marker.endswith("/") or marker in seen:
+                continue
+            seen.add(marker)
+            f = root / marker
+            try:
+                if f.is_file():
+                    out.append((marker, f.stat().st_size))
+            except OSError:
+                continue
+    return sorted(out, key=lambda r: -r[1])

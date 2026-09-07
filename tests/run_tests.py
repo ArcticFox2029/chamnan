@@ -20572,6 +20572,35 @@ _rmtree(_md11_dir.parent, ignore_errors=True)
 _rmtree(_md12_dir.parent, ignore_errors=True)
 
 
+# ------------------------------------------- the context file beside the block, finally counted
+# 🎯 [2026-09-07] chamnan budgets itself to the byte and had never mentioned the agent context file
+# loaded into the same window. Measured on this repository: 8,925 bytes of block against a 9,000
+# ceiling, and a 17,116-byte CLAUDE.md against no budget at all — nearly twice the size, never
+# counted. Derived from `host._AGENTS` rather than hardcoding `CLAUDE.md`, because the same blind
+# spot exists for all twenty-four vendors in that table (R5 acc3 new_ideas #2).
+import host as _hc  # noqa: E402
+_cf_repo = Path(tempfile.mkdtemp(prefix="chamnan-ctxfiles-")) / "r"
+_cf_repo.mkdir(parents=True)
+(_cf_repo / "CLAUDE.md").write_text("x" * 3000, encoding="utf-8")
+(_cf_repo / "AGENTS.md").write_text("y" * 500, encoding="utf-8")
+(_cf_repo / "QWEN.md").write_text("z" * 1500, encoding="utf-8")
+(_cf_repo / ".claude").mkdir()          # a DIRECTORY marker, which is config and not a prompt file
+_cf = _hc.context_files(_cf_repo)
+check("every vendor's context file is found, not just Claude's",
+      {n for n, _ in _cf} == {"CLAUDE.md", "AGENTS.md", "QWEN.md"})
+check("...largest first, because that is the one worth looking at",
+      [n for n, _ in _cf] == ["CLAUDE.md", "QWEN.md", "AGENTS.md"])
+check("...with real sizes", dict(_cf)["CLAUDE.md"] == 3000)
+check("a directory marker is not counted as a loaded file",
+      not any(n.endswith("/") for n, _ in _cf))
+check("a repository with none of them reports none",
+      _hc.context_files(Path(tempfile.mkdtemp())) == [])
+# Derived, so a vendor added to the table next year is covered without anyone remembering to.
+check("the sweep reads the vendor table rather than a list of its own",
+      len({m for _s in _hc._AGENTS.values() for m in _s.get("repo", ())
+           if not m.endswith("/")}) >= 15)
+_rmtree(_cf_repo.parent, ignore_errors=True)
+
 # ------------------------------------------- the README's router claim, checked against the code
 # 🎯 [2026-09-07] The README tells someone running a model router that chamnan needs no setup, and
 # gives the reason: it makes no model call and reads no endpoint variable. That is a claim about the
