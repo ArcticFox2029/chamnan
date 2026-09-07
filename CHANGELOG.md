@@ -109,6 +109,8 @@ past every check that scanned raw output. `chamnan-map --verify` printed index r
 redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
 the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
 
+3,646 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13 — and four of those platform jobs are the reason this release took five CI runs rather than one. Every defect they caught is in the notes above.
+
 ---
 
 ## What's new in 1.21.0
