@@ -549,6 +549,34 @@ def prune_orphaned_temps(root=None):
     return removed
 
 
+def _still_doomed(path, cutoff):
+    """True when `path` is STILL past the retention window at the moment of deletion.
+
+    🐛 [2026-09-07] `_doomed` is computed from one `stat()` sweep and acted on in a later pass, and
+    on POSIX unlinking a file a process holds open for append succeeds in silence — the writer's
+    next lines land in an orphaned inode nothing will ever read from that path again. Reproduced:
+    a `logs/*.md` note ten days old, a session reopening it and appending, the sweep landing in
+    between, and all ten of the writer's lines gone. Neither side raised anything; the sweep
+    reported a normal removal count.
+
+    That is not an exotic sequence. `expiring_logs()`'s own docstring names it as the ordinary one:
+    a note untouched for just over a week that a resumed session picks up again.
+
+    WHAT THIS DOES NOT FIX, stated because the reported fix was re-stat'ing and re-stat'ing does
+    not close the case that was reported. A writer that opens the file and has NOT yet written
+    leaves the mtime old at the first stat and old at this one, so the file is deleted either way —
+    measured both ways while writing the check for it. No amount of stat'ing separates "old" from
+    "old and held open"; that needs the writer to take a lock, and the writer is a session
+    appending to its own note with a plain open(), not chamnan code that could be made to.
+
+    What it DOES cover is the common shape: a session appends to an old note, and a LATER session's
+    SessionStart sweep finds it no longer old. That is one cheap syscall per doomed file, on a path
+    that only runs for files already sentenced. The narrower case stays open on the record.
+    """
+    mt = _mtime_or_none(path)
+    return mt is None or mt < cutoff
+
+
 def prune_logs(root=None):
     """Delete files under logs/ older than the retention window. Best-effort and silent: a
     housekeeping failure must never be the reason a command the user asked for fails.
@@ -584,7 +612,7 @@ def prune_logs(root=None):
             if path.name in SELF_PRUNING_LOGS:
                 continue
             if path.is_file():
-                if path in _doomed:
+                if path in _doomed and _still_doomed(path, cutoff):
                     path.unlink()
                     removed += 1
                 continue
