@@ -575,6 +575,8 @@ past every check that scanned raw output. `chamnan-map --verify` printed index r
 redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
 the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
 
+3,646 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13 — and four of those platform jobs are the reason this release took five CI runs rather than one. Every defect they caught is in the notes above.
+
 ## Bootstrap does not rewrite your code
 
 Worth being precise about, because an indexing tool that quietly edits your files is not one you
@@ -2339,7 +2341,7 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
 python3 tests/run_tests.py
 ```
 
-Over 1,800 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
+Over 3,600 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.
