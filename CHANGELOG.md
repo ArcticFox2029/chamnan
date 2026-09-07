@@ -1,11 +1,113 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1210), and every one of these is on the
+[README](README.md#whats-new-in-1220), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.22.0
+
+Sixty commits, and almost all of them close something that was quietly wrong rather than adding
+anything. The themes below are the ones that recurred.
+
+### A rule file could hang every session in the repository
+
+`**Check:**` trailers are regular expressions that arrive with a clone and run at every session
+start. Five more catastrophic-backtracking families were found and closed, on top of the four
+already guarded: ambiguous alternations repeated by *concatenation* rather than by a quantifier;
+the same shapes hidden behind `(?:`, `(?P<name>` or `(?i:`, whose group modifier was being read as
+part of the first branch; a bounded count over an atom made nullable by `?`; the same made nullable
+by an *empty* alternation branch; and an ambiguous alternation wrapped in one redundant group,
+which neither alternation pattern could see because a regex cannot look inside nested parentheses.
+Every one of them was under thirty characters, and the last of them hung the real session-start
+hook past ninety seconds from a single committed file.
+
+The ninth was not found by anyone noticing a shape. It was found by generating them — every
+combination of group opener, inner body and quantifier, flat, nested and concatenated, compiled,
+filtered to the ones the guards allow, and timed. **That generator is now part of the test suite**,
+so the tenth family is reported by name on any run rather than waiting for somebody to spot it.
+
+The guard beside them was refusing `(\d+)` and `(\d{4})` — the most ordinary patterns there are —
+because `"" in "+*{"` is true in Python and the check asked about the character after a group,
+which is the empty string at the end of a pattern. Every rule written that way had silently never
+run. And nothing bounded the *number* of checks a session pays for: fifty ordinary trailers cost
+4.5 seconds. Twenty-five now run and the rest are reported as unrun rather than quietly skipped.
+
+### A clock that jumped forward could delete your work
+
+Three separate mechanisms computed a deadline from the wall clock and nothing else. With the clock
+400 days ahead — an NTP correction, a dead RTC battery — retention deleted files written seconds
+earlier, the orphaned-staging-file sweep deleted the temporary file of a write that was still in
+progress (losing the new content while the destination kept the old), and the mutex let a second
+process take a lock a live process was holding.
+
+There is no way to tell a jumped clock from real age using the clock that jumped, so each of them
+now has a second bound the clock cannot move: process liveness for the two that had a PID available,
+and "a retention pass never empties a store" for the rest.
+
+### Writes that reported success and had not happened
+
+`chamnan-timeline new` on a directory it could not write printed "declared", named the file, printed
+the follow-up command, and exited 0 — with nothing on disk. Of two dozen call sites for the atomic
+writer, two ever checked whether it worked. Every write a person asked for by name now fails loudly,
+and says *why*: a read-only file, a read-only directory and a full disk used to produce one identical
+sentence and need three different fixes.
+
+### Files that were destroyed, forked, or written wrong
+
+The classifier that decides whether an adapter file is chamnan's own output destroyed a hand-written
+one for the fourth time — an italic first line is how a person writes a warning, and that was the
+test. It recognises chamnan's own voice now: the framing sentence every generated block has opened
+with since 1.8.0, plus a matched fence whose nonce is generated per run.
+
+A UTF-8 BOM — what PowerShell and Notepad write by default — made a thread's title unreadable, so
+`chamnan-timeline` forked one thread's history into a second file. Fixed at the read, so every file
+chamnan opens is now immune rather than the three parsers somebody remembered.
+
+`chamnan-timeline add --files` wrote absolute paths verbatim into a tracked file, committing one
+developer's machine layout. Claude Code requires absolute paths for Read and Edit, so an agent
+recording what it touched typed exactly the shape that broke.
+
+### Things chamnan knew and never told anyone
+
+Whether the pre-commit hook that keeps the index fresh is even installed — the detection lived
+inside the command that installs it, so a repository whose index was quietly going stale looked
+exactly like one whose hook was working. Whether any stored knowledge names a version no environment
+declares. Whether a rule's mechanical check *could not run*, which looked identical to a rule that
+never had one. Whether every candidate in the queue was machine-detected and unreviewed. And
+`environments.md`, which the inventory had never counted at all.
+
+`chamnan-map --undocumented` lists every file with no opening comment, because the two skills told
+the session to fix "the files that lack one" and only eight were ever shown — on a repository with
+forty, that left 80% untouched and unmentioned. `chamnan-map --verify` checks every mechanical claim
+the index makes against the tree and **exits non-zero** when one is false; the checker existed, its
+own comment recorded that its parser had been broken for three days "because nothing runs this
+file", and it returned 0 whatever it found.
+
+### What a session pays
+
+A resumed session was sent the entire block a second time. It is not resent when the transcript
+*proves* the first one is still in context — no compaction boundary after this session's own fence —
+and on every doubt the whole block is emitted exactly as before, because the cost of being wrong is
+a session with no index at all. Measured 837 tokens to 54.
+
+One optional section could cost more than the whole index budget: eight kinds of twenty Kubernetes
+objects with realistic names rendered 4,059 tokens against a 3,000-token budget, and forced the
+directory roll-up onto the entire repository's index as collateral. 808 now, with every kind still
+named. And chamnan counted *its own workspace* as your uncommitted work, so a clean tree was told
+"1 uncommitted file, and nobody recorded what for".
+
+### Leaks
+
+Control characters — ESC, BEL, the bidi overrides — reached the injected block from a session
+record's title, and reached the model through the JSON hook payloads where `json.dumps` escaped them
+past every check that scanned raw output. `chamnan-map --verify` printed index rows with no
+redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
+the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
 
 ---
 

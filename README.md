@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.20.0](#whats-new-in-1210) · [Commands](#commands)
+[What's new in 1.22.0](#whats-new-in-1220) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -475,65 +475,105 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.21.0
+## What's new in 1.22.0
 
-### Credentials that were reaching the index
+Sixty commits, and almost all of them close something that was quietly wrong rather than adding
+anything. The themes below are the ones that recurred.
 
-A connection string whose password contains `@` leaked. The rule's password class excluded `@`, so
-it stopped at the first one: `amqp://svc:a@b@rabbit/vhost` and `mongodb://root:x@y%40z@cluster/admin`
-passed through whole, and `postgres://admin:Hunter2@Pass@db/main` came out as
-`<REDACTED>@Pass@db/main` — half the password beside the marker that says it was handled. `@` is
-ordinary in a generated password and real connection strings do not percent-encode it. No
-`jdbc:postgresql://` URL had ever matched either, because the scheme admitted only one layer.
+### A rule file could hang every session in the repository
 
-A symlink with an innocent name walked past the "never open this file" refusal. Both refusals judged
-the name they were handed rather than the file that gets opened, and opening follows a link — so
-`safe_data.bin` pointing at `release.jks` was opened and its readable strings printed, alias and
-password-shaped fragment included.
+`**Check:**` trailers are regular expressions that arrive with a clone and run at every session
+start. Five more catastrophic-backtracking families were found and closed, on top of the four
+already guarded: ambiguous alternations repeated by *concatenation* rather than by a quantifier;
+the same shapes hidden behind `(?:`, `(?P<name>` or `(?i:`, whose group modifier was being read as
+part of the first branch; a bounded count over an atom made nullable by `?`; the same made nullable
+by an *empty* alternation branch; and an ambiguous alternation wrapped in one redundant group,
+which neither alternation pattern could see because a regex cannot look inside nested parentheses.
+Every one of them was under thirty characters, and the last of them hung the real session-start
+hook past ninety seconds from a single committed file.
 
-### Files that were silently lost
+The ninth was not found by anyone noticing a shape. It was found by generating them — every
+combination of group opener, inner body and quantifier, flat, nested and concatenated, compiled,
+filtered to the ones the guards allow, and timed. **That generator is now part of the test suite**,
+so the tenth family is reported by name on any run rather than waiting for somebody to spot it.
 
-Five functions turn free text into a filename and three never passed it through the guard that
-exists for this: a record titled `CON` or `nul` becomes `con.md` or `nul.md`, which on Windows are
-the console and the bit-bucket. The write does not fail, it goes to the device, the record is gone,
-and the index says it was written.
+The guard beside them was refusing `(\d+)` and `(\d{4})` — the most ordinary patterns there are —
+because `"" in "+*{"` is true in Python and the check asked about the character after a group,
+which is the empty string at the end of a pattern. Every rule written that way had silently never
+run. And nothing bounded the *number* of checks a session pays for: fifty ordinary trailers cost
+4.5 seconds. Twenty-five now run and the rest are reported as unrun rather than quietly skipped.
 
-The memory stamper read a file, decided, and wrote it back with nothing holding it in between,
-while firing on every Write and Edit — so a second write landing in that gap was overwritten by the
-stamped copy of the older text.
+### A clock that jumped forward could delete your work
 
-Three generated shell scripts were written with the platform's line endings, so on Windows the
-installed git hook and both generated tool scripts began `#!/bin/sh\r`, which no shell recognises.
+Three separate mechanisms computed a deadline from the wall clock and nothing else. With the clock
+400 days ahead — an NTP correction, a dead RTC battery — retention deleted files written seconds
+earlier, the orphaned-staging-file sweep deleted the temporary file of a write that was still in
+progress (losing the new content while the destination kept the old), and the mutex let a second
+process take a lock a live process was holding.
 
-### Files that were never described
+There is no way to tell a jumped clock from real age using the clock that jumped, so each of them
+now has a second bound the clock cannot move: process liveness for the two that had a PID available,
+and "a retention pass never empties a store" for the rest.
 
-A destructured JavaScript import spanning several lines ate the comment below it, so the file went
-into the index with no description at all. Brackets were counted; braces were not.
+### Writes that reported success and had not happened
 
-### Sizing, and honesty about it
+`chamnan-timeline new` on a directory it could not write printed "declared", named the file, printed
+the follow-up command, and exited 0 — with nothing on disk. Of two dozen call sites for the atomic
+writer, two ever checked whether it worked. Every write a person asked for by name now fails loudly,
+and says *why*: a read-only file, a read-only directory and a full disk used to produce one identical
+sentence and need three different fixes.
 
-`--model fable`, `opus`, `sonnet` and `haiku` now size correctly. Anthropic's current models are not
-called "Claude *n*", so every one of those names fell through to the default profile — a user on a
-million-token model told to size for a small window. The four numbers come from Anthropic's own
-documentation; `mythos` is deliberately absent, because "probably a million" is not a number, and it
-falls through with the table's own note that it is a dated convenience rather than an authority.
+### Files that were destroyed, forked, or written wrong
 
-`CHAMNAN_READ_ONLY` reached five call sites and no others, so every store kept writing with it
-set — including the one a background hook fires on ordinary Bash calls. And the commands were not
-told: `chamnan-timeline new` reported "declared — .chamnan/threads/a-thread.md" with nothing on
-disk. The first-session banner had the same fault against a repository that is simply not writable,
-announcing a workspace it had failed to create.
+The classifier that decides whether an adapter file is chamnan's own output destroyed a hand-written
+one for the fourth time — an italic first line is how a person writes a warning, and that was the
+test. It recognises chamnan's own voice now: the framing sentence every generated block has opened
+with since 1.8.0, plus a matched fence whose nonce is generated per run.
 
-A `tools/index.json` holding `{}` — a hand-edit, a bad merge — took `chamnan-report` down with a
-TypeError rather than reading as empty.
+A UTF-8 BOM — what PowerShell and Notepad write by default — made a thread's title unreadable, so
+`chamnan-timeline` forked one thread's history into a second file. Fixed at the read, so every file
+chamnan opens is now immune rather than the three parsers somebody remembered.
 
-### The suite
+`chamnan-timeline add --files` wrote absolute paths verbatim into a tracked file, committing one
+developer's machine layout. Claude Code requires absolute paths for Read and Edit, so an agent
+recording what it touched typed exactly the shape that broke.
 
-Its version-drift check had never run on CI, on any platform: the checkout fetches no tags, `git
-describe` finds nothing, and the whole block vanished inside an `if` with no `else`. A check that
-skips itself in silence is worse than an absent one, because the green total counts it as passed.
+### Things chamnan knew and never told anyone
 
-3,215 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
+Whether the pre-commit hook that keeps the index fresh is even installed — the detection lived
+inside the command that installs it, so a repository whose index was quietly going stale looked
+exactly like one whose hook was working. Whether any stored knowledge names a version no environment
+declares. Whether a rule's mechanical check *could not run*, which looked identical to a rule that
+never had one. Whether every candidate in the queue was machine-detected and unreviewed. And
+`environments.md`, which the inventory had never counted at all.
+
+`chamnan-map --undocumented` lists every file with no opening comment, because the two skills told
+the session to fix "the files that lack one" and only eight were ever shown — on a repository with
+forty, that left 80% untouched and unmentioned. `chamnan-map --verify` checks every mechanical claim
+the index makes against the tree and **exits non-zero** when one is false; the checker existed, its
+own comment recorded that its parser had been broken for three days "because nothing runs this
+file", and it returned 0 whatever it found.
+
+### What a session pays
+
+A resumed session was sent the entire block a second time. It is not resent when the transcript
+*proves* the first one is still in context — no compaction boundary after this session's own fence —
+and on every doubt the whole block is emitted exactly as before, because the cost of being wrong is
+a session with no index at all. Measured 837 tokens to 54.
+
+One optional section could cost more than the whole index budget: eight kinds of twenty Kubernetes
+objects with realistic names rendered 4,059 tokens against a 3,000-token budget, and forced the
+directory roll-up onto the entire repository's index as collateral. 808 now, with every kind still
+named. And chamnan counted *its own workspace* as your uncommitted work, so a clean tree was told
+"1 uncommitted file, and nobody recorded what for".
+
+### Leaks
+
+Control characters — ESC, BEL, the bidi overrides — reached the injected block from a session
+record's title, and reached the model through the JSON hook payloads where `json.dumps` escaped them
+past every check that scanned raw output. `chamnan-map --verify` printed index rows with no
+redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
+the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
 
 ## Bootstrap does not rewrite your code
 
