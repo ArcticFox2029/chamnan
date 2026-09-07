@@ -9063,6 +9063,61 @@ check("...and the two words that were bounded differently now behave the same",
       ("REDACTED" in redact.scrub(_json_key("access_token", "s3cr3tV4lu3H3r3x")))
       == ("REDACTED" in redact.scrub(_json_key("access_auth", "s3cr3tV4lu3H3r3x"))))
 
+# ---------------------------------------------------------------- personal data, not credentials
+# A second layer with a different problem from every credential rule beside it. A credential has a
+# NAME to anchor on — `api_key`, `password`, `Authorization`. Personal data has none: a card number
+# in a fixture and a national ID in a test seed are bare digits, and nothing in the text says what
+# they are.
+#
+# So the anchor is the number's own checksum — and a checksum ALONE is not enough. Measured before
+# the layer was designed: Luhn passes 9.8% of random 16-digit numbers, and Thailand's national-ID
+# checksum passes 10.0% of epoch-millisecond timestamps, the commonest 13-digit run in any log.
+# Trusting the arithmetic on its own would destroy one timestamp in ten, which is the "nearly right"
+# failure this module refuses. Both rules therefore require checksum AND context.
+_pd_id = "110170123456"
+_pd_id += str((11 - sum(int(_pd_id[i]) * (13 - i) for i in range(12)) % 11) % 10)
+_pd_dashed = f"{_pd_id[0]}-{_pd_id[1:5]}-{_pd_id[5:10]}-{_pd_id[10:12]}-{_pd_id[12]}"
+check("the synthetic national ID used below really does satisfy the checksum",
+      redact._thai_national_id(_pd_id))
+check("...and the documented test card really does satisfy Luhn",
+      redact._luhn("4111111111111111") and not redact._luhn("4111111111111112"))
+
+for _label, _text in (
+        ("visa, grouped",     "Test card 4111 1111 1111 1111 for the sandbox"),
+        ("visa, hyphenated",  "card=4111-1111-1111-1111"),
+        ("amex, 4-6-5",       "AMEX 3782 822463 10005 on file"),
+        ("mastercard + word", "credit_card_number = 5555555555554444"),
+        ("thai id, dashed",   f"ผู้ป่วย {_pd_dashed} เข้ารับบริการ"),
+        ("thai id + thai",    f"เลขประจำตัวประชาชน {_pd_id}"),
+        ("thai id + english", f"national_id = {_pd_id}")):
+    check(f"PERSONAL DATA IS REDACTED: {_label}", redact.PLACEHOLDER in redact.scrub(_text))
+
+# The decoys are the half that makes the layer usable. Every one of these passes some part of the
+# test and must survive: a rule that eats them costs the index real information, which is the trade
+# this module's own docstring says it will not make.
+for _label, _text in (
+        ("epoch milliseconds",   "created_at = 1757203845123"),
+        ("order number",         "order 4111111111111112 shipped"),
+        ("bare 16 digits",       "row_id = 5555555555554444"),
+        ("bare 13 digits",       f"seq {_pd_id} next"),
+        ("card, checksum wrong", "card 4111 1111 1111 1112 declined"),
+        ("thai id, sum wrong",   f"ref {_pd_dashed[:-1]}{(int(_pd_id[12]) + 1) % 10}"),
+        ("phone number",         "call +66 2 123 4567 for support"),
+        ("port list",            "ports 8080 9090 3000 5432"),
+        ("git hash",             "commit a954fba1c3d4e5f60718293a4b5c6d7e8f901234"),
+        ("date range",           "between 2026-01-01 and 2026-12-31")):
+    check(f"...while this is not personal data and survives: {_label}",
+          redact.PLACEHOLDER not in redact.scrub(_text))
+
+# 🐛 The layer costs 34.0 ms unguarded on this repository's 295 KB index — 11.2% of the whole
+# scrub — for rules that cannot match a document with no long digit run in it. Gated the way this
+# module already gates its `=>` and YAML-block rules, that becomes 1.4 ms. The gate must not change
+# any answer, which is what the two checks below are for.
+check("the digit-run gate skips a document that cannot contain either shape",
+      redact._redact_personal_data("def f():\n    return 'hello'") == "def f():\n    return 'hello'")
+check("...and does not skip one that can",
+      redact.PLACEHOLDER in redact._redact_personal_data("card 4111 1111 1111 1111"))
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
