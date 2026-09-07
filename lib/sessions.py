@@ -24,6 +24,7 @@ import datetime
 import subprocess
 import re
 import mdblock
+import tokens
 from pathlib import Path
 import workspace as ws
 import time
@@ -38,7 +39,15 @@ CARRIED = ("Remaining", "Blockers")
 
 # A record is bounded so one enormous session cannot swamp the injection. Roughly the same order as
 # state_token_budget's char-equivalent in the hook (see lib/state.py).
-MAX_CARRY_CHARS = 1200
+#
+# 🐛 [2026-09-07] In TOKENS, not characters. `lib/state.py`'s own docstring names this exact
+# anti-pattern two files away — "a flat character cap mis-prices any file that is not mostly Latin
+# script" — and this cap was the member of that set nobody revisited. Measured with chamnan's own
+# estimator: a Thai carry-forward note costs 1.99x the tokens of an English one at the same
+# character count, so a repository working in Thai was silently spending twice the injection budget
+# this number was chosen to bound (R10 acc3). 500 is what 1,200 characters of English came to, so
+# the English case is unchanged and only the mis-priced one moves.
+MAX_CARRY_TOKENS = 500
 
 _DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 
@@ -286,7 +295,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
 
 # How many same-day records carry forward at once. One is the single-developer case and the
 # common one; the cap exists so a busy shared day cannot push the whole injected block over its
-# budget, and it is small because MAX_CARRY_CHARS is shared across all of them.
+# budget, and it is small because MAX_CARRY_TOKENS is shared across all of them.
 MAX_CARRIED_RECORDS = 3
 
 
@@ -353,8 +362,8 @@ def carry_forward(root):
         head = f"_Last session ({when}) — {len(carried)} records, all unfinished_"
         body = "\n\n".join(f"**{mdblock.one_line(title)}**\n\n{text}"
                            for title, text in carried)
-    if len(body) > MAX_CARRY_CHARS:
-        body = body[:MAX_CARRY_CHARS].rsplit("\n", 1)[0] + \
+    if tokens.estimate(body) > MAX_CARRY_TOKENS:
+        body = body[:tokens.cut_at(body, MAX_CARRY_TOKENS)].rsplit("\n", 1)[0] + \
             f"\n\n_…truncated — read `{mdblock.one_line(group[0].name)}` for the rest._"
     return f"{head}\n\n{body}"
 

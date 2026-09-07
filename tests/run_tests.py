@@ -8830,6 +8830,91 @@ check("EVERY SUBPROCESS THAT CAPTURES TEXT SAYS HOW TO DECODE IT", _enc_bad == [
 check("...and the sweep found the calls it was written to police",
       len(list(_enc_pat.finditer(_enc_src))) > 40)
 
+# 🐛 [2026-09-07] `tools_index.load()` returns `[]` for a file it cannot parse, and `[]` is what it
+# returns for a registry that never existed — indistinguishable to every caller. The next
+# `chamnan-promote` wrote its one new entry over the top and every previously registered tool, with
+# its run counters, was gone. Silently and permanently. An unresolved `<<<<<<< HEAD` is the ordinary
+# way there: index.json is committed, two branches registering different tools collide in it.
+# Reported independently by two rounds (R9 acc3, R10 agent 2) and unfixed both times; the guard
+# already existed one file away in `state.render`.
+import tools_index as _tic  # noqa: E402 — the module-level alias is imported further down
+_ti = Path(tempfile.mkdtemp(prefix="chamnan-ticonf-")) / "r"
+(_ti / ".chamnan" / "tools").mkdir(parents=True)
+_ti_idx = _tic.path(_ti)
+_ti_good = '[{"name": "deploy.sh", "desc": "x", "runs": 42}]'
+_ti_idx.write_text(_ti_good, encoding="utf-8")
+check("a healthy registry is not refused", _tic.refuses_to_be_overwritten(_ti) == "")
+_ti_idx.write_text('<<<<<<< HEAD\n' + _ti_good + '\n=======\n[{"name": "b.sh"}]\n>>>>>>> x\n',
+                   encoding="utf-8")
+check("A MID-MERGE TOOLS INDEX IS NOT OVERWRITTEN, SO ITS HISTORY SURVIVES",
+      "mid-merge" in _tic.refuses_to_be_overwritten(_ti))
+try:
+    _tic.register(_ti, {"name": "new.sh"})
+    _ti_wrote = True
+except OSError:
+    _ti_wrote = False
+check("...and registering into one raises instead of destroying it",
+      _ti_wrote is False and "<<<<<<<" in _ti_idx.read_text(encoding="utf-8"))
+# Content that is not JSON at all is the same hazard by a different cause — a half-written file, a
+# hand-edit — and `[]` describes it just as wrongly.
+_ti_idx.write_text("this is not json", encoding="utf-8")
+check("...and so is a file whose content is not JSON",
+      "not valid JSON" in _tic.refuses_to_be_overwritten(_ti))
+# Deliberately narrow: the cases `[]` describes CORRECTLY must still register, or a fresh workspace
+# could never record its first tool.
+_ti_idx.unlink()
+check("...while an absent registry still accepts its first tool",
+      _tic.refuses_to_be_overwritten(_ti) == "" and _tic.register(_ti, {"name": "first.sh"}))
+_ti_idx.write_text("   \n", encoding="utf-8")
+check("...and so does an empty one", _tic.refuses_to_be_overwritten(_ti) == "")
+_rmtree(_ti.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] The MAP.md half of the same merge bug. `state.render` was given
+# `memory.unresolved_conflict` on 2026-09-06 after a badly-resolved merge injected both sides of
+# STATE.md as settled fact; MAP.md is the same shape of file and was reported the same day and never
+# picked up. It is the store MOST likely to conflict, not the least: two branches editing UNRELATED
+# source files still collide in its alphabetical Quick Index (R9 acc3).
+_mc = Path(tempfile.mkdtemp(prefix="chamnan-mapconf-")) / "r"
+(_mc / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_mc, capture_output=True)
+(_mc / "src" / "a.py").write_text('"""Alpha does a thing."""\ndef a(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_mc, capture_output=True)
+_mc_map = _mc / ".chamnan" / "MAP.md"
+_mc_map.write_text(_mc_map.read_text(encoding="utf-8").replace(
+    "- **`a.py`**",
+    "<<<<<<< HEAD\n- **`a.py`** — Alpha does a thing.\n=======\n"
+    "- **`a.py`** — Alpha does something else.\n>>>>>>> branch", 1), encoding="utf-8")
+_mc_out = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+    input='{"hook_event_name":"SessionStart","source":"startup"}', capture_output=True, text=True,
+    encoding="utf-8", errors="replace", cwd=_mc,
+    env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_mc))).stdout
+check("A MID-MERGE MAP.md IS NOT INJECTED AS SETTLED FACT", "mid-merge" in _mc_out)
+# Said INSTEAD of the content, not beside it: printing both sides under a warning invites the
+# reader to pick one, which is the failure. Same reasoning STATE.md's guard already records.
+check("...and neither side of the conflict reaches the session",
+      "Alpha does a thing" not in _mc_out and "something else" not in _mc_out
+      and "<<<<<<<" not in _mc_out)
+_rmtree(_mc.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] A Jupyter notebook was bucketed as "payload, not code" — the bucket for images and
+# data — so a fifteen-notebook data-science repository reported "described 2/2 files (100%)" while
+# every line of its real content was invisible, and nothing said so. It is source this indexer
+# cannot parse, which is what Perl, R, Julia and Fortran already get (R9 agent 4).
+check("A NOTEBOOK IS UNINDEXED SOURCE, NOT PAYLOAD",
+      ".ipynb" in assets_mod.UNEXTRACTED_SOURCE)
+
+# 🐛 [2026-09-07] `MAX_CARRY_CHARS` was a raw character cap, the exact anti-pattern `lib/state.py`'s
+# docstring names two files away: "a flat character cap mis-prices any file that is not mostly Latin
+# script". Measured 1.99x for Thai at the same character count (R10 acc3). The English case must not
+# move — 500 tokens is what 1,200 characters of English came to.
+_carry_en = "Finish the retry path in the importer and re-run the migration. " * 20
+_carry_th = "แก้เส้นทางลองใหม่ในตัวนำเข้าแล้วรันการย้ายข้อมูลอีกครั้ง " * 20
+check("THE CARRY-FORWARD CAP IS PRICED IN TOKENS, NOT CHARACTERS",
+      tokens.cut_at(_carry_en, sessions.MAX_CARRY_TOKENS) > 1100)
+check("...so a Thai record is cut where an English one of the same COST is",
+      tokens.cut_at(_carry_th, sessions.MAX_CARRY_TOKENS) < 750)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
@@ -18177,8 +18262,10 @@ check("...and a same-day record that finished everything is not carried",
       "Carol: all done" not in _three)
 check("...so the count names records with work left, not files on disk",
       "2 records, all unfinished" in _three)
+# In tokens now, like the cap itself — the whole point of the change is that a character count is
+# the wrong unit for this. The slack covers the heading and the per-record titles the cap excludes.
 check("...and the whole thing still respects the carry budget",
-      len(_three) <= _sess.MAX_CARRY_CHARS + 400)
+      tokens.estimate(_three) <= _sess.MAX_CARRY_TOKENS + 200)
 _rmtree(_twd.parent, ignore_errors=True)
 
 
