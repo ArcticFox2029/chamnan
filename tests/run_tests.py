@@ -20027,6 +20027,53 @@ check("...and the matrix still declares the Python floor those versions were cho
       '"3.8"' in (_wf_dir / "tests.yml").read_text(encoding="utf-8"))
 
 
+# ------------------------------------------- a hook payload is somebody else's JSON
+# 🐛 [2026-09-07] `payload["cwd"]` is whatever the host put in the JSON, and `pathlib.Path` raises
+# TypeError on anything that is not path-like. A dict there killed `chamnan_session_start.py`
+# outright: exit 1, ZERO bytes of stdout, a traceback the transcript never shows. That hook is the
+# one of six deliberately NOT wrapped in `_never_fail_the_session`, on the reasoning that it "has
+# something partial worth emitting" — sound, and unreachable when it dies on its first line
+# (R7 agent 9).
+#
+# Every hook, every field the host is documented to send, every JSON type. Derived from `hooks/`,
+# so a hook added later is covered by existing rather than by being remembered — and a field added
+# to the list is tested against all of them at once.
+_HOOK_FIELDS = ("cwd", "session_id", "hook_event_name", "source", "transcript_path",
+                "tool_name", "tool_input", "prompt", "agent_type")
+_HOOK_JUNK = ({"a": 1}, ["x"], 123, True, None, "", 1.5)
+_hook_files = sorted(q for q in (ROOT / "hooks").glob("chamnan_*.py"))
+check("the malformed-payload sweep found the hooks it is meant to police", len(_hook_files) >= 5)
+_hook_crashes = []
+for _hf in _hook_files:
+    for _field in _HOOK_FIELDS:
+        for _junk in _HOOK_JUNK:
+            _r = subprocess.run([sys.executable, str(_hf)],
+                                input=json.dumps({_field: _junk, "cwd": str(fixture)}
+                                                 if _field != "cwd" else {_field: _junk}),
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", cwd=str(fixture), timeout=60)
+            if _r.returncode != 0 or "Traceback (most recent call last)" in _r.stderr:
+                _hook_crashes.append(f"{_hf.name}: {_field}={_junk!r} -> exit {_r.returncode}")
+check("NO HOOK DIES ON A PAYLOAD FIELD OF THE WRONG TYPE", not _hook_crashes)
+for _hc in _hook_crashes[:12]:
+    print("      ", _hc)
+# ...and the sweep must have actually run something, or an empty list proves nothing.
+check("...having run every hook against every field and every type",
+      len(_hook_files) * len(_HOOK_FIELDS) * len(_HOOK_JUNK) >= 200)
+# A payload that is not an object at all, and one that is not JSON at all.
+_hook_garbage = []
+for _hf in _hook_files:
+    for _raw in ("[]", '"a string"', "null", "17", "", "not json at all", "{"):
+        _r = subprocess.run([sys.executable, str(_hf)], input=_raw, capture_output=True,
+                            text=True, encoding="utf-8", errors="replace", cwd=str(fixture),
+                            timeout=60)
+        if _r.returncode != 0 or "Traceback (most recent call last)" in _r.stderr:
+            _hook_garbage.append(f"{_hf.name}: stdin={_raw!r} -> exit {_r.returncode}")
+check("...nor on a payload that is not an object, or not JSON", not _hook_garbage)
+for _hg in _hook_garbage[:12]:
+    print("      ", _hg)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
