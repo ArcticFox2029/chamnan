@@ -19990,6 +19990,43 @@ check("...and still installs nothing here",
 _rmtree(_mono.parent, ignore_errors=True)
 
 
+# ------------------------------------------- CI actions that stop resolving on a known date
+# 🐛 [2026-09-07] `actions/checkout@v4` and `actions/setup-python@v5` are the last majors built on
+# Node 20, and GitHub removes Node 20 from the runners on 2026-09-23 — after which a Node-20 action
+# does not resolve at all and the five-job matrix silently stops running on every push. The runner
+# already shims them onto Node 24 with a warning, and that warning was in chamnan's own CI log on
+# the day this was found, so the deadline was visible and nobody was looking (R8 agent 1).
+#
+# A floor rather than an exact pin: this must not fail the day a newer major ships, only the day
+# somebody pastes an old snippet back in. Derived over every workflow file, so a second one added
+# later is covered by existing rather than by being remembered.
+_ACTION_FLOORS = {
+    # action -> (lowest major that is NOT built on Node 20, why)
+    "actions/checkout": (5, "v4 is the last major on Node 20; Node 20 leaves the runners 2026-09-23"),
+    "actions/setup-python": (6, "v5 is the last major on Node 20; same date"),
+}
+_wf_dir = ROOT / ".github" / "workflows"
+_wf_files = sorted(_wf_dir.glob("*.yml")) + sorted(_wf_dir.glob("*.yaml"))
+_wf_uses = []
+for _wf in _wf_files:
+    for _i, _line in enumerate(_wf.read_text(encoding="utf-8").splitlines(), 1):
+        _m = re.search(r"uses:\s*([\w.-]+/[\w.-]+)@v(\d+)", _line)
+        if _m:
+            _wf_uses.append((_wf.name, _i, _m.group(1), int(_m.group(2))))
+check("the CI-action audit found the workflow it is meant to police",
+      bool(_wf_files) and len(_wf_uses) >= 2)
+_stale_actions = [f"{_n}:{_i} {_a}@v{_v} — needs v{_ACTION_FLOORS[_a][0]}+ ({_ACTION_FLOORS[_a][1]})"
+                  for _n, _i, _a, _v in _wf_uses
+                  if _a in _ACTION_FLOORS and _v < _ACTION_FLOORS[_a][0]]
+check("NO CI ACTION IS PINNED TO A MAJOR THAT STOPS RESOLVING ON A KNOWN DATE", not _stale_actions)
+for _sa in _stale_actions:
+    print("      ", _sa)
+# The floors are only meaningful while the matrix still needs what they support. If the Python floor
+# moves, the reason for taking the SMALLER jump on setup-python moves with it.
+check("...and the matrix still declares the Python floor those versions were chosen for",
+      '"3.8"' in (_wf_dir / "tests.yml").read_text(encoding="utf-8"))
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
