@@ -881,6 +881,51 @@ was not recognised, and nothing fails. The table is a dated convenience, not an 
 list of names somebody wrote down, and models outlive it. `--window` takes the number directly and
 is always exact, which is the answer whenever the name is wrong, new, self-hosted, or yours.
 
+### Using it behind a router
+
+A router — 9Router, LiteLLM, OpenRouter, or a company gateway —
+sits between your agent and a vendor and decides which model answers. That is a fourth thing, and it
+is worth saying plainly where it lands against the three axes above: **it is not one of them.**
+
+**Install chamnan the normal way. There is nothing to configure, and nothing to undo if you remove
+the router later.**
+
+The reason is structural rather than a compatibility claim. chamnan never makes a model call. It has
+no HTTP client, no API key, no endpoint, and no model name in any code path — it reads files, writes
+files, and prints text that your agent then carries. A router only ever sees the request your agent
+sends; chamnan is on the other side of that boundary, preparing what goes into it. The two never
+touch, which is why there is no adapter for a router and will not be one: an adapter would have
+nothing to adapt.
+
+The whole list of environment variables chamnan reads is:
+
+`CHAMNAN_CONTEXT_AGENT` · `CHAMNAN_CONTEXT_PROFILE` · `CHAMNAN_OUTPUT_CEILING` ·
+`CLAUDE_CONFIG_DIR` · `CLAUDE_PROJECT_DIR`
+
+Three of its own and two of Claude Code's. `ANTHROPIC_BASE_URL` and its equivalents — the variable a
+router actually sets — are not read anywhere, so pointing one at a gateway changes nothing about
+what chamnan does or produces.
+
+**The one place a router is worth a thought** is the third axis, and it is a budget question rather
+than a compatibility one. A router that switches between models switches between context windows,
+and the size of the block chamnan injects is fixed at the moment it runs — it cannot know which
+model the router picked afterwards. If your router's smallest model has a notably smaller window
+than its largest, size for the small one:
+
+```bash
+chamnan-context --window 32000       # size for the smallest model the router might pick
+```
+
+and, for the session-start block specifically, `CHAMNAN_OUTPUT_CEILING` sets the same bound. The
+default ceiling is deliberately small for this reason, so on most setups the answer is that there is
+nothing to do.
+
+**What has actually been checked.** The claims above are read off the source: no network call, no
+endpoint variable, no model name outside the `--model` name table. chamnan has **not** been run
+end-to-end against a live 9Router install, so this is a structural argument rather than a test
+result. If you run one and something behaves differently, that is worth an issue — it would mean
+the boundary described here is not where it looks.
+
 ### Three axes, kept apart
 
 | | what it decides | set by |
