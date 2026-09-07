@@ -85,7 +85,7 @@ def _head(root):
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         return ""
     return out.stdout.strip() if out.returncode == 0 else ""
 
@@ -194,7 +194,7 @@ def _churn(root, window=CHURN_WINDOW):
             # filename raises the same exception, which is neither an OSError nor a
             # SubprocessError, so the except below would not catch it and the whole hook would die.
             text=True, encoding="utf-8", errors="replace", timeout=10)
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         return _remember(disk, head, key, {})
     if out.returncode != 0:
         return _remember(disk, head, key, {})

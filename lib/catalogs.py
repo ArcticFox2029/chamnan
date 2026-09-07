@@ -571,7 +571,7 @@ def _is_ignored(root, path):
                                stderr=subprocess.DEVNULL, timeout=10)
             if r.returncode in (0, 1):
                 return r.returncode == 0
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         pass
     # No git, or not a repository. Walk the .gitignore files from the file's own directory upward,
     # nearest first, and let the last matching rule win the way git does.

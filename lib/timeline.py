@@ -298,7 +298,7 @@ def historical_names(root, target):
             timeout=10)
         if out.returncode == 0:
             names = {ln.strip() for ln in out.stdout.splitlines() if ln.strip()}
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         names = set()
     return _NAMES_CACHE.setdefault(key, names)
 

@@ -294,7 +294,7 @@ def _tracked_ambiguous(root):
                 for i, part in enumerate(parts):
                     if part in AMBIGUOUS_SKIP:
                         found.add("/".join(parts[:i + 1]))
-    except (OSError, ValueError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         pass
     _TRACKED_AMBIGUOUS[key] = frozenset(found)
     return _TRACKED_AMBIGUOUS[key]
@@ -1997,7 +1997,7 @@ def _built_from(root):
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=5)
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         return ""
     sha = out.stdout.strip()
     return f" Built from {sha}." if out.returncode == 0 and sha else ""

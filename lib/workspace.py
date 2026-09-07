@@ -2007,7 +2007,7 @@ def git_hooks_dir(root):
         if out.returncode == 0 and out.stdout.strip():
             found = pathlib.Path(out.stdout.strip())
             return found if found.is_absolute() else (pathlib.Path(root) / found)
-    except (OSError, sp.SubprocessError):
+    except git_cannot_answer():
         pass
     return None
 
@@ -2213,7 +2213,7 @@ def git_toplevel(root):
                                 stdin=_subprocess().DEVNULL, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=10)
         return (out.stdout.strip() or None) if out.returncode == 0 else None
-    except (OSError, ValueError):
+    except git_cannot_answer():
         return None
 
 
@@ -2259,7 +2259,7 @@ def git_can_speak_for(root):
         answer = out.returncode == 0 and bool(out.stdout.strip())
         if not answer:
             answer = git_owns(root)          # a bare repository, which has no working tree
-    except (OSError, ValueError):
+    except git_cannot_answer():
         answer = False
     _GIT_SPEAKS[key] = answer
     return answer
@@ -2294,8 +2294,7 @@ def git_owns(root):
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             if bare.returncode == 0 and bare.stdout.strip():
                 answer = Path(bare.stdout.strip()).resolve() == Path(root).resolve()
-    except (OSError, ValueError) as exc:  # git missing, or an unresolvable path
-        del exc
+    except git_cannot_answer():  # git missing, unrunnable, or an unresolvable path
         answer = False
     except Exception:                     # noqa: BLE001 — subprocess timeouts and friends
         answer = False
@@ -2303,8 +2302,54 @@ def git_owns(root):
     return answer
 
 
+# Every way asking git a question can fail, as ONE definition rather than fourteen tuples.
+#
+# 🐛 [2026-09-07] `NotImplementedError` was in none of them, and that is the failure mode of an
+# environment with no process layer AT ALL -- Pyodide/WASM, and some restricted sandboxes and CI
+# containers. The tuples covered "git is not installed" (OSError) and "git said something odd"
+# (SubprocessError); they did not cover "there is no such thing as running a program here", so
+# chamnan did not degrade to its no-git behaviour, it raised out of `mapper.scan()` and took the
+# whole index with it. Reproduced by disabling subprocess and calling scan/render:
+#
+#     NotImplementedError: subprocess is not available in Pyodide/WASM
+#       workspace.py:2256 git_can_speak_for   except (OSError, ValueError)
+#
+# chamnan already answers "no git" gracefully and has a test for it; this is the same answer for a
+# stricter environment, and it is the same defect shape as the rest of this week -- a handler that
+# names some members of a set and misses the identical one beside it. `ValueError` stays because
+# a bad argument to `run()` raises it, and `SubprocessError` because a timeout is one.
 def _subprocess():
     """Imported here rather than at module scope: `workspace` is the module every other one loads,
-    and it has stayed free of anything that runs a process at import time."""
+    and it has stayed free of anything that runs a process at import time.
+
+    Measured 2026-09-07: `subprocess` is already in `sys.modules` by the time this module finishes
+    importing, so the laziness buys nothing on today's import graph. Kept anyway -- that is a fact
+    about what else happens to import it, not a property this file controls, and the cost of
+    keeping the accessor is one function call.
+    """
     import subprocess
     return subprocess
+
+
+def git_cannot_answer():
+    """Every way "ask git a question" can fail, as ONE definition rather than fourteen tuples.
+
+    \U0001f41b [2026-09-07] `NotImplementedError` was in none of them, and that is how an
+    environment with no process layer AT ALL fails -- Pyodide/WASM, and some restricted sandboxes
+    and CI containers. The tuples covered "git is not installed" (OSError) and "git said something
+    odd" (SubprocessError); none covered "there is no such thing as running a program here", so
+    chamnan did not fall back to its no-git behaviour, it raised out of `mapper.scan()` and took
+    the whole index with it. Reproduced by disabling subprocess and calling scan/render:
+
+        NotImplementedError: subprocess is not available in Pyodide/WASM
+          workspace.py git_can_speak_for   except (OSError, ValueError)
+
+    chamnan already answers "no git" gracefully and is tested for it; this is the same answer for a
+    stricter environment. It is also the same shape as the rest of this week -- a handler naming
+    some members of a set and missing the identical one beside it -- which is why it is one
+    function with fourteen callers rather than fourteen tuples kept in step by hand.
+
+    `ValueError` stays because a bad argument to `run()` raises it, and `SubprocessError` because a
+    timeout is one. Named through `_subprocess()` so this file keeps the property above.
+    """
+    return (OSError, ValueError, NotImplementedError, _subprocess().SubprocessError)
