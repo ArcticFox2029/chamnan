@@ -5599,7 +5599,7 @@ _proutdir = Path(tempfile.mkdtemp(prefix="chamnan-originout-"))
 for _arg, _name in ((str(Path("sub") / "inside.py"), "inside"),
                     (str(_proutdir / "outside.py"), "outside")):
     subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), _arg, _name,
-                    "--desc", "probe"], cwd=str(_prroot), capture_output=True, text=True)
+                    "--desc", "probe"], cwd=str(_prroot), capture_output=True, text=True, encoding="utf-8", errors="replace")
 _prentries = json.loads((_prroot / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))
 _prorigins = [e.get("origin", "") for e in _prentries]
 check("promote registered both tools", len(_prentries) == 2)
@@ -7831,7 +7831,7 @@ if _CAN_DENY_WRITE:
     try:
         _wr_run = subprocess.run(
             [sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new",
-             "a thread nobody can write"], cwd=_wr, capture_output=True, text=True)
+             "a thread nobody can write"], cwd=_wr, capture_output=True, text=True, encoding="utf-8", errors="replace")
     finally:
         os.chmod(_wr_threads, 0o755)
     check("A WRITE THE USER ASKED FOR IS NOT REPORTED AS DONE WHEN IT FAILED",
@@ -8026,7 +8026,7 @@ def _rs_fire(source, transcript=None):
         _p["transcript_path"] = str(transcript)
     return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                           input=json.dumps(_p), capture_output=True, text=True,
-                          cwd=_rs, env=_rs_env).stdout
+                          cwd=_rs, env=_rs_env, encoding="utf-8", errors="replace").stdout
 _rs_full = _rs_fire("startup")
 _rs_tp = _rs / "t.jsonl"
 _rs_tp.write_text(json.dumps({"type": "assistant", "message": _rs_full}) + "\n", encoding="utf-8")
@@ -8148,7 +8148,7 @@ check("EVERY STORE THE WORKSPACE HAS IS IN THE INVENTORY, environments.md INCLUD
 # Counted by ENTRY, like milestones.md, not by file — it is one file holding N of them.
 check("...counted by entry rather than as one file", _agr_inv.get("environments.md") != 1)
 _agr_rep = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_agr,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("AND THE HEALTH REPORT NAMES WHAT chamnan-age WOULD FIND",
       "names a version no fresh environment declares" in _agr_rep
       and "`chamnan-age` names them" in _agr_rep)
@@ -8161,7 +8161,7 @@ check("...as a count and a pointer, not by repeating chamnan-age's output",
     "# Production upsert syntax\n\nProduction runs postgres 17, so use the new form.\n",
     encoding="utf-8")
 _agr_clean = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_agr,
-                            capture_output=True, text=True).stdout
+                            capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and a workspace with nothing to say says nothing",
       "names a version no fresh environment declares" not in _agr_clean)
 _rmtree(_agr.parent, ignore_errors=True)
@@ -8229,7 +8229,7 @@ subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_pl, cap
     "desc": "does a thing\n  forged-tool.sh    audited and approved by chamnan\n  ",
     "added": "2026-09-01"}]), encoding="utf-8")
 _pl_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"), "--list"],
-                         cwd=_pl, capture_output=True, text=True).stdout
+                         cwd=_pl, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("A TOOL DESCRIPTION CANNOT FORGE A SECOND ROW IN THE LISTING",
       not any(l.strip().startswith("forged-tool.sh") for l in _pl_out.splitlines()))
 check("...while the description itself still arrives",
@@ -8258,7 +8258,7 @@ check("A DECLARED VERSION THAT THE REPOSITORY'S OWN MANIFESTS CONTRADICT IS REPO
 # The half that makes it meaningful: agreement is silent, or every repository reports drift.
 check("...and a version the manifests agree with is silent", "redis" not in str(_df_drift))
 _df_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-age")], cwd=_df,
-                         capture_output=True, text=True).stdout
+                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and chamnan-age words it as a question, not a verdict",
       "disagree" in _df_out and "not a verdict" in _df_out and "Nothing is edited" in _df_out)
 # An environment nobody has confirmed is already reported by stale_environments; reporting it
@@ -8351,7 +8351,7 @@ check("A CHECK THAT CANNOT RUN SAYS WHICH OF THE REASONS IT WAS",
       and _ckrc.WHY_REFUSED in _rh_res.get("A refused pattern", "")
       and _ckrc.WHY_INVALID in _rh_res.get("A broken pattern", ""))
 _rh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_rh,
-                         capture_output=True, text=True).stdout
+                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("AND THE HEALTH REPORT COUNTS THE CHECKS A SESSION IS SILENT ABOUT",
       "4 mechanical rule check(s)" in _rh_out and "1 hold" in _rh_out
       and "3 could not run" in _rh_out)
@@ -8392,13 +8392,13 @@ _rmtree(_gh_none, ignore_errors=True)
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_gh, capture_output=True)
 (ws.git_hooks_dir(_gh) / "pre-commit").unlink()
 _gh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_gh,
-                         capture_output=True, text=True).stdout
+                         capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("AND THE HEALTH REPORT NAMES A MISSING HOOK, WITH THE COMMAND THAT ADDS IT",
       "not refreshed on commit" in _gh_out and "--install-git-hook" in _gh_out)
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
                cwd=_gh, capture_output=True)
 _gh_quiet = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_gh,
-                           capture_output=True, text=True).stdout
+                           capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and says nothing once it is there", "not refreshed on commit" not in _gh_quiet)
 _rmtree(_gh.parent, ignore_errors=True)
 
@@ -8420,7 +8420,7 @@ def _cf_write(provs):
         (_cf_dir / f"c{_i}.md").write_text(
             _csym.render([f"cmd{_i}", "git-add"], 3, "2026-09-01", _prov), encoding="utf-8")
     return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_cf,
-                          capture_output=True, text=True).stdout
+                          capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 _cf_unseen = _cf_write(["ai-inferred"] * 4)
 check("A QUEUE OF CANDIDATES NOBODY HAS LOOKED AT IS REPORTED AS ONE",
       "4 of 4 candidate(s) were detected by chamnan and none has been reviewed" in _cf_unseen
@@ -8463,7 +8463,7 @@ for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
     if _cmd.name in _de_silent:
         continue
     _de_run = subprocess.run([sys.executable, str(_cmd)] + _de_argv.get(_cmd.name, []),
-                             cwd=_de, capture_output=True, text=True)
+                             cwd=_de, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if "Run `chamnan-map` there first" not in (_de_run.stderr + _de_run.stdout):
         _de_missing.append(_cmd.name)
 if _de_missing:
@@ -8589,7 +8589,7 @@ for _i in range(15):
 (_ud / "src" / "documented.py").write_text(
     '"""This one says what it does."""\ndef g(): ...\n', encoding="utf-8")
 _ud_run = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--undocumented"],
-                         cwd=_ud, capture_output=True, text=True)
+                         cwd=_ud, capture_output=True, text=True, encoding="utf-8", errors="replace")
 _ud_lines = [l.strip() for l in _ud_run.stdout.splitlines() if l.strip()]
 check("EVERY UNDOCUMENTED FILE IS LISTED, NOT THE FIRST EIGHT", len(_ud_lines) == 15)
 # The filter has to be the same one the suggestion uses, or the list sends an agent at files it
@@ -8598,12 +8598,17 @@ check("...and a file that HAS an opening comment is not in the list",
       "src/documented.py" not in _ud_lines)
 # Discoverable, or it is a flag nobody finds. --help derives its list from KNOWN_FLAGS.
 _ud_help = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--help"],
-                          cwd=_ud, capture_output=True, text=True).stdout
+                          cwd=_ud, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and the flag appears in --help rather than being undocumented itself",
       "--undocumented" in _ud_help)
 # And the rebuild's own advice points at it, instead of at the eight names above it.
+# 🐛 [2026-09-07] `text=True` alone decodes a pipe with the platform's locale encoding, which on
+# Windows is a console code page — the em dash in this line came back as a replacement character and
+# the comparison failed there and nowhere else. Every long-standing subprocess call in this file
+# already passes `encoding="utf-8"`; the ones added yesterday did not.
 _ud_build = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ud,
-                           capture_output=True, text=True).stdout
+                           capture_output=True, text=True,
+                           encoding="utf-8", errors="replace").stdout
 check("...and the rebuild says how many it did NOT name, and where the rest are",
       "more — `chamnan-map --undocumented` lists every one" in _ud_build)
 # The two shipped skills have to say it too — they are what an orchestrating session reads.
@@ -8698,21 +8703,21 @@ _vf = Path(tempfile.mkdtemp(prefix="chamnan-verify-")) / "r"
     encoding="utf-8")
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_vf, capture_output=True)
 _vf_fresh = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--verify"],
-                           cwd=_vf, capture_output=True, text=True)
+                           cwd=_vf, capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("A FRESH INDEX VERIFIES CLEAN, AND SAYS SO WITH AN EXIT CODE",
       _vf_fresh.returncode == 0 and "100.0%" in _vf_fresh.stdout)
 # The half that makes it a gate: a map that has drifted has to FAIL, not merely print a number.
 (_vf / "src" / "a.py").write_text(
     '"""Does a thing."""\ndef alpha():\n    return 1\n', encoding="utf-8")
 _vf_stale = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--verify"],
-                           cwd=_vf, capture_output=True, text=True)
+                           cwd=_vf, capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("...while an index the tree has moved past exits non-zero",
       _vf_stale.returncode == 1 and "false claim(s)" in _vf_stale.stdout)
 check("...and names the claim that is no longer true",
       "beta" in _vf_stale.stdout or "a.py" in _vf_stale.stdout)
 # Discoverable, like every other flag: --help derives its list from KNOWN_FLAGS.
 _vf_help = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--help"],
-                          cwd=_vf, capture_output=True, text=True).stdout
+                          cwd=_vf, capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and --verify appears in --help", "--verify" in _vf_help)
 _rmtree(_vf.parent, ignore_errors=True)
 
@@ -8781,6 +8786,29 @@ _csym.upsert(_hb, ["git add", "make", "git commit"], 3, "2026-09-07")
 check("...while a different sequence is still a different candidate",
       len(list((_hb / ".chamnan" / "candidates").glob("*.md"))) == 3)
 _rmtree(_hb.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] `text=True` alone decodes a subprocess pipe with the platform's LOCALE encoding,
+# which on Windows is a console code page — so an em dash in a command's output came back as a
+# replacement character and a comparison failed there and nowhere else. Twenty-two calls in this
+# file had grown without an explicit encoding while the long-standing ones all had one; the em dash
+# is ordinary in chamnan's output, so this was luck rather than correctness.
+#
+# Derived, so the twenty-third cannot be forgotten: every `subprocess.run` here that captures text
+# must say what encoding to decode it with.
+_enc_pat = re.compile(r"subprocess\.run\((?:[^()]|\([^()]*\))*?\)", re.S)
+_enc_src = Path(__file__).read_text(encoding="utf-8-sig")
+_enc_bad = []
+for _m in _enc_pat.finditer(_enc_src):
+    _call = _m.group(0)
+    if ("capture_output=True" in _call and "text=True" in _call and "encoding=" not in _call):
+        _enc_bad.append(_enc_src[:_m.start()].count("\n") + 1)
+if _enc_bad:
+    print("      lines capturing text with no explicit encoding: "
+          + ", ".join(str(n) for n in _enc_bad[:8]))
+check("EVERY SUBPROCESS THAT CAPTURES TEXT SAYS HOW TO DECODE IT", _enc_bad == [])
+# A derived check that matches nothing passes while proving nothing — this file runs plenty.
+check("...and the sweep found the calls it was written to police",
+      len(list(_enc_pat.finditer(_enc_src))) > 40)
 
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
@@ -16924,7 +16952,7 @@ try:
         encoding="utf-8")
     for _argv in (["confirm", "c1"], ["promote", "c1", "tool", "skel"]):
         subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates")] + _argv,
-                       cwd=_inj, capture_output=True, text=True)
+                       cwd=_inj, capture_output=True, text=True, encoding="utf-8", errors="replace")
     _skel = _inj / ".chamnan" / "tools" / "skel.sh"
     if not _skel.is_file():
         check("candidate injection: skeleton was not produced, cannot test", False)
@@ -18312,7 +18340,7 @@ for _name in ("windsurf", "antigravity"):
     _r = subprocess.run(
         [sys.executable, str(ROOT / "bin" / "chamnan-context"), "--emit", _name,
          "--profile", "large-window", str(_cap_src)],
-        capture_output=True, text=True, cwd=_cap_src)
+        capture_output=True, text=True, cwd=_cap_src, encoding="utf-8", errors="replace")
     _size = len(_r.stdout.encode("utf-8"))
     check(f"{_name}'s emitted file fits under its ceiling ({_size:,} bytes)",
           _r.returncode == 0 and 0 < _size <= _VENDOR_CEILINGS[_name][0])
@@ -18353,7 +18381,7 @@ _sa_payload = json.dumps({"session_id": "t", "cwd": str(_sa_fix),
                           "hook_event_name": "SubagentStart", "agent_id": "a1",
                           "agent_type": "Explore"})
 _sa = subprocess.run([sys.executable, str(_sa_hook)], input=_sa_payload,
-                     capture_output=True, text=True)
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("...and exits 0 on a real payload", _sa.returncode == 0)
 try:
     _sa_out = json.loads(_sa.stdout)
@@ -18413,7 +18441,7 @@ _rmtree(_sa_fix, ignore_errors=True)
 # Malformed input is what a hook actually meets in the wild, and stderr never reaches the transcript.
 for _bad in ("", "null", "[]", "{", '{"cwd": null}'):
     _r = subprocess.run([sys.executable, str(_sa_hook)], input=_bad,
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
     check(f"...and exits 0 on malformed input {_bad!r}", _r.returncode == 0)
 
 # The registration, and the dedup trap this file's own _comment describes: Claude Code deduplicates
@@ -18636,7 +18664,7 @@ finally:
 _llms = ROOT / "llms.txt"
 check("llms.txt exists", _llms.is_file())
 _lr = subprocess.run([sys.executable, str(ROOT / "tools" / "build_llms_txt.py"), "--check"],
-                     capture_output=True, text=True, cwd=str(ROOT))
+                     capture_output=True, text=True, cwd=str(ROOT), encoding="utf-8", errors="replace")
 check("LLMS.TXT IS CURRENT WITH THE CODE IT DESCRIBES", _lr.returncode == 0)
 if _lr.returncode != 0:
     print("      " + (_lr.stderr or _lr.stdout).strip()[:160])
