@@ -1134,11 +1134,62 @@ _CARD_BRANDS = (
     r"|35(?:2[89]|[3-8][0-9])[0-9]{12}"            # JCB
     r"|62[0-9]{14,17}"                             # UnionPay
 )
-# The grouped form: four-digit groups separated by a single space or hyphen, or Amex's 4-6-5.
+# 🐛 [2026-09-07] Every pattern below is written in ASCII `[0-9]`, and Python's `re` does not match
+# a Thai digit with it. So a checksum-valid national ID typed in Thai numerals — ๑๒๓๔๕๖๗๘๙๐๑๒๓,
+# the ordinary way to write one in the one market this plugin was built for — went through
+# untouched, next to the Thai keyword the pattern looks for. Same for Arabic-Indic (٠-٩), Eastern
+# Arabic-Indic (۰-۹), Devanagari (०-९) and fullwidth (０-９). Found independently by two agents in
+# one round, which is how a gap this wide survives: nobody had typed a number in anything but ASCII.
+#
+# Folded before matching rather than added to every character class. A fold is one table and cannot
+# be applied to some patterns and forgotten in the others, which is this repository's recurring
+# defect; and it is codepoint-for-codepoint, so a span found in the folded text is the same span in
+# the original and the ORIGINAL characters are what get replaced.
+_DIGIT_FOLD = str.maketrans({
+    **{chr(0x0660 + i): str(i) for i in range(10)},      # Arabic-Indic
+    **{chr(0x06F0 + i): str(i) for i in range(10)},      # Extended (Persian/Urdu) Arabic-Indic
+    **{chr(0x0966 + i): str(i) for i in range(10)},      # Devanagari
+    **{chr(0x0E50 + i): str(i) for i in range(10)},      # Thai
+    **{chr(0x0BE6 + i): str(i) for i in range(10)},      # Tamil
+    **{chr(0xFF10 + i): str(i) for i in range(10)},      # Fullwidth
+})
+# Separators a person or an exporter actually puts between card groups. The dot was measured
+# missing: `4111.1111.1111.1111` passed through whole even with the word "card" on the line. It is
+# safe to add because a 4-4-4-4 dotted run cannot be an IPv4 address (no octet has four digits) and
+# the Luhn check and brand prefix still both have to pass. NBSP and the narrow/thin spaces come out
+# of spreadsheets and PDFs, where they are what a copy-paste actually produces.
+_SEP = r"[ .\u00a0\u2007\u2009\u202f-]"
+# The grouped form: four-digit groups separated by a single separator, or Amex's 4-6-5.
 _CARD_GROUPED = re.compile(
-    r"(?<![0-9A-Za-z_-])((?:[0-9]{4}[ -]){3}[0-9]{3,4}|[0-9]{4}[ -][0-9]{6}[ -][0-9]{5})"
+    r"(?<![0-9A-Za-z_-])((?:[0-9]{4}" + _SEP + r"){3}[0-9]{3,4}"
+    r"|[0-9]{4}" + _SEP + r"[0-9]{6}" + _SEP + r"[0-9]{5})"
     r"(?![0-9A-Za-z_-])")
 _CARD_BARE = re.compile(r"(?<![0-9A-Za-z_-])(" + _CARD_BRANDS + r")(?![0-9A-Za-z_-])")
+
+# WHY THE GROUPED FORM NEEDS NO KEYWORD AND THE BARE FORM DOES, and why the false positive that
+# follows from it is accepted rather than fixed (decided 2026-09-07, R7 agent 10).
+#
+# `device_id = 4737-0000-0000-0002` is redacted, with no card vocabulary anywhere on the line. The
+# number is 4-4-4-4 grouped, carries a Visa prefix and passes Luhn, so it is card-shaped in every
+# way this module can test. Roughly one in ten arbitrary dash-grouped 16-digit identifiers will
+# satisfy the checksum by chance, and there is no signal left that separates them.
+#
+# Kept, and the reason is what this redactor guards. It is not a repository-wide scanner that
+# rewrites source — it scrubs chamnan's OWN generated text: MAP.md, the injected block, a command's
+# stdout. A false positive costs a model one opaque `<REDACTED>` where a device id used to be, in a
+# file that is regenerated from source anyway. A false negative puts a live card number in the
+# block that goes to the provider on every single session. Those are not comparable, and the whole
+# argument for this plugin is which side of that it errs on.
+#
+# The obvious mitigation was considered and refused: exempting names like `device_id`/`order_ref`
+# on the left of the assignment. That is a keyword list, and this file's own comment two paragraphs
+# down already says why — "a longer list is a wider net, and the checksum is doing the real work" —
+# and it would have to lose to the card words to stay safe, which is a second list to keep in step
+# with the first. Two lists that must agree is the defect this repository pays for most often.
+#
+# What would change this: evidence that the false positive damages something a regeneration does
+# not fix. If this module is ever pointed at a user's source files rather than at chamnan's output,
+# the trade above inverts and this comment is the place to start.
 # Words that say "the digits near me are a card". Deliberately short: a longer list is a wider net,
 # and the checksum is doing the real work.
 _CARD_WORD = re.compile(
@@ -1147,7 +1198,8 @@ _CARD_WORD = re.compile(
 # Thailand's 13-digit national ID. The checksum is a weighted sum, which is why this can be told
 # from an epoch timestamp at all -- and only barely, hence the context requirement.
 _THAI_ID_DASHED = re.compile(
-    r"(?<![0-9])([1-8])[ -]([0-9]{4})[ -]([0-9]{5})[ -]([0-9]{2})[ -]([0-9])(?![0-9])")
+    r"(?<![0-9])([1-8])" + _SEP + r"([0-9]{4})" + _SEP + r"([0-9]{5})" + _SEP
+    + r"([0-9]{2})" + _SEP + r"([0-9])(?![0-9])")
 _THAI_ID_BARE = re.compile(r"(?<![0-9A-Za-z_-])([1-8][0-9]{12})(?![0-9A-Za-z_-])")
 _THAI_ID_WORD = re.compile(
     r"(?i)(?<![a-z])(national[_ -]?id|citizen[_ -]?id|id[_ -]?card|idcard|thai[_ -]?id"
@@ -1187,39 +1239,58 @@ def _thai_national_id(digits):
 # see the `=>` and YAML-block gates above, and the note there about a gate that tests one character
 # out of a pattern and therefore skips nothing. Measured on this repository's 295 KB index: the
 # personal-data layer costs 34.0 ms unguarded, 11.2% of the whole scrub, and the gate is one scan.
-_A_LONG_DIGIT_RUN = re.compile(r"[0-9][0-9 -]{10,}[0-9]")
+_A_LONG_DIGIT_RUN = re.compile(r"[0-9][0-9 .\u00a0\u2007\u2009\u202f-]{10,}[0-9]")
 
 
 def _redact_personal_data(text):
-    """Card numbers and national IDs, where the number checks out AND its context agrees."""
-    if not _A_LONG_DIGIT_RUN.search(text):
+    """Card numbers and national IDs, where the number checks out AND its context agrees.
+
+    Matching runs against a digit-FOLDED copy of each line and the spans it finds are cut out of
+    the ORIGINAL. `_DIGIT_FOLD` maps one codepoint to one codepoint, so the two strings have
+    identical offsets and a span means the same thing in both — which is why this can read a Thai
+    or fullwidth number without every pattern above having to spell out six digit ranges.
+    """
+    if not _A_LONG_DIGIT_RUN.search(text.translate(_DIGIT_FOLD)):
         return text
-    lines = text.splitlines(keepends=True)
     out = []
-    for line in lines:
-        has_card_word = bool(_CARD_WORD.search(line))
-        has_id_word = bool(_THAI_ID_WORD.search(line))
+    for line in text.splitlines(keepends=True):
+        folded = line.translate(_DIGIT_FOLD)
+        has_card_word = bool(_CARD_WORD.search(folded))
+        has_id_word = bool(_THAI_ID_WORD.search(folded))
+        spans = []
 
-        def card(match):
-            digits = re.sub(r"[ -]", "", match.group(1))
-            if not _luhn(digits) or not re.fullmatch(_CARD_BRANDS, digits):
-                return match.group(0)
-            return PLACEHOLDER
-
-        line = _CARD_GROUPED.sub(card, line)
+        for m in _CARD_GROUPED.finditer(folded):
+            digits = re.sub(_SEP, "", m.group(1))
+            if _luhn(digits) and re.fullmatch(_CARD_BRANDS, digits):
+                spans.append(m.span(1))
         if has_card_word:
-            line = _CARD_BARE.sub(
-                lambda m: PLACEHOLDER if _luhn(m.group(1)) else m.group(0), line)
-
-        def thai(match):
-            digits = "".join(match.groups())
-            return PLACEHOLDER if _thai_national_id(digits) else match.group(0)
-
-        line = _THAI_ID_DASHED.sub(thai, line)
+            spans += [m.span(1) for m in _CARD_BARE.finditer(folded) if _luhn(m.group(1))]
+        spans += [(m.start(1), m.end(5)) for m in _THAI_ID_DASHED.finditer(folded)
+                  if _thai_national_id("".join(m.groups()))]
         if has_id_word:
-            line = _THAI_ID_BARE.sub(
-                lambda m: PLACEHOLDER if _thai_national_id(m.group(1)) else m.group(0), line)
-        out.append(line)
+            spans += [m.span(1) for m in _THAI_ID_BARE.finditer(folded)
+                      if _thai_national_id(m.group(1))]
+
+        if not spans:
+            out.append(line)
+            continue
+        # Overlaps are possible -- the grouped and bare forms can both match one number -- so the
+        # spans are merged before cutting. Replacing them one at a time would shift every later
+        # offset and cut the wrong characters out of the rest of the line.
+        spans.sort()
+        merged = [list(spans[0])]
+        for a, b in spans[1:]:
+            if a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        rebuilt, cursor = [], 0
+        for a, b in merged:
+            rebuilt.append(line[cursor:a])
+            rebuilt.append(PLACEHOLDER)
+            cursor = b
+        rebuilt.append(line[cursor:])
+        out.append("".join(rebuilt))
     return "".join(out)
 
 def for_a_terminal(text):
