@@ -263,7 +263,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
                                  encoding="utf-8", errors="replace", timeout=5)
             short = sha.stdout.strip() if sha.returncode == 0 else ""
             branch = f"a detached HEAD at {short}" if short else ""
-    except (OSError, subprocess.SubprocessError):
+    except ws.git_cannot_answer():
         return ""
 
     # 🐛 [2026-09-06] A session resumed in the middle of a rebase or a conflicted merge was told it

@@ -20572,6 +20572,73 @@ _rmtree(_md11_dir.parent, ignore_errors=True)
 _rmtree(_md12_dir.parent, ignore_errors=True)
 
 
+# ------------------------------------------- an environment with no process layer at all
+# 🐛 [2026-09-07] Every handler around a git call named "git is not installed" (OSError) and "git
+# said something odd" (SubprocessError). None named `NotImplementedError`, which is how an
+# environment with NO PROCESS LAYER fails — Pyodide/WASM, and some restricted sandboxes and CI
+# containers. So chamnan did not fall back to its no-git behaviour, which it has and is tested for;
+# it raised out of `mapper.scan()` and took the whole index with it.
+#
+# Found while measuring whether chamnan could run in a browser, which is a real question for a
+# comparison page — but the fix stands on its own: "works where processes cannot be spawned" is the
+# same promise as "works without git", and chamnan already made that one.
+_np_repo = Path(tempfile.mkdtemp(prefix="chamnan-noproc-")) / "r"
+(_np_repo / "src").mkdir(parents=True)
+for _i in range(12):
+    (_np_repo / "src" / f"m{_i}.py").write_text(
+        f'"""Module {_i} does a thing worth describing."""\nimport os\n\n\ndef f{_i}():\n'
+        f'    return os.getcwd()\n', encoding="utf-8")
+_np_code = '''
+import sys, subprocess, pathlib
+def _nope(*a, **k):
+    raise NotImplementedError("subprocess is not available in Pyodide/WASM")
+for _n in ("run", "check_output", "Popen", "call", "check_call"):
+    setattr(subprocess, _n, _nope)
+sys.path.insert(0, sys.argv[1])
+import mapper
+mapper.reset_skips()
+files = list(mapper.scan(pathlib.Path(sys.argv[2])))
+print(len(files), len(mapper.render(files, pathlib.Path(sys.argv[2]))))
+'''
+_np = subprocess.run([sys.executable, "-c", _np_code, str(ROOT / "lib"), str(_np_repo)],
+                     capture_output=True, text=True, encoding="utf-8", errors="replace")
+if _np.returncode != 0:
+    print(f"      DETAIL  {_np.stderr.strip().splitlines()[-1] if _np.stderr.strip() else '(no stderr)'}")
+check("THE INDEX BUILDS WHERE NO PROCESS CAN BE SPAWNED", _np.returncode == 0)
+check("...and actually indexed the files rather than returning empty",
+      _np.returncode == 0 and _np.stdout.split() and int(_np.stdout.split()[0]) == 12)
+_rmtree(_np_repo.parent, ignore_errors=True)
+
+# Derived, because the defect was that fourteen handlers had to be kept in step by hand. Any handler
+# that WRAPS A SUBPROCESS CALL must go through the one definition. Handlers elsewhere are not this
+# check's business — a first pass at this fix rewrote three that had nothing to do with git.
+_gh_bad = []
+for _f in sorted((ROOT / "lib").glob("*.py")):
+    _src = _f.read_text(encoding="utf-8")
+    _tree = ast.parse(_src)
+    for _t in ast.walk(_tree):
+        if not isinstance(_t, ast.Try):
+            continue
+        _has = any(isinstance(_c, ast.Call)
+                   and getattr(_c.func, "attr", "") in ("run", "check_output", "Popen",
+                                                        "call", "check_call")
+                   for _b in _t.body for _c in ast.walk(_b))
+        if not _has:
+            continue
+        for _h in _t.handlers:
+            if _h.type is None:
+                continue
+            _txt = ast.get_source_segment(_src, _h.type) or ""
+            if "SubprocessError" in _txt or ("OSError" in _txt and "git_cannot_answer" not in _txt):
+                _gh_bad.append(f"{_f.name}:{_h.lineno} {_txt}")
+if _gh_bad:
+    print(f"      DETAIL  git handlers not using the one definition: {_gh_bad}")
+check("every handler around a subprocess call uses the one failure definition", not _gh_bad)
+# It has to have found some, or it is passing on a walk that matched nothing.
+_gh_seen = sum(1 for _f in (ROOT / "lib").glob("*.py")
+               if "git_cannot_answer()" in _f.read_text(encoding="utf-8"))
+check("the git-handler sweep found the modules it is about", _gh_seen >= 5)
+
 # ------------------------------------------- the context file beside the block, finally counted
 # 🎯 [2026-09-07] chamnan budgets itself to the byte and had never mentioned the agent context file
 # loaded into the same window. Measured on this repository: 8,925 bytes of block against a 9,000
