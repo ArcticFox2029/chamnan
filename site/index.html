@@ -1,0 +1,1138 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Measure chamnan on any GitHub repository</title>
+<meta name="description" content="Paste a public GitHub repository URL and this page measures, in your browser, what chamnan would inject into a coding agent's context. Runs chamnan's real Python modules via Pyodide. Nothing is uploaded; there is no server.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --ground:#FBFBF8; --surface:#FFFFFF; --sunk:#F4F4EF;
+  --ink:#15181C; --muted:#5C6169; --faint:#8A8F96;
+  --rule:#E4E3DD; --accent:#0F6E5C; --accent-soft:#E4F0EC;
+  --warn:#A2600C; --warn-soft:#F8EEDD;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1013; --surface:#15181C; --sunk:#1B1F24;
+    --ink:#E9E9E3; --muted:#9AA0A6; --faint:#6E747B;
+    --rule:#262A2F; --accent:#4FCFAE; --accent-soft:#16302A;
+    --warn:#E0A857; --warn-soft:#2E2416;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1013; --surface:#15181C; --sunk:#1B1F24;
+  --ink:#E9E9E3; --muted:#9AA0A6; --faint:#6E747B;
+  --rule:#262A2F; --accent:#4FCFAE; --accent-soft:#16302A;
+  --warn:#E0A857; --warn-soft:#2E2416;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+     font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
+.wrap{max-width:60rem;margin:0 auto;padding:0 1.5rem}
+.measure{max-width:38rem}
+h1,h2,h3{font-family:var(--mono);font-weight:600;line-height:1.25;text-wrap:balance;margin:0}
+a{color:var(--accent)}
+code,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---------- masthead ---------- */
+header{border-bottom:1px solid var(--rule);padding:3.5rem 0 2.5rem}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.12em;text-transform:uppercase;
+         color:var(--faint);margin:0 0 1rem}
+h1{font-size:clamp(1.6rem,4vw,2.4rem);letter-spacing:-.02em}
+header p{color:var(--muted);margin:1.25rem 0 0}
+.claim{margin-top:1.5rem;padding:.85rem 1.1rem;background:var(--sunk);
+       border-left:3px solid var(--accent);border-radius:0 4px 4px 0;font-size:.94rem}
+.claim strong{font-family:var(--mono);font-weight:600}
+
+/* ---------- the console ---------- */
+section{padding:3rem 0;border-bottom:1px solid var(--rule)}
+h2{font-size:1.15rem;letter-spacing:-.01em}
+.lede{color:var(--muted);margin:.6rem 0 1.75rem}
+form{display:block}
+input[type=text]{flex:1 1 22rem;min-width:0;font-family:var(--mono);font-size:.92rem;
+  padding:.7rem .85rem;background:var(--surface);color:var(--ink);
+  border:1px solid var(--rule);border-radius:5px}
+input[type=text]:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+button{font-family:var(--mono);font-size:.9rem;font-weight:500;padding:.7rem 1.3rem;
+  background:var(--accent);color:var(--ground);border:0;border-radius:5px;cursor:pointer}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.steps{margin:0 0 1.5rem;padding-left:1.3rem;color:var(--muted);font-size:.94rem;max-width:38rem}
+.steps li{margin:.3rem 0}
+form label{display:block;font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--faint);margin-bottom:.45rem}
+.field{display:flex;gap:.6rem;flex-wrap:wrap;align-items:stretch;width:100%}
+.samples{margin-top:.9rem;font-size:.85rem;color:var(--muted)}
+.samples button{background:none;color:var(--accent);border:1px solid var(--rule);
+  padding:.2rem .55rem;font-size:.8rem;margin-right:.35rem;border-radius:4px}
+
+#status{margin-top:1.5rem;font-family:var(--mono);font-size:.85rem;color:var(--muted);min-height:1.4em}
+#status .bar{display:inline-block;width:9rem;height:5px;background:var(--sunk);
+  border-radius:3px;vertical-align:middle;margin-left:.6rem;overflow:hidden}
+#status .bar i{display:block;height:100%;background:var(--accent);width:0;transition:width .25s}
+
+/* ---------- results ---------- */
+#out{margin-top:2rem}
+.headline{background:var(--surface);border:1px solid var(--rule);border-radius:8px;
+  padding:1.6rem;margin-bottom:1.25rem}
+.headline .big{font-family:var(--mono);font-size:clamp(2rem,7vw,3.2rem);font-weight:600;
+  letter-spacing:-.03em;color:var(--accent);line-height:1;font-variant-numeric:tabular-nums}
+.headline .cap{color:var(--muted);font-size:.9rem;margin-top:.6rem}
+.cards{display:grid;gap:1.25rem;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1.25rem}
+.card h3{font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
+  margin-bottom:.9rem}
+.row{display:flex;justify-content:space-between;gap:1rem;padding:.42rem 0;
+  border-bottom:1px dotted var(--rule);font-size:.9rem}
+.row:last-child{border-bottom:0}
+.row .k{color:var(--muted)}
+.row .v{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+.v.good{color:var(--accent)}
+.v.warn{color:var(--warn)}
+.note{font-size:.82rem;color:var(--faint);margin-top:.9rem;line-height:1.5}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.87rem}
+th,td{text-align:right;padding:.45rem .6rem;border-bottom:1px solid var(--rule);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--mono);font-weight:500;font-size:.75rem;letter-spacing:.06em;
+   text-transform:uppercase;color:var(--faint)}
+td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---------- prose ---------- */
+.prose p{color:var(--muted)}
+.prose ul{color:var(--muted);padding-left:1.1rem}
+.prose li{margin:.4rem 0}
+.prose strong{color:var(--ink);font-weight:600}
+.limits{background:var(--warn-soft);border:1px solid var(--rule);border-left:3px solid var(--warn);
+  border-radius:0 6px 6px 0;padding:1.1rem 1.3rem}
+.limits h2{color:var(--ink);font-size:1rem;margin-bottom:.5rem}
+.kept{margin:0 0 .8rem;color:var(--ink);font-size:.92rem}
+.cmd{background:var(--sunk);border:1px solid var(--rule);border-radius:6px;padding:.9rem 1.1rem;
+  overflow-x:auto;font-size:.85rem;line-height:1.55;margin:1.2rem 0}
+.cmd code{font-family:var(--mono);color:var(--ink);white-space:pre}
+section.get{background:var(--accent-soft);border-bottom:1px solid var(--rule)}
+.big-link{font-family:var(--mono);font-size:.92rem;font-weight:500;display:inline-block;
+  margin-top:.6rem;text-decoration:none;border-bottom:2px solid var(--accent);padding-bottom:1px}
+.big-link:hover{opacity:.75}
+.simtag{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--warn);
+  background:var(--warn-soft);display:inline-block;padding:.15rem .45rem;border-radius:3px;
+  margin:0 0 .8rem}
+table.sim{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.5rem}
+table.sim th{font-size:.7rem;padding:.25rem .3rem}
+table.sim td{padding:.35rem .3rem;border-bottom:1px dotted var(--rule);text-align:right}
+table.sim td:first-child{text-align:left;color:var(--muted)}
+table.sim td.good{color:var(--accent)} table.sim td.warn{color:var(--warn)}
+.ver{font-family:var(--mono);font-size:.78rem;color:var(--faint);margin-top:1.1rem}
+.temp{margin:1.25rem 0 0;padding:.75rem 1rem;background:var(--warn-soft);
+  border-left:3px solid var(--warn);border-radius:0 5px 5px 0;
+  font-size:.86rem;color:var(--ink);line-height:1.5}
+footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
+.topline{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;flex-wrap:wrap}
+.topline .eyebrow{margin-bottom:0}
+#lang{font-family:var(--mono);font-size:.8rem;padding:.3rem .5rem;color:var(--muted);
+  background:var(--surface);border:1px solid var(--rule);border-radius:4px;cursor:pointer}
+#lang:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="topline">
+      <p class="eyebrow" data-i18n="eyebrow">chamnan · measured in your browser</p>
+      <select id="lang" aria-label="Language"></select>
+    </div>
+    <h1 data-i18n="h1">Paste a GitHub repository. See what chamnan would put in an agent's context.</h1>
+    <div class="measure">
+      <p data-i18n="intro">Paste any public GitHub repository. chamnan's own code runs here, in this tab, and reports
+         what it would inject into a coding agent's context. Nothing is uploaded and there is no
+         server — the page reads the repository from GitHub the same way your browser reads any
+         other page.</p>
+      <div class="claim" data-i18n-html="claimFull">
+        <strong data-i18n="claimStrong">The claim is efficiency, not correctness.</strong> chamnan bounds what reaches the
+        model. It does not make the model better at your task, and the research on that is linked
+        at the bottom, including the part that argues against doing this at all.
+      </div>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2 data-i18n="h2measure">Measure a repository</h2>
+    <ol class="steps">
+      <li data-i18n="step1">Paste the URL of any public GitHub repository into the box below.</li>
+      <li data-i18n="step2">Press Measure. Your browser downloads the source and runs chamnan on it.</li>
+      <li data-i18n="step3">Read the three cards: the code map, the per-session token cost, and what the redactor would hide.</li>
+    </ol>
+    <form id="f">
+      <label for="repo" data-i18n="inputLabel">GitHub repository URL</label>
+      <div class="field">
+        <input type="text" id="repo" placeholder="https://github.com/psf/requests"
+               spellcheck="false" autocomplete="off" value="">
+        <button type="submit" id="go" data-i18n="btnMeasure">Measure</button>
+      </div>
+    </form>
+    <div class="samples">
+      <span data-i18n="orTry">shortcuts, not special cases — any public repository works:</span>
+      <button type="button" data-r="psf/requests">requests</button>
+      <button type="button" data-r="pallets/flask">flask</button>
+      <button type="button" data-r="gin-gonic/gin">gin</button>
+      <button type="button" data-r="fastapi/fastapi">fastapi</button>
+      <button type="button" data-r="facebook/react">react</button>
+      <button type="button" data-r="chalk/chalk">chalk</button>
+    </div>
+    <div id="ver" class="ver"></div>
+    <div id="status" data-i18n="idle">Idle. The first run downloads the Python runtime (~10 MB), then it is cached.</div>
+    <div id="out"></div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap prose measure">
+    <h2 data-i18n="h2pre">Measured here already</h2>
+    <p class="lede" data-i18n-html="ledePre">Thirteen repositories across eight languages, every one measured through
+      this page in a real browser. The pattern is the point, not any single ratio: <strong>the source
+      grows nearly seventy-fold down this table and the injected block stays between 6.2 and
+      6.7 KB.</strong> That is a bound, not compression.</p>
+    <div class="scroll">
+      <table>
+        <thead><tr><th data-i18n="thRepo">repository</th><th data-i18n="thLang">language</th><th data-i18n="thSrc">source</th><th data-i18n="thInj">injected</th><th data-i18n="thRatio">ratio</th></tr></thead>
+        <tbody id="pre"></tbody>
+      </table>
+    </div>
+    <p class="note" data-i18n="drift">Measured 2026-09-08. These repositories are worked on daily, so
+      re-running one today will not match to the byte — the shape holds, the digits move.</p>
+    <p class="note" data-i18n="notePre">Source is the bytes of indexable files fetched. Injected is what the SessionStart
+      hook writes into the agent's context, after the index is rolled up to its token budget — not
+      the on-disk <code>MAP.md</code>, which is larger and is meant to be grepped, never read whole.</p>
+  </div>
+</section>
+
+<section class="get">
+  <div class="wrap measure prose">
+    <h2 data-i18n="getTitle">Liked the numbers? Install it</h2>
+    <p data-i18n="getBody">Two commands, then one slash command in a repository you work in.</p>
+    <pre class="cmd"><code>claude plugin marketplace add ArcticFox2029/chamnan
+claude plugin install chamnan@chamnan</code></pre>
+    <p class="note">…then <code>/chamnan:bootstrap</code> once, inside the repository.</p>
+    <p><a class="big-link" href="https://github.com/ArcticFox2029/chamnan"
+       data-i18n="getLink">chamnan on GitHub</a></p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap measure prose">
+    <h2 data-i18n="bigTitle">For a very large project, run it on your own machine</h2>
+    <p data-i18n="bigBody">This page has two ceilings, and a very large repository hits both.</p>
+    <pre class="cmd"><code>git clone https://github.com/ArcticFox2029/chamnan
+cd &lt;your repository&gt;
+python3 /path/to/chamnan/bin/chamnan-map</code></pre>
+    <p data-i18n="bigAfter">It prints the same figures this page does, over every file.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="limits measure">
+      <h2 data-i18n="h2limits">What this page cannot show you</h2>
+      <p class="kept" data-i18n="nothingKept">Nothing is stored.</p>
+      <div class="prose">
+        <ul>
+          <li data-i18n-html="lim1Full"><strong>Skills, session handoffs and recorded decisions need installing and using.</strong>
+              Their value comes from a week of real work accumulating in a repository. A one-shot
+              measurement cannot produce that, and this page does not pretend to.</li>
+          <li data-i18n-html="lim2Full"><strong>Anything that asks git.</strong> There is no process layer in a browser, so
+              churn ranking and commit history are absent here. chamnan degrades to its no-git
+              behaviour, which is a real supported mode — but the numbers above are that mode.</li>
+          <li data-i18n-html="lim3Full"><strong>Large repositories are sampled.</strong> The file list is capped so the page
+              does not pull a gigabyte through your connection. The cap in force is reported with
+              every result.</li>
+          <li data-i18n-html="lim4Full"><strong>The turn arithmetic is arithmetic.</strong> No model is called from this page,
+              and you are never asked for an API key. It multiplies a measured per-session cost; it
+              does not observe an agent working.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap measure">
+    <p data-i18n="foot1">chamnan is a context workspace for coding agents.
+       <a href="https://github.com/ArcticFox2029/chamnan" data-i18n="footLink">Source and the full evidence, including
+       the measurements that argue against it</a>.</p>
+    <p data-i18n="foot2">This page runs chamnan's real modules through Pyodide rather than a re-implementation, so the
+       numbers are the tool's own. Repository contents are read by your browser directly from
+       GitHub and are never sent anywhere else.</p>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+// Five languages. English is the source; every other string is a translation of it, not a
+// paraphrase, and the numbers and repository names are never translated.
+//
+// Chosen because chamnan is used outside English-speaking work and its own front page says so.
+// The set stops here rather than going further: a translation nobody can check is worse than an
+// English string, and these are the five this project can actually verify.
+const LANGS = {en:"English", th:"ไทย", zh:"中文", ja:"日本語", es:"Español"};
+
+const T = {
+  en: {
+    running: "running chamnan {v}",
+    drift: "Measured 2026-09-08. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
+    missed: "{n} file(s) could not be downloaded and are not in these numbers — the source figure is that much low.",
+    oversize: "{n} file(s) over 2 MB were skipped without downloading them, because chamnan does not index a file that size either.",
+    getTitle: "Liked the numbers? Install it",
+    getBody: "Two commands, then one slash command inside a repository you actually work in. It is a Claude Code plugin, Python standard library only, and everything it writes stays in <code>.chamnan/</code> inside your repository.",
+    getLink: "chamnan on GitHub — the source, and the full evidence including what argues against it",
+    scenSame: "50 turns, one subject",
+    scenRand: "50 turns, at random",
+    card2: "2 · One hundred turns",
+    simTag: "SIMULATED — not measured",
+    simHow: "Two ways of working, 50 turns each, over <strong>this repository's real files and their real sizes</strong>. Staying on one subject is where a map helps least — once you have opened the files you know where they are. Moving around is where it helps most. Showing only the second would be the flattering version; only the first, the useless one.",
+    simAssume: "The one assumption, stated rather than hidden: with no map, finding a file it has not seen costs the agent <strong>{opens} wrong files opened first</strong>; with the map, none. Revisiting a file already open is free either way. Seed {seed} — the same numbers for you as for anyone.",
+    kWith: "with chamnan",
+    kWithout: "without",
+    kCross: "block pays for itself at turn",
+    simNever: "not within 100 turns",
+    resultTemp: "This result is not saved anywhere. Refresh the page and it is gone — there is no server holding a copy, and no history to come back to. Copy the numbers now if you want to keep them.",
+    bigTitle: "For a very large project, run it on your own machine",
+    bigBody: "This page has two ceilings, and a repository the size of Linux, Kubernetes or VS Code hits both: the CDN that supplies the file list refuses repositories above a certain size, and the page only fetches the first 400 files so it does not pull a gigabyte through your connection. Neither limit exists when chamnan runs locally — and locally it can also ask git, which a browser cannot. Install it in the repository and run:",
+    bigAfter: "It prints the same figures this page does, over every file, plus the parts that need commit history.",
+    nothingKept: "Nothing is stored. There is no server to store it on: the source is downloaded into this tab, measured, and deleted as soon as the numbers exist. Close the tab and even the numbers are gone. The only thing kept between visits is which language you chose.",
+    orTry: "shortcuts, not special cases — any public repository works:",
+    reproduce: "Every row is reproducible: paste the same repository above and you should get the same numbers, give or take files added since. Nothing here is precomputed by a server — the page has no server. Paste a repository this page has never seen and it does exactly the same work.",
+    rateLimit: "GitHub's API allows only 60 requests an hour per IP address, and that is used up. This only affects repositories too large for the CDN index; ordinary ones do not touch GitHub at all.",
+    h1: "Paste a GitHub repository. See what chamnan would put in an agent's context.",
+    howTo: "How to use this page",
+    step1: "Paste the URL of any public GitHub repository into the box below.",
+    step2: "Press Measure. Your browser downloads the source and runs chamnan on it.",
+    step3: "Read the three cards: the code map, the per-session token cost, and what the redactor would hide.",
+    inputLabel: "GitHub repository URL",
+    tooBig: "This repository is too large for the CDN file index. Falling back to GitHub's API, which allows only 60 requests an hour per IP address.",
+    eyebrow: "chamnan · measured in your browser",
+    intro: "Paste any public GitHub repository. chamnan's own code runs here, in this tab, and reports what it would inject into a coding agent's context. Nothing is uploaded and there is no server — the page reads the repository the same way your browser reads any other page.",
+    claimStrong: "The claim is efficiency, not correctness.",
+    claimRest: "chamnan bounds what reaches the model. It does not make the model better at your task, and the research on that is linked at the bottom, including the part that argues against doing this at all.",
+    h2measure: "Measure a repository",
+    ledeMeasure: "The file list comes from jsDelivr's public index and the source from its CDN, so there is no API quota to run out of. Public repositories only.",
+    btnMeasure: "Measure",
+    tryLabel: "Try:",
+    idle: "Idle. The first run downloads the Python runtime (~10 MB), then it is cached.",
+    h2pre: "Measured here already",
+    ledePre: "Thirteen repositories across eight languages, every one measured through this page in a real browser. The pattern is the point, not any single ratio: <strong>the source grows nearly seventy-fold down this table and the injected block stays between 6.2 and 6.7 KB.</strong> That is a bound, not compression.",
+    thRepo: "repository", thLang: "language", thSrc: "source", thInj: "injected", thRatio: "ratio",
+    notePre: "Source is the bytes of indexable files fetched. Injected is what the SessionStart hook writes into the agent's context, after the index is rolled up to its token budget — not the on-disk MAP.md, which is larger and is meant to be grepped, never read whole.",
+    h2limits: "What this page cannot show you",
+    lim1s: "Skills, session handoffs and recorded decisions need installing and using.",
+    lim1: "Their value comes from a week of real work accumulating in a repository. A one-shot measurement cannot produce that, and this page does not pretend to.",
+    lim2s: "Anything that asks git.",
+    lim2: "There is no process layer in a browser, so churn ranking and commit history are absent here. chamnan degrades to its no-git behaviour, which is a real supported mode — but the numbers above are that mode.",
+    lim3s: "Large repositories are sampled.",
+    lim3: "The file list is capped so the page does not pull a gigabyte through your connection. The cap in force is reported with every result.",
+    lim4s: "The turn arithmetic is arithmetic.",
+    lim4: "No model is called from this page, and you are never asked for an API key. It multiplies a measured per-session cost; it does not observe an agent working.",
+    foot1: "chamnan is a context workspace for coding agents.",
+    footLink: "Source and the full evidence, including the measurements that argue against it",
+    foot2: "This page runs chamnan's real modules through Pyodide rather than a re-implementation, so the numbers are the tool's own. Repository contents are read by your browser directly from a public CDN and are never sent anywhere else.",
+    card1: "1 · The map", card2: "2 · Fifty turns", card3: "3 · Secrets and personal data",
+    kFiles: "files indexed", kSrc: "source fetched", kMap: "MAP.md on disk",
+    kInj: "injected per session", kCeil: "ceiling",
+    note1: "MAP.md is written to disk to be grepped, never read whole. Only the rolled-up block is injected, and it is bounded by the ceiling however large the repository is.",
+    kBlock: "block, per session", kTurns: "× 50 turns, one session", kReread: "re-read per turn instead",
+    note2: "The block is injected <strong>once per session</strong>, not per turn — so fifty turns cost it once. The second figure is the whole indexable source, shown as the bound on what orienting by reading files could cost, not as a prediction that an agent would read all of it. No model was called to produce either number.",
+    kScanned: "files scanned", kRedacted: "files the redactor changed",
+    note3: "Counted, never displayed. <code>redact.scrub</code> runs over repository text before any of it reaches the model, and it covers two different problems. <strong>Credentials</strong> have a word beside them — <code>api_key</code>, <code>password</code>, <code>Authorization</code> — and that word is the anchor. <strong>Personal data</strong> has none: a card number or a national identifier is bare digits and nothing in the text says what it is, so those are caught by CHECKSUM instead. This is not a secret scanner and will not tell you or anyone else what it matched or where. A match is frequently a test fixture rather than a live key.",
+    becomes: "of indexable source in {repo} becomes {bytes} bytes injected once per session.",
+    loadingPy: "Loading the Python runtime — about 10 MB, cached after this…",
+    loadingCh: "Loading chamnan…",
+    reading: "Reading the repository…",
+    fetching: "Fetching source — {done} of {total}",
+    running: "Running chamnan…",
+    doneMsg: "Done — {repo}, {n} files indexed in your browser.",
+    stopped: "Stopped: ",
+    badUrl: "That does not look like a GitHub repository.",
+    notFound: "Not found. Public repositories only.",
+    noFiles: "No files chamnan indexes were found in this repository.",
+    sampled: "Sampled: {got} of {total} files (cap {cap}), so the source figure is a floor, not the repository's full size.",
+  },
+
+  th: {
+    running: "กำลังใช้ chamnan {v}",
+    drift: "วัดเมื่อ 2026-09-08 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
+    missed: "มี {n} ไฟล์ที่ดาวน์โหลดไม่สำเร็จ และไม่ได้อยู่ในตัวเลขนี้ — ค่าซอร์สจึงต่ำกว่าจริงเท่านั้น",
+    oversize: "ข้าม {n} ไฟล์ที่ใหญ่เกิน 2 MB โดยไม่ดาวน์โหลด เพราะ chamnan ก็ไม่ index ไฟล์ขนาดนั้นเหมือนกัน",
+    getTitle: "ถ้าตัวเลขน่าสนใจ ลองติดตั้งดู",
+    getBody: "สองคำสั่ง แล้วสั่ง slash command อีกครั้งใน repository ที่ทำงานจริง เป็นปลั๊กอินของ Claude Code ใช้ Python standard library ล้วน และทุกอย่างที่มันเขียนอยู่ใน <code>.chamnan/</code> ใน repository ของคุณเอง",
+    getLink: "chamnan บน GitHub — ซอร์สโค้ด และหลักฐานทั้งหมด รวมถึงส่วนที่โต้แย้งตัวมันเอง",
+    scenSame: "50 turn เรื่องเดิม",
+    scenRand: "50 turn สุ่มทั้ง repo",
+    card2: "2 · หนึ่งร้อย turn",
+    simTag: "จำลอง — ไม่ใช่ค่าที่วัดจริง",
+    simHow: "การทำงานสองแบบ อย่างละ 50 turn บน<strong>ไฟล์จริงและขนาดจริงของ repository นี้</strong> การอยู่กับเรื่องเดิมคือจุดที่แผนผังช่วยน้อยที่สุด — เปิดไฟล์ไปแล้วก็รู้ที่อยู่เอง ส่วนการย้ายไปมาคือจุดที่ช่วยมากที่สุด ถ้าโชว์แค่แบบที่สองคือเข้าข้างตัวเอง ถ้าโชว์แค่แบบแรกก็ไร้ประโยชน์",
+    simAssume: "ข้อสมมติเดียว ที่เขียนบอกไม่ได้ซ่อน: ถ้าไม่มีแผนผัง การหาไฟล์ที่ยังไม่เคยเห็นจะเสียการเปิด<strong>ไฟล์ผิด {opens} ไฟล์ก่อน</strong> ถ้ามีแผนผังคือศูนย์ ส่วนการกลับไปดูไฟล์ที่เปิดแล้วไม่เสียอะไรทั้งสองฝั่ง seed {seed} — ตัวเลขเหมือนกันทุกคน",
+    kWith: "มี chamnan",
+    kWithout: "ไม่มี",
+    kCross: "block คืนทุนที่ turn ที่",
+    simNever: "ไม่คืนทุนภายใน 100 turn",
+    resultTemp: "ผลลัพธ์นี้ไม่ได้ถูกบันทึกไว้ที่ไหนเลย รีเฟรชหน้าเว็บแล้วมันจะหายไป — ไม่มีเซิร์ฟเวอร์เก็บสำเนาไว้ และไม่มีประวัติให้ย้อนกลับมาดู ถ้าอยากเก็บไว้ ให้คัดลอกตัวเลขไว้ตอนนี้",
+    bigTitle: "โปรเจคใหญ่มาก ให้โหลดไปรันในเครื่องเอง",
+    bigBody: "หน้านี้มีเพดานอยู่ 2 อย่าง และ repository ขนาด Linux, Kubernetes หรือ VS Code ชนทั้งสองอย่าง: CDN ที่ให้รายชื่อไฟล์ปฏิเสธ repository ที่เกินขนาดที่กำหนด และหน้านี้ดึงแค่ 400 ไฟล์แรก เพื่อไม่ให้ดูดข้อมูลเป็นกิกะไบต์ผ่านเน็ตของคุณ ทั้งสองข้อจำกัดนี้ไม่มีเลยเวลารัน chamnan ในเครื่อง — และในเครื่องมันยังถาม git ได้ด้วย ซึ่งเบราว์เซอร์ทำไม่ได้ ติดตั้งใน repository แล้วรัน:",
+    bigAfter: "มันจะพิมพ์ตัวเลขชุดเดียวกับหน้านี้ แต่ครบทุกไฟล์ พร้อมส่วนที่ต้องใช้ประวัติ commit ด้วย",
+    nothingKept: "ไม่มีการเก็บข้อมูลใดๆ เพราะไม่มีเซิร์ฟเวอร์ให้เก็บ: ซอร์สถูกดาวน์โหลดมาที่แท็บนี้ วัดผล แล้วลบทิ้งทันทีที่ได้ตัวเลข ปิดแท็บแล้วแม้แต่ตัวเลขก็หายไปด้วย สิ่งเดียวที่เก็บข้ามการเข้าใช้งานคือภาษาที่คุณเลือก",
+    orTry: "ปุ่มลัด ไม่ใช่กรณีพิเศษ — repo สาธารณะอันไหนก็ใช้ได้:",
+    reproduce: "ทุกแถวตรวจสอบซ้ำได้: วาง repository เดียวกันข้างบน แล้วควรได้ตัวเลขเดิม บวกลบตามไฟล์ที่เพิ่มมาทีหลัง ไม่มีอะไรตรงนี้ถูกคำนวณไว้ล่วงหน้าโดยเซิร์ฟเวอร์ — เพราะหน้านี้ไม่มีเซิร์ฟเวอร์ วาง repository ที่หน้านี้ไม่เคยเห็นมาก่อน มันก็ทำงานแบบเดียวกันเป๊ะ",
+    rateLimit: "GitHub API จำกัดแค่ 60 ครั้งต่อชั่วโมงต่อหนึ่ง IP และตอนนี้ใช้หมดแล้ว ข้อจำกัดนี้กระทบเฉพาะ repository ที่ใหญ่เกินกว่า index ของ CDN จะรองรับ ส่วน repo ทั่วไปไม่แตะ GitHub เลย",
+    h1: "วาง URL ของ GitHub repository แล้วดูว่า chamnan จะใส่อะไรเข้า context ของ agent",
+    howTo: "วิธีใช้หน้านี้",
+    step1: "วาง URL ของ GitHub repository สาธารณะอันไหนก็ได้ ลงในช่องข้างล่าง",
+    step2: "กดปุ่ม วัด เบราว์เซอร์ของคุณจะดาวน์โหลดซอร์สแล้วรัน chamnan กับมัน",
+    step3: "อ่านผลจากสามการ์ด: แผนผังโค้ด, ค่า token ต่อ session, และสิ่งที่ตัวกรองจะซ่อนไว้",
+    inputLabel: "URL ของ GitHub repository",
+    tooBig: "repository นี้ใหญ่เกินกว่าที่ index ของ CDN จะรองรับ กำลังถอยไปใช้ GitHub API ซึ่งจำกัดแค่ 60 ครั้งต่อชั่วโมงต่อหนึ่ง IP",
+    eyebrow: "chamnan · วัดในเบราว์เซอร์ของคุณ",
+    intro: "วาง URL ของ GitHub repository สาธารณะอันไหนก็ได้ โค้ดของ chamnan เองจะรันตรงนี้ ในแท็บนี้ แล้วรายงานว่ามันจะใส่อะไรเข้าไปใน context ของ coding agent ไม่มีการอัปโหลด ไม่มีเซิร์ฟเวอร์ — หน้านี้อ่าน repository แบบเดียวกับที่เบราว์เซอร์อ่านหน้าเว็บทั่วไป",
+    claimStrong: "สิ่งที่เคลมคือความประหยัด ไม่ใช่ความถูกต้อง",
+    claimRest: "chamnan จำกัดปริมาณสิ่งที่ไปถึงโมเดล มันไม่ได้ทำให้โมเดลทำงานของคุณได้ดีขึ้น งานวิจัยเรื่องนี้อยู่ลิงก์ด้านล่าง รวมถึงส่วนที่โต้แย้งว่าไม่ควรทำแบบนี้เลยด้วย",
+    h2measure: "วัด repository",
+    ledeMeasure: "รายชื่อไฟล์มาจาก index สาธารณะของ jsDelivr และซอร์สมาจาก CDN ของมัน จึงไม่มีโควตา API ให้หมด รองรับเฉพาะ repository สาธารณะ",
+    btnMeasure: "วัด",
+    tryLabel: "ลอง:",
+    idle: "พร้อมใช้งาน ครั้งแรกจะดาวน์โหลด Python runtime (~10 MB) หลังจากนั้นจะถูก cache ไว้",
+    h2pre: "ที่วัดไว้แล้ว",
+    ledePre: "13 repository จาก 8 ภาษา ทุกอันวัดผ่านหน้านี้ในเบราว์เซอร์จริง สิ่งสำคัญคือรูปแบบ ไม่ใช่ตัวเลขอันใดอันหนึ่ง: <strong>ซอร์สโตขึ้นเกือบเจ็ดสิบเท่าเมื่อไล่ลงมาตามตาราง แต่ block ที่ใส่เข้าไปอยู่ระหว่าง 6.2 ถึง 6.7 KB ตลอด</strong> นั่นคือการมีขอบเขต ไม่ใช่การบีบอัด",
+    thRepo: "repository", thLang: "ภาษา", thSrc: "ซอร์ส", thInj: "ที่ใส่เข้าไป", thRatio: "อัตราส่วน",
+    notePre: "ซอร์สคือจำนวนไบต์ของไฟล์ที่ index ได้ ส่วน \"ที่ใส่เข้าไป\" คือสิ่งที่ SessionStart hook เขียนลง context ของ agent หลังจากย่อ index ให้พอดี token budget แล้ว — ไม่ใช่ MAP.md บนดิสก์ ซึ่งใหญ่กว่าและมีไว้ให้ grep ไม่ใช่ให้อ่านทั้งไฟล์",
+    h2limits: "สิ่งที่หน้านี้แสดงให้ดูไม่ได้",
+    lim1s: "Skills, session handoff และ decision ที่บันทึกไว้ ต้องติดตั้งและใช้งานจริง",
+    lim1: "คุณค่าของมันมาจากงานจริงที่สะสมใน repository เป็นสัปดาห์ การวัดครั้งเดียวสร้างสิ่งนั้นไม่ได้ และหน้านี้ไม่แกล้งทำเป็นว่าได้",
+    lim2s: "ทุกอย่างที่ต้องถาม git",
+    lim2: "ในเบราว์เซอร์ไม่มี process layer การจัดอันดับ churn และประวัติ commit จึงไม่มีตรงนี้ chamnan จะลดระดับไปเป็นโหมดไม่มี git ซึ่งเป็นโหมดที่รองรับจริง — แต่ตัวเลขข้างบนคือโหมดนั้น",
+    lim3s: "repository ขนาดใหญ่จะถูกสุ่มตัวอย่าง",
+    lim3: "รายชื่อไฟล์ถูกจำกัดไว้ เพื่อไม่ให้หน้านี้ดึงข้อมูลเป็นกิกะไบต์ผ่านเน็ตของคุณ ทุกผลลัพธ์จะบอกจำนวนที่จำกัดไว้",
+    lim4s: "เลข 50 turn คือการคำนวณ ไม่ใช่การทดลอง",
+    lim4: "หน้านี้ไม่เรียกโมเดลใด ๆ และไม่เคยขอ API key จากคุณ มันคูณค่าใช้จ่ายต่อ session ที่วัดได้ ไม่ได้ไปสังเกต agent ทำงานจริง",
+    foot1: "chamnan คือ context workspace สำหรับ coding agent",
+    footLink: "ซอร์สโค้ดและหลักฐานทั้งหมด รวมถึงผลวัดที่โต้แย้งตัวมันเอง",
+    foot2: "หน้านี้รันโมดูลจริงของ chamnan ผ่าน Pyodide ไม่ใช่เขียนเลียนแบบขึ้นใหม่ ตัวเลขจึงเป็นของเครื่องมือเอง เนื้อหา repository ถูกอ่านโดยเบราว์เซอร์ของคุณจาก CDN สาธารณะโดยตรง และไม่ถูกส่งไปที่อื่นเลย",
+    card1: "1 · แผนผังโค้ด", card2: "2 · ห้าสิบ turn", card3: "3 · ข้อมูลลับและข้อมูลส่วนบุคคล",
+    kFiles: "ไฟล์ที่ index", kSrc: "ซอร์สที่ดึงมา", kMap: "MAP.md บนดิสก์",
+    kInj: "ใส่เข้าไปต่อ session", kCeil: "เพดาน",
+    note1: "MAP.md เขียนลงดิสก์เพื่อให้ grep ไม่ใช่ให้อ่านทั้งไฟล์ สิ่งที่ใส่เข้า context มีแค่ block ที่ย่อแล้ว และถูกจำกัดด้วยเพดานไม่ว่า repository จะใหญ่แค่ไหน",
+    kBlock: "block ต่อ session", kTurns: "× 50 turn ใน session เดียว", kReread: "ถ้าอ่านไฟล์ใหม่ทุก turn",
+    note2: "block ถูกใส่<strong>ครั้งเดียวต่อ session</strong> ไม่ใช่ทุก turn — 50 turn จึงจ่ายแค่ครั้งเดียว ตัวเลขที่สองคือซอร์สทั้งหมดที่ index ได้ แสดงไว้เป็นขอบบนว่าการทำความเข้าใจโค้ดด้วยการอ่านไฟล์จะแพงได้แค่ไหน ไม่ใช่การทำนายว่า agent จะอ่านทั้งหมด ไม่มีการเรียกโมเดลเพื่อให้ได้ตัวเลขทั้งสอง",
+    kScanned: "ไฟล์ที่สแกน", kRedacted: "ไฟล์ที่ตัวกรองแก้ไข",
+    note3: "นับอย่างเดียว ไม่แสดงผล <code>redact.scrub</code> ทำงานกับข้อความใน repository ก่อนที่อะไรจะไปถึงโมเดล และดูแลปัญหาสองแบบ <strong>ข้อมูลลับ</strong> มีคำกำกับอยู่ข้าง ๆ — <code>api_key</code>, <code>password</code>, <code>Authorization</code> — คำนั้นคือจุดยึด ส่วน<strong>ข้อมูลส่วนบุคคล</strong>ไม่มี: เลขบัตรเครดิตหรือเลขประจำตัวประชาชนคือตัวเลขเปล่า ๆ ไม่มีอะไรบอกว่ามันคืออะไร พวกนี้จึงจับด้วย CHECKSUM แทน นี่ไม่ใช่เครื่องมือหาความลับ และจะไม่บอกคุณหรือใครว่าเจออะไรตรงไหน สิ่งที่ตรงมักเป็น test fixture มากกว่าคีย์จริง",
+    becomes: "ของซอร์สที่ index ได้ใน {repo} กลายเป็น {bytes} ไบต์ ที่ใส่เข้าไปครั้งเดียวต่อ session",
+    loadingPy: "กำลังโหลด Python runtime — ประมาณ 10 MB หลังจากนี้จะถูก cache…",
+    loadingCh: "กำลังโหลด chamnan…",
+    reading: "กำลังอ่าน repository…",
+    fetching: "กำลังดึงซอร์ส — {done} จาก {total}",
+    running: "กำลังรัน chamnan…",
+    doneMsg: "เสร็จแล้ว — {repo}, index {n} ไฟล์ในเบราว์เซอร์ของคุณ",
+    stopped: "หยุด: ",
+    badUrl: "ดูไม่เหมือน GitHub repository",
+    notFound: "ไม่พบ รองรับเฉพาะ repository สาธารณะ",
+    noFiles: "ไม่พบไฟล์ที่ chamnan index ได้ใน repository นี้",
+    sampled: "สุ่มตัวอย่าง: {got} จาก {total} ไฟล์ (จำกัด {cap}) ตัวเลขซอร์สจึงเป็นค่าต่ำสุด ไม่ใช่ขนาดเต็มของ repository",
+  },
+
+  zh: {
+    running: "正在运行 chamnan {v}",
+    drift: "测量于 2026-09-08。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
+    missed: "有 {n} 个文件下载失败，未计入这些数字——源码数值因此偏低。",
+    oversize: "跳过了 {n} 个超过 2 MB 的文件且未下载，因为 chamnan 本身也不索引这种大小的文件。",
+    getTitle: "觉得数字不错？装上试试",
+    getBody: "两条命令，然后在你真正在用的仓库里运行一个斜杠命令。它是 Claude Code 插件，只用 Python 标准库，写入的一切都留在你仓库里的 <code>.chamnan/</code> 中。",
+    getLink: "GitHub 上的 chamnan——源码，以及包括反对意见在内的完整证据",
+    scenSame: "50 回合，同一主题",
+    scenRand: "50 回合，随机",
+    card2: "2 · 一百个回合",
+    simTag: "模拟——不是实测",
+    simHow: "两种工作方式，各 50 个回合，跑在<strong>这个仓库的真实文件及其真实大小</strong>上。守着同一个主题时地图帮助最小——文件都打开过了，位置自然就知道了。四处走动时帮助最大。只展示后者是自我美化，只展示前者则毫无意义。",
+    simAssume: "唯一的假设，写出来而不是藏起来：没有地图时，找到一个没见过的文件要先<strong>打开 {opens} 个错误的文件</strong>；有地图时为零。重新查看已经打开的文件，两边都免费。种子 {seed}——你和别人看到的数字相同。",
+    kWith: "有 chamnan",
+    kWithout: "没有",
+    kCross: "block 在第几回合回本",
+    simNever: "100 回合内未回本",
+    resultTemp: "这个结果不会保存在任何地方。刷新页面它就没了——没有服务器留副本，也没有历史记录可以回看。想留着的话，现在就把数字复制下来。",
+    bigTitle: "非常大的项目，请在自己的机器上运行",
+    bigBody: "本页有两个上限，而 Linux、Kubernetes 或 VS Code 这种体量的仓库两个都会撞上：提供文件列表的 CDN 会拒绝超过一定大小的仓库，而且本页只抓取前 400 个文件，以免通过你的网络拉取上 GB 的数据。chamnan 在本地运行时这两个限制都不存在——而且在本地它还能询问 git，这是浏览器做不到的。在仓库里安装后运行：",
+    bigAfter: "它会打印和本页相同的数字，覆盖每一个文件，还包括需要提交历史才能得出的部分。",
+    nothingKept: "什么都不会被保存。也没有服务器可以保存：源码被下载到这个标签页，测量完毕后，一有结果就立即删除。关掉标签页，连数字也不复存在。跨访问唯一保留的，是你选择的语言。",
+    orTry: "只是快捷方式，不是特例——任何公开仓库都可以：",
+    reproduce: "每一行都可复现：把同一个仓库粘贴到上面，你应该得到相同的数字，误差仅来自此后新增的文件。这里没有任何东西是服务器预先算好的——因为本页没有服务器。粘贴一个本页从未见过的仓库，它做的是完全一样的事。",
+    rateLimit: "GitHub 的 API 每个 IP 每小时只允许 60 次请求，现在已经用完。这只影响对 CDN 索引来说过大的仓库；普通仓库根本不会访问 GitHub。",
+    h1: "粘贴一个 GitHub 仓库，看看 chamnan 会往 agent 的 context 里放什么。",
+    howTo: "如何使用本页",
+    step1: "把任意一个公开 GitHub 仓库的网址粘贴到下面的输入框。",
+    step2: "点击「测量」。你的浏览器会下载源码并在本地运行 chamnan。",
+    step3: "看三张卡片：代码地图、每次会话的 token 开销，以及脱敏器会隐藏掉什么。",
+    inputLabel: "GitHub 仓库网址",
+    tooBig: "这个仓库对 CDN 的文件索引来说太大了。正在退回到 GitHub API，而它每个 IP 每小时只允许 60 次请求。",
+    eyebrow: "chamnan · 在你的浏览器中测量",
+    intro: "粘贴任意一个公开的 GitHub 仓库。chamnan 自己的代码就在这个标签页里运行，并报告它会向编码 agent 的 context 注入什么。不上传任何东西，也没有服务器——这个页面读取仓库的方式，和你的浏览器读取任何网页一样。",
+    claimStrong: "它主张的是效率，不是正确性。",
+    claimRest: "chamnan 限定到达模型的内容量。它不会让模型更擅长你的任务，相关研究在页面底部，包括反对这样做的那部分。",
+    h2measure: "测量一个仓库",
+    ledeMeasure: "文件列表来自 jsDelivr 的公开索引，源码来自它的 CDN，因此没有 API 配额会用尽。仅支持公开仓库。",
+    btnMeasure: "测量",
+    tryLabel: "试试：",
+    idle: "待机。首次运行会下载 Python 运行时（约 10 MB），之后会被缓存。",
+    h2pre: "已经测过的",
+    ledePre: "8 种语言的 13 个仓库，每一个都通过本页在真实浏览器中测量。重点是规律，而不是某个比值：<strong>沿着表格往下，源码增长了近七十倍，注入的 block 始终在 6.2 到 6.7 KB 之间。</strong>这是上界，不是压缩。",
+    thRepo: "仓库", thLang: "语言", thSrc: "源码", thInj: "注入", thRatio: "比值",
+    notePre: "源码是所抓取的可索引文件的字节数。注入指的是 SessionStart hook 在把索引压缩到 token 预算之后，写入 agent context 的内容——不是磁盘上的 MAP.md，那个更大，是用来 grep 的，不是通读的。",
+    h2limits: "这个页面无法向你展示的",
+    lim1s: "Skills、会话交接和已记录的决策，需要安装并实际使用。",
+    lim1: "它们的价值来自一周真实工作在仓库中的积累。一次性测量做不到这一点，本页也不假装做得到。",
+    lim2s: "任何需要询问 git 的东西。",
+    lim2: "浏览器里没有进程层，所以这里没有 churn 排序和提交历史。chamnan 会退化到它的无 git 模式，那是真实受支持的模式——但上面的数字就是那个模式。",
+    lim3s: "大仓库会被抽样。",
+    lim3: "文件列表设有上限，以免本页通过你的网络拉取一个 GB。每个结果都会报告当前生效的上限。",
+    lim4s: "关于回合数的计算就只是算术。",
+    lim4: "本页不调用任何模型，也从不向你索要 API key。它把测得的每会话成本做了乘法，并没有观察 agent 实际工作。",
+    foot1: "chamnan 是给编码 agent 用的 context 工作区。",
+    footLink: "源码与完整证据，包括那些反驳它的测量",
+    foot2: "本页通过 Pyodide 运行 chamnan 真实的模块，而不是一个重新实现，所以数字是这个工具自己的。仓库内容由你的浏览器直接从公开 CDN 读取，不会被送往任何其他地方。",
+    card1: "1 · 代码地图", card2: "2 · 五十个回合", card3: "3 · 密钥与个人数据",
+    kFiles: "已索引文件", kSrc: "已抓取源码", kMap: "磁盘上的 MAP.md",
+    kInj: "每会话注入", kCeil: "上限",
+    note1: "MAP.md 写到磁盘是为了被 grep，不是被通读。只有压缩后的 block 会被注入，而且无论仓库多大都受上限约束。",
+    kBlock: "block，每会话", kTurns: "× 50 回合，同一会话", kReread: "改为每回合重读",
+    note2: "block <strong>每次会话注入一次</strong>，不是每回合一次——所以五十个回合只付一次。第二个数字是全部可索引源码，作为「靠读文件来了解代码」可能花费的上界给出，并不是预测 agent 会全部读完。这两个数字都没有调用模型。",
+    kScanned: "已扫描文件", kRedacted: "脱敏器改动的文件",
+    note3: "只计数，绝不显示。<code>redact.scrub</code> 在任何内容到达模型之前处理仓库文本，覆盖两类不同的问题。<strong>凭据</strong>旁边有词可依——<code>api_key</code>、<code>password</code>、<code>Authorization</code>——那个词就是锚点。<strong>个人数据</strong>没有：卡号或身份证号就是一串裸数字，文本里没有任何东西说明它是什么，所以改用 CHECKSUM 来识别。这不是密钥扫描器，不会告诉你或任何人它匹配到了什么、在哪里。匹配到的往往是测试数据而非真实密钥。",
+    becomes: "{repo} 中可索引源码 → 每会话注入 {bytes} 字节。",
+    loadingPy: "正在加载 Python 运行时——约 10 MB，之后会被缓存…",
+    loadingCh: "正在加载 chamnan…",
+    reading: "正在读取仓库…",
+    fetching: "正在抓取源码 — {done} / {total}",
+    running: "正在运行 chamnan…",
+    doneMsg: "完成 — {repo}，在你的浏览器中索引了 {n} 个文件。",
+    stopped: "已停止：",
+    badUrl: "这看起来不像一个 GitHub 仓库。",
+    notFound: "未找到。仅支持公开仓库。",
+    noFiles: "在这个仓库里没有找到 chamnan 能索引的文件。",
+    sampled: "抽样：{total} 个文件中的 {got} 个（上限 {cap}），所以源码数字是下界，不是仓库的完整大小。",
+  },
+
+  ja: {
+    running: "chamnan {v} で実行中",
+    drift: "2026-09-08 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
+    missed: "{n} 件のファイルを取得できず、この数字には含まれていません——ソースの値はその分だけ低く出ています。",
+    oversize: "2 MB を超える {n} 件は、ダウンロードせずにスキップしました。chamnan もその大きさのファイルは索引しないためです。",
+    getTitle: "数字が気に入ったら、導入してみてください",
+    getBody: "コマンド二つ、そのあと実際に作業しているリポジトリでスラッシュコマンドを一度。Claude Code のプラグインで、Python 標準ライブラリのみ、書き込むものはすべてあなたのリポジトリ内の <code>.chamnan/</code> に収まります。",
+    getLink: "GitHub の chamnan — ソースと、反証も含めた根拠のすべて",
+    scenSame: "50 ターン、同じ題材",
+    scenRand: "50 ターン、無作為",
+    card2: "2 · 百ターン",
+    simTag: "シミュレーション — 実測ではありません",
+    simHow: "二通りの働き方を各 50 ターン、<strong>このリポジトリの実際のファイルと実際のサイズ</strong>の上で。同じ題材に留まるときが地図の効き目が最も小さい場面です——一度開けば場所はわかります。動き回るときが最も大きい。後者だけを見せれば手前味噌、前者だけなら無意味です。",
+    simAssume: "唯一の仮定を、隠さず明記します：地図がなければ、未見のファイルを見つけるまでに<strong>誤ったファイルを {opens} 件</strong>開く。地図があればゼロ。すでに開いたファイルの読み直しはどちらも無料。シード {seed}——誰が見ても同じ数字です。",
+    kWith: "chamnan あり",
+    kWithout: "なし",
+    kCross: "block が元を取るターン",
+    simNever: "100 ターン以内には回収せず",
+    resultTemp: "この結果はどこにも保存されません。ページを再読み込みすれば消えます——コピーを持つサーバーもなければ、戻って見られる履歴もありません。残したいなら、今のうちに数字をコピーしてください。",
+    bigTitle: "非常に大きなプロジェクトは、自分のマシンで実行してください",
+    bigBody: "このページには上限が二つあり、Linux や Kubernetes、VS Code ほどの規模のリポジトリはその両方に当たります：ファイル一覧を提供する CDN が一定サイズ以上のリポジトリを拒否し、またこのページはあなたの回線で 1 GB を引っ張らないよう先頭 400 ファイルしか取得しません。chamnan をローカルで動かせばどちらの制限もなく、さらにブラウザにはできない git への問い合わせもできます。リポジトリに導入して実行してください：",
+    bigAfter: "このページと同じ数値を、すべてのファイルについて出力します。コミット履歴が必要な部分も含みます。",
+    nothingKept: "何も保存されません。保存するサーバーがそもそもありません：ソースはこのタブに取得され、計測され、数字が出た時点で削除されます。タブを閉じれば数字も消えます。訪問をまたいで残るのは、選んだ言語だけです。",
+    orTry: "ショートカットであって特別扱いではありません——公開リポジトリならどれでも動きます：",
+    reproduce: "どの行も再現できます：同じリポジトリを上に貼れば、その後に追加されたファイルの分を除いて同じ数字になるはずです。ここにサーバーが事前計算したものは一つもありません——このページにサーバーはないからです。このページが一度も見たことのないリポジトリを貼っても、まったく同じ処理をします。",
+    rateLimit: "GitHub の API は IP ごとに 1 時間 60 リクエストまでで、それを使い切りました。これは CDN の索引に対して大きすぎるリポジトリだけの話で、通常のリポジトリは GitHub に一切アクセスしません。",
+    h1: "GitHub リポジトリを貼り付けて、chamnan が agent の context に何を入れるか見てください。",
+    howTo: "このページの使い方",
+    step1: "公開されている GitHub リポジトリの URL を、下の入力欄に貼り付けます。",
+    step2: "「計測」を押します。ブラウザがソースを取得し、その場で chamnan を実行します。",
+    step3: "3 枚のカードを読みます：コードマップ、セッションあたりの token コスト、秘匿処理が隠すもの。",
+    inputLabel: "GitHub リポジトリの URL",
+    tooBig: "このリポジトリは CDN のファイル索引には大きすぎます。GitHub の API に切り替えますが、そちらは IP ごとに 1 時間 60 リクエストまでです。",
+    eyebrow: "chamnan · ブラウザ内で計測",
+    intro: "公開されている GitHub リポジトリを貼り付けてください。chamnan 自身のコードがこのタブ内で動き、コーディング agent の context に何を注入するかを報告します。アップロードは一切なく、サーバーもありません——このページは、ブラウザが他のページを読むのと同じようにリポジトリを読みます。",
+    claimStrong: "主張しているのは効率であって、正確さではありません。",
+    claimRest: "chamnan はモデルに届く量を抑えます。あなたのタスクをモデルが上手くこなせるようにするものではなく、その点の研究は末尾にリンクしてあります。そもそもこれをやるべきでないと論じている部分も含めて。",
+    h2measure: "リポジトリを計測する",
+    ledeMeasure: "ファイル一覧は jsDelivr の公開インデックスから、ソースはその CDN から取得するため、使い切る API クォータがありません。公開リポジトリのみ対応。",
+    btnMeasure: "計測",
+    tryLabel: "例：",
+    idle: "待機中。初回は Python ランタイム（約 10 MB）をダウンロードし、以降はキャッシュされます。",
+    h2pre: "すでに計測済み",
+    ledePre: "8 言語 13 リポジトリを、すべてこのページ経由で実際のブラウザ上で計測しました。重要なのは個々の比率ではなく傾向です：<strong>表を下に辿るとソースは約 70 倍に増えるのに、注入される block は 6.2〜6.7 KB のままです。</strong>これは圧縮ではなく上限です。",
+    thRepo: "リポジトリ", thLang: "言語", thSrc: "ソース", thInj: "注入", thRatio: "比",
+    notePre: "ソースは取得した索引可能ファイルのバイト数です。注入とは、索引を token 予算まで畳んだ後に SessionStart hook が agent の context に書き込む内容であり、ディスク上の MAP.md ではありません。あちらはもっと大きく、grep するためのもので、通読するものではありません。",
+    h2limits: "このページでは示せないこと",
+    lim1s: "Skills、セッション引き継ぎ、記録された決定は、インストールして使う必要があります。",
+    lim1: "その価値は、一週間の実作業がリポジトリに積み重なることから生まれます。一度きりの計測では作り出せませんし、このページもできるふりはしません。",
+    lim2s: "git に問い合わせるもの全般。",
+    lim2: "ブラウザにはプロセス層がないため、churn の順位付けやコミット履歴はここにはありません。chamnan は git なしの挙動に落ちます。それは実際にサポートされたモードですが、上の数字はそのモードのものです。",
+    lim3s: "大きなリポジトリはサンプリングされます。",
+    lim3: "このページがあなたの回線で 1 GB を引っ張らないよう、ファイル一覧には上限があります。適用された上限は結果ごとに表示されます。",
+    lim4s: "ターン数の計算はあくまで算術です。",
+    lim4: "このページはモデルを呼び出さず、API キーを求めることもありません。計測済みのセッションあたりコストを掛け算しているだけで、agent の実際の作業を観察してはいません。",
+    foot1: "chamnan はコーディング agent のための context ワークスペースです。",
+    footLink: "ソースと全ての根拠（それに反対する計測結果も含む）",
+    foot2: "このページは再実装ではなく chamnan の実際のモジュールを Pyodide で動かしているため、数字はツール自身のものです。リポジトリの内容はあなたのブラウザが公開 CDN から直接読み取り、他のどこにも送られません。",
+    card1: "1 · コードマップ", card2: "2 · 50 ターン", card3: "3 · 認証情報と個人データ",
+    kFiles: "索引したファイル", kSrc: "取得したソース", kMap: "ディスク上の MAP.md",
+    kInj: "セッションあたり注入", kCeil: "上限",
+    note1: "MAP.md は grep されるためにディスクへ書かれます。通読用ではありません。注入されるのは畳まれた block だけで、リポジトリがどれだけ大きくても上限に収まります。",
+    kBlock: "block（セッションあたり）", kTurns: "× 50 ターン、1 セッション", kReread: "代わりに毎ターン読み直した場合",
+    note2: "block は<strong>セッションにつき一度</strong>注入されるのであって、ターンごとではありません——50 ターンでも一度分です。二つ目の数字は索引可能なソース全体で、ファイルを読んで把握する方式が最大どれだけ掛かりうるかの上限として示しています。agent が全部読むという予測ではありません。どちらの数字もモデルを呼ばずに出しています。",
+    kScanned: "走査したファイル", kRedacted: "秘匿処理が変更したファイル",
+    note3: "数えるだけで、決して表示しません。<code>redact.scrub</code> はモデルに届く前にリポジトリのテキストを処理し、二つの異なる問題を扱います。<strong>認証情報</strong>は隣に語があります——<code>api_key</code>、<code>password</code>、<code>Authorization</code>——その語が手がかりです。<strong>個人データ</strong>にはそれがありません。カード番号や身分証番号はただの数字の並びで、それが何かをテキストは語らないので、代わりに CHECKSUM で捕まえます。これはシークレットスキャナではなく、何がどこで一致したかを誰にも伝えません。一致するのは本物の鍵よりテスト用データであることが多いです。",
+    becomes: "{repo} の索引可能なソースが、セッションあたり {bytes} バイトの注入になります。",
+    loadingPy: "Python ランタイムを読み込み中——約 10 MB、以降はキャッシュされます…",
+    loadingCh: "chamnan を読み込み中…",
+    reading: "リポジトリを読み取り中…",
+    fetching: "ソースを取得中 — {total} 件中 {done} 件",
+    running: "chamnan を実行中…",
+    doneMsg: "完了 — {repo}、ブラウザ内で {n} ファイルを索引しました。",
+    stopped: "停止：",
+    badUrl: "GitHub のリポジトリには見えません。",
+    notFound: "見つかりません。公開リポジトリのみ対応です。",
+    noFiles: "このリポジトリには chamnan が索引できるファイルが見つかりませんでした。",
+    sampled: "サンプリング：{total} 件中 {got} 件（上限 {cap}）。したがってソースの数字は下限であり、リポジトリの全体サイズではありません。",
+  },
+
+  es: {
+    running: "ejecutando chamnan {v}",
+    drift: "Medido el 2026-09-08. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
+    missed: "{n} archivo(s) no se pudieron descargar y no están en estas cifras: el valor de fuente queda así de bajo.",
+    oversize: "Se omitieron {n} archivo(s) de más de 2 MB sin descargarlos, porque chamnan tampoco indexa un archivo de ese tamaño.",
+    getTitle: "¿Te convencen las cifras? Instálalo",
+    getBody: "Dos órdenes y luego un comando de barra dentro de un repositorio en el que trabajes de verdad. Es un plugin de Claude Code, solo biblioteca estándar de Python, y todo lo que escribe se queda en <code>.chamnan/</code> dentro de tu repositorio.",
+    getLink: "chamnan en GitHub: el código y la evidencia completa, incluida la que va en su contra",
+    scenSame: "50 turnos, un tema",
+    scenRand: "50 turnos, al azar",
+    card2: "2 · Cien turnos",
+    simTag: "SIMULADO — no medido",
+    simHow: "Dos formas de trabajar, 50 turnos cada una, sobre <strong>los archivos reales de este repositorio y sus tamaños reales</strong>. Quedarse en un mismo tema es donde menos ayuda un mapa: una vez abiertos los archivos, ya sabes dónde están. Moverse es donde más ayuda. Mostrar solo lo segundo sería la versión halagadora; solo lo primero, la inútil.",
+    simAssume: "La única suposición, dicha en vez de escondida: sin mapa, encontrar un archivo no visto le cuesta al agente <strong>abrir {opens} archivos equivocados</strong> primero; con mapa, ninguno. Volver a un archivo ya abierto es gratis en ambos casos. Semilla {seed}: las mismas cifras para ti que para cualquiera.",
+    kWith: "con chamnan",
+    kWithout: "sin",
+    kCross: "el bloque se amortiza en el turno",
+    simNever: "no dentro de 100 turnos",
+    resultTemp: "Este resultado no se guarda en ningún sitio. Actualiza la página y desaparece: no hay servidor que conserve una copia ni historial al que volver. Copia las cifras ahora si quieres conservarlas.",
+    bigTitle: "Para un proyecto muy grande, ejecútalo en tu propia máquina",
+    bigBody: "Esta página tiene dos topes, y un repositorio del tamaño de Linux, Kubernetes o VS Code choca con ambos: la CDN que proporciona la lista de archivos rechaza repositorios por encima de cierto tamaño, y la página solo descarga los primeros 400 archivos para no tirar de un gigabyte por tu conexión. Ninguno de los dos límites existe cuando chamnan se ejecuta en local, y ahí además puede consultar a git, cosa que un navegador no puede. Instálalo en el repositorio y ejecuta:",
+    bigAfter: "Imprime las mismas cifras que esta página, sobre todos los archivos, más las partes que necesitan el historial de commits.",
+    nothingKept: "No se guarda nada. No hay servidor donde guardarlo: el código se descarga en esta pestaña, se mide y se borra en cuanto existen las cifras. Cierra la pestaña y hasta las cifras desaparecen. Lo único que se conserva entre visitas es el idioma que elegiste.",
+    orTry: "atajos, no casos especiales: cualquier repositorio público funciona:",
+    reproduce: "Cada fila es reproducible: pega el mismo repositorio arriba y deberías obtener las mismas cifras, salvo por los archivos añadidos desde entonces. Aquí no hay nada precalculado por un servidor, porque esta página no tiene servidor. Pega un repositorio que esta página no haya visto nunca y hará exactamente el mismo trabajo.",
+    rateLimit: "La API de GitHub solo permite 60 peticiones por hora y dirección IP, y ya se han agotado. Esto solo afecta a repositorios demasiado grandes para el índice de la CDN; los normales no tocan GitHub en absoluto.",
+    h1: "Pega un repositorio de GitHub. Mira qué pondría chamnan en el contexto de un agente.",
+    howTo: "Cómo usar esta página",
+    step1: "Pega la URL de cualquier repositorio público de GitHub en la casilla de abajo.",
+    step2: "Pulsa Medir. Tu navegador descarga el código y ejecuta chamnan sobre él.",
+    step3: "Lee las tres tarjetas: el mapa del código, el coste en tokens por sesión y lo que ocultaría el redactor.",
+    inputLabel: "URL del repositorio de GitHub",
+    tooBig: "Este repositorio es demasiado grande para el índice de la CDN. Se recurre a la API de GitHub, que solo permite 60 peticiones por hora y dirección IP.",
+    eyebrow: "chamnan · medido en tu navegador",
+    intro: "Pega cualquier repositorio público de GitHub. El propio código de chamnan se ejecuta aquí, en esta pestaña, e informa de lo que inyectaría en el contexto de un agente de programación. No se sube nada y no hay servidor: la página lee el repositorio igual que tu navegador lee cualquier otra página.",
+    claimStrong: "Lo que se afirma es eficiencia, no corrección.",
+    claimRest: "chamnan acota lo que llega al modelo. No hace que el modelo sea mejor en tu tarea, y la investigación al respecto está enlazada abajo, incluida la parte que argumenta en contra de hacer esto.",
+    h2measure: "Medir un repositorio",
+    ledeMeasure: "La lista de archivos viene del índice público de jsDelivr y el código de su CDN, así que no hay cuota de API que se agote. Solo repositorios públicos.",
+    btnMeasure: "Medir",
+    tryLabel: "Prueba:",
+    idle: "En espera. La primera ejecución descarga el entorno de Python (~10 MB); después queda en caché.",
+    h2pre: "Ya medidos aquí",
+    ledePre: "Trece repositorios en ocho lenguajes, todos medidos a través de esta página en un navegador real. Lo importante es el patrón, no una proporción concreta: <strong>el código fuente crece casi setenta veces al bajar por la tabla y el bloque inyectado se mantiene entre 6,2 y 6,7 KB.</strong> Eso es una cota, no compresión.",
+    thRepo: "repositorio", thLang: "lenguaje", thSrc: "fuente", thInj: "inyectado", thRatio: "proporción",
+    notePre: "«Fuente» son los bytes de los archivos indexables descargados. «Inyectado» es lo que el hook de SessionStart escribe en el contexto del agente, después de plegar el índice a su presupuesto de tokens; no es el MAP.md en disco, que es mayor y está pensado para hacerle grep, nunca para leerlo entero.",
+    h2limits: "Lo que esta página no puede enseñarte",
+    lim1s: "Los skills, los traspasos de sesión y las decisiones registradas hay que instalarlos y usarlos.",
+    lim1: "Su valor viene de una semana de trabajo real acumulándose en un repositorio. Una medición puntual no puede producir eso, y esta página no finge lo contrario.",
+    lim2s: "Todo lo que consulta a git.",
+    lim2: "En un navegador no hay capa de procesos, así que aquí no están ni el ranking de churn ni el historial de commits. chamnan cae a su modo sin git, que es un modo real y soportado, pero los números de arriba son los de ese modo.",
+    lim3s: "Los repositorios grandes se muestrean.",
+    lim3: "La lista de archivos tiene un tope para que la página no descargue un gigabyte por tu conexión. El tope aplicado se indica en cada resultado.",
+    lim4s: "La aritmética de los turnos es aritmética.",
+    lim4: "Esta página no llama a ningún modelo y nunca te pide una clave de API. Multiplica un coste por sesión ya medido; no observa a un agente trabajando.",
+    foot1: "chamnan es un espacio de contexto para agentes de programación.",
+    footLink: "Código y la evidencia completa, incluidas las mediciones que van en su contra",
+    foot2: "Esta página ejecuta los módulos reales de chamnan mediante Pyodide, no una reimplementación, así que los números son los de la propia herramienta. Tu navegador lee el contenido del repositorio directamente desde una CDN pública y no se envía a ningún otro sitio.",
+    card1: "1 · El mapa", card2: "2 · Cincuenta turnos", card3: "3 · Credenciales y datos personales",
+    kFiles: "archivos indexados", kSrc: "fuente descargada", kMap: "MAP.md en disco",
+    kInj: "inyectado por sesión", kCeil: "tope",
+    note1: "MAP.md se escribe en disco para hacerle grep, nunca para leerlo entero. Solo se inyecta el bloque plegado, y está acotado por el tope por grande que sea el repositorio.",
+    kBlock: "bloque, por sesión", kTurns: "× 50 turnos, una sesión", kReread: "releer en cada turno",
+    note2: "El bloque se inyecta <strong>una vez por sesión</strong>, no por turno, así que cincuenta turnos lo pagan una sola vez. La segunda cifra es todo el código indexable, mostrada como cota de lo que podría costar orientarse leyendo archivos, no como predicción de que un agente los leería todos. No se llamó a ningún modelo para producir ninguna de las dos.",
+    kScanned: "archivos analizados", kRedacted: "archivos que el redactor alteró",
+    note3: "Se cuentan, nunca se muestran. <code>redact.scrub</code> recorre el texto del repositorio antes de que nada llegue al modelo, y cubre dos problemas distintos. Las <strong>credenciales</strong> llevan una palabra al lado — <code>api_key</code>, <code>password</code>, <code>Authorization</code> — y esa palabra es el ancla. Los <strong>datos personales</strong> no la llevan: un número de tarjeta o un documento de identidad son dígitos sueltos y nada dice qué son, así que se detectan por CHECKSUM. Esto no es un escáner de secretos y no dirá a nadie qué encontró ni dónde. Lo que coincide suele ser material de prueba, no una clave real.",
+    becomes: "de código indexable en {repo} se convierte en {bytes} bytes inyectados una vez por sesión.",
+    loadingPy: "Cargando el entorno de Python — unos 10 MB, después queda en caché…",
+    loadingCh: "Cargando chamnan…",
+    reading: "Leyendo el repositorio…",
+    fetching: "Descargando código — {done} de {total}",
+    running: "Ejecutando chamnan…",
+    doneMsg: "Listo — {repo}, {n} archivos indexados en tu navegador.",
+    stopped: "Detenido: ",
+    badUrl: "Esto no parece un repositorio de GitHub.",
+    notFound: "No encontrado. Solo repositorios públicos.",
+    noFiles: "No se han encontrado archivos que chamnan indexe en este repositorio.",
+    sampled: "Muestreo: {got} de {total} archivos (tope {cap}), así que la cifra de fuente es un mínimo, no el tamaño completo del repositorio.",
+  },
+};
+
+// The claim box and the four limitation bullets are a <strong> lead plus prose. Composed here
+// rather than duplicated as whole-HTML strings in five languages, so a change to the shape does
+// not have to be made five times.
+for (const L of Object.keys(T)){
+  T[L].claimFull = `<strong>${T[L].claimStrong}</strong> ${T[L].claimRest}`;
+  for (let i = 1; i <= 4; i++)
+    T[L][`lim${i}Full`] = `<strong>${T[L][`lim${i}s`]}</strong> ${T[L][`lim${i}`]}`;
+}
+
+let LANG = "en";
+const t = (k, vars) => {
+  let v = (T[LANG] && T[LANG][k]) || T.en[k] || k;
+  if (vars) for (const [a, b] of Object.entries(vars)) v = v.replaceAll(`{${a}}`, b);
+  return v;
+};
+
+function applyLang(code){
+  LANG = T[code] ? code : "en";
+  try { localStorage.setItem("chamnan-lang", LANG); } catch (e) {}
+  document.documentElement.lang = LANG;
+  for (const el of document.querySelectorAll("[data-i18n]"))
+    el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll("[data-i18n-html]"))
+    el.innerHTML = t(el.dataset.i18nHtml);
+  const sel = document.getElementById("lang");
+  if (sel.value !== LANG) sel.value = LANG;
+  // Anything already on screen was rendered in the previous language.
+  if (window.LAST_RESULT) render(window.LAST_RESULT);
+  document.title = t("h1");
+}
+
+(function initLang(){
+  const sel = document.getElementById("lang");
+  sel.innerHTML = Object.entries(LANGS)
+    .map(([c, n]) => `<option value="${c}">${n}</option>`).join("");
+  let want = null;
+  try { want = localStorage.getItem("chamnan-lang"); } catch (e) {}
+  if (!want){
+    // Follow the browser when nothing was chosen. `zh-TW`, `es-419` and friends match on prefix.
+    const nav = (navigator.languages || [navigator.language || "en"]).map(x => x.toLowerCase());
+    want = nav.map(x => Object.keys(T).find(c => x === c || x.startsWith(c + "-")))
+              .find(Boolean) || "en";
+  }
+  sel.addEventListener("change", () => applyLang(sel.value));
+  applyLang(want);
+})();
+
+const PRE = [
+  // Measured 2026-09-07 through THIS page in a real browser, re-measured 2026-09-08 with
+  // `site/remeasure.py`, which takes the same listing, the same filters and the same modules
+  // without one. Twelve of the thirteen came back identical; three rows moved and are the
+  // 2026-09-08 figures. Sorted by source size, because the bound is the finding rather than any
+  // single ratio. torvalds/linux comes through the GitHub fallback: jsDelivr refuses a repository
+  // that large.
+  ["chalk/chalk","JavaScript",56,2449,24],
+  ["facebook/react","JavaScript",257,6649,40],
+  ["psf/requests","Python",392,6345,63],
+  ["pallets/flask","Python",576,6391,92],
+  ["gin-gonic/gin","Go",660,6636,102],
+  ["sinatra/sinatra","Ruby",663,6570,103],
+  ["yumiaura/myCat","Mixed",719,6409,115],
+  ["rust-lang/mdBook","Rust",1190,6470,188],
+  ["rails/rails","Ruby",1550,6537,243],
+  ["django/django","Python",2209,6245,362],
+  ["torvalds/linux","C",3028,6603,470],
+  ["tokio-rs/tokio","Rust",3468,6441,551],
+  ["vuejs/core","TypeScript",3782,6250,620],
+];
+const kb = n => n >= 1024 ? (n/1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B";
+const num = n => n.toLocaleString("en-US");
+document.getElementById("pre").innerHTML = PRE.map(([r,l,skb,inj,ratio]) =>
+  `<tr><td>${r}</td><td>${l}</td><td class="n">${num(skb)} KB</td>` +
+  `<td class="n">${num(inj)} B</td><td class="n">${ratio}:1</td></tr>`).join("");
+
+const $ = id => document.getElementById(id);
+const statusEl = $("status"), out = $("out");
+let pyodide = null, EXT = null, booting = null, CHAMNAN_VERSION = null;
+
+function say(msg, pct){
+  statusEl.innerHTML = msg + (pct === undefined ? "" :
+    `<span class="bar"><i style="width:${Math.round(pct*100)}%"></i></span>`);
+}
+
+function parseRepo(v){
+  v = v.trim().replace(/^https?:\/\/(www\.)?github\.com\//i, "").replace(/\.git$/, "");
+  const m = v.match(/^([\w.-]+)\/([\w.-]+)/);
+  return m ? [m[1], m[2]] : null;
+}
+
+async function gh(url){
+  const r = await fetch(url);
+  if (r.status === 403) throw new Error(t("rateLimit"));
+  if (r.status === 404) throw new Error(t("notFound"));
+  if (!r.ok) throw new Error("GitHub returned " + r.status);  // status code, not prose
+  return r.json();
+}
+
+// The file list comes from jsDelivr, not from GitHub's API.
+//
+// GitHub allows 60 unauthenticated API requests an hour PER IP, and this page used two of them per
+// measurement. Fine for one person and wrong for everybody else: an office, a school or a
+// conference behind one address shares the sixty, and the first few visitors spend it for the rest
+// of the hour. It was hit within an hour of publishing, by the person it was built for.
+//
+// jsDelivr's data API lists a GitHub repository's files with `access-control-allow-origin: *`, no
+// authentication and no per-IP quota — and, better than the tree API here, it reports each file's
+// SIZE, so the source total is known before a byte is fetched. GitHub stays as a fallback only for
+// naming the default branch when a repository uses neither `main` nor `master`.
+async function listing(owner, repo){
+  let refused = false;
+  for (const ref of ["main", "master"]){
+    const r = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@${ref}?structure=flat`);
+    // 403 is jsDelivr refusing the repository for its SIZE, not a missing branch. Measured
+    // 2026-09-07: linux, kubernetes, vscode, rust, go and AutoGPT are all refused this way, while
+    // every ordinary repository is served — ten out of ten in a sample that included fastapi,
+    // django, rails, vue and react. So this is the path almost everyone takes.
+    if (r.status === 403) refused = true;
+    if (r.ok){
+      const j = await r.json();
+      if (j.files && j.files.length)
+        return {ref, via: "jsdelivr",
+                files: j.files.map(f => ({path: f.name.replace(/^\//, ""), size: f.size}))};
+    }
+  }
+
+  // Too large for the CDN index. GitHub's tree API has no such limit, and `HEAD` means the
+  // default branch WITHOUT a second request to ask what it is called — so a repository the size
+  // of AutoGPT costs exactly one API call, and the file contents still come from a CDN with no
+  // quota at all. Sixty of these an hour per IP address, against none before.
+  //
+  // The previous version asked GitHub for the branch name and then retried jsDelivr, which
+  // refused again for the same reason it refused the first time: the size, not the branch. It
+  // spent the quota and still failed.
+  if (refused) say(t("tooBig"));
+  const tree = await gh(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`);
+  // `type === "blob"` is true of a SYMLINK too, and a symlink's content is its target path — a
+  // line of text that would be fetched, indexed and counted as source. Mode 120000 is the only
+  // thing that distinguishes it, and jsDelivr's listing excludes them already, so this path was
+  // the only one that let them through (R13 agent 4, reproduced on microsoft/vscode).
+  const files = (tree.tree || [])
+    .filter(n => n.type === "blob" && n.mode !== "120000")
+    .map(n => ({path: n.path, size: n.size || 0}));
+  if (!files.length) throw new Error(t("noFiles"));
+  return {ref: "HEAD", via: "github", files, truncated: !!tree.truncated};
+}
+
+// Where a file's bytes come from, which differs by how the listing was obtained. Both are CDNs
+// with no API quota; only the listing above ever costs one.
+function contentUrl(owner, repo, ref, via, path){
+  return via === "jsdelivr"
+    ? `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${path}`
+    : `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`;
+}
+
+// The whole of boot, or none of it. A first version assigned `pyodide` as soon as the runtime
+// loaded and cached it there, so any failure in the steps after that left the page permanently
+// broken: the next attempt saw a truthy `pyodide`, returned early, and used a null `EXT`. The
+// symptom was an error with no message, which is the worst kind. Cache the PROMISE, and only
+// after every step has succeeded.
+function boot(){
+  if (booting) return booting;
+  booting = (async () => {
+    say(t("loadingPy"));
+    const py = await loadPyodide();
+    say(t("loadingCh"));
+    const manifest = await (await fetch("lib/manifest.json")).json();
+    const files = manifest.modules || manifest;      // an older bundle was a bare array
+    if (manifest.version){
+      CHAMNAN_VERSION = manifest.version;
+      const el = document.getElementById("ver");
+      if (el) el.textContent = t("running", {v: manifest.version});
+    }
+    try { py.FS.mkdir("/lib"); } catch (e) { /* already there on a repeat run */ }
+    for (const f of files){
+      const res = await fetch("lib/" + f);
+      if (!res.ok) throw new Error(`could not load chamnan module ${f} (${res.status})`);
+      py.FS.writeFile("/lib/" + f, await res.text());
+    }
+    py.runPython(`import sys; sys.path.insert(0, "/lib")`);
+    const exts = py.runPython(`
+import json, mapper
+json.dumps(sorted(mapper.EXT_LANG.keys()))
+`);
+    pyodide = py;
+    EXT = new Set(JSON.parse(exts));
+    return py;
+  })().catch(err => { booting = null; throw err; });
+  return booting;
+}
+
+const CAP = 400;
+
+// Delete the downloaded source. Called from a `finally`, so it runs when a measurement FAILS too.
+//
+// It was originally on the success path only, which is the wrong half: a run that dies part-way —
+// a repository too large for the CDN, a network drop, a file that will not decode — is exactly the
+// run that leaves several hundred files sitting in this tab's memory with nothing to show for
+// them. Measuring a few large repositories in one sitting is an ordinary thing to do, and Pyodide's
+// filesystem is memory. What is worth keeping after a measurement is about a dozen integers.
+function forgetTheSource(){
+  if (!pyodide) return;
+  try {
+    pyodide.runPython(`
+import shutil, pathlib
+shutil.rmtree(pathlib.Path("/repo"), ignore_errors=True)
+`);
+  } catch (e) { /* nothing here is worth failing a measurement over */ }
+}
+
+
+async function measure(owner, repo){
+  out.innerHTML = "";
+  await boot();
+
+  say(t("reading"));
+  const {ref, via, files: blobs, truncated} = await listing(owner, repo);
+  const want = blobs.filter(b => {
+    const i = b.path.lastIndexOf(".");
+    return i > 0 && EXT.has(b.path.slice(i).toLowerCase());
+  });
+  if (!want.length) throw new Error(t("noFiles"));
+  // Skipped BEFORE the fetch, not after. `mapper` refuses a file over 2 MB, but it only sees one
+  // once the browser has already downloaded it — and torvalds/linux carries 57 tracked-extension
+  // files past that line. The listing gives the size up front, so the bytes are never pulled.
+  // A size of 0 means the listing did not say; those are still fetched rather than assumed small.
+  const TOO_BIG = 2 * 1024 * 1024;
+  const oversize = want.filter(b => b.size > TOO_BIG).length;
+  const take = want.filter(b => b.size <= TOO_BIG).slice(0, CAP);
+
+  pyodide.runPython(`
+import shutil, pathlib
+r = pathlib.Path("/repo")
+if r.exists(): shutil.rmtree(r)
+r.mkdir()
+`);
+  // Fetched with a concurrency pool rather than one at a time. Measured: 400 files sequentially
+  // is minutes of round-trips on a CDN that will happily answer several at once, and a page that
+  // takes four minutes to answer is a page nobody waits for. The pool is small on purpose — the
+  // point is to hide latency, not to hammer the CDN.
+  const POOL = 8;
+  let got = 0, bytes = 0, done = 0;
+  let next = 0;
+  async function worker(){
+    while (true){
+      const i = next++;
+      if (i >= take.length) return;
+      const b = take[i];
+      try{
+        const res = await fetch(contentUrl(owner, repo, ref, via, b.path));
+        if (res.ok){
+          const text = await res.text();
+          const dir = b.path.split("/").slice(0,-1).join("/");
+          if (dir) pyodide.FS.mkdirTree("/repo/" + dir);
+          pyodide.FS.writeFile("/repo/" + b.path, text);
+          got++; bytes += new TextEncoder().encode(text).length;
+        }
+      }catch(e){ /* one unreadable file must not end the run */ }
+      done++;
+      if (done % 5 === 0 || done === take.length)
+        say(t("fetching", {done, total: take.length}), done/take.length);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(POOL, take.length)}, worker));
+
+  say(t("running"));
+  pyodide.globals.set("_bytes", bytes);
+  const raw = pyodide.runPython(`
+import json, pathlib, mapper, rollup, workspace as ws, redact
+root = pathlib.Path("/repo")
+mapper.reset_skips()
+files = list(mapper.scan(root))
+index = mapper.render(files, root)
+budget = ws.DEFAULT_CONFIG.get("index_token_budget", 3000)
+try:
+    injected = rollup.collapse(index, ".chamnan/MAP.md", budget, root, 8)
+except Exception:
+    injected = index
+
+# Credential-shaped strings, COUNTED and never shown. The point being demonstrated is that the
+# redactor runs before anything reaches the model, not where somebody's key is.
+hits = 0
+scanned = 0
+for p in root.rglob("*"):
+    if not p.is_file():
+        continue
+    try:
+        t = p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    scanned += 1
+    if redact.scrub(t) != t:
+        hits += 1
+
+# ---- two ways of working, 50 turns each, over THIS repository's real files
+#
+# Two scenarios rather than one blended number, because they answer different questions and the
+# honest thing is to show the range instead of the average:
+#
+#   A. 50 turns on ONE subject   — the agent stays in the same corner of the repository.
+#   B. 50 turns at random        — a different corner every turn.
+#
+# A is where an index helps LEAST: once you have opened the files, you know where they are, and a
+# map you were given at the start has told you nothing you did not learn anyway. B is where it
+# helps most. Showing only B would be the flattering version; showing only A the useless one. Both
+# run against the real files and real sizes read off this repository.
+#
+# Deterministic, seed shown, so the numbers are the same for everybody and can be re-run.
+import random as _rnd
+
+SEARCH_OPENS = 3          # wrong files opened to locate one, with no map. Stated, not derived.
+TURNS = 50
+SEED = 20260907
+
+sizes = []
+for _p in root.rglob("*"):
+    if _p.is_file():
+        try:
+            sizes.append(_p.stat().st_size)
+        except OSError:
+            pass
+sizes = [x for x in sizes if x > 0] or [1000]
+tok = lambda b: b / 4.0
+BLOCK = tok(len(injected.encode()))
+
+
+def scenario(new_subject_chance):
+    """(with_map, without_map) token totals over TURNS, and the turn the block repays itself."""
+    r = _rnd.Random(SEED)
+    with_map, without, seen, cross = BLOCK, 0.0, [], None
+    for turn in range(TURNS):
+        if seen and r.random() > new_subject_chance:
+            pass                                   # already open: free on both sides
+        else:
+            want = r.choice(sizes)
+            seen.append(want)
+            with_map += tok(want)                  # the map names the file: open it, once
+            without += tok(want) + sum(tok(r.choice(sizes)) for _ in range(SEARCH_OPENS))
+        if cross is None and without > with_map:
+            cross = turn + 1
+    return round(with_map), round(without), cross
+
+
+same_w, same_o, same_c = scenario(0.10)     # A: 10% of turns move on — mostly the same subject
+rand_w, rand_o, rand_c = scenario(1.00)     # B: every turn a new subject
+
+json.dumps({
+  "sim": {"same": {"w": same_w, "o": same_o, "cross": same_c},
+          "rand": {"w": rand_w, "o": rand_o, "cross": rand_c},
+          "turns": TURNS, "opens": SEARCH_OPENS, "seed": SEED,
+          "block": round(BLOCK)},
+  "indexed": len(files),
+  "index_bytes": len(index.encode()),
+  "injected_bytes": len(injected.encode()),
+  "ceiling": ws.DEFAULT_CONFIG.get("output_byte_ceiling", 9000),
+  "redacted_files": hits,
+  "scanned": scanned,
+})
+`);
+  const r = JSON.parse(raw);
+  r.src_bytes = bytes; r.fetched = got; r.total_blobs = want.length;
+  // `declared` used to be computed here and never read — dead arithmetic on every run.
+  r.missed = take.length - got;          // fetches that failed mid-run, which used to be silent
+  r.oversize = oversize;
+  r.capped = want.length > take.length || !!truncated;
+  r.via = via;
+  // The language is derived from what was actually indexed rather than asked of GitHub's API,
+  // which is one more request and a different answer anyway — GitHub reports the language of the
+  // whole repository, this reports the language of the files chamnan read.
+  r.slug = `${owner}/${repo}`; r.ref = ref;
+  return r;
+}
+
+function render(r){
+  window.LAST_RESULT = r;
+  const ratio = r.injected_bytes ? Math.round(r.src_bytes / r.injected_bytes) : 0;
+  const tok = n => Math.round(n / 4);
+  const perSession = tok(r.injected_bytes);
+  out.innerHTML = `
+  <div class="headline">
+    <div class="big">${num(ratio)}:1</div>
+    <div class="cap">${kb(r.src_bytes)} ${t("becomes", {repo: r.slug, bytes: num(r.injected_bytes)})}</div>
+  </div>
+  <div class="cards">
+    <div class="card">
+      <h3>${t("card1")}</h3>
+      <div class="row"><span class="k">${t("kFiles")}</span><span class="v">${num(r.indexed)}</span></div>
+      <div class="row"><span class="k">${t("kSrc")}</span><span class="v">${kb(r.src_bytes)}</span></div>
+      <div class="row"><span class="k">${t("kMap")}</span><span class="v">${kb(r.index_bytes)}</span></div>
+      <div class="row"><span class="k">${t("kInj")}</span><span class="v good">${num(r.injected_bytes)} B</span></div>
+      <div class="row"><span class="k">${t("kCeil")}</span><span class="v">${num(r.ceiling)} B</span></div>
+      <p class="note">${t("note1")}</p>
+    </div>
+    <div class="card">
+      <h3>${t("card2")}</h3>
+      <p class="simtag">${t("simTag")}</p>
+      <table class="sim">
+        <thead><tr><th></th><th>${t("kWith")}</th><th>${t("kWithout")}</th></tr></thead>
+        <tbody>
+          <tr><td>${t("scenSame")}</td>
+              <td class="n good">${num(r.sim.same.w)}</td>
+              <td class="n warn">${num(r.sim.same.o)}</td></tr>
+          <tr><td>${t("scenRand")}</td>
+              <td class="n good">${num(r.sim.rand.w)}</td>
+              <td class="n warn">${num(r.sim.rand.o)}</td></tr>
+        </tbody>
+      </table>
+      <div class="row"><span class="k">${t("kCross")} <em>(${t("scenRand")})</em></span><span class="v">${
+        r.sim.rand.cross ? r.sim.rand.cross : t("simNever")}</span></div>
+      <p class="note">${t("simHow")}</p>
+      <p class="note">${t("simAssume", {opens: r.sim.opens, seed: r.sim.seed})}</p>
+    </div>
+    <div class="card">
+      <h3>${t("card3")}</h3>
+      <div class="row"><span class="k">${t("kScanned")}</span><span class="v">${num(r.scanned)}</span></div>
+      <div class="row"><span class="k">${t("kRedacted")}</span>
+        <span class="v ${r.redacted_files ? "warn" : "good"}">${num(r.redacted_files)}</span></div>
+      <p class="note">${t("note3")}</p>
+    </div>
+  </div>
+  <p class="temp">${t("resultTemp")}</p>
+  ${r.missed > 0 ? `<p class="note">${t("missed", {n: num(r.missed)})}</p>` : ""}
+  ${r.oversize > 0 ? `<p class="note">${t("oversize", {n: num(r.oversize)})}</p>` : ""}
+  ${r.capped ? `<p class="note">${t("sampled", {got: num(r.fetched), total: num(r.total_blobs), cap: num(CAP)})}</p>` : ""}`;
+}
+
+async function run(){
+  const parsed = parseRepo($("repo").value);
+  if (!parsed){ say(t("badUrl")); return; }
+  $("go").disabled = true;
+  try{
+    const r = await measure(parsed[0], parsed[1]);
+    render(r);
+    say(t("doneMsg", {repo: r.slug, n: num(r.indexed)}));
+  }catch(e){
+    out.innerHTML = "";
+    say(t("stopped") + (e && (e.message || e.toString()) || "unknown error"));
+    console.error(e);
+  }finally{
+    forgetTheSource();
+    $("go").disabled = false;
+  }
+}
+
+window.addEventListener("pagehide", forgetTheSource);
+$("f").addEventListener("submit", e => { e.preventDefault(); run(); });
+document.querySelectorAll(".samples button").forEach(b =>
+  b.addEventListener("click", () => { $("repo").value = b.dataset.r; run(); }));
+</script>
+</body>
+</html>

@@ -33,13 +33,40 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
         # The floor the README declares, and the newest. The versions between are the same code
         # path; running all of them would buy repetition rather than coverage.
+        #
+        # "3.8" is NOT the same interpreter on every OS, and nothing here says so otherwise.
+        # setup-python resolves it to the newest matching build per platform, and
+        # actions/python-versions stops at DIFFERENT patches (read off the live manifest
+        # 2026-09-07, not from memory):
+        #
+        #     linux-x64 / linux-arm64 / darwin-x64   3.8.18
+        #     win32-x64 / win32-x86 / darwin-arm64   3.8.10
+        #
+        # So the Windows floor job tests against a build eight patches older than the Linux one.
+        # That is not a failure -- win32 3.8.10 is still published, so the job resolves and runs --
+        # but "tested at 3.8" means two different things across this matrix, and a future reader
+        # comparing a Windows-only failure against the Linux job should know that before assuming
+        # the difference is the OS (R12 agent 3, re-measured here).
         python: ["3.8", "3.13"]
         exclude:
-          # macOS runners are arm64 and have no 3.8 build; the floor is checked on Linux.
+          # macOS runners are arm64 and the floor is checked on Linux.
+          #
+          # The reason written here used to be "arm64 has no 3.8 build", and that is not what the
+          # manifest says: darwin-arm64 publishes 3.8.10, same as Windows. The exclusion is kept
+          # because the floor only needs proving once and Linux is where it is proven, which is a
+          # cost argument rather than an availability one -- worth stating correctly, since the
+          # wrong reason is the kind that gets "fixed" by someone who checks it.
           - os: macos-latest
             python: "3.8"
     steps:
-      - uses: actions/checkout@v4
+      # v4 is the LAST major built on Node 20, and GitHub removes Node 20 from the runners on
+      # 2026-09-23 — after which a Node-20 action does not resolve and this whole five-job matrix
+      # stops running on every push. The runner already shims it onto Node 24 with a warning, and
+      # that warning is in chamnan's own CI log from 2026-09-07:
+      #   "Node 20 is being deprecated. This workflow is running with Node 24 by default."
+      # v5 is the first major on node24 (confirmed against the tag's own action.yml, not the
+      # release notes) and the smallest jump that survives the date.
+      - uses: actions/checkout@v5
         with:
           # actions/checkout defaults to a depth-1 clone with no tags, so `git describe
           # --tags` finds nothing and the suite's version-drift check — the one its own
@@ -47,7 +74,11 @@ jobs:
           # three platforms, without saying so. Found by R1 agent 3.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      # Same deadline, same reasoning: v5 is the last major on Node 20, v6 the first on node24.
+      # v7 exists and its release notes say "Remove EOL Python versions", which is about the
+      # action's own test fixtures rather than what it can install — but the matrix below still
+      # needs 3.8, and taking the smaller jump means that claim does not have to be right.
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
 

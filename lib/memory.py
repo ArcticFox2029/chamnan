@@ -190,9 +190,16 @@ def title_of(path, text=None):
     # BOM is stripped at the READ now -- every `read_text` in lib/, bin/ and hooks/ decodes
     # `utf-8-sig`, which is plain UTF-8 plus "drop a leading BOM if there is one" -- and this
     # `lstrip` stays only because `text` may be passed in by a caller that read it itself.
+    # \U0001f41b [2026-09-07] `startswith("# ")` again, and this file is where the comment above
+    # says the disease lives -- one member of a set fixed, the identical ones beside it left. The
+    # heading unification reached `state`, `pointer`, `timeline.title_of` and `sessions`; it did
+    # not reach here or `timeline.set_status`, so a memory entry titled with a CJK keyboard's
+    # U+3000 after the hash was injected under its de-slugged FILENAME instead of its title, and a
+    # decision the owner wrote by hand arrived unrecognisable (R12 agent 2).
     for line in text.lstrip("\ufeff").splitlines():
-        if line.startswith("# "):
-            return line[2:].strip()
+        title = mdblock.heading_title(line)
+        if title is not None:
+            return title
     return path.stem.replace("-", " ")
 
 
@@ -395,7 +402,15 @@ def titles(root):
 # channel, unlike everything else here which is capped somewhere. A title this long is also almost
 # certainly the wrong thing to have written as a title in the first place, so truncating it doubles
 # as a visible nudge to shorten it, rather than a silent workaround.
-MAX_TITLE_CHARS = 120
+# whole_graphemes, as every other cutter in this codebase: a title ending in a flag emoji cut
+# mid-cluster left one regional indicator behind, rendering as a stray letter box in the injected
+# block (R4 agent 1). That cut is `mdblock.one_line_capped` now, shared with the three sections
+# that were missing it entirely.
+#
+# The number moved to `mdblock.INJECTED_ITEM_CHARS`, which is where the reasoning above now lives
+# too: this was the only section that had this guard, and three siblings that needed the identical
+# one did not have it because both the number and the argument were local to this file.
+MAX_TITLE_CHARS = mdblock.INJECTED_ITEM_CHARS
 
 
 def render_titles(found):
@@ -403,13 +418,6 @@ def render_titles(found):
     no heading rather than an empty one."""
     if not found:
         return ""
-
-    def _cap(title):
-        # whole_graphemes, as every other cutter in this codebase: a title ending in a flag emoji
-        # cut mid-cluster left one regional indicator behind, rendering as a stray letter box in
-        # the injected block (R4 agent 1).
-        return (title if len(title) <= MAX_TITLE_CHARS
-                else mdblock.whole_graphemes(title[:MAX_TITLE_CHARS]).rstrip() + "…")
 
     # 🐛 The cap was applied to the concatenation, which is in category-then-filename order — so a
     # repository with ten decisions and two lessons sent NO LESSON to the session at all, under a
@@ -425,7 +433,7 @@ def render_titles(found):
                 interleaved.append(by_cat[cat][i])
         i += 1
     shown = interleaved[:MAX_TITLES]
-    lines = [f"- **{cat[:-1]}** · `{mdblock.as_quoted(name)}` — {mdblock.one_line(_cap(title))}"
+    lines = [f"- **{cat[:-1]}** · `{mdblock.as_quoted(name)}` — {mdblock.one_line_capped(title, MAX_TITLE_CHARS)}"
              for cat, title, name in shown]
     if len(found) > MAX_TITLES:
         missing = sorted({c for c, _, _ in found} - {c for c, _, _ in shown})

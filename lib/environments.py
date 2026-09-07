@@ -311,8 +311,32 @@ def constraints_notice(root, name, envs=None):
     # every audit aimed at the session-start block.
     bullets = mdblock.one_line("; ".join(env["constraints"]))
     checked = mdblock.one_line(env["checked"] or "never confirmed")
-    return (f"chamnan: that command targets `{mdblock.one_line(name)}`, which declares — "
+    return (f"chamnan: that command targets `{mdblock.as_quoted(name)}`, which declares — "
             f"{bullets}. (from `.chamnan/{FILENAME}`, checked {checked})")
+
+
+# A constraint gets more room than a title, and the difference is deliberate rather than an
+# oversight of the shared default. A title is a NAME -- 120 characters is already past the point
+# where it has stopped being one. A constraint is a SENTENCE whose second half is usually the part
+# that prevents the wrong work ("RWO only, **so no RollingUpdate on anything mounting a PVC**"),
+# and cutting a rule before its consequence delivers the setup without the punchline. Measured on
+# the reporting round's own 908-character fixture: 384.4 tokens uncapped, 78.4 at 200, 48.5 at 120
+# -- the extra 80 characters cost ~30 tokens per item and buy the half of the sentence that does
+# the work.
+# The whole section, not one item. Measured before adding it: four environments with four
+# paragraph-style constraints each -- an ordinary way to document infra, not an adversarial one --
+# rendered 3,689 bytes through the real hook, 41% of the 9,000-byte whole-block ceiling, from a
+# fixture that held almost nothing else. This section is ranked next-to-last in `fit.DROP_ORDER`,
+# so overflowing on its account does not drop IT: tools, milestones, procedures, decisions, the
+# last session, open threads and reply style all go first. That is Finding 1's collateral-damage
+# shape in a different file.
+#
+# 1500 to match `memory.MAX_RULES_CHARS`, which is the only other session-block section with a
+# whole-section character cap and is the one section ranked above this. Two sections whose job is
+# to stop the wrong work being proposed, given the same room.
+MAX_SECTION_CHARS = 1500
+
+MAX_CONSTRAINT_CHARS = 200
 
 
 def render_constraints(root, max_envs=4, max_bullets=4):
@@ -327,16 +351,30 @@ def render_constraints(root, max_envs=4, max_bullets=4):
     found = [e for e in entries(root) if e["constraints"]]
     if not found:
         return ""
-    lines = []
+    lines, spent, shown, clipped = [], 0, 0, False
     for env in found[:max_envs]:
-        head = f"- **{mdblock.one_line(env['name'])}**"
+        head = f"- **{mdblock.one_line_capped(env['name'])}**"
         if env["platform"]:
-            head += f" ({mdblock.one_line(env['platform'])})"
-        lines.append(head)
+            head += f" ({mdblock.one_line_capped(env['platform'])})"
+        block = [head]
         for bullet in env["constraints"][:max_bullets]:
-            lines.append(f"  - {mdblock.one_line(bullet)}")
+            block.append(f"  - {mdblock.one_line_capped(bullet, MAX_CONSTRAINT_CHARS)}")
         if len(env["constraints"]) > max_bullets:
-            lines.append(f"  - _…{len(env['constraints']) - max_bullets} more_")
-    if len(found) > max_envs:
-        lines.append(f"- _…and {len(found) - max_envs} more in `.chamnan/{FILENAME}`_")
+            block.append(f"  - _…{len(env['constraints']) - max_bullets} more_")
+        cost = sum(len(l) + 1 for l in block)
+        # At least one environment always renders, even if it alone exceeds the budget: a section
+        # of zero rows is not a summary. The per-item cap above already bounds how bad that one is.
+        if lines and spent + cost > MAX_SECTION_CHARS:
+            clipped = True
+            break
+        lines.extend(block)
+        spent += cost
+        shown += 1
+    left = len(found) - shown
+    if left > 0:
+        # Named, never silent -- and it says WHY when the budget rather than the count cap did it,
+        # because "4 more" after four entries reads as the count cap doing its documented job while the
+        # reader has in fact lost sections they wrote.
+        why = " (this section is full)" if clipped else ""
+        lines.append(f"- _…and {left} more in `.chamnan/{FILENAME}`{why}_")
     return "\n".join(lines)

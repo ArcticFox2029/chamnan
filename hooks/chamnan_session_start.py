@@ -32,6 +32,7 @@ import milestones  # noqa: E402
 import profiles  # noqa: E402
 import mdblock  # noqa: E402
 import redact  # noqa: E402
+import blocklog  # noqa: E402
 
 # 🐛 Every `bin/` command shadows `print` with `redact.emit`; no hook did, and the hooks emit more
 # repository text than any of them. The credential half is deliberately NOT repeated here -- each
@@ -477,7 +478,9 @@ def _map_is_current_by_git(root, map_path):
     Anything unconfirmable -- no git, no stamp, an unknown stamp, a real source change -- returns
     False, and the mtime path decides exactly as it did before this existed.
     """
-    if not ws.git_owns(root):
+    # The diff below carries `-- . :(exclude).chamnan`, so it is scoped to this directory and a
+    # monorepo subproject is answered about itself. See workspace.git_can_speak_for.
+    if not ws.git_can_speak_for(root):
         # See workspace.git_owns. Without this the diff below runs against an ANCESTOR repository,
         # where the stamped sha is either unknown (128, read as "no git") or -- worse -- a real
         # commit of somebody else's history, and the map is then declared current or stale on
@@ -508,6 +511,11 @@ def _map_is_current_by_git(root, map_path):
         return False
 
 
+# How many kept-key names the downgrade banner spells out. A count, not a length: `as_quoted`
+# already bounds each name at 80 characters, and what blew the block was the NUMBER of them.
+KEPT_KEYS_NAMED = 8
+
+
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
 
@@ -520,6 +528,53 @@ def index_is_behind(root, map_path):
     Cheap enough to do every session: one pruned walk, measured at 0.04s on a 1,478-file
     repository. Only files mapper would actually index count, or a log line written overnight would
     report the architecture as out of date.
+
+    🔁 [2026-09-07] A REPORTED FIX WAS BUILT AND REVERTED, and what the measurement found is worth
+    more than the fix would have been. The report was that this "pays a full pruned tree walk every
+    firing whenever the working tree is dirty" — 0.34s clean against 3.87s dirty at 50,000 files —
+    and that capturing `git diff --name-only` instead of discarding it would remove the walk.
+
+    Built exactly that: a tri-state `_map_is_current_by_git` returning git's own changed-file list,
+    plus `ls-files --others` for the untracked half, fed to `mapper.indexable(only=...)` so the
+    filter stayed one definition. It produced the identical answer and it was **not faster**: 0.646s
+    against 0.659s on an 8,000-file fixture, inside the noise, because the two extra git processes
+    cost about what they saved.
+
+    The premise was wrong. Restricting WHICH files are considered cannot help, because the costs
+    that dominate are per-ROOT, not per-file: `mapper.indexable` computes `_nested_repo_dirs`,
+    `_tracked_ambiguous` and `_generated_globs` for the whole tree before it looks at a single path,
+    and they run identically whether the answer concerns one file or fifty thousand.
+
+    🐛 A FIRST VERSION OF THIS NOTE PUBLISHED A TABLE THAT MIS-READ ITS OWN MEASUREMENT, and the
+    correction is the useful part. It said the walk costs 0.005 s while `_nested_repo_dirs` costs
+    0.144 s. Both numbers were real and the attribution was not: `tree.session()` caches the walk on
+    FIRST USE, and `indexable()` happens to call `_nested_repo_dirs` before its own loop — so
+    whichever function is called first is billed for the walk. Swap the order and the numbers swap
+    with it, while the total does not move:
+
+        called nested-first (the real order)   _nested_repo_dirs 0.121 s   tree.files 0.005 s
+        called walk-first                      _nested_repo_dirs 0.000 s   tree.files 0.120 s
+
+    `_nested_repo_dirs`'s own logic is sub-millisecond. There is nothing in it to make cheaper, and
+    a table that says otherwise sends the next person to optimise a function that does no work
+    (R9 agent 1).
+
+    THE CACHE THIS NOTE ORIGINALLY FLOATED DOES NOT WORK EITHER, for three separate reasons, all
+    measured: a HEAD-keyed disk cache in `rollup`'s style is sound only because churn is derived
+    from commit history and nothing else, and none of these three meets that precondition.
+    `_nested_repo_dirs` depends on a `.git` directory EXISTING — creating a nested checkout does not
+    move the host repo's HEAD. `_tracked_ambiguous` reads `git ls-files`, which is the INDEX: `git
+    add` with no commit changes the answer while HEAD stands still. `_generated_globs` reads
+    `.gitattributes` off the working tree without going through git at all, so an unstaged edit
+    changes it and no git-derived key can see that.
+
+    What is left, and is real: `_generated_globs` runs its OWN `os.walk` outside `tree`'s cache — a
+    genuine second walk, measured 0.110 s at 50,000 files and additive — and the dominant per-file
+    cost is not in this module at all. `redact.is_blocked` was 53% of the loop at 50,000 files,
+    because `_names_to_judge` calls `os.path.realpath()` on every path without first asking whether
+    it is a symlink; gating that measured 8-9x on a tree with no symlinks. Neither is started here;
+    both are recorded so the next attempt begins where the evidence points rather than where the
+    first report guessed.
     """
     if _map_is_current_by_git(root, map_path):
         return 0, []
@@ -594,6 +649,16 @@ _QI_FOLDER = re.compile(r"^\*\*`([^`]+)`\*\*\s*$")
 _QI_ROW = re.compile(r"^- \*\*`([^`]+)`\*\*")
 
 
+# 🎯 [2026-09-07] Memoised on the TEXT. `dead_entries` and `unindexed` are handed the same
+# `map_text` in the same firing and each parsed it independently, so a stale index paid the parse
+# twice for one answer. Keyed by the text itself rather than by a path, because that is what the
+# function is a pure function of, and because the hook holds the text in memory anyway — nothing
+# here reads the file a second time. One entry: the two callers are given the same string, and
+# holding more than the current index would be caching for a caller that does not exist
+# (R13 agent 1, who called it a scoping note rather than a defect, which is the right weight).
+_QUICK_NAMES_CACHE = (None, None)
+
+
 def _quick_index_names(map_text):
     """The paths the Quick Index names, as a set, or None when there is no Quick Index at all.
 
@@ -601,6 +666,9 @@ def _quick_index_names(map_text):
     nothing to compare against, while a section naming nothing means every file on disk is missing
     from it. Collapsing the two would have made `unindexed` silent on an empty index.
     """
+    global _QUICK_NAMES_CACHE
+    if _QUICK_NAMES_CACHE[0] is map_text:
+        return _QUICK_NAMES_CACHE[1]
     start = map_text.find("## Quick Index")
     if start < 0:
         return None
@@ -627,7 +695,26 @@ def _quick_index_names(map_text):
         row = _QI_ROW.match(line)
         if row:
             names.add(f"{folder}/{row.group(1)}" if folder else row.group(1))
-    return names
+    _QUICK_NAMES_CACHE = (map_text, names)
+    return _QUICK_NAMES_CACHE[1]
+
+
+# Above this many names, `dead_entries` walks the tree once and asks a set instead of stating each
+# name. Which is cheaper is a RATIO, not a rule. Measured 2026-09-07 on a tree of 50,000 files:
+#
+#     names checked      one stat each      one walk + a set
+#                 5             0.1 ms                 70 ms
+#               500             2.5 ms                 67 ms
+#             5,000            25.6 ms                 68 ms
+#            50,000           250.4 ms                 68 ms
+#
+# A walk costs what the TREE costs, once, whatever is looked up in it afterwards; a stat costs
+# about 5 microseconds per NAME. So the crossover sits near 13,000 names on a tree that size, and
+# it moves with the tree — which is why the choice is made at run time rather than settled here.
+#
+# Do NOT copy the walk to a caller that checks a handful of names: on a large tree it is hundreds
+# of times slower, and nothing at the call site would show why.
+DEAD_WALK_ABOVE = 2000
 
 
 def dead_entries(root, map_text):
@@ -647,15 +734,42 @@ def dead_entries(root, map_text):
     session in that directory as fact. The 0-of-264 measurement was taken on a repository that
     happened to be current, which is a sample of one moment rather than a property of the format.
 
-    Costs no walk -- one `exists()` per name the map already contains, on a set the index budget
-    bounds. Deliberately evaluated whether or not the index is behind, because that is the whole
-    point: the case this catches is invisible to the age check.
+    Costs no walk -- one `exists()` per name the map already contains. Deliberately evaluated
+    whether or not the index is behind, because that is the whole point: the case this catches is
+    invisible to the age check.
+
+    🐛 [2026-09-07] This used to say the set was "bounded by the index budget", and a sibling report
+    repeated the claim without re-measuring it. It is not: `map_text` here is the ON-DISK MAP.md,
+    which is not budgeted -- the budget applies to the rolled-up block, not to the file. So the cost
+    is linear in however many paths the map names. Measured on this machine, half of them missing:
+
+        100 names 0.8 ms · 1,000 8.4 ms · 10,000 109 ms · 50,000 486 ms
+
+    against a hook that aims to finish in well under a second. The answer is still exact -- a count
+    over a sample would be a wrong number where the caller expects a right one, and this function
+    exists to catch a map that lies -- but past `DEAD_WALK_ABOVE` it is reached by walking the tree
+    once rather than by stating every name, which is 68 ms instead of 250 ms at fifty thousand
+    (R13 agent 1, re-measured here rather than taken on trust).
     """
     try:
         named = _quick_index_names(map_text)
         if not named:
             return 0, 0, []
-        dead = [n for n in sorted(named) if not (root / n).exists()]
+        ordered = sorted(named)
+        if len(ordered) > DEAD_WALK_ABOVE:
+            base = str(root)
+            cut = len(base) + 1
+            present = set()
+            for dirpath, dirnames, filenames in os.walk(base):
+                # The index never names anything in these, so descending into them is pure cost —
+                # and `.git` on a large repository is most of the file count.
+                dirnames[:] = [d for d in dirnames if d not in (".git", ws.WORKSPACE_DIRNAME)]
+                rel = dirpath[cut:]
+                for f in filenames:
+                    present.add(f"{rel}/{f}" if rel else f)
+            dead = [n for n in ordered if n.rstrip("/") not in present]
+        else:
+            dead = [n for n in ordered if not (root / n).exists()]
         return len(dead), len(named), dead[:3]
     except Exception:
         return 0, 0, []      # never let a nicety break a session
@@ -1000,6 +1114,30 @@ def main():
                        # standard this file sets for every other notice in it.
                        f"If that newer install is gone for good, clear it with "
                        f"`echo {ws.plugin_version(HERE.parent)} > .chamnan/.version`.\n")
+            # The banner says an older build is live. This says what that already cost, and it is
+            # the half a user can act on: `ensure()` kept these keys instead of dropping them, so
+            # they are still in the file — but only because THIS build knows to. Any build older
+            # than 2026-09-07 running here will delete them, silently, on its next touch.
+            if ws.LAST_CONFIG_KEYS_KEPT:
+                # \U0001f41b [2026-09-07] Capped, and this line is why the cap has to be here rather
+                # than left to `fit.shrink()`. The banner carries no `#` heading, so shrink cannot
+                # drop it -- it is undroppable content, which `fit.py`'s own docstring names as the
+                # one thing that can exceed the ceiling on its own. The key NAMES come from a
+                # committed `config.json`, and this line joined all of them with no slice: a hostile
+                # `.chamnan/.version` of `999.0.0` plus ~500 unknown keys took the hook's stdout to
+                # 38,338 bytes, 29 KB over the ceiling and far past the ~10,000 bytes at which the
+                # host truncates a SessionStart hook to its first 2,048 -- landing mid-key-name,
+                # with everything chamnan would otherwise have said gone. Every other key in the
+                # file is type-checked against DEFAULT_CONFIG; these are kept precisely BECAUSE
+                # they are unrecognised, so a bound is the only thing available (R12 agent 2).
+                _shown = sorted(ws.LAST_CONFIG_KEYS_KEPT)[:KEPT_KEYS_NAMED]
+                kept = ", ".join(f"`{mdblock.as_quoted(k)}`" for k in _shown)
+                if len(ws.LAST_CONFIG_KEYS_KEPT) > len(_shown):
+                    kept += f" +{len(ws.LAST_CONFIG_KEYS_KEPT) - len(_shown)} more"
+                out.append(f"  Settings in `config.json` that only the newer build understands were "
+                           f"KEPT rather than dropped: {kept}. An older chamnan will delete them — "
+                           f"`{ws.plugin_version(HERE.parent)}` keeps them because `.version` says a "
+                           f"newer one has been here.\n")
 
         if cfg.get("ledger", True):
             # Always the first thing in the injection, and gated on nothing but the flag itself --
@@ -1376,8 +1514,27 @@ def main():
                 # Three stable sorts, least significant first: name, then newest, then most-run.
                 ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
                 ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
-                ranked.sort(key=lambda t: -(t.get("runs") or 0))
-                lines = [f"- `{mdblock.one_line(t['name'])}` — {mdblock.one_line(t.get('desc') or 'no description')}"
+                # 🐛 [2026-09-07] `-(t.get("runs") or 0)` on a committed `"runs": "12"` is
+                # `-"12"`, which is a TypeError, and index.json arrives with a clone like every
+                # other file here. It left `run()` into the hook's blanket `except Exception` and
+                # ended the block at this section — the tools index and everything after it gone,
+                # every session, permanently. Same blast radius as the rulecheck glob fixed this
+                # morning, reached through a different field (R13 agent 2).
+                #
+                # `_real_tool` above validates the NAME because that one becomes a path. The other
+                # fields were trusted, and a sort key is exactly where an untrusted field turns
+                # into arithmetic. Coerced rather than rejected: a bad counter is a reason to rank
+                # a tool last, not to hide it from the listing.
+                def _runs(t):
+                    try:
+                        return -int(t.get("runs") or 0)
+                    except (TypeError, ValueError):
+                        return 0
+
+                ranked.sort(key=_runs)
+                # `--desc` is free text a person typed once and this section reads back into every
+                # session afterwards. MAX_TOOLS caps how many are listed, not how long one is.
+                lines = [f"- `{mdblock.as_quoted(t['name'])}` — {mdblock.one_line_capped(t.get('desc') or 'no description')}"
                          for t in ranked[:MAX_TOOLS]]
                 if len(tools) > MAX_TOOLS:
                     lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "
@@ -1576,6 +1733,35 @@ def main():
     # when it is a pipe rather than a console, and a code point outside it raises UnicodeEncodeError
     # -- which would kill the hook and cost that session its entire context, over one character in
     # somebody's comment. The repository's own text is exactly where such a character comes from.
+    #
+    # \U0001f41b [2026-09-07] `for_a_terminal`, and it was missing here alone. Every section above
+    # is `redact.scrub`-ed at the point it is read, which is the credential half; the control- and
+    # zero-width-character half is the other one, and the `print` shadow installed at the top of
+    # this file applies it -- but this is not a `print`, it is a raw write, so the assembled block
+    # was the ONE piece of chamnan output that never got it. The other two hooks
+    # (`chamnan_bulk_read_notice`, `chamnan_file_pointer`) spell it `for_a_terminal(scrub(...))`
+    # and were correct; this is the one that runs on every session, and instructions smuggled in
+    # Unicode Tag characters inside a committed source comment reached Claude Code's context
+    # through it with no rendered width (R12 agent 3, reproduced end to end).
+    body = redact.for_a_terminal(body)
+    # What this session was handed, as a shape rather than a copy — 188 bytes against the block's
+    # ~9,000, bounded by record count, no content stored. Written AFTER `fit.shrink` and after the
+    # terminal pass, because the question it answers is "what did the session actually receive",
+    # not "what did we intend to send". See lib/blocklog.py for why the text itself is not kept.
+    #
+    # Deliberately not guarded by a config flag: it costs one bounded append and it is the only
+    # record that would have shown today's three truncation defects on the day they landed rather
+    # than when an agent went looking.
+    #
+    # But it IS guarded by the read-only contract. `chamnan-map --preview` and `--explain` answer
+    # "what would a session receive" by running this hook, and their own help says they write
+    # nothing — so a write here would make that false, in the command whose whole purpose is to
+    # look without touching. The suite caught this the moment it was added, which is the check
+    # doing its job: a session that is only being previewed did not happen, and a log of sessions
+    # that did not happen is a log of the wrong thing.
+    if not ws.read_only():
+        blocklog.record(root, body, ceiling=ceiling,
+                        when=time.strftime("%Y-%m-%dT%H:%M:%S"))
     try:
         sys.stdout.write(body + "\n")
     except UnicodeEncodeError:

@@ -184,6 +184,22 @@ def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
     if hooks is None:
+        # 🐛 [2026-09-07] This said "not a git repository" at a directory git tracks perfectly well:
+        # a workspace in a monorepo subproject, where the repository is the directory ABOVE. The
+        # hook genuinely does not belong here — it is the outer repository's `pre-commit`, and not
+        # writing into a repository chamnan was not pointed at is exactly the promise this tool
+        # keeps — but the refusal has to say the true reason, because "not a git repository" sends
+        # the reader to check something that is not wrong (R7 agent 3).
+        top = ws.git_toplevel(root)
+        if top is not None and Path(top).resolve() != Path(root).resolve():
+            print(f"chamnan: this is a subdirectory of the repository at {top}, not a repository "
+                  f"of its own, so its pre-commit hook is not chamnan's to install.",
+                  file=sys.stderr)
+            print(f"  Run this from {top} to install it there, or add the line yourself:",
+                  file=sys.stderr)
+            print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
+                  file=sys.stderr)
+            return 1
         print("chamnan: not a git repository — nothing to install into", file=sys.stderr)
         return 1
     # 🐛 A bare repository has hooks, so this installed one and reported success — into a repository
@@ -220,11 +236,31 @@ def install_git_hook(root):
         # `#!/bin/sh\r` is not a shebang any shell recognises. `atomic_write_text` passes
         # newline="" for exactly this reason and its comment says so; three script writers never
         # called it (R2 agent 1). It also brings the tmp-then-rename these did not have.
-        ws.atomic_write_text(target, existing.rstrip() + "\n\n" + body)
+        # 🐛 [2026-09-07] Both writes discarded the bool, and both branches then printed success.
+        # `atomic_write_text` is best-effort BY DESIGN -- `write_or_raise`'s docstring draws the
+        # line and puts "a promoted tool" and "an environment entry" on the raising side because
+        # somebody typed a command to get them. `--install-git-hook` is as typed as a command gets,
+        # and it is worse than the others when it lies: the whole point of the hook is that nobody
+        # thinks about it again, so "appended to your existing .git/hooks/pre-commit" with nothing
+        # written is a stale index for as long as the repository lives. Reproduced on a read-only
+        # hooks directory (a raw FileNotFoundError traceback out of the chmod below, because the
+        # file the write never created is not there) and on a read-only existing hook file (exit 0,
+        # "appended", no change on disk) -- R7 agent 1, findings 4 and 5.
+        try:
+            ws.write_or_raise(target, existing.rstrip() + "\n\n" + body)
+        except OSError as err:
+            print(f"chamnan: {err}", file=sys.stderr)
+            return 1
         print(f"chamnan: appended to your existing {_show(target, root)}")
     else:
-        ws.atomic_write_text(target, "#!/bin/sh\n\n" + body)
-        target.chmod(0o755)
+        try:
+            ws.write_or_raise(target, "#!/bin/sh\n\n" + body)
+            target.chmod(0o755)
+        except OSError as err:
+            # The chmod is inside the guard on purpose: a hook that exists and is not executable is
+            # a hook git skips in silence, which is the same outcome as never writing it.
+            print(f"chamnan: {err}", file=sys.stderr)
+            return 1
         print(f"chamnan: installed {_show(target, root)}")
     # 🐛 This said "on every commit that touches tracked files", which the hook has never done:
     # `--diff-filter=ACDR` leaves out Modified, and measured on this repository 297 of 355
@@ -369,7 +405,13 @@ def main(argv):
     # An unknown flag is refused rather than ignored for the same reason the README already warns
     # about: a misspelt flag used to be dropped in silence and the command did something other than
     # what was asked, with nothing on screen to say so.
-    if any(a in ("-h", "--help") for a in argv):
+    # Before help, and before anything is parsed: "which build is this" must be
+    # answerable from any command, including one that would otherwise refuse the
+    # arguments beside it. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
         print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
         # 🐛 `--help` printed the docstring and stopped, and the docstring explains what the map is
         # FOR — not that the command takes five flags. So `--preview`, `--explain`, `--measure` and
@@ -514,6 +556,33 @@ def main(argv):
         _anyway = mapper.render(files, root)
         if not any(h in _anyway for h in ("## Deployment", "## Stored material",
                                           "## Source chamnan cannot index")):
+            # 🐛 [2026-09-07] This returned 1 in silence, and the silence hides a CLIFF. The
+            # "another route" above is the Stored-material section, which `assets.MIN_FILES`
+            # requires 12 files to open — so a documentation repository of ELEVEN markdown files
+            # gets exit 1 and no map, and the same repository with a twelfth gets a written index.
+            # Measured at exactly that boundary. Both outcomes are defensible; being given one of
+            # them with no way to know the other exists is not, and a docs repo is a shape a new
+            # user arrives with (R7 agent 2).
+            #
+            # The reasons above are true and stay. This adds the one fact that explains the
+            # difference, and only when the tree is actually near the floor — saying it for an
+            # empty directory would be noise.
+            # 🐛 [2026-09-07] The BIGGEST directory's count, not the global sum. `assets.scan()`
+            # applies the floor per top-level directory, so the question that decides whether a map
+            # gets written is "did any ONE directory clear it", and a global sum answers a different
+            # one: twelve unreadable files split six-and-six across two directories summed to 12,
+            # skipped this branch, and left the user with the silent exit 1 this exists to explain
+            # (R12 agent 2).
+            _unread = max(mapper.SKIPPED_UNKNOWN_DIR.values(), default=0)
+            _total = sum(mapper.SKIPPED_UNKNOWN_DIR.values())
+            if 0 < _unread < assets_mod.MIN_FILES:
+                _spread = ("" if _total == _unread else
+                           f" ({_total} in total, but the count is per directory, so spreading them "
+                           f"across directories lowers it rather than raising it)")
+                print(f"  {_unread} file(s) chamnan does not index in any one directory{_spread} is "
+                      f"below the {assets_mod.MIN_FILES} it takes to describe a directory as stored "
+                      f"material, so there is nothing to write. A repository with that many in one "
+                      f"directory does get a map.", file=sys.stderr)
             return 1
         print("  chamnan can still describe this tree by another route — writing the map.",
               file=sys.stderr)

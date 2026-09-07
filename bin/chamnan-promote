@@ -116,7 +116,12 @@ def _origin_for(src, root):
 
 
 def main(argv):
-    if not argv or argv[0] in ("-h", "--help"):
+    # Before help. These three answer help for a BARE call too, so `--version` has to be
+    # tested first or it would print usage instead. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if not argv or ws.wants_help(argv):
         # Same reason as chamnan-map: this command COPIES a file, so the flag a cautious
         # user tries first must not be the one that does it.
         print(__doc__.strip() if __doc__ else

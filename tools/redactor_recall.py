@@ -29,6 +29,19 @@ import redact  # noqa: E402
 
 _F = "0123456789abcdefghij"          # filler that is never a real key
 
+# ---------------------------------------------------------------- personal data, not credentials
+# Both numbers below are SYNTHETIC and built from public arithmetic: `4111 1111 1111 1111` is the
+# card number every payment provider documents as a test value, and the national ID is generated
+# here from the published checksum. Neither has ever belonged to anybody.
+def _thai_id(base="110170123456"):
+    weighted = sum(int(base[i]) * (13 - i) for i in range(12))
+    return base + str((11 - weighted % 11) % 10)
+
+
+_TID = _thai_id()
+_TID_DASHED = f"{_TID[0]}-{_TID[1:5]}-{_TID[5:10]}-{_TID[10:12]}-{_TID[12]}"
+
+
 # (label, text, the substring that must disappear)
 POSITIVES = [
     ("openai key",            f"OPENAI_KEY = 'sk-{_F}{_F}{_F}'",            f"sk-{_F}"),
@@ -101,11 +114,52 @@ POSITIVES = [
 ]
 
 # Must survive untouched. An index full of <REDACTED> is not an index.
+_TO_THAI = str.maketrans("0123456789", "\u0e50\u0e51\u0e52\u0e53\u0e54\u0e55\u0e56\u0e57\u0e58\u0e59")
+_TO_ARABIC = str.maketrans("0123456789", "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669")
+_TO_FULLWIDTH = str.maketrans("0123456789", "\uff10\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18\uff19")
+_TID_THAI = _TID.translate(_TO_THAI)
+_TID_THAI_DASHED = _TID_DASHED.translate(_TO_THAI)
+_TID_ARABIC = _TID.translate(_TO_ARABIC)
+_PAN_FULLWIDTH = "4111111111111111".translate(_TO_FULLWIDTH)
+
+PERSONAL = [
+    # A credential has a NAME beside it to anchor on; personal data has none, so the anchor is the
+    # number's own checksum PLUS its context. Both halves are required, which is why the decoys
+    # further down matter as much as these do.
+    ("visa, grouped",      "Test card 4111 1111 1111 1111 for the sandbox", "4111 1111 1111 1111"),
+    ("visa, hyphenated",   "card=4111-1111-1111-1111",                     "4111-1111-1111-1111"),
+    ("amex, grouped",      "AMEX 3782 822463 10005 on file",               "3782 822463 10005"),
+    ("mastercard + word",  "credit_card_number = 5555555555554444",        "5555555555554444"),
+    ("thai id, dashed",    f"ผู้ป่วย {_TID_DASHED} เข้ารับบริการ",             _TID_DASHED),
+    ("thai id + th word",  f"เลขประจำตัวประชาชน {_TID}",                     _TID),
+    ("thai id + en word",  f"national_id = {_TID}",                        _TID),
+    # 🐛 [2026-09-07] Every pattern is written in ASCII `[0-9]`, which does not match a Thai digit —
+    # so a checksum-valid ID typed the ordinary way in the one market this plugin was built for
+    # went through untouched, beside the Thai keyword the pattern looks for. Found independently by
+    # two agents in one round. These four are the scripts a real user of this tool would actually
+    # type in; the fold behind them covers Devanagari and Tamil too, which no corpus entry claims.
+    ("thai id, thai digits", f"เลขประจำตัวประชาชน {_TID_THAI}",              _TID_THAI),
+    ("thai id, thai dashed", f"บัตรประชาชน {_TID_THAI_DASHED}",              _TID_THAI_DASHED),
+    ("thai id, arabic-indic", f"national id {_TID_ARABIC}",                 _TID_ARABIC),
+    ("visa, fullwidth",    f"card {_PAN_FULLWIDTH}",                        _PAN_FULLWIDTH),
+    # Separators a spreadsheet or a PDF copy-paste actually produces. The dot form passed through
+    # whole with the word "card" on the same line.
+    ("visa, dotted",       "card 4111.1111.1111.1111",                      "4111.1111.1111.1111"),
+    ("visa, nbsp",         "card 4111\u00a01111\u00a01111\u00a01111",       "4111\u00a01111\u00a01111\u00a01111"),
+]
+
 NEGATIVES = [
     # Ordinary identifiers that contain a secret word as a SUBSTRING. Every one of these was being
     # destroyed: `token`, `secret` and `credential` were bare substrings while `key` and `auth`
     # beside them were carefully bounded — the same bug, left in the words nobody re-read.
-    ("tokenizer attr",   "self.tokenizer_config = AutoTokenizer.from_pretrained(model_name)"),
+    # The dot and NBSP separators added 2026-09-07 widen the grouped-card net, so the shapes that
+    # net could plausibly eat are pinned here rather than argued about.
+    ("dotted version",   "release = 1.2.3.4 and build 2026.09.07.1234"),
+    ("ipv4 address",     "upstream 192.168.100.1 proxies to 10.0.0.254"),
+    ("dotted date",      "expires 2026.12.31.0000 in the fixture"),
+    ("isbn-13",          "ISBN 978-3-16-148410-0 on the shelf"),
+    ("phone with nbsp",  "call +66\u00a02\u00a0123\u00a04567 during office hours"),
+    ("self.tokenizer",   "self.tokenizer_config = AutoTokenizer.from_pretrained(model_name)"),
     ("detokenize name",  "detokenize_output_text = join_pieces(chunks)"),
     ("retokenized name", "retokenized_batch = pad_and_stack(items)"),
     ("credentialing",    "credentialing_deadline = 2026-12-01"),
@@ -124,6 +178,18 @@ NEGATIVES = [
     ("certificate block",  "-----BEGIN CERTIFICATE-----\nMIID\n-----END CERTIFICATE-----"),
     ("authors list",       "AUTHORS=alexander,brigitte"),
     ("credential provider","credential_provider: environment"),
+    # The personal-data layer's decoys. A checksum ALONE passes 9.8% of random 16-digit numbers and
+    # 10.0% of epoch-millisecond timestamps — measured before that layer was designed, and the
+    # reason it requires context as well. Every line here would be destroyed by a rule that trusted
+    # the arithmetic on its own.
+    ("epoch milliseconds",  "created_at = 1757203845123"),
+    ("order number",        "order 4111111111111112 shipped"),
+    ("bare 16 digits",      "row_id = 5555555555554444"),
+    ("bare 13 digits",      f"seq {_TID} next"),
+    ("card checksum wrong", "card 4111 1111 1111 1112 declined"),
+    ("thai id sum wrong",   f"ref {_TID_DASHED[:-1]}{(int(_TID[12]) + 1) % 10}"),
+    ("phone number",        "call +66 2 123 4567 for support"),
+    ("port list",           "ports 8080 9090 3000 5432"),
     ("hash algorithm",     "password_hash_algorithm = bcrypt"),
     ("url without creds",  "https://api.example.com/v1/things?page=2"),
     ("function name",      "def rotate_access_key(client): ..."),
@@ -153,20 +219,24 @@ NEGATIVES = [
 def main():
     verbose = "--verbose" in sys.argv
     caught, missed = [], []
-    for label, text, secret in POSITIVES:
+    for label, text, secret in POSITIVES + PERSONAL:
         (caught if secret not in redact.scrub(text) else missed).append(label)
 
     clean, eaten = [], []
     for label, text in NEGATIVES:
         (eaten if redact.PLACEHOLDER in redact.scrub(text) else clean).append(label)
 
-    recall = len(caught) / len(POSITIVES) * 100
+    recall = len(caught) / (len(POSITIVES) + len(PERSONAL)) * 100
     # Precision here is over this corpus: of everything redacted, how much deserved it. A labelled
     # corpus cannot give the precision a repo-wide scan would; it can give the pair honestly.
     flagged = len(caught) + len(eaten)
     precision = len(caught) / flagged * 100 if flagged else 0.0
 
-    print(f"recall     {recall:5.1f}%   ({len(caught)}/{len(POSITIVES)} secret shapes redacted)")
+    # 🐛 The denominator was `len(POSITIVES)` while the numerator counted the personal-data corpus
+    # too, so the line read "48/42" — a rate over 100% printed as if it were a result. A number
+    # this file exists to publish must be arithmetic somebody can check.
+    print(f"recall     {recall:5.1f}%   ({len(caught)}/{len(POSITIVES) + len(PERSONAL)} "
+          f"secret and personal-data shapes redacted)")
     print(f"precision  {precision:5.1f}%   ({len(caught)}/{flagged} redactions deserved)")
     print(f"           {len(eaten)}/{len(NEGATIVES)} ordinary strings damaged")
 

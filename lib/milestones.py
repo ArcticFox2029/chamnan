@@ -72,7 +72,42 @@ def entries(root):
     out = []
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
-        out.append((m.group(1), m.group(2), text[m.end():end].strip()))
+        title = m.group(2)
+        # 🐛 [2026-09-07] `append()` folds newlines out of a title now, so no NEW entry can be
+        # split in two by one. That says nothing about the entries already in the file, and this
+        # file is COMMITTED — a clone carries whatever its author put there, and an install from
+        # before the fold wrote titles raw. A title holding "\n## <date> — <text>" therefore
+        # produces a second entry that HEAD's own fixed reader trusts completely, and because the
+        # date is attacker-chosen it sorts to the top of the two titles the session is shown.
+        # Reproduced against HEAD today: the planted entry won the "most recent" slot.
+        #
+        # The tell is structural rather than semantic: `render_entry` always leaves a blank line
+        # under its heading, so a heading whose PREVIOUS line is another heading was not written by
+        # this code. Flagged, never dropped — the owner's rule is that nothing here is deleted, and
+        # a reader who is told which line is suspect can fix the file, while a reader who is shown
+        # nothing cannot.
+        # \U0001f41b [2026-09-07] Look at the line immediately above, and at nothing else. The first
+        # version did `text[:m.start()].rstrip("\n")` and then asked whether what was left ended in
+        # a heading, which cannot tell "no blank line between them" from "a blank line, and a
+        # heading above THAT" -- `rstrip` removes the separator it is trying to detect. It was
+        # wrong in both directions: two legitimate field-less entries in a row were flagged (a
+        # shape `render_entry`'s own docstring designs for), and a single trailing SPACE on the
+        # blank line -- invisible in every editor, and inserted by many of them automatically --
+        # made the real forgery undetectable, because `rstrip("\n")` stops at the space (R12 a2).
+        #
+        # `render_entry` always leaves exactly one EMPTY line above a heading. So the test is
+        # whether the previous line is that empty line. A space-only line is not what this code
+        # writes either, and it is now flagged rather than trusted -- which is the right direction
+        # for a tell whose whole job is "this was not written by chamnan".
+        _above = text[:m.start()].split("\n")
+        # `text[:m.start()]` ends at the newline before the heading, so its last element is "" and
+        # the line the reader sees above the heading is the one before that.
+        split_off = len(_above) >= 2 and _above[-2] != ""
+        if split_off:
+            title = (title + " ⚠ this heading follows another with no blank line between them, "
+                     "which is not how chamnan writes one — it may have been split out of the "
+                     "title above by a newline. Check .chamnan/milestones.md.")
+        out.append((m.group(1), title, text[m.end():end].strip()))
     return out
 
 
@@ -86,7 +121,10 @@ def recent_titles(root, count=INJECT_RECENT):
     # that says "newest first", and pushed the genuinely second-newest out of the list entirely.
     # An undated entry sorts last rather than being dropped: it still happened.
     ordered = sorted(found, key=lambda e: (e[0] or "", ), reverse=True)
-    lines = [f"- **{mdblock.one_line(date)}** — {mdblock.one_line(title)}"
+    # `count=2` bounds how MANY milestones are shown and says nothing about how long each is: one
+    # ordinary "what happened and why" title, written the way `/chamnan:milestone` invites, measured
+    # 165 tokens on its own.
+    lines = [f"- **{mdblock.one_line(date)}** — {mdblock.one_line_capped(title)}"
              for date, title, _ in ordered[:count]]
     if len(found) > count:
         lines.append(f"- _…{len(found) - count} earlier in `.chamnan/{FILENAME}`_")
@@ -115,16 +153,22 @@ def append(root, entry_text):
     Returns the path written. The caller is responsible for the entry's content; this only owns
     where it goes and that the file keeps its shape.
     """
+    # 🐛 [2026-09-07] Read the whole file, append in memory, write it back — with no lock, so the
+    # last writer's snapshot became the entire file. Six processes appending one milestone each:
+    # FIVE VANISHED, valid Markdown throughout, no error anywhere. This is the highest-value store
+    # in the workspace, because a milestone is the one thing here a person typed a reason for, and
+    # two accounts on one machine both running /chamnan:milestone in the same minute is an ordinary
+    # afternoon rather than an edge case (R7 agent 5).
+    #
+    # The read has to happen INSIDE the lock, which is why this is `rewrite_shared` rather than a
+    # lock wrapped around the write: reading first and locking second leaves the same race with a
+    # smaller window, which is the version of this fix that looks right and is not.
     p = path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    existing = ""
-    if p.is_file():
-        try:
-            existing = p.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
-            existing = ""
-    if not existing.strip():
-        existing = HEADER + "\n"
-    body = existing.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
-    ws.write_or_raise(p, body)
+
+    def _appended(existing):
+        if not (existing or "").strip():
+            existing = HEADER + "\n"
+        return existing.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
+
+    ws.rewrite_shared(p, _appended)
     return p

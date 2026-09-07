@@ -170,6 +170,6 @@ def line(wsdir, path, display=str):
     rows = partners(wsdir, path)
     if not rows:
         return ""
-    parts = ", ".join(f"`{mdblock.one_line(display(b))}` ({p * 100:.0f}%)"
+    parts = ", ".join(f"`{mdblock.as_quoted(display(b))}` ({p * 100:.0f}%)"
                      for b, _, p in rows)
     return f"_You usually change {parts} right after this one._"
