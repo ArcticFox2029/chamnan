@@ -64,7 +64,10 @@ def listing(slug):
 def measure(slug):
     work = pathlib.Path(tempfile.mkdtemp(prefix="remeasure-"))
     try:
-        subprocess.run(["git", "clone", "--depth", "1", "-q",
+        # `--no-checkout`: every blob is fetched, none is written to the filesystem. The contents
+        # come out of the object database below, so a working tree is pure cost -- and on a
+        # case-insensitive one it is worse than cost.
+        subprocess.run(["git", "clone", "--depth", "1", "-q", "--no-checkout",
                         f"https://github.com/{slug}.git", str(work / "r")], check=True)
         repo = work / "r"
         exts = {e.lower() for e in mapper.EXT_LANG}
@@ -73,18 +76,22 @@ def measure(slug):
                 if "." in p.rsplit("/", 1)[-1] and ("." + p.rsplit(".", 1)[-1]).lower() in exts]
         take = [(p, s) for p, s in want if s <= TOO_BIG][:CAP]
 
-        # Keep only the chosen files, so mapper.scan sees exactly what the page's MEMFS holds.
-        keep = {p for p, _ in take}
+        # Written out one blob at a time from the object database, not copied from the working
+        # tree. A clone on a case-insensitive filesystem checks out only one of
+        # `xt_CONNMARK.h` / `xt_connmark.h`, and torvalds/linux has 13 such pairs -- a copy loop
+        # reads the tree and silently measures 13 files short, with a warning that scrolls past.
+        # `git cat-file` does not care what the filesystem can hold.
         source_bytes = 0
         staged = work / "repo"
-        for p in keep:
-            src = repo / p
-            if not src.is_file():
+        for path, _size in take:
+            blob = subprocess.run(["git", "-C", str(repo), "cat-file", "blob", f"HEAD:{path}"],
+                                  capture_output=True)
+            if blob.returncode != 0:
                 continue
-            dst = staged / p
+            dst = staged / path
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(src, dst)
-            source_bytes += dst.stat().st_size
+            dst.write_bytes(blob.stdout)
+            source_bytes += len(blob.stdout)
 
         mapper.reset_skips()
         files = list(mapper.scan(staged))

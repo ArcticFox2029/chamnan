@@ -41,9 +41,12 @@ def check(name, condition):
         print(f"[FAIL] {name}")
 
 
-def _tools_worker(root, n):
+def _tools_worker(root, n, timeout=None):
     sys.path.insert(0, LIB)
     import tools_index
+    if timeout is not None:
+        import workspace as ws
+        ws.LOCK_TIMEOUT = timeout
     for _ in range(n):
         tools_index.record_call(pathlib.Path(root), "t.sh", False, False)
 
@@ -143,6 +146,31 @@ if __name__ == "__main__":
     runs = json.loads(
         (root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))[0]["runs"]
     check(f"EVERY ONE OF 400 CONCURRENT INCREMENTS IS RECORDED (got {runs})", runs == 400)
+
+    # --- the same store, on a machine forty times slower than this one ------------------------
+    # 🐛 [2026-09-08] The check above passed on macOS and ubuntu and failed on Windows, at 41 of
+    # 400 -- and nothing on a Mac could see it, so it cost a push and a CI round trip to learn
+    # each time. It is not a Windows bug in the sense of a Windows API: LOCK_TIMEOUT was a ceiling
+    # on TOTAL waiting, and 400 turns through a lock drain inside 2 seconds only if a turn is
+    # cheap. Windows' turns are not cheap, waiters gave up, and `exclusive` yielding False means
+    # the caller writes unguarded.
+    #
+    # Shrinking the ceiling is the same experiment as slowing the disk, and it runs anywhere. At
+    # 0.05 s -- the 40x that separates the two platforms, measured from Windows' own 41/400 --
+    # macOS reproduced it at 389/400 before the fix and records all 400 after it. So this is the
+    # check that would have found it here rather than there, and it is the reason to reach for a
+    # squeeze rather than a second machine the next time a platform column disagrees.
+    root = pathlib.Path(tempfile.mkdtemp())
+    (root / ".chamnan" / "tools").mkdir(parents=True)
+    (root / ".chamnan" / "tools" / "index.json").write_text(
+        json.dumps([{"name": "t.sh", "desc": "x", "runs": 0}]), encoding="utf-8")
+    procs = [Process(target=_tools_worker, args=(str(root), 50, 0.05)) for _ in range(8)]
+    [p.start() for p in procs]
+    [p.join() for p in procs]
+    slow = json.loads(
+        (root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))[0]["runs"]
+    check(f"...AND ON A LOCK CEILING 40x TIGHTER, WHICH IS WHAT WINDOWS IS (got {slow})",
+          slow == 400)
 
     # --- the command log ---------------------------------------------------------------------
     # The append path is safe on its own; the periodic trim is a truncate-and-overwrite built from
