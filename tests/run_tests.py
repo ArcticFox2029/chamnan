@@ -8997,6 +8997,35 @@ check("...while a repository with nothing skipped says nothing about it",
 _rmtree(_sk_clean.parent, ignore_errors=True)
 _rmtree(_sk.parent, ignore_errors=True)
 
+# 🐛 [2026-09-07] The THIRD section with a count cap and no token budget, after routes/configuration
+# and the deployment section — both fixed from the same diagnosis, one of them the day before.
+# `DETAIL_LIMIT` bounded how many tables got a detailed line and nothing bounded what a line cost,
+# so 40 tables with an ordinary 140-character summary rendered 3,866 tokens against a 3,000-token
+# index budget. The cliff was INVERTED, which is why nobody noticed: 41 tables took the names-only
+# branch at 674 tokens while 40 took the detailed one at 3,866 (R5 acc3).
+def _schema_fake(n, summary=140):
+    return [{"name": f"customer_billing_events_{i:03d}", "summary": "S" * summary,
+             "source": f"db/migrations/{i:04d}_create_table.sql", "columns": []}
+            for i in range(n)]
+_sch_40 = schema.render(_schema_fake(40))
+check("ONE OPTIONAL SECTION CANNOT COST MORE THAN THE WHOLE INDEX BUDGET",
+      tokens.estimate(_sch_40) < 1200)
+# The names-only branch had no budget either, which is the same defect one branch over.
+check("...and a very large schema costs no more than a merely large one",
+      tokens.estimate(schema.render(_schema_fake(2000))) < 1200)
+# Falling back to names-only rather than to a handful of detailed rows: a cut that names 5 of 40
+# tables is worse than one naming all 40 without summaries. `rollup.collapse` settles this for the
+# index — coarse and complete beats detailed and arbitrarily half-missing.
+check("...while a schema small enough to describe in full still gets its summaries",
+      " — SSS" in schema.render(_schema_fake(5)))
+check("...and every table a session might grep for is still named at that size",
+      all(f"events_{i:03d}" in schema.render(_schema_fake(5)) for i in range(5)))
+# What is dropped is named as a number, never silently cut.
+check("...and a schema too large to name in full says how many it left out",
+      "not named here" in schema.render(_schema_fake(2000)))
+# A repository with no data model must see no trace of the feature at all.
+check("...and a repository with no schema gets no section", schema.render([]) == "")
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
