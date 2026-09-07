@@ -8915,6 +8915,52 @@ check("THE CARRY-FORWARD CAP IS PRICED IN TOKENS, NOT CHARACTERS",
 check("...so a Thai record is cut where an English one of the same COST is",
       tokens.cut_at(_carry_th, sessions.MAX_CARRY_TOKENS) < 750)
 
+# 🐛 [2026-09-07] `git_owns` answers False for "not a repository" AND for "git is not installed",
+# and every caller treated both as nothing to say. For the first that is right; for the second it is
+# a silent failure in a plugin whose session block is built out of git — "Where the last session
+# stopped" simply vanished with no diagnostic, so the reader concludes chamnan has nothing to tell
+# them rather than that it cannot look (R10 agent 1).
+_ng = Path(tempfile.mkdtemp(prefix="chamnan-nogit-")) / "r"
+(_ng / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_ng, capture_output=True)
+(_ng / "src" / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+(_ng / "src" / "b.py").write_text("x = 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ng, capture_output=True)
+_ng_empty = Path(tempfile.mkdtemp(prefix="chamnan-emptybin-"))
+def _ng_block(path_env):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+        input='{"hook_event_name":"SessionStart","source":"startup"}', capture_output=True,
+        text=True, encoding="utf-8", errors="replace", cwd=_ng,
+        env={**os.environ, "PATH": path_env, "CLAUDE_PROJECT_DIR": str(_ng)}).stdout
+check("A MACHINE WITHOUT GIT IS TOLD SO, NOT LEFT WITH A MISSING SECTION",
+      "not on this machine's PATH" in _ng_block(str(_ng_empty)))
+# And the ordinary case must not gain a line it never had — a diagnostic that fires when nothing is
+# wrong is the failure this whole block spends its comments avoiding.
+check("...while a machine that HAS git says nothing about it",
+      "not on this machine's PATH" not in _ng_block(os.environ["PATH"]))
+# The two causes stay distinct: a directory that is genuinely not a repository is still silent,
+# because there is genuinely nothing to report there.
+_ng_bare = Path(tempfile.mkdtemp(prefix="chamnan-notrepo-"))
+check("...and a directory that is not a repository is still silent",
+      sessions.where_git_says_you_stopped(_ng_bare) == "")
+_rmtree(_ng_bare, ignore_errors=True)
+_rmtree(_ng_empty, ignore_errors=True)
+_rmtree(_ng.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] Windows ships a `python3.exe` App Execution Alias stub when no real Python is
+# installed: on PATH, exists, and running it prints an error and opens the Store. The installer's
+# candidate loop committed to the first name that EXISTED and never asked whether it WORKED, so the
+# stub's error text parsed to version "was" and the script reported "python was — too old". A new
+# Windows user was told to upgrade a Python they do not have (R10 agent 1).
+_ck = (ROOT / "install" / "chamnan-check.sh").read_text(encoding="utf-8-sig")
+check("THE INSTALLER ASKS WHETHER A PYTHON ON PATH ACTUALLY RUNS",
+      '"$candidate" -V >/dev/null 2>&1 || continue' in _ck)
+# And when something answers but not with a version, "too old" is the wrong advice — the number it
+# would quote is not a number.
+check("...and does not call an unparseable version 'too old'",
+      'it does not report a version' in _ck and '[ "$MAJ" != 0 ]' in _ck)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
