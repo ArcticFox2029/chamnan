@@ -708,6 +708,20 @@ def hook_root(payload=None):
     for c in candidates:
         if not c:
             continue
+        # 🐛 [2026-09-07] `payload["cwd"]` is whatever the host put in the JSON, and `pathlib.Path`
+        # raises TypeError on anything that is not a path-like. A dict, a list or a number there
+        # killed chamnan_session_start.py outright — exit 1, ZERO bytes of stdout, a traceback the
+        # transcript never sees — and that hook is the one hook of six deliberately NOT wrapped in
+        # `_never_fail_the_session`, on the stated reasoning that it "has something partial worth
+        # emitting". It has nothing partial to emit when it dies on its first line. The reasoning is
+        # sound and the crash simply happened before it could apply, so the fix is here, where a
+        # malformed payload becomes "no candidate" rather than an exception (R7 agent 9).
+        #
+        # Not `str(c)`: that would turn `{"a": 1}` into a directory name and search for it. A value
+        # of the wrong type carries no path, and the next candidate — or `find_root()` — is the
+        # right answer.
+        if not isinstance(c, (str, bytes, os.PathLike)):
+            continue
         # 🐛 [found by CI on its first run] Resolved, because find_root() resolves and everything
         # downstream mixes the two. The host hands over the path it was given -- on macOS `/tmp`
         # and `/var` are symlinks, and plenty of people keep a project behind one -- so this
