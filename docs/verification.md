@@ -13,17 +13,21 @@ python3 tests/run_tests.py
 Expected output:
 
 ```
-220/220 checks passed
+N/N checks passed
 ```
 
-Exit status `0`. The count changes as checks are added — what matters is that both numbers match.
+Exit status `0`. The two numbers are what matters, not their value: the count grows every time a
+check is added, and a figure written here would be stale within the week. It has been in the
+thousands since well before 1.0 — this block used to print `220/220`, a snapshot from an early
+release that survived the suite growing more than tenfold past it, and a reader who took it
+literally would have concluded a correct run was broken.
 
 A failure prints each failed check by name before the total, and exits `1`:
 
 ```
   FAIL  <name of the check>
 
-219/220 checks passed
+N-1/N checks passed
 ```
 
 There is no pytest, no fixtures directory and no configuration file. A check is a call to

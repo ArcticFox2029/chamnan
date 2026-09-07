@@ -17,3 +17,7 @@ open the file that no longer holds what it says.
 
 If the described-coverage percentage fell, new files arrived without an opening comment. Say which
 ones, and offer the `commenter` agent.
+
+`chamnan-map --undocumented` is where the full list comes from — one path per line, all of them.
+The rebuild's own output names at most eight, as examples; a session that treats those eight as the
+list will fix eight and report the gap as closed.

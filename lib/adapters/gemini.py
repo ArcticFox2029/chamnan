@@ -54,12 +54,30 @@ def render(body):
     }, ensure_ascii=False)
 
 
-def _entry(command):
+# 🐛 [2026-09-06] This registered ONE group, `"matcher": "startup"`. Gemini's own hooks reference
+# says `matcher` on a lifecycle event is an EXACT STRING, and that SessionStart's `source` is one of
+# "startup" | "resume" | "clear" -- so chamnan's block reached a Gemini user on a cold start and
+# never again. A `--resume`d session got nothing, and neither did `/clear`, which is the moment a
+# user most needs the index back, because `/clear` is what just threw it away.
+#
+# The file's own docstring already said the event "fires on startup, resume and `/clear`", so this
+# was not a decision written down anywhere -- it was the same rule applied to one member of a set
+# and not the other two. chamnan's Claude Code registration (`hooks/hooks.json`) sets no matcher at
+# all on SessionStart, which means every source: the two agents now agree. Exactly one group can
+# match a given session, so this is three registrations, not three runs.
+SOURCES = ("startup", "resume", "clear")
+
+
+def _entry(command, source):
     return {
-        "matcher": "startup",
+        "matcher": source,
         "hooks": [{"name": HOOK_NAME, "type": "command", "command": command,
                    "timeout": TIMEOUT_MS}],
     }
+
+
+def _entries(command):
+    return [_entry(command, source) for source in SOURCES]
 
 
 def _is_ours(group):
@@ -119,15 +137,15 @@ def install(root, body, command):
             raise ValueError(f"{path} has a `hooks.SessionStart` that is not a list")
 
         # Replace ours in place rather than appending, so re-running install is idempotent and an
-        # upgraded plugin path is corrected instead of duplicated.
-        replaced = False
-        for i, group in enumerate(groups):
-            if _is_ours(group):
-                groups[i] = _entry(command)
-                replaced = True
-                break
-        if not replaced:
-            groups.append(_entry(command))
+        # upgraded plugin path is corrected instead of duplicated. ALL of ours are removed, not the
+        # first: this used to write one group and now writes one per source, so an install over a
+        # 1.21.x registration has to leave three behind rather than one corrected and two appended.
+        _ours = [i for i, group in enumerate(groups) if _is_ours(group)]
+        at = _ours[0] if _ours else len(groups)
+        for i in reversed(_ours):
+            del groups[i]
+        groups[at:at] = _entries(command)
 
-        write_target(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n")
+        if not write_target(target, json.dumps(settings, indent=2, ensure_ascii=False) + "\n"):
+            raise OSError(f"{target.path} could not be written")
         return path

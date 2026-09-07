@@ -24,6 +24,8 @@ import datetime
 import subprocess
 import re
 import mdblock
+from pathlib import Path
+import workspace as ws
 import time
 
 # Written by skills/resume. Deliberately flat markdown with no frontmatter: the file is meant to be
@@ -39,6 +41,45 @@ CARRIED = ("Remaining", "Blockers")
 MAX_CARRY_CHARS = 1200
 
 _DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+
+
+def _interrupted_by(root):
+    """(what git is in the middle of, how to finish it, how to undo it), or None.
+
+    git does not put this in `status --porcelain` -- a conflicted merge shows as `UU path` and a
+    rebase shows as an ordinary dirty tree, neither of which says "you are stuck". The state lives
+    as marker files inside the git directory, which is the cheapest and most reliable place to read
+    it: no extra subprocess on a path that already spends three.
+
+    Order matters. A rebase that hits a conflict leaves BOTH a rebase directory and, for some
+    strategies, merge markers; naming it a merge would send the reader at `git merge --abort`,
+    which is not the command that gets them out.
+    """
+    git_dir = Path(root) / ".git"
+    if git_dir.is_file():
+        # A linked worktree: `.git` is a file holding `gitdir: <path>`, and the state lives there.
+        try:
+            pointed = git_dir.read_text(encoding="utf-8-sig", errors="replace").strip()
+        except OSError:
+            return None
+        if not pointed.startswith("gitdir:"):
+            return None
+        git_dir = Path(pointed.split(":", 1)[1].strip())
+        if not git_dir.is_absolute():
+            git_dir = (Path(root) / git_dir).resolve()
+    for marker, what, finish, undo in (
+            ("rebase-merge", "a rebase", "git rebase --continue", "git rebase --abort"),
+            ("rebase-apply", "a rebase", "git rebase --continue", "git rebase --abort"),
+            ("CHERRY_PICK_HEAD", "a cherry-pick",
+             "git cherry-pick --continue", "git cherry-pick --abort"),
+            ("REVERT_HEAD", "a revert", "git revert --continue", "git revert --abort"),
+            ("MERGE_HEAD", "a merge", "git commit", "git merge --abort")):
+        try:
+            if (git_dir / marker).exists():
+                return what, finish, undo
+        except OSError:
+            return None
+    return None
 
 
 def directory(root):
@@ -76,7 +117,12 @@ def records(root):
         except OSError:
             mtime = 0.0
         return (bool(m), m.group(0) if m else "", mtime)
-    return sorted((p for p in d.glob("*.md") if p.is_file()), key=_key, reverse=True)
+    # Same refusal as threads/, candidates/ and memory/. This one is the worst of the four: a
+    # session record is read by the SessionStart hook with no user action at all, so a planted link
+    # put a file's title and structure into every session's block automatically.
+    return sorted((p for p in d.glob("*.md")
+                   if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root)),
+                  key=_key, reverse=True)
 
 
 def latest(root):
@@ -117,7 +163,7 @@ def _sections(text):
 
 
 def title_of(path, text=None):
-    text = text if text is not None else path.read_text(encoding="utf-8", errors="replace")
+    text = text if text is not None else path.read_text(encoding="utf-8-sig", errors="replace")
     for line in text.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
@@ -146,9 +192,28 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
     unfinished, never why, and a real record supersedes it entirely. This is the floor, not a
     replacement.
     """
+    if not ws.git_owns(root):
+        # 🐛 [2026-09-06] Without this, a directory holding a `.git` git itself refuses -- an
+        # interrupted `git init`, a copied-without-contents `.git` -- made every call below walk up
+        # and answer about the nearest REAL repository above it. Reproduced: this section reported
+        # "10 uncommitted file(s)" and named a branch, for a directory containing one file and no
+        # commits at all; both numbers were the ancestor's (R6 acc3, first ten minutes).
+        return ""
     try:
+        # 🐛 [2026-09-06] chamnan's OWN workspace was counted as the user's uncommitted work. git
+        # folds an entirely-untracked directory into one `??` line, so the scaffold this plugin
+        # creates on its first run -- .gitattributes, .gitignore, .version, config.json, no user
+        # content at all -- added exactly +1 to the count on every session until somebody committed
+        # `.chamnan/`, which nothing ever tells them to do. On a clean tree it did worse than
+        # inflate: it produced the whole section, reading "1 uncommitted file(s), and nobody
+        # recorded what for", which is flatly false (R15 agent 6).
+        #
+        # Excluded rather than counted, and that is the right direction even once `.chamnan/` IS
+        # committed: this section answers "where did I stop", and STATE.md changing every session
+        # is not an answer to it.
+        _ws_rel = ws.workspace(root).name
         st = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
-                             "status", "--porcelain"],
+                             "status", "--porcelain", "--", ".", f":(exclude){_ws_rel}"],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
                             timeout=5)
         if st.returncode != 0:
@@ -178,6 +243,14 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
     except (OSError, subprocess.SubprocessError):
         return ""
 
+    # 🐛 [2026-09-06] A session resumed in the middle of a rebase or a conflicted merge was told it
+    # had an ordinary dirty tree -- a file count and a branch name -- and the one fact that changes
+    # what the reader should do next was dropped: you are stuck, and the way out is `--continue` or
+    # `--abort` (R6 acc3, unusual repositories). git records the state in its own directory rather
+    # than in `status --porcelain`'s first two columns, so it has to be asked separately. Read from
+    # disk, not from another `git` call: this is a section that already costs three subprocesses.
+    interrupted = _interrupted_by(root)
+
     # Paths come from the repository, so they are made inert the way every other repository-authored
     # string in the injected block is. The caller scrubs.
     names, more = [], max(0, len(lines) - limit)
@@ -193,6 +266,10 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
         where = f" on `{mdblock.as_quoted(branch, 40)}`" if branch else ""
     lead = (f"**Where the last session stopped**, as the working tree has it{where} — "
             f"nobody recorded it, so this is git's answer rather than anyone's:\n")
+    if interrupted:
+        lead = (f"**This repository is in the middle of {interrupted[0]}**{where} — that is why the "
+                f"tree looks like this. Finish it with `{interrupted[1]}` or undo it with "
+                f"`{interrupted[2]}` before treating anything below as work in progress:\n")
     if not name_files:
         # 🐛 Claude Code injects its own `gitStatus` block once per session, and on a dirty tree it
         # already lists every changed file with no truncation, before any hook runs. Measured on
@@ -216,7 +293,7 @@ MAX_CARRIED_RECORDS = 3
 def _outstanding(path):
     """(title, body) of what one record leaves unfinished, or None when it leaves nothing."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
     found = _sections(text)
@@ -264,7 +341,13 @@ def carry_forward(root):
 
     when = newest.group(1) if newest else found[0].stem
     if len(carried) == 1:
-        head = f"_Last session ({when}) — {carried[0][0]}_"
+        # 🐛 The title went in raw HERE and through `one_line` in the branch below -- the same
+        # value, two lines apart, guarded on one path and not the other. A record whose `# Title`
+        # carried an ESC/OSC terminal-title sequence and a bidi override reached the injected
+        # block byte-for-byte, and only when the repository had exactly ONE unfinished record,
+        # which is the common case. The suite never saw it because the hostile fixture's record
+        # was dated old enough for retention to delete it before the hook read anything.
+        head = f"_Last session ({when}) — {mdblock.one_line(carried[0][0])}_"
         body = carried[0][1]
     else:
         head = f"_Last session ({when}) — {len(carried)} records, all unfinished_"
@@ -299,7 +382,9 @@ def prune(root, days):
         return 0
     cutoff = time.time() - days * 86400
     removed = 0
-    for path in d.glob("*.md"):
+    candidates = [q for q in d.glob("*.md") if q.is_file() and not ws.is_store_index(q)]
+    doomed = []
+    for path in candidates:
         try:
             if not path.is_file():
                 continue
@@ -324,11 +409,17 @@ def prune(root, days):
                     age = None      # an impossible date is not a date; fall back to mtime
             if age is not None:
                 if age > days * 86400:
-                    path.unlink()
-                    removed += 1
+                    doomed.append(path)
             elif path.stat().st_mtime < cutoff:
-                path.unlink()
-                removed += 1
+                doomed.append(path)
+        except OSError:
+            continue
+    # See workspace.keep_the_newest: a pass that would take EVERY record is a clock fault, not
+    # retention, and a session record is committed work rather than cache.
+    for path in ws.keep_the_newest(candidates, doomed):
+        try:
+            path.unlink()
+            removed += 1
         except OSError:
             continue
     return removed
@@ -343,7 +434,8 @@ def slug(title):
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return mdblock.filename_safe(s[:40].rstrip("-") or "session")
+    return mdblock.filename_safe(s[:40].rstrip("-")
+                                 or mdblock.fallback_name(title, "session"))
 
 
 def filename(date, title):

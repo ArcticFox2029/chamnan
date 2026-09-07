@@ -19,6 +19,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import mdblock
 import redact
 import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
@@ -77,7 +78,15 @@ def show(root):
         # row -- the name and the reason do that -- while an agent running this command would put
         # it in a session's context. The hook drops such an entry whole for the same reason; this
         # keeps the row visible and drops only the part with nothing to say.
-        desc = "" if why else redact.scrub(str(e.get("desc", "") or "(no description)"))
+        # 🐛 [2026-09-06] `redact.scrub` removes credentials and `redact.emit` removes control
+        # characters, and neither removes a NEWLINE. `tools/index.json` arrives with a clone, so a
+        # `desc` holding "x\n  forged-tool.sh   does something trustworthy" printed a second row
+        # that reads exactly like a real one, in output an agent and the owner both read directly.
+        # The SessionStart hook's reader of this very field already folds it with
+        # `mdblock.one_line`; this one, the command a person runs to audit the registry, did not
+        # (R12 agent 2).
+        desc = "" if why else redact.scrub(mdblock.one_line(
+            str(e.get("desc", "") or "(no description)")))
         print(f"  {name:<24} {desc}{why}")
         print(f"  {'':24} added {str(e.get('added','?'))[:10]}, run {used}x")
     if broken:
@@ -181,9 +190,9 @@ def main(argv):
     _line = _SHEBANG.get(dest.suffix)
     if _line:
         try:
-            _body = dest.read_text(encoding="utf-8")
+            _body = dest.read_text(encoding="utf-8-sig")
             if not _body.startswith("#!"):
-                ws.atomic_write_text(dest, _line + "\n" + _body)
+                ws.write_or_raise(dest, _line + "\n" + _body)
         except (OSError, UnicodeDecodeError):
             pass          # unreadable as text: leave it alone rather than corrupt it
 
@@ -222,4 +231,10 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    # The copy of the promoted file now raises on a failed write the same way the index
+    # registration above already did -- see `workspace.write_or_raise`.
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OSError as _err:
+        print(f"chamnan: {_err} — nothing was written", file=sys.stderr)
+        sys.exit(1)

@@ -25,6 +25,7 @@ import impact  # for is_test — see the guard in the file loops below
 import redact
 import tokens
 import tree
+import workspace as ws
 
 # PROTOTYPE (R8 agent A, .../scratchpad/R8A_work/R8_agentA.md): count caps and mdblock.as_quoted's
 # per-entry length cap bound quantity and size separately, and nothing bounds their product — 32-60
@@ -47,37 +48,15 @@ ROUTES_BUDGET_SHARE = 0.40
 ENV_BUDGET_SHARE = 2 / 15
 
 
-def _section_budget(share, configured=None):
-    """A section's token budget as a share of the index budget the user actually configured."""
-    if configured is None:
-        try:
-            import workspace as _ws
-            configured = _ws.load_config().get("index_token_budget", 3000)
-        except Exception:
-            configured = 3000
-    return max(int(configured * share), 120)
+# Both live in `tokens` now, so `deploy.py` -- which renders into the same budgeted index from the
+# same count-cap-plus-length-cap pair and never had this bound at all -- reaches the same rule
+# rather than a second copy of it. The names here stay so every call site below reads as it did.
+_section_budget = tokens.section_budget
 SKIP_PARTS = (".git", "node_modules", "vendor", "__pycache__", ".venv", "dist", "build")
 
 
-def _fill_by_budget(entries, render_one, token_budget, count_cap):
-    """Keep `entries` in order until either the token budget or the count cap is spent.
+_fill_by_budget = tokens.fill_by_budget
 
-    Returns (kept_render_lines, kept_count). At least one entry is always kept when the list is
-    non-empty, even if it alone exceeds the budget — a budget of zero rows is not a summary, and
-    `mdblock.as_quoted`'s own per-entry cap already bounds how bad the single worst case can be.
-    """
-    lines = []
-    spent = 0.0
-    for e in entries:
-        if len(lines) >= count_cap:
-            break
-        line = render_one(e)
-        cost = tokens.estimate(line)
-        if lines and spent + cost > token_budget:
-            break
-        lines.append(line)
-        spent += cost
-    return lines, len(lines)
 
 def _nested(root):
     """Nested checkouts, shared with mapper so both halves of the map agree on what this repo is.
@@ -229,7 +208,7 @@ def _grpc(root):
         if any(q in SKIP_PARTS for q in _rel_parts(path, root)) or not _outside(path, _nest):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         for m in PROTO_SERVICE.finditer(text):
@@ -243,7 +222,7 @@ def _grpc_source(root, service):
     for path in tree.by_suffix(root, ".proto"):
         try:
             if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
-                         path.read_text(encoding="utf-8", errors="replace"), re.M):
+                         path.read_text(encoding="utf-8-sig", errors="replace"), re.M):
                 return str(path.relative_to(root).as_posix())
         except OSError:
             continue
@@ -287,7 +266,7 @@ def _spec_files(root):
         if not (named or in_spec_dir):
             continue
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         if not SPEC_HEAD.search(text[:4000]):
@@ -309,7 +288,7 @@ def _readable(root, patterns):
                 continue
             seen.add(path)
             try:
-                yield path, path.read_text(encoding="utf-8", errors="replace")
+                yield path, path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
 
@@ -350,7 +329,7 @@ def _django_mounts(root, files):
         text = f.get("_source")
         if text is None:
             try:
-                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+                text = (root / f["path"]).read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
         if "include" not in text:
@@ -402,7 +381,7 @@ def scan_routes(root, files):
         text = f.get("_source")
         if text is None:
             try:
-                text = path.read_text(encoding="utf-8", errors="replace")
+                text = path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
         # `APIRouter` and `Blueprint` are FastAPI and Flask, so these two patterns can only ever
@@ -579,12 +558,18 @@ def render_routes(routes):
 # .git/info/exclude. Ask it, and fall back to reading the files only when it cannot answer.
 def _is_ignored(root, path):
     """Is `path` ignored by git? Authoritative when git can answer, best-effort when it cannot."""
+    # 🐛 [2026-09-06] Guarded, not merely tried: a directory holding a `.git` that git itself
+    # refuses is not a repository to git, so this call walked UP and let an ANCESTOR's .gitignore
+    # decide this repository's answer -- a path ignored there reported ignored here. Falls through
+    # to the file walk below rather than answering False, which is the documented degrade path and
+    # the right one when git cannot speak for this directory (R6 acc3, first ten minutes).
     try:
-        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
-                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                           stderr=subprocess.DEVNULL, timeout=10)
-        if r.returncode in (0, 1):
-            return r.returncode == 0
+        if ws.git_owns(root):
+            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=10)
+            if r.returncode in (0, 1):
+                return r.returncode == 0
     except (OSError, subprocess.SubprocessError):
         pass
     # No git, or not a repository. Walk the .gitignore files from the file's own directory upward,
@@ -609,7 +594,7 @@ def _ignored_by_files(root, path):
             rel = path.relative_to(d).as_posix()
         except ValueError:
             continue
-        for line in gi.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in gi.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -662,7 +647,7 @@ def scan_env(root, files):
         text = f.get("_source")
         if text is None:
             try:
-                text = (root / f["path"]).read_text(encoding="utf-8", errors="replace")
+                text = (root / f["path"]).read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
         for m in ENV_IN_CODE.finditer(text):
@@ -699,6 +684,19 @@ def render_env(pairs, unsafe):
     # new place: chamnan cannot know M without a reader for every language, and some real idioms
     # never appear in code at all — Spring's `${VAR}` in a YAML file is a live example. What it can
     # state is its own boundary, which is checkable and does not pretend to a denominator.
+    #
+    # 🐛 [2026-09-07] MEASURED AND KEPT AT FULL LENGTH. This sentence is 128.8 tokens, 7.9% of the
+    # delivered block on this repository — the single most expensive static string chamnan injects
+    # (R2 agent 6). Shortening the prose around the pattern list was tried and saves 20.5 tokens,
+    # 1.2% of the block, because the sentence is MOSTLY the pattern names and those are the part
+    # that makes the boundary checkable. Trading the clarity of a caveat that exists to stop an
+    # agent treating an incomplete list as complete, for 1.2%, is not a trade worth making.
+    #
+    # A measurement note for whoever revisits this: editing MAP.md to isolate a section changes its
+    # mtime, which silently toggles a SECOND, unrelated staleness warning off through
+    # `index_is_behind()`. The first attempt at this measurement read 585 bytes saved; pinning mtime
+    # with `os.utime` gave the real 297-byte figure. Half of that "saving" was a different section
+    # disappearing.
     out.append("")
     out.append("_Found by matching `os.environ`/`os.getenv`, `process.env`, `ENV[…]`, Go's "
                "`os.Getenv`/`os.LookupEnv`, and Rust's `env::var`. A variable read some other way "

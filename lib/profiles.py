@@ -21,6 +21,25 @@ stdout at roughly 10,000 bytes — a property of the HARNESS, not of the model b
 in a model profile would mean choosing a Gemini profile silently raised a ceiling Claude Code's
 host still enforces, and the block would be cut with no explanation. It stays on the agent adapter
 where it belongs.
+
+**What the 3x buys on Claude Code's own hook, measured rather than assumed.** R10 acc3 reported
+that the ceiling makes the delivered block "byte-for-byte identical regardless of profile" and
+that `large-window` is therefore dead code on chamnan's flagship integration. Reproduced against
+the real hook on four fixtures -- 120, 400 and 1,200 files, and 1,200 files with a five-times
+larger STATE.md -- and it is NOT identical at any size:
+
+    120 files    standard 6,781 bytes    large-window 8,957 bytes
+    400 files    standard 7,127 bytes    large-window 8,960 bytes
+    1,200 files  standard 7,142 bytes    large-window 8,836 bytes
+    1,200 + 5x STATE.md   7,143 bytes                 8,931 bytes
+
+So the profile does change what Claude Code receives, and the claim to be careful with is a
+different one: a 2.4-2.7x increase in the two TOKEN budgets buys roughly 25% more delivered BYTES,
+because `fit.CEILING` caps both profiles near the same number. That is the honest shape -- the
+budgets are caps on two sections, the ceiling is a cap on the whole block, and a bigger cap on a
+part cannot lift a smaller cap on the sum. `--explain` already says this in the reader's own
+numbers ("the byte ceiling binds first"); it is written here so the next round does not re-open a
+question that has been measured.
 """
 
 # Each profile: the two budgets, and the model class the numbers were chosen for. Names are
@@ -113,16 +132,56 @@ def explain(name):
 def resolve(config):
     """`(name, budgets)` from a loaded config dict.
 
-    An explicit `index_token_budget` in the config WINS over the profile, and does so silently by
-    design: someone who tuned a number by hand has measured something on their own repository, and
+    A HAND-TUNED `index_token_budget` in the config WINS over the profile, and does so silently by
+    design: someone who set a number themselves has measured something on their own repository, and
     a profile added later must not quietly undo it.
+
+    🐛 [2026-09-06] "Explicit" used to mean `key in config`, and `load_config()` merges DEFAULT_CONFIG
+    into every config it returns — so both budget keys are ALWAYS present and the profile could
+    never move either of them. Choosing `large-window` in the file did nothing at all. The one path
+    that worked, the environment variable, worked only because its caller popped the two keys first,
+    which is the same fix spelled at one call site instead of here where the precedence lives
+    (R8 agent 4).
+    #
+    A value still equal to its own default was not tuned by anybody, so it does not outrank a
+    profile the user chose. A value they changed still does.
     """
     name = str(config.get("context_profile", DEFAULT))
     chosen = budgets(name)
     for key in ("index_token_budget", "state_token_budget"):
-        if key in config:
+        if key in config and config[key] != _default_for(key):
             chosen[key] = config[key]
     return name, chosen
+
+
+def _default_for(key):
+    """The shipped default for `key`, or a sentinel that equals nothing when it cannot be read.
+
+    Imported here rather than at module scope: `workspace` is the module everything else loads, and
+    a cycle between the two would be paid at every import in the package. A missing default must
+    read as "no default", so an unreadable one leaves the old behaviour rather than silently making
+    every hand-tuned number stop counting.
+    """
+    try:
+        import workspace as _ws
+        return _ws.DEFAULT_CONFIG.get(key, _NO_DEFAULT)
+    except Exception:                       # noqa: BLE001 — a config question must not raise
+        return _NO_DEFAULT
+
+
+class _NoDefault:
+    """Equal to nothing, including itself, so `config[key] != _NO_DEFAULT` is always true."""
+
+    def __eq__(self, other):
+        return False
+
+    def __ne__(self, other):
+        return True
+
+    __hash__ = None
+
+
+_NO_DEFAULT = _NoDefault()
 
 
 # ---------------------------------------------------------------------------------------------
@@ -162,13 +221,42 @@ MODEL_WINDOWS = {
     "opus": 1_000_000,
     "sonnet": 1_000_000,
     "haiku": 200_000,
-    "gpt": 400_000,
-    "openai": 400_000,
+    # 🐛 400,000 was GPT-4.1's number and outlived it. OpenAI's own model documentation, read
+    # 2026-09-06, gives 1.05M for every current flagship — GPT-6 Astra and the three GPT-5.6
+    # builds. A round earlier raised the possibility that 400,000 was deliberately matching Codex
+    # CLI's practical cap rather than the API's window; that page states no Codex figure, and
+    # nothing in this file ever claimed it, so the guess is not what the table was recording.
+    #
+    # It changes no profile today: both numbers are over the large-window boundary. Corrected
+    # because a table of other people's numbers is either accurate or it is decoration, and the
+    # next boundary this feeds may not sit where this one does (R3 agent 1).
+    "gpt": 1_050_000,
+    "openai": 1_050_000,
     "gemini": 1_000_000,
-    "kimi": 2_000_000,
-    "grok": 256_000,
-    "deepseek": 128_000,
-    "glm": 200_000,
+    # 🐛 [2026-09-06] Four entries checked against each vendor's OWN current documentation, not
+    # against a listicle (R8 agent 1). Three were stale toward the small number and one toward the
+    # large, which is what tells you they aged separately rather than all being copied from one
+    # outdated source. The `kimi` direction is the one that matters: a window stated LARGER than the
+    # model really has is the only error in this table that can make chamnan ship a block the model
+    # cannot hold, and it was overstated by 2x.
+    #
+    #   kimi      2,000,000 -> 1,000,000   Moonshot's own pricing/chat docs: K3, the current
+    #                                      flagship, is 1M. The 2M figure's origin was not chased
+    #                                      and is not guessed at here.
+    #   grok        256,000 ->   500,000   xAI's own model page: grok-4.6, the current flagship, is
+    #                                      500K. 256K survives only on one narrow build.
+    #   deepseek    128,000 -> 1,000,000   DeepSeek's own models table: all three current models
+    #                                      share 1M, so this is not SKU ambiguity.
+    #   glm         200,000 -> 1,000,000   200K was an exact match for GLM-4.6; the vendor has
+    #                                      since shipped GLM-5.3 at 1M.
+    #
+    # `mistral` and `codestral` are deliberately NOT touched: their docs render client-side and two
+    # rounds could not read a number out of the vendor's own page. An unverified guess in a table
+    # whose whole value is that it was verified would be worse than a stale entry that says so.
+    "kimi": 1_000_000,
+    "grok": 500_000,
+    "deepseek": 1_000_000,
+    "glm": 1_000_000,
     "gemma": 128_000,
     "mistral": 128_000,
     # 32K was this family's window at its May-2024 launch. The January-2025 refresh moved it to

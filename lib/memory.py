@@ -25,6 +25,7 @@ characters, titles are capped by count, and the store itself is allowed to grow 
 files are small and each one was written on purpose.
 """
 import re
+import unicodedata
 from pathlib import Path
 import workspace as ws
 import mdblock
@@ -65,7 +66,8 @@ def entries(root, category):
     except (OSError, ValueError, RuntimeError):
         return []
     return sorted(p for p in d.glob("*.md")
-                  if p.is_file() and ws.inside(p, root, _resolved_root=root_resolved))
+                  if p.is_file() and not ws.is_store_index(p)
+                  and ws.inside(p, root, _resolved_root=root_resolved))
 
 
 # `see memory `slug``, `memory: `slug``, or a bare ``slug`` next to the word memory. Written by
@@ -117,7 +119,7 @@ def dangling_citations(root):
     found = {}
     for _, f in sorted(sources, key=lambda r: r[0]):
         try:
-            text = f.read_text(encoding="utf-8", errors="replace")
+            text = f.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         # Scanned over the WHOLE text, with the line derived from the match offset. Matching
@@ -137,7 +139,10 @@ def dangling_citations(root):
 
 
 def case_collisions(paths):
-    """Group `paths` whose filename stems are identical except for case.
+    """Group `paths` whose filename stems collide once the filesystem is done with them.
+
+    Case is one such equivalence and Unicode normalisation is the other, and both are folded here
+    because both fail the same way and the caller cannot tell them apart.
 
     🐛 On a case-insensitive filesystem (APFS, the default on this machine, and NTFS), writing
     `no-force-push.md` and then `No-Force-Push.md` leaves exactly one FILE on disk -- the first
@@ -148,23 +153,43 @@ def case_collisions(paths):
     `entries()` -- injected as two independent-looking rules that happen to say opposite things,
     with nothing marking them as the same name in disguise. This is the one place that coexistence
     is still visible: before the workspace is ever synced to a case-insensitive machine.
+
+    🐛 [2026-09-06] The key was `casefold()` alone, and `casefold()` does not normalise. A
+    precomposed `café` (U+00E9) and its decomposed twin (`e` + U+0301) render identically, collapse
+    into ONE file on this machine's APFS exactly as the case pair does -- verified by writing both
+    names and getting a single `listdir` entry holding the second write -- and hashed to two
+    different keys here, so the guard built for precisely this failure returned nothing. NFC first,
+    then casefold, catches both classes in one pass (R6 acc3, hostile filesystem).
+
+    Pure Thai text is NOT the exposure and a future round should not go looking there: Thai
+    combining vowel and tone marks have no precomposed form, so NFC and NFD coincide for it. The
+    risk is accented Latin and Vietnamese names -- `café`, `naïve`, `façade` -- which are ordinary
+    in a bilingual repository and normalise differently depending on which tool typed them.
     """
     groups = {}
     for p in paths:
-        groups.setdefault(p.stem.casefold(), []).append(p)
+        groups.setdefault(unicodedata.normalize("NFC", p.stem).casefold(), []).append(p)
     return [sorted(g) for g in groups.values() if len(g) > 1]
 
 
 def title_of(path, text=None):
     """The entry's `# ` heading, falling back to a readable form of the filename."""
     try:
-        text = text if text is not None else path.read_text(encoding="utf-8", errors="replace")
+        text = text if text is not None else path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return path.stem.replace("-", " ")
     # 🐛 A UTF-8 BOM sits before the `#`, so `startswith("# ")` was False on the first line and the
     # real title was unreachable: `# Why Postgres over SQLite` was injected as `why postgres`, the
-    # de-slugged filename. Editors on Windows write a BOM by default, and this is the only place a
-    # BOM could change what a session is told.
+    # de-slugged filename. Editors on Windows write a BOM by default.
+    #
+    # 🐛 [2026-09-06] "this is the only place a BOM could change what a session is told" is what
+    # this comment used to say, and it was wrong in the way this repository is always wrong -- one
+    # member of a set fixed, the identical ones beside it left. `timeline.title_of` reads a thread
+    # the same way, and a BOM there made `_distinct_slug` fork a thread's history into a second
+    # file; `sessions.title_of` lost the "last session" title the same way (R11 agent 1). So the
+    # BOM is stripped at the READ now -- every `read_text` in lib/, bin/ and hooks/ decodes
+    # `utf-8-sig`, which is plain UTF-8 plus "drop a leading BOM if there is one" -- and this
+    # `lstrip` stays only because `text` may be passed in by a caller that read it itself.
     for line in text.lstrip("\ufeff").splitlines():
         if line.startswith("# "):
             return line[2:].strip()
@@ -222,9 +247,15 @@ def rules_text(root):
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
     for path in rule_paths:
         try:
-            body = path.read_text(encoding="utf-8", errors="replace").strip()
+            body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
         except OSError:
             continue
+        # 🐛 [2026-09-06] `title_of(path)` was called with no body, at five sites in this loop, so
+        # every rule file was read a further FOUR times to recover a heading the caller already had
+        # in `body`. Measured by instrumenting the real hook sequence: 1,500 `read_text` calls for
+        # 500 rule files, where 500 is the whole requirement. The parameter to pass it exists and
+        # its docstring says what it is for (R12 agent 3).
+        title = title_of(path, body)
         group = collision_of.get(path)
         if group:
             # Same reasoning as the merge-conflict branch below, same shape of injection: a rule
@@ -232,18 +263,18 @@ def rules_text(root):
             # checkout the sibling file is real content nobody meant to inject as fact, and on the
             # case-insensitive machine that wrote it, it already silently ate the other one's body.
             others = ", ".join(f"`{mdblock.as_quoted(p.name)}`" for p in group if p != path)
-            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule's filename collides with {others}, "
+            out.append(f"**{mdblock.one_line(title)}** — ⚠ this rule's filename collides with {others}, "
                        f"differing only by case. Filesystems disagree on whether these are one file "
                        f"or two, so it is NOT in force until the files are merged or renamed apart; "
                        f"do not act on either side.")
-            titles.append(title_of(path))
+            titles.append(title)
         elif body and unresolved_conflict(body):
             # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
             # was never written, and the point is to get this file resolved.
-            out.append(f"**{mdblock.one_line(title_of(path))}** — ⚠ this rule is mid-merge and both sides are still "
+            out.append(f"**{mdblock.one_line(title)}** — ⚠ this rule is mid-merge and both sides are still "
                        f"in `{mdblock.as_quoted(path.name)}`. It is NOT in force until someone "
                        f"resolves it; do not act on either side.")
-            titles.append(title_of(path))
+            titles.append(title)
         elif body:
             # Closed per RULE, not only once around the finished section. A fence left open
             # in one rule's own file otherwise runs to the end of the whole section, and
@@ -252,7 +283,7 @@ def rules_text(root):
             # rules after the broken one swallowed exactly as before. Balancing here also
             # means both cuts below operate on text whose fences already match.
             out.append(mdblock.close_dangling_fence(_flatten(body)))
-            titles.append(title_of(path))
+            titles.append(title)
     if not out:
         return ""
     joined = "\n\n".join(out)
@@ -308,7 +339,7 @@ def rules_with_titles(root):
     out = []
     for path in entries(root, "rules"):
         try:
-            body = path.read_text(encoding="utf-8", errors="replace").strip()
+            body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
         except OSError:
             continue
         if body:
@@ -339,8 +370,23 @@ def titles(root):
     """
     found = []
     for category in ("decisions", "lessons"):
-        for path in entries(root, category):
-            found.append((category, title_of(path), path.name))
+        paths = entries(root, category)
+        # 🐛 [2026-09-06] `case_collisions` was wired into `rules_text` and nowhere else. Decisions
+        # and lessons are the same mechanism -- one file per entry, named from its title -- and got
+        # no collision detection at all (R12 agent 1). The consequence is quieter than a rule's and
+        # not smaller: a colliding pair leaves ONE file on APFS or NTFS holding the SECOND entry's
+        # body under the FIRST entry's name, so this listing tells a reader a decision exists, they
+        # open it, and they get a different one. Marked rather than dropped, for the reason the
+        # rules branch already gives: an entry that vanishes is indistinguishable from one nobody
+        # wrote.
+        collided = {q for g in case_collisions(paths) for q in g}
+        for path in paths:
+            title = title_of(path)
+            if path in collided:
+                title = ("⚠ " + title + " — this filename collides with another in the same store, "
+                         "differing only by case or Unicode form; one of the two files may hold the "
+                         "other's body. Read them before trusting either.")
+            found.append((category, title, path.name))
     return found
 
 
@@ -359,7 +405,11 @@ def render_titles(found):
         return ""
 
     def _cap(title):
-        return title if len(title) <= MAX_TITLE_CHARS else title[:MAX_TITLE_CHARS].rstrip() + "…"
+        # whole_graphemes, as every other cutter in this codebase: a title ending in a flag emoji
+        # cut mid-cluster left one regional indicator behind, rendering as a stray letter box in
+        # the injected block (R4 agent 1).
+        return (title if len(title) <= MAX_TITLE_CHARS
+                else mdblock.whole_graphemes(title[:MAX_TITLE_CHARS]).rstrip() + "…")
 
     # 🐛 The cap was applied to the concatenation, which is in category-then-filename order — so a
     # repository with ten decisions and two lessons sent NO LESSON to the session at all, under a
@@ -397,7 +447,8 @@ def slug(title):
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return mdblock.filename_safe(s[:50].rstrip("-") or "entry")
+    return mdblock.filename_safe(s[:50].rstrip("-")
+                                 or mdblock.fallback_name(title, "entry"))
 
 
 def filename(title):

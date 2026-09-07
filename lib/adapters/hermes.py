@@ -72,5 +72,6 @@ def install(root, body, command=""):
                 f"highest priority of any project context file, so replacing it would silently "
                 f"substitute an index for whatever it says. Move it aside first, or delete it if "
                 f"it is stale.")
-        write_target(target, render(body))
+        if not write_target(target, render(body)):
+            raise OSError(f"{target.path} could not be written")
         return target.path

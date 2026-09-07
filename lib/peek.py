@@ -20,11 +20,9 @@ says so instead of guessing.
 import binascii
 import codecs
 import csv
-import io
 import json
 import re
 import struct
-import sys
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -248,10 +246,11 @@ def peek_csv(path, find=None):
     if find:
         tail = "" if len(hits) < HIT_CAP else f" — the first {HIT_CAP}; there may be more"
         out.append(f"\nrows matching {find!r} ({len(hits)} shown{tail}):")
-        out += [f"  line {n}: " + " | ".join(c[:28] for c in r[:8]) for n, r in hits]
+        out += [f"  line {n}: " + " | ".join(mdblock.whole_graphemes(c[:28]) for c in r[:8])
+                for n, r in hits]
     else:
         out.append("\nfirst rows:")
-        out += ["  " + " | ".join(c[:28] for c in r[:8]) for r in rows]
+        out += ["  " + " | ".join(mdblock.whole_graphemes(c[:28]) for c in r[:8]) for r in rows]
     return out
 
 
@@ -329,7 +328,7 @@ def peek_jsonl(path, find=None, sample=SAMPLE_ROWS):
     if find:
         tail = "" if len(hits) < HIT_CAP else f" — the first {HIT_CAP}; there may be more"
         out.append(f"\nrecords matching {find!r} ({len(hits)} shown{tail}):")
-        out += [f"  line {n}: " + r[:110] for n, r in hits]
+        out += [f"  line {n}: " + mdblock.whole_graphemes(r[:110]) for n, r in hits]
     return out
 
 
@@ -686,7 +685,7 @@ def _env_names(path):
     """The variable names an env file declares, and nothing to the right of the `=`."""
     names = []
     try:
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        for line in path.read_text(encoding="utf-8-sig", errors="replace").splitlines():
             line = line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue

@@ -92,12 +92,14 @@ def install(root, body, command=""):
             # the tool, not to us. Measured cost on the common path: ~34µs for one `os.listdir` on a
             # small directory, against a write.
             _warn_about_a_differently_cased_sibling(path)
-            write_target(target, region)
+            if not write_target(target, region):
+                raise OSError(f"{target.path} could not be written")
             return path
 
         head, marked, rest = existing.partition(START)
         if not marked:
-            write_target(target, existing.rstrip() + "\n\n" + region)
+            if not write_target(target, existing.rstrip() + "\n\n" + region):
+                raise OSError(f"{target.path} could not be written")
             return path
 
         _ours, closed, tail = rest.partition(END)
@@ -108,5 +110,6 @@ def install(root, body, command=""):
         # heading butts against the end marker, which renders in most parsers but reads as damage
         # in the diff -- and this file is one a person opens by hand.
         after = tail.lstrip("\n")
-        write_target(target, head + region + ("\n" + after if after else ""))
+        if not write_target(target, head + region + ("\n" + after if after else "")):
+            raise OSError(f"{target.path} could not be written")
         return path

@@ -8,10 +8,11 @@ to look plausible, far enough to make the decision on bad numbers. One implement
 import re
 import json
 import mdblock
-import os
 import subprocess
+from pathlib import Path
 
 import tokens
+import workspace as ws
 
 # Below this, the history is too thin to rank with. Measured elsewhere: commit-history memory
 # degrades localization by 13.1pp on repos with sparse history (arXiv:2510.01003), so a young repo
@@ -35,8 +36,52 @@ def forget_churn():
     _CHURN_CACHE.clear()
 
 
+_SHA = re.compile(r"\A[0-9a-f]{40}\Z")
+
+
+def _head_from_disk(root):
+    """HEAD read straight off the filesystem, or "" when the layout is anything but the plain case.
+
+    This value is a CACHE KEY, so a wrong one is worse than a slow one — it would serve a stale
+    churn ranking as if it were current. Every branch here therefore returns "" rather than a guess,
+    and the caller falls back to asking git. Handles the two ordinary shapes: a detached HEAD, which
+    holds the sha itself, and a symref to a loose ref. A packed ref, a worktree's `.git` file, or
+    anything unexpected is left to the subprocess.
+    """
+    try:
+        git_dir = Path(root) / ".git"
+        if not git_dir.is_dir():          # a worktree or submodule: `.git` is a FILE
+            return ""
+        head = (git_dir / "HEAD").read_text(encoding="utf-8-sig").strip()
+        if _SHA.match(head):
+            return head                   # detached
+        if not head.startswith("ref: "):
+            return ""
+        ref = git_dir / head[5:].strip()
+        if not ref.is_file():
+            return ""                     # packed-refs, or an unborn branch
+        value = ref.read_text(encoding="utf-8-sig").strip()
+        return value if _SHA.match(value) else ""
+    except (OSError, ValueError, UnicodeDecodeError):
+        return ""
+
+
 def _head(root):
-    """The commit the churn answer belongs to, or "" when git cannot say."""
+    """The commit the churn answer belongs to, or "" when git cannot say.
+
+    🐛 A subprocess for a value that is usually two small file reads. Measured 19-65ms against
+    ~0.1ms, and the whole SessionStart hook 0.517s to 0.457s, on every session (R3 agent 1). The
+    filesystem answer is used only when it is unambiguous; everything else still asks git, so the
+    result is identical either way.
+    """
+    from_disk = _head_from_disk(root)
+    if from_disk:
+        return from_disk
+    if not ws.git_owns(root):
+        # A directory holding a `.git` git itself refuses is not a repository to git: the call
+        # below would walk up and return an ANCESTOR's HEAD, which then gets stamped into MAP.md
+        # as the commit this index was built from (R6 acc3, first ten minutes).
+        return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
@@ -57,7 +102,7 @@ def _disk_cache_path(root, window):
 def _read_disk_cache(path, head):
     """The stored counts when they belong to this commit, else None. Never raises."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return None
     if not isinstance(data, dict) or data.get("head") != head:
@@ -105,6 +150,9 @@ def _churn(root, window=CHURN_WINDOW):
         cached = _read_disk_cache(disk, head)
         if cached is not None:
             return _CHURN_CACHE.setdefault(key, cached)
+    if not ws.git_owns(root):
+        # See git_owns: an ancestor's churn would rank THIS repository's files.
+        return _CHURN_CACHE.setdefault(key, {})
     try:
         out = subprocess.run(
             # --name-status -M, not --name-only. Without rename detection a file that has been
@@ -197,10 +245,71 @@ MAX_SPINE_SEGMENTS = 12
 MIN_FILES_TO_DEEPEN = 40
 # One directory holding this share of everything means the depth is too shallow to be telling
 # anyone anything.
-DOMINANT_SHARE = 0.6
+#
+# 🐛 0.6 was too permissive to catch the case it exists for. Measured on this repository's own
+# index: `.chamnan/` is 48.6% of all files — under the threshold — so it stayed one bucket, and
+# `.chamnan/tests/` (118 files) and `.chamnan/tools/` (40) were folded together into a single
+# `.chamnan/ (158)` line. `tools/` is the directory the block itself tells an agent to prefer over
+# writing a new script, so hiding it inside a bucket dominated by the test suite loses exactly the
+# distinction a reader of this workspace needs (R3 agent 3).
+#
+# 0.45 separates them: the roll-up goes 1,509 to 2,293 tokens against a 3,000 budget, so it still
+# fits with a quarter to spare. MIN_FILES_TO_DEEPEN and MAX_GROUP_DEPTH still bound how far this
+# can go on a repository shaped differently.
+DOMINANT_SHARE = 0.45
+
+
+def _is_a_directory_heading(line):
+    """A bare `**`path/`**` line -- a Quick Index directory heading and nothing else.
+
+    Matched on the whole stripped line rather than a prefix, so a sentence that merely begins with a
+    bolded path is not mistaken for a heading and deleted.
+    """
+    stripped = line.strip()
+    return (stripped.startswith("**`") and stripped.endswith("`**")
+            and stripped.count("**") == 2)
+
+
+# 🐛 [2026-09-06] The SessionStart hook calls `collapse` from two places -- once to choose the
+# per_dir that gives the best coverage, and again if the assembled block is still over the byte
+# ceiling -- and both step through the same `(8, 4, 2, 0)` on the same index and budget. Counted on
+# a real run against this 2,544-file repository: 8 calls, 4 distinct argument tuples. The comment at
+# the second call site said re-rolling "returns the same text for one cached lookup", which was
+# true of the CHURN lookup inside and not of this function, so half the work was done twice.
+#
+# The saving R16 agent 1 reported for this -- 7.69 ms per call, 5.3% of the hook -- does NOT
+# reproduce, and the honest number is worth more than the change. Measured end to end on this
+# repository, 15 runs each, CPU time rather than wall clock: 88.2 ms -> 87.7 ms. Half a millisecond,
+# inside the run-to-run spread. Their figure came from a cProfile run, and a profiler charges per
+# CALL, so removing four calls to a function that makes many internal ones looks far larger under
+# the profiler than it is without one.
+#
+# What IS measured: this hook passes a 48,404-character Quick Index, and one collapse of it costs
+# 1.1-2.0 ms, so the duplicated half is a few milliseconds and grows with the index. The change is
+# kept because it removes work that is provably redundant and its output is byte-identical, not
+# because the profile said 5%.
+#
+# Per PROCESS and unbounded on purpose: a hook process makes at most eight of these calls and then
+# exits, so there is nothing to evict, and `index` is one string this module was handed rather than
+# one it builds.
+_COLLAPSE_CACHE = {}
 
 
 def collapse(index, map_rel, budget=None, root=None, per_dir=8):
+    # 🐛 The first version of this key held the arguments and nothing else, and the arguments do not
+    # determine the answer: the file names on each line are ranked by git churn, which moves with
+    # HEAD. Two commits into a test's fixture, the same arguments returned the ranking from before
+    # the commit — caught by the suite's own churn tests, which is exactly what they are for. The
+    # hook could never have hit it (one process, one moment), and "correct in the one caller I was
+    # thinking about" is not correct.
+    key = (index, str(map_rel), budget, str(root), per_dir, _head(root) if root else "")
+    if key in _COLLAPSE_CACHE:
+        return _COLLAPSE_CACHE[key]
+    _COLLAPSE_CACHE[key] = out = _collapse(index, map_rel, budget, root, per_dir)
+    return out
+
+
+def _collapse(index, map_rel, budget=None, root=None, per_dir=8):
     """Fold a too-large index down to one line per directory instead of cutting its tail off.
 
     Truncating at a byte offset drops whatever sorts last, so on a 196-file repo everything from
@@ -261,6 +370,31 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
     rows = [lines[i] for i in row_at]
     head = lines[:row_at[0]] if row_at else lines
     tail = lines[row_at[-1] + 1:] if row_at else []
+    # 🐛 [2026-09-06] The last line of `head` is the directory heading the FIRST row happened to sit
+    # under in the un-rolled index, and everything below is about to be regrouped -- so that heading
+    # is left standing over a list it does not describe. On this repository's real block, at the
+    # production default budget, `**`.chamnan/tests/`**` headed twenty directories from six
+    # different trees. It is a false claim in the one section three rounds have called the reason
+    # the block is a pointer rather than content, and it is in every session's context.
+    #
+    # Recorded as a low-budget artefact in the backlog ("orphaned-heading artefact at the cliff",
+    # 350-500 tokens) and independently reproduced there by R3 agent 3, which concluded the cliff
+    # was unreachable in practice. Both were right about the cliff and wrong about the scope: the
+    # heading is dropped only when the whole SECTION goes, so the cliff is where the symptom
+    # disappears, not where it starts. Gated on folding actually happening, not on the budget
+    # (R7 agent 1).
+    # Trailing blanks first: whether a blank line separates the heading from the first row is a
+    # detail of how MAP.md was rendered, not of whether the heading is orphaned. Checking `head[-1]`
+    # before stripping them made the fix work on the real index (no blank there) and silently do
+    # nothing on a fixture that had one -- which is the shape of a guard that only looks where it
+    # expects the problem, and this file has paid for that twice already.
+    if row_at:
+        while head and not head[-1].strip():
+            head = head[:-1]
+        if head and _is_a_directory_heading(head[-1]):
+            head = head[:-1]
+            while head and not head[-1].strip():
+                head = head[:-1]
     # Grouped at whatever depth actually separates this repository, not always at depth 1. Most
     # repositories keep their source under one directory -- src/, app/, lib/ -- and grouping by the
     # first segment then yields ONE line reading `src/ (528)`, which is a roll-up in shape only: it
@@ -329,6 +463,32 @@ def collapse(index, map_rel, budget=None, root=None, per_dir=8):
             deeper = at_depth(look)
         if len(deeper) <= len(groups):
             break          # nothing separates within the spine limit: a longer name for nothing
+        # 🐛 [2026-09-07] MEASURED AND NOT CHANGED, which is the useful part. R18 agent 6 varied the
+        # one dimension every earlier sweep held fixed -- directory layout at a constant file count.
+        # 400 identical files delivered 904 tokens in 4 directories, 2,331 in 41, and 3,155 in 401:
+        # a 3.5x multiplier for the same code, from a choice a user makes for reasons that have
+        # nothing to do with chamnan.
+        #
+        # The obvious fix is to refuse a split whose groups average fewer than two files, and it was
+        # built and measured before being rejected: it takes the 401-directory case from 3,155 to
+        # 731 tokens and leaves 4 and 41 untouched, but it puts a CLIFF at exactly 200 groups. 200
+        # directories delivered 2,997 tokens and 200 named rows; 201 delivered 731 and ONE row. A
+        # repository that adds one directory would lose its entire directory listing, which is a
+        # worse answer than the cost it removes.
+        #
+        # What the numbers actually say: at 200 groups the block is INSIDE its 3,000-token index
+        # budget, so `_fold_the_overflow` never runs and nothing is wrong -- the user asked for
+        # 3,000 tokens of index and got 3,000 tokens of directory names. The real question is
+        # whether a budget spent on 200 bare directory names beats one spent on 40 directories with
+        # filenames under them, and that is a judgement about what a reader wants, not a defect.
+        #
+        # 🐛 [2026-09-07] And that question CANNOT be answered from what is on disk, which is worth
+        # writing down so the next round does not go looking. R2 agent 6 read every candidate log's
+        # writer: `pointer.jsonl` records knowledge-base matches on a file open, not what the index
+        # looked like when the session opened it; the churn cache is a rendering INPUT, not a usage
+        # record; and the hook never persists its own output. Nothing on disk ties "what the block
+        # showed" to "what the session went on to read", so the comparison has no evidence available
+        # to it short of instrumenting sessions, which is a different feature.
         groups, depth, splits = deeper, look, splits + 1
     if not groups:
         # Nothing here has the `- **`path`**` shape this groups on: a hand-written map, one from an

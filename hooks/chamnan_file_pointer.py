@@ -28,9 +28,11 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
-import impact as impact_mod  # noqa: E402
+# 🐛 [2026-09-06] `redact` and `impact` are imported where they are used rather than on every
+# Read: `impact` is only reached when a map exists, and `redact` only on the one path that actually
+# emits text. `redact` costs 21.7 ms to import because it compiles 45 regexes doing it (R7 agent
+# 2). `pointer` stays here -- it is used immediately after the early returns, on the ordinary path.
 import pointer  # noqa: E402
-import redact  # noqa: E402
 import workspace as ws  # noqa: E402
 
 TOOLS = {"Read", "Edit", "Write", "NotebookEdit"}
@@ -73,11 +75,12 @@ def main():
     hits = pointer.related(wsdir, rel)
 
     edges = None
+    import impact as impact_mod  # deferred; see the import block
     if (time.time() - started) * 1000 < MAX_MS:
         mp = wsdir / "MAP.md"
         try:
             if mp.is_file() and mp.stat().st_size <= MAP_MAX_BYTES:
-                _, edges = impact_mod.lookup(mp.read_text(encoding="utf-8", errors="replace"), rel)
+                _, edges = impact_mod.lookup(mp.read_text(encoding="utf-8-sig", errors="replace"), rel)
         except (OSError, ValueError):
             edges = None
 
@@ -114,8 +117,14 @@ def main():
     #
     # Scrubbed here rather than in `pointer.render`, because this is the one place the text leaves
     # the process, and it also covers the `coedit.line` tail appended above it.
+    # 🐛 `scrub` removes credentials and has never removed CONTROL characters. `json.dumps`
+    # escapes them, so the raw-stdout sweep that guards every other reader sees nothing --
+    # and the harness decodes them straight back into the model's context. See
+    # `redact.for_a_terminal`.
+    import redact  # deferred; see the import block
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "additionalContext": redact.scrub(block)}}))
+        "hookEventName": "PreToolUse",
+        "additionalContext": redact.for_a_terminal(redact.scrub(block))}}))
     return 0
 
 

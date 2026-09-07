@@ -116,9 +116,18 @@ def extract_imports(source, lang):
     if not patterns:
         return []
     found = []
-    # Only the head of the file: imports live at the top in every language here, and scanning a
-    # 5,000-line file to the end for an import that is not there is time spent for nothing.
-    head = "\n".join(source.splitlines()[:200])
+    # 🐛 This read only the first 200 lines, on the reasoning that "imports live at the top in
+    # every language here". They do not. Deferring an import into a function is the idiomatic way
+    # to break a circular import in Python, and those land wherever the function is — which for a
+    # long module is far past line 200. Measured on this repository's own 346 source files:
+    # 1,855 import names against 1,981 with the cap lifted, so 6.8% of every edge the impact map
+    # could draw was missing, and `memory_manager.py` — a 3,425-line architectural hub — went from
+    # 17 names to 34. Half its edges (R2 agent 3).
+    #
+    # It costs 68ms across those 346 files, 0.2ms each. A prefilter that scans the head fully and
+    # then only import-shaped lines below it was measured too: 50ms instead of 68ms, and it found
+    # one name fewer, so it buys 18ms for a wrong answer.
+    head = source
     for pattern in patterns:
         for m in re.finditer(pattern, head, re.M):
             name = m.group(1).strip()

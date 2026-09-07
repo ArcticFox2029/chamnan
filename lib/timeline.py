@@ -68,7 +68,8 @@ def slug(title):
     and guessable, and create() disambiguates when it actually has to.
     """
     s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
-    return mdblock.filename_safe(s[:50].rstrip("-") or "thread")
+    return mdblock.filename_safe(s[:50].rstrip("-")
+                                 or mdblock.fallback_name(title, "thread"))
 
 
 def _distinct_slug(directory_, title):
@@ -88,7 +89,14 @@ def threads(root):
     d = directory(root)
     if not d.is_dir():
         return []
-    return sorted(p for p in d.glob("*.md") if p.is_file())
+    # 🐛 [2026-09-06] `ws.inside` guarded `memory/` and `skills/` and not this. A committed
+    # symlink under `threads/` pointing outside the repository made `chamnan-timeline show` print
+    # the full, unredacted content of whatever it named -- an SSH config, internal prose, anything
+    # the process can read. Nothing about that content is secret-SHAPED, so the redactor cannot
+    # help; the refusal is the only thing that can. The workspace arrives with a clone, so the link
+    # is the repository's choice and not the reader's (R9 agent 2).
+    return sorted(p for p in d.glob("*.md")
+                  if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
 
 
 def resolve(root, ident):
@@ -123,7 +131,7 @@ def title_of(path, text=None):
     """
     if text is None:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             return path.stem.replace("-", " ")
     for line in text.splitlines():
@@ -141,7 +149,7 @@ def status_of(path, text=None):
     """
     if text is None:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             return OPEN
     # Masked, because this searches the WHOLE file for the first match. A thread whose body quotes
@@ -164,7 +172,7 @@ def entries_of(path, text=None):
     """
     if text is None:
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             return []
     # Scanned over a copy with fenced lines blanked; offsets are preserved, so every slice below
@@ -191,8 +199,8 @@ def create(root, title, today):
     path = d / f"{_distinct_slug(d, title)}.md"
     if path.is_file():
         return path, False
-    ws.atomic_write_text(path, f"# {mdblock.one_line(title)}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
-                    encoding="utf-8")
+    ws.write_or_raise(path, f"# {mdblock.one_line(title)}\n\n**Started:** {today}\n**Status:** {OPEN}\n",
+                      encoding="utf-8")
     return path, True
 
 
@@ -214,12 +222,22 @@ def append(root, ident, date, note, files=None):
     # belonged to the real entry, and so answered `for_path()` in its place. A date nobody typed,
     # attached to a file it never touched, reading as a resolution.
     body = [f"## {date} — {mdblock.one_line(note)}", ""]
-    named = [f.strip() for f in (files or []) if f.strip()]
+    # 🐛 [2026-09-06] The note above was folded and this was not -- the same fix applied to one
+    # field of a pair, one line apart, which is this repository's most-repeated defect. A path
+    # carrying a newline and a `## chamnan` heading wrote a fabricated section into a file that gets
+    # COMMITTED, and ESC or U+202E in one reached every later reader of the thread. Reachable end to
+    # end from `chamnan-timeline add --files` (R9 agent 2; R2 reported this fixed and it was not --
+    # `git log -S` shows the line untouched since 1.6.0).
+    #
+    # `as_quoted`, not `one_line`: these are rendered INSIDE backticks, and a backtick in the value
+    # closes the span early and drops the rest of the line into chamnan's own voice. `as_quoted` is
+    # the helper that already exists for a value going into a code span.
+    named = [mdblock.as_quoted(f.strip(), 200) for f in (files or []) if f.strip()]
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")
-    existing = path.read_text(encoding="utf-8", errors="replace").rstrip("\n")
-    ws.atomic_write_text(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
+    existing = path.read_text(encoding="utf-8-sig", errors="replace").rstrip("\n")
+    ws.write_or_raise(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
     return path
 
 
@@ -230,7 +248,7 @@ def set_status(root, ident, status):
     path = resolve(root, ident)
     if path is None:
         return None
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     if _STATUS.search(text):
         text = _STATUS.sub(f"**Status:** {status}", text, count=1)
     else:
@@ -238,7 +256,7 @@ def set_status(root, ident, status):
         at = 1 if lines and lines[0].startswith("# ") else 0
         lines.insert(at, f"\n**Status:** {status}")
         text = "\n".join(lines)
-    ws.atomic_write_text(path, text.rstrip("\n") + "\n")
+    ws.write_or_raise(path, text.rstrip("\n") + "\n")
     return path
 
 
@@ -260,6 +278,9 @@ def historical_names(root, target):
     if key in _NAMES_CACHE:
         return _NAMES_CACHE[key]
     names = set()
+    if not ws.git_owns(repo):
+        # See workspace.git_owns: an ancestor's log would supply this file's rename history.
+        return _NAMES_CACHE.setdefault(key, names)
     try:
         out = subprocess.run(
             # core.quotePath=false for the same reason rollup._churn sets it: git C-quotes any
@@ -328,7 +349,7 @@ def open_titles(root, count=INJECT_OPEN):
     texts = {}
     for path in threads(root):
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             text = ""
         texts[path] = text

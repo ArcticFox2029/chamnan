@@ -27,15 +27,13 @@ output above, and running it prints the same thing plain `chamnan-map` does.
 
 Never imports or executes the code it reads.
 """
-import argparse
 import ast
 import fnmatch
+import os
 import subprocess
 import warnings
 import re
 import mdblock
-import unicodedata
-import sys
 from pathlib import Path, PurePosixPath
 
 import assets as assets_mod
@@ -45,6 +43,7 @@ import impact as impact_mod
 import redact
 import schema as schema_mod
 import tokens
+import workspace as ws
 from unicode_marks import mark_aware
 
 # Directories that are never source: dependency trees, build output, VCS internals, caches.
@@ -84,9 +83,31 @@ SKIP_DIRS = {
 # rule.
 MAX_FILE_BYTES = 2_000_000
 
+# 🐛 [2026-09-06] The byte ceiling assumes cost is roughly proportional to file SIZE, and for
+# ordinary source it is. For a file that is mostly newlines separating trivial statements it is
+# wrong by three orders of magnitude, because `ast.parse` allocates per STATEMENT, not per byte.
+# Measured on this machine, one file, through `scan()`:
+#
+#     50,000 lines   0.10 MB    115 MB peak RSS
+#    200,000 lines   0.40 MB    393 MB
+#    500,000 lines   1.00 MB    943 MB
+#    900,000 lines   1.80 MB  1,674 MB
+#
+# Every one of those passes MAX_FILE_BYTES cleanly. A 1.8 MB file — entirely plausible as generated
+# or data-shaped source — takes 1.7 GB, which OOM-kills `chamnan-map` on any CI container capped
+# under 2 GB, and the byte ceiling never sees it coming (R5 agent 1). Peak memory does NOT
+# accumulate across files (the AST is released between them), so bounding the single worst file
+# bounds the run.
+#
+# 200,000 is where the curve is still under 400 MB — an order of magnitude above what an ordinary
+# corpus costs and an order of magnitude below where a container dies. Counted on the BYTES, before
+# any decode, for the same reason the size check happens before the read.
+MAX_FILE_LINES = 200_000
+
 # What the last scan left out and why. Populated by indexable(), read by the caller that
 # reports coverage, so a skipped file is a number someone can see rather than an absence.
 SKIPPED_TOO_LARGE = []
+SKIPPED_TOO_MANY_LINES = []
 SKIPPED_BINARY = []
 # 🐛 Eight names in SKIP_DIRS are ORDINARY SOURCE DIRECTORY NAMES as well as build-output names,
 # and the list could not tell the two apart. Measured: coveragepy's index contained 130 files and
@@ -144,9 +165,10 @@ def _generated_globs(root):
     if key in _GENERATED_GLOBS:
         return _GENERATED_GLOBS[key]
     pats = []
-    for name in (".gitattributes", ".github/.gitattributes"):
+    for holder, name in _gitattributes_files(root):
         try:
-            text = (Path(root) / name).read_text(encoding="utf-8", errors="replace")
+            text = (Path(root) / holder / name if holder
+                    else Path(root) / name).read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             continue
         for line in text.splitlines():
@@ -155,9 +177,61 @@ def _generated_globs(root):
                 continue
             if "-linguist-generated" in line:      # an explicit un-marking; leave the file alone
                 continue
-            pats.append(line.split()[0])
+            pats.extend(_scoped(holder, line.split()[0]))
     _GENERATED_GLOBS[key] = tuple(pats)
     return _GENERATED_GLOBS[key]
+
+
+# 🐛 [2026-09-06] Only two fixed paths were read, both anchored at the repository root, and git
+# honours a `.gitattributes` at ANY depth, scoped to its own subtree -- which is exactly how a
+# monorepo package declares its own generated files without write access to a shared root file
+# every team does not have. Reproduced with a location-only A/B: the same declaration, same syntax,
+# same file, moved from the root `.gitattributes` into `packages/sub/.gitattributes`, stopped being
+# honoured -- the generated file was indexed as ordinary source, counted against the `described`
+# percentage, and offered to the commenter agent (R6 acc3, unusual repositories).
+MAX_GITATTRIBUTES = 200          # a bound, not a policy: see the walk below
+
+
+def _gitattributes_files(root):
+    """(directory relative to root, filename) for every `.gitattributes` git would consult.
+
+    The root's own and `.github/`'s come first and unconditionally, so a repository that has only
+    those pays one `is_file()` rather than a walk. Everything below is found by walking, pruned by
+    the same SKIP_DIRS the indexer uses -- a `.gitattributes` inside `node_modules` describes
+    somebody else's package and is not this repository's declaration about itself.
+
+    Bounded at MAX_GITATTRIBUTES because this runs on every map build: a repository with more
+    declarations than that has a shape nobody has measured, and reading the first two hundred in
+    walk order is a better failure than an unbounded walk on a tree of unknown size.
+    """
+    out = [("", ".gitattributes"), (".github", ".gitattributes")]
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(str(root)):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
+        rel = os.path.relpath(dirpath, str(root)).replace(os.sep, "/")
+        if rel in (".", ".github"):
+            continue
+        if ".gitattributes" in filenames:
+            out.append((rel, ".gitattributes"))
+            seen += 1
+            if seen >= MAX_GITATTRIBUTES:
+                break
+    return out
+
+
+def _scoped(holder, pat):
+    """`pat`, as written in the `.gitattributes` sitting in `holder`, rewritten root-relative.
+
+    git's own two rules. A pattern containing a slash is anchored to the declaring directory. A
+    pattern without one applies at every level BENEATH it, so both the direct child and the deeper
+    form are emitted -- `_is_generated` matches literally and cannot expand one into the other.
+    """
+    if not holder:
+        return [pat]
+    lead = pat[3:] if pat.startswith("**/") else pat
+    if "/" in lead:
+        return [f"{holder}/{lead}"]
+    return [f"{holder}/{lead}", f"{holder}/**/{lead}"]
 
 
 def _is_generated(rel, pats):
@@ -184,6 +258,10 @@ def _tracked_ambiguous(root):
     if key in _TRACKED_AMBIGUOUS:
         return _TRACKED_AMBIGUOUS[key]
     found = set()
+    if not ws.git_owns(root):
+        # See workspace.git_owns: an ANCESTOR's tracked-file list would decide which `build/` or
+        # `dist/` directories in THIS tree are committed source rather than generated output.
+        return _TRACKED_AMBIGUOUS.setdefault(key, found)
     try:
         done = subprocess.run(["git", "-C", key, "ls-files", "-z"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
@@ -1595,6 +1673,24 @@ def indexable(root, nested=None, with_text=False, sniff=True):
                 raw = path.read_bytes()
             except OSError:
                 continue
+            # 🐛 [2026-09-06] The ceiling was enforced on `stat()` nineteen lines above and never on
+            # the bytes actually read, so a file that GREW between the two passed a check on a size
+            # it no longer had. Reproduced deterministically by growing the file inside a patched
+            # `stat()`: a 6 MB file was yielded whole against a 2 MB ceiling and `SKIPPED_TOO_LARGE`
+            # stayed empty, so nothing even recorded that a limit had been crossed (R6 acc3). It
+            # needs no exotic setup -- a code generator mid-write, a build regenerating a `.py`, or
+            # a checkout still being written while the pre-commit hook fires. Re-checked on the
+            # bytes in hand, which is the only measurement that describes what is about to be
+            # indexed. Recorded with the size actually read, not the stale one.
+            if len(raw) > MAX_FILE_BYTES:
+                SKIPPED_TOO_LARGE.append((path, len(raw)))
+                continue
+            # Counted on the bytes rather than after decoding: the decode of a pathological file is
+            # itself part of what this is refusing to spend. See MAX_FILE_LINES for the measurement.
+            lines_here = raw.count(b"\n") + (1 if raw and not raw.endswith(b"\n") else 0)
+            if lines_here > MAX_FILE_LINES:
+                SKIPPED_TOO_MANY_LINES.append((path, lines_here))
+                continue
             if b"\x00" in raw[:8192]:
                 SKIPPED_BINARY.append(path)
                 continue
@@ -1622,7 +1718,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
 
 
 def reset_skips():
-    """Empty the five "what did not make it into the index" lists. Call once per REPORT, not per scan.
+    """Empty the six "what did not make it into the index" lists. Call once per REPORT, not per scan.
 
     🐛 `_scan` used to clear four of them on entry, which is wrong the moment a run scans more than
     one directory: `chamnan-map <a> <b>` calls scan() per target, so the second call wiped the first
@@ -1640,6 +1736,7 @@ def reset_skips():
     file vanishing from a report that claims to be complete.
     """
     SKIPPED_TOO_LARGE.clear()
+    SKIPPED_TOO_MANY_LINES.clear()
     SKIPPED_BINARY.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
@@ -1739,9 +1836,20 @@ _HOW_TO_READ = ("**Read the Quick Index in full. Do NOT read the Full Detail sec
                 "this file:\n"
                 "the index is a fraction of the detail, and the detail is a fraction of the source.")
 
+# 🐛 [2026-09-06] The instruction said "grep the one heading you need", and a reader following it
+# with `grep -A N` gets a SILENTLY truncated answer whenever the section is longer than N. Measured
+# on this repository's real index: the median Full Detail section is 10 lines, so `-A 20` returns
+# the whole of 285 of 326 files — and cuts the other 41 with nothing saying so. The longest is 472
+# lines, and at `-A 20` a reader sees 4% of it and cannot tell (R8 agent 6).
+#
+# A RANGE read cannot truncate, and it is one line of instruction rather than a number every reader
+# has to guess. `grep` is still named first because it is what a reader reaches for and it is right
+# for finding WHICH heading; the range is what to use once they know.
 _TOO_BIG_TO_READ_IN_FULL = (
     "**This index is too large to read in full — grep BOTH sections, never read either whole.**\n"
-    "Look for the one heading you need (`## \\`path\\``), or read one directory's block at a time.\n"
+    "Find the heading you need with `grep -n '^## \\`path\\`'`, then read that section with a RANGE:\n"
+    "`sed -n '/^## \\`path\\`/,/^## /p' MAP.md`. A `grep -A N` cuts a long section off at N lines and\n"
+    "says nothing about it — the longest section in a real index of this size is over 400 lines.\n"
     "This repository has enough files that summarising them all costs what reading them would: the\n"
     "session-start block rolls this up to one line per directory, and this file is the place to\n"
     "come when you need one of them in full.")
@@ -1759,6 +1867,12 @@ def _built_from(root):
     down: a reader that finds HEAD unchanged and the tree clean knows the map is current without
     asking a clock. Appended after the sentence so `map_claim_check`'s header regex still matches.
     """
+    # 🐛 [2026-09-06] Reproduced: in a directory holding one file and an empty `.git/`, nested
+    # inside a real repository, this stamped `Built from <sha>` into MAP.md with the ANCESTOR's
+    # HEAD -- persisted to disk, describing a zero-commit tree as built from an unrelated
+    # repository's commit, and read back by the staleness check on every later session.
+    if not ws.git_owns(root):
+        return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -1912,43 +2026,3 @@ def _render(files, root):
         if tokens.estimate(quick) > _READ_IN_FULL_CEILING:
             text = text.replace(_HOW_TO_READ, _TOO_BIG_TO_READ_IN_FULL, 1)
     return redact.scrub(text)
-
-
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("repo")
-    ap.add_argument("--out", default=None)
-    ap.add_argument("--measure", action="store_true")
-    a = ap.parse_args()
-    root = Path(a.repo).resolve()
-    if not root.is_dir():
-        print(f"not a directory: {root}", file=sys.stderr)
-        return 1
-    reset_skips()
-    files = scan(root)
-    if not files:
-        print(f"no recognised source files under {root}", file=sys.stderr)
-        return 1
-    text = render(files, root)
-    out = Path(a.out) if a.out else root / "ARCHITECTURE_MAP.md"
-    out.write_text(text, encoding="utf-8")
-
-    if a.measure:
-        src = sum(f["tokens"] for f in files)
-        idx = text.index("## Full Detail")
-        langs = {}
-        for f in files:
-            langs[f["lang"]] = langs.get(f["lang"], 0) + 1
-        map_tok = tokens.estimate(text)
-        idx_tok = tokens.estimate(text[:idx])
-        print(f"{root.name:<22} {len(files):>4} files  {'+'.join(f'{k}:{v}' for k,v in sorted(langs.items(), key=lambda x:-x[1]))}")
-        print(f"  whole source     {src:>10,.0f} tokens")
-        print(f"  whole map        {map_tok:>10,.0f} tokens   ({map_tok/src*100:>5.1f}% of the source)")
-        print(f"  Quick Index      {idx_tok:>10,.0f} tokens   ({idx_tok/src*100:>5.1f}% of the source)")
-    else:
-        print(f"wrote {out}")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

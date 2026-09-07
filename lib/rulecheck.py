@@ -14,8 +14,17 @@ So a rule may carry an optional trailer:
 
     **Check:** present `PATTERN` in `GLOB`
     **Check:** absent `PATTERN` in `GLOB`
+    **Check:** present `PATTERN` in every `GLOB`
+    **Check:** absent `PATTERN` in every `GLOB`
 
 PATTERN is a plain regular expression and GLOB is a path pattern relative to the repository root.
+Without `every`, both are AGGREGATE across the whole glob: `present` is upheld while at least one
+file matches, `absent` while none do. With `every`, they are per-file: `present ... in every`
+requires each file to match and `absent ... in every` requires none of them to, and the failure
+message names the files rather than a count. Say `every` whenever the rule means "each one" -- the
+aggregate form will report a violated per-file invariant as holding, which is the trap this grammar
+word exists to remove.
+
 `present` means the rule is upheld while at least one match exists; `absent` means it is upheld
 while none does. A rule with no Check is unchanged and unaffected -- most rules are about judgement
 and cannot be reduced to a grep, which is the reason this is optional and always will be.
@@ -30,7 +39,20 @@ import re
 
 from pathlib import Path
 
-CHECK = re.compile(r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+`(.+?)`\s*$", re.M)
+# 🐛 [2026-09-06] `present X in GLOB` is an AGGREGATE test -- upheld while at least one file in the
+# glob matches -- and that is the wrong quantifier for the commonest real rule there is. Written the
+# natural way, "every service config declares a timeout" became
+# ``**Check:** present `timeout:` in `config/*.yaml` ``; adding a second config with no timeout at
+# all, the exact regression the rule exists to prevent, still reported `holds — 1/2 file(s)`,
+# because one OTHER file matched (R8 agent 3). This module's own docstring says collapsing "I could
+# not check" into "this is violated" is how a check becomes noise; collapsing "violated" into
+# "holds" is the same failure and worse, and it had no name here.
+#
+# `in every GLOB` is the per-file quantifier. The aggregate form is unchanged, so no existing rule
+# moves; a rule author who means "each one" can now say it, and the BROKEN message names the files
+# that fail rather than a count they have to go and diff themselves.
+CHECK = re.compile(
+    r"^\*\*Check:\*\*\s+(present|absent)\s+`(.+?)`\s+in\s+(every\s+)?`(.+?)`\s*$", re.M)
 
 # 🐛 CHECK's grammar is exact: wrong case (`**check:**`), the wrong keyword ("for" instead of
 # "in"), a missing backtick -- any of it makes `CHECK.finditer()` find nothing, and `parse()`
@@ -46,11 +68,22 @@ _CHECK_LIKE = re.compile(r"^\*\*check:\*\*.*$", re.M | re.I)
 # would turn a health report into a reason to uninstall.
 MAX_FILES = 400
 MAX_BYTES = 400_000
+# 🐛 [2026-09-06] The two above bound ONE check. Nothing bounded the SUM, and the sum is what a
+# session start actually pays: measured ~90-100 ms per check at those caps' own worst case, so 50
+# ordinary non-adversarial trailers cost 4.5 s -- whether spread over 50 rule files or written into
+# one (R12 agent 2). The count is the third dimension of the same product the ReDoS guards bound in
+# the other two, and it was the one nobody had a number on.
+#
+# 25, because a repository with more rule checks than that has stopped using them as rules. The
+# ones past the cap are reported as unrun rather than dropped: a check that quietly does not
+# execute is the failure `_CHECK_LIKE` above exists to prevent, one layer down.
+MAX_CHECKS = 25
 
 
 def parse(text):
-    """Every Check trailer in one rule's text, as (mode, pattern, glob)."""
-    return [(m.group(1), m.group(2), m.group(3)) for m in CHECK.finditer(text)]
+    """Every Check trailer in one rule's text, as (mode, pattern, glob, per_file)."""
+    return [(m.group(1), m.group(2), m.group(4), bool(m.group(3)))
+            for m in CHECK.finditer(text)]
 
 
 def malformed(text):
@@ -90,6 +123,30 @@ def malformed(text):
 _NESTED_QUANTIFIER = re.compile(r"\([^()]*[+*][^()]*\)\s*[+*{]")
 
 
+# A frozenset, not the string "+*{": `ch in "+*{"` answers True for the EMPTY string, and this
+# scanner asks the question about the character after a `)`, which is "" at the end of a pattern.
+_QUANTIFIERS = frozenset("+*{")
+
+# 🐛 [2026-09-06] The SEVENTH family: `(a?){20}b`. A bounded repetition over a NULLABLE atom. Every
+# guard passed it -- `?` is deliberately not a quantifier for `_too_many_quantifiers` (the flat
+# `a?a?a?…` chain is measured flat on CPython, and counting it would refuse ordinary patterns), and
+# this scanner's inner marker set was the same frozenset, so a `?` inside the group set nothing.
+# Measured on the real engine: N=18 0.244s, N=20 0.896s, N=22 3.513s, about 4.3x per +2 -- and
+# through the real SessionStart hook, N=28 was still running after 90 seconds. The control
+# `(a){24}b`, the same shape without the `?`, is 0.00008s, which isolates the hazard to the nullable
+# atom rather than to the bounded count (R14 agent 2). Under 30 characters in one committed rule
+# file: a colleague's `git pull` is enough to deliver it.
+#
+# So `?` counts as an INNER marker and nowhere else. A group holding a nullable atom AND carrying a
+# quantifier of its own is the hazard; a flat chain of `?` outside any group still is not, and the
+# measurement that says so is untouched.
+_INNER_MARKERS = frozenset("+*{?")
+
+# The group-opening syntax, matched at a position rather than anchored: `_GROUP_PREFIX` above does
+# the same job for a captured string and cannot be used with `.match(text, pos)` because of its `^`.
+_GROUP_OPENER = re.compile(r"\?(?:P<[^>]*>|P=[^|)]*|[aiLmsux]*(?:-[aiLmsux]+)?:|:|=|!|<[=!]|>)")
+
+
 def _quantified_group_over_quantifier(pattern):
     """True when a quantified group contains a quantifier anywhere inside it, at any depth.
 
@@ -120,16 +177,32 @@ def _quantified_group_over_quantifier(pattern):
             starts.append(i)
             inner.append(False)
             depth += 1
+            # 🐛 The `?` in `(?:`, `(?P<x>`, `(?i:` and every lookaround opens the GROUP; it is not
+            # a quantifier on anything. Counting `?` as an inner marker without skipping these
+            # refused `(?:GET|POST)*x` — an ordinary pattern — which is the false positive the
+            # seventh family's fix would have shipped with. Caught by running the allowed list
+            # beside the refused one, not by reading the change.
+            opener = _GROUP_OPENER.match(pattern, i + 1)
+            if opener:
+                i = opener.end()
+                continue
         elif ch == ")" and depth:
             depth -= 1
             starts.pop()
             had = inner.pop()
+            # 🐛 [2026-09-06] `nxt` is "" at the end of the pattern, and `"" in "+*{"` is TRUE --
+            # the empty string is a substring of every string. So a group holding any quantifier
+            # and CLOSING the pattern read as a quantified group over a quantifier: `(\d{4})` and
+            # `(\d+)`, the most ordinary regexes there are, were refused outright and every
+            # `**Check:**` rule written that way had silently never run. A frozenset cannot be
+            # asked this question wrongly. Found while checking the sixth ReDoS family's fix for
+            # false positives -- the leak and the over-refusal sat in adjacent lines.
             nxt = pattern[i + 1] if i + 1 < n else ""
-            if had and nxt in "+*{":
+            if had and nxt in _QUANTIFIERS:
                 return True
-            if inner and (had or nxt in "+*{"):
+            if inner and (had or nxt in _QUANTIFIERS):
                 inner[-1] = True
-        elif ch in "+*{" and inner:
+        elif ch in _INNER_MARKERS and inner:
             inner[-1] = True
         i += 1
     return False
@@ -137,22 +210,113 @@ def _quantified_group_over_quantifier(pattern):
 # no inner quantifier at all -- `(a|a)*`, `(x|xy)+`, `(\s|\s)*`. Measured here: `(a|a)*$` against
 # 20 identical characters took 0.25s, 24 took 4.2s, and 28 had not finished after five seconds.
 # It sailed straight through a guard whose whole reason for existing is that hang.
-_AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]+(?:\|[^()|]+)+)\)\s*[+*{]")
+# 🐛 [2026-09-06] `[^()|]+` required at least one character on EACH side of the `|`, so an EMPTY
+# branch never registered as an alternation at all -- `(a|){20}b` was invisible to both this and
+# `_ANY_ALTERNATION` below, while its sibling `(a|a){20}b` was caught. That is the eighth family,
+# and a distinct root cause from the seventh: nullable through an empty branch rather than through
+# a `?`. Measured: N=18 0.247s, N=20 0.943s, N=22 3.560s, the same 4.4x per +2, and through the
+# real hook N=28 did not return inside 20 seconds (R17 agent 2).
+#
+# `*` rather than `+`, and `_branches_overlap`'s prefix test already answers correctly once an
+# empty branch reaches it -- "" is a prefix of everything, which is exactly why the group is
+# nullable and exactly what makes it a hazard.
+_AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)\s*[+*{]")
+# 🐛 [2026-09-06] The fifth family, and the module's own comment below predicted one. The same
+# alternation with NO quantifier at all -- `(a|aa)(a|aa)(a|aa)…` -- is invisible to every guard
+# here, because all four require either a nested quantifier or a trailing `+`/`*`/`{` on the group.
+# Concatenation supplies the exponent instead: k groups placed side by side give the backtracking
+# engine 2^k parse paths to try when the tail fails. Measured against Python's own `re`, with 52
+# `a` characters and a trailing `b` that never matches: k=14 0.004s, k=16 0.018s, k=18 0.078s,
+# k=20 0.338s, k=26 over 15 seconds -- roughly 4.4x per +2, which is 2^k. Reproduced end to end
+# against the real SessionStart hook, which hung indefinitely on a 157-character `**Check:**` line
+# in one committed rule file (R11 agent 2).
+_ANY_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)")
+
+
+# 🐛 [2026-09-06] Both alternation detectors captured a group's RAW content and split it on `|`
+# straight away, so `(?:a|a)*` produced the branches `["?:a", "a"]` -- not duplicates, no prefix
+# relation, and the guard said the pattern was safe. `(?P<x>a|a)*` and `(?i:a|a)*` slipped through
+# the same way. That is not an exotic shape: a non-capturing group is what somebody writes when
+# they do not want the capture, so this family is MORE likely to be written by accident than the
+# five already caught. Measured on the real engine: `(?:a|a)*$` against 20 `a`s and a `b` takes
+# 0.088s, 24 takes 1.381s, 26 takes 5.500s, while the capturing twin was refused outright
+# (R12 agent 2).
+#
+# Stripped rather than matched, and stripped in ONE place both detectors go through -- the two are
+# deliberately the same question asked about differently-quantified groups, and this repository's
+# most-repeated defect is a fix applied to one of a matched pair.
+_GROUP_PREFIX = re.compile(r"^\?(?:P<[^>]*>|P=[^|)]*|[aiLmsux]*(?:-[aiLmsux]+)?:|:|=|!|<[=!]|>)")
+
+
+# 🐛 [2026-09-06] The NINTH family, and the first one this repository found with a generator rather
+# than by hand: `((a|a))+c`. An ambiguous alternation wrapped in a redundant inner group is
+# invisible to both alternation patterns, because neither can look inside nested parentheses --
+# `[^()|]*` stops at the first `(`. The outer group carries the quantifier and the inner one carries
+# none, so `_quantified_group_over_quantifier` does not fire either. Measured: 0.692s on 22
+# characters, against 0.000s for the same pattern with the redundant layer removed.
+#
+# Rather than teach the two patterns to parse nesting -- which is the thing a regex cannot do, and
+# the reason the quantifier guard is a hand-written scanner -- the redundant layer is REMOVED before
+# they are asked. `((X))` and `(?:(X))` mean exactly what `(X)` means, so this cannot make a guard
+# answer differently about any pattern that was already visible to it; it can only make more
+# patterns visible. Bounded to four passes: each one removes a layer, and a pattern nested deeper
+# than that is refused by `_too_many_quantifiers` or is not something anyone typed on purpose.
+_REDUNDANT_NESTING = re.compile(r"\((?:\?:|\?P<\w+>|\?[aiLmsux]*(?:-[aiLmsux]+)?:)?"
+                                r"(\((?:\?:|\?P<\w+>|\?[aiLmsux]*(?:-[aiLmsux]+)?:)?[^()]*\))\)")
+
+
+def _unwrapped(pattern):
+    """`pattern` with groups that wrap nothing but one other group collapsed onto it."""
+    for _ in range(4):
+        flat = _REDUNDANT_NESTING.sub(r"\1", pattern)
+        if flat == pattern:
+            break
+        pattern = flat
+    return pattern
+
+
+def _branches(content):
+    """The alternation's branches, with any group modifier dropped off the first one.
+
+    `(?:`, `(?P<name>`, `(?i:`, a lookaround -- every one of them puts characters at the front of
+    the captured content that belong to the GROUP and not to the first branch. Leaving them there
+    made two branches that are the same text look different.
+    """
+    return _GROUP_PREFIX.sub("", content, count=1).split("|")
+
+
+def _branches_overlap(branches):
+    """True when two branches of one alternation can consume the same text.
+
+    Duplicates are the unmistakable case; a prefix relation (`(x|xy)`) is the same hazard, because
+    the engine has two ways to consume the same input and must try both.
+    """
+    if len(set(branches)) != len(branches):
+        return True
+    for i, a in enumerate(branches):
+        for b in branches[i + 1:]:
+            if a.startswith(b) or b.startswith(a):
+                return True
+    return False
 
 
 def _ambiguous(pattern):
     """True for an alternation whose branches can match the same text under a quantifier."""
-    for m in _AMBIGUOUS_ALTERNATION.finditer(pattern):
-        branches = m.group(1).split("|")
-        # Duplicates are the unmistakable case; a prefix relation ((x|xy)+) is the same hazard,
-        # because the engine has two ways to consume the same input and must try both.
-        if len(set(branches)) != len(branches):
-            return True
-        for i, a in enumerate(branches):
-            for b in branches[i + 1:]:
-                if a.startswith(b) or b.startswith(a):
-                    return True
-    return False
+    return any(_branches_overlap(_branches(m.group(1)))
+               for m in _AMBIGUOUS_ALTERNATION.finditer(_unwrapped(pattern)))
+
+
+def _overlapping_alternations(pattern):
+    """How many alternation groups in `pattern` have branches that can match the same text.
+
+    Quantified or not. ONE of these is a single choice point and costs nothing; what turns the
+    curve is how many of them the engine has to try together, and concatenation multiplies them
+    exactly as a quantifier does. An alternation whose branches are distinct -- `(GET|POST|PUT)`,
+    which is what a real `**Check:**` pattern looks like when it has one at all -- is not counted,
+    because the engine picks one branch per position and never comes back to it.
+    """
+    return sum(1 for m in _ANY_ALTERNATION.finditer(_unwrapped(pattern))
+               if _branches_overlap(_branches(m.group(1))))
 
 
 # 🐛 The third shape, and the one all three guards above are blind to by construction: they every
@@ -219,19 +383,45 @@ def _too_many_quantifiers(pattern):
     return False
 
 
-def _matches(root, pattern, glob):
-    """(files_scanned, files_matching) or None when the check cannot be run at all."""
-    if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
-            or _ambiguous(pattern) or _too_many_quantifiers(pattern)):
+# 🐛 [2026-09-06] `_matches` returned None for four different reasons and the caller printed one
+# sentence covering all of them: "matched no readable file, or is not a valid pattern". Those need
+# different actions -- a refused pattern is a rule to REWRITE, an empty glob is a path to FIX, and
+# they read identically. Nobody noticed while the only consumer was a session line that stays
+# silent unless something is broken; surfacing the count in `chamnan-report` is what made the
+# ambiguity visible (R12 agent 5).
+WHY_REFUSED = "the pattern is refused as a backtracking hazard — rewrite it more simply"
+WHY_INVALID = "the pattern is not valid regular expression syntax"
+WHY_NO_FILES = "no readable file inside this repository matched the glob"
+
+
+def _matches(root, pattern, glob, why=None):
+    """(files_scanned, files_matching, files_not_matching), or None when it cannot run.
+
+    `why` is an optional single-element list the caller passes to receive the REASON alongside the
+    None -- a second return value would change this function's shape for every existing caller, and
+    every one of them tests `is None`.
+    """
+    def _no(reason):
+        if why is not None:
+            why[:] = [reason]
         return None
+    # The count is on CHOICE POINTS, not on any one shape: an unbounded quantifier and an
+    # overlapping alternation are the same hazard to a backtracking engine, and the fifth family
+    # was found by supplying the exponent through concatenation rather than through repetition.
+    # Counting them against one budget closes that dimension for every arrangement of them --
+    # nested, quantified, or side by side -- instead of adding a fifth shape and inviting a sixth.
+    if (_NESTED_QUANTIFIER.search(pattern) or _quantified_group_over_quantifier(pattern)
+            or _ambiguous(pattern) or _too_many_quantifiers(pattern)
+            or _overlapping_alternations(pattern) > MAX_QUANTIFIERS):
+        return _no(WHY_REFUSED)
     try:
         rx = re.compile(pattern)
     except re.error:
-        return None
+        return _no(WHY_INVALID)
     try:
         paths = [p for p in sorted(root.glob(glob)) if p.is_file()][:MAX_FILES]
     except (ValueError, OSError):
-        return None
+        return _no(WHY_NO_FILES)
     # Containment, checked here rather than trusted from the glob. `root.glob()` follows `..`
     # segments, so a rule whose Check trailer read ``in `../../../../etc/hosts` `` read a real file
     # outside the repository and reported its match count into the session -- a working oracle for
@@ -253,17 +443,21 @@ def _matches(root, pattern, glob):
             continue
     paths = inside
     if not paths:
-        return None
-    hits = 0
+        return _no(WHY_NO_FILES)
+    hits, missing = 0, []
     for p in paths:
         try:
             if p.stat().st_size > MAX_BYTES:
                 continue
-            if rx.search(p.read_text(encoding="utf-8", errors="replace")):
+            if rx.search(p.read_text(encoding="utf-8-sig", errors="replace")):
                 hits += 1
+            else:
+                missing.append(p)
         except OSError:
             continue
-    return len(paths), hits
+    # The files that did NOT match come back too, so a per-file check can name them instead of
+    # handing the reader a count and leaving them to diff the glob themselves.
+    return len(paths), hits, missing
 
 
 def run(root, rules):
@@ -273,22 +467,49 @@ def run(root, rules):
     {"holds", "BROKEN", "unverifiable", "malformed"}.
     """
     out = []
+    ran = 0
     for title, text in rules:
-        for mode, pattern, glob in parse(text):
-            got = _matches(Path(root), pattern, glob)
-            if got is None:
+        for mode, pattern, glob, per_file in parse(text):
+            if ran >= MAX_CHECKS:
                 out.append((title, "unverifiable",
-                            f"nothing to check: `{glob}` matched no readable file, "
-                            f"or `{pattern}` is not a valid pattern"))
+                            f"not run: this repository declares more than {MAX_CHECKS} checks, "
+                            f"and they are evaluated at every session start"))
                 continue
-            scanned, hits = got
-            ok = hits > 0 if mode == "present" else hits == 0
+            ran += 1
+            why = []
+            got = _matches(Path(root), pattern, glob, why)
+            if got is None:
+                # The REASON, not a sentence covering four of them. A refused pattern is a rule to
+                # rewrite and an empty glob is a path to fix; they used to read identically.
+                out.append((title, "unverifiable",
+                            f"nothing to check: {why[0] if why else WHY_NO_FILES} "
+                            f"(`{pattern}` in `{glob}`)"))
+                continue
+            scanned, hits, missing = got
+            where = f"every `{glob}`" if per_file else f"`{glob}`"
+            if per_file:
+                ok = hits == scanned if mode == "present" else hits == 0
+                offenders = missing if mode == "present" else [
+                    q for q in Path(root).glob(glob) if q.is_file() and q not in missing]
+            else:
+                ok = hits > 0 if mode == "present" else hits == 0
+                offenders = []
             if ok:
                 out.append((title, "holds",
-                            f"{mode} `{pattern}` in `{glob}` — {hits}/{scanned} file(s)"))
+                            f"{mode} `{pattern}` in {where} — {hits}/{scanned} file(s)"))
+            elif per_file:
+                # Named, not counted: the whole reason to say `every` is that the reader wants to
+                # know WHICH file broke it, and a count is the thing they would have to go and
+                # work out for themselves.
+                _named = ", ".join(f"`{q.name}`" for q in sorted(offenders)[:4])
+                _more = len(offenders) - 4
+                out.append((title, "BROKEN",
+                            f"expected {mode} `{pattern}` in {where} — {hits}/{scanned} file(s); "
+                            + (f"{_named}" + (f" +{_more} more" if _more > 0 else "")
+                               if _named else "no file matched")))
             else:
                 out.append((title, "BROKEN",
-                            f"expected {mode} `{pattern}` in `{glob}`, "
+                            f"expected {mode} `{pattern}` in {where}, "
                             f"found {hits} match(es) across {scanned} file(s)"))
         # A distinct status from "unverifiable": that one means "the grammar is fine, the check
         # just can't run right now" (a glob matching nothing yet). This means the grammar itself
@@ -297,15 +518,50 @@ def run(root, rules):
         for bad_line in malformed(text):
             out.append((title, "malformed",
                         f"looks like an attempted **Check:** trailer but does not match the "
-                        f"required form (present|absent `PATTERN` in `GLOB`): `{bad_line}`"))
+                        f"required form (present|absent `PATTERN` in [every] `GLOB`): `{bad_line}`"))
     return out
 
 
-def line(results):
+def contradictions(rules):
+    """Pairs of rules whose Check trailers point at the same thing and demand opposite outcomes.
+
+    🐛 [2026-09-06] `memory.py` catches two SYNTACTIC self-contradictions -- a git merge marker
+    inside one file, and two filenames colliding by case -- and nothing at all catches two cleanly
+    written rules that flatly disagree. "Always run the full suite before every commit" and "Never
+    run the test suite locally" are both injected, back to back, as equally authoritative fact
+    (R8 agent 3).
+    #
+    A general contradiction detector needs judgement a grep cannot have, and is not what this is.
+    This is the one shape the plugin already holds the data for: two trailers with the same pattern
+    and the same glob, one saying `present` and the other `absent`. They cannot both hold, so one
+    of them is already reported BROKEN every session -- what was missing is the REASON, which is
+    the other rule, and which no amount of staring at the broken one reveals.
+
+    Returns [(title_a, title_b, pattern, glob)], each pair once, in a stable order.
+    """
+    seen = {}
+    for title, text in rules:
+        for mode, pattern, glob, _per_file in parse(text):
+            seen.setdefault((pattern, glob), {}).setdefault(mode, []).append(title)
+    out = []
+    for (pattern, glob), by_mode in sorted(seen.items()):
+        for a in sorted(set(by_mode.get("present", []))):
+            for b in sorted(set(by_mode.get("absent", []))):
+                # A rule that contradicts ITSELF -- both trailers in one file -- is a real mistake
+                # too, and naming it once is clearer than naming it as a pair with itself.
+                out.append((a, b, pattern, glob))
+    return out
+
+
+def line(results, clashes=()):
     """One line for the injected block. Silent when every check holds and none is unverifiable.
 
     Silence is the point. A session that reads "all rules hold" every time learns to skip the line,
     and then does not read it on the day it says something else.
+
+    `clashes` is `contradictions()`'s output. Optional and defaulting to empty so every existing
+    caller keeps working unchanged; a caller that has the rules to hand should pass it, because a
+    contradiction is the REASON behind a BROKEN line rather than a second complaint about it.
     """
     broken = [r for r in results if r[1] == "BROKEN"]
     # 🐛 A typo in a `**Check:**` trailer (wrong case, "for" instead of "in", a missing backtick)
@@ -314,7 +570,7 @@ def line(results):
     # meant to be mechanically checked." Reported here under its own line so it can't be confused
     # with either "holds" or "not meant to be checked."
     malformed_ = [r for r in results if r[1] == "malformed"]
-    if not broken and not malformed_:
+    if not broken and not malformed_ and not clashes:
         return ""
     # Rule titles and their `**Check:**` trailers are written by whoever wrote the repository, and
     # this line prints them in chamnan's own voice, outside the fence. Made inert first; the caller
@@ -332,4 +588,13 @@ def line(results):
         more = f" _(+{len(malformed_) - 3} more)_" if len(malformed_) > 3 else ""
         parts.append(f"⚠ {len(malformed_)} **Check:** trailer(s) do not parse and have never run: "
                      f"{named}{more}. Fix the syntax or the rule is not actually verified.")
+    if clashes:
+        named = "; ".join(
+            f"**{mdblock.as_quoted(a)}** vs **{mdblock.as_quoted(b)}** "
+            f"(`{mdblock.as_quoted(pattern, 40)}` in `{mdblock.as_quoted(glob, 40)}`)"
+            for a, b, pattern, glob in clashes[:3])
+        more = f" _(+{len(clashes) - 3} more)_" if len(clashes) > 3 else ""
+        parts.append(f"⚠ {len(clashes)} pair(s) of recorded rules demand opposite things about the "
+                     f"same files, so one of them cannot be met: {named}{more}. One of the pair is "
+                     f"wrong; deciding which is not something this can do for you.")
     return "\n_" + "_\n\n_".join(parts) + "_\n"

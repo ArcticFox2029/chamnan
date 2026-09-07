@@ -67,7 +67,7 @@ the identifiers this repository's sessions actually searched for are answerable 
 ## In one screen
 
 *Self-contained on purpose. If you are an AI summarising this page, or a person who would rather
-not read 1,900 lines, everything essential is in this section — the rest of the page is detail,
+not read two thousand lines, everything essential is in this section — the rest of the page is detail,
 evidence and reference, and nothing below states a claim in stronger terms than it is stated here.*
 
 | | |
@@ -77,8 +77,8 @@ evidence and reference, and nothing below states a claim in stronger terms than 
 | **How it works** | A scanner walks the tree and writes `.chamnan/MAP.md` — a Quick Index plus per-file detail. A SessionStart hook injects a bounded slice of it, plus whatever has been recorded, into the session. Commands and skills write the rest as you work. |
 | **What it is built from** | Python's standard library, and nothing else. **No network calls at runtime, no database, no daemon, no background process, no embedding model, no API key.** |
 | **What it produces** | Plain markdown and JSON inside `.chamnan/`, committed beside the code. Readable and editable by hand; deletable without breaking anything. |
-| **The one write outside `.chamnan/`** | An optional pre-commit Git hook, installed only if you say yes, that keeps the index in step with the tree. |
-| **What it never does** | Rewrite your source, call out to a network, run anything in the background, or send a repository anywhere. It reports; it does not edit code. |
+| **The two writes outside `.chamnan/`** | Both opt-in, both only if you say yes: a pre-commit Git hook that keeps the index in step with the tree, and the `commenter` agent, which adds one opening comment line to source files that have none. |
+| **What it never does** | Rewrite your source, call out to a network, run anything in the background, or send a repository anywhere. It reports; nothing it does on its own edits code — the single exception is the opt-in `commenter` agent in the row above, which adds one comment line per file and nothing else. |
 | **Requirements** | Claude Code, Python 3.8+, Git. macOS, Linux or Windows. |
 | **Install** | `/plugin marketplace add ArcticFox2029/chamnan` then `/plugin install chamnan`, then `/chamnan:bootstrap` in a repository. |
 | **Cost of being wrong** | An index entry that is stale is worse than one that is missing — that finding is measured, stated up front, and is why the index is regenerated rather than hand-edited, and why staleness is announced. |
@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.20.0](#whats-new-in-1210) · [Commands](#commands)
+[What's new in 1.22.0](#whats-new-in-1220) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -328,7 +328,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 
 | | |
 |---|---|
-| **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses four hook events: `SessionStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
+| **Claude Code with plugin support** | Required. chamnan is a plugin, and it uses five hook events: `SessionStart`, `SubagentStart`, `PreToolUse`, `PostToolUse`, `SessionEnd`. No minimum Claude Code version is declared in `plugin.json`; if your build supports `claude plugin install` and those events, it will run. |
 | **Python 3.8 or newer** | Required, and it must be on `PATH` as `python3`. The hooks are launched by path, relying on their `#!/usr/bin/env python3` line and executable bit. 3.8 is the floor because the assignment expression (`:=`) is the newest syntax used; nothing later appears anywhere in the plugin. |
 | **Third-party packages** | None. Standard library only — `ast`, `pathlib`, `re`, `json`, `csv`, `sqlite3`, `zipfile`, `tarfile`, `zlib`, `struct`, `subprocess`. Nothing to install, nothing to keep updated, and no virtualenv. |
 | **Git** | Not required for any feature, with one thing to know: the automatic first-session setup only creates `.chamnan/` inside a directory that has a `.git`, `.hg` or `.svn` marker (anything else would leave a folder in whatever directory a session happened to open). In a project with no version control, the session-start block says so and tells you to run `chamnan-map` once; after that every session behaves exactly as in a repository. The rest of this row is about the `git` binary — but the claim that used to sit here, "the plugin never invokes the `git` binary", was **false**. Nine paths shell out to `git` when it is present, and they are read-only: `git log` to rank files by churn, `git rev-parse HEAD` to know whether that ranking is still current, `git rev-parse HEAD` again to stamp `MAP.md` with the commit it was built from, and that stamp checked at session start with `git rev-parse HEAD` and `git status --porcelain` so a current map is trusted over a clock — `git checkout` writes files in tree order, and the map's mtime alone called a current index stale after every branch switch, `git ls-files` to tell a committed `src/build/` from a generated `build/`, `git check-ignore` to avoid warning about an ignored `.env`, `git log` again for the timeline, `git status` to say where the last session stopped when nobody wrote it down, and `git rev-parse --git-path hooks` so the hook installer works in a worktree. Each is wrapped and each degrades to a documented fallback when git is missing or the directory is not a repository — the roll-up sorts alphabetically, the build-output rescue does not fire, and so on. The one WRITE remains opt-in: `chamnan-map --install-git-hook` needs a `.git` directory, and the hook it writes is a `/bin/sh` script calling `git diff` and `git add`. |
@@ -448,7 +448,7 @@ Everything lives in one directory at the repository root, and nothing outside it
 │   └── rules/      standing constraints — injected every session
 ├── skills/         procedures you chose to keep     (starts empty)
 ├── tools/          scratch scripts you kept         (starts empty)
-├── candidates/     detected sequences, awaiting review (starts empty, and stays empty on every real log measured — see `chamnan-candidates`)
+├── candidates/     detected sequences, awaiting review (starts empty; see `chamnan-candidates`)
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 
@@ -475,65 +475,105 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.21.0
+## What's new in 1.22.0
 
-### Credentials that were reaching the index
+Sixty commits, and almost all of them close something that was quietly wrong rather than adding
+anything. The themes below are the ones that recurred.
 
-A connection string whose password contains `@` leaked. The rule's password class excluded `@`, so
-it stopped at the first one: `amqp://svc:a@b@rabbit/vhost` and `mongodb://root:x@y%40z@cluster/admin`
-passed through whole, and `postgres://admin:Hunter2@Pass@db/main` came out as
-`<REDACTED>@Pass@db/main` — half the password beside the marker that says it was handled. `@` is
-ordinary in a generated password and real connection strings do not percent-encode it. No
-`jdbc:postgresql://` URL had ever matched either, because the scheme admitted only one layer.
+### A rule file could hang every session in the repository
 
-A symlink with an innocent name walked past the "never open this file" refusal. Both refusals judged
-the name they were handed rather than the file that gets opened, and opening follows a link — so
-`safe_data.bin` pointing at `release.jks` was opened and its readable strings printed, alias and
-password-shaped fragment included.
+`**Check:**` trailers are regular expressions that arrive with a clone and run at every session
+start. Five more catastrophic-backtracking families were found and closed, on top of the four
+already guarded: ambiguous alternations repeated by *concatenation* rather than by a quantifier;
+the same shapes hidden behind `(?:`, `(?P<name>` or `(?i:`, whose group modifier was being read as
+part of the first branch; a bounded count over an atom made nullable by `?`; the same made nullable
+by an *empty* alternation branch; and an ambiguous alternation wrapped in one redundant group,
+which neither alternation pattern could see because a regex cannot look inside nested parentheses.
+Every one of them was under thirty characters, and the last of them hung the real session-start
+hook past ninety seconds from a single committed file.
 
-### Files that were silently lost
+The ninth was not found by anyone noticing a shape. It was found by generating them — every
+combination of group opener, inner body and quantifier, flat, nested and concatenated, compiled,
+filtered to the ones the guards allow, and timed. **That generator is now part of the test suite**,
+so the tenth family is reported by name on any run rather than waiting for somebody to spot it.
 
-Five functions turn free text into a filename and three never passed it through the guard that
-exists for this: a record titled `CON` or `nul` becomes `con.md` or `nul.md`, which on Windows are
-the console and the bit-bucket. The write does not fail, it goes to the device, the record is gone,
-and the index says it was written.
+The guard beside them was refusing `(\d+)` and `(\d{4})` — the most ordinary patterns there are —
+because `"" in "+*{"` is true in Python and the check asked about the character after a group,
+which is the empty string at the end of a pattern. Every rule written that way had silently never
+run. And nothing bounded the *number* of checks a session pays for: fifty ordinary trailers cost
+4.5 seconds. Twenty-five now run and the rest are reported as unrun rather than quietly skipped.
 
-The memory stamper read a file, decided, and wrote it back with nothing holding it in between,
-while firing on every Write and Edit — so a second write landing in that gap was overwritten by the
-stamped copy of the older text.
+### A clock that jumped forward could delete your work
 
-Three generated shell scripts were written with the platform's line endings, so on Windows the
-installed git hook and both generated tool scripts began `#!/bin/sh\r`, which no shell recognises.
+Three separate mechanisms computed a deadline from the wall clock and nothing else. With the clock
+400 days ahead — an NTP correction, a dead RTC battery — retention deleted files written seconds
+earlier, the orphaned-staging-file sweep deleted the temporary file of a write that was still in
+progress (losing the new content while the destination kept the old), and the mutex let a second
+process take a lock a live process was holding.
 
-### Files that were never described
+There is no way to tell a jumped clock from real age using the clock that jumped, so each of them
+now has a second bound the clock cannot move: process liveness for the two that had a PID available,
+and "a retention pass never empties a store" for the rest.
 
-A destructured JavaScript import spanning several lines ate the comment below it, so the file went
-into the index with no description at all. Brackets were counted; braces were not.
+### Writes that reported success and had not happened
 
-### Sizing, and honesty about it
+`chamnan-timeline new` on a directory it could not write printed "declared", named the file, printed
+the follow-up command, and exited 0 — with nothing on disk. Of two dozen call sites for the atomic
+writer, two ever checked whether it worked. Every write a person asked for by name now fails loudly,
+and says *why*: a read-only file, a read-only directory and a full disk used to produce one identical
+sentence and need three different fixes.
 
-`--model fable`, `opus`, `sonnet` and `haiku` now size correctly. Anthropic's current models are not
-called "Claude *n*", so every one of those names fell through to the default profile — a user on a
-million-token model told to size for a small window. The four numbers come from Anthropic's own
-documentation; `mythos` is deliberately absent, because "probably a million" is not a number, and it
-falls through with the table's own note that it is a dated convenience rather than an authority.
+### Files that were destroyed, forked, or written wrong
 
-`CHAMNAN_READ_ONLY` reached five call sites and no others, so every store kept writing with it
-set — including the one a background hook fires on ordinary Bash calls. And the commands were not
-told: `chamnan-timeline new` reported "declared — .chamnan/threads/a-thread.md" with nothing on
-disk. The first-session banner had the same fault against a repository that is simply not writable,
-announcing a workspace it had failed to create.
+The classifier that decides whether an adapter file is chamnan's own output destroyed a hand-written
+one for the fourth time — an italic first line is how a person writes a warning, and that was the
+test. It recognises chamnan's own voice now: the framing sentence every generated block has opened
+with since 1.8.0, plus a matched fence whose nonce is generated per run.
 
-A `tools/index.json` holding `{}` — a hand-edit, a bad merge — took `chamnan-report` down with a
-TypeError rather than reading as empty.
+A UTF-8 BOM — what PowerShell and Notepad write by default — made a thread's title unreadable, so
+`chamnan-timeline` forked one thread's history into a second file. Fixed at the read, so every file
+chamnan opens is now immune rather than the three parsers somebody remembered.
 
-### The suite
+`chamnan-timeline add --files` wrote absolute paths verbatim into a tracked file, committing one
+developer's machine layout. Claude Code requires absolute paths for Read and Edit, so an agent
+recording what it touched typed exactly the shape that broke.
 
-Its version-drift check had never run on CI, on any platform: the checkout fetches no tags, `git
-describe` finds nothing, and the whole block vanished inside an `if` with no `else`. A check that
-skips itself in silence is worse than an absent one, because the green total counts it as passed.
+### Things chamnan knew and never told anyone
 
-3,215 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
+Whether the pre-commit hook that keeps the index fresh is even installed — the detection lived
+inside the command that installs it, so a repository whose index was quietly going stale looked
+exactly like one whose hook was working. Whether any stored knowledge names a version no environment
+declares. Whether a rule's mechanical check *could not run*, which looked identical to a rule that
+never had one. Whether every candidate in the queue was machine-detected and unreviewed. And
+`environments.md`, which the inventory had never counted at all.
+
+`chamnan-map --undocumented` lists every file with no opening comment, because the two skills told
+the session to fix "the files that lack one" and only eight were ever shown — on a repository with
+forty, that left 80% untouched and unmentioned. `chamnan-map --verify` checks every mechanical claim
+the index makes against the tree and **exits non-zero** when one is false; the checker existed, its
+own comment recorded that its parser had been broken for three days "because nothing runs this
+file", and it returned 0 whatever it found.
+
+### What a session pays
+
+A resumed session was sent the entire block a second time. It is not resent when the transcript
+*proves* the first one is still in context — no compaction boundary after this session's own fence —
+and on every doubt the whole block is emitted exactly as before, because the cost of being wrong is
+a session with no index at all. Measured 837 tokens to 54.
+
+One optional section could cost more than the whole index budget: eight kinds of twenty Kubernetes
+objects with realistic names rendered 4,059 tokens against a 3,000-token budget, and forced the
+directory roll-up onto the entire repository's index as collateral. 808 now, with every kind still
+named. And chamnan counted *its own workspace* as your uncommitted work, so a clean tree was told
+"1 uncommitted file, and nobody recorded what for".
+
+### Leaks
+
+Control characters — ESC, BEL, the bidi overrides — reached the injected block from a session
+record's title, and reached the model through the JSON hook payloads where `json.dumps` escaped them
+past every check that scanned raw output. `chamnan-map --verify` printed index rows with no
+redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
+the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
 
 ## Bootstrap does not rewrite your code
 
@@ -556,7 +596,9 @@ they never open a source file for writing.
 | `.chamnan/MAP.md` | rewritten on every index run |
 | `.chamnan/logs/` contents | pruned on every command, per `log_retention_days` |
 
-Nothing outside `.chamnan/` is written without you asking. There is one opt-in exception, below.
+Nothing outside `.chamnan/` is written without you asking. There are two opt-in exceptions, both
+below: the pre-commit hook, and the `commenter` agent that adds one opening comment line to source
+files that have none.
 
 ### Optional, and only after you say yes
 
@@ -580,6 +622,22 @@ cannot run a command or delete a file. The "one line, never touch existing comme
 code" rules are instructions to a model, and a model following instructions is not the same thing
 as a guarantee: review the diff, as you would for any change you did not type. It is one line per
 file, so the diff is easy to read.
+
+### The other agent: `librarian`
+
+`commenter` is dispatched for you. `librarian` is not — it is on-demand, and it exists because
+nothing else checks whether the workspace still describes the repository. Ask for it by name
+("run the librarian") and it reports: whether the index is stale, whether a recorded procedure
+still points at files that exist, whether STATE.md is describing work that finished long ago.
+
+| | |
+|---|---|
+| Tools | `Read`, `Glob`, `Grep`, `Bash` |
+| Model | `haiku` |
+| Writes | nothing. It reports; every fix is yours to make |
+
+It shipped in the plugin for several releases with no mention in any documentation, so nobody who
+had it installed had a way to know it was there.
 
 Prefer it never asks? Set `"agents": false` in `.chamnan/config.json`. chamnan then lists the files
 missing a comment and leaves them to you.
@@ -691,6 +749,10 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `promote` | `true` | `true` / `false` | Noticing a scratch script written for the third time, offering to keep it in `.chamnan/tools/`, and listing kept tools at session start. |
 | `report` | `true` | `true` / `false` | The `chamnan-report` before/after measurement. |
 | `agents` | `true` | `true` / `false` | Whether chamnan may dispatch its own cheap-model agents. With `false`, low coverage is reported and the files are left to you. |
+| `pointer` | `true` | `true` / `false` | The file pointer: before a file is edited, naming the rules and impact edges that govern it. Fires on every tool call, so it is the switch to reach for if the notices are too frequent. |
+| `timeline` | `true` | `true` / `false` | `chamnan-timeline`, and injecting open threads at session start. |
+| `environments` | `true` | `true` / `false` | `chamnan-env`, and injecting the environment constraints at session start. |
+| `state_stale_days` | `14` | integer, days | How long an unpinned section of `STATE.md` is injected before it is treated as stale. A pinned section is never aged out. |
 | `log_retention_days` | `7` | integer, days | Files under `.chamnan/logs/` older than this are deleted on every command. Best-effort and silent — housekeeping never fails a command you asked for. |
 | `language` | `"en"` | any language, e.g. `"th"` | The language chamnan **writes in** when it generates file comments and records procedures. It never rewrites anything already written, and it never affects the language of replies to you. |
 | `index_token_budget` | `3000` | integer, tokens | Ceiling on the part of `MAP.md` injected every session. Over budget, the index is rolled up by directory rather than truncated, so nothing disappears silently. |
@@ -698,10 +760,12 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `warn_on_bulk_reads` | `true` | `true` / `false` | A notice before a read pulls in a lock file, a minified bundle or a very large file. A notice, never a block. |
 | `reply_style` | `"off"` | `"off"` / `"concise"` / `"terse"` | Injects a per-repo instruction on how answers should be written. `off` injects nothing; `concise` drops preamble, restatement and closing offers while keeping full sentences; `terse` adds fragments and tables over prose. An unrecognised value injects nothing. |
 | `resume` | `true` | `true` / `false` | Session records under `.chamnan/sessions/`, and injecting the unfinished part of the most recent one. |
+| `resume_pointer` | `true` | `true` / `false` | On a resumed session, send a one-line pointer instead of the whole block — but only when the transcript proves the earlier block is still in context, with no compaction after it. Measured at 837 → 54 tokens on a 12-file repository. Every doubt falls back to the full block, so turning this off only removes a saving. |
 | `session_retention_days` | `30` | integer, days | Session records older than this are deleted on the next `chamnan-map` or `chamnan-report`. Longer than the log window, because a record from three weeks ago is still the answer to "what was I doing". |
 | `memory` | `true` | `true` / `false` | `.chamnan/memory/`. Rules are injected in full; decisions and lessons contribute a title and are read on demand. **Not pruned by age** — a session record stops mattering, a decision does not. |
 | `milestones` | `true` | `true` / `false` | `.chamnan/milestones.md`. Only the two most recent titles are injected, so the file's length costs nothing per session. |
 | `ledger` | `true` | `true` / `false` | The write-skills line and the ledger line at the top of every session — naming the plugin's write skills, and a count of what each store holds. ~112–128 tokens together. Also gates the once-per-session resume nudge. |
+| `context_profile` | `standard` | one of `small-window`, `standard`, `large-window` | Sizes the injected block for the model reading it. A budget you set yourself still wins over the profile; one left at its default does not, so choosing a profile actually moves both numbers. `CHAMNAN_CONTEXT_PROFILE` overrides this per run without editing a file the repository commits. |
 | `state_token_budget` | `1700` | integer, tokens | Ceiling on `STATE.md`'s injection, in tokens rather than characters. A section whose heading ends in 📌 is injected in full first, regardless of this budget or where in the file it falls. |
 
 Each part is independent — switching one off does not affect the others.
@@ -729,7 +793,7 @@ chamnan-context --write cursor   set that agent up to read it
 chamnan-context --model kimi     size it for the context window the model actually has
 ```
 
-**35 agent names can be written**, from 24 adapters. Where an agent has a
+**35 agent names can be written**, from 23 adapters. Where an agent has a
 file of its own, chamnan writes that file; where several agents read the same one, they share it
 rather than each getting a copy that drifts.
 
@@ -751,7 +815,7 @@ rather than each getting a copy that drifts.
 | `iflow` | `IFLOW.md` |
 | `junie` | `.junie/AGENTS.md` |
 | `kiro` | `.kiro/steering/chamnan.md` |
-| `mistral` | `.vibe/AGENTS.md` |
+| `mistral` | `AGENTS.md` (an alias for `generic` — the `.vibe/` path had no reader left) |
 | `qwen` | `QWEN.md` |
 | `replit` | `replit.md` |
 | `roo` | `.roo/rules/chamnan.md` |

@@ -98,7 +98,16 @@ PATTERNS = [
     re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{10,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])AKIA[0-9A-Z]{16}\b"),
+    # 🐛 `AKIA` alone. AWS issues access key IDs under four prefixes and the commonest one in CI is
+    # `ASIA` — the temporary credential every assumed role hands out — which sailed straight through
+    # (R5 agent 2, against gitleaks' and detect-secrets' own fixtures).
+    #
+    # Only the KEY prefixes are here. `AROA`, `AIDA`, `AGPA`, `ANPA` and friends are principal ids
+    # for roles, users and groups: they appear in ARNs and policy documents as a matter of course,
+    # they are not credentials, and redacting them would cost the index real information for nothing.
+    # Two comparable tools redact them anyway; that is the precision half of this module's trade
+    # being spent without being noticed.
+    re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b"),
     re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,}"),
     re.compile(r"(?<![A-Za-z0-9_-])(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{16,}"),
@@ -237,14 +246,44 @@ CREDENTIALED_URL = re.compile(
     r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
     r":([^\s/]{3,})@(?=[^\s/@]+)")
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
+# 🐛 [2026-09-06] What sits immediately after the separator is not always the value. Three shapes
+# put something else there, and the rules below captured THAT and stopped:
+#
+#     val apiPassword: String = "hunter2..."      -> `String` was redacted, the secret was not
+#     api_password: &shared_pw "hunter2..."       -> the ANCHOR was redacted, the secret was not
+#     apiKey: string = "sk-..."                   -> same, in every C-family and JVM language
+#
+# The second half of that is the dangerous half: the line comes back carrying a `<REDACTED>` marker,
+# so a reader — or a later automated check — sees the redactor having fired and the credential
+# sitting in the clear beside it. Measured by R8 agent 2 across five language idioms; adding these
+# to `tools/redactor_recall.py`'s corpus drops recall from 97.4% to 88.1% without this.
+#
+# Stepped over rather than matched: an annotation is only an annotation when a real `=` follows it,
+# and a YAML anchor only when whitespace and a value follow. `api_key = os.environ["X"]` has
+# neither, so the optional group does not fire and the existing rules decide as before.
+_BETWEEN_NAME_AND_VALUE = (
+    r"(?:"
+    r"[A-Za-z_][\w.]*(?:\[[^\]\n]*\]|<[^>\n]*>)?[ \t]*=[ \t]*"   # a type, then the real `=`
+    r"|&[\w.-]+[ \t]+"                                              # a YAML anchor
+    r")?")
+
+# Go, and every other language that writes the type between the name and the `=` with no separator
+# at all: `var apiPassword string = "..."`. There is no `:` for the rules' own separator to find, so
+# this is a second name-side shape rather than something that can be stepped over after one.
+# Narrower than it looks: a single identifier-shaped word, then `=`, then a value that still has to
+# clear the six-character floor and `_looks_like_a_credential_name`. Precision is what decides
+# whether this is worth having, and it is measured -- `tools/redactor_recall.py` reports it.
+_TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*"
+
 ASSIGNED_SECRET = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)(['\"])([^'\"]{6,})\2", re.I)
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE
+    + r"|" + _TYPE_BEFORE_ASSIGN + r"))(['\"])([^'\"]{6,})\2", re.I)
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
 # single unbroken run of characters so a prose comment ("password: ask the platform team") is not
 # eaten, and to six characters so token_ttl=3600 is not either.
 ASSIGNED_SECRET_BARE = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE + r")"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
     # a now-broken line -- a leak and a corruption from one missing character.
@@ -665,6 +704,25 @@ def _value_is_the_key_itself(key_part, value):
 # So a window ends where a line ends AND where no quoted value opened by this occurrence is still
 # open. Past the cap, windowing is abandoned for the whole document rather than narrowed — a
 # redactor that is slow is a cost, and one that is nearly right is a leak.
+# Profiled on the real 2,544-file repository at 2026-09-06, not on a fixture, because the previous
+# profile was fixture-specific and said something that is not true here. R7 agent 2 reported
+# chamnan's regex work as "an order of magnitude below" the wait on git; measured in-process with
+# cProfile against the actual tree, git-wait is 37-42% of the hook's wall time and redaction is
+# 23-25% -- 1.5-1.8x apart, not 10x (R13 agent 1). The reason is this repository specifically: its
+# own MAP.md discusses keys, secrets and tokens constantly, so `SECRET_WORDS` matches 139 times in
+# 295,447 characters, and the windows those hits produce cover 15.4% of the document.
+#
+# Windowing is still a clear win and is not in question: 268.1 ms against 328.9 ms for the whole
+# document on that same file. What the corrected number changes is where a future round should
+# look, which is here rather than at the regexes downstream.
+#
+# Measured and NOT taken: the 51.9 ms this scan costs is the scan itself -- the per-hit work is
+# 0.2 ms of it -- and a cheap literal pre-filter over the same text ("pass", "pwd", "secret",
+# "cred", "token", "key", "auth", which every branch below requires one of) runs in 8.2 ms, so
+# chunking the document and running this only over chunks that contain one would save about 44 ms.
+# It is not built. Chunk boundaries must not split a match, the case-sensitive branches below make
+# the pre-filter's own casing load-bearing, and this module's own rule settles it: a redactor that
+# is slow is a cost, and one that is nearly right is a leak.
 _SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
 _WINDOW = 512
 _WINDOW_LOOKBACK = 64
@@ -743,6 +801,108 @@ def _apply_in_windows(text, spans, steps):
     return "".join(pieces)
 
 
+# 🐛 A name ending in `key` assigned an f-string TEMPLATE was redacted as a credential. Measured on
+# a real 33-file application: `history_key = f"chat_history_{mode}"`, `retry_key =
+# f"last_failed_prompt_{mode}"`, `container_key = "attach_" + ...` — session-state keys, cache keys,
+# widget ids, all replaced by <REDACTED>. 49 lines changed in one sweep (R5 agent 2).
+#
+# A value carrying a runtime interpolation is not a literal credential: whatever the real secret is,
+# it is not this text, because this text does not exist until the program runs. Narrow on purpose —
+# it applies only to the weakest of the secret words. `key` is the one that appears in
+# `history_key`; `password`, `secret`, `token` and `credential` are not exempted, so
+# `password = f"hunter2{n}"` is still redacted and the literal half never gets a pass.
+_TEMPLATED = re.compile(r"\{[^{}]*\}")
+# A provider prefix is recognisable long before the pattern that matches a whole key can fire:
+# `f"sk-{tail}"` leaves the literal `sk-`, four characters, under every length threshold in
+# PATTERNS. Splitting a key across an interpolation must not be a way through, so the prefix alone
+# disqualifies the exemption.
+_CREDENTIAL_PREFIX = re.compile(
+    r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprs]-|"
+    r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_)", re.I)
+_WEAK_SECRET_WORD = re.compile(r"(?:^|[^A-Za-z])keys?\s*$", re.I)
+
+
+def _is_a_template_under_a_weak_name(key_part, value):
+    """True when `key` names something built at runtime rather than a credential written down.
+
+    The interpolation is not enough on its own. `api_key = f"sk-{tail}"` is a template AND carries a
+    real provider prefix in its literal half — exempting it would have traded a false positive for a
+    leak, which the first version of this did. So the literal text, with the interpolations removed,
+    has to carry nothing credential-shaped for the exemption to apply.
+    """
+    name = key_part.rstrip().rstrip("=:").rstrip().strip("\"'` ")
+    if not _WEAK_SECRET_WORD.search(name) or not _TEMPLATED.search(value):
+        return False
+    literal = _TEMPLATED.sub("", value)
+    if _LONG_MIXED_VALUE.search(literal) or _CREDENTIAL_PREFIX.search(literal):
+        return False
+    return not any(p.search(literal) for p in PATTERNS)
+
+
+# 🐛 [2026-09-06] A quoted value that OPENS after a credential name and never closes leaked every
+# line after the first. `ASSIGNED_SECRET` requires the closing quote and never matched at all, so
+# the text fell through to `ASSIGNED_SECRET_BARE`, which captured the one `\S{6,}` run sitting on
+# the same line as the quote and left the continuation in the clear. Both modes agreed on the wrong
+# answer, so windowing neither caused it nor hid it -- confirmed open by two independent rounds
+# (R1 agent 2 finding 5, R2 agent 2 finding 3) and by the backlog before them.
+#
+# The detection was never the hard part; the STOP was. Redacting to end-of-document eats unrelated
+# content, and an unterminated string is what a truncated paste, a half-finished edit or a merge
+# fragment looks like -- so the run ends at the first thing that cannot be part of a value:
+#
+#   * a blank line, which is where a pasted fragment ends in a document;
+#   * a line that opens a new key of its own, which is where a config resumes;
+#   * the end of the text.
+#
+# Deliberately narrow in the other direction too: the name still has to read as a credential, so
+# `password_file = "path/to` is left exactly as `_looks_like_a_credential_name` already leaves it.
+_RESUMES_AFTER_A_VALUE = re.compile(
+    r"""^[ \t]*(?:[\w.-]+|['"][\w.\- ]+['"])[ \t]*(?:=>|[:=])""")
+
+
+def _close_unterminated_quoted_secrets(text):
+    """Redact from an unclosed quote that follows a credential name to where the value must end."""
+    out, pos = [], 0
+    for hit in _SECRET_WORD_ANYWHERE.finditer(text):
+        if hit.start() < pos:
+            continue
+        opener = _OPENS_A_QUOTED_VALUE.match(text, hit.end())
+        if not opener or text.find(opener.group(1), opener.end()) >= 0:
+            continue                      # no quoted value here, or it closes: the usual rules own it
+        line_start = text.rfind("\n", 0, hit.start()) + 1
+        name = text[line_start:opener.start(1)]
+        if _names_a_mechanism(name, "") or not _looks_like_a_credential_name(name, ""):
+            continue
+        stop = len(text)
+        at = text.find("\n", opener.end())
+        while at >= 0:
+            nxt = text.find("\n", at + 1)
+            line = text[at + 1:nxt if nxt >= 0 else len(text)]
+            if not line.strip() or _RESUMES_AFTER_A_VALUE.match(line):
+                stop = at
+                break
+            at = nxt
+        out.append(text[pos:opener.start(1)])
+        out.append(PLACEHOLDER)
+        pos = stop
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _is_only_a_template(value):
+    """True when `value` is nothing but an interpolation placeholder — no secret hiding beside one.
+
+    Both spellings that appear in a checked-in example file: `${VAR}` and `{{ var }}` from every
+    shell/compose/Helm/Jinja idiom, and the bare `{var}` Python format string. Anything with real
+    characters outside the braces is NOT exempt: `${PREFIX}hunter2` is a secret with a template
+    stuck to the front of it, and this rule is not a way through.
+    """
+    stripped = (value or "").strip()
+    if not stripped:
+        return False
+    return bool(re.fullmatch(r"\$?\{\{?[^{}]*\}\}?", stripped))
+
+
 def scrub(text, windowed=True):
     """Every string that leaves chamnan for a written file goes through this.
 
@@ -767,7 +927,16 @@ def scrub(text, windowed=True):
                 text = pattern.sub(lambda m: m.group(0).replace(m.group(1), PLACEHOLDER), text)
         else:
             text = pattern.sub(PLACEHOLDER, text)
-    text = CREDENTIALED_URL.sub(rf"\1:{PLACEHOLDER}@", text)
+    # 🐛 [2026-09-06] A template PLACEHOLDER where the password goes is not a password, and this
+    # rule redacted it as one. `postgres://user:${DB_PASSWORD}@db/app` is the shape a checked-in
+    # `.env.example` or `docker-compose.yml` is written in, so the redactor was damaging exactly the
+    # documentation whose whole job is to show the shape without the secret. `{{ password }}` came
+    # out worse still — the marker swallowed the closing braces and the rest of the line with them
+    # (R8 agent 2). `_TEMPLATED` is the module's existing answer to this question; the URL rule was
+    # the one place that did not ask it.
+    text = CREDENTIALED_URL.sub(
+        lambda m: m.group(0) if _is_only_a_template(m.group(2))
+        else f"{m.group(1)}:{PLACEHOLDER}@", text)
     # Before the assignment rules: these forms carry no `[:=]` the assignment rules can anchor on,
     # and running them first means a value they take is not left for a looser rule to half-capture.
     text = XML_SECRET.sub(
@@ -838,6 +1007,7 @@ def scrub(text, windowed=True):
         or m.group(2).lower() in SCHEME_WORDS
         or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
         or _value_is_the_key_itself(_full_key_at(m), m.group(2))
+        or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
         + " " * 0, chunk)
 
@@ -849,6 +1019,10 @@ def scrub(text, windowed=True):
     text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
                               [_spaced, _flag])
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
+    # Before the three rules below, and on the whole text rather than inside a window: an unclosed
+    # value's continuation can sit any distance from the name that opened it, and the rules below
+    # would otherwise consume the opening quote and leave that continuation behind.
+    text = _close_unterminated_quoted_secrets(text)
     text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
                               [_assigned, _call, _bare])
     # Applied after the substitution above rather than inside it, because the amount to swallow is
@@ -920,6 +1094,24 @@ def emit(*args, **kwargs):
 
 # Captured before any module shadows the name, so `emit` still reaches the real builtin.
 _print = print
+
+
+def emit_prescrubbed(*args, **kwargs):
+    """`print` for the hooks: control characters removed, credentials assumed already gone.
+
+    The `bin/` commands shadow `print` with `emit`, which does both halves. A hook cannot use that
+    one. It scrubs every section AT THE POINT IT IS READ and before the token budget cuts it, on
+    purpose -- a hostname inside a pinned section that the cut would have dropped still has to be
+    redacted, and running the credential pass again over the assembled block would be a second full
+    pass over text that is already clean. What the hooks had NO default for is the other half: the
+    control characters, which cost one `str.translate` and which every section was relying on its
+    own quoting helper to remove. `sessions.carry_forward` had two branches printing the same
+    title, one quoted and one not, and the unquoted one was the common case (R11).
+
+    Non-string arguments are left alone, same as `emit`.
+    """
+    return _print(*(for_a_terminal(a) if isinstance(a, str) else a for a in args), **kwargs)
+
 
 
 def _speak_utf8():

@@ -59,7 +59,7 @@ CONFIRMED_PROVENANCE = ("ai-confirmed", "user")
 
 
 def _title(path):
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     for line in text.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
@@ -201,7 +201,7 @@ def cmd_promote(root, ident, destination=None, name=None):
         for i, step in enumerate(sequence, 1):
             lines.append(f"echo 'TODO step {i}: '{shlex.quote(step)} >&2; exit 1"
                          f"  # replace this line")
-        ws.atomic_write_text(dest, "\n".join(lines) + "\n")
+        ws.write_or_raise(dest, "\n".join(lines) + "\n")
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         tools_index.register(root, {
             "name": dest.name,
@@ -295,7 +295,15 @@ def main(argv):
     root = ws.find_root()
     wsdir = ws.workspace(root)
     if not wsdir.is_dir():
-        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        # 🐛 [2026-09-06] A dead end in six of ten commands. `chamnan-context` was given the way
+        # out on 2026-09-05 and its siblings were not, and `chamnan-impact` carried BOTH — this
+        # sentence, and the actionable one 46 lines below it for a near-identical condition — so
+        # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
+        # ordering accident rather than anything they controlled. No test ran any of the six
+        # against a directory that genuinely has no workspace (R15 agent 3).
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
         return 1
     if not ws.enabled("promote", root):
         print("chamnan: promote is disabled in .chamnan/config.json — candidates are part of it")
@@ -334,4 +342,13 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    # 🐛 [2026-09-06] A write the user asked for by name now RAISES rather than being discarded --
+    # see `workspace.write_or_raise`. Caught here rather than at each command, so the message is
+    # the same one everywhere and a command added later is covered without knowing this exists.
+    # What it replaces: `chamnan-timeline new` on a read-only directory printed "declared", named
+    # the file, printed the follow-up command to add to it, and exited 0, with nothing on disk.
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OSError as _err:
+        print(f"chamnan: {_err} — nothing was written", file=sys.stderr)
+        sys.exit(1)
