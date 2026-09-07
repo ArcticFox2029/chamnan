@@ -469,7 +469,19 @@ def _is_never_opened_name(name):
 # password_hash_algorithm is bcrypt. Redacting those costs the index real information and protects
 # nothing. Kept short and each entry defensible -- this is the precision side of the trade in the
 # module docstring, and a long list here is how a scanner starts missing things.
-NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "url",
+# 🐛 [2026-09-07] `url` was here and `uri` was not, so `auth_uri` — a fixed, publicly documented
+# Google endpoint present in every service-account key ever issued — was destroyed while `token_uri`
+# beside it survived. The asymmetry is in SECRET_WORDS: `token` fires only as a compound suffix
+# (`[A-Za-z0-9]+[_-]tokens?`), so a leading `token_` never matches, while `auth` has no such
+# left-side requirement and matches anywhere. One word bounded, its neighbour not — the same defect
+# this repository keeps finding, inside a single tuple (R5 acc3).
+#
+# Added the whole class rather than `uri` alone: every one of these names a LOCATION or a PARTY, and
+# none of them has ever been the name of a credential. `issuer` and `audience` are the JWT claim
+# names, which appear beside real secrets in exactly these files and are not secret themselves.
+NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "url", "urls",
+                   "uri", "uris", "endpoint", "endpoints", "host", "hostname", "domain",
+                   "origin", "issuer", "audience",
                    "provider", "algorithm", "algo", "type", "method", "scheme",
                    "header", "enabled", "required", "ttl", "expiry", "field")
 
@@ -568,6 +580,17 @@ def _value_overrides_the_name(value):
     return any(c.isdigit() for c in v) and any(c.isalpha() for c in v)
 
 
+
+def _bare_key(key):
+    """A key name with the punctuation its file format wraps it in taken off, lowercased.
+
+    JSON quotes it, YAML follows it with a colon, an assignment follows it with `=`, and every
+    caller here wants the name underneath. One function, because two of them had grown their own
+    and only one stripped quotes.
+    """
+    return re.sub(r"^['\"]+|['\"\s:=]+$", "", (key or "").strip()).lower()
+
+
 def _names_a_mechanism(key, value=None):
     """True when the key is describing HOW a credential is handled, not holding one.
 
@@ -579,8 +602,19 @@ def _names_a_mechanism(key, value=None):
     The exemption is still right and still needed — `secret_name = "the-name-of-my-secret"` and
     `api_key_path = "/etc/keys/prod.pem"` genuinely name things, and redacting those is the noise
     that gets a redactor switched off. So the name still decides, unless the VALUE settles it.
+    🐛 [2026-09-07] `rstrip(": =\t")` did not strip the QUOTE a JSON key carries, so the key
+    `"api_key_path": ` arrived here as `api_key_path"` and its tail as `path"` — which is in no
+    suffix list. Every exemption in this function was therefore dead inside JSON: measured,
+    `api_key_path`, `password_file` and `auth_url` were all destroyed in a `.json` file and all
+    correctly kept in the identical assignment outside one. A GCP service-account key — the most
+    common real "secret in a repo" shape after `.env` — lost two fixed, publicly documented Google
+    endpoints that way (R5 acc3 found the `auth_uri` case; the class is wider than the case).
+
+    `_looks_like_a_credential_name` twenty lines up already normalises with a regex that strips the
+    quote correctly. Two helpers, one file, the same job, different normalisation — so they share
+    `_bare_key` now.
     """
-    tail = key.rstrip(": =\t").lower().rsplit("_", 1)[-1].rsplit("-", 1)[-1]
+    tail = _bare_key(key).rsplit("_", 1)[-1].rsplit("-", 1)[-1]
     if tail not in NAMING_SUFFIXES:
         return False
     return not _value_overrides_the_name(value)

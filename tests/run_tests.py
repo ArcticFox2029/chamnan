@@ -9026,6 +9026,43 @@ check("...and a schema too large to name in full says how many it left out",
 # A repository with no data model must see no trace of the feature at all.
 check("...and a repository with no schema gets no section", schema.render([]) == "")
 
+# 🐛 [2026-09-07] `_names_a_mechanism` normalised a key with `rstrip(": =\t")`, which does not strip
+# the QUOTE a JSON key carries — so `"api_key_path": ` arrived as `api_key_path"` and its tail as
+# `path"`, which is in no suffix list. Every exemption in that function was dead inside JSON. A GCP
+# service-account key, the most common real "secret in a repo" shape after `.env`, lost two fixed
+# publicly documented Google endpoints that way. `_looks_like_a_credential_name` twenty lines up
+# already stripped quotes correctly: two helpers, one file, same job, different normalisation
+# (R5 acc3 found the `auth_uri` case; the class is wider than the case).
+_json_key = lambda k, v: f'  "{k}": "{v}",'
+for _name in ("api_key_path", "password_file", "auth_url", "auth_uri", "secret_name",
+              "token_provider", "credential_type"):
+    check(f"A JSON KEY THAT NAMES A THING IS NOT REDACTED: {_name}",
+          "REDACTED" not in redact.scrub(_json_key(_name, "some-ordinary-value-here")))
+# The half that keeps it a redactor: the real secret in the same file shape still goes.
+for _name in ("api_key", "password", "auth_token", "private_key", "client_secret"):
+    check(f"...while the credential beside it still does: {_name}",
+          "REDACTED" in redact.scrub(_json_key(_name, "s3cr3tV4lu3H3r3x")))
+# The whole file, as `gcloud iam service-accounts keys create` writes it: exactly two fields are
+# secret and exactly two should go.
+_gcp = ('{\n  "type": "service_account",\n  "project_id": "my-project-123456",\n'
+        '  "private_key_id": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",\n'
+        '  "private_key": "-----BEGIN PRIVATE KEY-----\\nMIIabc123\\n-----END PRIVATE KEY-----\\n",\n'
+        '  "client_email": "deploy@my-project-123456.iam.gserviceaccount.com",\n'
+        '  "auth_uri": "https://accounts.google.com/o/oauth2/auth",\n'
+        '  "token_uri": "https://oauth2.googleapis.com/token",\n'
+        '  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs"\n}')
+_gcp_out = redact.scrub(_gcp)
+check("A SERVICE-ACCOUNT KEY LOSES ITS SECRETS AND KEEPS ITS PUBLIC ENDPOINTS",
+      _gcp_out.count("<REDACTED>") == 2
+      and "accounts.google.com/o/oauth2/auth" in _gcp_out
+      and "oauth2.googleapis.com/token" in _gcp_out
+      and "googleapis.com/oauth2/v1/certs" in _gcp_out)
+# 🐛 The asymmetry that produced it: `token` fires only as a compound suffix while `auth` had no
+# such left-side requirement. One word bounded, its neighbour not, inside a single tuple.
+check("...and the two words that were bounded differently now behave the same",
+      ("REDACTED" in redact.scrub(_json_key("access_token", "s3cr3tV4lu3H3r3x")))
+      == ("REDACTED" in redact.scrub(_json_key("access_auth", "s3cr3tV4lu3H3r3x"))))
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
