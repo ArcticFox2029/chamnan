@@ -1613,6 +1613,17 @@ def safe_tool_name(name):
 LOCK_TIMEOUT = 2.0
 LOCK_WAIT_MAX = 30.0
 LOCK_STALE = 30.0
+# Below this age a lock belongs to somebody who is plainly still working, and there is nothing to
+# learn from opening it -- only, on Windows, a chance to pin it open at the moment its owner tries
+# to release it.
+#
+# The number is set by two facts pulling opposite ways. A critical section here is a read, a small
+# edit and an atomic write -- single-digit milliseconds -- so a lock in a healthy storm never
+# reaches this age and is never opened by a waiter at all, which takes the collision rate to
+# roughly zero. And a lock whose holder DIED only gets older, so it crosses this line and is
+# broken a quarter of a second later, which the concurrency suite pins at under one second because
+# the alternative it was written against was 29.9.
+LOCK_READ_AFTER = 0.25
 
 # Why acquisitions gave up, counted rather than guessed. A lost update reports a NUMBER -- "83 of
 # 400" -- and a number cannot say whether the waiters timed out, hit the absolute ceiling, or fell
@@ -1876,36 +1887,53 @@ def exclusive(path):
                 pass
             break
         except FileExistsError:
-            try:
-                # 🐛 [2026-09-07] A lock left by a process that has DIED was waited on for the full
-                # LOCK_STALE window — 30 seconds — exactly as if a live but slow process held it.
-                # Measured at 29.9s. Every caller inside that window either blocks for its own
-                # LOCK_TIMEOUT and then skips its write, or (before today) wrote unguarded, so one
-                # crashed session made the next 30 seconds of every other session's bookkeeping
-                # unreliable. The PID has been in the lock file since 2026-09-06 for precisely this
-                # question and only the age rule ever asked it.
-                #
-                # "Dead", not "not alive": a lock is created and its PID written a moment later, so
-                # an empty lock is what a healthy holder looks like for a few microseconds. That
-                # case stays on the age rule, which is what it was always decided by.
-                state = _lock_holder_state(lock)
-                if state == LOCK_HOLDER_DEAD:
-                    lock.unlink()
-                    continue
-                if time.time() - lock.stat().st_mtime > LOCK_STALE and state != LOCK_HOLDER_ALIVE:
-                    lock.unlink()
-                    continue
-            except OSError:
-                pass
+            # 🐛 [2026-09-08] Progress is measured with `stat`, and the lock's CONTENT is read only
+            # when it is old enough to be worth suspecting. Both halves of that sentence are a
+            # Windows bug fix.
+            #
+            # Windows refuses to unlink a file another process holds OPEN, and Python's `open()`
+            # there does not grant delete sharing. The waiter below used to read the lock on every
+            # 10 ms poll -- eight waiters, a hundred reads a second each -- and the holder's own
+            # `lock.unlink()` then failed with PermissionError into an `except OSError: pass`. The
+            # lock survived its owner's release, and nothing could break it afterwards: the age
+            # rule requires `state != LOCK_HOLDER_ALIVE` and the PID in the file belongs to a
+            # process that is very much alive, having moved on to its next iteration. Every other
+            # writer then waited out its ceiling and wrote unguarded. That is the shape behind
+            # every number this defect produced -- 31, 41, 83, 187, 207 of 400, varying with how
+            # often a read happened to overlap a release.
+            #
+            # `os.stat` is safe: it asks for attributes with delete sharing granted, so it does not
+            # pin the file. So the poll uses stat, and the read happens once the lock looks stale
+            # rather than a hundred times a second.
             now = time.time()
             try:
                 st = lock.stat()
-                here = (lock.read_bytes(), st.st_mtime_ns, getattr(st, "st_ino", 0))
+                here = (st.st_mtime_ns, st.st_size, getattr(st, "st_ino", 0))
+                age = now - st.st_mtime
             except OSError:
-                here = None
-            if here != seen:
+                here, age = None, 0.0
+            if here is not None and here != seen:
                 seen = here
                 deadline = now + LOCK_TIMEOUT
+            # 🐛 [2026-09-07] A lock left by a process that has DIED was waited on for the full
+            # LOCK_STALE window — 30 seconds — exactly as if a live but slow process held it.
+            # Measured at 29.9s. The PID has been in the lock file since 2026-09-06 for precisely
+            # this question and only the age rule ever asked it.
+            #
+            # "Dead", not "not alive": a lock is created and its PID written a moment later, so an
+            # empty lock is what a healthy holder looks like for a few microseconds. That case
+            # stays on the age rule, which is what it was always decided by.
+            if age > LOCK_READ_AFTER:
+                try:
+                    state = _lock_holder_state(lock)
+                    if state == LOCK_HOLDER_DEAD:
+                        lock.unlink()
+                        continue
+                    if age > LOCK_STALE and state != LOCK_HOLDER_ALIVE:
+                        lock.unlink()
+                        continue
+                except OSError:
+                    pass
             if now > deadline or now - started > LOCK_WAIT_MAX:
                 LOCK_GIVEUPS["waited_too_long" if now - started > LOCK_WAIT_MAX
                              else "no_progress"] += 1
@@ -1947,9 +1975,26 @@ def exclusive(path):
         if fd is not None:
             try:
                 os.close(fd)
-                lock.unlink()
             except OSError:
                 pass
+            # 🐛 [2026-09-08] A single unlink that fails leaves the mutex held by nobody, forever
+            # as far as any waiter can tell. On Windows it fails whenever a reader has the file
+            # open at that instant, which the poll above no longer does a hundred times a second --
+            # but "much rarer" is not "never", and the cost of losing this race is every other
+            # writer in the workspace giving up and writing unguarded. Same shape as
+            # `_replace_with_retry`, and POSIX pays for none of it.
+            for _try in range(12):
+                try:
+                    lock.unlink()
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    if _try == 11:
+                        LOCK_GIVEUPS["release_failed"] = (
+                            LOCK_GIVEUPS.get("release_failed", 0) + 1)
+                        break
+                    time.sleep(0.02)
 
 
 
