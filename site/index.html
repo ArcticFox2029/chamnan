@@ -1006,7 +1006,28 @@ async function measure(owner, repo){
 
   say(t("reading"));
   const {ref, via, files: blobs, truncated} = await listing(owner, repo);
+  // A path is only used if it stays under /repo once normalised. `git mktree` accepts a SUBTREE
+  // named `..`, and a recursive walk of that tree emits `../evil.py` -- verified 2026-09-08, along
+  // with git's own refusals: `fsck --strict` flags it `hasDotdot` and `read-tree` calls it an
+  // invalid path, so GitHub's push-time fsck almost certainly rejects such a repository today.
+  //
+  // "Almost certainly, today, on one of the two listing sources" is not a memory-safety argument.
+  // Without this the page writes an attacker-named path into its own filesystem and is protected
+  // only by somebody else's validation, which it does not control and is not told about when it
+  // changes. Three lines, no measurable cost, and the dependency is gone (R1 agents 1 and 2, who
+  // reached opposite conclusions -- each had tested a different half).
+  const contained = path => {
+    const parts = [];
+    for (const part of ("repo/" + path).split("/")) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") { parts.pop(); continue; }
+      parts.push(part);
+    }
+    return parts[0] === "repo" && parts.length > 1;
+  };
+  const escaping = blobs.filter(b => !contained(b.path)).length;
   const want = blobs.filter(b => {
+    if (!contained(b.path)) return false;
     const i = b.path.lastIndexOf(".");
     return i > 0 && EXT.has(b.path.slice(i).toLowerCase());
   });
@@ -1153,6 +1174,7 @@ json.dumps({
   // `declared` used to be computed here and never read — dead arithmetic on every run.
   r.missed = take.length - got;          // fetches that failed mid-run, which used to be silent
   r.oversize = oversize;
+  r.escaping = escaping;   // paths that would have left /repo, refused before the fetch
   r.capped = want.length > take.length || !!truncated;
   r.via = via;
   // The language is derived from what was actually indexed rather than asked of GitHub's API,
