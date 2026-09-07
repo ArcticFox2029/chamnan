@@ -85,10 +85,55 @@ def load(root):
         loaded = json.loads(path(root).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, RecursionError):
         return []
+    # The `[]` above is honest for a file that is absent or empty. It is a LIE for a file that has
+    # content this parser cannot read, and `refuses_to_be_overwritten` below is what stops that lie
+    # from being written back. See its docstring.
     if not isinstance(loaded, list):
         return []
     return [e for e in loaded if isinstance(e, dict) and isinstance(e.get("name"), str)
             and e["name"]]
+
+
+
+def refuses_to_be_overwritten(root):
+    """Why this index must not be replaced, or "" when replacing it is safe.
+
+    🐛 [2026-09-07] `load()` returns `[]` for a file it cannot parse, and `[]` is exactly what it
+    returns for a registry that never existed — so the two are indistinguishable to every caller.
+    The next `chamnan-promote` then writes its one new entry over the top and every previously
+    registered tool, with its run counters, is gone. Silently and permanently.
+
+    An unresolved `<<<<<<< HEAD` is the ordinary way to arrive there: `index.json` is committed, two
+    branches registering different tools conflict in it, and a merge left half-finished is a file
+    with content that is not JSON. Reported independently by two rounds (R9 acc3, R10 agent 2) and
+    unfixed both times.
+
+    The guard already existed one file away. `lib/state.py` refuses to render a mid-merge STATE.md
+    rather than injecting both sides, using `memory.unresolved_conflict`; this is the same question
+    asked about a different file, and the answer has to be the same. What differs is the
+    consequence: STATE.md's is a bad injection, this one's is data destruction.
+
+    Deliberately narrow. A file that is missing, empty, or holds valid JSON of the wrong shape is
+    NOT protected — those are the cases `load()`'s `[]` describes correctly, and refusing them would
+    make a fresh workspace unable to register its first tool.
+    """
+    import memory
+    p = path(root)
+    try:
+        raw = p.read_text(encoding="utf-8-sig")
+    except OSError:
+        return ""
+    if not raw.strip():
+        return ""
+    if memory.unresolved_conflict(raw):
+        return (f"{p.name} is mid-merge and both sides are still in it; resolving the conflict is "
+                f"the only thing that can tell chamnan which tools this workspace has")
+    try:
+        json.loads(raw)
+    except (json.JSONDecodeError, RecursionError):
+        return (f"{p.name} has content that is not valid JSON, so the tools registered in it "
+                f"cannot be read; overwriting it would discard them")
+    return ""
 
 
 def _save(root, entries):
@@ -110,6 +155,12 @@ def _save(root, entries):
     # registration is a thing the user asked for, and `chamnan-promote` rolls back the copied file
     # when the index write fails. Swallowing it left the executable installed, announced, and
     # unregistered. Caught by the read-only-index test, which exists for exactly that.
+    # Checked HERE, at the one place every write goes through, rather than in `register` and
+    # `remove` and `record_call` separately — which is the shape of fix this repository has had to
+    # un-forget eight times.
+    why = refuses_to_be_overwritten(root)
+    if why:
+        raise OSError(why)
     if not ws.atomic_write_text(path(root),
                                 json.dumps(entries, indent=1, ensure_ascii=False) + "\n"):
         raise OSError(f"could not write {path(root)}")
@@ -134,10 +185,22 @@ def register(root, entry):
         pass
     with ws.exclusive(path(root)) as held:
         if not held:
-            # Registering matters more than serialising it: a promotion the user asked for that
-            # silently does nothing is worse than a rare lost update, and the file is written
-            # atomically either way.
-            return _register_locked(root, entry)
+            # 🐛 [2026-09-07] This used to fall through and write UNLOCKED, on the reasoning that
+            # "the file is written atomically either way" — which is the exact misconception
+            # `record_call`'s own docstring names and rejects three functions away: an atomic write
+            # stops a reader seeing a torn file and says nothing about which of two writers' snapshot
+            # wins. So the one writer that was hardened LAST reintroduced the race the other two were
+            # hardened against, and `record_call` fires from a PostToolUse hook on every Bash call —
+            # which is exactly the window a promotion runs in (R5 acc3).
+            #
+            # `remove()` already answers this correctly by raising, and `TimeoutError` is an
+            # `OSError`, so `chamnan-promote`'s existing handler catches it, deletes the executable
+            # it had already copied, and says nothing was left behind. A promotion that fails
+            # cleanly and can be retried beats one that silently loses the registration and leaves
+            # the file on disk — which is the outcome the old comment was trying to avoid and
+            # produced instead.
+            raise TimeoutError(
+                f"could not lock {path(root).name}; another process is writing it")
         return _register_locked(root, entry)
 
 

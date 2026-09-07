@@ -8830,6 +8830,202 @@ check("EVERY SUBPROCESS THAT CAPTURES TEXT SAYS HOW TO DECODE IT", _enc_bad == [
 check("...and the sweep found the calls it was written to police",
       len(list(_enc_pat.finditer(_enc_src))) > 40)
 
+# 🐛 [2026-09-07] `tools_index.load()` returns `[]` for a file it cannot parse, and `[]` is what it
+# returns for a registry that never existed — indistinguishable to every caller. The next
+# `chamnan-promote` wrote its one new entry over the top and every previously registered tool, with
+# its run counters, was gone. Silently and permanently. An unresolved `<<<<<<< HEAD` is the ordinary
+# way there: index.json is committed, two branches registering different tools collide in it.
+# Reported independently by two rounds (R9 acc3, R10 agent 2) and unfixed both times; the guard
+# already existed one file away in `state.render`.
+import tools_index as _tic  # noqa: E402 — the module-level alias is imported further down
+_ti = Path(tempfile.mkdtemp(prefix="chamnan-ticonf-")) / "r"
+(_ti / ".chamnan" / "tools").mkdir(parents=True)
+_ti_idx = _tic.path(_ti)
+_ti_good = '[{"name": "deploy.sh", "desc": "x", "runs": 42}]'
+_ti_idx.write_text(_ti_good, encoding="utf-8")
+check("a healthy registry is not refused", _tic.refuses_to_be_overwritten(_ti) == "")
+_ti_idx.write_text('<<<<<<< HEAD\n' + _ti_good + '\n=======\n[{"name": "b.sh"}]\n>>>>>>> x\n',
+                   encoding="utf-8")
+check("A MID-MERGE TOOLS INDEX IS NOT OVERWRITTEN, SO ITS HISTORY SURVIVES",
+      "mid-merge" in _tic.refuses_to_be_overwritten(_ti))
+try:
+    _tic.register(_ti, {"name": "new.sh"})
+    _ti_wrote = True
+except OSError:
+    _ti_wrote = False
+check("...and registering into one raises instead of destroying it",
+      _ti_wrote is False and "<<<<<<<" in _ti_idx.read_text(encoding="utf-8"))
+# Content that is not JSON at all is the same hazard by a different cause — a half-written file, a
+# hand-edit — and `[]` describes it just as wrongly.
+_ti_idx.write_text("this is not json", encoding="utf-8")
+check("...and so is a file whose content is not JSON",
+      "not valid JSON" in _tic.refuses_to_be_overwritten(_ti))
+# Deliberately narrow: the cases `[]` describes CORRECTLY must still register, or a fresh workspace
+# could never record its first tool.
+_ti_idx.unlink()
+check("...while an absent registry still accepts its first tool",
+      _tic.refuses_to_be_overwritten(_ti) == "" and _tic.register(_ti, {"name": "first.sh"}))
+_ti_idx.write_text("   \n", encoding="utf-8")
+check("...and so does an empty one", _tic.refuses_to_be_overwritten(_ti) == "")
+_rmtree(_ti.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] The MAP.md half of the same merge bug. `state.render` was given
+# `memory.unresolved_conflict` on 2026-09-06 after a badly-resolved merge injected both sides of
+# STATE.md as settled fact; MAP.md is the same shape of file and was reported the same day and never
+# picked up. It is the store MOST likely to conflict, not the least: two branches editing UNRELATED
+# source files still collide in its alphabetical Quick Index (R9 acc3).
+_mc = Path(tempfile.mkdtemp(prefix="chamnan-mapconf-")) / "r"
+(_mc / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_mc, capture_output=True)
+(_mc / "src" / "a.py").write_text('"""Alpha does a thing."""\ndef a(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_mc, capture_output=True)
+_mc_map = _mc / ".chamnan" / "MAP.md"
+_mc_map.write_text(_mc_map.read_text(encoding="utf-8").replace(
+    "- **`a.py`**",
+    "<<<<<<< HEAD\n- **`a.py`** — Alpha does a thing.\n=======\n"
+    "- **`a.py`** — Alpha does something else.\n>>>>>>> branch", 1), encoding="utf-8")
+_mc_out = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+    input='{"hook_event_name":"SessionStart","source":"startup"}', capture_output=True, text=True,
+    encoding="utf-8", errors="replace", cwd=_mc,
+    env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_mc))).stdout
+check("A MID-MERGE MAP.md IS NOT INJECTED AS SETTLED FACT", "mid-merge" in _mc_out)
+# Said INSTEAD of the content, not beside it: printing both sides under a warning invites the
+# reader to pick one, which is the failure. Same reasoning STATE.md's guard already records.
+check("...and neither side of the conflict reaches the session",
+      "Alpha does a thing" not in _mc_out and "something else" not in _mc_out
+      and "<<<<<<<" not in _mc_out)
+_rmtree(_mc.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] A Jupyter notebook was bucketed as "payload, not code" — the bucket for images and
+# data — so a fifteen-notebook data-science repository reported "described 2/2 files (100%)" while
+# every line of its real content was invisible, and nothing said so. It is source this indexer
+# cannot parse, which is what Perl, R, Julia and Fortran already get (R9 agent 4).
+check("A NOTEBOOK IS UNINDEXED SOURCE, NOT PAYLOAD",
+      ".ipynb" in assets_mod.UNEXTRACTED_SOURCE)
+
+# 🐛 [2026-09-07] `MAX_CARRY_CHARS` was a raw character cap, the exact anti-pattern `lib/state.py`'s
+# docstring names two files away: "a flat character cap mis-prices any file that is not mostly Latin
+# script". Measured 1.99x for Thai at the same character count (R10 acc3). The English case must not
+# move — 500 tokens is what 1,200 characters of English came to.
+_carry_en = "Finish the retry path in the importer and re-run the migration. " * 20
+_carry_th = "แก้เส้นทางลองใหม่ในตัวนำเข้าแล้วรันการย้ายข้อมูลอีกครั้ง " * 20
+check("THE CARRY-FORWARD CAP IS PRICED IN TOKENS, NOT CHARACTERS",
+      tokens.cut_at(_carry_en, sessions.MAX_CARRY_TOKENS) > 1100)
+check("...so a Thai record is cut where an English one of the same COST is",
+      tokens.cut_at(_carry_th, sessions.MAX_CARRY_TOKENS) < 750)
+
+# 🐛 [2026-09-07] `git_owns` answers False for "not a repository" AND for "git is not installed",
+# and every caller treated both as nothing to say. For the first that is right; for the second it is
+# a silent failure in a plugin whose session block is built out of git — "Where the last session
+# stopped" simply vanished with no diagnostic, so the reader concludes chamnan has nothing to tell
+# them rather than that it cannot look (R10 agent 1).
+_ng = Path(tempfile.mkdtemp(prefix="chamnan-nogit-")) / "r"
+(_ng / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_ng, capture_output=True)
+(_ng / "src" / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+(_ng / "src" / "b.py").write_text("x = 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ng, capture_output=True)
+_ng_empty = Path(tempfile.mkdtemp(prefix="chamnan-emptybin-"))
+def _ng_block(path_env):
+    return subprocess.run(
+        [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+        input='{"hook_event_name":"SessionStart","source":"startup"}', capture_output=True,
+        text=True, encoding="utf-8", errors="replace", cwd=_ng,
+        env={**os.environ, "PATH": path_env, "CLAUDE_PROJECT_DIR": str(_ng)}).stdout
+check("A MACHINE WITHOUT GIT IS TOLD SO, NOT LEFT WITH A MISSING SECTION",
+      "not on this machine's PATH" in _ng_block(str(_ng_empty)))
+# And the ordinary case must not gain a line it never had — a diagnostic that fires when nothing is
+# wrong is the failure this whole block spends its comments avoiding.
+check("...while a machine that HAS git says nothing about it",
+      "not on this machine's PATH" not in _ng_block(os.environ["PATH"]))
+# The two causes stay distinct: a directory that is genuinely not a repository is still silent,
+# because there is genuinely nothing to report there.
+_ng_bare = Path(tempfile.mkdtemp(prefix="chamnan-notrepo-"))
+check("...and a directory that is not a repository is still silent",
+      sessions.where_git_says_you_stopped(_ng_bare) == "")
+_rmtree(_ng_bare, ignore_errors=True)
+_rmtree(_ng_empty, ignore_errors=True)
+_rmtree(_ng.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] Windows ships a `python3.exe` App Execution Alias stub when no real Python is
+# installed: on PATH, exists, and running it prints an error and opens the Store. The installer's
+# candidate loop committed to the first name that EXISTED and never asked whether it WORKED, so the
+# stub's error text parsed to version "was" and the script reported "python was — too old". A new
+# Windows user was told to upgrade a Python they do not have (R10 agent 1).
+_ck = (ROOT / "install" / "chamnan-check.sh").read_text(encoding="utf-8-sig")
+check("THE INSTALLER ASKS WHETHER A PYTHON ON PATH ACTUALLY RUNS",
+      '"$candidate" -V >/dev/null 2>&1 || continue' in _ck)
+# And when something answers but not with a version, "too old" is the wrong advice — the number it
+# would quote is not a number.
+check("...and does not call an unparseable version 'too old'",
+      'it does not report a version' in _ck and '[ "$MAJ" != 0 ]' in _ck)
+
+# 🐛 [2026-09-07] `SKIPPED_TOO_LARGE`, `SKIPPED_TOO_MANY_LINES` and `SKIPPED_BINARY` are filled on
+# every run and printed to a TERMINAL, which a session never sees. MAP.md — the one artifact
+# SessionStart injects — named none of them, so a 2 MB module and a binary behind a `.py` suffix
+# were simply absent under a header stating a file count that silently excluded them. An index
+# missing a file is worse than one that says it is, which is this project's own position on
+# staleness applied to absence (R12 agent 5). The comment beside SKIPPED_BUILD_DIR conceded the gap
+# in passing long ago and used it as a reason not to report build directories either.
+_sk = Path(tempfile.mkdtemp(prefix="chamnan-skipped-")) / "r"
+(_sk / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_sk, capture_output=True)
+(_sk / "src" / "ok.py").write_text('"""Fine."""\ndef f(): ...\n', encoding="utf-8")
+(_sk / "src" / "huge.py").write_text("x = 1\n" * 500000, encoding="utf-8")
+(_sk / "src" / "binary.py").write_bytes(b"\x00\x01\x02" * 5000)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sk, capture_output=True)
+_sk_map = (_sk / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("THE INDEX NAMES THE FILES IT COULD NOT INDEX",
+      "too large to index" in _sk_map and "`src/huge.py`" in _sk_map
+      and "binary despite a source suffix" in _sk_map and "`src/binary.py`" in _sk_map)
+# 🐛 Repository-RELATIVE: these lists hold absolute paths and MAP.md is committed, so the first
+# version wrote one developer's machine layout into it — the same defect fixed in
+# `chamnan-timeline --files` the same morning.
+check("...by a repository-relative path, since this file gets committed", str(_sk) not in _sk_map)
+# And it points at the command that can still say something about a file it could not index.
+check("...and points at what can read one anyway", "chamnan-peek" in _sk_map)
+# The half that keeps it a header rather than a report: a clean repository gains nothing.
+_sk_clean = Path(tempfile.mkdtemp(prefix="chamnan-skipclean-")) / "r"
+(_sk_clean / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_sk_clean, capture_output=True)
+(_sk_clean / "src" / "ok.py").write_text('"""Fine."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sk_clean,
+               capture_output=True)
+check("...while a repository with nothing skipped says nothing about it",
+      "too large to index" not in (_sk_clean / ".chamnan" / "MAP.md").read_text(encoding="utf-8"))
+_rmtree(_sk_clean.parent, ignore_errors=True)
+_rmtree(_sk.parent, ignore_errors=True)
+
+# 🐛 [2026-09-07] The THIRD section with a count cap and no token budget, after routes/configuration
+# and the deployment section — both fixed from the same diagnosis, one of them the day before.
+# `DETAIL_LIMIT` bounded how many tables got a detailed line and nothing bounded what a line cost,
+# so 40 tables with an ordinary 140-character summary rendered 3,866 tokens against a 3,000-token
+# index budget. The cliff was INVERTED, which is why nobody noticed: 41 tables took the names-only
+# branch at 674 tokens while 40 took the detailed one at 3,866 (R5 acc3).
+def _schema_fake(n, summary=140):
+    return [{"name": f"customer_billing_events_{i:03d}", "summary": "S" * summary,
+             "source": f"db/migrations/{i:04d}_create_table.sql", "columns": []}
+            for i in range(n)]
+_sch_40 = schema.render(_schema_fake(40))
+check("ONE OPTIONAL SECTION CANNOT COST MORE THAN THE WHOLE INDEX BUDGET",
+      tokens.estimate(_sch_40) < 1200)
+# The names-only branch had no budget either, which is the same defect one branch over.
+check("...and a very large schema costs no more than a merely large one",
+      tokens.estimate(schema.render(_schema_fake(2000))) < 1200)
+# Falling back to names-only rather than to a handful of detailed rows: a cut that names 5 of 40
+# tables is worse than one naming all 40 without summaries. `rollup.collapse` settles this for the
+# index — coarse and complete beats detailed and arbitrarily half-missing.
+check("...while a schema small enough to describe in full still gets its summaries",
+      " — SSS" in schema.render(_schema_fake(5)))
+check("...and every table a session might grep for is still named at that size",
+      all(f"events_{i:03d}" in schema.render(_schema_fake(5)) for i in range(5)))
+# What is dropped is named as a number, never silently cut.
+check("...and a schema too large to name in full says how many it left out",
+      "not named here" in schema.render(_schema_fake(2000)))
+# A repository with no data model must see no trace of the feature at all.
+check("...and a repository with no schema gets no section", schema.render([]) == "")
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
@@ -18177,8 +18373,10 @@ check("...and a same-day record that finished everything is not carried",
       "Carol: all done" not in _three)
 check("...so the count names records with work left, not files on disk",
       "2 records, all unfinished" in _three)
+# In tokens now, like the cap itself — the whole point of the change is that a character count is
+# the wrong unit for this. The slack covers the heading and the per-record titles the cap excludes.
 check("...and the whole thing still respects the carry budget",
-      len(_three) <= _sess.MAX_CARRY_CHARS + 400)
+      tokens.estimate(_three) <= _sess.MAX_CARRY_TOKENS + 200)
 _rmtree(_twd.parent, ignore_errors=True)
 
 

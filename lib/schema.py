@@ -23,11 +23,15 @@ from pathlib import Path
 
 import redact
 import mdblock
+import tokens
 import impact  # for is_test — see the guard in the file loop below
 import tree
 
 # Above this many tables, only names are injected and columns are left to be grepped.
 DETAIL_LIMIT = 40
+# One sixth of the configured index budget. Routes take two fifths and configuration two fifteenths;
+# a data model is worth naming and is not the section a session opens the index for.
+SCHEMA_BUDGET_SHARE = 1 / 6
 MAX_COLUMNS_SHOWN = 25
 
 # The trailing "(" is what keeps a partition out of the index, and that is worth stating rather
@@ -378,6 +382,20 @@ def scan(root, files):
     return sorted(tables.values(), key=lambda t: t["name"].lower())
 
 
+
+def _detail_row(t):
+    """One table's line: name, the summary above its statement, and where it was found.
+
+    Same treatment as the route and env catalogues: these are substrings lifted out of repository
+    source and written into MAP.md, which is committed and injected. A table NAME is charset-bounded
+    by the SQL patterns, but a summary is free prose lifted from a comment above the statement, and
+    `source` is a path somebody chose.
+    """
+    desc = f" — {mdblock.as_quoted(t['summary'], 200)}" if t["summary"] else ""
+    return (f"- **`{mdblock.as_quoted(t['name'], 80)}`**{desc}"
+            f"  _({mdblock.as_quoted(t['source'], 120)})_")
+
+
 def render(tables):
     """The section injected with the index. Empty string when the repo has no data model — a repo
     of plain scripts should see no trace of this feature at all."""
@@ -385,21 +403,44 @@ def render(tables):
         return ""
     out = [f"## Data model", "",
            f"{len(tables)} table(s)/model(s) found in this repo's schema and migration files."]
-    if len(tables) > DETAIL_LIMIT:
+    # 🐛 [2026-09-07] Whether the detailed rows FIT, not just how many there are. `DETAIL_LIMIT`
+    # bounded the count and nothing bounded what a row costs, so the product ran away: 40 tables
+    # with an ordinary 140-character summary rendered 3,866 tokens against a 3,000-token index
+    # budget. The third section with this defect, after routes/configuration and the deployment
+    # section, both fixed from the same diagnosis (R5 acc3).
+    #
+    # And the cliff was INVERTED, which is why nobody noticed: 41 tables took the names-only branch
+    # and cost 674 tokens while 40 took the detailed one and cost 3,866. The "large schema" path was
+    # already the cheap one.
+    #
+    # Falling back to names-only rather than to a handful of detailed rows, because a budget cut
+    # that names 5 of 40 tables is worse than one that names all 40 without their summaries —
+    # `rollup.collapse`'s own docstring settles this for the index: coarse and complete beats
+    # detailed and arbitrarily half-missing.
+    _detailed = [_detail_row(t) for t in tables]
+    _fits = (len(tables) <= DETAIL_LIMIT
+             and tokens.estimate("\n".join(_detailed)) <= tokens.section_budget(
+                 SCHEMA_BUDGET_SHARE))
+    if not _fits:
         out.append(f"Names only — this schema is large. Grep `### <table>` below for one table's"
                    f" columns rather than reading them all.")
         out.append("")
-        out.append(", ".join(f"`{mdblock.as_quoted(t['name'], 80)}`" for t in tables))
+        # 🐛 The names-only branch had no budget either, which is the same defect one branch over:
+        # 200 tables render 2,954 tokens, essentially the whole index budget, for a section that is
+        # a supplement to the Quick Index rather than a replacement for it. A name is short, so this
+        # only bites on a genuinely large schema — and there the count and the pointer carry most of
+        # the value, which is why what is dropped is named as a number rather than silently cut.
+        _names, _kept = tokens.fill_by_budget(
+            tables, lambda t: f"`{mdblock.as_quoted(t['name'], 80)}`",
+            tokens.section_budget(SCHEMA_BUDGET_SHARE), len(tables))
+        out.append(", ".join(_names))
+        if _kept < len(tables):
+            out.append("")
+            out.append(f"_…and {len(tables) - _kept} more, not named here — they are all in the "
+                       f"detail section below._")
     else:
         out.append("")
-        for t in tables:
-            # Same treatment as the route and env catalogues: these are substrings lifted out of
-            # repository source and written into MAP.md, which is committed and injected. A table
-            # NAME is charset-bounded by the SQL patterns, but a summary is free prose lifted from
-            # a comment above the statement, and `source` is a path somebody chose.
-            desc = f" — {mdblock.as_quoted(t['summary'], 200)}" if t["summary"] else ""
-            out.append(f"- **`{mdblock.as_quoted(t['name'], 80)}`**{desc}"
-                       f"  _({mdblock.as_quoted(t['source'], 120)})_")
+        out += _detailed
     out.append("")
     return "\n".join(out)
 
