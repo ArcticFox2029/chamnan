@@ -312,22 +312,41 @@ def already_pointed(wsdir, session_id, rel_path):
 
 
 def mark_pointed(wsdir, session_id, rel_path):
+    # 🐛 [2026-09-07] `_seen_path`'s docstring describes an EARLIER version of this bug — one shared
+    # `pointer_seen.json` losing 70% of concurrent writes — and records the fix as "not sharing the
+    # file at all", one file per session_id. That assumption is exactly what a subagent breaks: a
+    # subagent's hooks fire with its PARENT's session_id (there is no field that tells them apart),
+    # so a parent and its subagents all write the same per-session file and are, in fact, sharing
+    # it. Twelve concurrent file-opens under one session id: ELEVEN LOST.
+    #
+    # What that costs is the thing the per-session redesign was built for. `already_pointed()` then
+    # returns False for files that were already shown, so the pointer re-fires and spends the
+    # once-per-file-per-session budget again on every later open of the same file.
+    #
+    # The per-session file is still right — it keeps contention down to one parent and its own
+    # subagents rather than the whole workspace. It just also needs the lock.
     p = _seen_path(wsdir, session_id)
-    try:
-        d = json.loads(p.read_text(encoding="utf-8-sig"))
-    except Exception:
-        d = {"session": str(session_id), "paths": []}
-    if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):
-        d = {"session": str(session_id), "paths": []}
-    if rel_path in d.get("paths", []):
-        return
-    d.setdefault("paths", []).append(rel_path)
-    try:
+
+    def _with_path(text):
+        try:
+            d = json.loads(text or "")
+        except Exception:
+            d = None
+        if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):
+            d = {"session": str(session_id), "paths": []}
+        if rel_path in d.get("paths", []):
+            return None
+        d.setdefault("paths", []).append(rel_path)
         # `.tmp` was a name shared by every process, so two sessions staged into the same file and
         # each replaced the target with whatever it held at their own moment. One helper now, so
         # the staging name cannot be got wrong here or anywhere else -- see ws.atomic_write_text.
-        ws.atomic_write_text(p, json.dumps(d))
-        _sweep_seen(wsdir, p)
+        return json.dumps(d)
+
+    try:
+        # Housekeeping: a pointer that cannot be recorded must not stop the session, and the cost
+        # of losing one is that the pointer fires twice.
+        if ws.rewrite_shared(p, _with_path, strict=False):
+            _sweep_seen(wsdir, p)
     except OSError:
         pass
 

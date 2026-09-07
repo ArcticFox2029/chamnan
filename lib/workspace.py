@@ -859,19 +859,45 @@ def ensure(root=None):
     # said nothing at all. Identical consequence to the bug the comment above documents, missed
     # because the guard was written around one way of being wrong instead of around the question
     # load_config actually asks.
+    # 🐛 [2026-09-07] This was the one writer in the whole scaffold that bypassed
+    # `atomic_write_text`. `Path.write_text` opens in "w" mode, which TRUNCATES the destination
+    # before a single new byte lands — so a process killed between the open and the write leaves
+    # config.json empty or half-written on its real path, with no staging file to lose instead.
+    # Everything else in this module either goes through the atomic writer or is append-only.
+    #
+    # And it is a read-modify-write on a file every command and hook touches at startup, so it
+    # needs the lock as well as the atomicity: `merged` is computed from a snapshot of `current`,
+    # and two sessions opening together each merge into their own snapshot (R7 agent 5).
     malformed = bool(_config_problem(cfg))
-    current = load_json(cfg, dict)
-    merged = dict(DEFAULT_CONFIG)
-    # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale option
-    # cannot sit in the file looking as though it still does something.
-    # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
-    # filter, and then raises TypeError on the first `>` comparison in a different module.
-    merged.update({k: v for k, v in current.items()
-                   if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
-                   and _in_range(k, v)})
-    if merged != current and not malformed:
+
+    def _merged(text):
         try:
-            cfg.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+            current = json.loads(text or "")
+        except (ValueError, TypeError, RecursionError):
+            # RecursionError for the reason every other json.loads in this package lists it: a
+            # document nested past the interpreter's limit raises it rather than ValueError, and
+            # the suite walks the package asserting all three are caught together.
+            current = None
+        if not isinstance(current, dict):
+            current = {}
+        merged = dict(DEFAULT_CONFIG)
+        # Keys the user set are kept; keys no longer in DEFAULT_CONFIG are dropped, so a stale
+        # option cannot sit in the file looking as though it still does something.
+        # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key
+        # filter, and then raises TypeError on the first `>` comparison in a different module.
+        merged.update({k: v for k, v in current.items()
+                       if k in DEFAULT_CONFIG and isinstance(v, type(DEFAULT_CONFIG[k]))
+                       and _in_range(k, v)})
+        if merged == current:
+            return None
+        return json.dumps(merged, indent=2) + "\n"
+
+    if not malformed:
+        try:
+            # strict=False: merging new defaults is a nicety, and a workspace whose config cannot
+            # be locked or written must still let the session start. That is the same judgement the
+            # except-branch below already records.
+            rewrite_shared(cfg, _merged, strict=False)
         except OSError:
             # Every other failure in this function is caught deliberately -- a mkdir collision must
             # not take the rest of the scaffold with it, and a plain-file `.chamnan` raises its own
@@ -956,29 +982,56 @@ def _mark_generated(root):
         ga = Path(root) / WORKSPACE_DIRNAME / ".gitattributes"
         if not ga.parent.is_dir():
             return
-        existing = ga.read_text(encoding="utf-8-sig", errors="replace") if ga.is_file() else ""
-        # 🐛 The presence test was `if "MAP.md linguist-generated" in existing: return` — a single
-        # sentinel line, which is the exact trap `_mark_ignored` a few functions down was rewritten
-        # to escape and whose comment says why: a rule added to the constant afterwards reaches NEW
-        # workspaces only, and every existing one keeps whatever it had. `MAP.md -diff` was added
-        # after that sentinel and never arrived here. Measured on this repository: the committed file
-        # carries one of the two lines, so `git diff`, `git log -p`, `git blame` and every IDE have
-        # been printing a 285 KB regenerated file in full the whole time (R13 agent 4).
+        # 🐛 [2026-09-07] Read the file, work out which rules are missing, append them — and two
+        # processes doing that at once each saw the same empty file and each appended the whole
+        # block, so the content TRIPLED under three. Both self-repairs in this module had it, and
+        # both are called from `ensure()`, which every command and every hook runs at startup: two
+        # sessions opening together is the ordinary way to hit it, not a contrived one (R7 agent 5).
         #
-        # Same answer as its sibling: compare the rules present against the rules that should be and
-        # append only what is missing. Self-maintaining however a future line is ordered.
-        have = {ln.strip() for ln in existing.splitlines()}
-        missing = [ln for ln in GENERATED_ATTR.splitlines() if ln.strip() and ln not in have]
-        if not missing:
-            return
-        with ga.open("a", encoding="utf-8") as fh:
-            if existing and not existing.endswith("\n"):
-                fh.write("\n")
-            note = GENERATED_NOTE if not existing else ""
-            fh.write(("\n" if existing else "") + note + "\n".join(missing) + "\n")
-        LAST_GENERATED_RULES_ADDED.extend(missing)
+        # The read has to be inside the lock, so the whole read-decide-append becomes one locked
+        # rewrite. Append semantics are preserved exactly — whatever is in the file stays, and only
+        # the missing lines are added — but now nothing else can append between the read and the
+        # write.
+        added = []
+
+        def _appended(existing):
+            existing = existing or ""
+            return _generated_rules_appended(existing, added)
+
+        # A nicety must never break workspace creation, so a lock this cannot take is a skip.
+        if rewrite_shared(ga, _appended, strict=False):
+            LAST_GENERATED_RULES_ADDED.extend(added)
     except OSError:
         pass          # a nicety must never break workspace creation
+
+
+def _generated_rules_appended(existing, added):
+    """The .gitattributes text with any missing generated-file rules appended, or None for none.
+
+    Split out of `_mark_generated` so the decision runs inside `rewrite_shared`'s lock rather than
+    before it, which is the whole fix — reading first and locking second leaves the same race with
+    a shorter window.
+    """
+    # 🐛 The presence test was `if "MAP.md linguist-generated" in existing: return` — a single
+    # sentinel line, which is the exact trap `_mark_ignored` a few functions down was rewritten
+    # to escape and whose comment says why: a rule added to the constant afterwards reaches NEW
+    # workspaces only, and every existing one keeps whatever it had. `MAP.md -diff` was added
+    # after that sentinel and never arrived here. Measured on this repository: the committed file
+    # carries one of the two lines, so `git diff`, `git log -p`, `git blame` and every IDE have
+    # been printing a 285 KB regenerated file in full the whole time (R13 agent 4).
+    #
+    # Same answer as its sibling: compare the rules present against the rules that should be and
+    # append only what is missing. Self-maintaining however a future line is ordered.
+    have = {ln.strip() for ln in existing.splitlines()}
+    missing = [ln for ln in GENERATED_ATTR.splitlines() if ln.strip() and ln not in have]
+    if not missing:
+        return None
+    head = existing
+    if head and not head.endswith("\n"):
+        head += "\n"
+    note = GENERATED_NOTE if not existing else ""
+    added.extend(missing)
+    return head + ("\n" if existing else "") + note + "\n".join(missing) + "\n"
 
 
 _VERSION_SHAPE = re.compile(r"^\d{1,4}(?:\.\d{1,5}){0,3}(?:[-+][0-9A-Za-z.]{1,20})?$")
@@ -1338,39 +1391,66 @@ def _mark_ignored(root):
         gi = Path(root) / WORKSPACE_DIRNAME / ".gitignore"
         if not gi.parent.is_dir():
             return
-        existing = gi.read_text(encoding="utf-8-sig", errors="replace") if gi.is_file() else ""
-        existing = _correct_stale_ignore_claims(existing)
-        # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
-        # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
-        # workspaces only, and every existing one kept leaking whatever the new rule was for. Moving
-        # the sentinel to "the last line" was the same trap one step along: today's rule was inserted
-        # mid-list and the last line did not change, so nothing appended.
-        #
-        # No sentinel. The rules actually present are compared against the rules that should be, and
-        # only the missing ones are appended -- self-maintaining, idempotent, and correct however a
-        # future rule is ordered. Comments and blanks are not rules and are only carried along when
-        # they introduce a rule that is being added.
-        have = {ln.strip() for ln in existing.splitlines()}
-        missing, pending = [], []
-        for line in IGNORE_LINES:
-            if not line.strip() or line.lstrip().startswith("#"):
-                pending.append(line)
-                continue
-            if line in have:
-                pending = []
-                continue
-            missing.extend(pending + [line])
-            pending = []
-        if not missing:
-            return
-        with gi.open("a", encoding="utf-8") as fh:
-            if existing and not existing.endswith("\n"):
-                fh.write("\n")
-            fh.write(("\n" if existing else "") + "\n".join(missing).strip("\n") + "\n")
-        LAST_IGNORE_RULES_ADDED.extend(ln for ln in missing if ln.strip()
-                                       and not ln.lstrip().startswith("#"))
+        # Locked for the reason `_mark_generated` gives above: the read, the decision and the
+        # append are one operation, and two `ensure()` calls running together each appended the
+        # whole block. Same fix, same shape, both siblings — because fixing one of a pair is how
+        # this file has had to be corrected before.
+        added = []
+
+        def _appended(existing):
+            return _ignore_rules_appended(existing or "", added)
+
+        if rewrite_shared(gi, _appended, strict=False):
+            LAST_IGNORE_RULES_ADDED.extend(added)
     except OSError:
         pass
+
+
+def _ignore_rules_appended(raw, added):
+    """The .gitignore text with stale claims corrected and missing rules appended, or None when
+    there is nothing to change.
+
+    Split out for the reason `_generated_rules_appended` is: the decision belongs inside the lock.
+    """
+    # 🐛 [2026-09-07] `_correct_stale_ignore_claims` has never reached disk. It ran here, its result
+    # was used to decide which rules were missing, and the append that followed went through
+    # `open("a")` — which appends to the file as it is, not to the corrected text. So in the branch
+    # where rules WERE missing the correction was discarded, and in the branch where none were it
+    # returned before doing anything. The suite's check is named "A FALSE SECURITY CLAIM IN AN
+    # ALREADY-COMMITTED IGNORE FILE IS CORRECTED" and calls the pure function directly, so it has
+    # been green the whole time while the claim sat uncorrected in every workspace on disk. Found
+    # while giving this function its lock — a test that exercises the function instead of the
+    # behaviour it is named for.
+    existing = _correct_stale_ignore_claims(raw)
+    # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
+    # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
+    # workspaces only, and every existing one kept leaking whatever the new rule was for. Moving
+    # the sentinel to "the last line" was the same trap one step along: today's rule was inserted
+    # mid-list and the last line did not change, so nothing appended.
+    #
+    # No sentinel. The rules actually present are compared against the rules that should be, and
+    # only the missing ones are appended -- self-maintaining, idempotent, and correct however a
+    # future rule is ordered. Comments and blanks are not rules and are only carried along when
+    # they introduce a rule that is being added.
+    have = {ln.strip() for ln in existing.splitlines()}
+    missing, pending = [], []
+    for line in IGNORE_LINES:
+        if not line.strip() or line.lstrip().startswith("#"):
+            pending.append(line)
+            continue
+        if line in have:
+            pending = []
+            continue
+        missing.extend(pending + [line])
+        pending = []
+    if not missing:
+        # A correction with nothing to append is still a correction worth writing.
+        return existing if existing != raw else None
+    head = existing
+    if head and not head.endswith("\n"):
+        head += "\n"
+    added.extend(ln for ln in missing if ln.strip() and not ln.lstrip().startswith("#"))
+    return head + ("\n" if existing else "") + "\n".join(missing).strip("\n") + "\n"
 
 
 # A promoted tool is addressed by its bare name everywhere afterwards -- the registry stores
@@ -1561,10 +1641,19 @@ def write_or_raise(dest, text, encoding="utf-8"):
     """
     LAST_WRITE_ERROR[:] = []
     if not atomic_write_text(dest, text, encoding=encoding):
-        why = (" (CHAMNAN_READ_ONLY is set)" if read_only()
-               else f" — {LAST_WRITE_ERROR[0]}" if LAST_WRITE_ERROR else "")
-        raise OSError(f"could not write {dest}{why}")
+        raise OSError(write_failure_text(dest))
     return True
+
+
+def write_failure_text(dest):
+    """Why the last `atomic_write_text` to `dest` failed, as one sentence.
+
+    Its own function because `rewrite_shared` needs the identical sentence and the alternative is
+    a second copy of it — the shape this file has had to correct more than once.
+    """
+    why = (" (CHAMNAN_READ_ONLY is set)" if read_only()
+           else f" — {LAST_WRITE_ERROR[0]}" if LAST_WRITE_ERROR else "")
+    return f"could not write {dest}{why}"
 
 def notice_due(root, key, times=NOTICE_TIMES):
     """True while a one-off piece of advice still has something to teach, and record the showing.
@@ -1607,19 +1696,49 @@ def _lock_holder_is_alive(lock):
     age rule decides on its own exactly as it used to. The age bound alone is the one a wrong
     clock can invert; the pair cannot both be wrong at once.
     """
+    return _lock_holder_state(lock) == "alive"
+
+
+LOCK_HOLDER_ALIVE, LOCK_HOLDER_DEAD, LOCK_HOLDER_UNKNOWN = "alive", "dead", "unknown"
+
+
+def _lock_holder_state(lock):
+    """"alive", "dead", or "unknown" — and the third is not the same as the second.
+
+    🐛 [2026-09-07] `_lock_holder_is_alive` collapses "this lock names a process that no longer
+    exists" and "this lock names nobody" into one False, which is right for the age rule (it only
+    runs after LOCK_STALE, by which time either is old enough to break) and wrong for anything
+    that wants to act sooner. A lock is CREATED and its PID written a moment later, two separate
+    syscalls, so "names nobody" is also what a perfectly healthy holder looks like for a few
+    microseconds — breaking on that would hand the same file to two writers, which is the one
+    thing this mutex exists to prevent.
+    """
     try:
         first = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
     except OSError:
-        return False
+        return LOCK_HOLDER_UNKNOWN
     if not first or not first[0].strip().isdigit():
-        return False
-    return _pid_is_alive(int(first[0].strip()))
+        return LOCK_HOLDER_UNKNOWN
+    return LOCK_HOLDER_ALIVE if _pid_is_alive(int(first[0].strip())) else LOCK_HOLDER_DEAD
 
 
 @contextlib.contextmanager
 def exclusive(path):
     """Hold a lock beside `path` for the duration of the block. Yields True when it was acquired."""
     lock = Path(str(path) + ".lock")
+    # 🐛 [2026-09-07] A lock cannot be created in a directory that does not exist, and `exclusive`
+    # answered that by yielding False — "somebody else has it" — rather than by making the
+    # directory. `tools_index.register` hit this, worked it out, and put a `mkdir` in front of its
+    # own call with a comment explaining why. Nobody applied that to the helper, so `state.age_out`
+    # locked `logs/state-ages.json` in a workspace where `logs/` does not exist yet and got False
+    # EVERY TIME on a fresh workspace — the lock its own comment calls the fix for a measured
+    # "26 of 40 concurrent updates lost" had never once been taken there. Found by making age_out
+    # respect the boolean it had been discarding: the moment it stopped writing unlocked, it
+    # stopped writing at all.
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     fd, deadline = None, time.time() + LOCK_TIMEOUT
     while True:
         try:
@@ -1637,7 +1756,22 @@ def exclusive(path):
             break
         except FileExistsError:
             try:
-                if time.time() - lock.stat().st_mtime > LOCK_STALE and not _lock_holder_is_alive(lock):
+                # 🐛 [2026-09-07] A lock left by a process that has DIED was waited on for the full
+                # LOCK_STALE window — 30 seconds — exactly as if a live but slow process held it.
+                # Measured at 29.9s. Every caller inside that window either blocks for its own
+                # LOCK_TIMEOUT and then skips its write, or (before today) wrote unguarded, so one
+                # crashed session made the next 30 seconds of every other session's bookkeeping
+                # unreliable. The PID has been in the lock file since 2026-09-06 for precisely this
+                # question and only the age rule ever asked it.
+                #
+                # "Dead", not "not alive": a lock is created and its PID written a moment later, so
+                # an empty lock is what a healthy holder looks like for a few microseconds. That
+                # case stays on the age rule, which is what it was always decided by.
+                state = _lock_holder_state(lock)
+                if state == LOCK_HOLDER_DEAD:
+                    lock.unlink()
+                    continue
+                if time.time() - lock.stat().st_mtime > LOCK_STALE and state != LOCK_HOLDER_ALIVE:
                     lock.unlink()
                     continue
             except OSError:
@@ -1673,6 +1807,74 @@ def exclusive(path):
             except OSError:
                 pass
 
+
+
+def rewrite_shared(path, mutate, strict=True):
+    """Read `path`, hand its text to `mutate`, write what comes back — with the lock held across
+    all three. Returns True when something was written, False when `mutate` asked for no change.
+
+    `mutate` is called with the file's current text, or None when it does not exist, and returns
+    the new text or None for "leave it alone". It runs INSIDE the lock, so it may read whatever it
+    likes about the file's current content and rely on the answer still being true when the write
+    lands.
+
+    Why a primitive rather than a rule. `atomic_write_text` fixed the tearing and every writer in
+    this repository was then hardened one at a time against the OTHER half — a lost update, where
+    two processes each read, each decide, and the second one's snapshot silently replaces the
+    first's work. `tools_index` needed three passes to get all three of its writers; `state.py`
+    documented the shape and `coedit.py` and `rollup.py` copied it while `pointer.py` and
+    `chamnan-map` did not. Measured on 2026-09-07, with the fix believed complete, six more writers
+    were still doing the bare read-modify-write:
+
+        milestones.append()          5 of 6 concurrent entries vanished — no lock at all
+        pointer.mark_pointed()       11 of 12 lost
+        the subagent firing log      270 of 320 lines lost, 84%
+        ensure()'s ignore-file repair   content tripled
+        ensure()'s config.json       written with `Path.write_text`, which truncates on open
+        candidates.upsert()          five files for one habit
+
+    Every one of those is the same four lines written slightly differently, so this is the four
+    lines written once. `LOCK_TIMEOUT` is short and the critical sections are small; a caller that
+    cannot take the lock in that time is in real contention and is told so.
+
+    🐛 The two halves are not interchangeable and having only one looks correct. An atomic write
+    stops a READER seeing half a file and says nothing about which of two WRITERS wins; a lock
+    without the atomic write stops the lost update and still lets a crash leave a torn file. Both
+    are here, in one place, so no future writer has to remember either.
+    """
+    lock_path = Path(path)
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
+    with exclusive(lock_path) as held:
+        if not held:
+            # 🐛 Falling through to write unlocked is the mistake `tools_index.register` made and
+            # had to be corrected for: it reintroduces exactly the race the lock exists to close,
+            # in the situation — real contention — where that race is most likely to fire. A
+            # caller that would rather skip than fail passes strict=False and gets a False back,
+            # which is a fact it can act on; nobody gets a silent unguarded write.
+            if strict:
+                raise TimeoutError(
+                    f"could not lock {lock_path} — another process is writing it. "
+                    f"Nothing was changed; try again in a moment.")
+            return False
+        try:
+            # utf-8-sig on the way IN only: it strips a BOM somebody else's editor left, and would
+            # WRITE one if it were used on the way out. Every reader in this repository reads with
+            # it and every writer writes plain utf-8, and that asymmetry is deliberate.
+            current = lock_path.read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            current = None
+        updated = mutate(current)
+        if updated is None:
+            return False
+        LAST_WRITE_ERROR[:] = []
+        if not atomic_write_text(lock_path, updated):
+            if strict:
+                raise OSError(write_failure_text(lock_path))
+            return False
+        return True
 
 
 # The pre-commit hook chamnan installs marks itself with this line, so a hook somebody wrote by

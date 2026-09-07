@@ -21,7 +21,7 @@ import subprocess
 import time
 import sys
 import tempfile
-from multiprocessing import Process
+from multiprocessing import Barrier, Process
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LIB = str(ROOT / "lib")
@@ -68,6 +68,38 @@ def _coedit_worker(wsdir, tag, n):
     coedit.TRIM_AT = 205
     for i in range(n):
         coedit.record(pathlib.Path(wsdir), f"{tag}-{i}.py")
+
+
+def _milestone_worker(root, i, gate):
+    sys.path.insert(0, LIB)
+    import milestones
+    gate.wait()
+    milestones.append(pathlib.Path(root), f"## 2026-09-0{1 + i % 9} — milestone-{i}\n\n**Why:** m{i}\n")
+
+
+def _pointer_worker(wsdir, session_id, i, gate):
+    sys.path.insert(0, LIB)
+    import pointer
+    gate.wait()
+    pointer.mark_pointed(pathlib.Path(wsdir), session_id, f"src/file-{i}.py")
+
+
+def _firing_worker(root, hook_path, i, gate):
+    sys.path.insert(0, LIB)
+    sys.path.insert(0, str(pathlib.Path(hook_path).parent))
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("sub_start", hook_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    gate.wait()
+    mod._record_a_firing(pathlib.Path(root), f"agent-{i}", 100 + i, "ok")
+
+
+def _ensure_worker(root, _i, gate):
+    sys.path.insert(0, LIB)
+    import workspace as _ws
+    gate.wait()
+    _ws.ensure(pathlib.Path(root))
 
 
 def _scratch_hook_worker(fixture_root, hook_path, idx):
@@ -255,6 +287,157 @@ if __name__ == "__main__":
     os.utime(stale, (time.time() - ws.LOCK_STALE - 5,) * 2)
     with ws.exclusive(target) as held:
         check("A LOCK LEFT BY A KILLED PROCESS IS BROKEN, NOT WAITED ON", held is True)
+
+    # ---------------------------------------------------------------- R7: six more of the same
+    # Every one of these is the identical shape the four above were fixed for, in a writer nobody
+    # had raced yet. They all go through `ws.rewrite_shared` now -- one primitive rather than the
+    # same four lines written six more slightly different ways.
+
+    # `milestones.append` had no lock AT ALL, and it loses entries outright rather than thinning
+    # them: the last writer's snapshot became the whole file. Six processes, five entries gone.
+    _ms = pathlib.Path(tempfile.mkdtemp(prefix="cw-milestones-")) / "r"
+    (_ms / ".chamnan").mkdir(parents=True)
+    _n_ms = 6
+    # 🐛 The first version of these four checks spawned the processes without a barrier and every
+    # one of them PASSED with the lock removed -- the workers finished before their siblings were
+    # even started, so nothing raced and the checks proved nothing. Caught by running the negative
+    # control rather than by reading them. The barrier is what makes them a concurrency test.
+    _gate = Barrier(_n_ms)
+    _procs = [Process(target=_milestone_worker, args=(str(_ms), i, _gate)) for i in range(_n_ms)]
+    for pr in _procs:
+        pr.start()
+    for pr in _procs:
+        pr.join()
+    _ms_text = (_ms / ".chamnan" / "milestones.md").read_text(encoding="utf-8")
+    _ms_have = sum(1 for i in range(_n_ms) if f"milestone-{i}" in _ms_text)
+    check(f"EVERY ONE OF {_n_ms} CONCURRENT MILESTONES SURVIVES ({_ms_have}/{_n_ms})",
+          _ms_have == _n_ms)
+    # Six racing writers each fall back to "the file is empty, start it with the header", so a
+    # duplicated header is the specific way this race shows even when no entry is lost.
+    import milestones as _ms_mod
+    check("...and the file still opens with its header exactly once",
+          _ms_text.count(_ms_mod.HEADER.strip()) == 1
+          and _ms_text.startswith(_ms_mod.HEADER.strip()))
+
+    # `pointer.mark_pointed`'s per-session file is not private when a subagent inherits its
+    # parent's session_id -- which is what a subagent's hooks actually do. Twelve opens, eleven
+    # lost.
+    _pt = pathlib.Path(tempfile.mkdtemp(prefix="cw-pointer-")) / ".chamnan"
+    (_pt / "logs").mkdir(parents=True)
+    _n_pt = 12
+    _gate = Barrier(_n_pt)
+    _procs = [Process(target=_pointer_worker, args=(str(_pt), "one-shared-session", i, _gate))
+              for i in range(_n_pt)]
+    for pr in _procs:
+        pr.start()
+    for pr in _procs:
+        pr.join()
+    sys.path.insert(0, LIB)
+    import pointer as _pointer_mod
+    _seen = json.loads(_pointer_mod._seen_path(_pt, "one-shared-session")
+                       .read_text(encoding="utf-8-sig"))
+    _pt_have = sum(1 for i in range(_n_pt) if f"src/file-{i}.py" in _seen.get("paths", []))
+    check(f"A PARENT AND ITS SUBAGENTS SHARE ONE SEEN-FILE AND LOSE NOTHING "
+          f"({_pt_have}/{_n_pt})", _pt_have == _n_pt)
+
+    # The subagent firing log: read the tail, append one, write it all back. Subagents are
+    # dispatched in batches, so this is the writer with the most concurrent callers by design --
+    # and it lost 84% of them.
+    _fr = pathlib.Path(tempfile.mkdtemp(prefix="cw-firings-")) / "r"
+    (_fr / ".chamnan" / "logs").mkdir(parents=True)
+    _n_fr = 30
+    _hook = str(ROOT / "hooks" / "chamnan_subagent_start.py")
+    _gate = Barrier(_n_fr)
+    _procs = [Process(target=_firing_worker, args=(str(_fr), _hook, i, _gate))
+              for i in range(_n_fr)]
+    for pr in _procs:
+        pr.start()
+    for pr in _procs:
+        pr.join()
+    _fr_lines = [ln for ln in (_fr / ".chamnan" / "logs" / "subagent_start.jsonl")
+                 .read_text(encoding="utf-8-sig").splitlines() if ln.strip()]
+    _fr_types = {json.loads(ln)["agent_type"] for ln in _fr_lines}
+    _fr_have = sum(1 for i in range(_n_fr) if f"agent-{i}" in _fr_types)
+    check(f"EVERY ONE OF {_n_fr} CONCURRENT SUBAGENT FIRINGS IS RECORDED ({_fr_have}/{_n_fr})",
+          _fr_have == _n_fr)
+    check("...and the firing log is still valid JSON Lines throughout",
+          all(isinstance(json.loads(ln), dict) for ln in _fr_lines))
+
+    # `ensure()` runs at the start of every command and every hook, and both of its self-repairs
+    # read-decided-appended without a lock, so each concurrent caller appended the whole block.
+    _en = pathlib.Path(tempfile.mkdtemp(prefix="cw-ensure-")) / "r"
+    _en.mkdir(parents=True)
+    (_en / ".git").mkdir()
+    _n_en = 8
+    _gate = Barrier(_n_en)
+    _procs = [Process(target=_ensure_worker, args=(str(_en), i, _gate)) for i in range(_n_en)]
+    for pr in _procs:
+        pr.start()
+    for pr in _procs:
+        pr.join()
+    import workspace as _ws_mod
+    _gi_lines = [ln for ln in (_en / ".chamnan" / ".gitignore")
+                 .read_text(encoding="utf-8-sig").splitlines() if ln.strip()
+                 and not ln.lstrip().startswith("#")]
+    check(f"{_n_en} CONCURRENT ensure() CALLS DO NOT DUPLICATE AN IGNORE RULE "
+          f"({len(_gi_lines)} lines, {len(set(_gi_lines))} distinct)",
+          len(_gi_lines) == len(set(_gi_lines)))
+    _ga_lines = [ln for ln in (_en / ".chamnan" / ".gitattributes")
+                 .read_text(encoding="utf-8-sig").splitlines() if ln.strip()
+                 and not ln.lstrip().startswith("#")]
+    check(f"...nor a generated-file attribute ({len(_ga_lines)} lines, "
+          f"{len(set(_ga_lines))} distinct)", len(_ga_lines) == len(set(_ga_lines)))
+    # config.json used to be written with Path.write_text, which truncates on open -- so the
+    # failure mode was an empty or half-written file on its real path, not a lost staging file.
+    check("...and config.json is whole and parses",
+          isinstance(json.loads((_en / ".chamnan" / "config.json")
+                                .read_text(encoding="utf-8-sig")), dict))
+
+    # 🐛 `state.age_out` took a lock on `logs/state-ages.json` and never looked at the boolean, so
+    # under contention it wrote while a real holder had the file. And the lock could not be
+    # created at all in a workspace where `logs/` did not exist yet -- so on a fresh workspace it
+    # had NEVER been taken, and the branch that ignored it was the only reason anything was
+    # written. Both halves are checked: the lock is takeable, and a caller that cannot take it
+    # does not write anyway.
+    _ag = pathlib.Path(tempfile.mkdtemp(prefix="cw-ages-")) / ".chamnan"
+    _ag.mkdir(parents=True)
+    import state as _state_mod
+    with ws.exclusive(_ag / _state_mod.AGES_PATH) as _ag_held:
+        check("A LOCK IS TAKEABLE BESIDE A FILE WHOSE DIRECTORY DOES NOT EXIST YET",
+              _ag_held is True)
+        _before = (_ag / _state_mod.AGES_PATH).exists()
+        _state_mod.age_out("## a\n\nbody\n", _ag, 30)
+        check("...and a second caller that cannot take it does not write the ages file anyway",
+              (_ag / _state_mod.AGES_PATH).exists() == _before)
+    _state_mod.age_out("## a\n\nbody\n", _ag, 30)
+    check("...and does write it once the lock is free",
+          (_ag / _state_mod.AGES_PATH).is_file())
+
+    # 🐛 A lock left by a process that DIED was waited on for the full 30-second stale window, the
+    # same as one held by a live but slow process. Measured at 29.9s. The PID is in the lock file
+    # for exactly this question and only the age rule ever asked it.
+    _dl = pathlib.Path(tempfile.mkdtemp(prefix="cw-deadlock-")) / "f.json"
+    _dl.parent.mkdir(parents=True, exist_ok=True)
+    _dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    _dead.wait()
+    pathlib.Path(str(_dl) + ".lock").write_text(f"{_dead.pid}\n", encoding="utf-8")
+    _t0 = time.time()
+    with ws.exclusive(_dl) as _dl_held:
+        _dl_took = time.time() - _t0
+        check("A LOCK WHOSE HOLDER HAS DIED IS BROKEN AT ONCE, NOT AFTER THE STALE WINDOW",
+              _dl_held is True and _dl_took < 1.0)
+    if not (_dl_held and _dl_took < 1.0):
+        print(f"       took {_dl_took:.1f}s against LOCK_STALE={ws.LOCK_STALE}")
+
+    # ...and the case that must NOT be broken early: a lock created by a live process that has not
+    # yet written its PID into it. Two syscalls, so an empty lock is also what a perfectly healthy
+    # holder looks like for a moment -- breaking on that hands one file to two writers.
+    _el = pathlib.Path(tempfile.mkdtemp(prefix="cw-emptylock-")) / "f.json"
+    _el.parent.mkdir(parents=True, exist_ok=True)
+    pathlib.Path(str(_el) + ".lock").write_text("", encoding="utf-8")
+    with ws.exclusive(_el) as _el_held:
+        check("...while a lock that names nobody yet is left alone until it is genuinely stale",
+              _el_held is False)
 
     total = PASSED + len(FAILED)
     print(f"\n{PASSED}/{total} checks passed")

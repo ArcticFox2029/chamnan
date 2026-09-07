@@ -118,16 +118,22 @@ def append(root, entry_text):
     Returns the path written. The caller is responsible for the entry's content; this only owns
     where it goes and that the file keeps its shape.
     """
+    # 🐛 [2026-09-07] Read the whole file, append in memory, write it back — with no lock, so the
+    # last writer's snapshot became the entire file. Six processes appending one milestone each:
+    # FIVE VANISHED, valid Markdown throughout, no error anywhere. This is the highest-value store
+    # in the workspace, because a milestone is the one thing here a person typed a reason for, and
+    # two accounts on one machine both running /chamnan:milestone in the same minute is an ordinary
+    # afternoon rather than an edge case (R7 agent 5).
+    #
+    # The read has to happen INSIDE the lock, which is why this is `rewrite_shared` rather than a
+    # lock wrapped around the write: reading first and locking second leaves the same race with a
+    # smaller window, which is the version of this fix that looks right and is not.
     p = path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    existing = ""
-    if p.is_file():
-        try:
-            existing = p.read_text(encoding="utf-8-sig", errors="replace")
-        except OSError:
-            existing = ""
-    if not existing.strip():
-        existing = HEADER + "\n"
-    body = existing.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
-    ws.write_or_raise(p, body)
+
+    def _appended(existing):
+        if not (existing or "").strip():
+            existing = HEADER + "\n"
+        return existing.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
+
+    ws.rewrite_shared(p, _appended)
     return p
