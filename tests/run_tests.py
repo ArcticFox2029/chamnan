@@ -134,8 +134,39 @@ def _probe_deny_read():
         _rmtree(box, ignore_errors=True)
 
 
+def _probe_deny_write():
+    """Can this process make a directory it owns unwritable to itself? Probed, not assumed.
+
+    🐛 [2026-09-07] The same distinction `_probe_deny_read` already draws, in the other direction,
+    and four checks written on 2026-09-06 assumed it. `os.chmod` on Windows toggles a read-only bit
+    on FILES and does nothing at all to a directory, so `chmod 555` there leaves the directory
+    perfectly writable — the write those checks expect to FAIL succeeds, and they fail reporting a
+    defect that is not there. Passed on macOS and Linux, failed on both Windows jobs.
+    """
+    box = Path(tempfile.mkdtemp())
+    try:
+        (box / "wall").mkdir()
+        os.chmod(box / "wall", 0o555)
+        try:
+            (box / "wall" / "f.txt").write_text("x", encoding="utf-8")
+            return False
+        except OSError:
+            return True
+    except OSError:
+        return False
+    finally:
+        try:
+            os.chmod(box / "wall", 0o755)
+        except OSError:
+            pass
+        _rmtree(box, ignore_errors=True)
+
+
 _CAN_SYMLINK = _probe_symlink()
 _CAN_DENY_READ = _probe_deny_read()
+_CAN_DENY_WRITE = _probe_deny_write()
+if not _CAN_DENY_WRITE:
+    print("  [SKIP] unwritable-directory checks — os.chmod does not restrict a directory here")
 if not _CAN_DENY_READ:
     print("  [SKIP] unreadable-directory checks — this platform does not honour chmod 000 "
           "against the owner")
@@ -7792,18 +7823,22 @@ _wr = Path(tempfile.mkdtemp(prefix="chamnan-wraise-")) / "r"
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_wr, capture_output=True)
 _wr_threads = _wr / ".chamnan" / "threads"
 _wr_threads.mkdir(parents=True, exist_ok=True)
-os.chmod(_wr_threads, 0o555)
-try:
-    _wr_run = subprocess.run(
-        [sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new", "a thread nobody can write"],
-        cwd=_wr, capture_output=True, text=True)
-finally:
-    os.chmod(_wr_threads, 0o755)
-check("A WRITE THE USER ASKED FOR IS NOT REPORTED AS DONE WHEN IT FAILED",
-      _wr_run.returncode == 1 and "declared" not in _wr_run.stdout
-      and not any(_wr_threads.iterdir()))
-check("...and the reason names the file rather than only failing",
-      "could not write" in _wr_run.stderr and "a-thread-nobody-can-write" in _wr_run.stderr)
+# Gated on the probe, not on the platform name: `os.chmod` does not restrict a DIRECTORY on
+# Windows, so the write these two checks expect to fail simply succeeds there and they report a
+# defect that is not present. See _probe_deny_write.
+if _CAN_DENY_WRITE:
+    os.chmod(_wr_threads, 0o555)
+    try:
+        _wr_run = subprocess.run(
+            [sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new",
+             "a thread nobody can write"], cwd=_wr, capture_output=True, text=True)
+    finally:
+        os.chmod(_wr_threads, 0o755)
+    check("A WRITE THE USER ASKED FOR IS NOT REPORTED AS DONE WHEN IT FAILED",
+          _wr_run.returncode == 1 and "declared" not in _wr_run.stdout
+          and not any(_wr_threads.iterdir()))
+    check("...and the reason names the file rather than only failing",
+          "could not write" in _wr_run.stderr and "a-thread-nobody-can-write" in _wr_run.stderr)
 _rmtree(_wr.parent, ignore_errors=True)
 
 # 🐛 [2026-09-06] `memory.title_of` was given a BOM strip on 2026-09-05 with a comment saying it
@@ -7859,14 +7894,25 @@ with ws.exclusive(_lk_target) as _lk_first:
 check("A SKEWED CLOCK CANNOT STEAL A LOCK A LIVE PROCESS HOLDS",
       _lk_first is True and _lk_stolen is False)
 # And the age rule must still do its job, or the fix would be "never reclaim".
+#
+# 🐛 [2026-09-07] This used a real exited subprocess's PID as "a dead process", and on Windows that
+# is not dead: `subprocess.Popen` holds a handle to the process object, so it survives its own exit
+# and `OpenProcess` still succeeds. The lock was never reclaimed and the check failed there while
+# passing on POSIX. What this check is actually about is `exclusive`'s DECISION — reclaim when
+# liveness says dead — so liveness is substituted and the OS's PID semantics are left out of it.
 _lk_lock = Path(str(_lk_target) + ".lock")
-_lk_proc = subprocess.Popen([sys.executable, "-c", "pass"])
-_lk_proc.wait()
-_lk_lock.write_text(f"{_lk_proc.pid}\n", encoding="utf-8")
+_lk_lock.write_text("424242\n", encoding="utf-8")
 os.utime(_lk_lock, (_time.time() - 3600, _time.time() - 3600))
-with ws.exclusive(_lk_target) as _lk_reclaimed:
-    pass
+_lk_alive = ws._pid_is_alive
+try:
+    ws._pid_is_alive = lambda pid: False
+    with ws.exclusive(_lk_target) as _lk_reclaimed:
+        pass
+finally:
+    ws._pid_is_alive = _lk_alive
 check("...while a lock a killed process left behind is still reclaimed", _lk_reclaimed is True)
+# The probe itself, in the one direction every platform can answer: this process is running.
+check("...and a process that IS running reads as alive", ws._pid_is_alive(os.getpid()) is True)
 # A lock written by a version that did not record a PID has to keep ageing out, or an upgrade
 # deadlocks on a file the previous build left.
 _lk_lock.write_text("", encoding="utf-8")
@@ -8452,14 +8498,15 @@ finally:
 # renamed the one sentence.
 _we_d = _we / "ro"
 _we_d.mkdir()
-os.chmod(_we_d, 0o555)
-try:
-    ws.LAST_WRITE_ERROR[:] = []
-    ws.atomic_write_text(_we_d / "y.md", "new\n")
-    check("...while a directory that refuses the write names the errno instead",
-          "PermissionError" in (ws.LAST_WRITE_ERROR[0] if ws.LAST_WRITE_ERROR else ""))
-finally:
-    os.chmod(_we_d, 0o755)
+if _CAN_DENY_WRITE:                 # see _probe_deny_write — chmod does not bind a dir on Windows
+    os.chmod(_we_d, 0o555)
+    try:
+        ws.LAST_WRITE_ERROR[:] = []
+        ws.atomic_write_text(_we_d / "y.md", "new\n")
+        check("...while a directory that refuses the write names the errno instead",
+              "PermissionError" in (ws.LAST_WRITE_ERROR[0] if ws.LAST_WRITE_ERROR else ""))
+    finally:
+        os.chmod(_we_d, 0o755)
 _rmtree(_we, ignore_errors=True)
 
 # 🐛 [2026-09-06] chamnan's OWN workspace was counted as the user's uncommitted work. git folds an
@@ -8533,7 +8580,10 @@ rollup._COLLAPSE_CACHE.clear()
 # codebase's own recorded flask example (76 missing) would have hidden 89% (R16 agent 4).
 _ud = Path(tempfile.mkdtemp(prefix="chamnan-undoc-")) / "r"
 (_ud / "src").mkdir(parents=True)
-(_ud / ".git").mkdir(parents=True)
+# A real `git init`, not a bare `.git` directory: `workspace.git_owns` asks git itself, and a
+# directory git refuses changes which files are indexed — differently on Windows, where this
+# fixture's overflow line did not appear at all.
+subprocess.run(["git", "init", "-q"], cwd=_ud, capture_output=True)
 for _i in range(15):
     (_ud / "src" / f"m{_i:02d}.py").write_text(f"def f{_i}():\n    return {_i}\n", encoding="utf-8")
 (_ud / "src" / "documented.py").write_text(
@@ -18240,17 +18290,33 @@ for _name, (_want, _why) in sorted(_VENDOR_CEILINGS.items()):
 
 # ...and the emitted file for a capped adapter actually lands under its own ceiling on this
 # repository, at the profile that produces the most text. The declaration is not the guarantee.
+#
+# 🐛 [2026-09-07] This emitted against `ROOT` and measured whatever state earlier checks had left in
+# `ROOT/.chamnan/` — so it measured a DIFFERENT document on each platform, because Windows skips 19
+# checks that write there and therefore runs a different prefix. It read 3,737 bytes on macOS and
+# 12,522 on Windows, from one commit, and only the second exceeded the 12,000 ceiling. A check whose
+# subject depends on what ran before it is not measuring the thing it names.
+#
+# Emitted against a COPY with a freshly built index instead: same content, one known state, no
+# dependence on order. `ROOT.parent.parent` was tried before this and gave 0 bytes in CI, which is
+# why the subject has to be built rather than found.
+_cap_src = Path(tempfile.mkdtemp(prefix="chamnan-capfix-")) / "repo"
+_cap_src.mkdir(parents=True)
+for _sub in ("lib", "bin", "hooks"):
+    shutil.copytree(ROOT / _sub, _cap_src / _sub,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+subprocess.run(["git", "init", "-q"], cwd=_cap_src, capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_cap_src,
+               capture_output=True)
 for _name in ("windsurf", "antigravity"):
     _r = subprocess.run(
         [sys.executable, str(ROOT / "bin" / "chamnan-context"), "--emit", _name,
-         # chamnan's OWN repository, which exists wherever this runs. `ROOT.parent.parent` is
-         # two directories above the checkout: a real repository on the development machine and
-         # an empty runner directory in CI, where every emit came back 0 bytes.
-         "--profile", "large-window", str(ROOT)],
-        capture_output=True, text=True)
+         "--profile", "large-window", str(_cap_src)],
+        capture_output=True, text=True, cwd=_cap_src)
     _size = len(_r.stdout.encode("utf-8"))
     check(f"{_name}'s emitted file fits under its ceiling ({_size:,} bytes)",
           _r.returncode == 0 and 0 < _size <= _VENDOR_CEILINGS[_name][0])
+_rmtree(_cap_src.parent, ignore_errors=True)
 
 
 # --------------------------------------------- the subagent pointer, and why it is only a pointer
