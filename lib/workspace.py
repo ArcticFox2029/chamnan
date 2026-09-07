@@ -1813,6 +1813,26 @@ def _config_problem(path):
 _GIT_OWNS = {}
 
 
+
+def git_is_installed():
+    """Whether a `git` executable is on PATH at all. Cached, like `git_owns`.
+
+    🐛 [2026-09-07] `git_owns` answers False for "not a repository" and for "git is not installed",
+    and every caller treats both as "nothing to say". For the first that is right; for the second it
+    is a silent failure in a plugin whose whole session block is built out of git — "Where the last
+    session stopped" simply vanished, with no diagnostic anywhere, and the user is left thinking
+    chamnan has nothing to tell them rather than that it cannot look (R10 agent 1).
+    """
+    global _GIT_ON_PATH
+    if _GIT_ON_PATH is None:
+        import shutil
+        _GIT_ON_PATH = shutil.which("git") is not None
+    return _GIT_ON_PATH
+
+
+_GIT_ON_PATH = None
+
+
 def git_owns(root):
     """True when git itself resolves `root` AS the repository, not as a directory inside one.
 

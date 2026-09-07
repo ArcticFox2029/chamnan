@@ -1,11 +1,62 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1220), and every one of these is on the
+[README](README.md#whats-new-in-1221), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
+
+---
+
+## What's new in 1.22.1
+
+1.22.0's notes never said how many checks it passed. Every release before it closed with that
+number and the platforms it was green on, and a page whose front matter says "verifiable claims,
+not adjectives" is the wrong place to drop the one line that is a claim rather than an adjective.
+That is what this release exists to correct, and the number is below.
+
+The README's own suite paragraph had drifted the same way: it still read "Over 1,800 checks",
+written when there were 1,800. It says "Over 3,600" now.
+
+Six fixes landed alongside it, all of them findings that had been reported and never acted on — a
+triage pass found that the backlog rolls up rounds R1-R8 and nothing after, leaving 35 reports
+never summarised and 14 findings with no trace in code or archive.
+
+### The tools index destroyed its own history on a merge conflict
+
+`load()` returns `[]` for a file it cannot parse, and `[]` is exactly what it returns for a registry
+that never existed — indistinguishable to every caller. The next `chamnan-promote` wrote its one new
+entry over the top and every previously registered tool, with its run counters, was gone. Silently
+and permanently. An unresolved `<<<<<<< HEAD` is the ordinary way there: `index.json` is committed,
+and two branches registering different tools collide in it. Reported independently by two rounds and
+unfixed both times, while the guard sat one file away.
+
+### Four more that were reported and forgotten
+
+A badly-resolved merge in MAP.md injected both sides as settled fact — the sibling of a bug whose
+STATE.md half was fixed the same day, in the store most likely to conflict rather than least, since
+two branches editing unrelated files still collide in an alphabetical index.
+
+A Jupyter notebook was bucketed as payload rather than as source this indexer cannot parse, so a
+fifteen-notebook repository reported "described 2/2 files (100%)" while all of its real content was
+invisible.
+
+The carry-forward cap counted characters, which mis-prices any script that is not mostly Latin —
+measured at 1.99x for Thai at the same character count.
+
+And on Windows: a Python App Execution Alias stub reported "too old" instead of "not installed",
+sending a new user toward the wrong diagnosis; and a missing `git` made "Where the last session
+stopped" vanish with no diagnostic at all, which is a different failure from having nothing to say.
+
+### On Windows an exited process read as alive
+
+`OpenProcess` succeeding is not liveness there: the process object outlives the process while
+anything holds a handle to it, so a lock left by a process that CRASHED was never reclaimed and
+every later write was silently unguarded. `GetExitCodeProcess` answers it, paired with a
+zero-timeout wait for the one process whose real exit code is 259.
+
+3,662 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
 
 ---
 
@@ -108,6 +159,8 @@ record's title, and reached the model through the JSON hook payloads where `json
 past every check that scanned raw output. `chamnan-map --verify` printed index rows with no
 redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
 the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
+
+3,646 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13 — and four of those platform jobs are the reason this release took five CI runs rather than one. Every defect they caught is in the notes above.
 
 ---
 

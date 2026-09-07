@@ -1013,6 +1013,24 @@ def main():
             mp = wsdir / "MAP.md"
             if mp.is_file():
                 text = _read_bounded(mp, MAP_READ_CEILING)
+                # 🐛 [2026-09-07] The third store to need this and the second to be forgotten.
+                # `memory.unresolved_conflict` guards rules, and `state.render` was given it on
+                # 2026-09-06 after a badly-resolved merge injected both sides of STATE.md as settled
+                # fact. MAP.md is the same shape of file and the same failure: two branches editing
+                # UNRELATED source files still collide in its alphabetical Quick Index, so this is
+                # the store most likely to conflict, not the least — and half a merge leaves
+                # `<<<<<<< HEAD` in the largest section a session reads (R9 acc3).
+                #
+                # Said instead of the content, exactly as STATE.md says it: printing both sides
+                # under a warning invites the reader to pick one, which is the failure.
+                if memory.unresolved_conflict(text):
+                    out.append(section(
+                        "Architecture index",
+                        "**`MAP.md` is mid-merge and both sides are still in the file.** No index "
+                        "is injected this session, because neither side of an unresolved conflict "
+                        "is what this repository contains. Resolve the markers, or rebuild it with "
+                        "`chamnan-map`, and it comes back.", display(mp, root)))
+                    text = ""
                 cut = text.find("## Full Detail")
                 # 🐛 A MAP.md that is HALF AN INDEX was injected as a complete one. chamnan-map
                 # writes atomically now, so it can no longer produce this itself — but a bad merge
