@@ -86,7 +86,10 @@ def recent_titles(root, count=INJECT_RECENT):
     # that says "newest first", and pushed the genuinely second-newest out of the list entirely.
     # An undated entry sorts last rather than being dropped: it still happened.
     ordered = sorted(found, key=lambda e: (e[0] or "", ), reverse=True)
-    lines = [f"- **{mdblock.one_line(date)}** — {mdblock.one_line(title)}"
+    # `count=2` bounds how MANY milestones are shown and says nothing about how long each is: one
+    # ordinary "what happened and why" title, written the way `/chamnan:milestone` invites, measured
+    # 165 tokens on its own.
+    lines = [f"- **{mdblock.one_line(date)}** — {mdblock.one_line_capped(title)}"
              for date, title, _ in ordered[:count]]
     if len(found) > count:
         lines.append(f"- _…{len(found) - count} earlier in `.chamnan/{FILENAME}`_")

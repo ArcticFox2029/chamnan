@@ -365,11 +365,13 @@ def carry_forward(root):
         # block byte-for-byte, and only when the repository had exactly ONE unfinished record,
         # which is the common case. The suite never saw it because the hostile fixture's record
         # was dated old enough for retention to delete it before the hook read anything.
-        head = f"_Last session ({when}) — {mdblock.one_line(carried[0][0])}_"
+        # The BODY below is bounded by MAX_CARRY_TOKENS; this head was not bounded by anything,
+        # and it is the same free-text `# Title` off the same kind of file.
+        head = f"_Last session ({when}) — {mdblock.one_line_capped(carried[0][0])}_"
         body = carried[0][1]
     else:
         head = f"_Last session ({when}) — {len(carried)} records, all unfinished_"
-        body = "\n\n".join(f"**{mdblock.one_line(title)}**\n\n{text}"
+        body = "\n\n".join(f"**{mdblock.one_line_capped(title)}**\n\n{text}"
                            for title, text in carried)
     if tokens.estimate(body) > MAX_CARRY_TOKENS:
         body = body[:tokens.cut_at(body, MAX_CARRY_TOKENS)].rsplit("\n", 1)[0] + \

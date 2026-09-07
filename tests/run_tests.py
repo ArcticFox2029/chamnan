@@ -7967,11 +7967,27 @@ check("...and an ordinary declaration is unchanged",
       aging.version_pairs("kubernetes 1.28, python v3.11")
       == [("kubernetes", "1.28"), ("python", "3.11")])
 # A date one day ahead is a timezone, not a typo -- same slack ledger allows.
+#
+# 🐛 This fixture used `datetime.date.fromtimestamp`, which is the LOCAL date, against a slack whose
+# boundary is a UTC one: `_ymd_to_ts` anchors a date at 12:00 UTC, so "tomorrow" is inside the
+# one-day slack only once the clock has passed 12:00 UTC. On this machine (UTC+7) the check
+# therefore passed every morning and failed every afternoon, and in CI it depended on the runner's
+# timezone. A test that is true for half the day is not a test; the date is derived from the
+# boundary the code actually uses now.
+_ev_inside = datetime.datetime.fromtimestamp(_time.time() + 43200,
+                                             datetime.timezone.utc).date().isoformat()
 (_ev / ".chamnan" / "environments.md").write_text(
     "# Environments\n\n## staging\n\n**Versions:** postgres 16\n**Checked:** "
-    + datetime.date.fromtimestamp(_time.time() + 43200).isoformat() + "\n", encoding="utf-8")
+    + _ev_inside + "\n", encoding="utf-8")
 check("...and a date inside the one-day slack is still a real check",
       envs.entries(_ev)[0]["checked_ts"] is not None)
+# ...and the fixture has to be the thing it stands for: a date that is not ahead of today proves
+# nothing about the slack. It is ahead for 12 of every 24 hours, so this asserts which case ran.
+_ev_today = datetime.datetime.fromtimestamp(_time.time(), datetime.timezone.utc).date().isoformat()
+check("...on a date that is genuinely today or tomorrow in UTC, whichever the clock makes it",
+      _ev_inside in (_ev_today,
+                     (datetime.datetime.fromtimestamp(_time.time(), datetime.timezone.utc).date()
+                      + datetime.timedelta(days=1)).isoformat()))
 _rmtree(_ev.parent, ignore_errors=True)
 
 # 🐛 [2026-09-06] The tail line after the Architecture index repeated what the index's own header
@@ -18541,7 +18557,10 @@ _rmtree(_twd.parent, ignore_errors=True)
 # safety.
 import ast as _mdast  # noqa: E402
 
-_MD_SANITISERS = ("one_line(", "as_quoted(", "masked(", "whole_graphemes(")
+# `one_line_capped(` is listed separately because these are SUBSTRING tests and it does not contain
+# `one_line(` — the underscore is in the way. A new sanitiser that is not added here is reported as
+# unsanitised, which is the safe direction for this audit to fail in.
+_MD_SANITISERS = ("one_line(", "one_line_capped(", "as_quoted(", "masked(", "whole_graphemes(")
 # Field names that carry text from the repository being indexed rather than from chamnan.
 _MD_REPO_FIELD = re.compile(
     r"\b(?:f|t|e|row|item|entry|hit|rec)\[['\"](?:path|doc|name|title|summary|source|desc|text|line)['\"]\]"
@@ -19593,6 +19612,108 @@ check("...and the index and report skills stay reachable, which is the point of 
       not _overreach)
 for _o in _overreach:
     print("      needlessly gated behind a slash command:", _o)
+
+
+# ------------------------------------------- a count cap is not a length cap
+# Three sections read as bounded because they capped how MANY items they showed, and nobody
+# constructed a long item and measured it. This check does, and it is written as a GROWTH test
+# rather than a list of the three: it fills every free-text field in a workspace twice, once short
+# and once with a 4,000-character paragraph, and asserts the whole injected block barely moves. A
+# section added next year that injects an unbounded field fails this without anyone remembering to
+# add it here.
+_cc_root = Path(tempfile.mkdtemp(prefix="chamnan-countcap-"))
+
+
+def _cc_workspace(filler):
+    """Every free-text field in the workspace set to `filler`. Returns the block the real hook emits."""
+    ws = _cc_root / ".chamnan"
+    _rmtree(ws, ignore_errors=True)
+    (ws / "memory" / "rules").mkdir(parents=True)
+    (ws / "sessions").mkdir()
+    (ws / "threads").mkdir()
+    (ws / "tools").mkdir()
+    (ws / "environments.md").write_text(
+        "# Environments\n\n" + "\n".join(
+            f"## {filler}\n\n**Platform:** {filler}\n**Checked:** 2026-09-01\n\n**Constraints:**\n"
+            + "".join(f"- {filler}\n" for _ in range(4))
+            for _ in range(4)),
+        encoding="utf-8")
+    (ws / "milestones.md").write_text(
+        "# Milestones\n\n" + "".join(f"## 2026-09-0{i} — {filler}\n\n**Why:** because\n\n"
+                                     for i in range(1, 4)),
+        encoding="utf-8")
+    for i in range(4):
+        (ws / "threads" / f"thread-{i}.md").write_text(
+            f"# {filler}\n\n**Started:** 2026-09-01\n**Status:** open\n\n## 2026-09-01 — a note\n",
+            encoding="utf-8")
+    (ws / "sessions" / "2026-09-01-a-session.md").write_text(
+        f"# {filler}\n\n## Remaining\n\n- something unfinished\n", encoding="utf-8")
+    (ws / "memory" / "decisions").mkdir(parents=True)
+    (ws / "memory" / "decisions" / "a-decision.md").write_text(
+        f"# {filler}\n\nThe body of a decision.\n", encoding="utf-8")
+    (ws / "tools" / "index.json").write_text(json.dumps(
+        {"tools": [{"name": "a-tool", "desc": filler, "added": "2026-09-01T00:00:00", "runs": 1}]}),
+        encoding="utf-8")
+    (ws / "MAP.md").write_text("# Architecture index\n\n## Quick Index\n\n- **`src/a.py`** (9L) — a module\n",
+                               encoding="utf-8")
+    env = dict(os.environ, CHAMNAN_ROOT=str(_cc_root))
+    return subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          input="{}", capture_output=True, text=True, encoding="utf-8",
+                          errors="replace", cwd=str(_cc_root), env=env).stdout
+
+
+_cc_small = _cc_workspace("a short field")
+_cc_big = _cc_workspace("PARAGRAPH " * 400)          # 4,000 characters in every free-text field
+
+# The derived check must prove it matched something: if the fixture never reached the block, the
+# growth is zero and the check passes while testing nothing. This is the failure mode that got past
+# review four times in this suite.
+_cc_sections = [t for t in ("Environment constraints", "Recent milestones", "Open threads",
+                            "Where the last session stopped", "Recorded decisions and lessons",
+                            "This repo's own tools")
+                if t in _cc_small]
+check("the long-field fixture actually reaches the injected block",
+      len(_cc_sections) >= 5 and "a short field" in _cc_small)
+if len(_cc_sections) < 5:
+    print("      sections the fixture failed to produce:",
+          sorted({"Environment constraints", "Recent milestones", "Open threads",
+                  "Where the last session stopped", "Recorded decisions and lessons",
+                  "This repo's own tools"} - set(_cc_sections)))
+
+# 4,000 characters in ~18 injected items is 72,000 characters of headroom for an unbounded section
+# to spend. Every one of them is capped, so the block may grow by the caps and nothing more.
+_cc_growth = len(_cc_big) - len(_cc_small)
+check("A COUNT CAP IS NOT A LENGTH CAP: 4,000-CHARACTER FIELDS GROW THE BLOCK BY A BOUNDED AMOUNT",
+      0 <= _cc_growth <= 4000)
+if not (0 <= _cc_growth <= 4000):
+    print(f"      block grew {_cc_growth} bytes ({len(_cc_small)} -> {len(_cc_big)}) "
+          f"when every free-text field went from 13 to 4,000 characters")
+
+# And the block must stay under its own ceiling rather than shedding sections to absorb the growth
+# -- a section that eats the budget costs the sections ranked below it, which is how this was found.
+check("...and no section is dropped to pay for it",
+      "Left out to stay under" not in _cc_big or "Left out to stay under" in _cc_small)
+
+# The per-item caps themselves, named where they live so a reader of the failure knows what to look at.
+import environments as _cc_env               # noqa: E402
+import milestones as _cc_ms                  # noqa: E402
+import timeline as _cc_tl                    # noqa: E402
+import mdblock as _cc_md                     # noqa: E402
+_cc_long = "x" * 4000
+check("mdblock.one_line_capped cuts to its limit and marks the cut",
+      len(_cc_md.one_line_capped(_cc_long)) == _cc_md.INJECTED_ITEM_CHARS + 1
+      and _cc_md.one_line_capped(_cc_long).endswith("…"))
+check("...and leaves a short value alone rather than appending an ellipsis to it",
+      _cc_md.one_line_capped("short") == "short")
+# The cut lands on a whole grapheme, which is why this shares memory.py's cutter rather than [:N].
+check("...and never leaves half a flag emoji behind",
+      not _cc_md.one_line_capped("y" * (_cc_md.INJECTED_ITEM_CHARS - 1) + "\U0001F1F9\U0001F1ED")
+      .rstrip("…").endswith("\U0001F1F9"))
+check("the environment section has a whole-section cap, not only a per-item one",
+      _cc_env.MAX_SECTION_CHARS < 4 * (1 + 4) * _cc_env.MAX_CONSTRAINT_CHARS)
+check("a constraint gets more room than a title, deliberately",
+      _cc_env.MAX_CONSTRAINT_CHARS > _cc_md.INJECTED_ITEM_CHARS)
+_rmtree(_cc_root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup
