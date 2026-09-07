@@ -116,6 +116,10 @@ td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .cmd{background:var(--sunk);border:1px solid var(--rule);border-radius:6px;padding:.9rem 1.1rem;
   overflow-x:auto;font-size:.85rem;line-height:1.55;margin:1.2rem 0}
 .cmd code{font-family:var(--mono);color:var(--ink);white-space:pre}
+section.get{background:var(--accent-soft);border-bottom:1px solid var(--rule)}
+.big-link{font-family:var(--mono);font-size:.92rem;font-weight:500;display:inline-block;
+  margin-top:.6rem;text-decoration:none;border-bottom:2px solid var(--accent);padding-bottom:1px}
+.big-link:hover{opacity:.75}
 .simtag{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--warn);
   background:var(--warn-soft);display:inline-block;padding:.15rem .45rem;border-radius:3px;
   margin:0 0 .8rem}
@@ -206,6 +210,18 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
   </div>
 </section>
 
+<section class="get">
+  <div class="wrap measure prose">
+    <h2 data-i18n="getTitle">Liked the numbers? Install it</h2>
+    <p data-i18n="getBody">Two commands, then one slash command in a repository you work in.</p>
+    <pre class="cmd"><code>claude plugin marketplace add ArcticFox2029/chamnan
+claude plugin install chamnan@chamnan</code></pre>
+    <p class="note">…then <code>/chamnan:bootstrap</code> once, inside the repository.</p>
+    <p><a class="big-link" href="https://github.com/ArcticFox2029/chamnan"
+       data-i18n="getLink">chamnan on GitHub</a></p>
+  </div>
+</section>
+
 <section>
   <div class="wrap measure prose">
     <h2 data-i18n="bigTitle">For a very large project, run it on your own machine</h2>
@@ -265,6 +281,9 @@ const LANGS = {en:"English", th:"ไทย", zh:"中文", ja:"日本語", es:"Es
 
 const T = {
   en: {
+    getTitle: "Liked the numbers? Install it",
+    getBody: "Two commands, then one slash command inside a repository you actually work in. It is a Claude Code plugin, Python standard library only, and everything it writes stays in <code>.chamnan/</code> inside your repository.",
+    getLink: "chamnan on GitHub — the source, and the full evidence including what argues against it",
     scenSame: "50 turns, one subject",
     scenRand: "50 turns, at random",
     card2: "2 · One hundred turns",
@@ -338,6 +357,9 @@ const T = {
   },
 
   th: {
+    getTitle: "ถ้าตัวเลขน่าสนใจ ลองติดตั้งดู",
+    getBody: "สองคำสั่ง แล้วสั่ง slash command อีกครั้งใน repository ที่ทำงานจริง เป็นปลั๊กอินของ Claude Code ใช้ Python standard library ล้วน และทุกอย่างที่มันเขียนอยู่ใน <code>.chamnan/</code> ใน repository ของคุณเอง",
+    getLink: "chamnan บน GitHub — ซอร์สโค้ด และหลักฐานทั้งหมด รวมถึงส่วนที่โต้แย้งตัวมันเอง",
     scenSame: "50 turn เรื่องเดิม",
     scenRand: "50 turn สุ่มทั้ง repo",
     card2: "2 · หนึ่งร้อย turn",
@@ -411,6 +433,9 @@ const T = {
   },
 
   zh: {
+    getTitle: "觉得数字不错？装上试试",
+    getBody: "两条命令，然后在你真正在用的仓库里运行一个斜杠命令。它是 Claude Code 插件，只用 Python 标准库，写入的一切都留在你仓库里的 <code>.chamnan/</code> 中。",
+    getLink: "GitHub 上的 chamnan——源码，以及包括反对意见在内的完整证据",
     scenSame: "50 回合，同一主题",
     scenRand: "50 回合，随机",
     card2: "2 · 一百个回合",
@@ -484,6 +509,9 @@ const T = {
   },
 
   ja: {
+    getTitle: "数字が気に入ったら、導入してみてください",
+    getBody: "コマンド二つ、そのあと実際に作業しているリポジトリでスラッシュコマンドを一度。Claude Code のプラグインで、Python 標準ライブラリのみ、書き込むものはすべてあなたのリポジトリ内の <code>.chamnan/</code> に収まります。",
+    getLink: "GitHub の chamnan — ソースと、反証も含めた根拠のすべて",
     scenSame: "50 ターン、同じ題材",
     scenRand: "50 ターン、無作為",
     card2: "2 · 百ターン",
@@ -557,6 +585,9 @@ const T = {
   },
 
   es: {
+    getTitle: "¿Te convencen las cifras? Instálalo",
+    getBody: "Dos órdenes y luego un comando de barra dentro de un repositorio en el que trabajes de verdad. Es un plugin de Claude Code, solo biblioteca estándar de Python, y todo lo que escribe se queda en <code>.chamnan/</code> dentro de tu repositorio.",
+    getLink: "chamnan en GitHub: el código y la evidencia completa, incluida la que va en su contra",
     scenSame: "50 turnos, un tema",
     scenRand: "50 turnos, al azar",
     card2: "2 · Cien turnos",
