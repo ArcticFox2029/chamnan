@@ -114,6 +114,14 @@ POSITIVES = [
 ]
 
 # Must survive untouched. An index full of <REDACTED> is not an index.
+_TO_THAI = str.maketrans("0123456789", "\u0e50\u0e51\u0e52\u0e53\u0e54\u0e55\u0e56\u0e57\u0e58\u0e59")
+_TO_ARABIC = str.maketrans("0123456789", "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669")
+_TO_FULLWIDTH = str.maketrans("0123456789", "\uff10\uff11\uff12\uff13\uff14\uff15\uff16\uff17\uff18\uff19")
+_TID_THAI = _TID.translate(_TO_THAI)
+_TID_THAI_DASHED = _TID_DASHED.translate(_TO_THAI)
+_TID_ARABIC = _TID.translate(_TO_ARABIC)
+_PAN_FULLWIDTH = "4111111111111111".translate(_TO_FULLWIDTH)
+
 PERSONAL = [
     # A credential has a NAME beside it to anchor on; personal data has none, so the anchor is the
     # number's own checksum PLUS its context. Both halves are required, which is why the decoys
@@ -125,13 +133,33 @@ PERSONAL = [
     ("thai id, dashed",    f"ผู้ป่วย {_TID_DASHED} เข้ารับบริการ",             _TID_DASHED),
     ("thai id + th word",  f"เลขประจำตัวประชาชน {_TID}",                     _TID),
     ("thai id + en word",  f"national_id = {_TID}",                        _TID),
+    # 🐛 [2026-09-07] Every pattern is written in ASCII `[0-9]`, which does not match a Thai digit —
+    # so a checksum-valid ID typed the ordinary way in the one market this plugin was built for
+    # went through untouched, beside the Thai keyword the pattern looks for. Found independently by
+    # two agents in one round. These four are the scripts a real user of this tool would actually
+    # type in; the fold behind them covers Devanagari and Tamil too, which no corpus entry claims.
+    ("thai id, thai digits", f"เลขประจำตัวประชาชน {_TID_THAI}",              _TID_THAI),
+    ("thai id, thai dashed", f"บัตรประชาชน {_TID_THAI_DASHED}",              _TID_THAI_DASHED),
+    ("thai id, arabic-indic", f"national id {_TID_ARABIC}",                 _TID_ARABIC),
+    ("visa, fullwidth",    f"card {_PAN_FULLWIDTH}",                        _PAN_FULLWIDTH),
+    # Separators a spreadsheet or a PDF copy-paste actually produces. The dot form passed through
+    # whole with the word "card" on the same line.
+    ("visa, dotted",       "card 4111.1111.1111.1111",                      "4111.1111.1111.1111"),
+    ("visa, nbsp",         "card 4111\u00a01111\u00a01111\u00a01111",       "4111\u00a01111\u00a01111\u00a01111"),
 ]
 
 NEGATIVES = [
     # Ordinary identifiers that contain a secret word as a SUBSTRING. Every one of these was being
     # destroyed: `token`, `secret` and `credential` were bare substrings while `key` and `auth`
     # beside them were carefully bounded — the same bug, left in the words nobody re-read.
-    ("tokenizer attr",   "self.tokenizer_config = AutoTokenizer.from_pretrained(model_name)"),
+    # The dot and NBSP separators added 2026-09-07 widen the grouped-card net, so the shapes that
+    # net could plausibly eat are pinned here rather than argued about.
+    ("dotted version",   "release = 1.2.3.4 and build 2026.09.07.1234"),
+    ("ipv4 address",     "upstream 192.168.100.1 proxies to 10.0.0.254"),
+    ("dotted date",      "expires 2026.12.31.0000 in the fixture"),
+    ("isbn-13",          "ISBN 978-3-16-148410-0 on the shelf"),
+    ("phone with nbsp",  "call +66\u00a02\u00a0123\u00a04567 during office hours"),
+    ("self.tokenizer",   "self.tokenizer_config = AutoTokenizer.from_pretrained(model_name)"),
     ("detokenize name",  "detokenize_output_text = join_pieces(chunks)"),
     ("retokenized name", "retokenized_batch = pad_and_stack(items)"),
     ("credentialing",    "credentialing_deadline = 2026-12-01"),
