@@ -1377,7 +1377,9 @@ def main():
                 ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
                 ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
                 ranked.sort(key=lambda t: -(t.get("runs") or 0))
-                lines = [f"- `{mdblock.one_line(t['name'])}` — {mdblock.one_line(t.get('desc') or 'no description')}"
+                # `--desc` is free text a person typed once and this section reads back into every
+                # session afterwards. MAX_TOOLS caps how many are listed, not how long one is.
+                lines = [f"- `{mdblock.as_quoted(t['name'])}` — {mdblock.one_line_capped(t.get('desc') or 'no description')}"
                          for t in ranked[:MAX_TOOLS]]
                 if len(tools) > MAX_TOOLS:
                     lines.append(f"- _…and {len(tools)-MAX_TOOLS} more in "

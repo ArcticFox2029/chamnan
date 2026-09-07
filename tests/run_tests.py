@@ -19716,6 +19716,132 @@ check("a constraint gets more room than a title, deliberately",
 _rmtree(_cc_root, ignore_errors=True)
 
 
+# ------------------------------------------- never name a file you did not write
+# `workspace.write_or_raise` exists to draw one line: housekeeping stays silent because a workspace
+# that cannot be written must not stop a session, and a thing somebody typed a command to get must
+# fail loudly rather than be reported as done. The line was drawn per call site, so three commands
+# were on the wrong side of it and each announced a path that was not there:
+#
+#   chamnan-candidates demote   "back for review at .chamnan/candidates/a-tool.md", exit 0, no file
+#                               -- and the tool was already unregistered and moved by then, so the
+#                               only record of why it existed was gone for good
+#   chamnan-map --install-git-hook   "appended to your existing .git/hooks/pre-commit", exit 0, on a
+#                               read-only hook file; the other branch raised a bare traceback
+#   chamnan-candidates promote ... tool   left an executable, unregistered script in the committed
+#                               tools directory under the words "nothing was written"
+#
+# So this asserts the PROPERTY rather than the three: with every directory in the workspace
+# read-only, a command that exits 0 must not print the path of a file that does not exist. The
+# command list is derived from bin/, and a command missing from the table below fails the check
+# rather than being skipped -- which is what stops a command added next year from being forgotten.
+if _CAN_DENY_WRITE:
+    _nw_root = Path(tempfile.mkdtemp(prefix="chamnan-nowrite-")) / "r"
+
+    # What each command is given so that it TRIES to write. A command that writes nothing gets None
+    # and is asserted to write nothing rather than skipped.
+    _NW_ARGV = {
+        "chamnan-candidates": ["demote", "t.py"],
+        "chamnan-map": ["--install-git-hook"],
+        "chamnan-timeline": ["new", "a new thread"],
+        "chamnan-env": ["set", "prod", "--platform", "GKE"],
+        "chamnan-promote": ["a-script.sh", "newtool", "--desc", "what it does"],
+        "chamnan-age": None,
+        "chamnan-context": None,
+        "chamnan-impact": None,
+        "chamnan-peek": None,
+        "chamnan-report": None,
+    }
+    _nw_commands = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*") if p.suffix != ".cmd")
+    check("the write-honesty sweep knows about every command that ships",
+          sorted(_NW_ARGV) == _nw_commands and len(_nw_commands) >= 9)
+    if sorted(_NW_ARGV) != _nw_commands:
+        print("      not covered:", sorted(set(_nw_commands) - set(_NW_ARGV)))
+        print("      no longer present:", sorted(set(_NW_ARGV) - set(_nw_commands)))
+
+    def _nw_build():
+        """A workspace with something for each command to act on, then made read-only."""
+        _rmtree(_nw_root.parent / "r", ignore_errors=True)
+        (_nw_root / "src").mkdir(parents=True)
+        (_nw_root / "src" / "a.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+        (_nw_root / "a-script.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+        subprocess.run(["git", "init", "-q", str(_nw_root)], check=True)
+        _wsd = _nw_root / ".chamnan"
+        for sub in ("candidates", "tools", "threads", "sessions", "state", "logs"):
+            (_wsd / sub).mkdir(parents=True, exist_ok=True)
+        (_wsd / "tools" / "t.py").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+        # A top-level list, which is the shape `tools_index` actually writes -- a `{"tools": [...]}`
+        # wrapper reads as an empty index and every command here says "no promoted tool named ...".
+        (_wsd / "tools" / "index.json").write_text(json.dumps(
+            [{"name": "t.py", "desc": "a tool", "added": "2026-09-01T00:00:00",
+              "runs": 0, "origin": "test"}]), encoding="utf-8")
+        (_wsd / "environments.md").write_text("# Environments\n", encoding="utf-8")
+        # Every directory read-only, deepest first, so nothing under the workspace can be written.
+        for d in sorted((q for q in _wsd.rglob("*") if q.is_dir()), reverse=True):
+            os.chmod(d, 0o555)
+        os.chmod(_wsd, 0o555)
+        os.chmod(_nw_root / ".git" / "hooks", 0o555)
+
+    def _nw_unlock():
+        os.chmod(_nw_root / ".git" / "hooks", 0o755)
+        os.chmod(_nw_root / ".chamnan", 0o755)
+        for d in (q for q in (_nw_root / ".chamnan").rglob("*") if q.is_dir()):
+            os.chmod(d, 0o755)
+
+    # A path chamnan printed, in any of the three shapes its messages use.
+    _NW_PATH = re.compile(r"(?:^|[\s`'\"(])((?:\.chamnan|\.git)/[\w./\-]+)")
+    _nw_lied = []
+    _nw_ran = 0
+    for _nwc, _nwargv in sorted(_NW_ARGV.items()):
+        if _nwargv is None:
+            continue
+        _nw_build()
+        try:
+            _nwr = subprocess.run([sys.executable, str(ROOT / "bin" / _nwc)] + _nwargv,
+                                  capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", cwd=str(_nw_root))
+        finally:
+            _nw_unlock()
+        _nw_ran += 1
+        _named = [m.group(1) for m in _NW_PATH.finditer(_nwr.stdout)]
+        _missing = [n for n in _named if not (_nw_root / n).exists()]
+        if _nwr.returncode == 0 and _missing:
+            _nw_lied.append((_nwc, _nwr.returncode, _missing, _nwr.stdout.strip()[:200]))
+        # A raw traceback is not a message. `chamnan-map --install-git-hook` produced one on a
+        # read-only hooks directory, out of the chmod that followed the write it never checked.
+        if "Traceback (most recent call last)" in _nwr.stderr:
+            _nw_lied.append((_nwc, _nwr.returncode, ["<traceback>"], _nwr.stderr.strip()[-200:]))
+
+    check("the write-honesty sweep actually ran the commands it derived",
+          _nw_ran == len([v for v in _NW_ARGV.values() if v is not None]) and _nw_ran >= 5)
+    check("NO COMMAND ANNOUNCES A FILE IT DID NOT WRITE", not _nw_lied)
+    for _c, _rc, _paths, _out in _nw_lied:
+        print(f"      {_c} exited {_rc} naming {_paths}: {_out}")
+
+    # The other half, and the one that makes the check mean something: the same commands on a
+    # WRITABLE workspace must still succeed and still produce the files they name. A command that
+    # started failing everywhere would pass the check above while being useless.
+    _nw_build()
+    _nw_unlock()
+    _nw_ok = []
+    for _nwc, _nwargv in sorted(_NW_ARGV.items()):
+        if _nwargv is None:
+            continue
+        _nwr = subprocess.run([sys.executable, str(ROOT / "bin" / _nwc)] + _nwargv,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", cwd=str(_nw_root))
+        _named = [m.group(1) for m in _NW_PATH.finditer(_nwr.stdout)]
+        _nw_ok.append((_nwc, _nwr.returncode == 0,
+                       [n for n in _named if not (_nw_root / n).exists()]))
+    check("...and on a writable workspace every one of them still writes what it names",
+          all(ok and not missing for _, ok, missing in _nw_ok))
+    for _c, _ok, _missing in _nw_ok:
+        if not _ok or _missing:
+            print(f"      {_c}: exit ok={_ok} missing={_missing}")
+    _rmtree(_nw_root.parent, ignore_errors=True)
+else:
+    print(f"  [SKIP] {2} write-honesty checks — os.chmod does not restrict a directory here")
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

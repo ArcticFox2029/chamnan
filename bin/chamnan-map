@@ -220,11 +220,31 @@ def install_git_hook(root):
         # `#!/bin/sh\r` is not a shebang any shell recognises. `atomic_write_text` passes
         # newline="" for exactly this reason and its comment says so; three script writers never
         # called it (R2 agent 1). It also brings the tmp-then-rename these did not have.
-        ws.atomic_write_text(target, existing.rstrip() + "\n\n" + body)
+        # 🐛 [2026-09-07] Both writes discarded the bool, and both branches then printed success.
+        # `atomic_write_text` is best-effort BY DESIGN -- `write_or_raise`'s docstring draws the
+        # line and puts "a promoted tool" and "an environment entry" on the raising side because
+        # somebody typed a command to get them. `--install-git-hook` is as typed as a command gets,
+        # and it is worse than the others when it lies: the whole point of the hook is that nobody
+        # thinks about it again, so "appended to your existing .git/hooks/pre-commit" with nothing
+        # written is a stale index for as long as the repository lives. Reproduced on a read-only
+        # hooks directory (a raw FileNotFoundError traceback out of the chmod below, because the
+        # file the write never created is not there) and on a read-only existing hook file (exit 0,
+        # "appended", no change on disk) -- R7 agent 1, findings 4 and 5.
+        try:
+            ws.write_or_raise(target, existing.rstrip() + "\n\n" + body)
+        except OSError as err:
+            print(f"chamnan: {err}", file=sys.stderr)
+            return 1
         print(f"chamnan: appended to your existing {_show(target, root)}")
     else:
-        ws.atomic_write_text(target, "#!/bin/sh\n\n" + body)
-        target.chmod(0o755)
+        try:
+            ws.write_or_raise(target, "#!/bin/sh\n\n" + body)
+            target.chmod(0o755)
+        except OSError as err:
+            # The chmod is inside the guard on purpose: a hook that exists and is not executable is
+            # a hook git skips in silence, which is the same outcome as never writing it.
+            print(f"chamnan: {err}", file=sys.stderr)
+            return 1
         print(f"chamnan: installed {_show(target, root)}")
     # 🐛 This said "on every commit that touches tracked files", which the hook has never done:
     # `--diff-filter=ACDR` leaves out Modified, and measured on this repository 297 of 355
