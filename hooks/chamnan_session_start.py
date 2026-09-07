@@ -32,6 +32,14 @@ import milestones  # noqa: E402
 import profiles  # noqa: E402
 import mdblock  # noqa: E402
 import redact  # noqa: E402
+
+# 🐛 Every `bin/` command shadows `print` with `redact.emit`; no hook did, and the hooks emit more
+# repository text than any of them. The credential half is deliberately NOT repeated here -- each
+# section is scrubbed at the point it is read, ahead of the token cut, so a second pass over the
+# assembled block would buy nothing. The control-character half had no default at all, and one
+# missing `one_line` in `sessions.carry_forward` put an ESC/OSC sequence and a bidi override into
+# the injected block. See `redact.emit_prescrubbed`.
+print = redact.emit_prescrubbed  # noqa: A001
 import rollup  # noqa: E402
 import rulecheck  # noqa: E402
 import sessions  # noqa: E402
@@ -61,26 +69,56 @@ STATE_READ_CEILING = 2_000_000    # bytes
 MAP_READ_CEILING = 8_000_000      # bytes
 
 
+# Bytes the last `_read_bounded` call did not read, because the ceiling stopped it.
+LAST_UNREAD = []
+
+
 def _read_bounded(path, ceiling):
     """`path`'s text, cut at `ceiling` bytes, without ever reading past it.
 
     `Path.read_text()` takes no size argument, so it loads the whole file before any caller-side
     budget can say no. Reading through a file object means the OS never hands back more than asked.
     """
-    with path.open("r", encoding="utf-8", errors="replace") as f:
-        return f.read(ceiling)
+    with path.open("r", encoding="utf-8-sig", errors="replace") as f:
+        text = f.read(ceiling)
+    # 🐛 The caller's truncation marker counts what it was GIVEN, not what exists. STATE.md is read
+    # at a 2 MB ceiling, so on a 50 MB file the marker said "…2 MB more" when 48 MB was unread — an
+    # undercount of about 25x, on exactly the size of file the ceiling exists for (R1 agent 4).
+    # Recorded here because this is the only place that knows both numbers.
+    del LAST_UNREAD[:]
+    try:
+        unread = max(0, path.stat().st_size - len(text.encode("utf-8", "replace")))
+    except OSError:
+        unread = 0
+    LAST_UNREAD.append(unread)
+    return text
 
 # The plugin's own write skills, in the order they should be named. `note` is the description
 # fragment used only when the skill is present -- kept here rather than read from each SKILL.md so
 # the sentence stays a single planned read, not five. Checked against skills/ at runtime (see
 # write_skills_line) so a skill that is removed silently stops being named, rather than the line
 # going stale.
+#
+# 🐛 [2026-09-06] "Nothing writes here unless you ask" is a promise about INVOCATION, and none of
+# these skills was keeping it. A SKILL.md with no `disable-model-invocation` takes the platform's
+# documented default of `false`, which means Claude Code may load and run the skill on its own from
+# a description match -- so chamnan printed a guarantee in every session that its own frontmatter
+# contradicted (R1 acc3, platform drift). All five record-writing skills now set it to true; the
+# index-building ones (bootstrap, remap) deliberately do not, because a regenerable index is not a
+# record and CLAUDE.md asks for it to be rebuilt without being told. `SELF_INVOKED_SKILLS` is the
+# set-wide form: a new write skill added without the field fails the suite rather than quietly
+# widening what runs unasked.
 WRITE_SKILLS = (
     ("resume", "session record"),
     ("remember", "decision, lesson, or rule"),
     ("milestone", None),
     ("capture", "a procedure worth keeping"),
 )
+
+# Every skill that writes a durable record or tool into the workspace, which is what the promise
+# above covers. `promote` is here and not in WRITE_SKILLS because it writes a tool rather than a
+# record -- the sentence does not name it, the guarantee still has to hold for it.
+SELF_INVOKED_SKILLS = frozenset(name for name, _ in WRITE_SKILLS) | {"promote"}
 
 
 def write_skills_line(plugin_root):
@@ -134,7 +172,7 @@ def describe(path):
     the file was never migrated to `---\\ndescription: ...\\n---`.
     """
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
     head = text[:1200]
@@ -222,6 +260,61 @@ FRAMING = (f"_Blocks fenced with {OPEN_MARK} … {CLOSE_MARK} are text read from
 # the block would still look correct.
 
 
+
+# How much of the transcript's tail to read when answering "is my block still in this session's
+# context". Enough to hold a compaction boundary and everything after it many times over, and
+# bounded so a session that has been running for days does not pay for its own history at startup.
+# Measured on this repository's largest real transcript (105 MB): 2 MB is 0.9% of it and reads in
+# 4 ms, against 3.1 s to read the whole file.
+TRANSCRIPT_TAIL_BYTES = 2_000_000
+
+# A record Claude Code writes when it compacts. Both keys appear together -- a `system` record
+# carrying `compactMetadata` and the `user` record carrying `isCompactSummary` -- and either one
+# proves a boundary, so both are matched and neither is relied on alone.
+_COMPACT_MARKS = ('"isCompactSummary"', '"compactMetadata"')
+
+
+def block_is_still_in_context(payload):
+    """True only when this session's transcript PROVES the injected block survived into context.
+
+    Fails safe, in every direction and on purpose: a missing `transcript_path`, an unreadable file,
+    a tail that does not reach far enough, a format that changed -- every one of them returns
+    False, and False means the caller emits the whole block exactly as it always has. The saving is
+    about a thousand tokens; the cost of being wrong is a session that starts with no index, no
+    rules and no state, which is the failure this plugin exists to prevent. Those are not the same
+    size, so only a positive proof is allowed to shorten anything.
+
+    🐛 The obvious version of this check -- "does the transcript contain my framing sentence" -- is
+    NOT a proof and would have been wrong in the one case that matters. Compaction does not rewrite
+    the transcript: every earlier record stays on disk while the model's context is rebuilt from
+    the summary. So the question is not whether the block is in the FILE, it is whether the last
+    compaction boundary comes BEFORE it. A session that compacted and was then closed reopens as
+    `source="resume"`, not `"compact"`, and its block is gone from context while still sitting in
+    the file.
+    """
+    if not isinstance(payload, dict):
+        return False
+    path = payload.get("transcript_path")
+    if not path or not isinstance(path, str):
+        return False
+    try:
+        p = Path(path)
+        size = p.stat().st_size
+        with p.open("rb") as fh:
+            if size > TRANSCRIPT_TAIL_BYTES:
+                fh.seek(size - TRANSCRIPT_TAIL_BYTES)
+                fh.readline()                 # drop the partial line the seek landed inside
+            tail = fh.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        return False
+    # This session's own fence, so another repository's chamnan block in the same transcript --
+    # a subagent's, or a different project's -- cannot answer for this one.
+    at = tail.rfind(OPEN_MARK)
+    if at < 0:
+        return False
+    return not any(mark in tail[at:] for mark in _COMPACT_MARKS)
+
+
 def why_this_session(payload):
     """One line naming WHY this block is being injected, when the reason changes what it is for.
 
@@ -275,10 +368,25 @@ def display(path, root):
         return Path(path).name
 
 
+# Any `[repo:xxxxxx]` or `[/repo:xxxxxx]`, whatever the six hex digits are -- see section().
+_FENCE_SHAPED = re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
+
+
 def section(title, body, source=""):
     if not body.strip():
         return ""
-    fenced = body.rstrip().replace(CLOSE_MARK, f"[/repo:escaped]")
+    # 🐛 [2026-09-06] This escaped exactly ONE string: the literal close mark of the session in
+    # force. A body carrying `[repo:aaaaaa]` or `[/repo:aaaaaa]` -- any six hex digits that are not
+    # this session's -- passed through byte-for-byte, so a rule could print something shaped exactly
+    # like a fence right next to the real ones. It does not achieve breakout, and R3 agent 2 proved
+    # that separately: the reader is told to match the nonce, and a wrong one does not match. But a
+    # reader skimming sees a closing fence where none closed, and the whole mechanism rests on the
+    # marker meaning one thing. Every fence-SHAPED marker is neutralised now, not only ours.
+    #
+    # Deliberately not `re.escape(NONCE)`: the point is that a marker the reader might mistake for
+    # a fence cannot appear inside one, and that is a question about the SHAPE, not about which
+    # nonce it carries.
+    fenced = _FENCE_SHAPED.sub(lambda m: f"[{m.group(1)}repo:escaped]", body.rstrip())
     # A body that opens a ``` or ~~~ block and never closes it -- whether that is how the file was
     # written, or how a budget cut left it -- swallows everything after it into what a renderer
     # treats as one unterminated code block: the `[/repo:nonce]` mark below, and every section
@@ -369,8 +477,14 @@ def _map_is_current_by_git(root, map_path):
     Anything unconfirmable -- no git, no stamp, an unknown stamp, a real source change -- returns
     False, and the mtime path decides exactly as it did before this existed.
     """
+    if not ws.git_owns(root):
+        # See workspace.git_owns. Without this the diff below runs against an ANCESTOR repository,
+        # where the stamped sha is either unknown (128, read as "no git") or -- worse -- a real
+        # commit of somebody else's history, and the map is then declared current or stale on
+        # evidence from a repository this index does not describe (R6 acc3, first ten minutes).
+        return False
     try:
-        head_text = map_path.read_text(encoding="utf-8", errors="replace")[:600]
+        head_text = map_path.read_text(encoding="utf-8-sig", errors="replace")[:600]
         m = _BUILT_FROM.search(head_text)
         if not m:
             return False
@@ -378,17 +492,18 @@ def _map_is_current_by_git(root, map_path):
         # Both argv lists are single literals on purpose: a guard in the suite reads every
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
-        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "HEAD", "--",
+        # One call, not two. `git diff <A> -- <pathspec>` with a SINGLE ref already compares
+        # commit A against the working tree — committed history since A and uncommitted changes
+        # together — which is exactly the question, and what the `diff <A> HEAD` plus `status`
+        # pair was spelling out in two processes. Verified equivalent across a clean tree, an
+        # uncommitted edit, that edit committed, a workspace-only change, a new untracked source
+        # file, and a staged-but-uncommitted edit; measured 0.192s to 0.110s on the whole hook,
+        # and every session pays this (R3 agent 1).
+        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "--",
                                ".", ":(exclude).chamnan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=5)
-        if diff.returncode != 0:          # 1 = something changed; 128 = unknown stamp or no git
-            return False
-        st = subprocess.run(["git", "-C", str(root), "status", "--porcelain",
-                             "--untracked-files=no", "--", ".", ":(exclude).chamnan"],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace",
-                            timeout=5)
-        return st.returncode == 0 and not st.stdout.strip()
+        return diff.returncode == 0      # 1 = something changed; 128 = unknown stamp or no git
     except (OSError, subprocess.SubprocessError, ValueError):
         return False
 
@@ -467,7 +582,7 @@ def rebuild_hook_installed(root):
     """
     try:
         hook = Path(root) / ".git" / "hooks" / "pre-commit"
-        return HOOK_MARKER in hook.read_text(encoding="utf-8", errors="replace")
+        return HOOK_MARKER in hook.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return False
 
@@ -598,6 +713,11 @@ def unindexed(root, map_text):
         return 0, []
 
 
+# The profile name asked for and not recognised, from the last `_with_profile`. A list so the
+# caller can tell "not asked yet" from "asked and fine", and empty in the ordinary case.
+UNKNOWN_PROFILE = []
+
+
 def _with_profile(cfg):
     """`cfg` with the context profile's budgets folded in, resolved ONCE.
 
@@ -621,6 +741,14 @@ def _with_profile(cfg):
         for key in ("index_token_budget", "state_token_budget"):
             cfg.pop(key, None)
     _name, budgets = profiles.resolve(cfg)
+    # 🐛 [2026-09-06] The chosen name was resolved and thrown away, and `profiles.explain()` -- a
+    # function whose entire docstring is "what was chosen, and whether the name was recognised" --
+    # was called by nothing in the package. So a typo fell back to the default profile in total
+    # silence: the user asks for a bigger block, gets the standard one, and concludes the feature
+    # does not work, which is exactly the conclusion the inert-config bug above already earned once
+    # (R8 agent 4). Recorded rather than printed here, because this function returns a config; the
+    # caller that owns the session's warning line decides whether to say it.
+    UNKNOWN_PROFILE[:] = [] if _name in profiles.PROFILES else [_name]
     out = dict(cfg)
     out.update(budgets)
     return out
@@ -757,6 +885,39 @@ def main():
     # Said once, plainly. A config that does not parse is running on defaults, and every value the
     # user set is being ignored — silently, that is a settings file that appears not to work.
     _bad_cfg = ws.config_is_malformed(root)
+
+    # 🐛 [2026-09-06] `source="resume"` produced a block identical to `source="startup"` down to
+    # the byte, fence nonce aside — measured by running the hook both ways — and the transcript on
+    # disk carries the earlier one, so on a plain resume the whole thing was a duplicate. 967
+    # tokens on an 8-file fixture; R5 estimated ~3,500 on this repository's real block.
+    #
+    # It is only skipped on a POSITIVE proof, never on the source alone. `block_is_still_in_context`
+    # is written to answer False on every doubt, because the two outcomes are not the same size: a
+    # thousand tokens against a session that starts with no index, no rules and no state. A session
+    # that compacted and was then closed reopens as "resume", not "compact", and its block is gone
+    # from context while still sitting in the transcript file — which is exactly why the proof is
+    # "no compaction boundary AFTER my fence" rather than "my fence is in the file".
+    #
+    # What still gets said is what CHANGED since the block was injected. A stale index is the one
+    # thing a resumed session cannot know from the block above it, because the block was right when
+    # it was written.
+    if payload.get("source") == "resume" and cfg.get("resume_pointer", True) \
+            and block_is_still_in_context(payload):
+        # "not resent", not "still current". The block IS still above; whether it is still true is
+        # a different claim, and STATE.md or a rule may have been written since. Saying the second
+        # when only the first was proved is the kind of overreach the aging check exists to refuse.
+        _lines = [f"_chamnan: this session's index, rules and state are already above — not resent. "
+                  f"Anything written to `{display(wsdir, root)}` since then is not in them._"]
+        try:
+            _mp = wsdir / "MAP.md"
+            if _mp.is_file() and index_is_behind(root, _mp)[0]:
+                _lines.append("_⚠ The architecture index has fallen behind the tree since then — "
+                              "rebuild it with `chamnan-map` before trusting what it says._")
+        except Exception:
+            pass
+        print("\n".join(_lines))
+        return 0
+
     out = []
     # 🐛 This was appended at the prune site, forty lines before `out` exists — a NameError the
     # hook's own guard swallowed, so the warning never appeared and nothing said why. The
@@ -801,6 +962,19 @@ def main():
         # An update that is already downloaded, reported and never acted on. The user decides: a tool
         # that upgrades itself because someone opened a session is doing something they did not ask
         # for, and doing it silently is worse than not doing it at all.
+        # The long trailing sentence below ("every other repository brings its own workspace up to
+        # date by itself") is one-time knowledge, and R1_acc3 proposed deleting it, R13 agent 6
+        # proposed gating it to the session's first firing. Measured at 332 bytes / 138.8 tokens,
+        # confirmed by an actual firing against a real pending-update fixture rather than a read of
+        # the source -- and it is stated nowhere else in the block, so deleting it loses a fact.
+        #
+        # Neither is built, and the reason is that the firing this would have saved is already
+        # saved. The resume short-circuit above returns before this line, so a session whose block
+        # is provably still in context never reaches the banner at all. What is left is `startup`,
+        # where this IS the first firing, and `compact`/`clear`, where the context was erased and
+        # the sentence is wanted again. Gating past those would mean session-scoped state on disk,
+        # written from the one code path that must never fail a session, to save a sentence in a
+        # case that mostly does not occur.
         offered = ws.available_update(HERE.parent)
         if offered:
             out.append(f"\n**chamnan {offered} is available** — this session is running "
@@ -918,7 +1092,29 @@ def main():
                 # with a clone, so a key written into it — by hand, or by a generated comment —
                 # reached the session intact.
                 out.append(section("Architecture index", redact.scrub(index), display(mp, root)))
-                tail = (f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
+                # 🐛 [2026-09-06] The second clause repeated what the index's own header had
+                # already said, in every firing, on every repository. `mapper` has two header
+                # variants and BOTH open with the same instruction in more detail -- `_HOW_TO_READ`
+                # ("grep it for the one heading you need") and `_TOO_BIG_TO_READ_IN_FULL` ("grep
+                # BOTH sections, never read either whole"). R1 found this and scoped the guard to
+                # the literal string "too large to read in full", which is the LARGE variant only;
+                # R11 agent 6 measured it on 8-, 150- and 1,200-file fixtures and the duplication is
+                # unconditional, so that guard would have closed the minority case and left the
+                # common one open.
+                #
+                # What the tail says that neither header does is WHERE the file is: a header
+                # written inside MAP.md says "this file", which is unambiguous there and not here.
+                # So the path always survives and the instruction is dropped once it is already in
+                # the block. 38.5 tokens on every session that delivers a header.
+                # Matched on a fragment that carries no line break. `_HOW_TO_READ` is wrapped
+                # in the source -- "— grep it\nfor the one heading you need" -- so the obvious
+                # whole-sentence test silently never fired on the SMALL variant, which is the one
+                # most repositories get. Measured before believing it: 8- and 150-file fixtures
+                # still carried both copies until this was narrowed.
+                _told_how = ("for the one heading you need" in text
+                             or "never read either whole" in text)
+                tail = (f"_Full detail lives in `{display(mp, root)}`._" if _told_how else
+                        f"_Full detail lives in `{display(mp, root)}` — grep it for one heading, "
                         f"never read it whole._")
                 # Named only when it is actually there. A causal ablation of a structural codebase
                 # index (arXiv:2606.22417) found its measurable gain concentrated in cross-file,
@@ -1025,8 +1221,12 @@ def main():
                 # it says something else.
                 # Rule titles and their Check trailers are repository-authored and this line
                 # prints them outside the fence, so it gets the same scrub every section has.
+                # Read the rules ONCE: `run()` and `contradictions()` both want them, and this is
+                # the session's critical path.
+                _titled = memory.rules_with_titles(root)
                 broken = redact.scrub(
-                    rulecheck.line(rulecheck.run(root, memory.rules_with_titles(root))))
+                    rulecheck.line(rulecheck.run(root, _titled),
+                                   rulecheck.contradictions(_titled)))
                 if broken:
                     out.append(broken)
             # Decisions and lessons are looked up when the question comes round, so they contribute a
@@ -1098,6 +1298,13 @@ def main():
                 full = redact.scrub(raw)
                 budget = cfg.get("state_token_budget", 1700)
                 st, marker = state.render(full, budget, display(sp, root))
+                # The marker describes the budget cut. Anything the READ ceiling left behind is on
+                # top of that, and only this scope knows both numbers.
+                _unread = LAST_UNREAD[0] if LAST_UNREAD else 0
+                if _unread and marker:
+                    marker += (f"\n_…and {_unread // 1024:,} KB of `{display(sp, root)}` was never "
+                               f"read: it is larger than the {STATE_READ_CEILING // 1_000_000} MB "
+                               f"this hook will load._")
                 # 🐛 Demoted HERE and not inside render(), whose job is "this file under a budget"
                 # and whose callers depend on getting the file back unaltered. This is the point
                 # where repository-authored text enters chamnan's own structure, which is the same
@@ -1117,7 +1324,7 @@ def main():
 
         if cfg.get("promote", True):
             try:
-                tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8"))
+                tools = json.loads((wsdir / "tools" / "index.json").read_text(encoding="utf-8-sig"))
             except Exception:
                 tools = []
             # 🐛 index.json arrives with a clone like anything else, and nothing checked that an
@@ -1168,7 +1375,11 @@ def main():
             # file's content into the block — reproduced with `~/.ssh/id_rsa` behind a `.md`
             # name. The workspace arrives with a clone, so the link is the repository's
             # choice and not the reader's.
-            skills = ([p for p in sorted((wsdir / "skills").glob("*.md")) if ws.inside(p, root)]
+            # `ws.is_store_index` drops the directory's own README: it is the index OF this
+            # store, not a procedure in it, and here it sorted second of twenty and spent one of
+            # twelve slots describing what the folder is (R8 agent 5).
+            skills = ([p for p in sorted((wsdir / "skills").glob("*.md"))
+                       if ws.inside(p, root) and not ws.is_store_index(p)]
                       if (wsdir / "skills").is_dir() else [])
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
@@ -1199,7 +1410,7 @@ def main():
             if digest_path.is_file():
                 lines = []
                 try:
-                    data = json.loads(digest_path.read_text(encoding="utf-8"))
+                    data = json.loads(digest_path.read_text(encoding="utf-8-sig"))
                     if isinstance(data, dict):
                         lines = [str(x) for x in (data.get("lines") or [])][:6]
                 except (OSError, json.JSONDecodeError, RecursionError):
@@ -1265,6 +1476,15 @@ def main():
                        "builds one, and inside Claude Code `/chamnan:bootstrap` builds it and "
                        "records a baseline._\n")
 
+        if UNKNOWN_PROFILE:
+            # Said once, on a session that asked for something that does not exist. Not recurring
+            # noise: in ordinary operation this list is empty, and the alternative is a setting that
+            # silently does nothing -- the failure this whole area was just fixed for.
+            out.insert(0, f"_⚠ context profile "
+                          f"`{mdblock.as_quoted(UNKNOWN_PROFILE[0], 40)}` is not one of "
+                          f"{', '.join('`' + n + '`' for n in profiles.names())}. This session is "
+                          f"running on `{profiles.DEFAULT}`; fix `context_profile` in "
+                          f"`.chamnan/config.json` or `CHAMNAN_CONTEXT_PROFILE`._\n")
         if _bad_cfg:
             # 🐛 [2026-09-04] The reason used to be assumed rather than reported: one sentence about
             # "a stray comma or quote", printed for the only case this could detect. A config that

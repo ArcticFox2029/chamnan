@@ -18,6 +18,7 @@ import mdblock
 import pathlib
 import re
 from collections import defaultdict
+import tokens
 import tree
 
 K8S_KIND = re.compile(r"^kind:\s*([A-Za-z]+)\s*$", re.M)
@@ -51,7 +52,22 @@ ANSIBLE_DIRS = ("roles", "inventories", "inventory", "group_vars", "host_vars", 
 ANSIBLE_FILES = ("site.yml", "site.yaml", "playbook.yml", "playbook.yaml", "ansible.cfg",
                  "requirements.yml", "hosts.yml", "hosts.yaml")
 SKIP = {".git", "node_modules", "__pycache__", ".venv", "vendor", ".terraform"}
+# 🐛 [2026-09-06] A count cap and `as_quoted`'s per-entry length cap bound quantity and size
+# separately, and nothing bounded their PRODUCT. `catalogs.py` diagnosed exactly this for routes
+# and configuration and replaced the count cap with a token budget; this module renders into the
+# same index from the same two primitives and was never given the fix. Measured: eight kinds of
+# twenty objects with 73-character names -- what a GitOps monorepo reaches once environment and
+# region suffixes are on the name -- rendered 4,059 tokens, above the whole 3,000-token default
+# `index_token_budget`, with MAX_PER_GROUP reporting nothing wrong. And it does not fail on its
+# own: mapper concatenates this into the very text `tokens.fits(index, budget)` measures, so one
+# oversized Deployment section forces the directory roll-up onto the entire repository's Quick
+# Index (R10 acc3).
+#
+# The count cap stays as a floor against a wall of very short names; the token budget is now the
+# primary limit. One eighth of the configured index budget: this is a supplement to the Quick
+# Index, not a replacement for it, and routes already take two fifths.
 MAX_PER_GROUP = 14
+DEPLOY_BUDGET_SHARE = 0.125
 # A Secret contributes its name so the reader knows one exists; never anything under it.
 NEVER_EXPAND = {"Secret", "SealedSecret"}
 
@@ -85,7 +101,7 @@ def _read(root):
             if nested and any(parent.resolve() in nested for parent in path.parents):
                 continue
             try:
-                yield path, path.read_text(encoding="utf-8", errors="replace")
+                yield path, path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
 
@@ -268,9 +284,24 @@ def _claim_count(found):
             + len(found["helm"]))
 
 
+def _within(names, cap, budget):
+    """`names` truncated so the rendered list fits `budget` tokens as well as `cap` entries.
+
+    Returns (rendered_names, kept). The per-name render is what `as_quoted` produces, so the cost
+    counted here is the cost that lands in the index rather than the raw name's.
+    """
+    kept, _ = tokens.fill_by_budget(
+        list(names), lambda n: f"`{mdblock.as_quoted(n, 80)}`", budget, cap)
+    return kept, len(kept)
+
+
 def render(found):
     lines = []
     k8s = found["k8s"]
+    # One budget for the whole section, spent down kind by kind -- a per-kind budget would let
+    # eight kinds cost eight times what the section is allowed, which is the same product the
+    # count cap failed to bound.
+    left = tokens.section_budget(DEPLOY_BUDGET_SHARE)
     if k8s:
         total = sum(len(v) for v in k8s.values())
         lines.append(f"{total} Kubernetes object(s):")
@@ -280,19 +311,28 @@ def render(found):
             # of repository YAML and written into MAP.md, which is committed and injected. Same
             # neutralisation the route, env and schema catalogues take: folded onto one line, with
             # the backticks that would close this span removed. See lib/mdblock.as_quoted.
-            shown = ", ".join(f"`{mdblock.as_quoted(n, 80)}`" for n in names[:MAX_PER_GROUP])
-            more = f" _+{len(names)-MAX_PER_GROUP}_" if len(names) > MAX_PER_GROUP else ""
+            rendered, kept = _within(names, MAX_PER_GROUP, left)
+            left -= sum(tokens.estimate(r) for r in rendered)
+            shown = ", ".join(rendered)
+            more = f" _+{len(names)-kept}_" if len(names) > kept else ""
             note = "  _(names only — never their contents)_" if kind in NEVER_EXPAND else ""
             lines.append(f"- **{kind}** ({len(names)}) — {shown}{more}{note}")
     if found["compose"]:
         svc = sorted(found["compose"])
-        lines.append(f"- **Compose services** ({len(svc)}) — "
-                     + ", ".join(f"`{mdblock.as_quoted(s, 80)}`" for s in svc[:MAX_PER_GROUP]))
+        rendered, kept = _within(svc, MAX_PER_GROUP, max(left, 120))
+        left -= sum(tokens.estimate(r) for r in rendered)
+        lines.append(f"- **Compose services** ({len(svc)}) — " + ", ".join(rendered)
+                     + (f" _+{len(svc)-kept}_" if len(svc) > kept else ""))
     if found["images"]:
         img = sorted(found["images"])
         lines.append(f"- **Images** ({len(img)}) — "
                      + ", ".join(f"`{mdblock.as_quoted(i, 80)}`" for i in img[:8])
                      + (f" _+{len(img)-8}_" if len(img) > 8 else ""))
+    # The lists below are each ONE line with a flat cap of 8, and that is deliberate rather than the
+    # same oversight: their product IS bounded -- 8 entries of at most 80 characters is about 200
+    # tokens, four such lines under 800 in the worst case. What was unbounded above is the number of
+    # KINDS, which a CRD can add to without limit, so eight kinds of fourteen names multiplied out
+    # past the whole index budget while each individual cap looked reasonable.
     for key, label in (("ansible", "Ansible"), ("helm", "Helm charts"), ("ci", "Pipelines")):
         items = sorted(found[key])
         if items:

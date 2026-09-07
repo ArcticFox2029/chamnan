@@ -1,5 +1,6 @@
 ---
 description: Turn a scratch script into a permanent tool this repo keeps. Use when a check, report, or analysis has proved worth running more than once.
+disable-model-invocation: true
 ---
 
 # Keep a script instead of rewriting it

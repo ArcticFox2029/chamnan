@@ -81,6 +81,13 @@ DEFAULT_CONFIG = {
     # one overwritten file about the present; these are many small files, one per session, and only
     # the unfinished part of the newest one is ever injected. See lib/sessions.py.
     "resume": True,
+    # On `source="resume"` the hook sends a one-line pointer instead of the whole block, but ONLY
+    # when it can prove from the transcript that the earlier block is still in context -- no
+    # compaction boundary after its own fence. Measured 967 tokens saved on an 8-file fixture and
+    # about 3,500 on this repository's real block. Set False to resend unconditionally; the proof
+    # already fails safe, so this exists for someone whose host restores transcripts differently
+    # rather than as a knob anybody should need.
+    "resume_pointer": True,
     # These accumulate one per working session in a directory that gets committed, so they are
     # bounded from the start rather than after somebody's repository fills up. Longer than the log
     # window because a record from three weeks ago is still the answer to "what was I doing".
@@ -121,7 +128,60 @@ DEFAULT_CONFIG = {
     # is a re-pricing, not a cut. A heading ending in the pin marker (see lib/state.py) is injected
     # in full ahead of this budget and is never dropped by it.
     "state_token_budget": 1700,
+    # 🐛 [2026-09-06] `lib/profiles.py`'s own opening line says the profile is "CHOSEN, in
+    # `.chamnan/config.json`, not sniffed" -- and it was not a key here, so `load_config()`'s
+    # allowlist dropped it before `profiles.resolve()` ever saw it. Setting it in the file the
+    # module names did precisely nothing, silently; only the environment variable worked, and the
+    # module does not mention one (R8 agent 4). The two budget keys beside it still WIN over the
+    # profile when set by hand, which `resolve()` documents and does not change.
+    "context_profile": "standard",
 }
+# 🐛 [2026-09-06] A directory's own README is that directory's INDEX, not a member of it, and
+# every store here is listed by globbing `*.md`. In this workspace `.chamnan/skills/README.md` sorts
+# second of twenty, so with a twelve-slot listing it took a real skill's place — and it was described
+# to the model by its own first prose line, which explains what the folder is rather than what a
+# procedure does (R8 agent 5). One predicate rather than a check at each listing, because there are
+# eight of those and this is exactly the shape this repository keeps rediscovering.
+# 🐛 [2026-09-06] Every retention pass computes its cutoff from `time.time()`, and nothing bounds
+# what happens when that value is wrong. Reproduced with a 400-day forward jump — an NTP correction
+# or a dead RTC battery, not an exotic input: `prune_logs` and `sessions.prune` each deleted a file
+# written SECONDS earlier, and `expiring_logs`, the warning that exists to give notice, is computed
+# from the same broken clock and gives none (R10 agent 2).
+#
+# There is no way to tell a jumped clock from real age using the clock that jumped. So the rule is
+# not about the clock at all: a retention pass never empties a store. Whatever it believes about
+# time, the newest entry survives. In the genuine case — a workspace nobody has touched for a year —
+# that costs one file, kept one pass longer than the window says. In the fault case it is the
+# difference between losing old logs and losing the session record written a minute ago.
+def _mtime_or_none(path):
+    """`path`'s mtime, or None when it cannot be read. A file that vanished mid-pass is not old."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def keep_the_newest(paths, doomed):
+    """`doomed` minus the newest entry, when `doomed` would take every one of `paths`.
+
+    CALLERS MUST CHECK THE RESULT: this returns the list to delete, not a flag. Passing `doomed`
+    through unchanged whenever anything survives keeps the ordinary path exactly as it was.
+    """
+    paths, doomed = list(paths), list(doomed)
+    if not paths or len(doomed) < len(paths):
+        return doomed
+    try:
+        newest = max(paths, key=lambda q: q.stat().st_mtime)
+    except (OSError, ValueError):
+        return doomed
+    return [q for q in doomed if q != newest]
+
+
+def is_store_index(path):
+    """True when `path` is a store's own README rather than an entry in it."""
+    return pathlib.Path(path).name.lower() in ("readme.md", "index.md")
+
+
 VCS_MARKERS = (".git", ".hg", ".svn")
 
 
@@ -327,8 +387,11 @@ def expiring_logs(root=None, within_days=1.0):
     logs = workspace(root) / "logs"
     if not logs.is_dir():
         return []
-    window = load_config(root).get("log_retention_days", 7) * 86400
-    cutoff = time.time() - window
+    # Same rule as the sweeper below: 0 means "keep everything", so nothing is ever about to expire.
+    days = load_config(root).get("log_retention_days", 7)
+    if not days or days <= 0:
+        return []
+    cutoff = time.time() - days * 86400
     soon = cutoff + within_days * 86400
     out = []
     for path in logs.iterdir():
@@ -354,7 +417,58 @@ def expiring_logs(root=None, within_days=1.0):
 # touch a write in progress: a real staging file exists for the milliseconds between open and
 # os.replace, and a name without a numeric middle segment was not written by this module.
 _ORPHAN_TEMP_AGE = 3600
-_ORPHAN_TEMP = re.compile(r"\.\d+\.tmp$")
+_ORPHAN_TEMP = re.compile(r"\.(\d+)\.tmp$")
+
+
+def _pid_is_alive(pid):
+    """True when a process with `pid` exists. Unknown answers are reported as ALIVE.
+
+    🐛 [2026-09-07] Used by `exclusive()` and NOT by `prune_orphaned_temps`, which is where it
+    started. PIDs are small integers and get reused, so on a busy machine an abandoned staging file
+    named after a recycled PID is protected for ever — CI caught that on Linux and Windows while it
+    passed on macOS, where those numbers happened to be free. The sweep uses a filesystem-derived
+    reference now; a LOCK still needs this, because a lock file's mtime does not move while it is
+    held, so liveness is the only signal there is.
+
+    🐛 [2026-09-06] The age bound above is computed from `time.time()`, and the same 400-day clock
+    jump that empties a retention store makes a staging file written milliseconds ago look an hour
+    old. `atomic_write_text` flushes its content and then calls `os.replace`; delete the staging
+    file between those two and the write is lost -- the destination keeps its old content, which is
+    the atomicity working, and the NEW content is simply gone. The comment above says "both bounds
+    have to be wrong before this can touch a write in progress", and the second bound was the
+    NAME's shape, which a live writer's staging file matches exactly (R10 agent 2).
+
+    So the second bound becomes one the clock cannot move: the filename already carries the PID
+    that wrote it. A recycled PID means an orphan lingers until that unrelated process exits, and
+    that is the direction to be wrong in -- a stray 40-byte file against a lost write.
+
+    `os.kill(pid, 0)` is POSIX-only for this purpose and must NOT be used on Windows: CPython's
+    `os.kill` there calls TerminateProcess for every signal but CTRL_C_EVENT and CTRL_BREAK_EVENT,
+    so the liveness probe would kill the process it asked about.
+    """
+    if pid <= 0:
+        return True
+    if os.name == "nt":
+        try:
+            import ctypes
+            _SYNCHRONIZE = 0x00100000
+            handle = ctypes.windll.kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                return True
+            # ERROR_ACCESS_DENIED (5): the process exists, this one may not open it.
+            return ctypes.windll.kernel32.GetLastError() == 5
+        except Exception:
+            return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True                       # exists, owned by somebody else
+    except OSError:
+        return True
 
 
 def prune_orphaned_temps(root=None):
@@ -376,7 +490,27 @@ def prune_orphaned_temps(root=None):
             return 0
     except OSError:
         pass
-    cutoff = time.time() - _ORPHAN_TEMP_AGE
+    # 🐛 [2026-09-07] The first fix for the clock-jump case tested the writing PID for liveness and
+    # kept the file while it was alive. CI found what that costs: PIDs are small integers and get
+    # REUSED, so on any busy machine a genuinely abandoned `x.999.tmp` is protected for ever by an
+    # unrelated process that happens to hold PID 999. It passed on macOS, where those PIDs were free,
+    # and failed on Linux and Windows, where they were not — the shape of luck a suite exists to
+    # catch. (`_pid_is_alive` is still right for `exclusive()`, where the lock's mtime does not move
+    # while it is held and liveness is the only signal there is.)
+    #
+    # The reference for "now" comes from the FILESYSTEM instead, and that answers the original
+    # question properly. A file written a moment ago and the stamp written a moment ago carry
+    # timestamps from the same clock at the same moment, so a jump moves both together and their
+    # difference is unchanged — which is exactly what `time.time()` could not give. A write in
+    # progress is milliseconds old by that measure however wrong the clock is, and a file abandoned
+    # an hour ago is an hour old however wrong the clock is.
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        now = stamp.stat().st_mtime
+    except OSError:
+        now = time.time()             # cannot write a reference: fall back to the clock we have
+    cutoff = now - _ORPHAN_TEMP_AGE
     removed = 0
     for path in ws_dir.rglob("*.tmp"):
         try:
@@ -385,13 +519,8 @@ def prune_orphaned_temps(root=None):
             if path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1
-        except OSError:
+        except (OSError, ValueError):
             continue
-    try:
-        stamp.parent.mkdir(parents=True, exist_ok=True)
-        stamp.touch()
-    except OSError:
-        pass
     return removed
 
 
@@ -407,14 +536,30 @@ def prune_logs(root=None):
     logs = ws_dir / "logs"
     if not logs.is_dir():
         return 0
-    cutoff = time.time() - load_config(root).get("log_retention_days", 7) * 86400
+    days = load_config(root).get("log_retention_days", 7)
+    # 🐛 [2026-09-06] `0` meant OPPOSITE things in two settings sitting three lines apart in
+    # DEFAULT_CONFIG. `session_retention_days: 0` disables pruning (`sessions.prune`: `if not
+    # days`), and so does `state_stale_days` (`state.py`: "days <= 0 disables the whole pass") and
+    # the ledger's own window. Here it made `cutoff` equal to NOW, so every log older than this
+    # instant was deleted — a user writing 0 to mean "keep everything", the reading three of the
+    # four places already have, lost the lot (R8 agent 4). Three against one is not a design, it is
+    # an omission; this is the one that was out of step.
+    if not days or days <= 0:
+        return 0
+    cutoff = time.time() - days * 86400
+    # See keep_the_newest: a pass that would take EVERY file is a clock fault, not retention.
+    _files = [q for q in logs.iterdir()
+              if q.is_file() and q.name not in SELF_PRUNING_LOGS]
+    _doomed = set(keep_the_newest(
+        _files, [q for q in _files if _mtime_or_none(q) is not None
+                 and _mtime_or_none(q) < cutoff]))
     removed = 0
     for path in logs.iterdir():
         try:
             if path.name in SELF_PRUNING_LOGS:
                 continue
             if path.is_file():
-                if path.stat().st_mtime < cutoff:
+                if path in _doomed:
                     path.unlink()
                     removed += 1
                 continue
@@ -430,10 +575,27 @@ def prune_logs(root=None):
             # entry was last added or removed. A directory whose every file is past the window is
             # finished work, and one holding nothing at all is a leftover -- neither is history the
             # record-level rules are keeping on purpose.
+            #
+            # 🐛 [2026-09-06] This built the WHOLE list and stat'd every file in it to compute a max
+            # it only ever compares against one number. A 409 MB, 6,870-file scratch directory that
+            # an earlier research round left here cost 120 ms of EVERY SessionStart firing on this
+            # repository -- 34% of the hook's 349 ms -- and the directory was fresh, so the walk
+            # could have stopped on its first file (R12 agent 1). Third occurrence of this shape:
+            # the two above it are named in this same function's comments.
+            #
+            # One fresh file is the whole answer, so the loop stops at it. A directory being written
+            # to right now has one immediately; a directory that is genuinely finished is walked in
+            # full exactly once and then deleted.
             if path.is_dir() and not path.is_symlink():
-                inside = [f for f in path.rglob("*") if f.is_file()]
-                newest = max((f.stat().st_mtime for f in inside), default=0)
-                if newest < cutoff:
+                fresh = False
+                for f in path.rglob("*"):
+                    if not f.is_file():
+                        continue
+                    mt = _mtime_or_none(f)
+                    if mt is not None and mt >= cutoff:
+                        fresh = True
+                        break
+                if not fresh:
                     _rmtree_quietly(path)
                     removed += 1
         except OSError:
@@ -537,7 +699,7 @@ def load_json(path, want=dict):
         # for the read, which is the cost being avoided. A file over the ceiling is not truncated
         # into a parse -- `read(n)` of a bigger file yields invalid JSON and lands in the `except`
         # below, which returns the empty store, the same degraded answer as a missing file.
-        with pathlib.Path(path).open(encoding="utf-8") as fh:
+        with pathlib.Path(path).open(encoding="utf-8-sig") as fh:
             data = json.loads(fh.read(JSON_READ_CEILING))
     except (OSError, json.JSONDecodeError, ValueError, RecursionError, UnicodeDecodeError):
         return want()
@@ -769,7 +931,7 @@ def _mark_generated(root):
         ga = Path(root) / WORKSPACE_DIRNAME / ".gitattributes"
         if not ga.parent.is_dir():
             return
-        existing = ga.read_text(encoding="utf-8", errors="replace") if ga.is_file() else ""
+        existing = ga.read_text(encoding="utf-8-sig", errors="replace") if ga.is_file() else ""
         # 🐛 The presence test was `if "MAP.md linguist-generated" in existing: return` — a single
         # sentinel line, which is the exact trap `_mark_ignored` a few functions down was rewritten
         # to escape and whose comment says why: a rule added to the constant afterwards reaches NEW
@@ -803,7 +965,7 @@ def plugin_version(plugin_root):
     """The running plugin's own version, from the manifest beside it. "" if it cannot be read."""
     try:
         data = json.loads((Path(plugin_root) / ".claude-plugin" / "plugin.json")
-                          .read_text(encoding="utf-8"))
+                          .read_text(encoding="utf-8-sig"))
         return str(data.get("version", ""))
     except (OSError, ValueError, TypeError, RecursionError):
         return ""
@@ -860,7 +1022,7 @@ def reconcile_version(root, running):
         return ""
     path = workspace(root) / VERSION_FILE
     try:
-        seen = path.read_text(encoding="utf-8").strip()
+        seen = path.read_text(encoding="utf-8-sig").strip()
     except OSError:
         seen = ""
     # 🐛 `seen` is the raw contents of a COMMITTED file, and the caller interpolates it into a bold
@@ -928,7 +1090,7 @@ def available_update(plugin_root):
         if not running:
             return ""
         name = json.loads((root / ".claude-plugin" / "plugin.json")
-                          .read_text(encoding="utf-8")).get("name", "")
+                          .read_text(encoding="utf-8-sig")).get("name", "")
         best = ""
         for ancestor in root.parents:
             if ancestor.name != "plugins":
@@ -936,7 +1098,7 @@ def available_update(plugin_root):
             for entry in _marketplace_dirs(ancestor):
                 for manifest in _plugin_manifests_under(entry):
                     try:
-                        data = json.loads(manifest.read_text(encoding="utf-8"))
+                        data = json.loads(manifest.read_text(encoding="utf-8-sig"))
                     except (OSError, ValueError, RecursionError):
                         continue
                     if not isinstance(data, dict):
@@ -984,7 +1146,7 @@ def _marketplace_dirs(plugins_dir):
     except OSError:
         pass
     try:
-        known = json.loads((plugins_dir / "known_marketplaces.json").read_text(encoding="utf-8"))
+        known = json.loads((plugins_dir / "known_marketplaces.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         known = None
     if isinstance(known, dict):
@@ -1034,7 +1196,7 @@ def _plugin_manifests_under(market):
     # caught — a marketplace manifest is a file on disk that this code did not write.
     try:
         declared = json.loads((market / ".claude-plugin" / "marketplace.json")
-                              .read_text(encoding="utf-8"))
+                              .read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         return out
     entries = declared.get("plugins") if isinstance(declared, dict) else None
@@ -1100,6 +1262,39 @@ IGNORE_LINES = [
 LAST_IGNORE_RULES_ADDED = []
 
 
+# 🐛 The rules here are appended and never corrected, which is right for a RULE — a workspace that
+# already exists must gain a new one — and wrong for the sentences beside them. The comment block
+# shipped before `scratch.jsonl` was routed through the redactor says the opposite of what the code
+# now does: "neither passes through the redactor ... a credential typed into a one-off script lands
+# in these files intact." That is a security claim, it is false, and it is sitting committed in
+# every workspace written before the change (R3 agent 5).
+#
+# Only lines chamnan itself wrote are replaced, matched literally, so nothing a person added is
+# touched. A stale claim about redaction is worth this; ordinary wording drift is not, and this list
+# should stay short enough to read.
+_STALE_IGNORE_CLAIMS = {
+    "# throwaway script and commands.jsonl keeps command signatures, both verbatim, and neither":
+        "# throwaway script, scrubbed by the same redactor MAP.md uses. commands.jsonl keeps",
+    "# passes through the redactor (that guards MAP.md and the injected block, a different path).":
+        "# command signatures verbatim — the program name only, never its arguments, so a secret",
+    "# A credential typed into a one-off script lands in these files intact.":
+        "# passed as an argument is not captured here in the first place.",
+}
+
+
+def _correct_stale_ignore_claims(text):
+    """`text` with chamnan's own outdated comment lines replaced by what is true now."""
+    if not text:
+        return text
+    out = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\n")
+        replacement = _STALE_IGNORE_CLAIMS.get(stripped)
+        out.append((replacement + "\n" if line.endswith("\n") else replacement)
+                   if replacement is not None else line)
+    return "".join(out)
+
+
 def _mark_ignored(root):
     """Keep chamnan's own runtime logs out of git. Best effort; never breaks workspace creation.
 
@@ -1118,7 +1313,8 @@ def _mark_ignored(root):
         gi = Path(root) / WORKSPACE_DIRNAME / ".gitignore"
         if not gi.parent.is_dir():
             return
-        existing = gi.read_text(encoding="utf-8", errors="replace") if gi.is_file() else ""
+        existing = gi.read_text(encoding="utf-8-sig", errors="replace") if gi.is_file() else ""
+        existing = _correct_stale_ignore_claims(existing)
         # 🐛 The presence check was a single sentinel line -- `logs/*.jsonl`, which every workspace
         # written before today already has. So a rule added to IGNORE_LINES afterwards reached NEW
         # workspaces only, and every existing one kept leaking whatever the new rule was for. Moving
@@ -1230,6 +1426,12 @@ def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
             time.sleep(pause)
 
 
+# Why the last `atomic_write_text` failed, for `write_or_raise` to put in its message. A list rather
+# than a return value because the bool IS the contract here and every caller tests it; same shape as
+# LAST_UNREAD, and read only immediately after a False.
+LAST_WRITE_ERROR = []
+
+
 def atomic_write_text(dest, text, encoding="utf-8"):
     """Write `text` to `dest` so a reader sees the old file or the new one, never a half of either.
 
@@ -1253,8 +1455,10 @@ def atomic_write_text(dest, text, encoding="utf-8"):
 
     Returns True on success. Best-effort by default: a workspace on a read-only checkout must still
     let a session start, so the caller decides whether a failed write is worth reporting.
+    `write_or_raise` below is that decision made for the writes a user asked for by name.
     """
     if read_only():
+        LAST_WRITE_ERROR[:] = ["CHAMNAN_READ_ONLY is set, so nothing is written anywhere"]
         return False
     tmp = None
     try:
@@ -1265,6 +1469,9 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # roll back the file it already copied rather than leave an unregistered executable behind.
         # Checked explicitly, because the filesystem will not check it for us any more.
         if dest.exists() and not os.access(dest, os.W_OK):
+            # Named, like the exception path below: this refusal and a full disk are the two
+            # answers a caller used to get as one identical sentence, and they need opposite fixes.
+            LAST_WRITE_ERROR[:] = ["the file is not writable — its permissions refuse this write"]
             return False
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Per-process, and `.tmp` last so a suffix-matching reader never mistakes it for the real
@@ -1291,7 +1498,14 @@ def atomic_write_text(dest, text, encoding="utf-8"):
             pass
         _replace_with_retry(tmp, dest)
         return True
-    except Exception:
+    except Exception as err:
+        # 🐛 [2026-09-06] The reason was caught here and thrown away, so every caller could say was
+        # "could not write X". Reproduced live with `chmod 444` and `chmod 555`: a read-only FILE, a
+        # read-only DIRECTORY and a full disk all produced the identical sentence, and the first two
+        # need different fixes (R15 agent 3). The bool return stays the contract -- every caller
+        # tests it -- so the reason goes in a module-level slot the raising wrapper reads, the same
+        # shape `LAST_UNREAD` already uses for the read ceiling.
+        LAST_WRITE_ERROR[:] = [f"{type(err).__name__}: {err}"]
         if tmp is not None:
             try:
                 tmp.unlink()
@@ -1302,6 +1516,30 @@ def atomic_write_text(dest, text, encoding="utf-8"):
 
 NOTICE_TIMES = 3
 
+
+
+def write_or_raise(dest, text, encoding="utf-8"):
+    """`atomic_write_text`, for a write the user asked for by name. Raises instead of returning.
+
+    🐛 [2026-09-06] `atomic_write_text` is best-effort on purpose and returns a bool, and of its
+    two dozen call sites only `tools_index._save` and `chamnan-map` ever looked at it. The bug
+    named two paragraphs above -- `chamnan-timeline new` printing "declared -- .chamnan/threads/
+    a-thread.md" with no file on disk -- was fixed only in this function's own return value; the
+    caller went on discarding it, so the same output came back for a read-only directory, a full
+    disk, and the staging-file race in `prune_orphaned_temps` (R10 agent 2).
+
+    The line is the one `tools_index._save`'s comment already draws: a log line, a pointer, a
+    rollup cache is housekeeping and stays silent, because a workspace that cannot be written must
+    not stop a session from starting. A thread, a milestone, an environment entry or a promoted
+    tool is a thing somebody typed a command to get, and telling them it happened when it did not
+    is worse than failing.
+    """
+    LAST_WRITE_ERROR[:] = []
+    if not atomic_write_text(dest, text, encoding=encoding):
+        why = (" (CHAMNAN_READ_ONLY is set)" if read_only()
+               else f" — {LAST_WRITE_ERROR[0]}" if LAST_WRITE_ERROR else "")
+        raise OSError(f"could not write {dest}{why}")
+    return True
 
 def notice_due(root, key, times=NOTICE_TIMES):
     """True while a one-off piece of advice still has something to teach, and record the showing.
@@ -1335,6 +1573,24 @@ def notice_due(root, key, times=NOTICE_TIMES):
     return True
 
 
+
+def _lock_holder_is_alive(lock):
+    """True when the process named inside `lock` still exists.
+
+    Read as a SECOND bound beside the age one, never instead of it: a lock written by an older
+    version carries no PID, and an unreadable or unparseable one falls back to "not alive" so the
+    age rule decides on its own exactly as it used to. The age bound alone is the one a wrong
+    clock can invert; the pair cannot both be wrong at once.
+    """
+    try:
+        first = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+    except OSError:
+        return False
+    if not first or not first[0].strip().isdigit():
+        return False
+    return _pid_is_alive(int(first[0].strip()))
+
+
 @contextlib.contextmanager
 def exclusive(path):
     """Hold a lock beside `path` for the duration of the block. Yields True when it was acquired."""
@@ -1343,10 +1599,20 @@ def exclusive(path):
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            # 🐛 [2026-09-06] The holder's PID goes IN the lock, for the reason `_pid_is_alive`
+            # exists: `time.time() - mtime > LOCK_STALE` is the third place in this module where a
+            # forward clock jump inverted a bound. Skew the clock by more than 30 seconds and a
+            # second process reads a lock a live process is still holding as abandoned, unlinks it
+            # and takes it -- so the mutex hands the same shared file to two writers at once, which
+            # is exactly the lost update it exists to prevent (R11 agent 2).
+            try:
+                os.write(fd, f"{os.getpid()}\n".encode())
+            except OSError:
+                pass
             break
         except FileExistsError:
             try:
-                if time.time() - lock.stat().st_mtime > LOCK_STALE:
+                if time.time() - lock.stat().st_mtime > LOCK_STALE and not _lock_holder_is_alive(lock):
                     lock.unlink()
                     continue
             except OSError:
@@ -1382,6 +1648,64 @@ def exclusive(path):
             except OSError:
                 pass
 
+
+
+# The pre-commit hook chamnan installs marks itself with this line, so a hook somebody wrote by
+# hand and one chamnan wrote are told apart by the file's own content rather than by its name.
+GIT_HOOK_MARKER = "# >>> chamnan"
+
+
+def git_hooks_dir(root):
+    """Where git will ACTUALLY look for hooks, or None when this is not a repository git owns.
+
+    Not `.git/hooks`. `core.hooksPath` relocates hooks entirely -- pre-commit, Husky and lefthook
+    all set it -- and in a worktree `.git` is a FILE containing `gitdir: …`. `git rev-parse
+    --git-path hooks` resolves both.
+
+    🐛 And it resolves something ELSE if nobody checks first: in a directory holding a `.git` git
+    itself refuses, git walks UP and returns the ANCESTOR repository's hooks path as a relative
+    string. `git_owns` is the question that has to be asked before this one.
+
+    🐛 [2026-09-06] Lived in `bin/chamnan-map` as a private function, so the only code that could
+    ask "is the hook installed" was the code that installs it -- and nothing ever asked. A
+    repository whose index quietly goes stale on every commit looks exactly like one whose hook is
+    working (R14 agent 5). Moved here so the report can ask the same question the installer does,
+    with the same three subtleties handled, rather than checking `.git/hooks/pre-commit` and being
+    wrong in all three.
+    """
+    if not git_owns(root):
+        return None
+    sp = _subprocess()           # deferred, like every other git call in this module
+    try:
+        out = sp.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
+                     capture_output=True, text=True, encoding="utf-8",
+                     errors="replace", timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            found = pathlib.Path(out.stdout.strip())
+            return found if found.is_absolute() else (pathlib.Path(root) / found)
+    except (OSError, sp.SubprocessError):
+        pass
+    return None
+
+
+def git_hook_state(root):
+    """"installed", "absent", "theirs", or None when the question does not apply here.
+
+    "theirs" means a pre-commit hook exists and is not chamnan's -- which is not a problem and must
+    not be reported as one. The distinction matters because the advice differs: an absent hook can
+    be offered, and somebody else's cannot be touched.
+    """
+    hooks = git_hooks_dir(root)
+    if hooks is None:
+        return None
+    target = pathlib.Path(hooks) / "pre-commit"
+    if not target.is_file():
+        return "absent"
+    try:
+        return ("installed" if GIT_HOOK_MARKER in
+                target.read_text(encoding="utf-8-sig", errors="replace") else "theirs")
+    except OSError:
+        return None
 
 def config_is_malformed(root):
     """Why config.json will not be used, as a short reason — or "" when it will be.
@@ -1424,7 +1748,7 @@ def _config_problem(path):
     so it is answered in one place.
     """
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return ""
     if not text.strip():
@@ -1441,3 +1765,69 @@ def _config_problem(path):
                       int: "number", float: "number", type(None): "null"}
         return f"is a JSON {_JSON_NAME.get(type(parsed), 'value')}, not an object"
     return ""
+
+
+# ---------------------------------------------------------------------------------------------
+# 🐛 [2026-09-06] chamnan decides what its root is by looking for a `.git`, `.hg` or `.svn` entry.
+# Real git decides differently: a `.git` that is an empty directory, or a directory copied without
+# its contents, or an interrupted `git init`, is not a repository to git — so `git -C <that dir>`
+# does not fail. It WALKS UP and answers about the nearest real repository above it.
+#
+# Twelve call sites shelled out to `git -C root ...` on that assumption and every one of them was
+# reporting somebody else's repository (R6 acc3, first ten minutes). Reproduced: in a directory
+# holding one file and an empty `.git/`, nested inside a real repository, the session-start block
+# said "10 uncommitted file(s)" and named a branch — the ANCESTOR's status; `chamnan-map` stamped
+# `Built from <sha>` into MAP.md with the ancestor's HEAD; and `--install-git-hook` resolved
+# `rev-parse --git-path hooks` to `../../../.git/hooks`, joined it onto root, and wrote a real
+# executable pre-commit hook into the unrelated ancestor repository, printing success.
+#
+# So the question every one of those sites has to ask first is not "does a .git exist" — which is
+# chamnan's own root rule and stays as it is, because a workspace inside a half-made repository is
+# still that directory's workspace — but "does GIT agree this directory is the repository". Asked
+# once per root and cached: a subprocess per call site would be twelve of them at session start.
+_GIT_OWNS = {}
+
+
+def git_owns(root):
+    """True when git itself resolves `root` AS the repository, not as a directory inside one.
+
+    CALLERS MUST CHECK THE RESULT: every `git -C <root>` in this package is only meaningful when
+    this is True. False means either "not a repository at all" or, far worse, "a repository, but a
+    different one further up" — and those two are indistinguishable from a return code.
+
+    True for an ordinary checkout, a linked worktree and a submodule (git's own `--show-toplevel`
+    is the working tree's root in all three), and for a bare repository, which has no working tree
+    and answers with its own directory instead. False for anything that merely sits inside one.
+    """
+    key = str(Path(root).resolve())
+    if key in _GIT_OWNS:
+        return _GIT_OWNS[key]
+    answer = False
+    try:
+        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", timeout=10)
+        if out.returncode == 0 and out.stdout.strip():
+            answer = Path(out.stdout.strip()).resolve() == Path(root).resolve()
+        else:
+            # No working tree: a bare repository is still "this directory IS the repository", and
+            # refusing one here would take the specific bare-repo refusals with it.
+            bare = _subprocess().run(
+                ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+            if bare.returncode == 0 and bare.stdout.strip():
+                answer = Path(bare.stdout.strip()).resolve() == Path(root).resolve()
+    except (OSError, ValueError) as exc:  # git missing, or an unresolvable path
+        del exc
+        answer = False
+    except Exception:                     # noqa: BLE001 — subprocess timeouts and friends
+        answer = False
+    _GIT_OWNS[key] = answer
+    return answer
+
+
+def _subprocess():
+    """Imported here rather than at module scope: `workspace` is the module every other one loads,
+    and it has stayed free of anything that runs a process at import time."""
+    import subprocess
+    return subprocess

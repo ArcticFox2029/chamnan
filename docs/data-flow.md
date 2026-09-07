@@ -53,7 +53,10 @@ analysis. There is no service, no account, and no key to configure. The only pro
 starts is a second copy of Python to run its own session-start hook, which is what
 `chamnan-map --preview` does so you can see what a session would receive.
 
-It does not invoke `git` either. The one thing it writes outside `.chamnan/` is a `pre-commit`
+It DOES invoke `git`, read-only, from six modules — churn ranking, the map's commit stamp and
+its freshness check, build-output detection, the timeline, and the session-record fallback.
+The claim that it does not was corrected in the README and left standing here. The one thing
+it writes outside `.chamnan/` is a `pre-commit`
 hook, and only when you ask for it with `chamnan-map --install-git-hook`.
 
 ## What is generated

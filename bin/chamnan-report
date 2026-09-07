@@ -25,6 +25,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
+import aging  # noqa: E402
+import environments  # noqa: E402
 import ledger  # noqa: E402
 # 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
 # neither of these two commands imported mdblock at all. Every value below is repository-
@@ -35,6 +37,8 @@ import ledger  # noqa: E402
 # `lib/`, `hooks/` and two bin commands by example, and these two were never in the examples
 # (R13 agent 3).
 import mdblock  # noqa: E402
+import candidates  # noqa: E402
+import rulecheck  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
 import workflows  # noqa: E402
@@ -317,14 +321,160 @@ def print_inventory(root):
         noun = "entry" if count == 1 else "entries"
         print(f"  {label:<{width}}   {count:>3} {noun:<8}   last write {ledger.humanize_age(last_ts)}")
 
+    # 🐛 [2026-09-06] Nothing anywhere showed which settings this repository had actually changed.
+    # Two config defects found today were both invisible for the same reason: `context_profile` set
+    # in the file did nothing at all, and `log_retention_days: 0` deleted every log while the three
+    # settings beside it read 0 as "keep everything". In each case a person could read their own
+    # config.json and still not know what chamnan was doing with it (R9 agent 5).
+    #
+    # Only the DIFFERENCES, and only here rather than in the injected block: a list of 23 defaults
+    # nobody changed is the kind of always-true output that stops being read, and on an untouched
+    # workspace this says one short line and moves on.
+    _cfg = ws.load_config(root)
+    _changed = sorted(k for k, v in _cfg.items()
+                      if k in ws.DEFAULT_CONFIG and v != ws.DEFAULT_CONFIG[k])
+    print("\nSettings this repository has changed")
+    if not _changed:
+        print(f"  none — all {len(ws.DEFAULT_CONFIG)} settings are at their shipped defaults")
+    else:
+        _w = max(len(k) for k in _changed)
+        for _k in _changed:
+            print(f"  {_k:<{_w}}   {_cfg[_k]!r}   (default {ws.DEFAULT_CONFIG[_k]!r})")
+
+    # 🐛 "1 of 2 decision has no Rejected". The noun agrees with the TOTAL and the verb with the
+    # count — `plural` was keyed to the count for both, so one decision out of two made the noun
+    # singular. The line above it had the opposite half of the same bug: `lessons name` is fixed
+    # plural, so one lesson out of one read "1 of 1 lessons name". Two adjacent sentences, one
+    # helper wrong and one missing, which is this repository's own recurring shape (R2 agent 4).
+    def _agree(count, total, singular, plural, verb_singular, verb_plural):
+        return f"{total} {singular if total == 1 else plural} {verb_singular if count == 1 else verb_plural}"
+
     naming_none, lessons_total = ledger.entries_naming_no_file(root, "lessons")
     if lessons_total:
-        print(f"\n  {naming_none} of {lessons_total} lessons name no file in this repository")
+        print(f"\n  {naming_none} of "
+              f"{_agree(naming_none, lessons_total, 'lesson', 'lessons', 'names', 'name')} "
+              f"no file in this repository")
 
     without, decisions_total = ledger.decisions_without_rejected(root)
     if decisions_total:
-        plural = "decision has" if without == 1 else "decisions have"
-        print(f"  {without} of {decisions_total} {plural} no `Rejected:` — a trade-off nobody wrote down")
+        print(f"  {without} of "
+              f"{_agree(without, decisions_total, 'decision', 'decisions', 'has', 'have')} "
+              f"no `Rejected:` — a trade-off nobody wrote down")
+
+    # 🐛 [2026-09-06] The ledger counts `candidates/` as a directory and stops there. What it never
+    # said is where those candidates are in the pipeline `lib/candidates.py`'s own docstring
+    # describes — evidence, candidate, human confirm, memory — so a workspace whose candidates are
+    # all machine-detected and never reviewed reports the same "4" as one where four were confirmed
+    # and promoted. Measured on this repository: 4 candidates, all `ai-inferred`, none ever promoted
+    # (R14 agent 5). That is the fact somebody deciding whether the workflow is worth using needs,
+    # and a raw count actively hides it.
+    #
+    # Said only when there is something to say: a workspace where every candidate has been looked at
+    # gets no line, like every other signal here.
+    try:
+        _cd = candidates.entries(root)
+    except Exception:
+        _cd = []
+    if _cd:
+        _cd_prov = {}
+        for _c in _cd:
+            try:
+                _f = candidates._fields(_c.read_text(encoding="utf-8-sig", errors="replace"))
+            except OSError:
+                continue
+            _cd_prov[_f.get("provenance", "unstated")] = \
+                _cd_prov.get(_f.get("provenance", "unstated"), 0) + 1
+        # "Nobody has looked at these yet" is exactly the machine-written provenances with none of
+        # the human ones beside them. `imported` and `deprecated` are somebody's decision either way.
+        _cd_unseen = _cd_prov.get("ai-inferred", 0) + _cd_prov.get("ai-drafted", 0)
+        _cd_seen = sum(v for k, v in _cd_prov.items() if k in ("user", "ai-confirmed"))
+        try:
+            _cd_promoted = len({str(e.get("origin", "")) for e in tools_index.load(root)
+                                if str(e.get("origin", "")).startswith("candidate:")})
+        except Exception:
+            _cd_promoted = 0
+        if _cd_unseen and not _cd_seen and not _cd_promoted:
+            print(f"\n  {_cd_unseen} of {len(_cd)} candidate(s) were detected by chamnan and none "
+                  f"has been reviewed")
+            print("    `chamnan-candidates` lists them; confirming or rejecting one is what moves "
+                  "it out of\n    the queue. Nothing here is acted on until a person says so.")
+
+    # 🐛 [2026-09-06] Nothing ever asked whether the pre-commit hook that keeps MAP.md fresh is
+    # actually installed. Only `chamnan-map --install-git-hook` could answer it, because the
+    # detection lived inside that command as a private function — so a repository whose index goes
+    # quietly stale on every commit looks exactly like one whose hook is working, and this
+    # repository turned out to be the former (R14 agent 5).
+    #
+    # Someone else's pre-commit hook is reported as a fact and NOT as a problem: chamnan does not
+    # edit a hook it did not write, and its own installer refuses to, so the advice differs.
+    _hook_state = ws.git_hook_state(root)
+    if _hook_state == "absent":
+        print("\n  the index is not refreshed on commit — no pre-commit hook is installed")
+        print("    `chamnan-map --install-git-hook` adds one; it rebuilds the index when a file "
+              "is added,\n    deleted or renamed, which is about one commit in six.")
+    elif _hook_state == "theirs":
+        print("\n  a pre-commit hook is installed and is not chamnan's — left alone, as it should "
+              "be.\n    The index is refreshed only when `chamnan-map` is run by hand.")
+
+    # 🐛 [2026-09-06] `rulecheck.line()` is SILENT by design when every check holds — "a line that
+    # always says all good stops being read before the day it says something else" — and it reports
+    # only BROKEN, malformed and contradictions. So "unverifiable" reaches nobody at all: a glob
+    # that matches no file, a pattern the guards refuse, or a check past MAX_CHECKS looks exactly
+    # like a rule with no check trailer, which is the silent-failure class this whole module exists
+    # to close, one layer up (R12 agent 5).
+    #
+    # Here, where a person is asking about workspace health, the count that is silent in a session
+    # is the one worth saying — including how many DO hold, because that is the number that makes
+    # "3 unverifiable" mean something.
+    try:
+        _rc_titled = memory.rules_with_titles(root)
+        _rc_results = rulecheck.run(root, _rc_titled) if _rc_titled else []
+    except Exception:
+        _rc_results = []
+    if _rc_results:
+        _rc_hold = sum(1 for r in _rc_results if r[1] == "holds")
+        _rc_broken = sum(1 for r in _rc_results if r[1] == "BROKEN")
+        _rc_unver = sum(1 for r in _rc_results if r[1] == "unverifiable")
+        _rc_bad = sum(1 for r in _rc_results if r[1] == "malformed")
+        print(f"\n  {len(_rc_results)} mechanical rule check(s): {_rc_hold} hold"
+              + (f", {_rc_broken} BROKEN" if _rc_broken else "")
+              + (f", {_rc_bad} malformed" if _rc_bad else "")
+              + (f", {_rc_unver} could not run" if _rc_unver else ""))
+        if _rc_unver or _rc_bad:
+            # Named, not counted: a check that cannot run is indistinguishable from a rule nobody
+            # meant to check mechanically, and the name is what tells the two apart.
+            for _t, _st, _d in _rc_results:
+                if _st in ("unverifiable", "malformed"):
+                    print(f"    `{mdblock.as_quoted(_t, 60)}` — {mdblock.as_quoted(_d, 110)}")
+
+    # 🐛 [2026-09-06] `aging.check()` was reachable from `chamnan-age` and from nowhere else, so a
+    # stored lesson naming a version no environment declares was visible in one command and
+    # invisible in the one people actually run to ask "is this workspace healthy". Every other
+    # health signal in this section is here for exactly that reason (R12 agent 5).
+    #
+    # A COUNT and a pointer, not the findings themselves: `chamnan-age` exists, prints them in
+    # full, and this section is a list of one-line signals. Duplicating its output here would make
+    # the report longer than the thing it summarises.
+    if ws.enabled("environments", root):
+        try:
+            _age_found, _age_unver, _age_refusal = aging.check(root)
+        except Exception:
+            _age_found, _age_unver, _age_refusal = [], [], None
+        # The refusal is reported as a refusal, never as an empty result -- the distinction this
+        # whole module exists to keep. A workspace with no environments.md at all is not a finding
+        # and not a refusal worth a line; it is the common case.
+        if _age_refusal and environments.path(root).is_file():
+            print(f"\n  version aging not checked — {mdblock.as_quoted(_age_refusal, 120)}")
+        elif _age_found or _age_unver:
+            if _age_found:
+                _n = len(_age_found)
+                print(f"\n  {_n} stored entr{'y' if _n == 1 else 'ies'} name"
+                      f"{'s' if _n == 1 else ''} a version no fresh environment declares")
+            if _age_unver:
+                _u = len(_age_unver)
+                print(f"  {_u} more can{'' if _u == 1 else 'not'} be checked at all — the only "
+                      f"environment declaring that version has gone cold")
+            print("    `chamnan-age` names them, with what is declared beside each claim.")
 
     # A pointer to knowledge that was never written. Same shape as a MAP.md entry naming a file that
     # is gone, and reported in the same spirit: here, where a person looks at workspace health,
@@ -372,7 +522,7 @@ def command_summaries():
     out = {}
     for name in known_commands():
         try:
-            head = (HERE / name).read_text(encoding="utf-8", errors="replace")[:400]
+            head = (HERE / name).read_text(encoding="utf-8-sig", errors="replace")[:400]
         except OSError:
             continue
         for line in head.splitlines():
@@ -405,9 +555,16 @@ def print_usage(root):
             what = f"  — {what[:58]}" + ("…" if len(what) > 58 else "")
         print(f"  {name:<{width}}   {n:>3} time{'s' if n != 1 else ''}{what}")
     if oldest and newest:
+        # 🐛 "exact" was printed whatever the log held. A line a killed process tore in half is
+        # skipped by `workflows.read` — correctly — and the count of those was thrown away, so the
+        # sentence claimed a precision the number did not have (R1 agent 4).
+        _torn = len(workflows.LAST_SKIPPED)
+        _exact = (f"so these counts are exact for that window" if not _torn
+                  else f"and {_torn} unreadable line{'s' if _torn != 1 else ''} "
+                       f"{'were' if _torn != 1 else 'was'} skipped, so these counts are a floor")
         print(f"  (from the calls currently logged, {oldest[:10]} to {newest[:10]} — "
               f"commands.jsonl keeps {workflows.KEEP_DAYS} days; chamnan's own commands are never "
-              f"evicted, so these counts are exact for that window)")
+              f"evicted, {_exact})")
     else:
         print("  (nothing logged yet)")
 
@@ -462,10 +619,12 @@ def _read_pointer_log(root):
         return 0, {}
     fired, named = 0, {}
     try:
-        for line in log.read_text(encoding="utf-8").splitlines():
+        for line in log.read_text(encoding="utf-8-sig").splitlines():
             try:
                 rec = json.loads(line)
             except (ValueError, RecursionError):
+                continue
+            if not isinstance(rec, dict):
                 continue
             fired += 1
             for path in rec.get("named") or []:
@@ -524,7 +683,15 @@ def main(argv):
     # cannot tell "you are in the wrong directory" from "your workspace is empty", and those call
     # for opposite next steps (R21 agent 5).
     if not ws.workspace(root).is_dir():
-        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        # 🐛 [2026-09-06] A dead end in six of ten commands. `chamnan-context` was given the way
+        # out on 2026-09-05 and its siblings were not, and `chamnan-impact` carried BOTH — this
+        # sentence, and the actionable one 46 lines below it for a near-identical condition — so
+        # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
+        # ordering accident rather than anything they controlled. No test ran any of the six
+        # against a directory that genuinely has no workspace (R15 agent 3).
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
         return 1
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")

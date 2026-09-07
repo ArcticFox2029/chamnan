@@ -83,5 +83,6 @@ def install(root, body, command=""):
                         f"precedence and hide it, and writing anything lower in Zed's list would be "
                         f"a file it never opens. Nothing written.")
 
-        write_target(target, render(body))
+        if not write_target(target, render(body)):
+            raise OSError(f"{target.path} could not be written")
         return target.path

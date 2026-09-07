@@ -15,6 +15,15 @@ So each adapter is a plain module with the same four names and no inheritance be
 A new agent is a new file. Nothing here has to change for one to be added, and nothing an
 existing adapter does can be altered by adding one.
 
+**"No shared base class" is about RENDERING, and only about rendering.** Writing is the opposite:
+`safe_target` / `held_target` / `read_target` / `write_target` are one funnel every adapter goes
+through, including the four with a custom `install()` (`generic`, `gemini`, `hermes`, `zed`).
+That funnel is what closed the symlink-escape and silent-write-failure classes, and `safe_target`'s
+own docstring says why it had to be central -- it was the ninth time a guard had been added to some
+members of a set and forgotten in the others. So: no shared render logic, one shared write funnel.
+Read as a blanket principle, the paragraph above would point a new adapter at hand-rolling its own
+`install()`, which is exactly the mistake the funnel exists to make impossible.
+
 **What every adapter writes is generated and per-developer, and none of it should be committed.**
 Two people on one repository may use two different agents, and neither wants the other's context
 file in their tree. `install()` adds the target to `.chamnan/.gitignore` rather than assuming.
@@ -26,6 +35,7 @@ pull-request author the one thing it exists to withhold.
 import contextlib
 import errno
 import os
+import re
 import stat
 
 import workspace as ws
@@ -312,7 +322,7 @@ def read_target(target):
     """
     if target.dir_fd is None:
         try:
-            return target.path.read_text(encoding="utf-8")
+            return target.path.read_text(encoding="utf-8-sig")
         except FileNotFoundError:
             return None
     try:
@@ -326,12 +336,19 @@ def read_target(target):
                 f"outside the repository, and this adapter merges what it reads into a file it "
                 f"then writes here.") from exc
         raise
-    with os.fdopen(fd, "r", encoding="utf-8") as fh:
+    with os.fdopen(fd, "r", encoding="utf-8-sig") as fh:
         return fh.read()
 
 
 def write_target(target, text):
     """Replace the target atomically, through the held handle. Returns True on success.
+
+    CALLERS MUST CHECK THE RESULT. That sentence is load-bearing: `tests/run_tests.py` walks this
+    package for it and fails on any call site that throws the answer away. It is here because all
+    seven sites did exactly that, so a read-only target was left untouched while every adapter
+    reported success — and adding an eighth unchecked site is the obvious way for that to come
+    back. `ws.atomic_write_text` deliberately carries no such sentence: it is best-effort by
+    contract, a failed write there must not stop a session starting, and the caller decides.
 
     Same two properties `ws.atomic_write_text` carries and for the same reasons -- a per-process
     staging name so two writers never share one, and a refusal to replace a file the user has made
@@ -378,7 +395,34 @@ def _exists_at(target):
 
 # Written into every file the shared writer produces, and the first thing `_looks_generated` looks
 # for. A person does not type this by accident, which is the entire property a heading lacked.
-MARKER = "<!-- chamnan:generated — safe to delete; `chamnan-context --write` recreates it -->"
+# 🐛 This line used to read "safe to delete; `chamnan-context --write` recreates it", and
+# doing exactly what it said broke the thing it describes. The marker IS the provenance: with
+# it gone, chamnan can no longer tell its own output from a file somebody wrote, so the next
+# `--write` refuses rather than recreating — which is the cautious behaviour and the right
+# one, since guessing is what destroyed a user's notes twice. What was wrong was the sentence
+# (R3 agent 4). It now says what actually happens, and names the one move that does work.
+MARKER = ("<!-- chamnan:generated — this line is how chamnan knows it wrote this file. "
+          "Delete the whole file to start over; `chamnan-context --write` then recreates it. -->")
+
+
+# A matched fence pair, whatever the six hex digits are. `section()` in the session-start hook
+# generates the nonce fresh on every run, so this cannot be typed by hand and cannot be stale.
+_FENCE_PAIR = re.compile(r"\[repo:([0-9a-fA-F]{6})\](?s:.)*?\[/repo:\1\]")
+
+
+
+def _opens_in_chamnans_voice(body):
+    """Whether the first non-blank line under `## chamnan` is one chamnan itself writes.
+
+    The framing sentence has opened every generated block since 1.8.0 and its wording is unchanged
+    in the shipped 1.17.0, 1.18.1 and 1.20.0, so no real pre-marker file stops being recognised.
+    The ledger line is the fallback for a block with no fenced section to frame.
+    """
+    for line in body.splitlines()[1:]:
+        if not line.strip():
+            continue
+        return line.startswith("_Blocks fenced with [repo:") or line.startswith("_chamnan · ")
+    return False
 
 
 def _looks_generated(text):
@@ -427,7 +471,43 @@ def _looks_generated(text):
         body = body[end + 4:].lstrip()
     if not body.startswith("## chamnan"):
         return False
-    return [ln for ln in body.splitlines() if ln.startswith("## ")] == ["## chamnan"]
+    # Two chamnan-authored signals, neither of which a person types: the opening framing sentence,
+    # and a MATCHED `[repo:<nonce>]` pair whose nonce is generated fresh on every run. Together
+    # they are stronger evidence than the count guard below, and they are checked ahead of it
+    # because that guard refuses a REAL pre-marker file: the Architecture index carries a
+    # `## \`path\`` heading per file, so every generated block for a repository with more than a
+    # roll-up's worth of files has a second `## ` line. Measured on HEAD before this change --
+    # a genuine 1.17-era file was refused and the hand-written note was accepted, which is the
+    # worst possible pair of answers.
+    if _opens_in_chamnans_voice(body) and _FENCE_PAIR.search(body):
+        return True
+    if [ln for ln in body.splitlines() if ln.startswith("## ")] != ["## chamnan"]:
+        return False
+    # 🐛 Third version, third failure in the same direction. "Only heading is `## chamnan`" is
+    # exactly the shape of an ordinary note a person writes ABOUT chamnan — it is the natural
+    # heading for one — so a hand-written file saying "My own notes about how we use chamnan here"
+    # was replaced without warning, frontmatter and all (R3 agent 4). The comment above argues that
+    # a human file "has to literally begin that way to be replaced, at which point it is chamnan's
+    # own output". That does not follow, and this is what it cost.
+    #
+    # The MARKER above would settle it, but it only shipped in 1.20.0, so a file written by 1.17
+    # through 1.19 carries none and requiring it would refuse to update a real user's real file.
+    #
+    # 🐛 Fourth version, fourth failure in the same direction. "An italic aside, or a `###`
+    # section" was still a SHAPE, and an italic first line is exactly how a person writes a warning
+    # — `_Internal note: ask Bob before touching this._` — so a hand-written QWEN.md opening that
+    # way, with ordinary prose under it, was replaced start to finish by `chamnan-context --write`
+    # (R10 agent 2). Worse here than anywhere else in the plugin: these targets sit OUTSIDE
+    # `.chamnan/`, and chamnan's own printed advice for every one of them is to gitignore it, so
+    # its instructions arrange for there to be no git history to recover from.
+    #
+    # The lesson three rounds drew and none of them applied: recognise chamnan's own VOICE, not the
+    # shape a note about chamnan is likely to take. Every generated block since 1.8.0 opens with
+    # the fence-framing sentence, and every one of them contains a matched `[repo:<nonce>]` pair.
+    # Neither is something a person types: the nonce is generated per run. Checked against the
+    # wording actually shipped by 1.17.0, 1.18.1 and 1.20.0 -- unchanged in all three, so no real
+    # pre-marker file stops being recognised.
+    return _opens_in_chamnans_voice(body)
 
 
 def fixed_overhead(agent):
@@ -508,7 +588,15 @@ def install(root, agent, body, command=""):
                 f"adapter's output will carry it -- and run this again.")
         # The marker goes LAST: several targets require YAML frontmatter as their first bytes, and
         # a provenance line ahead of that would break the format it is meant to protect.
-        write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n")
+    # 🐛 `write_target` returns True on success and its own docstring says so, and not one of the
+    # seven call sites looked. A target the user had made read-only was left untouched while every
+    # adapter reported success and `chamnan-context --write` printed `-> <path>` and exited 0 —
+    # same inode, same bytes, a stale file the user now believes is current. That is the untruth
+    # this release has already fixed twice elsewhere, in the writer nobody had checked
+    # (R3 agent 4). The result travels back to the caller now, and a failure is said out loud.
+        if not write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n"):
+            raise OSError(f"{target.path} could not be written — it may be read-only, or on a "
+                          f"filesystem that refused the replace.")
     return target.path
 
 

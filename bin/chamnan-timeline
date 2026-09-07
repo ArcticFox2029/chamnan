@@ -77,7 +77,7 @@ def cmd_show(root, ident):
     path = _resolve_or_complain(root, ident)
     if path is None:
         return 1
-    print(path.read_text(encoding="utf-8", errors="replace").rstrip())
+    print(path.read_text(encoding="utf-8-sig", errors="replace").rstrip())
     return 0
 
 
@@ -147,7 +147,15 @@ def cmd_for(root, target):
 def main(argv):
     root = ws.find_root()
     if not ws.workspace(root).is_dir():
-        print("chamnan: no .chamnan workspace here", file=sys.stderr)
+        # 🐛 [2026-09-06] A dead end in six of ten commands. `chamnan-context` was given the way
+        # out on 2026-09-05 and its siblings were not, and `chamnan-impact` carried BOTH — this
+        # sentence, and the actionable one 46 lines below it for a near-identical condition — so
+        # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
+        # ordering accident rather than anything they controlled. No test ran any of the six
+        # against a directory that genuinely has no workspace (R15 agent 3).
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
         return 1
     if not ws.enabled("timeline", root):
         print("chamnan: timeline is disabled in .chamnan/config.json")
@@ -189,7 +197,15 @@ def main(argv):
     files = []
     if "--files" in note_parts:
         at = note_parts.index("--files")
-        files = [f for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
+        # 🐛 [2026-09-07] These land in a TRACKED `.chamnan/threads/*.md` file, and an absolute path
+        # was written verbatim — so a commit carried one developer's machine layout, meaningless to
+        # everyone who pulls it and to the same person on another machine. `_relativise` is defined
+        # forty lines above and already used by `for` and by chamnan-impact, but only on the QUERY
+        # side; the WRITE side, which is what reaches the commit, was never wired to it. Claude Code
+        # requires absolute paths for Read and Edit, so an agent recording what it touched types
+        # exactly the shape that breaks. The sibling command `chamnan-promote` had this same bug
+        # fixed on 2026-09-04 (R18 agent 3).
+        files = [_relativise(root, f) for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
         note_parts = note_parts[:at]
     if not note_parts:
         print("chamnan: add needs a note — chamnan-timeline add <id> \"<what happened>\"",
@@ -199,4 +215,13 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    sys.exit(main(sys.argv[1:]))
+    # 🐛 [2026-09-06] A write the user asked for by name now RAISES rather than being discarded --
+    # see `workspace.write_or_raise`. Caught here rather than at each command, so the message is
+    # the same one everywhere and a command added later is covered without knowing this exists.
+    # What it replaces: `chamnan-timeline new` on a read-only directory printed "declared", named
+    # the file, printed the follow-up command to add to it, and exited 0, with nothing on disk.
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except OSError as _err:
+        print(f"chamnan: {_err} — nothing was written", file=sys.stderr)
+        sys.exit(1)

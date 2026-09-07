@@ -1,5 +1,6 @@
 ---
 description: Write down where this stretch of work stopped, so the next session continues instead of restarting. Use at the end of a working session, or when handing the repository to someone else.
+disable-model-invocation: true
 ---
 
 # Record where this session got to

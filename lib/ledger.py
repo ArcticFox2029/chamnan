@@ -18,6 +18,8 @@ with no further change here.
 import re
 import time
 
+import workspace as ws
+
 WEEK = 7 * 86400
 
 # Matches the date convention sessions.py documents for its own filenames: "sorted by filename,
@@ -41,7 +43,7 @@ def _files(root, *parts):
         d = d / p
     if not d.is_dir():
         return None
-    return sorted(p for p in d.glob("*.md") if p.is_file())
+    return sorted(p for p in d.glob("*.md") if p.is_file() and not ws.is_store_index(p))
 
 
 def _mtimes(paths):
@@ -107,7 +109,7 @@ def _dated(paths):
     for p in paths:
         ts = None
         try:
-            m = _AS_OF.search(p.read_text(encoding="utf-8", errors="replace"))
+            m = _AS_OF.search(p.read_text(encoding="utf-8-sig", errors="replace"))
             if m:
                 ts = _ymd_to_ts(*m.groups())
             if ts is None:
@@ -251,6 +253,24 @@ def inventory(root, now=None):
     rules = _files(root, "memory", "rules") or []
     cand = _files(root, "candidates") or []
     thr = _files(root, "threads") or []
+    # 🐛 [2026-09-06] `skills/` is a real store — the session block lists it, `/chamnan:capture`
+    # writes into it, and housekeeping keeps it forever — and it was the one store this inventory
+    # never mentioned. Someone asking `chamnan-report` "what does this workspace hold" was told
+    # about six stores and silently not about the seventh (R8 agent 5).
+    skl = _files(root, "skills") or []
+    # 🐛 [2026-09-06] And `environments.md` was the eighth, missed by the same fix. It is a store
+    # by every test this list applies: a write skill creates it, `chamnan-env` writes it, the
+    # session block reads it, and `chamnan-age` refuses to run without it. Someone asking
+    # `chamnan-report` what the workspace holds was told about seven and silently not the eighth
+    # (R12 agent 5). One file holding N entries, so it is counted the way `milestones.md` is --
+    # by ENTRY, not by file -- and dated by its newest `Checked:`, which is the field that says how
+    # much of it is still worth trusting.
+    from environments import entries as env_entries, path as env_path
+    try:
+        envs = env_entries(root)
+    except OSError:
+        envs = []
+    env_ts = [e["checked_ts"] for e in envs if e.get("checked_ts")]
     ms = milestone_entries(root)
 
     def last(ts):
@@ -264,6 +284,13 @@ def inventory(root, now=None):
         ("milestones.md", len(ms), last(_milestone_timestamps(root))),
         ("candidates/", len(cand), last(_mtimes(cand))),
         ("threads/", len(thr), last(_mtimes(thr))),
+        # By mtime, not by an As-of trailer: a skill is a procedure, not a dated claim, and the
+        # write skills do not stamp one on it.
+        ("skills/", len(skl), last(_mtimes(skl))),
+        # None when nothing in it carries a Checked: date, which is the honest answer -- an
+        # environment nobody has confirmed has no last-write worth reporting, and `chamnan-env`
+        # says so in its own words.
+        ("environments.md", len(envs), last(env_ts)),
     ]
 
 
@@ -323,7 +350,7 @@ def entries_naming_no_file(root, category="lessons"):
     for path in memory_entries(root, category):
         total += 1
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             naming_none += 1
             continue
@@ -351,7 +378,7 @@ def decisions_without_rejected(root):
     for path in memory_entries(root, "decisions"):
         total += 1
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             without += 1
             continue

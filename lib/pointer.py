@@ -37,7 +37,6 @@ import re
 import time
 from pathlib import Path
 
-import fnmatch
 
 import md
 import workspace as ws
@@ -159,7 +158,7 @@ def _governs(text, rel_path):
     except ImportError:
         return False
     rel = str(rel_path).replace("\\", "/")
-    for _mode, _pattern, glob in rulecheck.parse(text):
+    for _mode, _pattern, glob, _per_file in rulecheck.parse(text):
         # Matched the way rulecheck RESOLVES it, not the way fnmatch reads it. fnmatch's `*`
         # crosses `/`; Path.glob's does not, and rulecheck -- the module that actually runs the
         # check -- uses Path.glob. So `src/*.py` had the pointer telling a session that
@@ -197,7 +196,7 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
             try:
                 if f.stat().st_size > MAX_BYTES:
                     continue
-                text = f.read_text(encoding="utf-8", errors="replace")
+                text = f.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
                 continue
             for tier, needle in enumerate(wanted):
@@ -297,17 +296,28 @@ def _sweep_seen(wsdir, keep):
 def already_pointed(wsdir, session_id, rel_path):
     """True if this session has already been shown this file."""
     try:
-        d = json.loads(_seen_path(wsdir, session_id).read_text(encoding="utf-8"))
+        d = json.loads(_seen_path(wsdir, session_id).read_text(encoding="utf-8-sig"))
     except Exception:
         return False
-    return rel_path in (d.get("paths") or [])
+    # 🐛 A freshly parsed JSON value was used as a dict with no check that it was one. A file
+    # holding `[]`, `42` or `null` is valid JSON, so it parsed, and `.get` then raised
+    # AttributeError. coedit.py and chamnan_scratch_watch.py guard the identical shape with a
+    # comment naming this exact bug; these siblings did not (R4 agent 1).
+    if not isinstance(d, dict):
+        return False
+    paths = d.get("paths")
+    # `{"paths": 7}` is a dict AND valid JSON, so the shape check above passes and `in` then raises
+    # TypeError. The value's own shape has to be checked too, not just its container's.
+    return rel_path in paths if isinstance(paths, list) else False
 
 
 def mark_pointed(wsdir, session_id, rel_path):
     p = _seen_path(wsdir, session_id)
     try:
-        d = json.loads(p.read_text(encoding="utf-8"))
+        d = json.loads(p.read_text(encoding="utf-8-sig"))
     except Exception:
+        d = {"session": str(session_id), "paths": []}
+    if not isinstance(d, dict) or not isinstance(d.get("paths", []), list):
         d = {"session": str(session_id), "paths": []}
     if rel_path in d.get("paths", []):
         return

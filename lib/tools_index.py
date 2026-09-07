@@ -6,7 +6,7 @@ the exact same read/append/format logic instead of a second, slightly different 
 JSON-append implementations drifting apart is exactly the kind of bug this repo has been burned by
 before with concurrent writers of a shared file — see `main_app_concurrent_file_writes.md` in the
 repo this plugin is developed against, though that specific failure mode (two threads writing at
-once) does not apply here, since both callers are short-lived CLI invocations, never long-running.
+once) does not apply here, since every caller is a short-lived CLI invocation, never long-running.
 
 The schema is deliberately small: `name`, `desc`, `added` (ISO timestamp), `origin` (where the
 content came from — a file path for a promoted script, `"candidate:<slug>"` for one generated from
@@ -72,14 +72,23 @@ def load(root):
 
     Entries that are not dicts are dropped rather than taking the file down with them: a list with
     one bad row is still nine good tools, and losing the file loses the run counters too.
+
+    🐛 [2026-09-06] And an entry with NO `name` is dropped too, which is the same rule one level
+    down. The dict guard above was added and the field it exists to protect was not: `usage()` still
+    did `e["name"]`, and `[{"runs": 5}]` — a hand-edit, a bad merge, a half-written file, the same
+    causes the dict guard names — took `chamnan-report` down with a KeyError instead of reporting.
+    Five readers here subscript that field. Filtered ONCE, here, rather than guarded at each of the
+    five, because guarding five call sites is how this repository keeps arriving back at the same
+    defect: the rule applied to some members of a set and not the others.
     """
     try:
-        loaded = json.loads(path(root).read_text(encoding="utf-8"))
+        loaded = json.loads(path(root).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, RecursionError):
         return []
     if not isinstance(loaded, list):
         return []
-    return [e for e in loaded if isinstance(e, dict)]
+    return [e for e in loaded if isinstance(e, dict) and isinstance(e.get("name"), str)
+            and e["name"]]
 
 
 def _save(root, entries):

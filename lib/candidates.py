@@ -47,7 +47,8 @@ def directory(root):
 def slug(sequence):
     joined = "-".join(sequence)
     s = re.sub(r"[^a-zA-Z0-9]+", "-", joined.strip().lower()).strip("-")
-    return mdblock.filename_safe(s[:60].rstrip("-") or "candidate")
+    return mdblock.filename_safe(s[:60].rstrip("-")
+                                 or mdblock.fallback_name(joined, "candidate"))
 
 
 def filename(sequence):
@@ -68,8 +69,14 @@ def render(sequence, observed, last_seen, provenance):
     the point of writing, never stored, per the closed enum this whole module exists to enforce."""
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
-    title = " · ".join(sequence)
-    steps = ", ".join(sequence)
+    # 🐛 `title` was folded and `steps` was not — the same data, one line apart. A step carrying a
+    # newline and a `## chamnan` heading, or an ANSI escape, therefore landed raw in a file that
+    # gets COMMITTED, and the heading opened a section every later reader treats as real. Reachable
+    # end to end from `chamnan-promote --desc` through `tools/index.json` to
+    # `chamnan-candidates demote` (R2 agent 2). Folded per step rather than after joining, so a
+    # newline inside one step cannot survive by hiding next to the separator.
+    title = " · ".join(mdblock.one_line(s) for s in sequence)
+    steps = ", ".join(mdblock.one_line(s) for s in sequence)
     return (f"# {mdblock.one_line(title)}\n\n"
             f"**Sequence:** {steps}\n"
             f"**Observed:** {observed}\n"
@@ -87,10 +94,74 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred"):
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
     p = path_for(root, sequence)
+    if not p.is_file():
+        # 🐛 [2026-09-07] One workflow produced FIVE candidate files in this repository's own queue:
+        # `python3, git add, git commit`, the same three rotated two ways, and two more with an
+        # extra `python3` on the end. `repeated()` sees a sliding window over a command log, so one
+        # habit performed at slightly different offsets is detected as several sequences, and each
+        # one got a file. A reviewer then pays five decisions for one habit — and the queue's own
+        # count says five things are waiting when one is (R12 agent 5 predicted this; the queue
+        # then produced it).
+        #
+        # Merged only when the new sequence is a ROTATION of an existing one or a contiguous run
+        # inside it. Both mean the same commands in the same cyclic order, which is what a habit
+        # detected at a different offset looks like; two genuinely different sequences that happen
+        # to share commands are not related by either test.
+        existing = _same_habit(root, sequence)
+        if existing is not None:
+            kept, seen = existing
+            # The LONGER sequence is the better description of the habit, and the count is the
+            # larger of the two rather than their sum -- they are the same events counted twice.
+            merged = sequence if len(sequence) > len(seen) else seen
+            target = path_for(root, merged)
+            if kept != target:
+                try:
+                    kept.unlink()
+                except OSError:
+                    pass
+            prior = read(root, merged if merged is seen else seen)
+            try:
+                was = int(str((prior or ("0",))[0]).strip())
+            except (TypeError, ValueError):
+                was = 0
+            target.parent.mkdir(parents=True, exist_ok=True)
+            ws.atomic_write_text(target, render(merged, max(observed, was), when, provenance))
+            return target, False
     is_new = not p.is_file()
     p.parent.mkdir(parents=True, exist_ok=True)
     ws.atomic_write_text(p, render(sequence, observed, when, provenance))
     return p, is_new
+
+
+def _rotations(seq):
+    """Every cyclic rotation of `seq`, as tuples."""
+    t = tuple(seq)
+    return {t[i:] + t[:i] for i in range(len(t))}
+
+
+def _same_habit(root, sequence):
+    """(path, its sequence) of an existing candidate describing the same habit, or None.
+
+    The same habit at a different offset in the command log, which is what a sliding window
+    produces: a rotation of the same commands, or one sequence sitting contiguously inside the
+    other. Anything else is a different candidate and is left alone.
+    """
+    want = tuple(sequence)
+    for other in entries(root):
+        try:
+            fields = _fields(other.read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            continue
+        got = tuple(x.strip() for x in (fields.get("sequence") or "").split(",") if x.strip())
+        if not got or got == want:
+            continue
+        if want in _rotations(got) or got in _rotations(want):
+            return other, list(got)
+        longer, shorter = (got, want) if len(got) > len(want) else (want, got)
+        if any(longer[i:i + len(shorter)] == shorter
+               for i in range(len(longer) - len(shorter) + 1)):
+            return other, list(got)
+    return None
 
 
 def read(root, sequence):
@@ -101,7 +172,7 @@ def read(root, sequence):
     if not p.is_file():
         return None
     try:
-        fields = _fields(p.read_text(encoding="utf-8", errors="replace"))
+        fields = _fields(p.read_text(encoding="utf-8-sig", errors="replace"))
     except OSError:
         return None
     if "observed" not in fields:
@@ -114,7 +185,10 @@ def entries(root):
     d = directory(root)
     if not d.is_dir():
         return []
-    return sorted(p for p in d.glob("*.md") if p.is_file())
+    # Same refusal as threads/ and memory/: a symlink out of the repository is the repository's
+    # choice, arriving with a clone, and its content is not this store's to read.
+    return sorted(p for p in d.glob("*.md")
+                  if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
 
 
 def fields_of(path):
@@ -122,7 +196,7 @@ def fields_of(path):
     than the sequence `read()` needs. `{}` for a missing or unreadable file -- a review tool
     listing candidates should show what it can, not crash on one bad file."""
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return {}
     return _fields(text)
@@ -151,13 +225,13 @@ def set_provenance(path, provenance):
     a reviewer confirming or rejecting a candidate is still bound by the closed enum."""
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
-    text = path.read_text(encoding="utf-8", errors="replace")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
     new_line = f"**Provenance:** {provenance}"
     if _FIELD.search(text) and "provenance" in _fields(text):
         text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)
     else:
         text = text.rstrip("\n") + f"\n{new_line}\n"
-    ws.atomic_write_text(path, text)
+    ws.write_or_raise(path, text)
 
 
 def count(root):

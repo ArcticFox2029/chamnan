@@ -308,7 +308,14 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                     break
                 continue
 
-    body = header + "".join(parts) + notice(dropped, ceiling)
+    # What drove the budget, when it is something the reader can act on. `state.render` says so in
+    # the section itself when pinned content alone exceeds its budget; joining that to the list of
+    # casualties is what turns "the index is missing" into "unpin something and it comes back".
+    cause = ""
+    if dropped and any("pinned sections alone are" in part for part in parts):
+        cause = ("Pinned sections in `.chamnan/STATE.md` are taking the budget — unpin one to get "
+                 "these back.")
+    body = header + "".join(parts) + notice(dropped, ceiling, cause)
     if _oversize:
         body += _oversize_note()
     # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
@@ -451,10 +458,23 @@ def _dropped_title(dropped, i, order):
     return t if any(d[0] == t for d in dropped) else None
 
 
-def notice(dropped, ceiling=CEILING):
-    """One line naming what was left out and where to read it. Empty when nothing was dropped."""
+def notice(dropped, ceiling=CEILING, cause=""):
+    """One line naming what was left out and where to read it. Empty when nothing was dropped.
+
+    🐛 `cause` exists because the notice named the casualties and never the reason. A STATE.md with
+    twenty pinned sections consumes the budget — pinned content is deliberately never cut, which is
+    the whole point of a pin — and the Architecture index is then dropped to fit. Measured on an
+    eight-file fixture: twenty ordinary pinned threads, and the index goes.
+    #
+    # Nothing here is silent: the section is listed, with the file to read it in. But the two facts
+    # sat in different places. The reader was told `.chamnan/MAP.md` had been left out, and
+    # separately that pins are never cut, and nothing joined them — so the one action that would
+    # get the index back, unpinning something, was not visible from either. The trade is right; not
+    # saying what drives it is what was wrong (R3 agent 3).
+    """
     if not dropped:
         return ""
     named = ", ".join(f"{t} (`{s}`)" if s else t for t, s in dropped)
+    tail = f" {cause}" if cause else ""
     return (f"\n_Left out to stay under the {ceiling:,}-byte hook limit — read it if you need it: "
-            f"{named}._\n")
+            f"{named}.{tail}_\n")

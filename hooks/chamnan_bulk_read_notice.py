@@ -36,9 +36,13 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
-import mdblock  # noqa: E402
-import redact  # noqa: E402
-import tokens  # noqa: E402
+# 🐛 [2026-09-06] Only `workspace` is imported here. This hook runs on EVERY Read, and eight
+# early returns stand between its first line and the first use of the three modules below -- an
+# ordinary source file reaches none of them. Importing them anyway cost 22.9 ms of the 26.5 ms this
+# process spends above the interpreter's own floor, on every Read, to load code the call was never
+# going to run. `redact` alone is 21.7 ms of that, because it compiles 45 regexes doing it
+# (R7 agent 2). Each one is imported immediately before the line that uses it, not at the top of
+# the function, or the cost would simply move rather than go.
 import workspace as ws  # noqa: E402
 
 LOCKFILES = {
@@ -100,7 +104,7 @@ def _estimate(path, size):
     built in memory to price a file nobody is going to read.
     """
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
             head = fh.read(SAMPLE_BYTES)
     except OSError:
         return 0.0
@@ -108,6 +112,7 @@ def _estimate(path, size):
         return 0.0
     # Scale by bytes, not characters: a UTF-8 multibyte file has fewer characters than bytes.
     sampled = max(1, len(head.encode("utf-8", "replace")))
+    import tokens  # deferred; see the import block
     return tokens.estimate(head) * max(1.0, size / sampled)
 
 
@@ -222,6 +227,7 @@ def main():
     # `as_quoted` is the helper that already exists for exactly this, and its docstring records the
     # same class being fixed in the stale-index and broken-rule notices. Both call sites take it,
     # not one -- the half-applied fix is this repository's most repeated defect.
+    import mdblock  # deferred; see the import block
     name = mdblock.as_quoted(path.name)
     if why:
         note = (f"chamnan: `{name}` is {why} (~{est:,.0f} tokens). "
@@ -237,8 +243,14 @@ def main():
     # as_quoted makes a value inert; it does not make it non-secret, and its own docstring says the
     # caller still has to scrub the finished line. `peek` already scrubs the shape it returns, so
     # this covers the half that was not covered -- the header line built from the name.
+    # 🐛 `scrub` removes credentials and has never removed CONTROL characters. `json.dumps`
+    # escapes them, so the raw-stdout sweep that guards every other reader sees nothing --
+    # and the harness decodes them straight back into the model's context. See
+    # `redact.for_a_terminal`.
+    import redact  # deferred; see the import block
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse", "additionalContext": redact.scrub(note)}}))
+        "hookEventName": "PreToolUse",
+        "additionalContext": redact.for_a_terminal(redact.scrub(note))}}))
     return 0
 
 
