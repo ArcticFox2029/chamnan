@@ -2926,6 +2926,45 @@ check("the title cap says how many more there are", "and" in many and "more" in 
 for i in range(20):
     (mroot / "decisions" / f"d-{i:02d}.md").unlink()
 
+# 🐛 [2026-09-08] ...and WHICH ones it keeps was decided by filename alphabet, so a lesson written
+# today lost its slot to one written months ago that happens to start with an earlier letter. Found
+# on this repository's own store: two entries committed that day were absent from the block while an
+# older one was shown (R1 agent 4). Both siblings with the same cap -- milestones and timeline --
+# already sort by recency, and `rules_text` in the same module was fixed for an adjacent version of
+# this four days before.
+#
+# Named so the failure is unambiguous: alphabetically the OLD ones win, by recency the NEW ones do,
+# and the two orders disagree completely. mtimes are set explicitly rather than by write order,
+# because a test that depends on how fast the filesystem clock ticks is a test that fails on
+# somebody else's machine at 3am.
+import os as _os_mt
+for _i in range(memory_mod.MAX_TITLES + 4):
+    (mroot / "decisions" / f"zzz-new-{_i:02d}.md").write_text(
+        f"# New decision {_i}\n\nbody\n", encoding="utf-8")
+for _i in range(memory_mod.MAX_TITLES + 4):
+    (mroot / "decisions" / f"aaa-old-{_i:02d}.md").write_text(
+        f"# Old decision {_i}\n\nbody\n", encoding="utf-8")
+_now = time.time()
+for _i in range(memory_mod.MAX_TITLES + 4):
+    _os_mt.utime(mroot / "decisions" / f"zzz-new-{_i:02d}.md", (_now, _now - _i))
+    _os_mt.utime(mroot / "decisions" / f"aaa-old-{_i:02d}.md", (_now, _now - 90 * 86400 - _i))
+_recent = memory_mod.render_titles(memory_mod.titles(mem))
+check("AND THE ONES IT KEEPS ARE THE NEWEST, NOT THE ALPHABETICALLY FIRST",
+      "zzz-new-00" in _recent and "aaa-old-00" not in _recent)
+if "aaa-old-00" in _recent:
+    print("      DETAIL  a three-month-old entry took a slot from one written today")
+# The tie-break is the filename, which is what makes this safe on a fresh clone: git does not
+# preserve mtimes, so every file carries the checkout time and the order falls back to the previous
+# behaviour rather than to whatever order the filesystem hands back.
+for _f in (mroot / "decisions").glob("*.md"):
+    _os_mt.utime(_f, (_now, _now))
+_tied = memory_mod.render_titles(memory_mod.titles(mem))
+check("...and when every mtime is identical, as after a clone, the order is the filename again",
+      "aaa-old-00" in _tied)
+for _f in list((mroot / "decisions").glob("zzz-new-*.md")) + \
+          list((mroot / "decisions").glob("aaa-old-*.md")):
+    _f.unlink()
+
 # 🐛 [2026-08-27] title_of() has no length limit of its own, and render_titles() used to pass it
 # straight through — a genuinely unbounded injection channel.
 (mroot / "decisions" / "long-title.md").write_text(
@@ -11702,6 +11741,14 @@ try:
             check(f"THE FIRST-SESSION BANNER REPORTS WHAT HAPPENED, NOT WHAT WAS ATTEMPTED: {_label}",
                   _want in _br.stdout
                   and (("has just been created" in _br.stdout) == (_bd / ".chamnan").is_dir()))
+            # 🐛 [2026-09-08] The check above reads the LEADING clause, and the rest of the
+            # sentence was written for the success case and appended to all three branches — so the
+            # unwritable banner said `.chamnan/` could not be created AND that the directories
+            # inside it are "ready to write to", in one sentence, and this test passed over it
+            # (R1 agent 3). A banner that contradicts itself is worse than a silent one: it sends
+            # the reader to look for a directory the same sentence just said does not exist.
+            check(f"...and does not also claim the workspace is ready to write to: {_label}",
+                  ("ready to write to" in _br.stdout) == (_bd / ".chamnan").is_dir())
         finally:
             if _ro_fs:
                 os.chmod(_bd, 0o755)

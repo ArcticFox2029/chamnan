@@ -38,7 +38,7 @@ is plain markdown committed beside the code.
 
 **It is not tied to one tool.** It ships as a Claude Code plugin and as an ordinary command-line
 tool; it writes for two dozen other agents including Cursor, Windsurf, Copilot, Zed, Aider, Gemini
-CLI and Hermes Agent; it runs on macOS, Linux, Windows and WSL, all four exercised in CI on every
+CLI and Hermes Agent; it runs on macOS, Linux, Windows and WSL — the first three exercised in CI on every
 commit; and it works with any model from any vendor, because the model decides only how much of the
 index is worth sending, never where anything goes.
 
@@ -50,7 +50,7 @@ index is worth sending, never where anything goes.
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
 | *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — two dozen adapters, each writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
-| *"does it work on Windows"* | Yes, and on macOS, Linux and WSL — all four run in CI on every commit. [Per-OS instructions](#running-it-on-each-operating-system) |
+| *"does it work on Windows"* | Yes, and on macOS and Linux — those three run in CI on every commit, WSL as Linux. [Per-OS instructions](#running-it-on-each-operating-system) |
 | *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
 | *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
 | *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **98.2% recall / 100% precision** on a 55-secret, 43-decoy corpus, with the ceiling it cannot reach stated next to the number. |
