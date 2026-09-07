@@ -174,8 +174,10 @@ def _sections(text):
 def title_of(path, text=None):
     text = text if text is not None else path.read_text(encoding="utf-8-sig", errors="replace")
     for line in text.splitlines():
-        if line.startswith("# "):
-            return line[2:].strip()
+        # See timeline.title_of — one definition of what a heading is, in mdblock.
+        title = mdblock.heading_title(line)
+        if title is not None:
+            return title
     return path.stem
 
 

@@ -89,6 +89,36 @@ _CONTROLS = str.maketrans(
         + ["\u200b", "\ufeff"]}})
 
 
+# 🐛 [2026-09-07] `# ` and `[ \t]+` are ASCII, and a CJK keyboard types U+3000 IDEOGRAPHIC SPACE
+# after the hash without anything on screen saying so. Five heading patterns existed in `lib/`; the
+# three written with `\s+` matched it by luck, because Python's `\s` is Unicode-aware, and the two
+# written with `[ \t]+` did not. Neither group knew it was making a choice.
+#
+# What the miss cost, measured rather than argued: a `##<U+3000>SETTLED — do not raise these again
+# 📌` heading in STATE.md was not seen as a heading at all, so the section was ABSORBED INTO THE
+# ONE ABOVE IT — the pin went unrecognised and, worse, the pinned text now ages out with whatever
+# section swallowed it. Same shape as the en-dash bug `milestones.py` records: an unmatched heading
+# is not mis-parsed, it is eaten by its predecessor. A Thai thread titled with one read back as its
+# own filename.
+#
+# `[^\S\r\n]` is "whitespace that is not a line break" — every space character Unicode defines,
+# and never a newline, which is what `\s+` would wrongly allow to run past the end of the line.
+HEADING_SPACE = r"[^\S\r\n]"
+HEADING_LINE = re.compile(r"^(#{1,6})" + HEADING_SPACE + r"+(.*?)" + HEADING_SPACE + r"*$")
+
+
+def heading_title(line, levels=(1,)):
+    """The title on `line` when it is an ATX heading of one of `levels`, else None.
+
+    One definition, because this was written four different ways — two regexes and two
+    `startswith("# ")` tests — and the two spellings disagreed about what a space is.
+    """
+    m = HEADING_LINE.match(line)
+    if not m or len(m.group(1)) not in levels:
+        return None
+    return m.group(2).strip()
+
+
 def one_line(value):
     """A single-line field, forced onto one line before it is written into a shared file.
 

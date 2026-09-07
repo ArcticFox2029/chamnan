@@ -408,10 +408,34 @@ def _has_source_extension(name):
 # target's. The two lists here have drifted apart once before, so this sits in one helper they share
 # rather than being written out twice.
 def _names_to_judge(path):
-    """Every name that should be allowed to condemn this path: its own, and its target's."""
+    """Every name that should be allowed to condemn this path: its own, and its target's.
+
+    🐛 [2026-09-07] `realpath()` ran on EVERY path, and it is not a cheap call — it resolves the
+    whole chain component by component, ~12 `lstat` calls per file. Measured on the real
+    `mapper.indexable(sniff=False)` scan the SessionStart hook actually makes: this function was
+    3-4x more expensive than it needed to be, and 30-38% of the whole per-firing scan, on a tree
+    with no symlinks in it at all. Every one of those calls answered a question about a file that
+    is not a link.
+
+    (An earlier round put the figure at 8-9x; re-measured four ways it does not reproduce that
+    high. The direction held, the magnitude did not, and the smaller number is the one recorded.)
+
+    WHY THE GATE IS SAFE, which is the part that had to be settled before touching a security
+    filter. `realpath` differs from the path's own name only when something in the chain is a
+    link, and it can only rewrite ANCESTOR components — the leaf's own name survives resolution
+    unless the leaf itself is a link. So for a non-symlink leaf the second name is always the first
+    one, and computing it buys nothing.
+
+    The case that matters — an innocent-looking name pointing at a blocked keystore — still
+    resolves, because that leaf IS a symlink. Verified against the adversarial fixture already in
+    the suite, plus a dangling link, the reverse case (a blocked-looking name pointing at an
+    ordinary file), and the case the suite did not have: only an ancestor DIRECTORY is a link.
+    Identical verdicts before and after.
+    """
     names = {path.name.lower()}
     try:
-        names.add(Path(os.path.realpath(str(path))).name.lower())
+        if path.is_symlink():
+            names.add(Path(os.path.realpath(str(path))).name.lower())
     except (OSError, ValueError, RuntimeError):
         pass
     return names
