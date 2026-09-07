@@ -2188,8 +2188,12 @@ _GIT_TOO_OLD = False
 
 
 def git_is_too_old():
-    """Whether the git on PATH is present but too old for `-C` (git 1.8.5, 2013)."""
-    git_is_installed()          # populates the probe on first call
+    """Whether a `git -C` in this process has come back saying it does not know that option.
+
+    False until one has been attempted: this reports evidence already gathered, it does not go
+    looking. `git_can_speak_for` is what sets it, and every caller that needs this answer has been
+    through that function first.
+    """
     return _GIT_TOO_OLD
 
 
@@ -2214,20 +2218,17 @@ def git_is_installed():
         #
         # So the question is not "is git here" but "can git answer the way this package asks", and
         # the only honest way to know is to ask it once.
-        _GIT_ON_PATH = False
-        if shutil.which("git"):
-            try:
-                probe = _subprocess().run(["git", "-C", ".", "rev-parse", "--git-dir"],
-                                          capture_output=True, text=True, encoding="utf-8",
-                                          errors="replace", timeout=10)
-                # A git too old to know `-C` fails on the OPTION, not on the directory: "unknown
-                # option" rather than "not a repository". Either exit status is fine — running this
-                # outside a repository is normal — but an unrecognised option is not.
-                _GIT_ON_PATH = "unknown option" not in (probe.stderr or "").lower()
-                global _GIT_TOO_OLD
-                _GIT_TOO_OLD = not _GIT_ON_PATH
-            except git_cannot_answer():
-                _GIT_ON_PATH = False
+        # \U0001f41b [2026-09-07] This ran `git -C . rev-parse` here to find out whether the git on
+        # PATH is new enough to understand `-C` (1.8.5, 2013). It answered correctly and cost a
+        # process spawn on every session to do it — and `git_can_speak_for` runs `git -C` a moment
+        # later anyway, so the same fact was already available for free from a call we make
+        # regardless. CI showed the cost rather than the correctness: Windows went from 4m16s to
+        # 9m25s and three concurrency checks stopped fitting their window.
+        #
+        # So this is a cheap `which` again, and "too old" is recorded by the first real `git -C`
+        # that comes back saying it does not know the option. Detection where the evidence already
+        # is, rather than a question asked in advance.
+        _GIT_ON_PATH = shutil.which("git") is not None
     return _GIT_ON_PATH
 
 
@@ -2289,6 +2290,12 @@ def git_can_speak_for(root):
         out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
                                 stdin=_subprocess().DEVNULL, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=10)
+        # A git too old for `-C` fails on the OPTION, not on the directory — "unknown option"
+        # rather than "not a repository". Recorded here because this is the first `git -C` any
+        # session makes, so the answer costs nothing beyond the call already being made.
+        if out.returncode != 0 and "unknown option" in (out.stderr or "").lower():
+            global _GIT_TOO_OLD
+            _GIT_TOO_OLD = True
         answer = out.returncode == 0 and bool(out.stdout.strip())
         if not answer:
             answer = git_owns(root)          # a bare repository, which has no working tree

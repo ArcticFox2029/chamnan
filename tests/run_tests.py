@@ -16928,11 +16928,20 @@ _hook_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"),
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("INSTALLING A HOOK NEVER WRITES INTO THE REPOSITORY ABOVE",
       not (_outer / ".git" / "hooks" / "pre-commit").exists())
-# `_unprivate` on BOTH sides: macOS resolves a tempdir to /private/var/... and git prints the same,
-# but Path.resolve() and git's own output do not always agree on which spelling, so normalising one
-# side only compares two different paths and fails for a reason that is not the code's.
+# Applied to BOTH sides. Three platforms disagree about how to spell the same directory, and each
+# disagreement failed a check for a reason that had nothing to do with the code:
+#
+#   macOS    resolves a tempdir to /private/var/…, and git prints the same path either way
+#   Windows  git prints C:/Users/… while Path.resolve() gives C:\Users\…, and the drive letter
+#            and path segments differ in case between the two
+#
+# Written on macOS, these comparisons passed there and failed on Windows the first time CI saw
+# them — which is the argument for normalising both sides rather than the one that looked wrong.
 def _unprivate(text):
-    return str(text).replace("/private/var/", "/var/").replace("/private/tmp/", "/tmp/")
+    out = str(text).replace("/private/var/", "/var/").replace("/private/tmp/", "/tmp/")
+    if os.name == "nt":
+        out = out.replace("\\", "/").lower()
+    return out
 
 
 check("...and it says so rather than reporting success, in words that are true",
@@ -20659,8 +20668,15 @@ check("THE LOG IS BOUNDED BY RECORD COUNT AND CANNOT GROW WITHOUT LIMIT",
 check("...and the newest record is the one kept, not the oldest",
       f'x{_blocklog.KEEP + 24}' in _bl_lines[-1] or _blocklog.trend(_bl, 1))
 # Telemetry that can break a session is worse than none.
+# A path that cannot be created on EITHER platform. `/nonexistent-…` is not that: on Windows it
+# resolves against the current drive and `mkdir(parents=True)` happily succeeds, so the record was
+# written and the check failed for a reason that had nothing to do with the code. A file standing
+# where a directory must go is refused everywhere.
+_bl_blocked = Path(tempfile.mkdtemp(prefix="chamnan-bl-ro-")) / "in-the-way"
+_bl_blocked.write_text("not a directory", encoding="utf-8")
 check("...and a workspace it cannot write to costs the session nothing",
-      _blocklog.record(Path("/nonexistent-chamnan-path-xyz"), "### S\nx\n") is False)
+      _blocklog.record(_bl_blocked, "### S\nx\n") is False)
+_rmtree(_bl_blocked.parent, ignore_errors=True)
 # 🐛 [2026-09-07] Added, and the suite refused it: `chamnan-map --preview` and `--explain` answer
 # "what would a session receive" by RUNNING this hook, and their own help says they write nothing.
 # A log write there makes that false in the one command whose whole purpose is to look without
@@ -20679,75 +20695,96 @@ _rmtree(_bl.parent, ignore_errors=True)
 #
 # The message matters as much as the detection: telling somebody who HAS git that git is missing
 # sends them to install what is already there.
-_go = Path(tempfile.mkdtemp(prefix="chamnan-oldgit-"))
-(_go / "bin").mkdir()
+# POSIX only: the fixture is a `#!/bin/sh` script named `git`, placed ahead of the real one on
+# PATH. Windows has no shebang, so the shim would not run and the checks would be measuring the
+# fixture rather than chamnan. `_POSIX_SHELL` is this file's existing answer to that question.
+_OLDGIT_SKIPPED = 0
+if _POSIX_SHELL:
+    _go = Path(tempfile.mkdtemp(prefix="chamnan-oldgit-"))
+    (_go / "bin").mkdir()
 
 
-def _fake_git(rejects):
-    """A git on PATH that refuses one flag and delegates everything else to the real one."""
-    (_go / "bin" / "git").write_text(
-        "#!/bin/sh\n"
-        "for a in \"$@\"; do\n"
-        f"  if [ \"$a\" = \"{rejects}\" ]; then echo \"error: unknown option\" >&2; exit 129; fi\n"
-        "done\n"
-        f"exec {shutil.which('git')} \"$@\"\n", encoding="utf-8")
-    (_go / "bin" / "git").chmod(0o755)
-    env = dict(os.environ)
-    env["PATH"] = str(_go / "bin") + os.pathsep + env.get("PATH", "")
-    return env
+    def _fake_git(rejects):
+        """A git on PATH that refuses one flag and delegates everything else to the real one."""
+        (_go / "bin" / "git").write_text(
+            "#!/bin/sh\n"
+            "for a in \"$@\"; do\n"
+            f"  if [ \"$a\" = \"{rejects}\" ]; then echo \"error: unknown option\" >&2; exit 129; fi\n"
+            "done\n"
+            f"exec {shutil.which('git')} \"$@\"\n", encoding="utf-8")
+        (_go / "bin" / "git").chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = str(_go / "bin") + os.pathsep + env.get("PATH", "")
+        return env
 
 
-_probe = '''
+    # Written at column 0 on purpose: this is the source of a `python -c`, and `-c` rejects a
+    # leading indent on the first statement. Reindenting the block that holds it must not reindent
+    # the string it holds.
+    _probe = '''
 import sys, json
 sys.path.insert(0, sys.argv[1])
 import workspace as ws, sessions
 ws._GIT_OWNS.clear()
+# A dict literal evaluates in order, and `too_old` is recorded BY the first real `git -C` — which
+# is the call the sentence below makes. Reading the flag before that call reports False and tests
+# nothing, so the sentence is computed first, into a name.
+_sentence = sessions.where_git_says_you_stopped(sys.argv[3])
 print(json.dumps({
     "installed": ws.git_is_installed(),
-    "too_old": ws.git_is_too_old(),
     "owns_bare": ws.git_owns(sys.argv[2]),
-    "sentence": sessions.where_git_says_you_stopped(sys.argv[3]),
+    "sentence": _sentence,
+    "too_old": ws.git_is_too_old(),
 }))
 '''
-_bare = _go / "bare.git"
-subprocess.run(["git", "init", "-q", "--bare", str(_bare)], check=True)
-_work = _go / "work"
-(_work / "src").mkdir(parents=True)
-for _i in range(14):
-    (_work / "src" / f"m{_i}.py").write_text(
-        f'"""Module {_i}."""\nimport os\n\n\ndef f{_i}():\n    return os.getcwd()\n',
-        encoding="utf-8")
-subprocess.run(["git", "init", "-q", str(_work)], check=True)
-# `carry_forward` returns "" before it ever asks about git when there are no session records, so a
-# bare `git init` never reaches the branch under test. The workspace has to exist first — which is
-# also the only state a real user is in when this sentence is shown to them.
-subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_work),
-               capture_output=True)
+    _bare = _go / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(_bare)], check=True)
+    _work = _go / "work"
+    (_work / "src").mkdir(parents=True)
+    for _i in range(14):
+        (_work / "src" / f"m{_i}.py").write_text(
+            f'"""Module {_i}."""\nimport os\n\n\ndef f{_i}():\n    return os.getcwd()\n',
+            encoding="utf-8")
+    subprocess.run(["git", "init", "-q", str(_work)], check=True)
+    # `carry_forward` returns "" before it ever asks about git when there are no session records, so a
+    # bare `git init` never reaches the branch under test. The workspace has to exist first — which is
+    # also the only state a real user is in when this sentence is shown to them.
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_work),
+                   capture_output=True)
 
 
-def _ask(env):
-    out = subprocess.run([sys.executable, "-c", _probe, str(ROOT / "lib"), str(_bare), str(_work)],
-                         capture_output=True, text=True, encoding="utf-8",
-                         errors="replace", env=env)
-    return json.loads(out.stdout or "{}")
+    def _ask(env):
+        out = subprocess.run([sys.executable, "-c", _probe, str(ROOT / "lib"), str(_bare), str(_work)],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", env=env)
+        return json.loads(out.stdout or "{}")
 
 
-_old_c = _ask(_fake_git("-C"))
-check("A GIT TOO OLD FOR -C IS NOT REPORTED AS INSTALLED",
-      _old_c.get("installed") is False and _old_c.get("too_old") is True)
-check("...and the sentence names the real cause instead of sending them to install git",
-      "too old" in (_old_c.get("sentence") or "")
-      and "not on this machine" not in (_old_c.get("sentence") or ""))
+    _old_c = _ask(_fake_git("-C"))
+    # `git_is_installed()` reports what it says: a git too old for `-C` IS on PATH, and answering
+    # False there would be a second wrong sentence rather than a fix. What must be true is that the
+    # fact is known by the time anything needs it — recorded by the first real `git -C`, which
+    # `git_can_speak_for` makes anyway, rather than by a probe spawned in advance. The probe was
+    # correct and cost Windows CI 4m16s -> 9m25s and three concurrency checks.
+    check("A GIT TOO OLD FOR -C IS RECOGNISED, WITHOUT A PROBE TO FIND OUT",
+          _old_c.get("installed") is True and _old_c.get("too_old") is True)
+    check("...and the sentence names the real cause instead of sending them to install git",
+          "too old" in (_old_c.get("sentence") or "")
+          and "not on this machine" not in (_old_c.get("sentence") or ""))
 
-_old_adg = _ask(_fake_git("--absolute-git-dir"))
-check("A BARE REPO IS STILL RECOGNISED BY A GIT WITHOUT --absolute-git-dir",
-      _old_adg.get("owns_bare") is True)
+    _old_adg = _ask(_fake_git("--absolute-git-dir"))
+    check("A BARE REPO IS STILL RECOGNISED BY A GIT WITHOUT --absolute-git-dir",
+          _old_adg.get("owns_bare") is True)
 
-_real = _ask(dict(os.environ))
-check("...and a current git is unaffected by either fallback",
-      _real.get("installed") is True and _real.get("too_old") is False
-      and _real.get("owns_bare") is True)
-_rmtree(_go, ignore_errors=True)
+    _real = _ask(dict(os.environ))
+    check("...and a current git is unaffected by either fallback",
+          _real.get("installed") is True and _real.get("too_old") is False
+          and _real.get("owns_bare") is True)
+    _rmtree(_go, ignore_errors=True)
+else:
+    _OLDGIT_SKIPPED = 4
+    print(f"  [SKIP] {_OLDGIT_SKIPPED} old-git checks — the fixture is a /bin/sh "
+          f"shim named git, which this platform cannot execute")
 
 # The Quick Index parse is memoised on the text, because two callers in one firing were each
 # paying for it. Correctness first: a different text must not be served the previous answer.
