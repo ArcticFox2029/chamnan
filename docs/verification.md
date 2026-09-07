@@ -97,9 +97,19 @@ Documentation-only work is not a functional change and should not be described a
 information, not something to publish: 1.23.1 spent an evening pushing candidates to the public
 repository and collecting failed runs on it, each one visible forever beside the releases.
 
-Verified 2026-09-08: a pull request opened on the mirror dispatches all five jobs — ubuntu 3.8,
-ubuntu 3.13, macos 3.13, windows 3.8, windows 3.13 — exactly as the public one does. A push to a
-branch alone does not; the workflow fires on `pull_request` and on a push to `main`.
+Verified 2026-09-08, and in both directions, because a mirror that cannot go red is a mirror that
+proves nothing:
+
+- A pull request opened on it dispatches all five jobs — ubuntu 3.8, ubuntu 3.13, macos 3.13,
+  windows 3.8, windows 3.13 — exactly as the public one does. A push to a branch alone does not;
+  the workflow fires on `pull_request` and on a push to `main`.
+- The candidate that had just failed the public repository's Windows columns failed the mirror's
+  in the same place and on the same checks: `EVERY ONE OF 400 CONCURRENT INCREMENTS IS RECORDED`
+  at 31 and 207 of 400, against 41 and 187 on the public run. Different numbers, because the defect
+  is a timing one; the same finding.
+
+The mirror is slower — 6 to 9 minutes a job against 3 to 4 — which is the cost of it, and it is
+paid while the local suite is running anyway.
 
 ```bash
 git remote add staging https://github.com/ArcticFox2029/chamnan-test.git   # once per checkout

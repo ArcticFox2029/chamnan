@@ -1614,6 +1614,13 @@ LOCK_TIMEOUT = 2.0
 LOCK_WAIT_MAX = 30.0
 LOCK_STALE = 30.0
 
+# Why acquisitions gave up, counted rather than guessed. A lost update reports a NUMBER -- "83 of
+# 400" -- and a number cannot say whether the waiters timed out, hit the absolute ceiling, or fell
+# out of the loop on an exception nobody expected. Windows is the platform where this matters and
+# the one that cannot be debugged interactively from here, so the run has to carry its own
+# diagnosis home. Read by tests/test_concurrent_writers.py; nothing in the shipped path looks at it.
+LOCK_GIVEUPS = {"no_progress": 0, "waited_too_long": 0, "unexpected_error": 0, "taken": 0}
+
 
 def _replace_with_retry(tmp, dest, attempts=12, pause=0.02):
     """`os.replace`, which is not always allowed to proceed on Windows.
@@ -1900,6 +1907,8 @@ def exclusive(path):
                 seen = here
                 deadline = now + LOCK_TIMEOUT
             if now > deadline or now - started > LOCK_WAIT_MAX:
+                LOCK_GIVEUPS["waited_too_long" if now - started > LOCK_WAIT_MAX
+                             else "no_progress"] += 1
                 break
             time.sleep(0.01)
         # 🐛 A lock another process has just unlinked sits in Windows' DELETE-PENDING state for a
@@ -1919,10 +1928,19 @@ def exclusive(path):
             now = time.time()
             deadline = now + LOCK_TIMEOUT
             if now - started > LOCK_WAIT_MAX:
+                LOCK_GIVEUPS["waited_too_long"] += 1
                 break
             time.sleep(0.01)
-        except OSError:
+        except OSError as exc:
+            # Not FileExistsError and not PermissionError: something this loop has no plan for.
+            # It used to leave silently, which is how a platform-specific failure mode stays
+            # invisible -- record what it was so the next Windows run says so out loud.
+            LOCK_GIVEUPS["unexpected_error"] += 1
+            LOCK_GIVEUPS.setdefault("errors", []).append(
+                f"{type(exc).__name__}:{getattr(exc, 'errno', '?')}")
             break
+    if fd is not None:
+        LOCK_GIVEUPS["taken"] += 1
     try:
         yield fd is not None
     finally:
