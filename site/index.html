@@ -777,6 +777,36 @@ function contentUrl(owner, repo, ref, via, path){
     : `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`;
 }
 
+// The whole of boot, or none of it. A first version assigned `pyodide` as soon as the runtime
+// loaded and cached it there, so any failure in the steps after that left the page permanently
+// broken: the next attempt saw a truthy `pyodide`, returned early, and used a null `EXT`. The
+// symptom was an error with no message, which is the worst kind. Cache the PROMISE, and only
+// after every step has succeeded.
+function boot(){
+  if (booting) return booting;
+  booting = (async () => {
+    say(t("loadingPy"));
+    const py = await loadPyodide();
+    say(t("loadingCh"));
+    const files = await (await fetch("lib/manifest.json")).json();
+    try { py.FS.mkdir("/lib"); } catch (e) { /* already there on a repeat run */ }
+    for (const f of files){
+      const res = await fetch("lib/" + f);
+      if (!res.ok) throw new Error(`could not load chamnan module ${f} (${res.status})`);
+      py.FS.writeFile("/lib/" + f, await res.text());
+    }
+    py.runPython(`import sys; sys.path.insert(0, "/lib")`);
+    const exts = py.runPython(`
+import json, mapper
+json.dumps(sorted(mapper.EXT_LANG.keys()))
+`);
+    pyodide = py;
+    EXT = new Set(JSON.parse(exts));
+    return py;
+  })().catch(err => { booting = null; throw err; });
+  return booting;
+}
+
 const CAP = 400;
 
 // Delete the downloaded source. Called from a `finally`, so it runs when a measurement FAILS too.
