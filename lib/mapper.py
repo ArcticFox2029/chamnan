@@ -258,9 +258,9 @@ def _tracked_ambiguous(root):
     if key in _TRACKED_AMBIGUOUS:
         return _TRACKED_AMBIGUOUS[key]
     found = set()
-    if not ws.git_owns(root):
-        # See workspace.git_owns: an ANCESTOR's tracked-file list would decide which `build/` or
-        # `dist/` directories in THIS tree are committed source rather than generated output.
+    # `git ls-files` from a subdirectory lists that subtree only, relative to it — measured, not
+    # assumed — so the ancestor's tracked-file list cannot reach this tree.
+    if not ws.git_can_speak_for(root):
         return _TRACKED_AMBIGUOUS.setdefault(key, found)
     try:
         done = subprocess.run(["git", "-C", key, "ls-files", "-z"],
@@ -1938,7 +1938,9 @@ def _built_from(root):
     # inside a real repository, this stamped `Built from <sha>` into MAP.md with the ANCESTOR's
     # HEAD -- persisted to disk, describing a zero-commit tree as built from an unrelated
     # repository's commit, and read back by the staleness check on every later session.
-    if not ws.git_owns(root):
+    # The stamp is a commit id, and a subproject of a monorepo has the same HEAD as its
+    # repository — so this is `git_can_speak_for`, and the staleness check stops being blind there.
+    if not ws.git_can_speak_for(root):
         return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],

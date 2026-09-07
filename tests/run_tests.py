@@ -9684,8 +9684,10 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
     # commit -- the event this check exists to force. Sites and purposes differ because several
     # purposes use two sites; the README counts purposes, this counts sites.
     _gitcalls += _t.count('["git",')
+# Raised 2026-09-07: `git_can_speak_for` and `git_toplevel` are two new sites, and the paragraph
+# went from nine purposes to ten in the same commit — the event this check exists to force.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      3 <= _gitcalls <= 14)
+      3 <= _gitcalls <= 17)
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -16496,11 +16498,28 @@ check("...and the README says why Claude Code has none",
 # executable pre-commit hook into an unrelated repository, printing success (R6 acc3).
 #
 # Twelve sites in seven files, no shared guard -- the shape this repository keeps paying for. So
-# the check is over the SET: every `git -C` in shipped code sits in a function that consults
-# `workspace.git_owns`, and the thirteenth is caught the day it is written rather than the day
-# somebody's other repository grows a hook nobody installed.
+# the check is over the SET: every `git -C` in shipped code sits in a function that consults one of
+# the two guards, and the thirteenth is caught the day it is written rather than the day somebody's
+# other repository grows a hook nobody installed.
+#
+# 🐛 [2026-09-07] `git_owns` alone was too strong, and the cost of that was measured: in a monorepo
+# subproject — a layout `find_root`'s docstring calls supported — four features went dark in silence
+# (last-session empty over real uncommitted files, no `Built from` stamp so the staleness check was
+# blind, churn {} against 60 commits, and a refusal that called a tracked directory "not a git
+# repository"). Both guards count now, because the danger the original twelve shared was never
+# "asking git about a subdirectory" — it was asking an UNSCOPED question and using the answer for
+# this tree. `git_can_speak_for`'s docstring carries the measurement, including the one that removes
+# a distinction this codebase believed in: a directory holding a `.git` git refuses is
+# indistinguishable from an ordinary subdirectory, because git ignores it and answers about the
+# repository above either way.
+#
+# The write paths stay on `git_owns` and that is checked separately below: where the hook goes is a
+# question about ownership, not about scope.
+_GIT_GUARDS = ("git_owns", "git_can_speak_for")
 _GIT_OWNS_EXEMPT = {
-    ("workspace.py", "git_owns"),   # the guard itself; asking it about itself is the recursion
+    ("workspace.py", "git_owns"),            # the guards themselves; asking them is the recursion
+    ("workspace.py", "git_can_speak_for"),
+    ("workspace.py", "git_toplevel"),        # answers WHICH repository, for a message that names it
 }
 _ungated_git = []
 for _gp, _gsrc in _runtime_sources():
@@ -16524,16 +16543,18 @@ for _gp, _gsrc in _runtime_sources():
         if (_gp.name, _name) in _GIT_OWNS_EXEMPT:
             continue
         _body = ast.get_source_segment(_gsrc, _fn) if _fn else ""
-        if "git_owns" not in (_body or ""):
+        if not any(g in (_body or "") for g in _GIT_GUARDS):
             _ungated_git.append(f"{_gp.name}:{_gnode.lineno} in {_name}()")
 check("the git-escalation audit found the call sites it is meant to police",
       len([1 for _p, _s in _runtime_sources() if '"git", "-C"' in _s]) >= 6)
-check("EVERY `git -C <root>` CALLER FIRST ASKS WHETHER GIT AGREES THAT IS THE REPOSITORY",
+check("EVERY `git -C <root>` CALLER FIRST ASKS GIT WHETHER IT CAN SPEAK FOR THAT DIRECTORY",
       not _ungated_git)
 for _u in _ungated_git:
     print("      answers about whatever repository is above it:", _u)
-check("...and the one exemption is the guard itself, which cannot consult itself",
-      _GIT_OWNS_EXEMPT == {("workspace.py", "git_owns")})
+check("...and every exemption is a guard, which cannot consult itself",
+      _GIT_OWNS_EXEMPT == {("workspace.py", "git_owns"),
+                           ("workspace.py", "git_can_speak_for"),
+                           ("workspace.py", "git_toplevel")})
 
 # 🐛 [2026-09-06] The three hooks that run on EVERY tool call imported everything they might need
 # at module scope, and most calls need almost none of it: eight early returns stand between
@@ -16588,9 +16609,34 @@ check("...and every deferred module is still imported somewhere in its hook", no
 for _u in _unbound:
     print("      used but never imported:", _u)
 
-# The lint above proves every site ASKS. This proves the answer is right and that the three
-# symptoms are actually gone, on a real nested fixture rather than on a mock: a directory holding
-# one file and an empty `.git/`, four levels inside a real repository with a real commit.
+# The lint above proves every site ASKS. This proves the answer is right, on a real nested fixture
+# rather than on a mock: a directory holding one file and an empty `.git/`, four levels inside a
+# real repository with a real commit.
+#
+# 🔁 [2026-09-07] A DECISION REVERSED, with the measurement that reversed it, because reversing one
+# silently is how a fix gets flip-flopped. Three checks here used to assert that this directory got
+# NOTHING from git — no commit stamp, no working-tree state — on the reasoning that it is "not a
+# repository" and an ancestor must not answer for it. Two measurements taken while fixing the
+# monorepo-subproject blindness say that reasoning does not hold:
+#
+#   1. An empty `.git/` does not make a directory separate. `git add -A` in the outer repository
+#      TRACKS `a/b/fresh_repo/app.py` — measured, printed by the fixture's own check below. Git
+#      skips a directory holding a valid gitlink, not one holding an empty folder called `.git`.
+#      So this file's content genuinely came from the outer repository's HEAD, and stamping it is
+#      describing the tree accurately, not borrowing somebody else's history.
+#   2. `--show-toplevel`, `--absolute-git-dir` and `HEAD` return identical values for this
+#      directory and for an ordinary subdirectory. There is nothing here for chamnan to tell apart
+#      that git itself does not.
+#
+# What was genuinely wrong was never "asking git about a subdirectory" — it was asking an UNSCOPED
+# question and using the answer for this tree. `git log` with no pathspec was the one real instance
+# and it takes `--relative -- .` now. Everything else here was already scoped and was being refused
+# for a danger it did not have; the cost of that refusal was four features silently dark in a
+# monorepo subproject, which is a layout `find_root` documents as supported.
+#
+# The WRITE stays refused, and that is the part of the old decision that survives: where a hook goes
+# is a question about ownership, not about scope, and chamnan does not write into a repository it
+# was not pointed at. Only the sentence changed, from one that was false.
 _esc = Path(tempfile.mkdtemp(prefix="chamnan-esc-"))
 _outer, _inner = _esc / "outer", _esc / "outer" / "a" / "b" / "fresh_repo"
 (_inner / ".git").mkdir(parents=True)
@@ -16611,6 +16657,10 @@ _ancestor_head = _git("rev-parse", "--short=12", "HEAD").stdout.strip()
 check("the escalation fixture has a real ancestor repository to escalate INTO",
       len(_ancestor_head) == 12
       and _git("rev-parse", "--show-toplevel", cwd=_inner).stdout.strip() != str(_inner))
+# The premise of the reversal above, asserted rather than assumed: the outer repository really does
+# track the file inside this directory, so its HEAD really is the commit that content came from.
+check("...and the outer repository tracks the nested file, empty `.git` or not",
+      "a/b/fresh_repo/app.py" in _git("ls-files").stdout.split())
 
 check("GIT DOES NOT OWN A DIRECTORY WHOSE .git IT REFUSES", not ws.git_owns(_inner))
 check("...while it does own the real repository above it", ws.git_owns(_outer))
@@ -16619,23 +16669,42 @@ _map_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], c
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
 _esc_map = (_inner / ".chamnan" / "MAP.md")
 _esc_head = _esc_map.read_text(encoding="utf-8")[:600] if _esc_map.is_file() else ""
-check("THE INDEX IS NOT STAMPED WITH AN ANCESTOR REPOSITORY'S COMMIT",
-      _ancestor_head not in _esc_head and "Built from" not in _esc_head)
+check("THE INDEX IS STAMPED WITH THE COMMIT ITS CONTENT ACTUALLY CAME FROM",
+      _ancestor_head in _esc_head and "Built from" in _esc_head)
 
 _hook_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"),
                             "--install-git-hook"], cwd=str(_inner),
                            capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("INSTALLING A HOOK NEVER WRITES INTO THE REPOSITORY ABOVE",
       not (_outer / ".git" / "hooks" / "pre-commit").exists())
-check("...and it says so rather than reporting success",
-      _hook_out.returncode == 1 and "not a git repository" in _hook_out.stderr)
+# `_unprivate` on BOTH sides: macOS resolves a tempdir to /private/var/... and git prints the same,
+# but Path.resolve() and git's own output do not always agree on which spelling, so normalising one
+# side only compares two different paths and fails for a reason that is not the code's.
+def _unprivate(text):
+    return str(text).replace("/private/var/", "/var/").replace("/private/tmp/", "/tmp/")
+
+
+check("...and it says so rather than reporting success, in words that are true",
+      _hook_out.returncode == 1 and "not a git repository" not in _hook_out.stderr
+      and _unprivate(_outer.resolve()) in _unprivate(_hook_out.stderr))
 
 _esc_start = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                             input="{}", cwd=str(_inner), capture_output=True, text=True,
                             encoding="utf-8", errors="replace",
                             env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_inner)))
-check("THE SESSION BLOCK REPORTS NO GIT STATE IT DID NOT GET FROM THIS REPOSITORY",
-      "uncommitted file(s)" not in _esc_start.stdout and _ancestor_head not in _esc_start.stdout)
+# The tree is clean, so there is nothing to report either way — what must NOT appear is the outer
+# repository's own file, which is what an unscoped `git status` would have named.
+check("THE SESSION BLOCK REPORTS NO GIT STATE IT DID NOT GET ABOUT THIS DIRECTORY",
+      "real.py" not in _esc_start.stdout and "a/plain" not in _esc_start.stdout)
+_esc_dirty = (_inner / "app.py")
+_esc_dirty.write_text("x = 2\n", encoding="utf-8")
+(_outer / "real.py").write_text("outer = 2\n", encoding="utf-8")
+_esc_start2 = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                             input="{}", cwd=str(_inner), capture_output=True, text=True,
+                             encoding="utf-8", errors="replace",
+                             env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_inner)))
+check("...and with both dirty, it names ITS file and not the one above it",
+      "app.py" in _esc_start2.stdout and "real.py" not in _esc_start2.stdout)
 _rmtree(_esc, ignore_errors=True)
 
 # 🐛 [2026-09-06] docs/verification.md's worked example printed `220/220 checks passed` as the
@@ -19840,6 +19909,85 @@ if _CAN_DENY_WRITE:
     _rmtree(_nw_root.parent, ignore_errors=True)
 else:
     print(f"  [SKIP] {2} write-honesty checks — os.chmod does not restrict a directory here")
+
+
+# ------------------------------------------- a workspace in a monorepo subproject
+# 🐛 `find_root`'s docstring says a workspace deliberately placed in a subproject of a monorepo is
+# NOT relocated to the outer repository root — a supported layout. `git_owns` answers False there,
+# correctly (git's `--show-toplevel` is the outer root), and eight call sites gated on it, so four
+# features went dark with nothing said: the last-session section came back empty over real
+# uncommitted files, MAP.md never got its `Built from <sha>` line so the staleness check was
+# permanently blind, churn ranked nothing against 60 real commits, and `--install-git-hook` printed
+# "not a git repository" at a directory git tracks perfectly well (R7 agent 3).
+#
+# The guards were aimed at the wrong half: each says an ANCESTOR's answer must not be used for THIS
+# directory, which is true, and the answer to it is to SCOPE THE QUERY rather than refuse to ask.
+_mono = Path(tempfile.mkdtemp(prefix="chamnan-mono-")) / "monorepo"
+_msub = _mono / "subproject"
+(_msub / "src").mkdir(parents=True)
+(_mono / "other").mkdir()
+subprocess.run(["git", "init", "-q", str(_mono)], check=True)
+subprocess.run(["git", "-C", str(_mono), "config", "user.email", "t@t"], check=True)
+subprocess.run(["git", "-C", str(_mono), "config", "user.name", "t"], check=True)
+for _i in range(_MONO_COMMITS := 60):
+    (_msub / "src" / "app.py").write_text(f"def f():\n    return {_i}\n", encoding="utf-8")
+    (_mono / "other" / "unrelated.py").write_text(f"y = {_i}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(_mono), "add", "-A"], check=True)
+    subprocess.run(["git", "-C", str(_mono), "commit", "-qm", f"c{_i}"], check=True)
+(_msub / ".chamnan").mkdir()
+(_msub / "src" / "app.py").write_text("def f():\n    return 99\n", encoding="utf-8")   # uncommitted
+
+import rollup as _mono_rollup                       # noqa: E402
+check("git does not OWN a monorepo subproject", not ws.git_owns(_msub))
+check("...but it can still speak for it, which is the weaker question the reads need",
+      ws.git_can_speak_for(_msub))
+check("...and it can speak for the repository root too, so nothing was traded away",
+      ws.git_can_speak_for(_mono))
+check("...while a directory in no repository at all is still refused",
+      not ws.git_can_speak_for(Path(tempfile.mkdtemp(prefix="chamnan-norepo-"))))
+
+# F1 — the section that came back empty over a real uncommitted file.
+_mono_stopped = sessions.where_git_says_you_stopped(_msub)
+check("A MONOREPO SUBPROJECT IS TOLD WHERE ITS LAST SESSION STOPPED",
+      "src/app.py" in _mono_stopped)
+# ...and it is answered about ITSELF: the outer repository's own file must not appear.
+check("...and about itself only, not the repository above it",
+      "unrelated.py" not in _mono_stopped and "other/" not in _mono_stopped)
+
+# F2 — the commit stamp the staleness check reads.
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_msub),
+               capture_output=True, text=True, encoding="utf-8", errors="replace")
+_mono_map = (_msub / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("...and its index carries the commit it was built from",
+      "Built from " in _mono_map)
+
+# F3 — churn. The one query in the package that was genuinely unscoped: `git log` with no pathspec
+# lists the WHOLE repository, under paths relative to ITS root, which match nothing in this tree.
+_mono_churn = _mono_rollup._churn(_msub)
+check(f"...and its churn ranking is not empty against {_MONO_COMMITS} real commits",
+      bool(_mono_churn))
+check("...ranked under paths that exist in THIS tree, not the outer repository's",
+      set(_mono_churn) == {"src/app.py"})
+if set(_mono_churn) != {"src/app.py"}:
+    print("      ranked:", sorted(_mono_churn))
+# The repository root must be unchanged by all of this — the scoping is a no-op there.
+_root_churn = _mono_rollup._churn(_mono)
+check("...while the repository root still ranks its whole tree exactly as before",
+      set(_root_churn) == {"other/unrelated.py", "subproject/src/app.py"})
+
+# F4 — the refusal that named the wrong reason. The hook still is not installed here, and that is
+# right: it belongs to the outer repository, and writing into a repository chamnan was not pointed
+# at is the promise the tool keeps. Only the sentence changes.
+_mono_hook = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"),
+                             "--install-git-hook"], cwd=str(_msub), capture_output=True,
+                            text=True, encoding="utf-8", errors="replace")
+check("A REFUSAL DOES NOT CALL A TRACKED DIRECTORY 'NOT A GIT REPOSITORY'",
+      _mono_hook.returncode == 1 and "not a git repository" not in _mono_hook.stderr)
+check("...it names the repository this directory is actually in",
+      _unprivate(_mono.resolve()) in _unprivate(_mono_hook.stderr))
+check("...and still installs nothing here",
+      not (_msub / ".git").exists())
+_rmtree(_mono.parent, ignore_errors=True)
 
 
 # ---------------------------------------------------------------- cleanup

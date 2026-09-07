@@ -564,7 +564,8 @@ def _is_ignored(root, path):
     # to the file walk below rather than answering False, which is the documented degrade path and
     # the right one when git cannot speak for this directory (R6 acc3, first ten minutes).
     try:
-        if ws.git_owns(root):
+        # check-ignore is asked about one specific path, so it is scoped by construction.
+        if ws.git_can_speak_for(root):
             r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, timeout=10)
