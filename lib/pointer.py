@@ -61,7 +61,8 @@ SEEN_MAX_AGE = 2 * 24 * 3600     # a store older than this belongs to a session 
 EVENT_LOG = "logs/pointer.jsonl"
 
 _FRONT_NAME = re.compile(r"^description:\s*(.+?)\s*$", re.M)  # applied to front matter ONLY
-_HEADING = re.compile(r"^#{1,3}[ \t]+(.+?)\s*$", re.M)
+# See mdblock.HEADING_SPACE — `[ \t]` misses the space a CJK keyboard types.
+_HEADING = re.compile(r"^#{1,3}" + mdblock.HEADING_SPACE + r"+(.+?)\s*$", re.M)
 # An HTML-comment description, which is how the skills in this workspace carry theirs.
 _COMMENT_DESC = re.compile(r"<!--\s*description:\s*(.+?)\s*-->", re.S)
 

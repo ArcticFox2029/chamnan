@@ -135,8 +135,12 @@ def title_of(path, text=None):
         except OSError:
             return path.stem.replace("-", " ")
     for line in text.splitlines():
-        if line.startswith("# "):
-            return line[2:].strip()
+        # `mdblock.heading_title`, not `startswith("# ")`: a thread titled with a CJK keyboard's
+        # U+3000 after the hash read back as its own filename — measured, `เรื่องที่กำลังทำ` became
+        # `t`. Same definition the section splitters use now.
+        title = mdblock.heading_title(line)
+        if title is not None:
+            return title
     return path.stem.replace("-", " ")
 
 

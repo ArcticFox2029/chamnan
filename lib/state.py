@@ -64,7 +64,11 @@ PIN_MARK = "📌"
 
 AGES_PATH = "logs/state-ages.json"
 
-_HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*$", re.M)
+# `mdblock.HEADING_SPACE`, not `[ \t]`: a CJK keyboard types U+3000 after the hash and this
+# pattern did not see it, so the section was absorbed into the one above — pin and all. The
+# measurement and the other three spellings of this are in mdblock beside the definition.
+_HEADING = re.compile(r"^(#{1,6})" + mdblock.HEADING_SPACE + r"+(.*?)"
+                      + mdblock.HEADING_SPACE + r"*$", re.M)
 
 
 def _heading_text(raw):
