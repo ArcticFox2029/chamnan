@@ -7753,10 +7753,17 @@ _tmp_dest = _tmp_r / ".chamnan" / "state" / "important.json"
 _tmp_dest.write_text('{"old":true}', encoding="utf-8")
 _tmp_live = _tmp_dest.with_name(f"{_tmp_dest.name}.{os.getpid()}.tmp")
 _tmp_live.write_text('{"new":true}', encoding="utf-8")
-_tmp_proc = subprocess.Popen([sys.executable, "-c", "pass"])
-_tmp_proc.wait()
-_tmp_dead = _tmp_dest.with_name(f"{_tmp_dest.name}.{_tmp_proc.pid}.tmp")
+# 🐛 [2026-09-07] The first fix for this tested the writing PID for liveness. CI found what that
+# costs: PIDs are small integers and get REUSED, so an abandoned `x.999.tmp` was protected for ever
+# by an unrelated process holding PID 999 — passing on macOS where those PIDs were free, failing on
+# Linux and Windows where they were not. The reference for "now" comes from the FILESYSTEM instead:
+# the stamp is written first and its own mtime is the reference, so a file written a moment ago and
+# the stamp written a moment ago carry timestamps from the same clock at the same moment. A jump
+# moves both together and their difference is unchanged, which is what `time.time()` could not give.
+_tmp_dead = _tmp_dest.with_name(f"{_tmp_dest.name}.999.tmp")
 _tmp_dead.write_text("x", encoding="utf-8")
+_tmp_past = _time.time() - 2 * ws._ORPHAN_TEMP_AGE
+os.utime(_tmp_dead, (_tmp_past, _tmp_past))
 _tmp_real = _time.time
 try:
     _time.time = lambda: _tmp_real() + 400 * 86400
@@ -7765,8 +7772,9 @@ finally:
     _time.time = _tmp_real
 check("A SKEWED CLOCK CANNOT DELETE THE STAGING FILE OF A WRITE IN PROGRESS",
       _tmp_live.is_file())
-# And the sweep still does its job, or the fix would be "never prune".
-check("...while a staging file whose writer is gone is still swept",
+# And the sweep still does its job, or the fix would be "never prune" — including when the PID in
+# the name belongs to a live process, which on a busy machine a low number usually does.
+check("...while a staging file left an hour ago is still swept, whatever PID it names",
       _tmp_removed == 1 and not _tmp_dead.is_file())
 os.replace(str(_tmp_live), str(_tmp_dest))
 check("...so the interrupted write completes with its own content",
