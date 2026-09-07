@@ -124,7 +124,18 @@ def main():
         questions = [q for q in questions if q["id"] in only]
 
     data = load_results()
-    data.setdefault("corpus", str(corpus))
+    # 🐛 [2026-09-07] `str(corpus)` is the RESOLVED absolute path, and these result files are
+    # committed and published — so `bench/smoke_smallchat.json` shipped the author's full home
+    # directory path, `/Users/<name>/Documents/test-chamnan/smallchat`, to everyone who cloned the
+    # repository. That is the machine-specific path the project's own rule says must never reach a
+    # commit, written there automatically by the tool rather than typed by anyone. (Spelled with a
+    # placeholder here on purpose: quoting the real one to explain the fix would put it back.)
+    #
+    # The name is what the figures need to be read: "which corpus was this measured on" is
+    # answerable from `smallchat`, and "which directory it sat in on one laptop" answers nothing
+    # while identifying the person who ran it. Fixed in the generator rather than only in the file,
+    # because fixing the output alone means the next run puts it back.
+    data.setdefault("corpus", corpus.name)
 
     NO_PLUGIN.write_text(json.dumps({"enabledPlugins": {"chamnan@chamnan": False}}))
 
