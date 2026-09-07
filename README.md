@@ -606,11 +606,46 @@ on-disk `MAP.md`, 250 ms at fifty thousand. It now walks the tree once above a t
 below it, because which is cheaper is a ratio and not a rule — 68 ms for the same exact answer, and
 the measured crossover is written beside the constant so the next reader does not re-derive it.
 
-The redactor gained the personal-data identifiers that are not Thai. Each earned its place by the
-standard this module set for itself: measure the checksum against random input first. IBAN mod-97
-passes 1.02% of random alphanumerics and Brazil's CPF 1.03%, so shape is enough for both; India's
-Aadhaar Verhoeff passes 9.99% of random 12-digit numbers, so it is keyword-gated exactly like the
-bare Thai national ID, and for the same measured reason.
+### Card numbers and national IDs, in the scripts people actually type them in
+
+The redactor already refused to let a credit-card number or a Thai national ID reach a model, and
+this release found the hole in how: **every pattern was written in ASCII `[0-9]`, and Python's `re`
+does not match a Thai digit with it.** A checksum-valid national ID typed as ๑๒๓๔๕๖๗๘๙๐๑๒๓ — the
+ordinary way to write one in the one market this plugin was built for — went through untouched,
+sitting next to the Thai keyword the rule looks for. The same was true of Arabic-Indic, Persian,
+Devanagari, Tamil and fullwidth digits. Two separate research agents found it in one round, which
+is how a gap that wide survives: nobody had typed a number in anything but ASCII.
+
+It is one fold table now, applied before matching rather than added to every character class,
+because a rule spelled into six places is the defect this repository pays for most often. The fold
+is codepoint-for-codepoint, so the span found in the folded text is the span replaced in the
+original.
+
+What the layer covers, and why each rule is shaped the way it is:
+
+| | |
+|---|---|
+| **Credit cards** | Luhn **and** an issuer prefix that is actually issued — Visa, Mastercard including the 2-series, American Express, Discover, JCB, UnionPay. Grouped 4-4-4-4 and Amex's 4-6-5, separated by space, dash, dot, NBSP or the narrow spaces a spreadsheet or PDF copy-paste produces. `4111.1111.1111.1111` used to pass through whole, with the word "card" on the same line. |
+| **Thai national ID** | Checksum and a word naming it on the same line. |
+| **IBAN** | mod-97 over the 77-country length table. |
+| **CPF** (Brazil) | mod-11, dotted form. |
+| **Aadhaar** (India) | Verhoeff, keyword-gated. |
+
+**Each of those earned its shape from a measurement taken before the rule was written**, because
+the answer decided the design. A Luhn check passes **9.8% of random 16-digit numbers**, and the
+Thai national-ID checksum passes **10.0% of epoch-millisecond timestamps** — the commonest 13-digit
+run in any log or JSON file. A checksum alone would therefore destroy one timestamp in ten. So
+every rule here is checksum **and** context: the conventional grouped form, which nothing else is
+written in, or a word on the same line naming what the number is. A bare undelimited run with no
+word near it is left alone on purpose. IBAN mod-97 passes 1.02% of random alphanumerics and CPF
+1.03%, so shape alone is enough for those two; Aadhaar's Verhoeff passes 9.99%, so it is gated like
+the Thai ID and for the same reason.
+
+One false positive is accepted and the reasoning is in the code beside it: `device_id =
+4737-0000-0000-0002` is redacted, because it is card-shaped in every way this module can test. That
+costs a model one opaque `<REDACTED>` in a file regenerated from source. The other way round puts a
+live card number in the block that goes to the provider on every session, and those are not
+comparable.
 
 The invisible-character filter gained the code points Unicode itself deprecates and the invisible
 math operators, and deliberately did NOT gain the other sixty-two format characters that survive
