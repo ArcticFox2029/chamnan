@@ -90,9 +90,31 @@ Choose the number by what actually changed, not by diff size:
 
 Documentation-only work is not a functional change and should not be described as one in the notes.
 
-**3. The commit is in, and pushed.**
+**3. The commit is on a branch, and the pull request is green.**
 
-Tag after the push, not before, so the tag never points at a commit no one else can fetch.
+`main` is protected. A direct `git push origin main` is rejected with
+`GH006: Protected branch update failed` — and has been for every release since 1.18.0, so this is
+the normal path and not an exception to it.
+
+```bash
+git switch -c release/{version}
+git push -u origin release/{version}
+gh pr create --fill
+gh pr checks --watch          # five jobs: ubuntu, macos, windows, and two lint
+```
+
+Wait for all five. **Windows is the one that catches what a Mac cannot**, and it has caught a real
+regression in this repository more than once — a `#!/bin/sh` test fixture that will not run, a path
+compared with the wrong separator, a `/nonexistent-...` path that is writable there, and a
+subprocess spawn added per session that took CI from four minutes to nine. A red Windows job is a
+finding, not a flake; read it before re-running it.
+
+```bash
+gh pr merge --squash --delete-branch
+git switch main && git pull
+```
+
+Tag after the merge, not before, so the tag never points at a commit no one else can fetch.
 
 **4. Dry-run the tag.**
 
@@ -161,10 +183,24 @@ writes the version into `site/lib/manifest.json`, which is what the page display
 version bump, or the page announces the previous release. The suite has a check for the copy having
 drifted; it cannot check that you rebuilt after bumping rather than before.
 
-**b. Re-measure the sample table.** The thirteen rows in `PRE` are real measurements with a date
-beside them, and those repositories are worked on daily — the figures move. Re-run them through the
-page and update both the numbers and the date. A table that never changes is a table nobody is
-measuring, and this one is the page's evidence that it measures anything at all.
+**b. Re-measure the sample table.** The rows in `PRE` are real measurements with a date beside
+them, and those repositories are worked on daily — the figures move. A table that never changes is
+a table nobody is measuring, and this one is the page's evidence that it measures anything at all.
+
+```bash
+python3 site/remeasure.py chalk/chalk facebook/react …      # one JSON line per repository
+```
+
+`site/remeasure.py` reproduces the browser without one: it asks jsDelivr for the same listing the
+page asks for, falls back to the same GitHub tree API on the same 403, applies the same extension
+filter, size gate and 400-file cap, and runs the same modules. Verified against three published
+rows to the byte.
+
+**The listing's order is the whole reason it has to ask.** Where the cap binds, a different order is
+a different 400 files: reading the same repository from a clone's own tree order reported
+facebook/react at 4,792 KB against the page's 257 KB, and the clone was not the one that was wrong
+— it was answering a different question. A re-measurement that does not take the page's listing is
+not a re-measurement of the page.
 
 **c. Test the PUBLISHED page, not the local one.** A browser tab left open all afternoon holds the
 script it loaded, so a local check can pass against code the deployed copy does not have. Load the
