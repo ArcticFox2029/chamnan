@@ -13,6 +13,7 @@ No dependencies, no pytest — a plain check(name, condition) counter, so this r
 does, which is the same bar the plugin itself has to clear.
 """
 import ast
+import atexit
 import datetime
 import importlib.util
 import contextlib
@@ -57,6 +58,25 @@ def legal_name(text):
     if os.name != "nt":
         return text
     return "".join(c for c in text if c not in _WINDOWS_FORBIDS).rstrip(" .")
+
+# 🐛 [2026-09-08] Every `tempfile.mkdtemp()` in this file used to land in the real system temp
+# directory, and 15+ of the call sites never remove what they make -- a fixture used inline as a
+# throwaway argument has no name to pass to `_rmtree` later. Measured on this machine: **779
+# leftover `chamnan-*` directories**, spanning two days of local runs. It also falsifies a prior
+# round's assumption that the OS clears them: macOS's `/var/folders/.../T` is not swept the way
+# `/tmp` is, and that round's own fixture from two days earlier was still there (R1 agent 1).
+#
+# Fixed once, here, rather than at fifteen call sites -- a rule every future writer has to remember
+# is a rule that gets forgotten at the sixteenth. `tempfile.tempdir` redirects mkdtemp, mkstemp and
+# NamedTemporaryFile alike, including the ones inside the library code under test, so nothing has to
+# opt in. The whole tree goes at exit, however the run ended: `atexit` fires on a failed assertion
+# and on a `SystemExit` too, which is exactly when a fixture is most likely to be left behind.
+#
+# Set BEFORE anything else runs, because a module imported later may make its own at import time.
+_TMP_ROOT = tempfile.mkdtemp(prefix="chamnan-suite-")
+tempfile.tempdir = _TMP_ROOT
+atexit.register(lambda: shutil.rmtree(_TMP_ROOT, ignore_errors=True))
+
 
 def _rmtree(path, ignore_errors=False):
     """`shutil.rmtree`, but able to delete a `.git` directory on Windows.
