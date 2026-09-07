@@ -423,6 +423,13 @@ _ORPHAN_TEMP = re.compile(r"\.(\d+)\.tmp$")
 def _pid_is_alive(pid):
     """True when a process with `pid` exists. Unknown answers are reported as ALIVE.
 
+    🐛 [2026-09-07] Used by `exclusive()` and NOT by `prune_orphaned_temps`, which is where it
+    started. PIDs are small integers and get reused, so on a busy machine an abandoned staging file
+    named after a recycled PID is protected for ever — CI caught that on Linux and Windows while it
+    passed on macOS, where those numbers happened to be free. The sweep uses a filesystem-derived
+    reference now; a LOCK still needs this, because a lock file's mtime does not move while it is
+    held, so liveness is the only signal there is.
+
     🐛 [2026-09-06] The age bound above is computed from `time.time()`, and the same 400-day clock
     jump that empties a retention store makes a staging file written milliseconds ago look an hour
     old. `atomic_write_text` flushes its content and then calls `os.replace`; delete the staging
@@ -483,27 +490,37 @@ def prune_orphaned_temps(root=None):
             return 0
     except OSError:
         pass
-    cutoff = time.time() - _ORPHAN_TEMP_AGE
+    # 🐛 [2026-09-07] The first fix for the clock-jump case tested the writing PID for liveness and
+    # kept the file while it was alive. CI found what that costs: PIDs are small integers and get
+    # REUSED, so on any busy machine a genuinely abandoned `x.999.tmp` is protected for ever by an
+    # unrelated process that happens to hold PID 999. It passed on macOS, where those PIDs were free,
+    # and failed on Linux and Windows, where they were not — the shape of luck a suite exists to
+    # catch. (`_pid_is_alive` is still right for `exclusive()`, where the lock's mtime does not move
+    # while it is held and liveness is the only signal there is.)
+    #
+    # The reference for "now" comes from the FILESYSTEM instead, and that answers the original
+    # question properly. A file written a moment ago and the stamp written a moment ago carry
+    # timestamps from the same clock at the same moment, so a jump moves both together and their
+    # difference is unchanged — which is exactly what `time.time()` could not give. A write in
+    # progress is milliseconds old by that measure however wrong the clock is, and a file abandoned
+    # an hour ago is an hour old however wrong the clock is.
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        now = stamp.stat().st_mtime
+    except OSError:
+        now = time.time()             # cannot write a reference: fall back to the clock we have
+    cutoff = now - _ORPHAN_TEMP_AGE
     removed = 0
     for path in ws_dir.rglob("*.tmp"):
         try:
-            match = _ORPHAN_TEMP.search(path.name)
-            if not match or path.is_symlink() or not path.is_file():
-                continue
-            # The PID bound before the age bound, and deliberately so: age is the one a wrong
-            # clock can invert, liveness is not. See _pid_is_alive.
-            if _pid_is_alive(int(match.group(1))):
+            if not _ORPHAN_TEMP.search(path.name) or path.is_symlink() or not path.is_file():
                 continue
             if path.stat().st_mtime < cutoff:
                 path.unlink()
                 removed += 1
         except (OSError, ValueError):
             continue
-    try:
-        stamp.parent.mkdir(parents=True, exist_ok=True)
-        stamp.touch()
-    except OSError:
-        pass
     return removed
 
 
