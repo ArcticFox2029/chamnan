@@ -393,8 +393,34 @@ def titles(root):
                 title = ("⚠ " + title + " — this filename collides with another in the same store, "
                          "differing only by case or Unicode form; one of the two files may hold the "
                          "other's body. Read them before trusting either.")
-            found.append((category, title, path.name))
-    return found
+            found.append((category, title, path.name, _written_at(path)))
+    # 🐛 [2026-09-08] The cap below chose which entries a session sees BY FILENAME ALPHABET, so a
+    # lesson written today lost its slot to one written months ago whose title happens to start with
+    # an earlier letter. Reproduced on this repository's own store: two entries committed that day
+    # were absent from the block while an older one was shown (R1 agent 4).
+    #
+    # Both siblings that face the identical "more entries than the cap" problem already sort by
+    # recency -- `milestones.recent_titles` and `timeline.open_titles` -- and `rules_text` in THIS
+    # file was fixed for an adjacent version of it four days earlier. One more member of a set that
+    # did not get the rule.
+    #
+    # It is mtime rather than a date in the file, because these entries carry no date: they are a
+    # heading and a body, and inventing a metadata format for them is a bigger change than the bug.
+    # mtime is meaningless straight after a clone -- git does not preserve it, so every file gets
+    # the checkout time -- and that case falls back exactly to the previous behaviour, because the
+    # filename is the tie-break. Where it is meaningful is a workspace somebody is actually writing
+    # in, which is the only place the bug was ever felt.
+    found.sort(key=lambda row: (-row[3], row[0], row[2]))
+    return [(cat, title, name) for cat, title, name, _ in found]
+
+
+def _written_at(path):
+    """Last-modified time, or 0 when it cannot be read -- which sorts the entry to the end rather
+    than dropping it, on the same reasoning as `milestones`' undated entries: it still happened."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 # 🐛 [2026-08-27] title_of() reads a `# ` heading with no length limit of its own, and this was the

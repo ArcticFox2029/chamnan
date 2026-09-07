@@ -1624,20 +1624,32 @@ def main():
             # Three states, three sentences. Collapsing the last two would tell a `--preview`
             # reader their repository is unwritable, which is a different problem from the one
             # they have and would send them to fix the wrong thing.
-            if wsdir.is_dir():
-                _made = "has just been created"
-            elif ws.read_only():
-                _made = "would be created on the first real session — this is a preview, so it was not"
-            else:
-                _made = "could not be created, because this repository is not writable"
-            out.append(section(
-                "chamnan is set up in this repository",
-                f"`.chamnan/` {_made} — `memory/`, `sessions/`, `threads/`, `skills/`, "
-                "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
+            # 🐛 [2026-09-08] ...and the fix above patched the LEADING clause only. The rest of the
+            # sentence was written for the success case and was appended to all three, so a reader
+            # on an unwritable repository was told in one breath that `.chamnan/` could not be
+            # created and that the directories inside it are "ready to write to". The regression
+            # test asserted the leading clause and passed straight over the contradiction (R1
+            # agent 3). Three states, three WHOLE sentences now -- a shared tail is what made a
+            # three-way branch produce a two-thirds-wrong answer.
+            _inside = "`memory/`, `sessions/`, `threads/`, `skills/`, `tools/` and `config.json`"
+            _index_hint = (
                 "Nothing has been indexed yet. `chamnan-map` builds the architecture index, and "
-                "inside Claude Code `/chamnan:bootstrap` builds it and records a baseline; the write "
-                "skills listed above work from now on, whether or not that has been run.",
-                "(generated)"))
+                "inside Claude Code `/chamnan:bootstrap` builds it and records a baseline; the "
+                "write skills listed above work from now on, whether or not that has been run.")
+            if wsdir.is_dir():
+                _body = (f"`.chamnan/` has just been created — {_inside} are ready to write to, "
+                         f"and empty on purpose.\n\n{_index_hint}")
+            elif ws.read_only():
+                _body = (f"`.chamnan/` would be created on the first real session — this is a "
+                         f"preview, so nothing was written. {_inside} are what it will hold, and "
+                         f"none of them exists yet.\n\n{_index_hint}")
+            else:
+                _body = (f"`.chamnan/` could not be created, because this repository is not "
+                         f"writable. {_inside} do not exist and cannot be written to, so nothing "
+                         f"is being recorded — chamnan keeps reading what it can and stays quiet "
+                         f"about the rest. Making the repository writable, or pointing "
+                         f"`CLAUDE_PROJECT_DIR` at a copy that is, restores all of it.")
+            out.append(section("chamnan is set up in this repository", _body, "(generated)"))
         elif not (wsdir / "MAP.md").is_file():
             # 🐛 The section above is said ONCE, on the session that created the workspace. A user
             # who was not paying attention that minute never hears it again: every session after
