@@ -278,8 +278,8 @@ def historical_names(root, target):
     if key in _NAMES_CACHE:
         return _NAMES_CACHE[key]
     names = set()
-    if not ws.git_owns(repo):
-        # See workspace.git_owns: an ancestor's log would supply this file's rename history.
+    # Scoped by its own `-- <target>` pathspec, so a subproject gets its own history.
+    if not ws.git_can_speak_for(repo):
         return _NAMES_CACHE.setdefault(key, names)
     try:
         out = subprocess.run(

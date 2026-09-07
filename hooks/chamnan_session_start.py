@@ -477,7 +477,9 @@ def _map_is_current_by_git(root, map_path):
     Anything unconfirmable -- no git, no stamp, an unknown stamp, a real source change -- returns
     False, and the mtime path decides exactly as it did before this existed.
     """
-    if not ws.git_owns(root):
+    # The diff below carries `-- . :(exclude).chamnan`, so it is scoped to this directory and a
+    # monorepo subproject is answered about itself. See workspace.git_can_speak_for.
+    if not ws.git_can_speak_for(root):
         # See workspace.git_owns. Without this the diff below runs against an ANCESTOR repository,
         # where the stamped sha is either unknown (128, read as "no git") or -- worse -- a real
         # commit of somebody else's history, and the map is then declared current or stale on

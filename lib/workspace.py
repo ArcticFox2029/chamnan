@@ -2101,6 +2101,70 @@ def git_is_installed():
 _GIT_ON_PATH = None
 
 
+def git_toplevel(root):
+    """The working-tree root of the repository `root` belongs to, or None when there is none.
+
+    Exists so a refusal can name the repository the caller is actually in. `git_owns` returning
+    False has two very different meanings — "no repository anywhere" and "a repository, higher up"
+    — and a message that does not tell them apart sends the reader to check the wrong thing.
+    """
+    try:
+        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                stdin=_subprocess().DEVNULL, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=10)
+        return (out.stdout.strip() or None) if out.returncode == 0 else None
+    except (OSError, ValueError):
+        return None
+
+
+_GIT_SPEAKS = {}
+
+
+def git_can_speak_for(root):
+    """True when git recognises `root` as part of a repository — the weaker question `git_owns` is
+    not, and the right one for every READ that is path-scoped to `root`.
+
+    `git_owns` asks "is this directory exactly the repository". That is correct for a WRITE — where
+    the hook goes, whose HEAD gets stamped into a committed file — and it is too strong for
+    everything else, because a `.chamnan/` deliberately placed in a subproject of a monorepo is a
+    layout `find_root` documents as supported and `git_owns` answers False for. Four features went
+    dark there and nothing said so: "Where the last session stopped" returned empty with real
+    uncommitted files under it, `MAP.md` never got its `Built from <sha>` line so the staleness
+    check was permanently blind, churn ranking returned {} against 50+ real commits, and
+    `--install-git-hook` printed "not a git repository" at a directory git tracks perfectly well
+    (R7 agent 3).
+
+    🐛 The guards those four sites carry are not wrong, they are aimed at the wrong half of the
+    problem. Each says an ANCESTOR's answer must not be used for THIS directory — true, and the fix
+    for it is to SCOPE THE QUERY, not to refuse to ask. Measured: `git -C <subdir> status
+    --porcelain -- .`, `ls-files`, `check-ignore`, `log -- <path>` and `diff -- .` are all already
+    scoped to the subdirectory, and `rev-parse HEAD` is the same commit either way because it is
+    the same repository. The one that was not scoped was churn's `git log`, which listed the whole
+    monorepo with repository-root-relative paths; it takes `--relative -- .` now.
+
+    And one measurement that removes a distinction this codebase believed in: a directory holding a
+    `.git` git REFUSES — an interrupted `git init`, an empty `.git/` — is indistinguishable from an
+    ordinary subdirectory, because git simply ignores it and answers about the enclosing
+    repository. `--show-toplevel`, `--absolute-git-dir` and `HEAD` return identical values for
+    both. So there is nothing here to tell apart, and scoping is the whole answer for both.
+    """
+    key = str(Path(root).resolve())
+    if key in _GIT_SPEAKS:
+        return _GIT_SPEAKS[key]
+    answer = False
+    try:
+        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                stdin=_subprocess().DEVNULL, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=10)
+        answer = out.returncode == 0 and bool(out.stdout.strip())
+        if not answer:
+            answer = git_owns(root)          # a bare repository, which has no working tree
+    except (OSError, ValueError):
+        answer = False
+    _GIT_SPEAKS[key] = answer
+    return answer
+
+
 def git_owns(root):
     """True when git itself resolves `root` AS the repository, not as a directory inside one.
 

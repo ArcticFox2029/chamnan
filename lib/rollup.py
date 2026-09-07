@@ -77,10 +77,10 @@ def _head(root):
     from_disk = _head_from_disk(root)
     if from_disk:
         return from_disk
-    if not ws.git_owns(root):
-        # A directory holding a `.git` git itself refuses is not a repository to git: the call
-        # below would walk up and return an ANCESTOR's HEAD, which then gets stamped into MAP.md
-        # as the commit this index was built from (R6 acc3, first ten minutes).
+    # `git_can_speak_for`, not `git_owns`: HEAD is the same commit whether this directory is the
+    # repository root or a subproject inside it, because it is the same repository. See that
+    # function for the measurement that removed the distinction this guard was written around.
+    if not ws.git_can_speak_for(root):
         return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -150,8 +150,10 @@ def _churn(root, window=CHURN_WINDOW):
         cached = _read_disk_cache(disk, head)
         if cached is not None:
             return _CHURN_CACHE.setdefault(key, cached)
-    if not ws.git_owns(root):
-        # See git_owns: an ancestor's churn would rank THIS repository's files.
+    # The one query in this file that was genuinely unscoped: `git log` with no pathspec lists
+    # the WHOLE monorepo with repository-root-relative paths. `--relative -- .` below fixes that,
+    # and is a no-op at a repository root, so the weaker gate is now safe here too.
+    if not ws.git_can_speak_for(root):
         return _CHURN_CACHE.setdefault(key, {})
     try:
         out = subprocess.run(
@@ -176,8 +178,12 @@ def _churn(root, window=CHURN_WINDOW):
              # It did not affect the figures this project has published: chamnan's own history is
              # 2.1% merges in the window and the development monorepo is 0%. It affects the users
              # whose repositories look like the ones this tool was written for.
-             "log", "--no-merges", "--name-status", "-M",
-             "--pretty=format:", "-n", str(window)],
+             # 🐛 [2026-09-07] No pathspec, so from a monorepo subproject this ranked the WHOLE
+             # repository's files under repository-root-relative paths that match nothing in this
+             # tree. `--relative -- .` scopes it and renames the paths to this directory; both are
+             # no-ops at a repository root, where they were the only shape ever tested.
+             "log", "--no-merges", "--name-status", "-M", "--relative",
+             "--pretty=format:", "-n", str(window), "--", "."],
             # A hook's stdin carries the host's JSON payload. A child that inherits it can consume
             # bytes the hook has not read yet, or block waiting on a prompt that will never come.
             stdin=subprocess.DEVNULL, capture_output=True,

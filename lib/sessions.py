@@ -210,7 +210,10 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
         return ("**Where the last session stopped** — not available: `git` is not on this machine's "
                 "PATH, and this section is read from the working tree. Everything else in this "
                 "block works without it.")
-    if not ws.git_owns(root):
+    # `git_can_speak_for`: the query below is `status --porcelain -- . :(exclude)<ws>`, already
+    # scoped to this directory, so a workspace in a monorepo subproject gets its own answer rather
+    # than an empty section. See that function.
+    if not ws.git_can_speak_for(root):
         # 🐛 [2026-09-06] Without this, a directory holding a `.git` git itself refuses -- an
         # interrupted `git init`, a copied-without-contents `.git` -- made every call below walk up
         # and answer about the nearest REAL repository above it. Reproduced: this section reported
