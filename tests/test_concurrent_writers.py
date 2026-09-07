@@ -102,6 +102,13 @@ def _ensure_worker(root, _i, gate):
     _ws.ensure(pathlib.Path(root))
 
 
+def _candidate_worker(root, sequence, gate):
+    sys.path.insert(0, LIB)
+    import candidates
+    gate.wait()
+    candidates.upsert(pathlib.Path(root), sequence, 1, "2026-09-07")
+
+
 def _scratch_hook_worker(fixture_root, hook_path, idx):
     """One real subprocess invocation of the PostToolUse hook, piping a synthetic Write-tool
     payload on stdin -- the actual entry point, not a call into a lib/ function, because the
@@ -438,6 +445,83 @@ if __name__ == "__main__":
     with ws.exclusive(_el) as _el_held:
         check("...while a lock that names nobody yet is left alone until it is genuinely stale",
               _el_held is False)
+
+    # 🐛 `candidates.upsert`'s merge is a read-modify-write across the whole DIRECTORY -- scan every
+    # candidate, then unlink one and write another. Two PostToolUse hooks firing together each
+    # scanned, each found nothing to merge with, and each wrote its own file, producing the very
+    # "five files for one habit" the merge exists to prevent.
+    _cd = pathlib.Path(tempfile.mkdtemp(prefix="cw-cand-")) / "r"
+    (_cd / ".chamnan" / "candidates").mkdir(parents=True)
+    # The same habit seen at three different offsets: rotations of one cyclic sequence, which is
+    # exactly what a sliding window over a command log produces.
+    #
+    # Pure rotations only, and that is a deliberate narrowing. The first version of this check also
+    # included the four-element `python3, git add, git commit, python3` — and got 2 files, which
+    # looked like the lock failing. It was not: run SEQUENTIALLY, that set produces 2 files in 18
+    # of its 24 orderings, so the check was asserting a property the merge has never had. Three
+    # rotations give exactly 1 file in all 6 sequential orderings, so there is a single right
+    # answer here and concurrency is the only thing under test.
+    #
+    # (That the merge is order-dependent for a longer sequence containing a shorter one is a real
+    # finding and a separate one. It is not a race, it does not lose data, and folding it in here
+    # would make this check fail for a reason that has nothing to do with concurrency.)
+    _seqs = [["python3", "git add", "git commit"],
+             ["git add", "git commit", "python3"],
+             ["git commit", "python3", "git add"]]
+    _gate = Barrier(len(_seqs))
+    _procs = [Process(target=_candidate_worker, args=(str(_cd), q, _gate)) for q in _seqs]
+    for pr in _procs:
+        pr.start()
+    for pr in _procs:
+        pr.join()
+    _cd_files = sorted(q.name for q in (_cd / ".chamnan" / "candidates").glob("*.md"))
+    check(f"ONE HABIT SEEN AT {len(_seqs)} OFFSETS AT ONCE IS STILL ONE CANDIDATE "
+          f"({len(_cd_files)} files)", len(_cd_files) == 1)
+    if len(_cd_files) != 1:
+        print("       ", _cd_files)
+
+    # 🐛 `prune_logs` decides what to delete from one stat() sweep and unlinks in a later pass. On
+    # POSIX, unlinking a file a process holds open for append succeeds in silence and the writer's
+    # next lines land in an orphaned inode nothing will ever read from that path again.
+    #
+    # WHAT IS CHECKED HERE, AND WHY IT IS NOT AN END-TO-END RACE. The reported fix — re-stat before
+    # the unlink — does NOT close the case that was reported. Measured, both ways: with a writer
+    # that opens the file and delays its first write, the sweep sentences it on an mtime that is
+    # still old, the re-stat reads the same old mtime, and the file is deleted with or without the
+    # fix. Written the other way, with the writer touching the file first, it is never sentenced at
+    # all and the check passes with or without the fix. There is a window between those two where
+    # the fix is what saves the file, and it is a few milliseconds wide and not reproducible on
+    # demand — so an end-to-end check of it would pass for whichever reason the scheduler picked
+    # that run, which is worse than no check.
+    #
+    # So what the fix DOES is pinned directly instead. It covers the common shape — a session
+    # appends, a later session's SessionStart sweep runs, and the file is spared because it is no
+    # longer old — and it does not cover a file that is held open and untouched. No amount of
+    # stat'ing tells "old" from "old and held open"; that needs the writer to take a lock, and the
+    # writer is a session appending to its own note with a plain open(), not chamnan code that
+    # could be made to. On the record as open rather than papered over.
+    _pl = pathlib.Path(tempfile.mkdtemp(prefix="cw-prune-")) / "r"
+    _pl_logs = _pl / ".chamnan" / "logs"
+    _pl_logs.mkdir(parents=True)
+    _old = time.time() - 10 * 86400
+    _u1 = _pl_logs / "touched.md"
+    _u1.write_text("x\n", encoding="utf-8")
+    check("A FILE TOUCHED SINCE THE SWEEP DECIDED ITS FATE IS SPARED",
+          not ws._still_doomed(_u1, time.time() - 86400))
+    _u2 = _pl_logs / "untouched.md"
+    _u2.write_text("x\n", encoding="utf-8")
+    os.utime(_u2, (_old, _old))
+    check("...and one that has not been touched is not",
+          ws._still_doomed(_u2, time.time() - 86400))
+    # End to end, the part that IS deterministic: retention still deletes what it should, and a
+    # file whose mtime moved after the sweep started is still there afterwards.
+    (_pl_logs / "a-fresh-note.md").write_text("fresh\n", encoding="utf-8")
+    _cold = _pl_logs / "a-cold-note.md"
+    _cold.write_text("cold\n", encoding="utf-8")
+    os.utime(_cold, (_old, _old))
+    ws.prune_logs(_pl)
+    check("...while a log nobody has touched is still deleted", not _cold.exists())
+    check("...and a fresh one beside it is not", (_pl_logs / "a-fresh-note.md").is_file())
 
     total = PASSED + len(FAILED)
     print(f"\n{PASSED}/{total} checks passed")

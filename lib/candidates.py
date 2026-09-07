@@ -109,6 +109,25 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred", strict=Fals
     """
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
+    # 🐛 [2026-09-07] The merge below is a read-modify-write across the WHOLE DIRECTORY, not one
+    # file: `_same_habit` scans every candidate, then this unlinks one and writes another. Two
+    # PostToolUse hooks firing together each scanned, each found nothing to merge with, and each
+    # wrote its own file — reproducing, under concurrency, the exact "five files for one habit"
+    # the comment below says this merge exists to prevent (R7 agent 5).
+    #
+    # The lock is on the directory because the invariant is: one habit, one file. A per-file lock
+    # cannot express that — the two writers are racing over which file should EXIST, and they hold
+    # different ones.
+    with ws.exclusive(directory(root)) as held:
+        if not held and strict:
+            raise TimeoutError(f"could not lock {directory(root)} — another process is writing a "
+                               f"candidate. Nothing was changed; try again in a moment.")
+        return _upsert_locked(root, sequence, observed, when, provenance, strict)
+
+
+def _upsert_locked(root, sequence, observed, when, provenance, strict):
+    """`upsert`'s body, with the candidates directory already locked. Split out so the lock is
+    visible in the caller rather than buried, and so the early returns stay early returns."""
     p = path_for(root, sequence)
     if not p.is_file():
         # 🐛 [2026-09-07] One workflow produced FIVE candidate files in this repository's own queue:
