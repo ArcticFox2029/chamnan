@@ -104,7 +104,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.22.0](#whats-new-in-1220) · [Commands](#commands)
+[What's new in 1.22.1](#whats-new-in-1221) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -475,107 +475,56 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.22.0
+## What's new in 1.22.1
 
-Sixty commits, and almost all of them close something that was quietly wrong rather than adding
-anything. The themes below are the ones that recurred.
+1.22.0's notes never said how many checks it passed. Every release before it closed with that
+number and the platforms it was green on, and a page whose front matter says "verifiable claims,
+not adjectives" is the wrong place to drop the one line that is a claim rather than an adjective.
+That is what this release exists to correct, and the number is below.
 
-### A rule file could hang every session in the repository
+The README's own suite paragraph had drifted the same way: it still read "Over 1,800 checks",
+written when there were 1,800. It says "Over 3,600" now.
 
-`**Check:**` trailers are regular expressions that arrive with a clone and run at every session
-start. Five more catastrophic-backtracking families were found and closed, on top of the four
-already guarded: ambiguous alternations repeated by *concatenation* rather than by a quantifier;
-the same shapes hidden behind `(?:`, `(?P<name>` or `(?i:`, whose group modifier was being read as
-part of the first branch; a bounded count over an atom made nullable by `?`; the same made nullable
-by an *empty* alternation branch; and an ambiguous alternation wrapped in one redundant group,
-which neither alternation pattern could see because a regex cannot look inside nested parentheses.
-Every one of them was under thirty characters, and the last of them hung the real session-start
-hook past ninety seconds from a single committed file.
+Six fixes landed alongside it, all of them findings that had been reported and never acted on — a
+triage pass found that the backlog rolls up rounds R1-R8 and nothing after, leaving 35 reports
+never summarised and 14 findings with no trace in code or archive.
 
-The ninth was not found by anyone noticing a shape. It was found by generating them — every
-combination of group opener, inner body and quantifier, flat, nested and concatenated, compiled,
-filtered to the ones the guards allow, and timed. **That generator is now part of the test suite**,
-so the tenth family is reported by name on any run rather than waiting for somebody to spot it.
+### The tools index destroyed its own history on a merge conflict
 
-The guard beside them was refusing `(\d+)` and `(\d{4})` — the most ordinary patterns there are —
-because `"" in "+*{"` is true in Python and the check asked about the character after a group,
-which is the empty string at the end of a pattern. Every rule written that way had silently never
-run. And nothing bounded the *number* of checks a session pays for: fifty ordinary trailers cost
-4.5 seconds. Twenty-five now run and the rest are reported as unrun rather than quietly skipped.
+`load()` returns `[]` for a file it cannot parse, and `[]` is exactly what it returns for a registry
+that never existed — indistinguishable to every caller. The next `chamnan-promote` wrote its one new
+entry over the top and every previously registered tool, with its run counters, was gone. Silently
+and permanently. An unresolved `<<<<<<< HEAD` is the ordinary way there: `index.json` is committed,
+and two branches registering different tools collide in it. Reported independently by two rounds and
+unfixed both times, while the guard sat one file away.
 
-### A clock that jumped forward could delete your work
+### Four more that were reported and forgotten
 
-Three separate mechanisms computed a deadline from the wall clock and nothing else. With the clock
-400 days ahead — an NTP correction, a dead RTC battery — retention deleted files written seconds
-earlier, the orphaned-staging-file sweep deleted the temporary file of a write that was still in
-progress (losing the new content while the destination kept the old), and the mutex let a second
-process take a lock a live process was holding.
+A badly-resolved merge in MAP.md injected both sides as settled fact — the sibling of a bug whose
+STATE.md half was fixed the same day, in the store most likely to conflict rather than least, since
+two branches editing unrelated files still collide in an alphabetical index.
 
-There is no way to tell a jumped clock from real age using the clock that jumped, so each of them
-now has a second bound the clock cannot move: process liveness for the two that had a PID available,
-and "a retention pass never empties a store" for the rest.
+A Jupyter notebook was bucketed as payload rather than as source this indexer cannot parse, so a
+fifteen-notebook repository reported "described 2/2 files (100%)" while all of its real content was
+invisible.
 
-### Writes that reported success and had not happened
+The carry-forward cap counted characters, which mis-prices any script that is not mostly Latin —
+measured at 1.99x for Thai at the same character count.
 
-`chamnan-timeline new` on a directory it could not write printed "declared", named the file, printed
-the follow-up command, and exited 0 — with nothing on disk. Of two dozen call sites for the atomic
-writer, two ever checked whether it worked. Every write a person asked for by name now fails loudly,
-and says *why*: a read-only file, a read-only directory and a full disk used to produce one identical
-sentence and need three different fixes.
+And on Windows: a Python App Execution Alias stub reported "too old" instead of "not installed",
+sending a new user toward the wrong diagnosis; and a missing `git` made "Where the last session
+stopped" vanish with no diagnostic at all, which is a different failure from having nothing to say.
 
-### Files that were destroyed, forked, or written wrong
+### On Windows an exited process read as alive
 
-The classifier that decides whether an adapter file is chamnan's own output destroyed a hand-written
-one for the fourth time — an italic first line is how a person writes a warning, and that was the
-test. It recognises chamnan's own voice now: the framing sentence every generated block has opened
-with since 1.8.0, plus a matched fence whose nonce is generated per run.
+`OpenProcess` succeeding is not liveness there: the process object outlives the process while
+anything holds a handle to it, so a lock left by a process that CRASHED was never reclaimed and
+every later write was silently unguarded. `GetExitCodeProcess` answers it, paired with a
+zero-timeout wait for the one process whose real exit code is 259.
 
-A UTF-8 BOM — what PowerShell and Notepad write by default — made a thread's title unreadable, so
-`chamnan-timeline` forked one thread's history into a second file. Fixed at the read, so every file
-chamnan opens is now immune rather than the three parsers somebody remembered.
+3,662 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
 
-`chamnan-timeline add --files` wrote absolute paths verbatim into a tracked file, committing one
-developer's machine layout. Claude Code requires absolute paths for Read and Edit, so an agent
-recording what it touched typed exactly the shape that broke.
-
-### Things chamnan knew and never told anyone
-
-Whether the pre-commit hook that keeps the index fresh is even installed — the detection lived
-inside the command that installs it, so a repository whose index was quietly going stale looked
-exactly like one whose hook was working. Whether any stored knowledge names a version no environment
-declares. Whether a rule's mechanical check *could not run*, which looked identical to a rule that
-never had one. Whether every candidate in the queue was machine-detected and unreviewed. And
-`environments.md`, which the inventory had never counted at all.
-
-`chamnan-map --undocumented` lists every file with no opening comment, because the two skills told
-the session to fix "the files that lack one" and only eight were ever shown — on a repository with
-forty, that left 80% untouched and unmentioned. `chamnan-map --verify` checks every mechanical claim
-the index makes against the tree and **exits non-zero** when one is false; the checker existed, its
-own comment recorded that its parser had been broken for three days "because nothing runs this
-file", and it returned 0 whatever it found.
-
-### What a session pays
-
-A resumed session was sent the entire block a second time. It is not resent when the transcript
-*proves* the first one is still in context — no compaction boundary after this session's own fence —
-and on every doubt the whole block is emitted exactly as before, because the cost of being wrong is
-a session with no index at all. Measured 837 tokens to 54.
-
-One optional section could cost more than the whole index budget: eight kinds of twenty Kubernetes
-objects with realistic names rendered 4,059 tokens against a 3,000-token budget, and forced the
-directory roll-up onto the entire repository's index as collateral. 808 now, with every kind still
-named. And chamnan counted *its own workspace* as your uncommitted work, so a clean tree was told
-"1 uncommitted file, and nobody recorded what for".
-
-### Leaks
-
-Control characters — ESC, BEL, the bidi overrides — reached the injected block from a session
-record's title, and reached the model through the JSON hook payloads where `json.dumps` escaped them
-past every check that scanned raw output. `chamnan-map --verify` printed index rows with no
-redaction at all, because it shells out to a tool that lives outside `bin/` and was therefore outside
-the sweep that requires the guard. That sweep is now derived from what the commands *invoke*.
-
-3,646 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13 — and four of those platform jobs are the reason this release took five CI runs rather than one. Every defect they caught is in the notes above.
+---
 
 ## Bootstrap does not rewrite your code
 
