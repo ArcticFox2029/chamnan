@@ -173,34 +173,63 @@ if __name__ == "__main__":
     if runs != 400:
         print(f"[WHY] shipped ceilings: {_why_they_left(root)}")
 
-    # --- the same store, on a machine forty times slower than this one ------------------------
-    # 🐛 [2026-09-08] The check above passed on macOS and ubuntu and failed on Windows, at 41 of
-    # 400 -- and nothing on a Mac could see it, so it cost a push and a CI round trip to learn
-    # each time. It is not a Windows bug in the sense of a Windows API: LOCK_TIMEOUT was a ceiling
-    # on TOTAL waiting, and 400 turns through a lock drain inside 2 seconds only if a turn is
-    # cheap. Windows' turns are not cheap, waiters gave up, and `exclusive` yielding False means
-    # the caller writes unguarded.
+    # --- the same store, with the ceiling set in this machine's own units -------------------
+    # 🐛 [2026-09-08] The check above passed on macOS and ubuntu and failed on Windows at 41 of
+    # 400, and nothing on a Mac could see it -- so it cost a push and a CI round trip to learn each
+    # time. The mechanism was a waiter holding the lock file open while its owner tried to unlink
+    # it, which Windows refuses; `lib/workspace.py` carries the whole account beside the fix.
     #
-    # Shrinking the ceiling is the same experiment as slowing the disk, and it runs anywhere. At
-    # 0.05 s -- the 40x that separates the two platforms, measured from Windows' own 41/400 --
-    # macOS reproduced it at 389/400 before the fix and records all 400 after it. So this is the
-    # check that would have found it here rather than there, and it is the reason to reach for a
-    # squeeze rather than a second machine the next time a platform column disagrees.
+    # This is the check that finds the NEXT one here instead of there. Squeezing the ceiling is the
+    # same experiment as slowing the disk, and it runs anywhere -- but the first version of it
+    # pinned an absolute 0.05 s, which is a hard squeeze on the machine it was written on and a
+    # brutal one where a turn already costs forty times more. It failed on Windows at 396 of 400
+    # and on ubuntu too, for a reason that was not a defect. A threshold in seconds measures the
+    # platform; a threshold in multiples of what the platform itself costs measures the code.
+    #
+    # So: time the REAL operation uncontended -- lock, read the index, edit it, write it back --
+    # and give the storm three times what it costs all eight contenders to each take one turn. That
+    # is the smallest ceiling under which a fair queue can still make progress, and it is expressed
+    # in the machine's own units, so the same sentence is true on a laptop and on a slow runner.
+    # An earlier version of this timed an EMPTY lock cycle and recorded 399 of 400 here, because
+    # the critical section is most of the cost and it was not in the measurement.
+    import tools_index as _tools_index
+    import workspace as ws
+    CONTENDERS = 8
+    _probe = pathlib.Path(tempfile.mkdtemp(prefix="cw-cycle-"))
+    (_probe / ".chamnan" / "tools").mkdir(parents=True)
+    (_probe / ".chamnan" / "tools" / "index.json").write_text(
+        json.dumps([{"name": "t.sh", "desc": "x", "runs": 0}]), encoding="utf-8")
+    _cycles = []
+    for _ in range(40):
+        _t0 = time.perf_counter()
+        _tools_index.record_call(_probe, "t.sh", False, False)
+        _cycles.append(time.perf_counter() - _t0)
+    # Capped at the shipped ceiling, because a machine slow enough that three fair rounds cost
+    # more than LOCK_TIMEOUT would otherwise run this at a LOOSER setting than production and call
+    # it a squeeze. There the check degenerates to "the shipped configuration holds", which is
+    # true, worth knowing, and must say so rather than quietly measure nothing.
+    _ceiling = min(max(max(_cycles) * CONTENDERS * 3, 0.002), ws.LOCK_TIMEOUT)
+    print(f"[INFO] one uncontended record_call here: {max(_cycles)*1000:.3f} ms, so the squeeze "
+          f"runs at {_ceiling*1000:.1f} ms against the shipped {ws.LOCK_TIMEOUT*1000:.0f}"
+          + (" — no squeeze: this machine is slower than the shipped ceiling allows for"
+             if _ceiling >= ws.LOCK_TIMEOUT else
+             f" — {ws.LOCK_TIMEOUT / _ceiling:.0f}x tighter"))
+
     root = pathlib.Path(tempfile.mkdtemp())
     (root / ".chamnan" / "tools").mkdir(parents=True)
     (root / ".chamnan" / "tools" / "index.json").write_text(
         json.dumps([{"name": "t.sh", "desc": "x", "runs": 0}]), encoding="utf-8")
     procs = [Process(target=_tools_worker,
-                     args=(str(root), 50, 0.05, str(root / f"giveups-{k}.json")))
-             for k in range(8)]
+                     args=(str(root), 50, _ceiling, str(root / f"giveups-{k}.json")))
+             for k in range(CONTENDERS)]
     [p.start() for p in procs]
     [p.join() for p in procs]
     slow = json.loads(
         (root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))[0]["runs"]
-    check(f"...AND ON A LOCK CEILING 40x TIGHTER, WHICH IS WHAT WINDOWS IS (got {slow})",
+    check(f"...AND ON A CEILING OF THREE FAIR ROUNDS, IN THIS MACHINE'S UNITS (got {slow})",
           slow == 400)
     if slow != 400:
-        print(f"[WHY] 0.05s ceiling: {_why_they_left(root)}")
+        print(f"[WHY] squeezed ceiling: {_why_they_left(root)}")
 
     # --- the command log ---------------------------------------------------------------------
     # The append path is safe on its own; the periodic trim is a truncate-and-overwrite built from
