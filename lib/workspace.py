@@ -449,15 +449,40 @@ def _pid_is_alive(pid):
     if pid <= 0:
         return True
     if os.name == "nt":
+        # 🐛 [2026-09-07] `OpenProcess` succeeding is NOT liveness on Windows. The process OBJECT
+        # outlives the process for as long as anything holds a handle to it — a parent's
+        # `subprocess.Popen` is exactly that — so an exited process reads as alive, and a lock left
+        # by one that CRASHED is then never reclaimed: `exclusive()` waits out its timeout and every
+        # caller writes unguarded, or in `tools_index` does not write at all. Silent, and for the
+        # life of the parent. psutil fixed the identical bug the same way (giampaolo/psutil#1094).
+        #
+        # `GetExitCodeProcess` is the question that has an answer: STILL_ACTIVE (259) means running.
+        # The one ambiguity is a process whose real exit code IS 259, which is why psutil pairs it
+        # with a zero-timeout wait — a signalled object is finished whatever code it carries.
+        #
+        # `use_last_error=True` and `ctypes.get_last_error()`, not `GetLastError()`: ctypes' own
+        # documentation says the raw call is unreliable because ctypes may make other calls between
+        # yours and it, and CPython carries an open issue on exactly that (python/cpython#132888).
         try:
             import ctypes
-            _SYNCHRONIZE = 0x00100000
-            handle = ctypes.windll.kernel32.OpenProcess(_SYNCHRONIZE, False, pid)
-            if handle:
-                ctypes.windll.kernel32.CloseHandle(handle)
-                return True
-            # ERROR_ACCESS_DENIED (5): the process exists, this one may not open it.
-            return ctypes.windll.kernel32.GetLastError() == 5
+            from ctypes import wintypes
+            _SYNCHRONIZE, _QUERY_LIMITED = 0x00100000, 0x1000
+            _STILL_ACTIVE, _WAIT_OBJECT_0, _ACCESS_DENIED = 259, 0, 5
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            handle = k32.OpenProcess(_SYNCHRONIZE | _QUERY_LIMITED, False, pid)
+            if not handle:
+                # ERROR_ACCESS_DENIED: the process exists, this one may not open it.
+                return ctypes.get_last_error() == _ACCESS_DENIED
+            try:
+                code = wintypes.DWORD()
+                if not k32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                    return True                      # cannot tell: report alive, the safe answer
+                if code.value != _STILL_ACTIVE:
+                    return False
+                # Exit code 259 is legal, so ask the object itself: a signalled handle is finished.
+                return k32.WaitForSingleObject(handle, 0) != _WAIT_OBJECT_0
+            finally:
+                k32.CloseHandle(handle)
         except Exception:
             return True
     try:

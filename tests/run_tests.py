@@ -7913,6 +7913,21 @@ finally:
 check("...while a lock a killed process left behind is still reclaimed", _lk_reclaimed is True)
 # The probe itself, in the one direction every platform can answer: this process is running.
 check("...and a process that IS running reads as alive", ws._pid_is_alive(os.getpid()) is True)
+# 🐛 [2026-09-07] And the other direction, which is where the Windows branch was wrong: an exited
+# child whose handle a parent still holds. `OpenProcess` succeeding is not liveness there — the
+# process OBJECT outlives the process for as long as anything references it, and `subprocess.Popen`
+# is exactly that — so a lock left by a CRASHED process was never reclaimed and every later write
+# was silently unguarded, for the life of the parent (R3 agent 1; psutil fixed the same bug in
+# giampaolo/psutil#1094).
+#
+# Written to run everywhere and pass on POSIX, because only Windows could ever have failed it: the
+# earlier version of this check substituted liveness precisely to avoid the OS's PID semantics, and
+# that is what let the real defect through. Popen is kept alive deliberately — releasing it would
+# destroy the handle and hide the very condition under test.
+_dead = subprocess.Popen([sys.executable, "-c", "pass"])
+_dead.wait()
+check("AN EXITED CHILD IS DEAD, EVEN WHILE ITS PARENT STILL HOLDS THE HANDLE",
+      ws._pid_is_alive(_dead.pid) is False)
 # A lock written by a version that did not record a PID has to keep ageing out, or an upgrade
 # deadlocks on a file the previous build left.
 _lk_lock.write_text("", encoding="utf-8")
