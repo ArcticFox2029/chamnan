@@ -84,7 +84,23 @@ def render(sequence, observed, last_seen, provenance):
             f"**Provenance:** {provenance}\n")
 
 
-def upsert(root, sequence, observed, when, provenance="ai-inferred"):
+def _write(strict):
+    """The writer `upsert` should use for the caller it has.
+
+    🐛 [2026-09-07] `upsert` has exactly two callers and they sit on opposite sides of the line
+    `workspace.write_or_raise` documents. `chamnan_scratch_watch.py` is a background hook, where a
+    workspace that cannot be written must not stop a session and silence is the policy. `chamnan-
+    candidates demote` is a command somebody typed by name — and it prints the path of the review
+    record it just wrote. With the candidates directory read-only it printed "back for review at
+    .chamnan/candidates/a-tool.md", exit 0, with no such file: by that point in the same command
+    the tool had already been moved to `tools/archived/` and its index entry already removed, both
+    successfully. So the net effect was the permanent, silent loss of the only record of why the
+    tool existed, under a message naming the file that holds it (R7 agent 1, finding 2).
+    """
+    return ws.write_or_raise if strict else ws.atomic_write_text
+
+
+def upsert(root, sequence, observed, when, provenance="ai-inferred", strict=False):
     """Create or update the one candidate for `sequence`. `observed` and `when` (a date string) are
     written as given -- not accumulated here -- so calling this repeatedly with the same values is
     a no-op on disk, and calling it with a fresher count or date correctly updates in place.
@@ -125,11 +141,11 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred"):
             except (TypeError, ValueError):
                 was = 0
             target.parent.mkdir(parents=True, exist_ok=True)
-            ws.atomic_write_text(target, render(merged, max(observed, was), when, provenance))
+            _write(strict)(target, render(merged, max(observed, was), when, provenance))
             return target, False
     is_new = not p.is_file()
     p.parent.mkdir(parents=True, exist_ok=True)
-    ws.atomic_write_text(p, render(sequence, observed, when, provenance))
+    _write(strict)(p, render(sequence, observed, when, provenance))
     return p, is_new
 
 

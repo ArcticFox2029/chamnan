@@ -203,12 +203,31 @@ def cmd_promote(root, ident, destination=None, name=None):
                          f"  # replace this line")
         ws.write_or_raise(dest, "\n".join(lines) + "\n")
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        tools_index.register(root, {
-            "name": dest.name,
-            "desc": f"from a confirmed candidate: {title} — placeholders, not filled in yet",
-            "added": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "origin": f"candidate:{p.stem}",
-        })
+        # 🐛 [2026-09-07] The same two-step shape `bin/chamnan-promote` documents twelve lines above
+        # its own rollback -- write the script, then register it -- and this copy never got the
+        # rollback. With a read-only `index.json`, register raised, the uncaught OSError reached the
+        # bottom-level handler, and that handler printed "nothing was written": a sentence written
+        # for a FIRST write failing, reused for a SECOND one after the first had already landed. On
+        # disk was an executable, unregistered skeleton in `.chamnan/tools/`, a directory this
+        # workspace commits on purpose — so `git add .chamnan` would have committed a script the
+        # user had just been told did not exist (R7 agent 1, finding 3).
+        try:
+            tools_index.register(root, {
+                "name": dest.name,
+                "desc": f"from a confirmed candidate: {title} — placeholders, not filled in yet",
+                "added": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "origin": f"candidate:{p.stem}",
+            })
+        except OSError as err:
+            try:
+                dest.unlink()
+            except OSError:
+                pass
+            print(f"chamnan: could not register {dest.name!r} in the tools index: {err}",
+                  file=sys.stderr)
+            print("  nothing was left behind -- the candidate is still there. Fix the underlying "
+                  "issue (often the index file's permissions) and run this again.", file=sys.stderr)
+            return 1
         p.unlink()
         rel = dest.relative_to(root).as_posix()
         print(f"chamnan: skeleton installed -> {rel}")
@@ -282,7 +301,19 @@ def cmd_demote(root, tool_name):
             archived = tool_path
     sequence = [entry.get("desc") or tool_name]
     today = datetime.now().astimezone().strftime("%Y-%m-%d")
-    new_path, _is_new = candidates.upsert(root, sequence, 1, today, provenance="ai-inferred")
+    # strict: the line printed below names this file, and the tool it describes has already been
+    # unregistered and moved by the time we get here. See `candidates._write`.
+    try:
+        new_path, _is_new = candidates.upsert(root, sequence, 1, today, provenance="ai-inferred",
+                                              strict=True)
+    except OSError as err:
+        print(f"chamnan: {tool_name} was removed as a tool, but the review record could not be "
+              f"written: {err}", file=sys.stderr)
+        if archived:
+            print(f"  the file itself is safe at {archived.relative_to(root).as_posix()} — "
+                  f"re-run this once the candidates directory is writable to recover the record.",
+                  file=sys.stderr)
+        return 1
     print(f"chamnan: demoted {tool_name} — removed as a tool, back for review at "
           f"{new_path.relative_to(root).as_posix()}")
     if archived:
