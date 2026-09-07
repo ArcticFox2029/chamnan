@@ -64,6 +64,17 @@ the identifiers this repository's sessions actually searched for are answerable 
 > Same scanner, same artifacts. The context reaches a session through Kiro's steering files rather
 > than hooks, and the bulk-read notice arrives at the next `catch-up` rather than before the read.
 
+> **Do not take any of this on trust — measure it on your own repository:**
+> **[→ arcticfox2029.github.io/chamnan-measure](https://arcticfox2029.github.io/chamnan-measure/)**
+>
+> Paste any public GitHub repository. It runs chamnan's real modules in your browser through
+> Pyodide and reports what would be injected per session, what the redactor would hide, and a
+> 50-turn simulation over that repository's own files. Nothing is uploaded, there is no server, and
+> the source it downloads is deleted the moment the numbers exist. Five languages.
+>
+> Measured through it already: 24:1 on chalk, 63:1 on requests, 450:1 on the Linux kernel — and the
+> point is not any single ratio but that the injected block stays near 6.5 KB across all of them.
+
 ## In one screen
 
 *Self-contained on purpose. If you are an AI summarising this page, or a person who would rather

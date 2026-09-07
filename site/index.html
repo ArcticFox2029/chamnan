@@ -116,6 +116,14 @@ td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .cmd{background:var(--sunk);border:1px solid var(--rule);border-radius:6px;padding:.9rem 1.1rem;
   overflow-x:auto;font-size:.85rem;line-height:1.55;margin:1.2rem 0}
 .cmd code{font-family:var(--mono);color:var(--ink);white-space:pre}
+.simtag{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--warn);
+  background:var(--warn-soft);display:inline-block;padding:.15rem .45rem;border-radius:3px;
+  margin:0 0 .8rem}
+table.sim{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.5rem}
+table.sim th{font-size:.7rem;padding:.25rem .3rem}
+table.sim td{padding:.35rem .3rem;border-bottom:1px dotted var(--rule);text-align:right}
+table.sim td:first-child{text-align:left;color:var(--muted)}
+table.sim td.good{color:var(--accent)} table.sim td.warn{color:var(--warn)}
 .temp{margin:1.25rem 0 0;padding:.75rem 1rem;background:var(--warn-soft);
   border-left:3px solid var(--warn);border-radius:0 5px 5px 0;
   font-size:.86rem;color:var(--ink);line-height:1.5}
@@ -257,6 +265,16 @@ const LANGS = {en:"English", th:"ไทย", zh:"中文", ja:"日本語", es:"Es
 
 const T = {
   en: {
+    scenSame: "50 turns, one subject",
+    scenRand: "50 turns, at random",
+    card2: "2 · One hundred turns",
+    simTag: "SIMULATED — not measured",
+    simHow: "Two ways of working, 50 turns each, over <strong>this repository's real files and their real sizes</strong>. Staying on one subject is where a map helps least — once you have opened the files you know where they are. Moving around is where it helps most. Showing only the second would be the flattering version; only the first, the useless one.",
+    simAssume: "The one assumption, stated rather than hidden: with no map, finding a file it has not seen costs the agent <strong>{opens} wrong files opened first</strong>; with the map, none. Revisiting a file already open is free either way. Seed {seed} — the same numbers for you as for anyone.",
+    kWith: "with chamnan",
+    kWithout: "without",
+    kCross: "block pays for itself at turn",
+    simNever: "not within 100 turns",
     resultTemp: "This result is not saved anywhere. Refresh the page and it is gone — there is no server holding a copy, and no history to come back to. Copy the numbers now if you want to keep them.",
     bigTitle: "For a very large project, run it on your own machine",
     bigBody: "This page has two ceilings, and a repository the size of Linux, Kubernetes or VS Code hits both: the CDN that supplies the file list refuses repositories above a certain size, and the page only fetches the first 400 files so it does not pull a gigabyte through your connection. Neither limit exists when chamnan runs locally — and locally it can also ask git, which a browser cannot. Install it in the repository and run:",
@@ -320,6 +338,16 @@ const T = {
   },
 
   th: {
+    scenSame: "50 turn เรื่องเดิม",
+    scenRand: "50 turn สุ่มทั้ง repo",
+    card2: "2 · หนึ่งร้อย turn",
+    simTag: "จำลอง — ไม่ใช่ค่าที่วัดจริง",
+    simHow: "การทำงานสองแบบ อย่างละ 50 turn บน<strong>ไฟล์จริงและขนาดจริงของ repository นี้</strong> การอยู่กับเรื่องเดิมคือจุดที่แผนผังช่วยน้อยที่สุด — เปิดไฟล์ไปแล้วก็รู้ที่อยู่เอง ส่วนการย้ายไปมาคือจุดที่ช่วยมากที่สุด ถ้าโชว์แค่แบบที่สองคือเข้าข้างตัวเอง ถ้าโชว์แค่แบบแรกก็ไร้ประโยชน์",
+    simAssume: "ข้อสมมติเดียว ที่เขียนบอกไม่ได้ซ่อน: ถ้าไม่มีแผนผัง การหาไฟล์ที่ยังไม่เคยเห็นจะเสียการเปิด<strong>ไฟล์ผิด {opens} ไฟล์ก่อน</strong> ถ้ามีแผนผังคือศูนย์ ส่วนการกลับไปดูไฟล์ที่เปิดแล้วไม่เสียอะไรทั้งสองฝั่ง seed {seed} — ตัวเลขเหมือนกันทุกคน",
+    kWith: "มี chamnan",
+    kWithout: "ไม่มี",
+    kCross: "block คืนทุนที่ turn ที่",
+    simNever: "ไม่คืนทุนภายใน 100 turn",
     resultTemp: "ผลลัพธ์นี้ไม่ได้ถูกบันทึกไว้ที่ไหนเลย รีเฟรชหน้าเว็บแล้วมันจะหายไป — ไม่มีเซิร์ฟเวอร์เก็บสำเนาไว้ และไม่มีประวัติให้ย้อนกลับมาดู ถ้าอยากเก็บไว้ ให้คัดลอกตัวเลขไว้ตอนนี้",
     bigTitle: "โปรเจคใหญ่มาก ให้โหลดไปรันในเครื่องเอง",
     bigBody: "หน้านี้มีเพดานอยู่ 2 อย่าง และ repository ขนาด Linux, Kubernetes หรือ VS Code ชนทั้งสองอย่าง: CDN ที่ให้รายชื่อไฟล์ปฏิเสธ repository ที่เกินขนาดที่กำหนด และหน้านี้ดึงแค่ 400 ไฟล์แรก เพื่อไม่ให้ดูดข้อมูลเป็นกิกะไบต์ผ่านเน็ตของคุณ ทั้งสองข้อจำกัดนี้ไม่มีเลยเวลารัน chamnan ในเครื่อง — และในเครื่องมันยังถาม git ได้ด้วย ซึ่งเบราว์เซอร์ทำไม่ได้ ติดตั้งใน repository แล้วรัน:",
@@ -383,6 +411,16 @@ const T = {
   },
 
   zh: {
+    scenSame: "50 回合，同一主题",
+    scenRand: "50 回合，随机",
+    card2: "2 · 一百个回合",
+    simTag: "模拟——不是实测",
+    simHow: "两种工作方式，各 50 个回合，跑在<strong>这个仓库的真实文件及其真实大小</strong>上。守着同一个主题时地图帮助最小——文件都打开过了，位置自然就知道了。四处走动时帮助最大。只展示后者是自我美化，只展示前者则毫无意义。",
+    simAssume: "唯一的假设，写出来而不是藏起来：没有地图时，找到一个没见过的文件要先<strong>打开 {opens} 个错误的文件</strong>；有地图时为零。重新查看已经打开的文件，两边都免费。种子 {seed}——你和别人看到的数字相同。",
+    kWith: "有 chamnan",
+    kWithout: "没有",
+    kCross: "block 在第几回合回本",
+    simNever: "100 回合内未回本",
     resultTemp: "这个结果不会保存在任何地方。刷新页面它就没了——没有服务器留副本，也没有历史记录可以回看。想留着的话，现在就把数字复制下来。",
     bigTitle: "非常大的项目，请在自己的机器上运行",
     bigBody: "本页有两个上限，而 Linux、Kubernetes 或 VS Code 这种体量的仓库两个都会撞上：提供文件列表的 CDN 会拒绝超过一定大小的仓库，而且本页只抓取前 400 个文件，以免通过你的网络拉取上 GB 的数据。chamnan 在本地运行时这两个限制都不存在——而且在本地它还能询问 git，这是浏览器做不到的。在仓库里安装后运行：",
@@ -446,6 +484,16 @@ const T = {
   },
 
   ja: {
+    scenSame: "50 ターン、同じ題材",
+    scenRand: "50 ターン、無作為",
+    card2: "2 · 百ターン",
+    simTag: "シミュレーション — 実測ではありません",
+    simHow: "二通りの働き方を各 50 ターン、<strong>このリポジトリの実際のファイルと実際のサイズ</strong>の上で。同じ題材に留まるときが地図の効き目が最も小さい場面です——一度開けば場所はわかります。動き回るときが最も大きい。後者だけを見せれば手前味噌、前者だけなら無意味です。",
+    simAssume: "唯一の仮定を、隠さず明記します：地図がなければ、未見のファイルを見つけるまでに<strong>誤ったファイルを {opens} 件</strong>開く。地図があればゼロ。すでに開いたファイルの読み直しはどちらも無料。シード {seed}——誰が見ても同じ数字です。",
+    kWith: "chamnan あり",
+    kWithout: "なし",
+    kCross: "block が元を取るターン",
+    simNever: "100 ターン以内には回収せず",
     resultTemp: "この結果はどこにも保存されません。ページを再読み込みすれば消えます——コピーを持つサーバーもなければ、戻って見られる履歴もありません。残したいなら、今のうちに数字をコピーしてください。",
     bigTitle: "非常に大きなプロジェクトは、自分のマシンで実行してください",
     bigBody: "このページには上限が二つあり、Linux や Kubernetes、VS Code ほどの規模のリポジトリはその両方に当たります：ファイル一覧を提供する CDN が一定サイズ以上のリポジトリを拒否し、またこのページはあなたの回線で 1 GB を引っ張らないよう先頭 400 ファイルしか取得しません。chamnan をローカルで動かせばどちらの制限もなく、さらにブラウザにはできない git への問い合わせもできます。リポジトリに導入して実行してください：",
@@ -509,6 +557,16 @@ const T = {
   },
 
   es: {
+    scenSame: "50 turnos, un tema",
+    scenRand: "50 turnos, al azar",
+    card2: "2 · Cien turnos",
+    simTag: "SIMULADO — no medido",
+    simHow: "Dos formas de trabajar, 50 turnos cada una, sobre <strong>los archivos reales de este repositorio y sus tamaños reales</strong>. Quedarse en un mismo tema es donde menos ayuda un mapa: una vez abiertos los archivos, ya sabes dónde están. Moverse es donde más ayuda. Mostrar solo lo segundo sería la versión halagadora; solo lo primero, la inútil.",
+    simAssume: "La única suposición, dicha en vez de escondida: sin mapa, encontrar un archivo no visto le cuesta al agente <strong>abrir {opens} archivos equivocados</strong> primero; con mapa, ninguno. Volver a un archivo ya abierto es gratis en ambos casos. Semilla {seed}: las mismas cifras para ti que para cualquiera.",
+    kWith: "con chamnan",
+    kWithout: "sin",
+    kCross: "el bloque se amortiza en el turno",
+    simNever: "no dentro de 100 turnos",
     resultTemp: "Este resultado no se guarda en ningún sitio. Actualiza la página y desaparece: no hay servidor que conserve una copia ni historial al que volver. Copia las cifras ahora si quieres conservarlas.",
     bigTitle: "Para un proyecto muy grande, ejecútalo en tu propia máquina",
     bigBody: "Esta página tiene dos topes, y un repositorio del tamaño de Linux, Kubernetes o VS Code choca con ambos: la CDN que proporciona la lista de archivos rechaza repositorios por encima de cierto tamaño, y la página solo descarga los primeros 400 archivos para no tirar de un gigabyte por tu conexión. Ninguno de los dos límites existe cuando chamnan se ejecuta en local, y ahí además puede consultar a git, cosa que un navegador no puede. Instálalo en el repositorio y ejecuta:",
@@ -682,52 +740,41 @@ async function listing(owner, repo){
   for (const ref of ["main", "master"]){
     const r = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@${ref}?structure=flat`);
     // 403 is jsDelivr refusing the repository for its SIZE, not a missing branch. Measured
-    // 2026-09-07: linux, kubernetes, vscode, rust and go are all refused this way, while every
-    // ordinary repository is served. Distinguishing the two matters — one is a wait, the other
-    // never resolves — and the fallback below costs GitHub API quota, so the visitor is told.
+    // 2026-09-07: linux, kubernetes, vscode, rust, go and AutoGPT are all refused this way, while
+    // every ordinary repository is served — ten out of ten in a sample that included fastapi,
+    // django, rails, vue and react. So this is the path almost everyone takes.
     if (r.status === 403) refused = true;
     if (r.ok){
       const j = await r.json();
-      if (j.files && j.files.length) return {ref, files: j.files};
+      if (j.files && j.files.length)
+        return {ref, via: "jsdelivr",
+                files: j.files.map(f => ({path: f.name.replace(/^\//, ""), size: f.size}))};
     }
   }
+
+  // Too large for the CDN index. GitHub's tree API has no such limit, and `HEAD` means the
+  // default branch WITHOUT a second request to ask what it is called — so a repository the size
+  // of AutoGPT costs exactly one API call, and the file contents still come from a CDN with no
+  // quota at all. Sixty of these an hour per IP address, against none before.
+  //
+  // The previous version asked GitHub for the branch name and then retried jsDelivr, which
+  // refused again for the same reason it refused the first time: the size, not the branch. It
+  // spent the quota and still failed.
   if (refused) say(t("tooBig"));
-  const meta = await gh(`https://api.github.com/repos/${owner}/${repo}`);
-  const r = await fetch(`https://data.jsdelivr.com/v1/packages/gh/${owner}/${repo}@${meta.default_branch}?structure=flat`);
-  if (!r.ok) throw new Error("Could not read this repository's file list. Public repositories only.");
-  const j = await r.json();
-  if (!j.files || !j.files.length) throw new Error("That repository appears to be empty.");
-  return {ref: meta.default_branch, files: j.files};
+  const tree = await gh(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`);
+  const files = (tree.tree || [])
+    .filter(n => n.type === "blob")
+    .map(n => ({path: n.path, size: n.size || 0}));
+  if (!files.length) throw new Error(t("noFiles"));
+  return {ref: "HEAD", via: "github", files, truncated: !!tree.truncated};
 }
 
-// The whole of boot, or none of it. A first version assigned `pyodide` as soon as the runtime
-// loaded and cached it there, so any failure in the steps after that left the page permanently
-// broken: the next attempt saw a truthy `pyodide`, returned early, and used a null `EXT`. The
-// symptom was an error with no message, which is the worst kind. Cache the PROMISE, and only
-// after every step has succeeded.
-function boot(){
-  if (booting) return booting;
-  booting = (async () => {
-    say(t("loadingPy"));
-    const py = await loadPyodide();
-    say(t("loadingCh"));
-    const files = await (await fetch("lib/manifest.json")).json();
-    try { py.FS.mkdir("/lib"); } catch (e) { /* already there on a repeat run */ }
-    for (const f of files){
-      const res = await fetch("lib/" + f);
-      if (!res.ok) throw new Error(`could not load chamnan module ${f} (${res.status})`);
-      py.FS.writeFile("/lib/" + f, await res.text());
-    }
-    py.runPython(`import sys; sys.path.insert(0, "/lib")`);
-    const exts = py.runPython(`
-import json, mapper
-json.dumps(sorted(mapper.EXT_LANG.keys()))
-`);
-    pyodide = py;
-    EXT = new Set(JSON.parse(exts));
-    return py;
-  })().catch(err => { booting = null; throw err; });
-  return booting;
+// Where a file's bytes come from, which differs by how the listing was obtained. Both are CDNs
+// with no API quota; only the listing above ever costs one.
+function contentUrl(owner, repo, ref, via, path){
+  return via === "jsdelivr"
+    ? `https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${path}`
+    : `https://raw.githubusercontent.com/${owner}/${repo}/${ref}/${path}`;
 }
 
 const CAP = 400;
@@ -755,8 +802,7 @@ async function measure(owner, repo){
   await boot();
 
   say(t("reading"));
-  const {ref, files: all} = await listing(owner, repo);
-  const blobs = all.map(f => ({path: f.name.replace(/^\//, ""), size: f.size}));
+  const {ref, via, files: blobs, truncated} = await listing(owner, repo);
   const want = blobs.filter(b => {
     const i = b.path.lastIndexOf(".");
     return i > 0 && EXT.has(b.path.slice(i).toLowerCase());
@@ -784,7 +830,7 @@ r.mkdir()
       if (i >= take.length) return;
       const b = take[i];
       try{
-        const res = await fetch(`https://cdn.jsdelivr.net/gh/${owner}/${repo}@${ref}/${b.path}`);
+        const res = await fetch(contentUrl(owner, repo, ref, via, b.path));
         if (res.ok){
           const text = await res.text();
           const dir = b.path.split("/").slice(0,-1).join("/");
@@ -829,7 +875,63 @@ for p in root.rglob("*"):
     if redact.scrub(t) != t:
         hits += 1
 
+# ---- two ways of working, 50 turns each, over THIS repository's real files
+#
+# Two scenarios rather than one blended number, because they answer different questions and the
+# honest thing is to show the range instead of the average:
+#
+#   A. 50 turns on ONE subject   — the agent stays in the same corner of the repository.
+#   B. 50 turns at random        — a different corner every turn.
+#
+# A is where an index helps LEAST: once you have opened the files, you know where they are, and a
+# map you were given at the start has told you nothing you did not learn anyway. B is where it
+# helps most. Showing only B would be the flattering version; showing only A the useless one. Both
+# run against the real files and real sizes read off this repository.
+#
+# Deterministic, seed shown, so the numbers are the same for everybody and can be re-run.
+import random as _rnd
+
+SEARCH_OPENS = 3          # wrong files opened to locate one, with no map. Stated, not derived.
+TURNS = 50
+SEED = 20260907
+
+sizes = []
+for _p in root.rglob("*"):
+    if _p.is_file():
+        try:
+            sizes.append(_p.stat().st_size)
+        except OSError:
+            pass
+sizes = [x for x in sizes if x > 0] or [1000]
+tok = lambda b: b / 4.0
+BLOCK = tok(len(injected.encode()))
+
+
+def scenario(new_subject_chance):
+    """(with_map, without_map) token totals over TURNS, and the turn the block repays itself."""
+    r = _rnd.Random(SEED)
+    with_map, without, seen, cross = BLOCK, 0.0, [], None
+    for turn in range(TURNS):
+        if seen and r.random() > new_subject_chance:
+            pass                                   # already open: free on both sides
+        else:
+            want = r.choice(sizes)
+            seen.append(want)
+            with_map += tok(want)                  # the map names the file: open it, once
+            without += tok(want) + sum(tok(r.choice(sizes)) for _ in range(SEARCH_OPENS))
+        if cross is None and without > with_map:
+            cross = turn + 1
+    return round(with_map), round(without), cross
+
+
+same_w, same_o, same_c = scenario(0.10)     # A: 10% of turns move on — mostly the same subject
+rand_w, rand_o, rand_c = scenario(1.00)     # B: every turn a new subject
+
 json.dumps({
+  "sim": {"same": {"w": same_w, "o": same_o, "cross": same_c},
+          "rand": {"w": rand_w, "o": rand_o, "cross": rand_c},
+          "turns": TURNS, "opens": SEARCH_OPENS, "seed": SEED,
+          "block": round(BLOCK)},
   "indexed": len(files),
   "index_bytes": len(index.encode()),
   "injected_bytes": len(injected.encode()),
@@ -841,7 +943,8 @@ json.dumps({
   const r = JSON.parse(raw);
   r.src_bytes = bytes; r.fetched = got; r.total_blobs = want.length;
   r.declared = declared;
-  r.capped = want.length > take.length;
+  r.capped = want.length > take.length || !!truncated;
+  r.via = via;
   // The language is derived from what was actually indexed rather than asked of GitHub's API,
   // which is one more request and a different answer anyway — GitHub reports the language of the
   // whole repository, this reports the language of the files chamnan read.
@@ -871,10 +974,22 @@ function render(r){
     </div>
     <div class="card">
       <h3>${t("card2")}</h3>
-      <div class="row"><span class="k">${t("kBlock")}</span><span class="v">≈ ${num(perSession)} tok</span></div>
-      <div class="row"><span class="k">${t("kTurns")}</span><span class="v good">≈ ${num(perSession)} tok</span></div>
-      <div class="row"><span class="k">${t("kReread")}</span><span class="v warn">≈ ${num(tok(r.src_bytes))} tok / turn</span></div>
-      <p class="note">${t("note2")}</p>
+      <p class="simtag">${t("simTag")}</p>
+      <table class="sim">
+        <thead><tr><th></th><th>${t("kWith")}</th><th>${t("kWithout")}</th></tr></thead>
+        <tbody>
+          <tr><td>${t("scenSame")}</td>
+              <td class="n good">${num(r.sim.same.w)}</td>
+              <td class="n warn">${num(r.sim.same.o)}</td></tr>
+          <tr><td>${t("scenRand")}</td>
+              <td class="n good">${num(r.sim.rand.w)}</td>
+              <td class="n warn">${num(r.sim.rand.o)}</td></tr>
+        </tbody>
+      </table>
+      <div class="row"><span class="k">${t("kCross")} <em>(${t("scenRand")})</em></span><span class="v">${
+        r.sim.rand.cross ? r.sim.rand.cross : t("simNever")}</span></div>
+      <p class="note">${t("simHow")}</p>
+      <p class="note">${t("simAssume", {opens: r.sim.opens, seed: r.sim.seed})}</p>
     </div>
     <div class="card">
       <h3>${t("card3")}</h3>
