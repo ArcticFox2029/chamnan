@@ -1607,9 +1607,20 @@ def _inside_workspace(path, root):
     """
     try:
         from workspace import WORKSPACE_DIRNAME
-        return WORKSPACE_DIRNAME in path.relative_to(root).parts
+        parts = path.relative_to(root).parts
     except (ValueError, ImportError):
         return False
+    if WORKSPACE_DIRNAME not in parts:
+        return False
+    # 🐛 [2026-09-07] `tools/` is the exception, and it is the whole point of the exception:
+    # everything else under `.chamnan/` is written BY chamnan, but `tools/` holds scripts a person
+    # promoted and whatever those scripts need beside them. Excluding the lot meant a user-placed
+    # asset there — a `.dat`, a fixture, a binary a tool reads — was silently absent from the
+    # unindexed tally, which is the one place the index admits what it could not read. The
+    # docstring already said "chamnan's own files"; the code said "anything under .chamnan"
+    # (R13 agent 2).
+    at = parts.index(WORKSPACE_DIRNAME)
+    return parts[at + 1:at + 2] != ("tools",)
 
 
 def indexable(root, nested=None, with_text=False, sniff=True):
@@ -2068,9 +2079,9 @@ def _render(files, root):
         if here != cur_dir:
             cur_dir = here
             lines.append("")
-            lines.append(f"**`{mdblock.one_line(here if here != '.' else '.')}/`**")
+            lines.append(f"**`{mdblock.as_quoted(here if here != '.' else '.')}/`**")
         shown = PurePosixPath(f["path"]).name
-        lines.append(f"- **`{mdblock.one_line(shown)}`**"
+        lines.append(f"- **`{mdblock.as_quoted(shown)}`**"
                      f" ({f['lines']}L{', ' + '/'.join(counts) if counts else ''}) — {mdblock.one_line(summary)}")
 
     # Optional sections, in one file rather than several: a repo of plain scripts should end up
@@ -2109,7 +2120,7 @@ def _render(files, root):
     if detail:
         lines += [detail, ""]
     for f in files:
-        lines.append(f"## `{mdblock.one_line(f['path'])}`")
+        lines.append(f"## `{mdblock.as_quoted(f['path'])}`")
         if f["doc"]:
             lines.append(mdblock.demote_headings(f["doc"]))
         lines.append("")
@@ -2125,7 +2136,7 @@ def _render(files, root):
             if methods:
                 lines.append(f"  - methods: {', '.join(mdblock.one_line(m) for m in methods[:30])}")
         for sig, doc in f["funcs"]:
-            lines.append(f"- `{mdblock.one_line(sig)}`"
+            lines.append(f"- `{mdblock.as_quoted(sig)}`"
                          f"{' — ' + mdblock.one_line(doc) if doc else ''}")
         lines.append("")
     # One choke point, on the whole document, rather than at each of the dozen places a summary is

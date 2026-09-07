@@ -44,6 +44,27 @@ def directory(root):
     return workspace(root) / DIRNAME
 
 
+# 🐛 [2026-09-07] KNOWN, NOT FIXED. `slug()` truncates at 60 characters with no collision guard,
+# so two genuinely different sequences sharing a 60-character prefix resolve to one file and the
+# second overwrites the first. Reproduced:
+#
+#     python3 sed python3 git-add git-commit python3 pytest ruff mypy black
+#     python3 sed python3 git-add git-commit python3 pytest ruff mypy isort
+#     -> python3-sed-python3-git-add-git-commit-python3-pytest-ruff-m   (both)
+#
+# Ten-command sequences are exactly what this detector is for, so the prefix collision is not
+# exotic. `timeline._distinct_slug` solves the same problem for threads by appending a short hash.
+#
+# The obvious port of it FAILS here and the reason is worth writing down, because the next attempt
+# will otherwise make it again: `_upsert_locked` calls `path_for` BEFORE `_same_habit` has decided
+# whether this sequence is a rotation of one already on disk. A per-sequence hash at that point
+# gives four rotations of one habit four different filenames and defeats the merge that exists to
+# stop exactly that — "ONE HABIT DETECTED AT FOUR OFFSETS IS ONE CANDIDATE" fails immediately.
+#
+# The fix belongs after the merge decision, not in the name: when `_same_habit` finds nothing and a
+# genuinely new file is about to be written, THAT is where a taken name should be disambiguated.
+# Left undone rather than shipped half-right, because breaking a deliberate, tested merge to close
+# a narrower collision is the wrong trade (R13 agent 3).
 def slug(sequence):
     joined = "-".join(sequence)
     s = re.sub(r"[^a-zA-Z0-9]+", "-", joined.strip().lower()).strip("-")

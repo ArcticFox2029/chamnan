@@ -1,5 +1,8 @@
 # chamnan
 
+[![tests](https://github.com/ArcticFox2029/chamnan/actions/workflows/tests.yml/badge.svg)](https://github.com/ArcticFox2029/chamnan/actions/workflows/tests.yml)
+[![measure it on your own repo](https://img.shields.io/badge/measure_it-on_your_own_repo-0F6E5C)](https://arcticfox2029.github.io/chamnan-measure/)
+
 <img src="docs/assets/chamnan-promo.png" alt="chamnan — repository memory for Claude Code. It scans the repository and builds context files (MAP.md, STATE.md, sessions/, memory/, skills/ and tools/, milestones.md) that a session is handed at startup, so the agent stops rediscovering the same things. Runs on your machine; nothing is sent anywhere." width="100%">
 
 <p align="center"><sub><a href="docs/i18n/README.zh-CN.md">🇨🇳 中文</a> · <a href="docs/i18n/README.zh-TW.md">🇹🇼 繁體中文</a> · <a href="docs/i18n/README.ja.md">🇯🇵 日本語</a> · <a href="docs/i18n/README.ko.md">🇰🇷 한국어</a> · <a href="docs/i18n/README.th.md">🇹🇭 ไทย</a> · <a href="docs/i18n/README.vi.md">🇻🇳 Tiếng Việt</a> · <a href="docs/i18n/README.id.md">🇮🇩 Indonesia</a> · <a href="docs/i18n/README.hi.md">🇮🇳 हिन्दी</a> · <a href="docs/i18n/README.bn.md">🇧🇩 বাংলা</a> · <a href="docs/i18n/README.ur.md">🇵🇰 اردو</a> · <a href="docs/i18n/README.ar.md">🇸🇦 العربية</a> · <a href="docs/i18n/README.he.md">🇮🇱 עברית</a> · <a href="docs/i18n/README.tr.md">🇹🇷 Türkçe</a> · <a href="docs/i18n/README.ru.md">🇷🇺 Русский</a> · <a href="docs/i18n/README.uk.md">🇺🇦 Українська</a> · <a href="docs/i18n/README.pl.md">🇵🇱 Polski</a> · <a href="docs/i18n/README.cs.md">🇨🇿 Čeština</a> · <a href="docs/i18n/README.de.md">🇩🇪 Deutsch</a> · <a href="docs/i18n/README.nl.md">🇳🇱 Nederlands</a> · <a href="docs/i18n/README.fr.md">🇫🇷 Français</a> · <a href="docs/i18n/README.es.md">🇪🇸 Español</a> · <a href="docs/i18n/README.pt-PT.md">🇵🇹 Português</a> · <a href="docs/i18n/README.pt-BR.md">🇧🇷 Português (BR)</a> · <a href="docs/i18n/README.it.md">🇮🇹 Italiano</a> · <a href="docs/i18n/README.ro.md">🇷🇴 Română</a> · <a href="docs/i18n/README.el.md">🇬🇷 Ελληνικά</a> · <a href="docs/i18n/README.hu.md">🇭🇺 Magyar</a> · <a href="docs/i18n/README.sv.md">🇸🇪 Svenska</a> · <a href="docs/i18n/README.fi.md">🇫🇮 Suomi</a> · <a href="docs/i18n/README.da.md">🇩🇰 Dansk</a> · <a href="docs/i18n/README.no.md">🇳🇴 Norsk</a> · <a href="docs/i18n/README.tl.md">🇵🇭 Tagalog</a></sub></p>
@@ -115,7 +118,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.22.1](#whats-new-in-1221) · [Commands](#commands)
+[What's new in 1.23.1](#whats-new-in-1231) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -422,6 +425,11 @@ claude plugin marketplace add ArcticFox2029/chamnan
 claude plugin install chamnan@chamnan
 ```
 
+Both commands are Claude Code's own. If `claude` is not on your PATH yet, install it first —
+[the official instructions are here](https://docs.claude.com/en/docs/claude-code/setup) — and check
+with `claude --version`. chamnan itself needs nothing more: Python 3.8 or newer, standard library
+only, no `pip install`, no account, no key.
+
 Then open Claude Code in a repository you actually work in, and run it once:
 
 ```
@@ -486,56 +494,139 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.22.1
+## What's new in 1.23.1
 
-1.22.0's notes never said how many checks it passed. Every release before it closed with that
-number and the platforms it was green on, and a page whose front matter says "verifiable claims,
-not adjectives" is the wrong place to drop the one line that is a claim rather than an adjective.
-That is what this release exists to correct, and the number is below.
+**Measure this on your own repository before installing anything:
+[arcticfox2029.github.io/chamnan-measure](https://arcticfox2029.github.io/chamnan-measure/)**
 
-The README's own suite paragraph had drifted the same way: it still read "Over 1,800 checks",
-written when there were 1,800. It says "Over 3,600" now.
+Paste a public GitHub repository. The page runs chamnan's real modules through Pyodide — not a
+re-implementation — and reports what would be injected per session, what the redactor would alter,
+and a 50-turn simulation over that repository's own files. No server, nothing uploaded, no API key
+asked for, and the source it downloads is deleted the moment the numbers exist. Five languages.
 
-Six fixes landed alongside it, all of them findings that had been reported and never acted on — a
-triage pass found that the backlog rolls up rounds R1-R8 and nothing after, leaving 35 reports
-never summarised and 14 findings with no trace in code or archive.
+The rest of this release is one defect, found in fourteen places, plus two things the tool could
+not previously say about itself.
 
-### The tools index destroyed its own history on a merge conflict
+### A rule applied to some members of a set, and forgotten in the identical ones beside it
 
-`load()` returns `[]` for a file it cannot parse, and `[]` is exactly what it returns for a registry
-that never existed — indistinguishable to every caller. The next `chamnan-promote` wrote its one new
-entry over the top and every previously registered tool, with its run counters, was gone. Silently
-and permanently. An unresolved `<<<<<<< HEAD` is the ordinary way there: `index.json` is committed,
-and two branches registering different tools collide in it. Reported independently by two rounds and
-unfixed both times, while the guard sat one file away.
+Every item below is that shape. They were found by separate research rounds, in code written
+months apart, which is why they are worth naming together rather than listed as unrelated fixes.
 
-### Four more that were reported and forgotten
+**A rule file's glob could end a session's context, permanently.** `Path.glob` raises
+`NotImplementedError` — not `ValueError`, not `OSError` — for any pattern beginning with `/`, and
+`rulecheck` caught the other two. One committed line reading ``**Check:** absent `X` in every
+`/etc/*` `` left `run()`, hit the session-start hook's blanket `except Exception`, and ended the
+injected block where it stood: milestones, the last session's handoff, the tools index, open
+threads and the reply style stopped being injected, every session, under a message that never named
+the rule. A rule file arrives with a clone, so this needed no local access.
 
-A badly-resolved merge in MAP.md injected both sides as settled fact — the sibling of a bug whose
-STATE.md half was fixed the same day, in the store most likely to conflict rather than least, since
-two branches editing unrelated files still collide in an alphabetical index.
+**A committed tools index did the same through a different field.** `sort(key=lambda t: -(t.get(
+"runs") or 0))` on `"runs": "12"` is `-"12"`, a `TypeError`. The name in that file was validated,
+because a name becomes a path; the other fields were trusted, and a sort key is exactly where an
+untrusted field turns into arithmetic.
 
-A Jupyter notebook was bucketed as payload rather than as source this indexer cannot parse, so a
-fifteen-notebook repository reported "described 2/2 files (100%)" while all of its real content was
-invisible.
+**All three context-injecting hooks failed to strip zero-width characters, each differently.**
+Two bypassed the `print` shadow with a raw write; the third called it faithfully on the finished
+JSON, by which point `json.dumps` has escaped every smuggled code point to `\uXXXX` text that no
+character filter matches and Claude Code decodes straight back. Reproduced end to end: 44 Unicode
+Tag characters in, an instruction back out.
 
-The carry-forward cap counted characters, which mis-prices any script that is not mostly Latin —
-measured at 1.99x for Thai at the same character count.
+**Eleven places wrapped a repository-derived name in backticks and folded it with `one_line`
+instead of making it inert with `as_quoted`.** A filename carrying a backtick closes its own code
+span, and everything after it stops being the repository's data and becomes chamnan's formatting.
+A report named two of them; the sweep found nine more across five modules and a hook.
 
-And on Windows: a Python App Execution Alias stub reported "too old" instead of "not installed",
-sending a new user toward the wrong diagnosis; and a missing `git` made "Where the last session
-stopped" vanish with no diagnostic at all, which is a different failure from having nothing to say.
+**`rulecheck` could name a file outside the repository even though it could not read one** — the
+offenders list came from a second, uncontained glob, and that line prints outside the
+`[repo:nonce]` fence in chamnan's own voice.
 
-### On Windows an exited process read as alive
+**The forged-milestone detector was wrong in both directions, and its sibling had none at all.**
+`rstrip("\n")` removes the blank line it is trying to detect, so two legitimate field-less entries
+were flagged while one invisible trailing space hid a real forgery. `timeline` had no detector,
+although the comment above its entry regex already said it was "the same shape as milestones'".
+A planted `## 2099-12-31` takes the top slot of the Open-threads section and pushes real threads
+down.
 
-`OpenProcess` succeeding is not liveness there: the process object outlives the process while
-anything holds a handle to it, so a lock left by a process that CRASHED was never reclaimed and
-every later write was silently unguarded. `GetExitCodeProcess` answers it, paired with a
-zero-timeout wait for the one process whose real exit code is 259.
+**`--version` answered a refusal instead of the version** in exactly the two cases its own comment
+says it must survive. Six of nine commands put the check first; three put it below the
+no-workspace exit and the feature-disabled exit, and the existing sweep passed because it ran every
+command inside a healthy workspace — the one state nobody is in when they ask.
 
-3,662 checks, green on macOS, Ubuntu and Windows at Python 3.8 and 3.13.
+**The downgrade banner had no bound and `fit.shrink` cannot drop it.** A committed `.version` of
+`999.0.0` plus 500 unknown config keys took the hook's stdout to 34,728 bytes against a 9,000-byte
+ceiling, truncated mid-key-name at the host's 2,048.
+
+**The `MIN_FILES` cliff was explained by a count the gate does not use.** `assets.scan()` applies
+the floor per top-level directory; the explanation summed globally, so twelve unindexable files
+split six-and-six across two directories got the silent exit 1 with no explanation.
+
+**A heredoc body was scanned as shell.** Every `;` `&&` `||` `|` inside one split the command and
+each fragment's first word became a fabricated step. Five of the eight candidates in this
+repository's own queue carried the token `s` as a result — the `s` of `sed -i '' 's/…/…/'` written
+inside a `python3 - <<'PY'` block, read as a command name.
+
+### Where processes cannot be spawned, and where git cannot answer
+
+Fourteen handlers around a git call named "git is not installed" and "git said something odd".
+None named `NotImplementedError`, which is how an environment with no process layer fails —
+Pyodide and WASM, and some restricted sandboxes and CI containers. chamnan did not fall back to its
+no-git behaviour, which it has and is tested for; it raised out of `mapper.scan()` and took the
+whole index with it. There is now one `git_cannot_answer()` with fourteen callers and a check that
+finds every handler wrapping a subprocess call and requires it to use that definition — which
+caught a fifteenth site the first fix had missed.
+
+Two more thresholds in the same family: `git_is_installed()` answered "a file called git exists",
+which is true of a git too old for `-C` (added in 1.8.5, 2013 — RHEL 7 and CentOS 7 shipped
+1.8.3.1 for years), so the diagnostic added for a missing git never fired and every git-derived
+section went silent. And `git_owns()` used `--absolute-git-dir`, which arrived in git 2.13 (2017),
+so a bare repository was unrecognised by the git Ubuntu 14.04 and 16.04 shipped. Both fixed, and
+the message now names the real cause: telling somebody who has git that git is missing sends them
+to install what is already there.
+
+### Two things chamnan could not previously say about itself
+
+**The file beside the block is finally counted.** `chamnan-report` now reports the agent context
+files loaded into the same window as chamnan's own block. Measured on this repository: the block is
+8,925 bytes against its own 9,000-byte ceiling, and `CLAUDE.md` is 17,116 against no budget at all.
+Derived from the vendor table, so it covers all twenty-four agents rather than Claude alone, and
+stated as a measurement rather than as advice — a long context file is frequently the correct one.
+
+**Every session now records the SHAPE of the block it was handed**, in `logs/block_shape.jsonl`:
+byte totals, per-section sizes, and whether the block stopped early. Not the text — the block is
+reassembled from files already in git, so a copy buys nothing that re-running the hook does not.
+What cannot be regenerated is what yesterday's block looked like, and all three truncation defects
+above are obvious in a column of numbers. 188 bytes a session against the block's ~9,000, bounded
+by record count so it cannot grow without limit, and it honours `CHAMNAN_READ_ONLY` so
+`chamnan-map --preview` still writes nothing.
+
+### Also
+
+`dead_entries` claimed to be bounded by the index budget and was not: it stated every name in the
+on-disk `MAP.md`, 250 ms at fifty thousand. It now walks the tree once above a threshold and stats
+below it, because which is cheaper is a ratio and not a rule — 68 ms for the same exact answer, and
+the measured crossover is written beside the constant so the next reader does not re-derive it.
+
+The redactor gained the personal-data identifiers that are not Thai. Each earned its place by the
+standard this module set for itself: measure the checksum against random input first. IBAN mod-97
+passes 1.02% of random alphanumerics and Brazil's CPF 1.03%, so shape is enough for both; India's
+Aadhaar Verhoeff passes 9.99% of random 12-digit numbers, so it is keyword-gated exactly like the
+bare Thai national ID, and for the same measured reason.
+
+The invisible-character filter gained the code points Unicode itself deprecates and the invisible
+math operators, and deliberately did NOT gain the other sixty-two format characters that survive
+it — ZWJ holds a family emoji together, ZWNJ separates a Persian verb prefix, and the bidi marks,
+Arabic number signs and Hangul fillers are ordinary letters in languages this tool indexes.
+
+`chamnan-map`'s unindexed tally no longer swallows files a person placed in `.chamnan/tools/`
+alongside their own scripts; the CI workflow says out loud that `"3.8"` resolves to different
+interpreters per OS; and the release checklist in `docs/verification.md` now states what every
+release note must carry, starting with the number of checks that passed.
 
 ---
+
+**3,844 of 3,844 checks passed** on macOS 15 / Python 3.14.7, and the CI matrix runs the same suite
+on ubuntu-latest, macos-latest and windows-latest at Python 3.8 and 3.13. The demo page's sample
+table was re-measured through the page itself on 2026-09-07: all twelve repositories reproduce.
 
 ## Bootstrap does not rewrite your code
 
@@ -988,7 +1079,7 @@ From a shell, in the repository:
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |
 | `chamnan-promote <file> <name> --desc "…"` | install a scratch script as a permanent tool in `.chamnan/tools/` |
 | `chamnan-promote --list` | what this repo already keeps |
-| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list`. **Measured 2026-09-02: the sequence detector behind this has never produced a candidate on real data** — 0 across 2,905 logged commands in four working repositories, and still 0 at half its shipped thresholds. The scratch-script notice in the same feature does fire and is a different mechanism. Kept because the cost is 1.14 ms per tool call and one machine's logs are not proof about everyone's, but do not expect it to find anything. |
+| `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list`. **Measured 2026-09-02: 0 candidates across 2,905 logged commands in four working repositories, and still 0 at half its shipped thresholds. Re-measured 2026-09-07: it fires.** Eight candidates in this repository's own workspace, on a day of unusually repetitive work. The earlier figure was true when it was taken and is left here because the honest reading is that this detector needs a particular shape of day rather than that it does nothing. The scratch-script notice in the same feature is a different mechanism and fires more often. Cost is 1.14 ms per tool call. |
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
 | `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |

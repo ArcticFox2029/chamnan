@@ -32,6 +32,7 @@ import milestones  # noqa: E402
 import profiles  # noqa: E402
 import mdblock  # noqa: E402
 import redact  # noqa: E402
+import blocklog  # noqa: E402
 
 # 🐛 Every `bin/` command shadows `print` with `redact.emit`; no hook did, and the hooks emit more
 # repository text than any of them. The credential half is deliberately NOT repeated here -- each
@@ -648,6 +649,16 @@ _QI_FOLDER = re.compile(r"^\*\*`([^`]+)`\*\*\s*$")
 _QI_ROW = re.compile(r"^- \*\*`([^`]+)`\*\*")
 
 
+# 🎯 [2026-09-07] Memoised on the TEXT. `dead_entries` and `unindexed` are handed the same
+# `map_text` in the same firing and each parsed it independently, so a stale index paid the parse
+# twice for one answer. Keyed by the text itself rather than by a path, because that is what the
+# function is a pure function of, and because the hook holds the text in memory anyway — nothing
+# here reads the file a second time. One entry: the two callers are given the same string, and
+# holding more than the current index would be caching for a caller that does not exist
+# (R13 agent 1, who called it a scoping note rather than a defect, which is the right weight).
+_QUICK_NAMES_CACHE = (None, None)
+
+
 def _quick_index_names(map_text):
     """The paths the Quick Index names, as a set, or None when there is no Quick Index at all.
 
@@ -655,6 +666,9 @@ def _quick_index_names(map_text):
     nothing to compare against, while a section naming nothing means every file on disk is missing
     from it. Collapsing the two would have made `unindexed` silent on an empty index.
     """
+    global _QUICK_NAMES_CACHE
+    if _QUICK_NAMES_CACHE[0] is map_text:
+        return _QUICK_NAMES_CACHE[1]
     start = map_text.find("## Quick Index")
     if start < 0:
         return None
@@ -681,7 +695,26 @@ def _quick_index_names(map_text):
         row = _QI_ROW.match(line)
         if row:
             names.add(f"{folder}/{row.group(1)}" if folder else row.group(1))
-    return names
+    _QUICK_NAMES_CACHE = (map_text, names)
+    return _QUICK_NAMES_CACHE[1]
+
+
+# Above this many names, `dead_entries` walks the tree once and asks a set instead of stating each
+# name. Which is cheaper is a RATIO, not a rule. Measured 2026-09-07 on a tree of 50,000 files:
+#
+#     names checked      one stat each      one walk + a set
+#                 5             0.1 ms                 70 ms
+#               500             2.5 ms                 67 ms
+#             5,000            25.6 ms                 68 ms
+#            50,000           250.4 ms                 68 ms
+#
+# A walk costs what the TREE costs, once, whatever is looked up in it afterwards; a stat costs
+# about 5 microseconds per NAME. So the crossover sits near 13,000 names on a tree that size, and
+# it moves with the tree — which is why the choice is made at run time rather than settled here.
+#
+# Do NOT copy the walk to a caller that checks a handful of names: on a large tree it is hundreds
+# of times slower, and nothing at the call site would show why.
+DEAD_WALK_ABOVE = 2000
 
 
 def dead_entries(root, map_text):
@@ -701,15 +734,42 @@ def dead_entries(root, map_text):
     session in that directory as fact. The 0-of-264 measurement was taken on a repository that
     happened to be current, which is a sample of one moment rather than a property of the format.
 
-    Costs no walk -- one `exists()` per name the map already contains, on a set the index budget
-    bounds. Deliberately evaluated whether or not the index is behind, because that is the whole
-    point: the case this catches is invisible to the age check.
+    Costs no walk -- one `exists()` per name the map already contains. Deliberately evaluated
+    whether or not the index is behind, because that is the whole point: the case this catches is
+    invisible to the age check.
+
+    🐛 [2026-09-07] This used to say the set was "bounded by the index budget", and a sibling report
+    repeated the claim without re-measuring it. It is not: `map_text` here is the ON-DISK MAP.md,
+    which is not budgeted -- the budget applies to the rolled-up block, not to the file. So the cost
+    is linear in however many paths the map names. Measured on this machine, half of them missing:
+
+        100 names 0.8 ms · 1,000 8.4 ms · 10,000 109 ms · 50,000 486 ms
+
+    against a hook that aims to finish in well under a second. The answer is still exact -- a count
+    over a sample would be a wrong number where the caller expects a right one, and this function
+    exists to catch a map that lies -- but past `DEAD_WALK_ABOVE` it is reached by walking the tree
+    once rather than by stating every name, which is 68 ms instead of 250 ms at fifty thousand
+    (R13 agent 1, re-measured here rather than taken on trust).
     """
     try:
         named = _quick_index_names(map_text)
         if not named:
             return 0, 0, []
-        dead = [n for n in sorted(named) if not (root / n).exists()]
+        ordered = sorted(named)
+        if len(ordered) > DEAD_WALK_ABOVE:
+            base = str(root)
+            cut = len(base) + 1
+            present = set()
+            for dirpath, dirnames, filenames in os.walk(base):
+                # The index never names anything in these, so descending into them is pure cost —
+                # and `.git` on a large repository is most of the file count.
+                dirnames[:] = [d for d in dirnames if d not in (".git", ws.WORKSPACE_DIRNAME)]
+                rel = dirpath[cut:]
+                for f in filenames:
+                    present.add(f"{rel}/{f}" if rel else f)
+            dead = [n for n in ordered if n.rstrip("/") not in present]
+        else:
+            dead = [n for n in ordered if not (root / n).exists()]
         return len(dead), len(named), dead[:3]
     except Exception:
         return 0, 0, []      # never let a nicety break a session
@@ -1454,7 +1514,24 @@ def main():
                 # Three stable sorts, least significant first: name, then newest, then most-run.
                 ranked = sorted(tools, key=lambda t: str(t.get("name") or ""))
                 ranked.sort(key=lambda t: str(t.get("added") or ""), reverse=True)
-                ranked.sort(key=lambda t: -(t.get("runs") or 0))
+                # 🐛 [2026-09-07] `-(t.get("runs") or 0)` on a committed `"runs": "12"` is
+                # `-"12"`, which is a TypeError, and index.json arrives with a clone like every
+                # other file here. It left `run()` into the hook's blanket `except Exception` and
+                # ended the block at this section — the tools index and everything after it gone,
+                # every session, permanently. Same blast radius as the rulecheck glob fixed this
+                # morning, reached through a different field (R13 agent 2).
+                #
+                # `_real_tool` above validates the NAME because that one becomes a path. The other
+                # fields were trusted, and a sort key is exactly where an untrusted field turns
+                # into arithmetic. Coerced rather than rejected: a bad counter is a reason to rank
+                # a tool last, not to hide it from the listing.
+                def _runs(t):
+                    try:
+                        return -int(t.get("runs") or 0)
+                    except (TypeError, ValueError):
+                        return 0
+
+                ranked.sort(key=_runs)
                 # `--desc` is free text a person typed once and this section reads back into every
                 # session afterwards. MAX_TOOLS caps how many are listed, not how long one is.
                 lines = [f"- `{mdblock.as_quoted(t['name'])}` — {mdblock.one_line_capped(t.get('desc') or 'no description')}"
@@ -1667,6 +1744,24 @@ def main():
     # Unicode Tag characters inside a committed source comment reached Claude Code's context
     # through it with no rendered width (R12 agent 3, reproduced end to end).
     body = redact.for_a_terminal(body)
+    # What this session was handed, as a shape rather than a copy — 188 bytes against the block's
+    # ~9,000, bounded by record count, no content stored. Written AFTER `fit.shrink` and after the
+    # terminal pass, because the question it answers is "what did the session actually receive",
+    # not "what did we intend to send". See lib/blocklog.py for why the text itself is not kept.
+    #
+    # Deliberately not guarded by a config flag: it costs one bounded append and it is the only
+    # record that would have shown today's three truncation defects on the day they landed rather
+    # than when an agent went looking.
+    #
+    # But it IS guarded by the read-only contract. `chamnan-map --preview` and `--explain` answer
+    # "what would a session receive" by running this hook, and their own help says they write
+    # nothing — so a write here would make that false, in the command whose whole purpose is to
+    # look without touching. The suite caught this the moment it was added, which is the check
+    # doing its job: a session that is only being previewed did not happen, and a log of sessions
+    # that did not happen is a log of the wrong thing.
+    if not ws.read_only():
+        blocklog.record(root, body, ceiling=ceiling,
+                        when=time.strftime("%Y-%m-%dT%H:%M:%S"))
     try:
         sys.stdout.write(body + "\n")
     except UnicodeEncodeError:

@@ -389,7 +389,12 @@ def main():
     try:
         print(body)
     except UnicodeEncodeError:
-        sys.stdout.buffer.write(redact.scrub(body).encode("utf-8", "replace") + b"\n")
+        # \U0001f41b [2026-09-07] `for_a_terminal` too. `print` here is the shadow that applies both
+        # halves; this fallback applied only the credential half, so the one path that exists
+        # BECAUSE the text contains an awkward character was the path that stopped filtering
+        # awkward characters. Same shape as the three hooks fixed this morning (R13 agent 2).
+        sys.stdout.buffer.write(
+            redact.for_a_terminal(redact.scrub(body)).encode("utf-8", "replace") + b"\n")
     return 0
 
 

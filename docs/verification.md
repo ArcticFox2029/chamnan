@@ -145,6 +145,69 @@ release on a tag no other release uses.
 
 `.github/release-template.md` is a starting point for the notes.
 
+### The demo page ships with the release, not after it
+
+`site/` is published separately at
+[arcticfox2029.github.io/chamnan-measure](https://arcticfox2029.github.io/chamnan-measure/), from
+the `ArcticFox2029/chamnan-measure` repository. It runs chamnan's REAL modules through Pyodide, and
+its whole claim to be worth looking at is that the numbers on it are this tool's own. That stops
+being true the moment a release goes out without it, and nothing about the page says so — it will
+keep reporting an old build's behaviour, confidently, in five languages.
+
+So it is part of the release, in this order:
+
+**a. Rebuild the bundle.** `python3 site/build.py` copies the import closure out of `lib/` and
+writes the version into `site/lib/manifest.json`, which is what the page displays. Run it AFTER the
+version bump, or the page announces the previous release. The suite has a check for the copy having
+drifted; it cannot check that you rebuilt after bumping rather than before.
+
+**b. Re-measure the sample table.** The thirteen rows in `PRE` are real measurements with a date
+beside them, and those repositories are worked on daily — the figures move. Re-run them through the
+page and update both the numbers and the date. A table that never changes is a table nobody is
+measuring, and this one is the page's evidence that it measures anything at all.
+
+**c. Test the PUBLISHED page, not the local one.** A browser tab left open all afternoon holds the
+script it loaded, so a local check can pass against code the deployed copy does not have. Load the
+live URL with a cache-busting query and measure at least one repository through it. GitHub Pages
+also caches HTML for about ten minutes, so a visitor arriving in that window sees the previous
+build; that resolves itself, but do not conclude from it that the deploy failed.
+
+**d. Push it.** The demo repository takes the same identity rules as this one.
+
+### What every release note must contain
+
+Not style. Each of these exists because a release went out without it and the omission cost
+something.
+
+**1. The number of checks that passed, and the platforms.** `N/N checks passed`, verbatim from the
+run that gated this release. 1.22.0 shipped without it and 1.22.1 existed largely to correct that:
+a page whose front matter says *"verifiable claims, not adjectives"* had dropped the one line in its
+notes that is a claim rather than an adjective. Write the number the suite actually printed — not
+one carried over from the previous release, which is how the README came to say "Over 1,800 checks"
+long after there were 3,600.
+
+**2. What changed, in terms of what it cost the user.** "Fixed a bug in `rulecheck`" is not a note.
+"One committed rule file ended the injected block at the rules section — milestones, the session
+handoff and the tools index stopped being injected, every session" is, because a reader can tell
+whether it affected them.
+
+**3. A measurement for anything described as faster, smaller or cheaper**, with the method. This
+project has been wrong about its own performance more than once by reading a profiler instead of a
+clock, and a number with no method behind it is the kind that survives into three more releases.
+
+**4. Nothing described as a functional change that is documentation only.** Already stated in the
+version table above; repeated here because notes are written last, when the temptation is highest.
+
+### What a note should NOT carry
+
+A correction is worth recording when it fixes something a PREVIOUS RELEASE shipped: the reader saw
+the old behaviour, and the note explains why it changed. A mistake made and fixed inside one
+unreleased working session is not that — nobody saw the wrong version, so writing "this was first
+measured at X, which was wrong" reads as the author changing their mind twice and makes the work
+look unstable rather than careful. Publish the correct answer and the measurement behind it. The
+same rule applies to `🐛` comments in the code (owner, 2026-09-07).
+
+
 **8. Verify what was published.**
 
 ```bash

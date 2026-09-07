@@ -200,6 +200,7 @@ import sessions  # noqa: E402
 import milestones as _milestones  # noqa: E402
 import state as state_mod  # noqa: E402
 import timeline  # noqa: E402
+import blocklog as _blocklog  # noqa: E402
 import environments as envs  # noqa: E402
 import aging  # noqa: E402
 import tokens  # noqa: E402
@@ -9894,8 +9895,13 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
     _gitcalls += _t.count('["git",')
 # Raised 2026-09-07: `git_can_speak_for` and `git_toplevel` are two new sites, and the paragraph
 # went from nine purposes to ten in the same commit — the event this check exists to force.
+# Raised again the same day for two FALLBACK sites that add no purpose: `git_is_installed` now asks
+# git whether it understands `-C` before answering, and `git_owns` falls back from
+# `--absolute-git-dir` (git 2.13) to `--git-dir` for an older git. Both serve purposes the
+# paragraph already lists, so the prose is unchanged and only the site count moves — which is the
+# distinction the comment above draws between sites and purposes, met for the first time.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      3 <= _gitcalls <= 17)
+      3 <= _gitcalls <= 19)
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -10407,9 +10413,46 @@ check("...and Rake's per-task desc is not mistaken for one",
 # index.json is in registration order and the injected list took the first MAX_TOOLS of it, so a
 # thirteenth tool was never named in any session.
 _hooksrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+# 🐛 [2026-09-07] This asserted the literal source text of the sort line. A correct fix — coercing
+# a hostile `runs` so a committed `"12"` cannot raise a TypeError out of the whole block — changed
+# the spelling and broke the check, while the behaviour it names was still true. A check pinned to
+# how a line is written fails on the fix and passes on a rewrite that ranks by nothing at all,
+# which is backwards in both directions. It runs the hook and reads the order instead.
+_rank = Path(tempfile.mkdtemp(prefix="chamnan-rank-")) / "r"
+(_rank / "src").mkdir(parents=True)
+for _i in range(14):
+    (_rank / "src" / f"m{_i}.py").write_text(
+        f'"""Module {_i} does a thing."""\nimport os\n\n\ndef f{_i}():\n    return os.getcwd()\n',
+        encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_rank)], check=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_rank),
+               capture_output=True)
+_rank_tools = _rank / ".chamnan" / "tools"
+_rank_tools.mkdir(parents=True, exist_ok=True)
+for _n in ("old_and_busy.sh", "new_and_idle.sh"):
+    (_rank_tools / _n).write_text("#!/bin/sh\n", encoding="utf-8")
+# Registered FIRST and used often, against registered later and never used. Order by registration
+# would put them the other way round.
+(_rank_tools / "index.json").write_text(json.dumps([
+    {"name": "old_and_busy.sh", "desc": "used constantly", "added": "2026-01-01", "runs": 90},
+    {"name": "new_and_idle.sh", "desc": "never used", "added": "2026-09-01", "runs": 0},
+]), encoding="utf-8")
+_rank_out = subprocess.run(
+    [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+    input=json.dumps({"cwd": str(_rank)}), capture_output=True, text=True,
+    encoding="utf-8", errors="replace").stdout
+# Scoped to the tools SECTION. A first version searched the whole block and failed, because the
+# where-the-last-session-stopped section lists untracked files alphabetically — where
+# `new_and_idle.sh` precedes `old_and_busy.sh`, and `str.index` found that mention first. The
+# ranking was right and the check was reading somewhere else, which is its own lesson.
+_rank_sec = _rank_out.split("own tools", 1)[-1].split("###", 1)[0]
 check("THE INJECTED TOOL LIST IS RANKED BY USE, NOT BY WHO REGISTERED FIRST",
-      'ranked.sort(key=lambda t: -(t.get("runs") or 0))' in _hooksrc
-      and "for t in ranked[:MAX_TOOLS]" in _hooksrc)
+      "old_and_busy.sh" in _rank_sec and "new_and_idle.sh" in _rank_sec
+      and _rank_sec.index("old_and_busy.sh") < _rank_sec.index("new_and_idle.sh"))
+# The cap still applies, and it is a cap on how many are listed.
+check("...and the list is still capped rather than printed whole",
+      "for t in ranked[:MAX_TOOLS]" in _hooksrc)
+_rmtree(_rank.parent, ignore_errors=True)
 
 # peek exists so a number here can be trusted instead of the file being read.
 _wide = Path(tempfile.mkdtemp(prefix="chamnan-peek-")) / "w.csv"
@@ -19646,8 +19689,14 @@ finally:
 _sa_src = (ROOT / "hooks" / "chamnan_subagent_start.py").read_text(encoding="utf-8")
 _sa_interp = [ln.strip() for ln in _sa_src.splitlines()
               if ("nested[" in ln or "for t in titles" in ln) and ("join" in ln or "for " in ln)]
-check("both repository-derived names in the pointer are folded through one_line",
-      len(_sa_interp) == 2 and all("one_line" in ln for ln in _sa_interp))
+# Either sanitiser satisfies this — `as_quoted` is `one_line` plus making backticks inert, and the
+# name inside backticks was moved to it on 2026-09-07. Pinning the weaker of the two spellings made
+# this fail on a strictly stronger fix, which is the wrong direction for a check to fail in.
+check("both repository-derived names in the pointer are sanitised, neither interpolated bare",
+      len(_sa_interp) == 2
+      and all(("one_line" in ln or "as_quoted" in ln) for ln in _sa_interp))
+check("...and the one wrapped in backticks uses the sanitiser that defangs a backtick",
+      all("as_quoted" in ln for ln in _sa_interp if "`" in ln))
 
 
 # ------------------- the git-fallback section restated names Claude Code had already been handed
@@ -20571,6 +20620,417 @@ _rmtree(_nu2.parent, ignore_errors=True)
 _rmtree(_md11_dir.parent, ignore_errors=True)
 _rmtree(_md12_dir.parent, ignore_errors=True)
 
+
+# ------------------------------------------- what the session was handed, as a shape
+# 🎯 [2026-09-07] Three truncation defects landed in one day — a rule file's glob raising out of
+# the hook, a tools index with a string counter, a downgrade banner with no cap — and not one was
+# noticed from using chamnan. All three were found by an agent sent looking. Each is obvious in a
+# column of block sizes, and nothing was recording that column.
+#
+# The shape, never the text: the block is reassembled from files already in git, so a copy buys
+# nothing that re-running the hook does not. What cannot be regenerated is what yesterday's block
+# looked like. Measured: 8,938 bytes of block against 188 bytes of record, and `housekeeping.py`
+# exists because a log nobody bounded reached 950 MB — so this one is capped by RECORD COUNT.
+_bl_body = ("_intro_\n\n### Rules this repository works under\n[repo:x]\nrules\n[/repo:x]\n\n"
+            "### Architecture index\n[repo:x]\nindex\n[/repo:x]\n")
+_bl_rec = _blocklog.shape(_bl_body, ceiling=9000, when="2026-09-07T21:00:00")
+check("the record names each section and its size, and nothing else",
+      set(_bl_rec["sec"]) == {"Rules this repository works under", "Architecture index"}
+      and _bl_rec["bytes"] == len(_bl_body.encode("utf-8")))
+check("...and it stores no content from the block",
+      "rules" not in json.dumps(_bl_rec) and "index" not in json.dumps(_bl_rec).replace(
+          "Architecture index", ""))
+check("A TRUNCATED BLOCK IS VISIBLE IN THE RECORD",
+      _blocklog.shape(_bl_body + "_chamnan: this block stopped early — TypeError._")["early"]
+      and not _bl_rec["early"])
+# The size that matters: this is written every session forever.
+check("...and one record stays far smaller than the block it describes",
+      len(json.dumps(_bl_rec, separators=(",", ":")).encode()) < 400)
+
+_bl = Path(tempfile.mkdtemp(prefix="chamnan-blocklog-")) / "r"
+(_bl / ".chamnan").mkdir(parents=True)
+for _i in range(_blocklog.KEEP + 25):
+    _blocklog.record(_bl, f"### S\n[repo:x]\nx{_i}\n[/repo:x]\n", ceiling=9000,
+                     when="2026-09-07T00:00:00")
+_bl_file = _bl / ".chamnan" / _blocklog.LOG
+_bl_lines = _bl_file.read_text(encoding="utf-8").splitlines()
+check("THE LOG IS BOUNDED BY RECORD COUNT AND CANNOT GROW WITHOUT LIMIT",
+      len(_bl_lines) == _blocklog.KEEP)
+check("...and the newest record is the one kept, not the oldest",
+      f'x{_blocklog.KEEP + 24}' in _bl_lines[-1] or _blocklog.trend(_bl, 1))
+# Telemetry that can break a session is worse than none.
+check("...and a workspace it cannot write to costs the session nothing",
+      _blocklog.record(Path("/nonexistent-chamnan-path-xyz"), "### S\nx\n") is False)
+# 🐛 [2026-09-07] Added, and the suite refused it: `chamnan-map --preview` and `--explain` answer
+# "what would a session receive" by RUNNING this hook, and their own help says they write nothing.
+# A log write there makes that false in the one command whose whole purpose is to look without
+# touching — and a record of a session that did not happen is a log of the wrong thing. The
+# `CHAMNAN_READ_ONLY` contract already existed for this; the new write simply had to honour it.
+check("the block log honours the read-only contract rather than inventing its own",
+      "ws.read_only()" in (ROOT / "hooks" / "chamnan_session_start.py").read_text(
+          encoding="utf-8").split("blocklog.record", 1)[0].rsplit("\n\n", 1)[-1])
+_rmtree(_bl.parent, ignore_errors=True)
+
+# ------------------------------------------- a git that is present but cannot answer
+# 🐛 [2026-09-07] Three thresholds, one family, and the fix for the first made the other two
+# visible. `git -C` arrived in git 1.8.5 (2013) and RHEL 7 / CentOS 7 shipped 1.8.3.1 for years;
+# `git rev-parse --absolute-git-dir` arrived in 2.13 (2017), four generations later, and Ubuntu
+# 14.04 and 16.04 shipped a git in between (R13 agent 1).
+#
+# The message matters as much as the detection: telling somebody who HAS git that git is missing
+# sends them to install what is already there.
+_go = Path(tempfile.mkdtemp(prefix="chamnan-oldgit-"))
+(_go / "bin").mkdir()
+
+
+def _fake_git(rejects):
+    """A git on PATH that refuses one flag and delegates everything else to the real one."""
+    (_go / "bin" / "git").write_text(
+        "#!/bin/sh\n"
+        "for a in \"$@\"; do\n"
+        f"  if [ \"$a\" = \"{rejects}\" ]; then echo \"error: unknown option\" >&2; exit 129; fi\n"
+        "done\n"
+        f"exec {shutil.which('git')} \"$@\"\n", encoding="utf-8")
+    (_go / "bin" / "git").chmod(0o755)
+    env = dict(os.environ)
+    env["PATH"] = str(_go / "bin") + os.pathsep + env.get("PATH", "")
+    return env
+
+
+_probe = '''
+import sys, json
+sys.path.insert(0, sys.argv[1])
+import workspace as ws, sessions
+ws._GIT_OWNS.clear()
+print(json.dumps({
+    "installed": ws.git_is_installed(),
+    "too_old": ws.git_is_too_old(),
+    "owns_bare": ws.git_owns(sys.argv[2]),
+    "sentence": sessions.where_git_says_you_stopped(sys.argv[3]),
+}))
+'''
+_bare = _go / "bare.git"
+subprocess.run(["git", "init", "-q", "--bare", str(_bare)], check=True)
+_work = _go / "work"
+(_work / "src").mkdir(parents=True)
+for _i in range(14):
+    (_work / "src" / f"m{_i}.py").write_text(
+        f'"""Module {_i}."""\nimport os\n\n\ndef f{_i}():\n    return os.getcwd()\n',
+        encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_work)], check=True)
+# `carry_forward` returns "" before it ever asks about git when there are no session records, so a
+# bare `git init` never reaches the branch under test. The workspace has to exist first — which is
+# also the only state a real user is in when this sentence is shown to them.
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_work),
+               capture_output=True)
+
+
+def _ask(env):
+    out = subprocess.run([sys.executable, "-c", _probe, str(ROOT / "lib"), str(_bare), str(_work)],
+                         capture_output=True, text=True, encoding="utf-8",
+                         errors="replace", env=env)
+    return json.loads(out.stdout or "{}")
+
+
+_old_c = _ask(_fake_git("-C"))
+check("A GIT TOO OLD FOR -C IS NOT REPORTED AS INSTALLED",
+      _old_c.get("installed") is False and _old_c.get("too_old") is True)
+check("...and the sentence names the real cause instead of sending them to install git",
+      "too old" in (_old_c.get("sentence") or "")
+      and "not on this machine" not in (_old_c.get("sentence") or ""))
+
+_old_adg = _ask(_fake_git("--absolute-git-dir"))
+check("A BARE REPO IS STILL RECOGNISED BY A GIT WITHOUT --absolute-git-dir",
+      _old_adg.get("owns_bare") is True)
+
+_real = _ask(dict(os.environ))
+check("...and a current git is unaffected by either fallback",
+      _real.get("installed") is True and _real.get("too_old") is False
+      and _real.get("owns_bare") is True)
+_rmtree(_go, ignore_errors=True)
+
+# The Quick Index parse is memoised on the text, because two callers in one firing were each
+# paying for it. Correctness first: a different text must not be served the previous answer.
+_qn_a = "# Map\n\n## Quick Index\n\n" + "\n".join(
+    f"- **`src/m{_i}.py`** (1L, 1fn) — x" for _i in range(50))
+_qn_b = _qn_a + "\n- **`src/extra.py`** (1L, 1fn) — x"
+_first = _ss2._quick_index_names(_qn_a)
+check("the memoised index parse returns the same answer twice",
+      _ss2._quick_index_names(_qn_a) == _first)
+check("...and a different index is parsed again rather than served stale",
+      _ss2._quick_index_names(_qn_b) != _first)
+
+# ------------------------------------------- two ways to answer one question, same answer
+# 🐛 [2026-09-07] `dead_entries` stated every name the on-disk MAP.md contains — 250 ms at fifty
+# thousand names, on a hook that aims to finish well under a second, and its docstring claimed the
+# set was "bounded by the index budget" when the budget applies to the injected block and not to
+# the file. It walks the tree once above `DEAD_WALK_ABOVE` instead.
+#
+# The check that matters is not the speed: it is that BOTH paths give the same answer. A fast path
+# that quietly disagrees with the slow one is worse than the slow one, and this function exists to
+# catch a map that lies about what is on disk (R13 agent 1).
+def _dead_fixture(n):
+    d = Path(tempfile.mkdtemp(prefix="chamnan-dead-"))
+    (d / "src").mkdir()
+    for _i in range(0, n, 2):                       # exactly half of them exist
+        (d / "src" / f"m{_i}.py").write_text("x", encoding="utf-8")
+    text = "# Map\n\n## Quick Index\n\n" + "\n".join(
+        f"- **`src/m{_i}.py`** (1L, 1fn) — x" for _i in range(n))
+    return d, text
+
+
+_de_bad = []
+for _n in (100, _ss2.DEAD_WALK_ABOVE - 1, _ss2.DEAD_WALK_ABOVE + 1, 6000):
+    _d, _t = _dead_fixture(_n)
+    _dead, _named, _ = _ss2.dead_entries(_d, _t)
+    if (_dead, _named) != (_n // 2, _n):
+        _de_bad.append(f"{_n} names -> dead={_dead} named={_named}, want {_n // 2}/{_n}")
+    _rmtree(_d, ignore_errors=True)
+for _b in _de_bad:
+    print(f"      DETAIL  {_b}")
+check("THE STAT PATH AND THE WALK PATH GIVE THE SAME ANSWER", not _de_bad)
+# And the threshold has to actually straddle both, or this only ever tested one of them.
+check("...and the fixtures exercised both paths",
+      _ss2.DEAD_WALK_ABOVE > 1 and 6000 > _ss2.DEAD_WALK_ABOVE)
+# The walk must not descend into .git — on a real repository that is most of the file count.
+check("...and the walk skips .git and the workspace",
+      '".git"' in (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+      .split("def dead_entries", 1)[1].split("def ", 1)[0])
+
+# ------------------------------------------- personal data that is not Thai
+# 🎯 [2026-09-07 owner] "we have no way of knowing what nationality the user is, but looking at it
+# as a data record, somebody has written one." The card rules were already international; the only
+# national identifier was Thailand's — the one country whose absence would not be noticed from here.
+#
+# Each rule earns its place the way the card rule did: measure the checksum against random input
+# and let the number decide whether shape is enough. 200,000 samples each, 2026-09-07:
+#   IBAN mod-97 1.02% · CPF mod-11 1.03% · Aadhaar Verhoeff 9.99% (Luhn/16 digits was 9.8%)
+# So Aadhaar is keyword-gated exactly like the bare Thai form, and for the same measured reason.
+def _valid_aadhaar():
+    for _c in "0123456789":
+        if _rd._aadhaar("22345678901" + _c):
+            return "22345678901" + _c
+    return None
+
+
+_ad = _valid_aadhaar()
+_pd_go = {
+    "IBAN, Germany": "iban = DE89370400440532013000",
+    "IBAN, UK, spaced as people write it": "GB82 WEST 1234 5698 7654 32",
+    "IBAN, France, with a letter in the body": "FR1420041010050500013M02606",
+    "CPF, dotted": "cpf: 529.982.247-25",
+    "Aadhaar, with the word beside it": f"aadhaar {_ad[0:4]} {_ad[4:8]} {_ad[8:12]}",
+}
+_pd_stay = {
+    "a commit sha": "commit a1b2c3d4e5f6a7b8c9d0",
+    "an IBAN-shaped string with a bad check": "DE00370400440532013000",
+    "a country code that is just text": "DE89 is not an iban here",
+    "a CPF-shaped number with a bad check": "cpf: 111.222.333-44",
+    "a repeated-digit CPF, the classic trap": "cpf: 111.111.111-11",
+    "twelve digits with no keyword": f"value {_ad[0:4]} {_ad[4:8]} {_ad[8:12]}",
+    "a port and a path": "http://localhost:8080/a/b/c",
+    "an ordinary long number": "ts 234567890123",
+}
+_pd_missed = [_k for _k, _v in _pd_go.items() if _rd.scrub(_v) == _v]
+_pd_false = [_k for _k, _v in _pd_stay.items() if _rd.scrub(_v) != _v]
+for _m in _pd_missed:
+    print(f"      DETAIL  not redacted: {_m}")
+for _f in _pd_false:
+    print(f"      DETAIL  FALSE POSITIVE: {_f} -> {_rd.scrub(_pd_stay[_f])}")
+check("AN IBAN, A CPF AND AN AADHAAR ARE REDACTED LIKE A THAI ID IS", not _pd_missed)
+check("...and none of them fires on ordinary repository text", not _pd_false)
+# The gate is the measurement, not the shape: a country code that does not issue IBANs, or the
+# wrong length for one that does, must not pass however well the arithmetic works out.
+check("...and an IBAN needs a real country code of that country's length",
+      not _rd._iban("ZZ89370400440532013000") and _rd._iban("DE89370400440532013000"))
+check("...and the Aadhaar check is the reason it is keyword-gated, not a formality",
+      _rd._aadhaar(_ad) and not _rd._aadhaar(_ad[:-1] + str((int(_ad[-1]) + 1) % 10)))
+
+# ------------------------------------------- a heredoc body is a document, not shell
+# 🐛 [2026-09-07] `_split_unquoted` tracked quotes and knew nothing about `<<`, so the body of a
+# heredoc was scanned as live shell: every `;` `&&` `||` `|` inside it split the command and each
+# fragment's first word became a fabricated step. Five of the eight candidates in this repository's
+# own queue carried the token `s` as a result — the `s` of `sed -i '' 's/…/…/'` written inside a
+# `python3 - <<'PY'` block, read as a command name (R13 agent 3, live evidence not a fixture).
+#
+# `$(( … ))` is tracked alongside it, because `<<` there is a left shift. A first fix without that
+# read `echo $((1 << 2)) && ls` as a heredoc named `2` and swallowed the rest of the line.
+_hd = {
+    "quoted heredoc keeps its body whole":
+        ("python3 - <<'PY'\nimport x; print(1)\nPY\ngit add a && git commit", 2),
+    "a sed expression inside one is not a command":
+        ("python3 - <<'PY'\nsed -i '' 's/a/b/' f\nPY\ngit add a && git commit", 2),
+    "an unquoted delimiter works the same":
+        ("cat <<EOF\na; b && c\nEOF\ngit add a && git commit", 2),
+    "<<- allows the terminator to be indented":
+        ("cat <<-EOF\n\ta; b\n\tEOF\ngit add a && git commit", 2),
+    "a left shift is not a redirect":
+        ("echo $((1 << 2)) && ls\ngit add a && git commit", 3),
+    "nested arithmetic still closes":
+        ("echo $(( (1 << 2) + $((3 << 1)) )) && ls", 2),
+    "an ordinary pipeline still splits":
+        ("cat f | grep x && echo done", 3),
+    "a semicolon inside quotes still does not split":
+        ('git commit -m "Refactor; use fetch" && git push', 2),
+}
+_hd_bad = [f"{_k}: got {len(_wf2._split_unquoted(_c))}, want {_want}"
+           for _k, (_c, _want) in _hd.items() if len(_wf2._split_unquoted(_c)) != _want]
+for _hb in _hd_bad:
+    print(f"      DETAIL  {_hb}")
+check("A HEREDOC BODY IS NOT SCANNED AS SHELL", not _hd_bad)
+# The token that gave this away in production must not come back.
+check("...so `sed -i '' 's/…/…/'` inside a heredoc yields no bare `s` step",
+      "s" not in [_wf2.signature(_p) for _p in
+                  _wf2._split_unquoted("python3 - <<'PY'\nsed -i '' 's/a/b/' f\nPY")])
+
+# ------------------------------------------- a name in backticks has to be inert, not just folded
+# 🐛 [2026-09-07] `mdblock.one_line` folds a value onto one line. It does not make it inert, and a
+# value wrapped in backticks needs `as_quoted` — a name carrying a backtick closes its own code
+# span, and everything after it stops being the repository's data and becomes chamnan's own
+# formatting. Names come from a clone: filenames, branch names, environment names, directory names.
+#
+#     one_line("evil`.py")  -> `evil`.py`     the span closes early
+#     as_quoted("evil`.py") -> `evil'.py`     inert
+#
+# A report named two sites; the sweep that followed found nine more across six modules and a hook.
+# Derived, so the tenth cannot ship — and asserting it found files, so it cannot pass by scanning
+# nothing (R13 agent 2, extended).
+_bt_bad = []
+for _d in ("lib", "bin", "hooks"):
+    for _f in sorted((ROOT / _d).iterdir()):
+        if not _f.is_file() or _f.suffix not in ("", ".py"):
+            continue
+        for _n, _ln in enumerate(_f.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            if "`{mdblock.one_line(" in _ln:
+                _bt_bad.append(f"{_f.name}:{_n}")
+if _bt_bad:
+    print(f"      DETAIL  one_line inside backticks: {_bt_bad}")
+check("A REPOSITORY-DERIVED NAME IN BACKTICKS IS QUOTED INERT, NOT MERELY FOLDED", not _bt_bad)
+check("the backtick sweep read the source it is about",
+      sum(1 for _d in ("lib", "bin", "hooks") for _f in (ROOT / _d).iterdir() if _f.is_file()) > 30)
+# And the two spellings must actually differ, or the sweep enforces a synonym.
+check("...and as_quoted is what makes it inert",
+      "`" not in mdblock.as_quoted("evil`.py") and "`" in mdblock.one_line("evil`.py"))
+
+# ------------------------------------------- the demo page must run THIS code, not a stale copy
+# 🎯 [2026-09-07] The published page at arcticfox2029.github.io/chamnan-measure says, in its own
+# words and in chamnan's README, that it runs "chamnan's real modules rather than a
+# re-implementation" — which is the entire reason to trust a number it prints. `site/build.py`
+# copies them out of lib/, and its own docstring warns that the copy has to be regenerated when
+# lib/ changes. Nothing checked. A claim that a reader acts on, guarded by somebody remembering,
+# is a claim that goes false quietly (R13 agent 4).
+#
+# Derived from the manifest the page fetches, so a module added to the closure next year is covered
+# without anyone updating this check.
+_site_lib = ROOT / "site" / "lib"
+if _site_lib.is_dir():
+    _site_raw = json.loads((_site_lib / "manifest.json").read_text(encoding="utf-8"))
+    # The manifest carries the version alongside the module list now, so the page can say which
+    # chamnan produced the numbers on it. An older bundle was a bare array.
+    _site_manifest = _site_raw.get("modules", _site_raw) if isinstance(_site_raw, dict) else _site_raw
+    _site_stale = []
+    for _m in _site_manifest:
+        _a, _b = _site_lib / _m, ROOT / "lib" / _m
+        if not _b.is_file():
+            _site_stale.append(f"{_m} (no longer in lib/)")
+        elif _a.read_bytes() != _b.read_bytes():
+            _site_stale.append(_m)
+    if _site_stale:
+        print(f"      DETAIL  site/lib differs from lib/: {_site_stale} — run `python3 site/build.py`")
+    check("THE DEMO PAGE SHIPS THIS CODE, NOT A COPY THAT HAS DRIFTED", not _site_stale)
+    check("...and the manifest names a real set of modules", len(_site_manifest) >= 10)
+    # The page prints the version it is running. Without it a stale copy reports an old build's
+    # behaviour silently, which is the one thing a page like that must not do.
+    check("...and the bundle declares which chamnan version it is",
+          isinstance(_site_raw, dict) and _site_raw.get("version")
+          and _site_raw["version"] == ws.plugin_version(ROOT))
+
+    # The set itself is derived from the import graph, so a NEW dependency of mapper/rollup/redact
+    # must already be in the bundle — otherwise the page loads and fails on an import nobody tested.
+    _closure_src = (ROOT / "site" / "build.py").read_text(encoding="utf-8")
+    check("...and the bundle is derived from the import graph rather than listed by hand",
+          "import_graph" in _closure_src and "closure" in _closure_src)
+
+# ------------------------------------------- a forged entry in a thread, not just a milestone
+# 🐛 [2026-09-07] `milestones.entries` got a split-heading detector today and `timeline.entries_of`
+# did not — although the comment above `timeline._ENTRY` already says it is "the same shape as
+# milestones' _ENTRY". One member of a pair guarded, the identical one beside it left, which is
+# this repository's recurring defect (R13 agent 2).
+#
+# Thread files are committed, so a clone carries whatever its author wrote. A planted
+# `## 2099-12-31` heading becomes an entry this reader trusts, and `open_titles` ranks threads by
+# their newest entry date — so the planted thread takes the top slot of the injected section and
+# pushes the real ones down. Enough of them and the real threads leave the section entirely.
+#
+# The flag has to reach the line the SESSION reads. A first fix put it on the entry title, which
+# `open_titles` never prints — the warning existed and nobody would ever have seen it.
+_tlrepo = Path(tempfile.mkdtemp(prefix="chamnan-thread-")) / "r"
+(_tlrepo / ".chamnan" / "threads").mkdir(parents=True)
+_tl_dir = _tlrepo / ".chamnan" / "threads"
+(_tl_dir / "real.md").write_text(
+    "# Real work on auth\n\n**Started:** 2026-09-01\n**Status:** open\n\n"
+    "## 2026-09-01 \u2014 started the auth migration\n\n"
+    "## 2026-09-02 \u2014 finished the token refresh\n", encoding="utf-8")
+(_tl_dir / "planted.md").write_text(
+    "# Innocent looking thread\n\n**Started:** 2026-01-01\n**Status:** open\n\n"
+    "## 2026-01-01 \u2014 a real entry\n"
+    "## 2099-12-31 \u2014 PLANTED\n\n**Files:** `x.py`\n", encoding="utf-8")
+_tl_out = timeline.open_titles(_tlrepo)
+check("A FORGED THREAD ENTRY IS FLAGGED ON THE LINE THE SESSION READS",
+      "\u26a0" in _tl_out and "Innocent looking" in _tl_out)
+check("...and an honestly written thread is not flagged",
+      _tl_out.count("\u26a0") == 1 and "Real work on auth" in _tl_out)
+# Flagged, never dropped: the owner's rule is that nothing here is deleted.
+check("...and the suspect thread is still listed rather than hidden",
+      "planted.md" in _tl_out)
+_rmtree(_tlrepo.parent, ignore_errors=True)
+
+# ------------------------------------------- a committed tools index with a hostile counter
+# 🐛 [2026-09-07] `ranked.sort(key=lambda t: -(t.get("runs") or 0))` on a committed
+# `"runs": "12"` is `-"12"`, a TypeError. index.json arrives with a clone like every other file
+# here, so that ended the injected block at this section — the tools index and everything after
+# it gone, every session. Same blast radius as the rulecheck glob, reached through a different
+# field (R13 agent 2).
+#
+# `_real_tool` validates the NAME because that one becomes a path; the other fields were trusted,
+# and a sort key is exactly where an untrusted field turns into arithmetic. The entry must also
+# name a file that EXISTS to get this far, which is why a fixture without one does not reproduce
+# it — the first attempt at this check missed for that reason.
+_ti = Path(tempfile.mkdtemp(prefix="chamnan-toolsidx-")) / "r"
+(_ti / "src").mkdir(parents=True)
+for _i in range(14):
+    (_ti / "src" / f"m{_i}.py").write_text(
+        f'"""Module {_i} does a thing."""\nimport os\n\n\ndef f{_i}():\n    return os.getcwd()\n',
+        encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_ti)], check=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_ti),
+               capture_output=True)
+_ti_tools = _ti / ".chamnan" / "tools"
+_ti_tools.mkdir(parents=True, exist_ok=True)
+(_ti_tools / "probe.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+
+
+def _ti_block(runs):
+    (_ti_tools / "index.json").write_text(json.dumps(
+        [{"name": "probe.sh", "desc": "a tool", "added": "2026-01-01", "runs": runs}]),
+        encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+        input=json.dumps({"cwd": str(_ti)}), capture_output=True, text=True,
+        encoding="utf-8", errors="replace").stdout
+
+
+_ti_good = _ti_block(3)
+check("the fixture reaches the tools section at all", "own tools" in _ti_good)
+_ti_bad = [r for r in ("12", ["x"], {"a": 1}, "not-a-number", float("nan"))
+           if "own tools" not in _ti_block(r) or "stopped early" in _ti_block(r)]
+if _ti_bad:
+    print(f"      DETAIL  runs values that still break the block: {_ti_bad}")
+check("A HOSTILE `runs` COUNTER CANNOT END THE INJECTED BLOCK", not _ti_bad)
+# And a good counter still ranks: the fix coerces rather than discarding the field.
+check("...while an honest counter is still what ranks the list",
+      "own tools" in _ti_block(3))
+_rmtree(_ti.parent, ignore_errors=True)
 
 # ------------------------------------------- an environment with no process layer at all
 # 🐛 [2026-09-07] Every handler around a git call named "git is not installed" (OSError) and "git

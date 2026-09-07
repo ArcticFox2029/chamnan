@@ -191,7 +191,30 @@ def entries_of(path, text=None):
         body = text[m.end():end].strip()
         fm = _FILES.search(mdblock.masked(body))
         files = [f.strip().strip("`") for f in fm.group(1).split(",")] if fm else []
-        out.append((m.group(1), m.group(2), [f for f in files if f]))
+        title = m.group(2)
+        # 🐛 [2026-09-07] The guard `milestones.entries` got today, on the reader that the comment
+        # at the top of this file already calls "the same shape as milestones' _ENTRY". It was
+        # applied to one member of the pair and not the identical one beside it, which is this
+        # repository's recurring defect exactly (R13 agent 2).
+        #
+        # Thread files are COMMITTED, so a clone carries whatever its author put in one. A title
+        # holding "\n## <date> — <text>" becomes a second entry that this reader trusts completely,
+        # and `open_titles` ranks threads by their most recent entry date. Reproduced through the
+        # real hook: a planted `## 2099-12-31` took the top slot of the injected Open-threads
+        # section and pushed both genuine threads below it. It does not inject the planted TEXT --
+        # only titles and dates are shown -- but with enough planted files it evicts the real
+        # threads from the section altogether, which is the same outcome by a slower road.
+        #
+        # `append()` writes exactly one empty line above each heading, so a heading whose previous
+        # line is not that empty line was not written by this code. Flagged, never dropped: the
+        # owner's rule is that nothing here is deleted, and a reader told which line is suspect can
+        # fix the file, while a reader shown nothing cannot.
+        above = text[:m.start()].split("\n")
+        if len(above) >= 2 and above[-2] != "":
+            title += (" ⚠ this heading follows another line with no blank line between them, "
+                      "which is not how chamnan writes one — it may have been split out of the "
+                      "title above by a newline. Check this thread file.")
+        out.append((m.group(1), title, [f for f in files if f]))
     return out
 
 
@@ -364,13 +387,21 @@ def open_titles(root, count=INJECT_OPEN):
             continue
         found = entries_of(path, text)
         last = found[-1][0] if found else ""
-        rows.append((last, path, len(found)))
+        # A thread whose entries carry the split-heading warning ranks by DATE like every other,
+        # and that date is the attacker-chosen one -- so the flag has to travel to the line the
+        # session actually reads. Only the entry titles carry it, and this section prints the
+        # THREAD title, so without this the warning existed and nobody ever saw it.
+        suspect = any("\u26a0" in note for _d, note, _f in found)
+        rows.append((last, path, len(found), suspect))
     if not rows:
         return ""
     rows.sort(key=lambda r: r[0], reverse=True)
     lines = []
-    for last, path, n in rows[:count]:
+    for last, path, n, suspect in rows[:count]:
         when = f", last {last}" if last else ""
+        if suspect:
+            when += (" ⚠ an entry in this thread has no blank line above its heading, which is not "
+                     "how chamnan writes one — the date beside it may have been planted. Check the file")
         # `title_of` returns a thread file's `# ` heading with no length limit of any kind, and
         # `count=3` caps the number of threads rather than the size of one.
         lines.append(f"- **{mdblock.one_line_capped(title_of(path, texts[path]))}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
