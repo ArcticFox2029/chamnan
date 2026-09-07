@@ -428,6 +428,24 @@ def _clip(text, limit=110):
     Bounded, because the fix has its own failure mode: a single long unbroken token near the limit
     would otherwise shrink the description by however long it is. Past CLIP_BACKOFF the hard cut
     stands and the token is broken -- worse, but bounded.
+
+    **`limit` is in CHARACTERS on purpose, and this has been decided twice.** `lib/tokens.py` exists
+    because a character budget mis-prices any script that is not mostly Latin, and this looks like
+    the same defect -- a research round has now reported it as one twice, which is why the reasoning
+    is written HERE rather than only in a commit message nobody reads.
+    
+    Measured on this repository's own estimator: an English description of 93 characters is 38.3
+    tokens, an equivalent Thai one of 82 characters is 65.7. A token cap set to the English figure
+    would cut that Thai description at 45 characters of 82 -- it would lose half a sentence to make a
+    number tidy. The Chinese case is worse: 31 characters carry 27.6 tokens, and the suite pins
+    `A CHINESE LEADING COMMENT REACHES THE INDEX INTACT` precisely because that comment must survive
+    whole.
+    
+    The difference from the budgets `tokens.py` was built for is what settles it. Those bound a
+    SECTION that is injected into every session, where overspending costs the reader something. This
+    bounds ONE ROW of a file that is read on demand and grepped, where the cost of cutting early is
+    an identifier nobody can find and the cost of a long row is nothing. When the two disagree,
+    keeping the sentence wins.
     """
     text = DECORATION.sub(" ", text or "")
     text = _strip_doc_tags(text)
