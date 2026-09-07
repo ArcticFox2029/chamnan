@@ -293,8 +293,15 @@ def main():
         text = mdblock.whole_graphemes(
             text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
     _record_a_firing(root, _agent_type, len(text.encode()), "delivered")
+    # \U0001f41b [2026-09-07] The `print` shadow at the top of this file DOES apply
+    # `for_a_terminal` -- but to the argument it is given, which here is the finished JSON string.
+    # `json.dumps` has already escaped every smuggled code point to `\uXXXX` text by then, so the
+    # filter matched nothing and Claude Code decoded the payload straight back out. The strip has
+    # to happen on the text, before the dump. Same defect in `chamnan_scratch_watch`, and a third
+    # spelling of it in `chamnan_session_start` (R12 agent 3).
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "SubagentStart", "additionalContext": text}}))
+        "hookEventName": "SubagentStart",
+        "additionalContext": redact.for_a_terminal(text)}}))
     return 0
 
 

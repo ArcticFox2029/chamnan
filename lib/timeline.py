@@ -257,7 +257,10 @@ def set_status(root, ident, status):
         text = _STATUS.sub(f"**Status:** {status}", text, count=1)
     else:
         lines = text.splitlines()
-        at = 1 if lines and lines[0].startswith("# ") else 0
+        # Same shared reader `title_of` twelve lines up already uses: a thread headed with a CJK
+        # keyboard's U+3000 had its **Status:** line inserted ABOVE its own title, which is how a
+        # status ends up looking like the file's heading.
+        at = 1 if lines and mdblock.heading_title(lines[0]) is not None else 0
         lines.insert(at, f"\n**Status:** {status}")
         text = "\n".join(lines)
     ws.write_or_raise(path, text.rstrip("\n") + "\n")

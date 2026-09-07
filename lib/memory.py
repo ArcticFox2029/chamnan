@@ -190,9 +190,16 @@ def title_of(path, text=None):
     # BOM is stripped at the READ now -- every `read_text` in lib/, bin/ and hooks/ decodes
     # `utf-8-sig`, which is plain UTF-8 plus "drop a leading BOM if there is one" -- and this
     # `lstrip` stays only because `text` may be passed in by a caller that read it itself.
+    # \U0001f41b [2026-09-07] `startswith("# ")` again, and this file is where the comment above
+    # says the disease lives -- one member of a set fixed, the identical ones beside it left. The
+    # heading unification reached `state`, `pointer`, `timeline.title_of` and `sessions`; it did
+    # not reach here or `timeline.set_status`, so a memory entry titled with a CJK keyboard's
+    # U+3000 after the hash was injected under its de-slugged FILENAME instead of its title, and a
+    # decision the owner wrote by hand arrived unrecognisable (R12 agent 2).
     for line in text.lstrip("\ufeff").splitlines():
-        if line.startswith("# "):
-            return line[2:].strip()
+        title = mdblock.heading_title(line)
+        if title is not None:
+            return title
     return path.stem.replace("-", " ")
 
 

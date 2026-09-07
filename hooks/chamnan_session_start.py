@@ -510,6 +510,11 @@ def _map_is_current_by_git(root, map_path):
         return False
 
 
+# How many kept-key names the downgrade banner spells out. A count, not a length: `as_quoted`
+# already bounds each name at 80 characters, and what blew the block was the NUMBER of them.
+KEPT_KEYS_NAMED = 8
+
+
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
 
@@ -1054,7 +1059,21 @@ def main():
             # they are still in the file — but only because THIS build knows to. Any build older
             # than 2026-09-07 running here will delete them, silently, on its next touch.
             if ws.LAST_CONFIG_KEYS_KEPT:
-                kept = ", ".join(f"`{mdblock.as_quoted(k)}`" for k in ws.LAST_CONFIG_KEYS_KEPT)
+                # \U0001f41b [2026-09-07] Capped, and this line is why the cap has to be here rather
+                # than left to `fit.shrink()`. The banner carries no `#` heading, so shrink cannot
+                # drop it -- it is undroppable content, which `fit.py`'s own docstring names as the
+                # one thing that can exceed the ceiling on its own. The key NAMES come from a
+                # committed `config.json`, and this line joined all of them with no slice: a hostile
+                # `.chamnan/.version` of `999.0.0` plus ~500 unknown keys took the hook's stdout to
+                # 38,338 bytes, 29 KB over the ceiling and far past the ~10,000 bytes at which the
+                # host truncates a SessionStart hook to its first 2,048 -- landing mid-key-name,
+                # with everything chamnan would otherwise have said gone. Every other key in the
+                # file is type-checked against DEFAULT_CONFIG; these are kept precisely BECAUSE
+                # they are unrecognised, so a bound is the only thing available (R12 agent 2).
+                _shown = sorted(ws.LAST_CONFIG_KEYS_KEPT)[:KEPT_KEYS_NAMED]
+                kept = ", ".join(f"`{mdblock.as_quoted(k)}`" for k in _shown)
+                if len(ws.LAST_CONFIG_KEYS_KEPT) > len(_shown):
+                    kept += f" +{len(ws.LAST_CONFIG_KEYS_KEPT) - len(_shown)} more"
                 out.append(f"  Settings in `config.json` that only the newer build understands were "
                            f"KEPT rather than dropped: {kept}. An older chamnan will delete them — "
                            f"`{ws.plugin_version(HERE.parent)}` keeps them because `.version` says a "
@@ -1637,6 +1656,17 @@ def main():
     # when it is a pipe rather than a console, and a code point outside it raises UnicodeEncodeError
     # -- which would kill the hook and cost that session its entire context, over one character in
     # somebody's comment. The repository's own text is exactly where such a character comes from.
+    #
+    # \U0001f41b [2026-09-07] `for_a_terminal`, and it was missing here alone. Every section above
+    # is `redact.scrub`-ed at the point it is read, which is the credential half; the control- and
+    # zero-width-character half is the other one, and the `print` shadow installed at the top of
+    # this file applies it -- but this is not a `print`, it is a raw write, so the assembled block
+    # was the ONE piece of chamnan output that never got it. The other two hooks
+    # (`chamnan_bulk_read_notice`, `chamnan_file_pointer`) spell it `for_a_terminal(scrub(...))`
+    # and were correct; this is the one that runs on every session, and instructions smuggled in
+    # Unicode Tag characters inside a committed source comment reached Claude Code's context
+    # through it with no rendered width (R12 agent 3, reproduced end to end).
+    body = redact.for_a_terminal(body)
     try:
         sys.stdout.write(body + "\n")
     except UnicodeEncodeError:
