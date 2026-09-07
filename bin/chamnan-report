@@ -44,6 +44,7 @@ import tools_index  # noqa: E402
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
+import host  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
 # like it could carry a secret today. Five findings running came from one store having a guarded
@@ -491,6 +492,30 @@ def print_inventory(root):
         if len(dangling) > 5:
             print(f"    …and {len(dangling) - 5} more")
         print("    `/chamnan:remember` writes it, or drop the reference.")
+
+    # 🎯 [2026-09-07] The file beside the block, which chamnan had never mentioned.
+    #
+    # chamnan budgets itself to the byte and enforces it section by section; the agent context file
+    # next to it is loaded whole, every session, with no budget at all. On this repository the day
+    # this was written that was 8,925 bytes of chamnan against a 9,000 ceiling, and 17,116 bytes of
+    # CLAUDE.md against nothing -- nearly twice the size, same context window, never counted. A tool
+    # arguing for context economy should not have a blind spot shaped like its own subject.
+    #
+    # Reported HERE and not injected: it is a fact about the repository's setup that changes when
+    # someone edits it, not something a session needs told every time. And it is stated as a
+    # measurement, never as advice -- CLAUDE.md is the owner's file, a long one is often correct,
+    # and chamnan has no standing to say how long it should be.
+    beside = host.context_files(root)
+    if beside:
+        ceiling = ws.load_config(root).get("output_byte_ceiling",
+                                           ws.DEFAULT_CONFIG["output_byte_ceiling"])
+        print("\n  Loaded into the same context as this block, and not budgeted by chamnan:")
+        width = max([len(n) for n, _ in beside] + [len("chamnan block")])
+        for name, size in beside:
+            times = f"  {size / ceiling:.1f}x chamnan's own ceiling" if ceiling else ""
+            print(f"    {name:<{width}}   {size:>7,} bytes{times}")
+        print(f"    {'chamnan block':<{width}}   {'<= ' + format(ceiling, ',') :>7} bytes  "
+              f"(`output_byte_ceiling`, enforced per section)")
     print()
 
 
@@ -667,14 +692,33 @@ def print_pointer(fired, named, opened):
     print()
 
 
+KNOWN_FLAGS = ()
+
+
 def main(argv):
     # 🐛 argv was never read, so `chamnan-report --help` ran the full report — and because this is
     # the one command that prunes, it also deleted session records older than 30 days. Every
     # sibling command handles -h/--help; this one answered a question about itself by mutating the
     # workspace.
-    if any(a in ("-h", "--help") for a in argv):
+    # Before help, and before anything is parsed: "which build is this" must be
+    # answerable from any command, including one that would otherwise refuse the
+    # arguments beside it. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+    # 🐛 [2026-09-07] Any unrecognised flag was accepted in silence and the full report ran — and
+    # this is the command that PRUNES, so a misspelt flag did not merely do the wrong thing, it
+    # deleted session records past the retention window while appearing to answer a question about
+    # itself. The paragraph above records the same shape for `--help` and this half was left
+    # (R6 acc3). `chamnan-map` has refused unknown flags all along.
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if _bad:
+        print(f"chamnan: unknown option {_bad[0]!r} — this command takes no options",
+              file=sys.stderr)
+        return 2
     root = ws.find_root()
     # 🐛 The one of nine `bin/` commands that reported on a directory with no workspace in it.
     # `find_root` returns the directory it was given when nothing above it is a repository, so

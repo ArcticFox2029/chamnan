@@ -44,6 +44,27 @@ def directory(root):
     return workspace(root) / DIRNAME
 
 
+# 🐛 [2026-09-07] KNOWN, NOT FIXED. `slug()` truncates at 60 characters with no collision guard,
+# so two genuinely different sequences sharing a 60-character prefix resolve to one file and the
+# second overwrites the first. Reproduced:
+#
+#     python3 sed python3 git-add git-commit python3 pytest ruff mypy black
+#     python3 sed python3 git-add git-commit python3 pytest ruff mypy isort
+#     -> python3-sed-python3-git-add-git-commit-python3-pytest-ruff-m   (both)
+#
+# Ten-command sequences are exactly what this detector is for, so the prefix collision is not
+# exotic. `timeline._distinct_slug` solves the same problem for threads by appending a short hash.
+#
+# The obvious port of it FAILS here and the reason is worth writing down, because the next attempt
+# will otherwise make it again: `_upsert_locked` calls `path_for` BEFORE `_same_habit` has decided
+# whether this sequence is a rotation of one already on disk. A per-sequence hash at that point
+# gives four rotations of one habit four different filenames and defeats the merge that exists to
+# stop exactly that — "ONE HABIT DETECTED AT FOUR OFFSETS IS ONE CANDIDATE" fails immediately.
+#
+# The fix belongs after the merge decision, not in the name: when `_same_habit` finds nothing and a
+# genuinely new file is about to be written, THAT is where a taken name should be disambiguated.
+# Left undone rather than shipped half-right, because breaking a deliberate, tested merge to close
+# a narrower collision is the wrong trade (R13 agent 3).
 def slug(sequence):
     joined = "-".join(sequence)
     s = re.sub(r"[^a-zA-Z0-9]+", "-", joined.strip().lower()).strip("-")
@@ -84,7 +105,23 @@ def render(sequence, observed, last_seen, provenance):
             f"**Provenance:** {provenance}\n")
 
 
-def upsert(root, sequence, observed, when, provenance="ai-inferred"):
+def _write(strict):
+    """The writer `upsert` should use for the caller it has.
+
+    🐛 [2026-09-07] `upsert` has exactly two callers and they sit on opposite sides of the line
+    `workspace.write_or_raise` documents. `chamnan_scratch_watch.py` is a background hook, where a
+    workspace that cannot be written must not stop a session and silence is the policy. `chamnan-
+    candidates demote` is a command somebody typed by name — and it prints the path of the review
+    record it just wrote. With the candidates directory read-only it printed "back for review at
+    .chamnan/candidates/a-tool.md", exit 0, with no such file: by that point in the same command
+    the tool had already been moved to `tools/archived/` and its index entry already removed, both
+    successfully. So the net effect was the permanent, silent loss of the only record of why the
+    tool existed, under a message naming the file that holds it (R7 agent 1, finding 2).
+    """
+    return ws.write_or_raise if strict else ws.atomic_write_text
+
+
+def upsert(root, sequence, observed, when, provenance="ai-inferred", strict=False):
     """Create or update the one candidate for `sequence`. `observed` and `when` (a date string) are
     written as given -- not accumulated here -- so calling this repeatedly with the same values is
     a no-op on disk, and calling it with a fresher count or date correctly updates in place.
@@ -93,6 +130,25 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred"):
     """
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
+    # 🐛 [2026-09-07] The merge below is a read-modify-write across the WHOLE DIRECTORY, not one
+    # file: `_same_habit` scans every candidate, then this unlinks one and writes another. Two
+    # PostToolUse hooks firing together each scanned, each found nothing to merge with, and each
+    # wrote its own file — reproducing, under concurrency, the exact "five files for one habit"
+    # the comment below says this merge exists to prevent (R7 agent 5).
+    #
+    # The lock is on the directory because the invariant is: one habit, one file. A per-file lock
+    # cannot express that — the two writers are racing over which file should EXIST, and they hold
+    # different ones.
+    with ws.exclusive(directory(root)) as held:
+        if not held and strict:
+            raise TimeoutError(f"could not lock {directory(root)} — another process is writing a "
+                               f"candidate. Nothing was changed; try again in a moment.")
+        return _upsert_locked(root, sequence, observed, when, provenance, strict)
+
+
+def _upsert_locked(root, sequence, observed, when, provenance, strict):
+    """`upsert`'s body, with the candidates directory already locked. Split out so the lock is
+    visible in the caller rather than buried, and so the early returns stay early returns."""
     p = path_for(root, sequence)
     if not p.is_file():
         # 🐛 [2026-09-07] One workflow produced FIVE candidate files in this repository's own queue:
@@ -125,11 +181,11 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred"):
             except (TypeError, ValueError):
                 was = 0
             target.parent.mkdir(parents=True, exist_ok=True)
-            ws.atomic_write_text(target, render(merged, max(observed, was), when, provenance))
+            _write(strict)(target, render(merged, max(observed, was), when, provenance))
             return target, False
     is_new = not p.is_file()
     p.parent.mkdir(parents=True, exist_ok=True)
-    ws.atomic_write_text(p, render(sequence, observed, when, provenance))
+    _write(strict)(p, render(sequence, observed, when, provenance))
     return p, is_new
 
 

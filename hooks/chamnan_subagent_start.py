@@ -114,11 +114,23 @@ def _record_a_firing(root, agent_type, size, outcome="delivered"):
         entry = {"at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                  "agent_type": _md.one_line(agent_type or "")[:60], "bytes": size,
                  "outcome": outcome}
-        lines = []
-        if path.is_file():
-            lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()[-(MAX_FIRINGS - 1):]
-        lines.append(json.dumps(entry, ensure_ascii=False))
-        ws.atomic_write_text(path, "\n".join(lines) + "\n")
+
+        # 🐛 [2026-09-07] Read the last MAX_FIRINGS-1 lines, append one, write the whole file back —
+        # unlocked. This hook fires once per subagent, and subagents are dispatched in BATCHES: ten
+        # at a time is an ordinary afternoon on this repository. Measured with 320 concurrent
+        # firings, 270 were lost — 84%, the worst loss of any writer in the workspace.
+        #
+        # `lib/coedit.py` does the identical read-trim-write and does it under `ws.exclusive`, and
+        # its comment says the lock is what makes the read non-stale. That reasoning applies here
+        # word for word; this file is the one member of SELF_PRUNING_LOGS that trims itself from a
+        # hook and never got it (R7 agent 5).
+        def _with_firing(text):
+            lines = (text or "").splitlines()[-(MAX_FIRINGS - 1):]
+            lines.append(json.dumps(entry, ensure_ascii=False))
+            return "\n".join(lines) + "\n"
+
+        # A firing that cannot be recorded is a lost measurement, not a lost session.
+        ws.rewrite_shared(path, _with_firing, strict=False)
     except Exception:
         pass
 
@@ -162,7 +174,7 @@ def _block(root):
             # is repository text too, and redact.scrub strips credentials, not control characters.
             # The sibling line was wrapped and this one was not, which is this repository's own
             # recurring disease -- a fix applied to some members of a set.
-            shown = ", ".join(f"`{mdblock.one_line(n)}`" for n in nested[:4])
+            shown = ", ".join(f"`{mdblock.as_quoted(n)}`" for n in nested[:4])
             parts.append(
                 f"That index does NOT cover the checkouts nested inside this one — {shown}"
                 + (f" and {len(nested) - 4} more" if len(nested) > 4 else "")
@@ -281,8 +293,15 @@ def main():
         text = mdblock.whole_graphemes(
             text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
     _record_a_firing(root, _agent_type, len(text.encode()), "delivered")
+    # \U0001f41b [2026-09-07] The `print` shadow at the top of this file DOES apply
+    # `for_a_terminal` -- but to the argument it is given, which here is the finished JSON string.
+    # `json.dumps` has already escaped every smuggled code point to `\uXXXX` text by then, so the
+    # filter matched nothing and Claude Code decoded the payload straight back out. The strip has
+    # to happen on the text, before the dump. Same defect in `chamnan_scratch_watch`, and a third
+    # spelling of it in `chamnan_session_start` (R12 agent 3).
     print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "SubagentStart", "additionalContext": text}}))
+        "hookEventName": "SubagentStart",
+        "additionalContext": redact.for_a_terminal(text)}}))
     return 0
 
 

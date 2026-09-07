@@ -189,8 +189,16 @@ def say(text):
     directory have always used. Exactly one object may be written, which is why every check in
     main() returns immediately after speaking.
     """
+    # \U0001f41b [2026-09-07] `for_a_terminal` here, and BEFORE `json.dumps`. Two separate reasons
+    # it was missing: this is a raw `sys.stdout.write`, so the `print` shadow installed at the top
+    # of this file never sees it; and applying the strip to the DUMPED string would do nothing
+    # anyway, because `json.dumps` has by then escaped every non-ASCII code point to `\uXXXX` text
+    # that no character filter matches -- Claude Code decodes it back on the other side. The two
+    # PreToolUse hooks spell it `for_a_terminal(scrub(...))` on the text, which is the correct
+    # order; all three of the others had it wrong, each in its own way (R12 agent 3).
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PostToolUse", "additionalContext": text}}) + "\n")
+        "hookEventName": "PostToolUse",
+        "additionalContext": redact.for_a_terminal(text)}}) + "\n")
 
 def jaccard(a, b):
     if not a or not b:

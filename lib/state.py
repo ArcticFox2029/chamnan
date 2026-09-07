@@ -64,7 +64,11 @@ PIN_MARK = "📌"
 
 AGES_PATH = "logs/state-ages.json"
 
-_HEADING = re.compile(r"^(#{1,6})[ \t]+(.*?)[ \t]*$", re.M)
+# `mdblock.HEADING_SPACE`, not `[ \t]`: a CJK keyboard types U+3000 after the hash and this
+# pattern did not see it, so the section was absorbed into the one above — pin and all. The
+# measurement and the other three spellings of this are in mdblock beside the definition.
+_HEADING = re.compile(r"^(#{1,6})" + mdblock.HEADING_SPACE + r"+(.*?)"
+                      + mdblock.HEADING_SPACE + r"*$", re.M)
 
 
 def _heading_text(raw):
@@ -328,12 +332,26 @@ def age_out(text, wsdir, days, now=None):
     # same shape. It yields False rather than raising when the lock cannot be taken, and the block
     # still runs then — an ages file is a staleness hint, and refusing to start a session over one
     # would be a worse failure than the race it prevents.
+    #
+    # 🐛 [2026-09-07] "The block still runs then" was the deliberate choice above, and it was wrong
+    # in a way that only shows under the contention it was reasoning about. `exclusive` yields
+    # False, not an exception, when the lock cannot be taken inside LOCK_TIMEOUT — and the yielded
+    # value was never inspected, so the full read-decide-write ran anyway, WHILE a legitimate
+    # holder still had the lock. Reproduced: a holder taking the lock for 3.0s, `age_out` returning
+    # after exactly 2.003s having rewritten the ages file inside the holder's window. Under real
+    # contention two non-holders can then race EACH OTHER, which is the 26-of-40 loss the comment
+    # above measures for the pre-lock code — gated on load rather than removed by the fix.
+    #
+    # Skipping the REWRITE is the harmless direction and this function's own docstring already
+    # argues for it: every failure path here errs toward injecting, and an ages file one session
+    # out of date holds a section back one session late. Losing another writer's ages does not
+    # come back.
     import workspace as ws_mod
-    with ws_mod.exclusive(wsdir / AGES_PATH):
-        return _age_out_locked(text, wsdir, sections, now, cutoff, days)
+    with ws_mod.exclusive(wsdir / AGES_PATH) as held:
+        return _age_out_locked(text, wsdir, sections, now, cutoff, days, save=held)
 
 
-def _age_out_locked(text, wsdir, sections, now, cutoff, days):
+def _age_out_locked(text, wsdir, sections, now, cutoff, days, save=True):
     ages = _load_ages(wsdir)
     fresh_ages, drop = {}, []
     for sec in sections:
@@ -347,7 +365,11 @@ def _age_out_locked(text, wsdir, sections, now, cutoff, days):
         if first_seen <= cutoff:
             drop.append((sec["start"], sec["end"], now - first_seen))
 
-    _save_ages(wsdir, fresh_ages)
+    # `save` is False when the lock could not be taken. The ages this run computed are still used
+    # to decide what to hold back — that decision is read-only and correct — they are just not
+    # written over the holder's.
+    if save:
+        _save_ages(wsdir, fresh_ages)
 
     if not drop:
         return text, ""
