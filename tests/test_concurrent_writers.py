@@ -41,14 +41,36 @@ def check(name, condition):
         print(f"[FAIL] {name}")
 
 
-def _tools_worker(root, n, timeout=None):
+def _tools_worker(root, n, timeout=None, report=None):
     sys.path.insert(0, LIB)
     import tools_index
+    import workspace as ws
     if timeout is not None:
-        import workspace as ws
         ws.LOCK_TIMEOUT = timeout
     for _ in range(n):
         tools_index.record_call(pathlib.Path(root), "t.sh", False, False)
+    # Each process carries its own tally home. A lost update reports a number, and a number cannot
+    # say WHY the waiters left -- which is the whole question on a platform nobody here can attach
+    # a debugger to.
+    if report:
+        pathlib.Path(report).write_text(json.dumps(ws.LOCK_GIVEUPS), encoding="utf-8")
+
+
+def _why_they_left(root):
+    """Sum the per-process tallies written by _tools_worker into one line."""
+    total = {}
+    for f in sorted(pathlib.Path(root).glob("giveups-*.json")):
+        try:
+            for k, v in json.loads(f.read_text(encoding="utf-8")).items():
+                if isinstance(v, list):
+                    total.setdefault(k, []).extend(v)
+                else:
+                    total[k] = total.get(k, 0) + v
+        except (OSError, ValueError):
+            pass
+    if "errors" in total:
+        total["errors"] = sorted(set(total["errors"]))[:6]
+    return json.dumps(total, sort_keys=True)
 
 
 def _log_worker(path, tag, n):
@@ -140,12 +162,16 @@ if __name__ == "__main__":
     (root / ".chamnan" / "tools").mkdir(parents=True)
     (root / ".chamnan" / "tools" / "index.json").write_text(
         json.dumps([{"name": "t.sh", "desc": "x", "runs": 0}]), encoding="utf-8")
-    procs = [Process(target=_tools_worker, args=(str(root), 50)) for _ in range(8)]
+    procs = [Process(target=_tools_worker,
+                     args=(str(root), 50, None, str(root / f"giveups-{k}.json")))
+             for k in range(8)]
     [p.start() for p in procs]
     [p.join() for p in procs]
     runs = json.loads(
         (root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))[0]["runs"]
     check(f"EVERY ONE OF 400 CONCURRENT INCREMENTS IS RECORDED (got {runs})", runs == 400)
+    if runs != 400:
+        print(f"[WHY] shipped ceilings: {_why_they_left(root)}")
 
     # --- the same store, on a machine forty times slower than this one ------------------------
     # 🐛 [2026-09-08] The check above passed on macOS and ubuntu and failed on Windows, at 41 of
@@ -164,13 +190,17 @@ if __name__ == "__main__":
     (root / ".chamnan" / "tools").mkdir(parents=True)
     (root / ".chamnan" / "tools" / "index.json").write_text(
         json.dumps([{"name": "t.sh", "desc": "x", "runs": 0}]), encoding="utf-8")
-    procs = [Process(target=_tools_worker, args=(str(root), 50, 0.05)) for _ in range(8)]
+    procs = [Process(target=_tools_worker,
+                     args=(str(root), 50, 0.05, str(root / f"giveups-{k}.json")))
+             for k in range(8)]
     [p.start() for p in procs]
     [p.join() for p in procs]
     slow = json.loads(
         (root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8"))[0]["runs"]
     check(f"...AND ON A LOCK CEILING 40x TIGHTER, WHICH IS WHAT WINDOWS IS (got {slow})",
           slow == 400)
+    if slow != 400:
+        print(f"[WHY] 0.05s ceiling: {_why_they_left(root)}")
 
     # --- the command log ---------------------------------------------------------------------
     # The append path is safe on its own; the periodic trim is a truncate-and-overwrite built from
