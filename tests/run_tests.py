@@ -8961,6 +8961,42 @@ check("THE INSTALLER ASKS WHETHER A PYTHON ON PATH ACTUALLY RUNS",
 check("...and does not call an unparseable version 'too old'",
       'it does not report a version' in _ck and '[ "$MAJ" != 0 ]' in _ck)
 
+# 🐛 [2026-09-07] `SKIPPED_TOO_LARGE`, `SKIPPED_TOO_MANY_LINES` and `SKIPPED_BINARY` are filled on
+# every run and printed to a TERMINAL, which a session never sees. MAP.md — the one artifact
+# SessionStart injects — named none of them, so a 2 MB module and a binary behind a `.py` suffix
+# were simply absent under a header stating a file count that silently excluded them. An index
+# missing a file is worse than one that says it is, which is this project's own position on
+# staleness applied to absence (R12 agent 5). The comment beside SKIPPED_BUILD_DIR conceded the gap
+# in passing long ago and used it as a reason not to report build directories either.
+_sk = Path(tempfile.mkdtemp(prefix="chamnan-skipped-")) / "r"
+(_sk / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_sk, capture_output=True)
+(_sk / "src" / "ok.py").write_text('"""Fine."""\ndef f(): ...\n', encoding="utf-8")
+(_sk / "src" / "huge.py").write_text("x = 1\n" * 500000, encoding="utf-8")
+(_sk / "src" / "binary.py").write_bytes(b"\x00\x01\x02" * 5000)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sk, capture_output=True)
+_sk_map = (_sk / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+check("THE INDEX NAMES THE FILES IT COULD NOT INDEX",
+      "too large to index" in _sk_map and "`src/huge.py`" in _sk_map
+      and "binary despite a source suffix" in _sk_map and "`src/binary.py`" in _sk_map)
+# 🐛 Repository-RELATIVE: these lists hold absolute paths and MAP.md is committed, so the first
+# version wrote one developer's machine layout into it — the same defect fixed in
+# `chamnan-timeline --files` the same morning.
+check("...by a repository-relative path, since this file gets committed", str(_sk) not in _sk_map)
+# And it points at the command that can still say something about a file it could not index.
+check("...and points at what can read one anyway", "chamnan-peek" in _sk_map)
+# The half that keeps it a header rather than a report: a clean repository gains nothing.
+_sk_clean = Path(tempfile.mkdtemp(prefix="chamnan-skipclean-")) / "r"
+(_sk_clean / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_sk_clean, capture_output=True)
+(_sk_clean / "src" / "ok.py").write_text('"""Fine."""\ndef f(): ...\n', encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sk_clean,
+               capture_output=True)
+check("...while a repository with nothing skipped says nothing about it",
+      "too large to index" not in (_sk_clean / ".chamnan" / "MAP.md").read_text(encoding="utf-8"))
+_rmtree(_sk_clean.parent, ignore_errors=True)
+_rmtree(_sk.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
