@@ -1732,6 +1732,44 @@ def git_hook_state(root):
     except OSError:
         return None
 
+
+# ---------------------------------------------------------------- the command line, asked once
+HELP_FLAGS = ("-h", "--help")
+
+
+def wants_help(argv):
+    """True when `argv` asks for help, wherever the flag sits.
+
+    🐛 [2026-09-07] Eight commands wrote this test four different ways, and only two of them —
+    `chamnan-report` and `chamnan-map` — looked past `argv[0]`. The other six accepted `-h` as
+    DATA in any later position, and two of those then wrote to disk:
+
+        chamnan-timeline new "my thread" -h   created .chamnan/threads/my-thread-h.md
+        chamnan-promote tool.sh mytool -h     installed the tool, exit 0
+
+    Both files are permanent and tracked, with `-h` baked into the name, from a flag the user typed
+    to find out what the command does. Two further commands escaped only because their argument
+    happened to be consumed first — by accident, not by design (R6 acc3, which swept the whole set
+    rather than reporting one).
+
+    An exact bare `-h` element is never a legitimate title, note or filename: a quoted title
+    CONTAINING "-h" arrives as one argument and does not match. So testing every position is safe,
+    and it is the only reading under which a user who types the flag gets what they asked for.
+    """
+    return any(a in HELP_FLAGS for a in (argv or []))
+
+
+def unknown_flags(argv, known):
+    """Flags in `argv` that `known` does not list — so a command can refuse rather than ignore.
+
+    A misspelt flag silently dropped means the command does something other than what was asked
+    with nothing on screen to say so. `chamnan-map` has refused unknown flags for this reason since
+    it grew its own; the commands beside it accepted anything and ran their default action.
+    """
+    allowed = set(known) | set(HELP_FLAGS)
+    return [a for a in (argv or []) if a.startswith("-") and a not in allowed]
+
+
 def config_is_malformed(root):
     """Why config.json will not be used, as a short reason — or "" when it will be.
 

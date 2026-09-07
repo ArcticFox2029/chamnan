@@ -43,10 +43,23 @@ import redact  # noqa: E402
 print = redact.emit  # noqa: A001
 
 
+KNOWN_FLAGS = ()
+
+
 def main(argv):
-    if argv and argv[0] in ("-h", "--help"):
+    if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+
+    # 🐛 [2026-09-07] Any unrecognised flag was accepted in silence and the default action ran, so
+    # a misspelt flag did something other than what was asked with nothing on screen to say so.
+    # `chamnan-map` has refused unknown flags for exactly this reason since it grew its own; the
+    # commands beside it never got the rule (R6 acc3).
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if _bad:
+        print(f"chamnan: unknown option {_bad[0]!r} — "
+              f"{', '.join(KNOWN_FLAGS) or 'this command takes no options'}", file=sys.stderr)
+        return 2
 
     root = ws.find_root()
     if not ws.workspace(root).is_dir():

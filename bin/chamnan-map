@@ -369,7 +369,7 @@ def main(argv):
     # An unknown flag is refused rather than ignored for the same reason the README already warns
     # about: a misspelt flag used to be dropped in silence and the command did something other than
     # what was asked, with nothing on screen to say so.
-    if any(a in ("-h", "--help") for a in argv):
+    if ws.wants_help(argv):
         print(__doc__.strip() if __doc__ else "chamnan-map — rebuild .chamnan/MAP.md")
         # 🐛 `--help` printed the docstring and stopped, and the docstring explains what the map is
         # FOR — not that the command takes five flags. So `--preview`, `--explain`, `--measure` and

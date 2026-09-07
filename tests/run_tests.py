@@ -9118,6 +9118,58 @@ check("the digit-run gate skips a document that cannot contain either shape",
 check("...and does not skip one that can",
       redact.PLACEHOLDER in redact._redact_personal_data("card 4111 1111 1111 1111"))
 
+# ---------------------------------------------------------------- the command line, asked once
+# 🐛 [2026-09-07] Eight commands wrote the help test four different ways, and only two looked past
+# `argv[0]`. The other six accepted `-h` as DATA in any later position, and two of those then wrote
+# to disk: `chamnan-timeline new "my thread" -h` created `my-thread-h.md`, and
+# `chamnan-promote tool.sh mytool -h` installed the tool and exited 0. Both files are permanent and
+# tracked, with the flag baked into the name, from a user asking what the command does. Two more
+# escaped only because their argument was consumed first — by accident, not design (R6 acc3).
+#
+# DERIVED, so a command added next year is covered by existing rather than by being remembered.
+_hlp = Path(tempfile.mkdtemp(prefix="chamnan-helpflag-")) / "r"
+(_hlp / "src").mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_hlp, capture_output=True)
+(_hlp / "src" / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
+(_hlp / "tool.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_hlp, capture_output=True)
+_hlp_before = {p.name for p in _hlp.rglob("*") if p.is_file()}
+# Every command, given a plausible argument list with `-h` at the END — the position that was
+# accepted as data. `chamnan-context` is argparse-driven and answers `-h` itself.
+_hlp_argv = {
+    "chamnan-timeline": ["new", "my thread"], "chamnan-promote": ["tool.sh", "mytool"],
+    "chamnan-impact": ["src/a.py"], "chamnan-peek": ["src/a.py"],
+    "chamnan-candidates": ["list"], "chamnan-env": ["check"], "chamnan-map": ["--preview"],
+}
+_hlp_bad = []
+for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
+                   if p.is_file() and p.suffix == "" and p.name.startswith("chamnan-")):
+    _r = subprocess.run([sys.executable, str(_cmd)] + _hlp_argv.get(_cmd.name, []) + ["-h"],
+                        cwd=_hlp, capture_output=True, text=True,
+                        encoding="utf-8", errors="replace")
+    if _r.returncode != 0:
+        _hlp_bad.append(f"{_cmd.name} exit={_r.returncode}")
+if _hlp_bad:
+    print("      did not answer -h: " + ", ".join(_hlp_bad))
+check("EVERY COMMAND ANSWERS -h WHEREVER IT SITS, RATHER THAN TAKING IT AS DATA", _hlp_bad == [])
+# The half that is the actual damage: none of those calls may leave anything behind.
+check("...and none of them wrote a file while doing it",
+      {p.name for p in _hlp.rglob("*") if p.is_file()} == _hlp_before)
+# And a real invocation still works, including a title that CONTAINS the flag as text — which is
+# one argument, not a bare `-h`, and must not be mistaken for one.
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-timeline"), "new", "fix -h handling"],
+               cwd=_hlp, capture_output=True)
+check("...while a title containing the flag is still a title",
+      (_hlp / ".chamnan" / "threads" / "fix-h-handling.md").is_file())
+# 🐛 And an unrecognised flag was accepted in SILENCE by the two commands that had no flags at all,
+# so the default action ran — for `chamnan-report`, the action that prunes.
+for _cmd, _flag in (("chamnan-age", "--nonsense"), ("chamnan-report", "--nonsense")):
+    _r = subprocess.run([sys.executable, str(ROOT / "bin" / _cmd), _flag], cwd=_hlp,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace")
+    check(f"AN UNRECOGNISED FLAG IS REFUSED, NOT IGNORED: {_cmd}",
+          _r.returncode == 2 and "unknown option" in (_r.stdout + _r.stderr))
+_rmtree(_hlp.parent, ignore_errors=True)
+
 # Every other failure in ensure() is caught on purpose; this write had no guard, so a read-only
 # workspace crashed it outright — and with it every command and hook that calls it.
 _ro = Path(tempfile.mkdtemp()) / "ro"
