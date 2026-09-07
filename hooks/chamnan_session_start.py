@@ -522,6 +522,32 @@ def index_is_behind(root, map_path):
     Cheap enough to do every session: one pruned walk, measured at 0.04s on a 1,478-file
     repository. Only files mapper would actually index count, or a log line written overnight would
     report the architecture as out of date.
+
+    🔁 [2026-09-07] A REPORTED FIX WAS BUILT AND REVERTED, and what the measurement found is worth
+    more than the fix would have been. The report was that this "pays a full pruned tree walk every
+    firing whenever the working tree is dirty" — 0.34s clean against 3.87s dirty at 50,000 files —
+    and that capturing `git diff --name-only` instead of discarding it would remove the walk.
+
+    Built exactly that: a tri-state `_map_is_current_by_git` returning git's own changed-file list,
+    plus `ls-files --others` for the untracked half, fed to `mapper.indexable(only=...)` so the
+    filter stayed one definition. It produced the identical answer and it was **not faster**: 0.646s
+    against 0.659s on an 8,000-file fixture, inside the noise, because the two extra git processes
+    cost about what they saved.
+
+    The premise was wrong, and this is where the time actually goes on that fixture:
+
+        tree.files (the walk itself)      0.005 s      <- what the fix was aimed at
+        _nested_repo_dirs                 0.144 s
+        _tracked_ambiguous                0.084 s
+        _generated_globs                  0.034 s
+        the per-file stat and filter      the rest
+
+    The walk is already nearly free because `tree.session()` caches it. Restricting WHICH files are
+    considered cannot help while the per-root setup runs either way, so a real fix has to attack
+    that setup — a HEAD-keyed disk cache for `_nested_repo_dirs`, the way `rollup` caches churn —
+    and that is a new cache with its own staleness risk, deliberately not started here on the way
+    past. Anyone picking it up: `rollup`'s memo once omitted HEAD from its key and served a stale
+    ranking, which is the failure mode to design against first.
     """
     if _map_is_current_by_git(root, map_path):
         return 0, []
