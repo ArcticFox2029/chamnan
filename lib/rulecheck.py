@@ -394,6 +394,58 @@ WHY_INVALID = "the pattern is not valid regular expression syntax"
 WHY_NO_FILES = "no readable file inside this repository matched the glob"
 
 
+def scan(root, glob):
+    """The files one Check trailer's glob is allowed to open, or None when the glob is unusable.
+
+    Containment is checked here rather than trusted from the glob. `Path.glob()` follows `..`
+    segments, so a rule whose Check trailer read ``in `../../../../etc/hosts` `` read a real file
+    outside the repository and reported its match count into the session -- a working oracle for
+    any file the process can open, from a rule file that arrives with a clone. It bypassed
+    redact's never-open list too, which is why that is consulted as well: this module is the one
+    place a path in repository text turns into an open().
+
+    \U0001f41b [2026-09-07] This was inline in `_matches`, and `run()` built its human-readable
+    OFFENDERS list from a SECOND, raw `Path(root).glob(glob)` that never came near it. The two calls
+    glob the same string and were not the same computation: this one filters, that one only removed
+    files already in `missing` -- a set that by construction cannot hold a file this filter
+    excluded, because it was dropped before `missing` existed. So a rule that could not READ outside
+    the repository could still NAME outside it, and the line those names land in is printed OUTSIDE
+    the `[repo:nonce]` fence, in chamnan's own voice. It does not need a `..` pattern either: a
+    committed symlinked directory plus an ordinary in-repo glob is enough, because `Path.glob`
+    follows a symlinked directory for its one-level children. It also silently disagreed about
+    MAX_FILES. One function, two callers, which is the only way the two stay the same computation.
+    """
+    try:
+        paths = [p for p in sorted(root.glob(glob)) if p.is_file()][:MAX_FILES]
+    # \U0001f41b [2026-09-07] `NotImplementedError` was not in this list, and `Path.glob` raises
+    # exactly that -- "Non-relative patterns are unsupported" -- for any pattern beginning with `/`.
+    # A rule file arrives with a clone, so one committed line reading ``**Check:** absent `X` in
+    # every `/etc/*` `` was enough: the exception left `run()`, and the only thing above it is the
+    # session-start hook's blanket `except Exception`, which ends the injected block where it
+    # stands. Everything after the rules section -- milestones, where the last session stopped, the
+    # tools index, open threads, the reply style -- silently stopped being injected, on every
+    # session, permanently, under a generic "stopped early" line that never named the rule
+    # (R12 agent 1). An absolute glob is a rule asking to read outside the repository, which the
+    # containment filter below refuses anyway; refusing it here as "no files" is the same answer
+    # arrived at without the crash.
+    except (ValueError, OSError, NotImplementedError):
+        return None
+    base = root.resolve()
+    inside = []
+    for q in paths:
+        try:
+            if q.resolve().parent == base or base in q.resolve().parents:
+                # Imported here, not at module scope. `pointer._governs()` reaches `parse()`
+                # on every Read, Edit and Write and never comes near this branch, and
+                # `import redact` measured 15 ms of that hot path for nothing.
+                import redact
+                if not redact.is_never_opened(q):
+                    inside.append(q)
+        except (OSError, RuntimeError):
+            continue
+    return inside
+
+
 def _matches(root, pattern, glob, why=None):
     """(files_scanned, files_matching, files_not_matching), or None when it cannot run.
 
@@ -418,31 +470,8 @@ def _matches(root, pattern, glob, why=None):
         rx = re.compile(pattern)
     except re.error:
         return _no(WHY_INVALID)
-    try:
-        paths = [p for p in sorted(root.glob(glob)) if p.is_file()][:MAX_FILES]
-    except (ValueError, OSError):
-        return _no(WHY_NO_FILES)
-    # Containment, checked here rather than trusted from the glob. `root.glob()` follows `..`
-    # segments, so a rule whose Check trailer read ``in `../../../../etc/hosts` `` read a real file
-    # outside the repository and reported its match count into the session -- a working oracle for
-    # any file the process can open, from a rule file that arrives with a clone. It bypassed
-    # redact's never-open list too, which is why that is consulted as well: this module is the one
-    # place a path in repository text turns into an open().
-    base = root.resolve()
-    inside = []
-    for q in paths:
-        try:
-            if q.resolve().parent == base or base in q.resolve().parents:
-                # Imported here, not at module scope. `pointer._governs()` reaches `parse()`
-                # on every Read, Edit and Write and never comes near this branch, and
-                # `import redact` measured 15 ms of that hot path for nothing.
-                import redact
-                if not redact.is_never_opened(q):
-                    inside.append(q)
-        except (OSError, RuntimeError):
-            continue
-    paths = inside
-    if not paths:
+    paths = scan(root, glob)
+    if paths is None or not paths:
         return _no(WHY_NO_FILES)
     hits, missing = 0, []
     for p in paths:
@@ -489,8 +518,10 @@ def run(root, rules):
             where = f"every `{glob}`" if per_file else f"`{glob}`"
             if per_file:
                 ok = hits == scanned if mode == "present" else hits == 0
+                # `scan()`, not a second raw glob -- see its docstring. It cannot return None
+                # here: `_matches` just returned a result, so the same call already succeeded.
                 offenders = missing if mode == "present" else [
-                    q for q in Path(root).glob(glob) if q.is_file() and q not in missing]
+                    q for q in (scan(Path(root), glob) or []) if q not in missing]
             else:
                 ok = hits > 0 if mode == "present" else hits == 0
                 offenders = []

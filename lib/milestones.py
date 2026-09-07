@@ -86,8 +86,23 @@ def entries(root):
         # this code. Flagged, never dropped — the owner's rule is that nothing here is deleted, and
         # a reader who is told which line is suspect can fix the file, while a reader who is shown
         # nothing cannot.
-        before = text[:m.start()].rstrip("\n")
-        split_off = bool(before) and _ENTRY.match(before.rsplit("\n", 1)[-1] + "\n") is not None
+        # \U0001f41b [2026-09-07] Look at the line immediately above, and at nothing else. The first
+        # version did `text[:m.start()].rstrip("\n")` and then asked whether what was left ended in
+        # a heading, which cannot tell "no blank line between them" from "a blank line, and a
+        # heading above THAT" -- `rstrip` removes the separator it is trying to detect. It was
+        # wrong in both directions: two legitimate field-less entries in a row were flagged (a
+        # shape `render_entry`'s own docstring designs for), and a single trailing SPACE on the
+        # blank line -- invisible in every editor, and inserted by many of them automatically --
+        # made the real forgery undetectable, because `rstrip("\n")` stops at the space (R12 a2).
+        #
+        # `render_entry` always leaves exactly one EMPTY line above a heading. So the test is
+        # whether the previous line is that empty line. A space-only line is not what this code
+        # writes either, and it is now flagged rather than trusted -- which is the right direction
+        # for a tell whose whole job is "this was not written by chamnan".
+        _above = text[:m.start()].split("\n")
+        # `text[:m.start()]` ends at the newline before the heading, so its last element is "" and
+        # the line the reader sees above the heading is the one before that.
+        split_off = len(_above) >= 2 and _above[-2] != ""
         if split_off:
             title = (title + " ⚠ this heading follows another with no blank line between them, "
                      "which is not how chamnan writes one — it may have been split out of the "

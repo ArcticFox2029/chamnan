@@ -323,6 +323,19 @@ def cmd_demote(root, tool_name):
 
 
 def main(argv):
+    # \U0001f41b [2026-09-07] FIRST, before `find_root`. This block already carried the sentence
+    # "including one that would otherwise refuse the arguments beside it", and in this command it
+    # sat BELOW two such refusals -- the no-workspace exit and the config-disabled exit -- so
+    # `--version` printed the refusal instead of the version in exactly the two cases the comment
+    # names. Six of nine commands placed it first and three did not: the same rule applied to some
+    # members of a set and forgotten in the identical ones beside it (R12 agent 2).
+    #
+    # Before help, and before anything is parsed: "which build is this" must be
+    # answerable from any command, including one that would otherwise refuse the
+    # arguments beside it. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
     root = ws.find_root()
     wsdir = ws.workspace(root)
     if not wsdir.is_dir():
@@ -342,12 +355,6 @@ def main(argv):
 
     if not argv or argv[0] in ("list", "-l", "--list"):
         return cmd_list(root)
-    # Before help, and before anything is parsed: "which build is this" must be
-    # answerable from any command, including one that would otherwise refuse the
-    # arguments beside it. See workspace.wants_version.
-    if ws.wants_version(argv):
-        print(ws.version_line())
-        return 0
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
