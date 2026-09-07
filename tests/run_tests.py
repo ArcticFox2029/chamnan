@@ -20942,6 +20942,59 @@ check("...and an IBAN needs a real country code of that country's length",
 check("...and the Aadhaar check is the reason it is keyword-gated, not a formality",
       _rd._aadhaar(_ad) and not _rd._aadhaar(_ad[:-1] + str((int(_ad[-1]) + 1) % 10)))
 
+# ------------------------------------------- the false NEGATIVES, which nothing here measured
+# 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
+# against random input before its rule shipped. A reader of the release notes asked the obvious
+# next question -- has the false-negative rate been measured against identifiers deliberately
+# shaped to dodge the patterns -- and the honest answer was no, there was no such corpus. Three
+# leaks were found within hours of looking (R1 agent 2, and the third's real cause found here).
+#
+# Each case below is the shape that broke it, not a variation on the shape that already worked.
+
+# 1. An IBAN in a SENTENCE. `_SEP` contains a space and the run continued into the next English
+#    word: "wire to DE89…3000 today" matched with " today" inside it, the length stopped equalling
+#    Germany's 22, mod-97 failed, and the rule redacted NOTHING. Four of these ten passed before.
+_fn_iban = "DE89370400440532013000"
+_fn_sentences = ["wire to {i} today", "IBAN {i} please", "account {i} is closed",
+                 "send it to {i} before Friday", "{i} was the old one", "use {i} instead",
+                 "{i}", "IBAN: {i}", "the IBAN is {i}.", "({i})"]
+_fn_leaked = [t for t in _fn_sentences
+              if _rd.PLACEHOLDER not in _rd.scrub(t.format(i=_fn_iban))]
+check(f"AN IBAN IS REDACTED IN A SENTENCE, NOT ONLY ON A LINE OF ITS OWN "
+      f"({len(_fn_sentences) - len(_fn_leaked)}/{len(_fn_sentences)})", not _fn_leaked)
+if _fn_leaked:
+    print(f"      DETAIL  leaked: {_fn_leaked[:4]}")
+
+# 2. The one rule of seven that read the raw line instead of the digit-folded copy, so an IBAN in
+#    fullwidth or Arabic-Indic numerals never matched at all -- in the same release that added the
+#    fold table, and beside six siblings that use it.
+_fn_wide = _fn_iban[:2] + "".join(chr(0xFF10 + int(c)) if c.isdigit() else c
+                                  for c in _fn_iban[2:])
+check("...and in fullwidth digits, like every other personal-data rule",
+      _rd.PLACEHOLDER in _rd.scrub(_fn_wide))
+
+# 3. A tab, which is what a spreadsheet, a TSV export and a copy out of a terminal table produce.
+#    The tab was missing from `_SEP` -- and adding it there fixed nothing, because the cheap gate
+#    that decides whether to run this layer at all had its OWN hand-written copy of the separator
+#    set and turned the layer off before any rule saw the line. That gate is built from `_SEP` now.
+#    `_pd_id` above is a checksum-valid Thai national ID; the card is the published Visa test PAN.
+for _fn_label, _fn_text in (("a card number", "\t".join(["4111", "1111", "1111", "1111"])),
+                            ("a national id", f"national id\t{_pd_id}")):
+    check(f"...and when a tab is the separator, which is what a spreadsheet paste is: {_fn_label}",
+          _rd.PLACEHOLDER in _rd.scrub(_fn_text))
+check("...and the gate that decides whether to run at all reads the SAME separator set",
+      _rd._SEP in _rd._A_LONG_DIGIT_RUN.pattern)
+
+# A wider net is not allowed to cost the false-positive side anything. Both numbers below were
+# measured before the fix and are unchanged after it.
+_fn_prose = ["the build takes 45 minutes", "see PR 1234 for the fix", "commit a1b2c3d4e5f6",
+             "version 1.23.1 shipped", "timeout 30000 ms", "port 9333 was busy",
+             "AB12 is not an iban", "US99 not a country code"]
+_fn_fp = [t for t in _fn_prose if _rd.PLACEHOLDER in _rd.scrub(t)]
+check("...and none of it fires on ordinary text", not _fn_fp)
+if _fn_fp:
+    print(f"      DETAIL  false positives: {_fn_fp}")
+
 # ------------------------------------------- a heredoc body is a document, not shell
 # 🐛 [2026-09-07] `_split_unquoted` tracked quotes and knew nothing about `<<`, so the body of a
 # heredoc was scanned as live shell: every `;` `&&` `||` `|` inside it split the command and each
