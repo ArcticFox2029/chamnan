@@ -1157,7 +1157,12 @@ _TERMINAL_SAFE = str.maketrans({
     # operators (FUNCTION APPLICATION, INVISIBLE TIMES/SEPARATOR/PLUS), and 206A-206F are deprecated
     # by Unicode itself. FFF9-FFFB are interlinear annotation, which Unicode says is not for plain
     # text interchange. None of these appears in a comment anybody wrote on purpose (R12 agent 2).
-    **{chr(i): None for i in range(0x2061, 0x2065)},
+    # \U0001f41b [2026-09-07] 0x2060 (WORD JOINER), added after the range beside it. The previous
+    # pass took 2061-2064 and stopped one code point short of the zero-width character most often
+    # named in smuggling write-ups -- the same "some members of a set" mistake, made while fixing
+    # that mistake. It has a typographic use (joining without a break) that no source comment has
+    # ever needed, and it is invisible, which is the property that matters here (R13 agent 2).
+    **{chr(i): None for i in range(0x2060, 0x2065)},
     **{chr(i): None for i in range(0x2066, 0x2070)},
     **{chr(i): None for i in range(0xFFF9, 0xFFFC)},
     "\u200b": None,
@@ -1278,6 +1283,103 @@ _THAI_ID_WORD = re.compile(
     r"|เลขประจำตัวประชาชน|บัตรประชาชน|ประชาชน)(?![a-z])")
 
 
+# ---- identifiers that are not Thai, because we do not get to know where the user is
+#
+# 🎯 [2026-09-07 owner] "we have no way of knowing what nationality the user is, but looking at it
+# as a data record, somebody has written one." The card rules were already international — Luhn and
+# the issuer prefixes are — but the only national identifier here was Thailand's, which is the one
+# country whose absence nobody would have noticed from this desk.
+#
+# Each rule earns its place by the standard this module set for itself when the card rule was
+# designed: MEASURE the checksum against random input first, and let the number decide whether the
+# shape alone is enough or a keyword is required. Measured 2026-09-07, 200,000 random samples each:
+#
+#     IBAN mod-97 on random alphanumerics       1.02%   -> shape is enough, with a real country code
+#     CPF mod-11 on random 11 digits            1.03%   -> the dotted form is enough
+#     Aadhaar Verhoeff on random 12 digits      9.99%   -> keyword required, like the bare Thai form
+#     (Luhn on random 16 digits, measured before the card rule shipped: 9.8%)
+#
+# So Aadhaar is gated the same way the bare Thai ID is, and for the same reason: one in ten random
+# 12-digit numbers passes Verhoeff, and a repository is full of 12-digit numbers.
+
+# IBAN: two letters, two check digits, then up to 30 alphanumerics. The country code has to be one
+# that issues IBANs AND the length has to be that country's, which is what takes this from 1% to
+# essentially nothing -- a random string that passes mod-97 almost never also has both.
+_IBAN_LENGTHS = {
+    "AD": 24, "AE": 23, "AL": 28, "AT": 20, "AZ": 28, "BA": 20, "BE": 16, "BG": 22, "BH": 22,
+    "BR": 29, "BY": 28, "CH": 21, "CR": 22, "CY": 28, "CZ": 24, "DE": 22, "DK": 18, "DO": 28,
+    "EE": 20, "EG": 29, "ES": 24, "FI": 18, "FO": 18, "FR": 27, "GB": 22, "GE": 22, "GI": 23,
+    "GL": 18, "GR": 27, "GT": 28, "HR": 21, "HU": 28, "IE": 22, "IL": 23, "IQ": 23, "IS": 26,
+    "IT": 27, "JO": 30, "KW": 30, "KZ": 20, "LB": 28, "LC": 32, "LI": 21, "LT": 20, "LU": 20,
+    "LV": 21, "LY": 25, "MC": 27, "MD": 24, "ME": 22, "MK": 19, "MR": 27, "MT": 31, "MU": 30,
+    "NL": 18, "NO": 15, "PK": 24, "PL": 28, "PS": 29, "PT": 25, "QA": 29, "RO": 24, "RS": 22,
+    "SA": 24, "SC": 31, "SD": 18, "SE": 24, "SI": 19, "SK": 24, "SM": 27, "ST": 25, "SV": 28,
+    "TL": 23, "TN": 24, "TR": 26, "UA": 29, "VA": 22, "VG": 24, "XK": 20,
+}
+_IBAN = re.compile(r"(?<![A-Za-z0-9])([A-Z]{2}[0-9]{2}(?:" + _SEP + r"?[A-Za-z0-9]){10,30})"
+                   r"(?![A-Za-z0-9])")
+# Brazil's CPF, in the form people actually write it. The bare 11-digit run is deliberately NOT
+# matched: at 1% it would be tolerable on its own, but 11-digit runs are ordinary in code and the
+# dotted form is what appears in a record somebody pasted.
+_CPF_DOTTED = re.compile(r"(?<![0-9])([0-9]{3}\.[0-9]{3}\.[0-9]{3}-[0-9]{2})(?![0-9])")
+_AADHAAR = re.compile(r"(?<![0-9])([0-9]{4}" + _SEP + r"?[0-9]{4}" + _SEP + r"?[0-9]{4})(?![0-9])")
+_AADHAAR_WORD = re.compile(r"(?i)(?<![a-z])(aadhaar|aadhar|uidai|\u0906\u0927\u093e\u0930)(?![a-z])")
+
+
+def _iban(text):
+    """True when `text` is a well-formed IBAN: known country, that country's length, mod-97 == 1."""
+    compact = re.sub(_SEP, "", text).upper()
+    if len(compact) < 5 or not compact[:2].isalpha() or not compact[2:4].isdigit():
+        return False
+    if _IBAN_LENGTHS.get(compact[:2]) != len(compact):
+        return False
+    if not compact[4:].isalnum():
+        return False
+    moved = compact[4:] + compact[:4]
+    try:
+        digits = "".join(str(int(c, 36)) for c in moved)
+    except ValueError:
+        return False
+    return int(digits) % 97 == 1
+
+
+def _cpf(text):
+    """Brazil's CPF: two mod-11 check digits. A run of one repeated digit is rejected -- 11111111111
+    passes the arithmetic and is not a CPF, which is the standard trap in every implementation."""
+    n = re.sub(r"[^0-9]", "", text)
+    if len(n) != 11 or len(set(n)) == 1:
+        return False
+    for k in (9, 10):
+        total = sum(int(n[i]) * (k + 1 - i) for i in range(k)) * 10 % 11 % 10
+        if total != int(n[k]):
+            return False
+    return True
+
+
+_VERHOEFF_D = (
+    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9), (1, 2, 3, 4, 0, 6, 7, 8, 9, 5),
+    (2, 3, 4, 0, 1, 7, 8, 9, 5, 6), (3, 4, 0, 1, 2, 8, 9, 5, 6, 7),
+    (4, 0, 1, 2, 3, 9, 5, 6, 7, 8), (5, 9, 8, 7, 6, 0, 4, 3, 2, 1),
+    (6, 5, 9, 8, 7, 1, 0, 4, 3, 2), (7, 6, 5, 9, 8, 2, 1, 0, 4, 3),
+    (8, 7, 6, 5, 9, 3, 2, 1, 0, 4), (9, 8, 7, 6, 5, 4, 3, 2, 1, 0))
+_VERHOEFF_P = (
+    (0, 1, 2, 3, 4, 5, 6, 7, 8, 9), (1, 5, 7, 6, 2, 8, 3, 0, 9, 4),
+    (5, 8, 0, 3, 7, 9, 6, 1, 4, 2), (8, 9, 1, 6, 0, 4, 3, 5, 2, 7),
+    (9, 4, 5, 3, 1, 2, 6, 8, 7, 0), (4, 2, 8, 6, 5, 7, 3, 9, 0, 1),
+    (2, 7, 9, 3, 8, 0, 6, 4, 1, 5), (7, 0, 4, 6, 9, 1, 3, 2, 5, 8))
+
+
+def _aadhaar(text):
+    """India's Aadhaar: a Verhoeff check digit. Never used without a keyword -- see the table above."""
+    n = re.sub(r"[^0-9]", "", text)
+    if len(n) != 12 or n[0] in "01":       # a real Aadhaar never begins 0 or 1
+        return False
+    c = 0
+    for i, ch in enumerate(reversed(n)):
+        c = _VERHOEFF_D[c][_VERHOEFF_P[i % 8][int(ch)]]
+    return c == 0
+
+
 def _luhn(digits):
     """True when `digits` satisfies the Luhn check every card network uses.
 
@@ -1342,6 +1444,12 @@ def _redact_personal_data(text):
         if has_id_word:
             spans += [m.span(1) for m in _THAI_ID_BARE.finditer(folded)
                       if _thai_national_id(m.group(1))]
+        # Not Thai. See the measurement table beside `_iban`: shape is enough for the first two,
+        # and Aadhaar needs the word beside it because one in ten random 12-digit numbers passes.
+        spans += [m.span(1) for m in _IBAN.finditer(line) if _iban(m.group(1))]
+        spans += [m.span(1) for m in _CPF_DOTTED.finditer(folded) if _cpf(m.group(1))]
+        if _AADHAAR_WORD.search(folded):
+            spans += [m.span(1) for m in _AADHAAR.finditer(folded) if _aadhaar(m.group(1))]
 
         if not spans:
             out.append(line)

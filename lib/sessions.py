@@ -209,6 +209,15 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
     # different answers: not-a-repository is correctly silent (there is genuinely nothing to say),
     # while git-not-installed is a thing the reader can fix and would want to (R10 agent 1).
     if not ws.git_is_installed():
+        # Two different sentences, because "install git" is useless advice to somebody who has it.
+        # A git older than 1.8.5 (2013) rejects `-C`, which every query here uses, and RHEL 7 and
+        # CentOS 7 shipped 1.8.3.1 for years — so this is reachable, and telling that reader their
+        # git is missing sends them to install what is already there (R13 agent 1).
+        if ws.git_is_too_old():
+            return ("**Where the last session stopped** — not available: the `git` on this machine "
+                    "is too old for `git -C`, which arrived in git 1.8.5 (2013) and is what every "
+                    "query here uses. Upgrading git restores this section; everything else in this "
+                    "block already works without it.")
         return ("**Where the last session stopped** — not available: `git` is not on this machine's "
                 "PATH, and this section is read from the working tree. Everything else in this "
                 "block works without it.")
@@ -380,7 +389,7 @@ def carry_forward(root):
                            for title, text in carried)
     if tokens.estimate(body) > MAX_CARRY_TOKENS:
         body = body[:tokens.cut_at(body, MAX_CARRY_TOKENS)].rsplit("\n", 1)[0] + \
-            f"\n\n_…truncated — read `{mdblock.one_line(group[0].name)}` for the rest._"
+            f"\n\n_…truncated — read `{mdblock.as_quoted(group[0].name)}` for the rest._"
     return f"{head}\n\n{body}"
 
 

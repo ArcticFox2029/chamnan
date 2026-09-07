@@ -210,6 +210,15 @@ def as_quoted(value, limit=80):
 INJECTED_ITEM_CHARS = 120
 
 
+# \U0001f41b [2026-09-07] `one_line` FOLDS a value onto one line; it does not make it inert. A
+# value wrapped in backticks needs `as_quoted`, which turns a backtick into an apostrophe -- because
+# a name carrying one closes its own code span and everything after it is chamnan's formatting
+# rather than the repository's data. Names come from a clone: filenames, branch names, environment
+# names, directory names. Eleven sites across six modules had `one_line` inside backticks; a report
+# named two of them and the sweep that followed found the other nine, which is the usual ratio here.
+# `tests/run_tests.py` now refuses any new one.
+
+
 def one_line_capped(value, limit=INJECTED_ITEM_CHARS):
     """`one_line`, cut to `limit` characters, ending on a whole grapheme.
 

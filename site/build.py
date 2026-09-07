@@ -59,9 +59,19 @@ def main():
         src = LIB / f"{mod}.py"
         shutil.copy2(src, OUT / f"{mod}.py")
         total += src.stat().st_size
+    # The version travels with the bundle. A number on the page is the only way a visitor can tell
+    # WHICH chamnan produced what they are looking at, and the only way a stale copy of the page
+    # announces itself instead of quietly reporting a year-old build's behaviour.
+    version = "unknown"
+    try:
+        version = json.loads(
+            (ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError):
+        pass
     (OUT / "manifest.json").write_text(
-        json.dumps([f"{m}.py" for m in needed], indent=2) + "\n", encoding="utf-8")
-    print(f"site/lib: {len(needed)} modules, {total:,} bytes")
+        json.dumps({"version": version, "modules": [f"{m}.py" for m in needed]}, indent=2) + "\n",
+        encoding="utf-8")
+    print(f"site/lib: chamnan {version}, {len(needed)} modules, {total:,} bytes")
     for mod in needed:
         print(f"  {mod}.py")
 

@@ -2182,6 +2182,17 @@ _GIT_OWNS = {}
 
 
 
+# True when git IS on PATH but cannot answer `-C`. Kept apart from `git_is_installed()` because
+# the two cases need different sentences: "install git" is useless advice to somebody who has it.
+_GIT_TOO_OLD = False
+
+
+def git_is_too_old():
+    """Whether the git on PATH is present but too old for `-C` (git 1.8.5, 2013)."""
+    git_is_installed()          # populates the probe on first call
+    return _GIT_TOO_OLD
+
+
 def git_is_installed():
     """Whether a `git` executable is on PATH at all. Cached, like `git_owns`.
 
@@ -2194,7 +2205,29 @@ def git_is_installed():
     global _GIT_ON_PATH
     if _GIT_ON_PATH is None:
         import shutil
-        _GIT_ON_PATH = shutil.which("git") is not None
+        # 🐛 [2026-09-07] `which("git")` answers "a file called git exists", and every `git -C` in
+        # this package needs more than that: `-C` arrived in git 1.8.5, and RHEL 7 and CentOS 7
+        # shipped 1.8.3.1 for years. On such a machine this returned True, the diagnostic added
+        # this morning for "git is missing" therefore never fired, and every git-derived section
+        # went silent with nothing anywhere saying why — which is the exact failure that
+        # diagnostic exists to prevent, reached by the other half of the same set (R13 agent 1).
+        #
+        # So the question is not "is git here" but "can git answer the way this package asks", and
+        # the only honest way to know is to ask it once.
+        _GIT_ON_PATH = False
+        if shutil.which("git"):
+            try:
+                probe = _subprocess().run(["git", "-C", ".", "rev-parse", "--git-dir"],
+                                          capture_output=True, text=True, encoding="utf-8",
+                                          errors="replace", timeout=10)
+                # A git too old to know `-C` fails on the OPTION, not on the directory: "unknown
+                # option" rather than "not a repository". Either exit status is fine — running this
+                # outside a repository is normal — but an unrecognised option is not.
+                _GIT_ON_PATH = "unknown option" not in (probe.stderr or "").lower()
+                global _GIT_TOO_OLD
+                _GIT_TOO_OLD = not _GIT_ON_PATH
+            except git_cannot_answer():
+                _GIT_ON_PATH = False
     return _GIT_ON_PATH
 
 
@@ -2289,11 +2322,23 @@ def git_owns(root):
         else:
             # No working tree: a bare repository is still "this directory IS the repository", and
             # refusing one here would take the specific bare-repo refusals with it.
+            # `--absolute-git-dir` arrived in git 2.13 (2017), four generations after `-C` itself,
+            # so a git from the 1.8.5-2.12 range — Ubuntu 14.04 and 16.04 shipped one — has the
+            # flag this function is called with and not the flag this branch uses. It answered
+            # False for a bare repository that git itself resolves, silently. `--git-dir` is as old
+            # as git and gives the same answer once resolved against `root` (R13 agent 1).
             bare = _subprocess().run(
                 ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+            if bare.returncode != 0 and "unknown option" in (bare.stderr or "").lower():
+                bare = _subprocess().run(
+                    ["git", "-C", str(root), "rev-parse", "--git-dir"],
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             if bare.returncode == 0 and bare.stdout.strip():
-                answer = Path(bare.stdout.strip()).resolve() == Path(root).resolve()
+                found = Path(bare.stdout.strip())
+                if not found.is_absolute():          # --git-dir may answer relatively
+                    found = Path(root) / found
+                answer = found.resolve() == Path(root).resolve()
     except git_cannot_answer():  # git missing, unrunnable, or an unresolvable path
         answer = False
     except Exception:                     # noqa: BLE001 — subprocess timeouts and friends

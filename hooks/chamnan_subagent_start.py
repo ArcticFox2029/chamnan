@@ -174,7 +174,7 @@ def _block(root):
             # is repository text too, and redact.scrub strips credentials, not control characters.
             # The sibling line was wrapped and this one was not, which is this repository's own
             # recurring disease -- a fix applied to some members of a set.
-            shown = ", ".join(f"`{mdblock.one_line(n)}`" for n in nested[:4])
+            shown = ", ".join(f"`{mdblock.as_quoted(n)}`" for n in nested[:4])
             parts.append(
                 f"That index does NOT cover the checkouts nested inside this one — {shown}"
                 + (f" and {len(nested) - 4} more" if len(nested) > 4 else "")

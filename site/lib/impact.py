@@ -424,7 +424,7 @@ def render(impact):
             more = (f" _+{len(edges['tests']) - MAX_TESTS} more_"
                     if len(edges["tests"]) > MAX_TESTS else "")
             parts.append(f"**tested by** {shown}{more}")
-        lines.append(f"- **`{mdblock.one_line(path)}`** — " + "; ".join(parts))
+        lines.append(f"- **`{mdblock.as_quoted(path)}`** — " + "; ".join(parts))
     if len(ranked) > MAX_ENTRIES:
         lines.append(f"- _…and {len(ranked) - MAX_ENTRIES} more with incoming references_")
     return "\n".join(lines)

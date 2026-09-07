@@ -311,7 +311,7 @@ def constraints_notice(root, name, envs=None):
     # every audit aimed at the session-start block.
     bullets = mdblock.one_line("; ".join(env["constraints"]))
     checked = mdblock.one_line(env["checked"] or "never confirmed")
-    return (f"chamnan: that command targets `{mdblock.one_line(name)}`, which declares — "
+    return (f"chamnan: that command targets `{mdblock.as_quoted(name)}`, which declares — "
             f"{bullets}. (from `.chamnan/{FILENAME}`, checked {checked})")
 
 

@@ -108,8 +108,69 @@ def _split_unquoted(text):
     module actually splits on.
     """
     parts, buf, quote, i, n = [], [], None, 0, len(text)
+    heredoc = None          # the delimiter we are waiting for, once a << has opened one
+    arith = 0               # depth of $(( … )), where << is a left shift rather than a redirect
     while i < n:
         ch = text[i]
+        # 🐛 [2026-09-07] Inside a heredoc body, `;` `&&` `||` `|` are ordinary text — it is a
+        # document, not shell. The splitter tracked quotes and knew nothing about `<<`, so a
+        # `python3 - <<'PY'` block had its Python source split on every `;` in it and each fragment
+        # became a fabricated step. Five of the eight candidates in this repository's own queue
+        # carried the resulting garbage token `s`, from `sed -i '' 's/…/…/'` inside such a block:
+        # the `s` of a sed expression was being read as a command name (R13 agent 3).
+        #
+        # The body ends at a line that is exactly the delimiter — optionally indented when the
+        # operator was `<<-`, which is what that dash means.
+        if heredoc is not None:
+            buf.append(ch)
+            if ch == "\n":
+                j = text.find("\n", i + 1)
+                line = text[i + 1:j if j != -1 else n]
+                if (line.strip() if heredoc[1] else line) == heredoc[0]:
+                    heredoc = None
+            i += 1
+            continue
+        # `$(( … ))` is arithmetic: `<<` inside it is a left shift, and reading it as a redirect
+        # named `2` swallowed the rest of the command. Tracked rather than guessed at, because a
+        # numeric heredoc delimiter is legal shell and the difference is the context, not the word.
+        if quote is None and text[i:i + 3] == "$((":
+            arith += 1
+            buf.append(text[i:i + 3])
+            i += 3
+            continue
+        if quote is None and arith and text[i:i + 2] == "))":
+            arith -= 1
+            buf.append(text[i:i + 2])
+            i += 2
+            continue
+        if ch == "<" and text[i:i + 2] == "<<" and quote is None and not arith:
+            j = i + 2
+            dash = j < n and text[j] == "-"
+            if dash:
+                j += 1
+            while j < n and text[j] in " \t":
+                j += 1
+            q = text[j] if j < n and text[j] in "\"'" else None
+            k = j + 1 if q else j
+            start = k
+            if q:
+                while k < n and text[k] != q:
+                    k += 1
+                word = text[start:k]
+                k += 1
+            else:
+                while k < n and (text[k].isalnum() or text[k] in "_-"):
+                    k += 1
+                word = text[start:k]
+            # `a << b` is a left shift or a redirect with no word; only a real delimiter opens one.
+            # And a heredoc BODY begins on the next line, so with no newline left in the text there
+            # is nothing it could delimit: `echo $((1 << 2)) && ls` is arithmetic, and reading it as
+            # a heredoc named `2` swallowed the `&&` and the rest of the line with it.
+            if word and text.find("\n", k) != -1:
+                heredoc = (word, dash)
+                buf.append(text[i:k])
+                i = k
+                continue
         if quote:
             buf.append(ch)
             if ch == "\\" and quote == '"' and i + 1 < n:

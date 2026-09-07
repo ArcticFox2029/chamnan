@@ -128,6 +128,7 @@ table.sim th{font-size:.7rem;padding:.25rem .3rem}
 table.sim td{padding:.35rem .3rem;border-bottom:1px dotted var(--rule);text-align:right}
 table.sim td:first-child{text-align:left;color:var(--muted)}
 table.sim td.good{color:var(--accent)} table.sim td.warn{color:var(--warn)}
+.ver{font-family:var(--mono);font-size:.78rem;color:var(--faint);margin-top:1.1rem}
 .temp{margin:1.25rem 0 0;padding:.75rem 1rem;background:var(--warn-soft);
   border-left:3px solid var(--warn);border-radius:0 5px 5px 0;
   font-size:.86rem;color:var(--ink);line-height:1.5}
@@ -183,9 +184,11 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
       <button type="button" data-r="psf/requests">requests</button>
       <button type="button" data-r="pallets/flask">flask</button>
       <button type="button" data-r="gin-gonic/gin">gin</button>
+      <button type="button" data-r="fastapi/fastapi">fastapi</button>
       <button type="button" data-r="facebook/react">react</button>
       <button type="button" data-r="chalk/chalk">chalk</button>
     </div>
+    <div id="ver" class="ver"></div>
     <div id="status" data-i18n="idle">Idle. The first run downloads the Python runtime (~10 MB), then it is cached.</div>
     <div id="out"></div>
   </div>
@@ -281,6 +284,10 @@ const LANGS = {en:"English", th:"ไทย", zh:"中文", ja:"日本語", es:"Es
 
 const T = {
   en: {
+    running: "running chamnan {v}",
+    drift: "Measured 2026-09-07. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
+    missed: "{n} file(s) could not be downloaded and are not in these numbers — the source figure is that much low.",
+    oversize: "{n} file(s) over 2 MB were skipped without downloading them, because chamnan does not index a file that size either.",
     getTitle: "Liked the numbers? Install it",
     getBody: "Two commands, then one slash command inside a repository you actually work in. It is a Claude Code plugin, Python standard library only, and everything it writes stays in <code>.chamnan/</code> inside your repository.",
     getLink: "chamnan on GitHub — the source, and the full evidence including what argues against it",
@@ -334,14 +341,14 @@ const T = {
     foot1: "chamnan is a context workspace for coding agents.",
     footLink: "Source and the full evidence, including the measurements that argue against it",
     foot2: "This page runs chamnan's real modules through Pyodide rather than a re-implementation, so the numbers are the tool's own. Repository contents are read by your browser directly from a public CDN and are never sent anywhere else.",
-    card1: "1 · The map", card2: "2 · Fifty turns", card3: "3 · Credentials",
+    card1: "1 · The map", card2: "2 · Fifty turns", card3: "3 · Secrets and personal data",
     kFiles: "files indexed", kSrc: "source fetched", kMap: "MAP.md on disk",
     kInj: "injected per session", kCeil: "ceiling",
     note1: "MAP.md is written to disk to be grepped, never read whole. Only the rolled-up block is injected, and it is bounded by the ceiling however large the repository is.",
     kBlock: "block, per session", kTurns: "× 50 turns, one session", kReread: "re-read per turn instead",
     note2: "The block is injected <strong>once per session</strong>, not per turn — so fifty turns cost it once. The second figure is the whole indexable source, shown as the bound on what orienting by reading files could cost, not as a prediction that an agent would read all of it. No model was called to produce either number.",
     kScanned: "files scanned", kRedacted: "files the redactor changed",
-    note3: "Counted, never displayed. This shows that <code>redact.scrub</code> runs over repository text before any of it reaches the model — it is not a secret scanner, and this page will not tell you or anyone else what it matched or where. A match is frequently a test fixture rather than a live key.",
+    note3: "Counted, never displayed. <code>redact.scrub</code> runs over repository text before any of it reaches the model, and it covers two different problems. <strong>Credentials</strong> have a word beside them — <code>api_key</code>, <code>password</code>, <code>Authorization</code> — and that word is the anchor. <strong>Personal data</strong> has none: a card number or a national identifier is bare digits and nothing in the text says what it is, so those are caught by CHECKSUM instead. This is not a secret scanner and will not tell you or anyone else what it matched or where. A match is frequently a test fixture rather than a live key.",
     becomes: "of indexable source in {repo} becomes {bytes} bytes injected once per session.",
     loadingPy: "Loading the Python runtime — about 10 MB, cached after this…",
     loadingCh: "Loading chamnan…",
@@ -357,6 +364,10 @@ const T = {
   },
 
   th: {
+    running: "กำลังใช้ chamnan {v}",
+    drift: "วัดเมื่อ 2026-09-07 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
+    missed: "มี {n} ไฟล์ที่ดาวน์โหลดไม่สำเร็จ และไม่ได้อยู่ในตัวเลขนี้ — ค่าซอร์สจึงต่ำกว่าจริงเท่านั้น",
+    oversize: "ข้าม {n} ไฟล์ที่ใหญ่เกิน 2 MB โดยไม่ดาวน์โหลด เพราะ chamnan ก็ไม่ index ไฟล์ขนาดนั้นเหมือนกัน",
     getTitle: "ถ้าตัวเลขน่าสนใจ ลองติดตั้งดู",
     getBody: "สองคำสั่ง แล้วสั่ง slash command อีกครั้งใน repository ที่ทำงานจริง เป็นปลั๊กอินของ Claude Code ใช้ Python standard library ล้วน และทุกอย่างที่มันเขียนอยู่ใน <code>.chamnan/</code> ใน repository ของคุณเอง",
     getLink: "chamnan บน GitHub — ซอร์สโค้ด และหลักฐานทั้งหมด รวมถึงส่วนที่โต้แย้งตัวมันเอง",
@@ -410,14 +421,14 @@ const T = {
     foot1: "chamnan คือ context workspace สำหรับ coding agent",
     footLink: "ซอร์สโค้ดและหลักฐานทั้งหมด รวมถึงผลวัดที่โต้แย้งตัวมันเอง",
     foot2: "หน้านี้รันโมดูลจริงของ chamnan ผ่าน Pyodide ไม่ใช่เขียนเลียนแบบขึ้นใหม่ ตัวเลขจึงเป็นของเครื่องมือเอง เนื้อหา repository ถูกอ่านโดยเบราว์เซอร์ของคุณจาก CDN สาธารณะโดยตรง และไม่ถูกส่งไปที่อื่นเลย",
-    card1: "1 · แผนผังโค้ด", card2: "2 · ห้าสิบ turn", card3: "3 · ข้อมูลลับ",
+    card1: "1 · แผนผังโค้ด", card2: "2 · ห้าสิบ turn", card3: "3 · ข้อมูลลับและข้อมูลส่วนบุคคล",
     kFiles: "ไฟล์ที่ index", kSrc: "ซอร์สที่ดึงมา", kMap: "MAP.md บนดิสก์",
     kInj: "ใส่เข้าไปต่อ session", kCeil: "เพดาน",
     note1: "MAP.md เขียนลงดิสก์เพื่อให้ grep ไม่ใช่ให้อ่านทั้งไฟล์ สิ่งที่ใส่เข้า context มีแค่ block ที่ย่อแล้ว และถูกจำกัดด้วยเพดานไม่ว่า repository จะใหญ่แค่ไหน",
     kBlock: "block ต่อ session", kTurns: "× 50 turn ใน session เดียว", kReread: "ถ้าอ่านไฟล์ใหม่ทุก turn",
     note2: "block ถูกใส่<strong>ครั้งเดียวต่อ session</strong> ไม่ใช่ทุก turn — 50 turn จึงจ่ายแค่ครั้งเดียว ตัวเลขที่สองคือซอร์สทั้งหมดที่ index ได้ แสดงไว้เป็นขอบบนว่าการทำความเข้าใจโค้ดด้วยการอ่านไฟล์จะแพงได้แค่ไหน ไม่ใช่การทำนายว่า agent จะอ่านทั้งหมด ไม่มีการเรียกโมเดลเพื่อให้ได้ตัวเลขทั้งสอง",
     kScanned: "ไฟล์ที่สแกน", kRedacted: "ไฟล์ที่ตัวกรองแก้ไข",
-    note3: "นับอย่างเดียว ไม่แสดงผล ตรงนี้แสดงว่า <code>redact.scrub</code> ทำงานกับข้อความใน repository ก่อนที่อะไรจะไปถึงโมเดล — มันไม่ใช่เครื่องมือหาความลับ และหน้านี้จะไม่บอกคุณหรือใครว่ามันเจออะไรตรงไหน สิ่งที่ตรงมักเป็น test fixture มากกว่าคีย์จริง",
+    note3: "นับอย่างเดียว ไม่แสดงผล <code>redact.scrub</code> ทำงานกับข้อความใน repository ก่อนที่อะไรจะไปถึงโมเดล และดูแลปัญหาสองแบบ <strong>ข้อมูลลับ</strong> มีคำกำกับอยู่ข้าง ๆ — <code>api_key</code>, <code>password</code>, <code>Authorization</code> — คำนั้นคือจุดยึด ส่วน<strong>ข้อมูลส่วนบุคคล</strong>ไม่มี: เลขบัตรเครดิตหรือเลขประจำตัวประชาชนคือตัวเลขเปล่า ๆ ไม่มีอะไรบอกว่ามันคืออะไร พวกนี้จึงจับด้วย CHECKSUM แทน นี่ไม่ใช่เครื่องมือหาความลับ และจะไม่บอกคุณหรือใครว่าเจออะไรตรงไหน สิ่งที่ตรงมักเป็น test fixture มากกว่าคีย์จริง",
     becomes: "ของซอร์สที่ index ได้ใน {repo} กลายเป็น {bytes} ไบต์ ที่ใส่เข้าไปครั้งเดียวต่อ session",
     loadingPy: "กำลังโหลด Python runtime — ประมาณ 10 MB หลังจากนี้จะถูก cache…",
     loadingCh: "กำลังโหลด chamnan…",
@@ -433,6 +444,10 @@ const T = {
   },
 
   zh: {
+    running: "正在运行 chamnan {v}",
+    drift: "测量于 2026-09-07。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
+    missed: "有 {n} 个文件下载失败，未计入这些数字——源码数值因此偏低。",
+    oversize: "跳过了 {n} 个超过 2 MB 的文件且未下载，因为 chamnan 本身也不索引这种大小的文件。",
     getTitle: "觉得数字不错？装上试试",
     getBody: "两条命令，然后在你真正在用的仓库里运行一个斜杠命令。它是 Claude Code 插件，只用 Python 标准库，写入的一切都留在你仓库里的 <code>.chamnan/</code> 中。",
     getLink: "GitHub 上的 chamnan——源码，以及包括反对意见在内的完整证据",
@@ -486,14 +501,14 @@ const T = {
     foot1: "chamnan 是给编码 agent 用的 context 工作区。",
     footLink: "源码与完整证据，包括那些反驳它的测量",
     foot2: "本页通过 Pyodide 运行 chamnan 真实的模块，而不是一个重新实现，所以数字是这个工具自己的。仓库内容由你的浏览器直接从公开 CDN 读取，不会被送往任何其他地方。",
-    card1: "1 · 代码地图", card2: "2 · 五十个回合", card3: "3 · 凭据",
+    card1: "1 · 代码地图", card2: "2 · 五十个回合", card3: "3 · 密钥与个人数据",
     kFiles: "已索引文件", kSrc: "已抓取源码", kMap: "磁盘上的 MAP.md",
     kInj: "每会话注入", kCeil: "上限",
     note1: "MAP.md 写到磁盘是为了被 grep，不是被通读。只有压缩后的 block 会被注入，而且无论仓库多大都受上限约束。",
     kBlock: "block，每会话", kTurns: "× 50 回合，同一会话", kReread: "改为每回合重读",
     note2: "block <strong>每次会话注入一次</strong>，不是每回合一次——所以五十个回合只付一次。第二个数字是全部可索引源码，作为「靠读文件来了解代码」可能花费的上界给出，并不是预测 agent 会全部读完。这两个数字都没有调用模型。",
     kScanned: "已扫描文件", kRedacted: "脱敏器改动的文件",
-    note3: "只计数，绝不显示。这说明 <code>redact.scrub</code> 会在任何内容到达模型之前处理仓库文本——它不是密钥扫描器，本页不会告诉你或任何人它匹配到了什么、在哪里。匹配到的往往是测试用的假数据，而不是真实密钥。",
+    note3: "只计数，绝不显示。<code>redact.scrub</code> 在任何内容到达模型之前处理仓库文本，覆盖两类不同的问题。<strong>凭据</strong>旁边有词可依——<code>api_key</code>、<code>password</code>、<code>Authorization</code>——那个词就是锚点。<strong>个人数据</strong>没有：卡号或身份证号就是一串裸数字，文本里没有任何东西说明它是什么，所以改用 CHECKSUM 来识别。这不是密钥扫描器，不会告诉你或任何人它匹配到了什么、在哪里。匹配到的往往是测试数据而非真实密钥。",
     becomes: "{repo} 中可索引源码 → 每会话注入 {bytes} 字节。",
     loadingPy: "正在加载 Python 运行时——约 10 MB，之后会被缓存…",
     loadingCh: "正在加载 chamnan…",
@@ -509,6 +524,10 @@ const T = {
   },
 
   ja: {
+    running: "chamnan {v} で実行中",
+    drift: "2026-09-07 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
+    missed: "{n} 件のファイルを取得できず、この数字には含まれていません——ソースの値はその分だけ低く出ています。",
+    oversize: "2 MB を超える {n} 件は、ダウンロードせずにスキップしました。chamnan もその大きさのファイルは索引しないためです。",
     getTitle: "数字が気に入ったら、導入してみてください",
     getBody: "コマンド二つ、そのあと実際に作業しているリポジトリでスラッシュコマンドを一度。Claude Code のプラグインで、Python 標準ライブラリのみ、書き込むものはすべてあなたのリポジトリ内の <code>.chamnan/</code> に収まります。",
     getLink: "GitHub の chamnan — ソースと、反証も含めた根拠のすべて",
@@ -562,14 +581,14 @@ const T = {
     foot1: "chamnan はコーディング agent のための context ワークスペースです。",
     footLink: "ソースと全ての根拠（それに反対する計測結果も含む）",
     foot2: "このページは再実装ではなく chamnan の実際のモジュールを Pyodide で動かしているため、数字はツール自身のものです。リポジトリの内容はあなたのブラウザが公開 CDN から直接読み取り、他のどこにも送られません。",
-    card1: "1 · コードマップ", card2: "2 · 50 ターン", card3: "3 · 認証情報",
+    card1: "1 · コードマップ", card2: "2 · 50 ターン", card3: "3 · 認証情報と個人データ",
     kFiles: "索引したファイル", kSrc: "取得したソース", kMap: "ディスク上の MAP.md",
     kInj: "セッションあたり注入", kCeil: "上限",
     note1: "MAP.md は grep されるためにディスクへ書かれます。通読用ではありません。注入されるのは畳まれた block だけで、リポジトリがどれだけ大きくても上限に収まります。",
     kBlock: "block（セッションあたり）", kTurns: "× 50 ターン、1 セッション", kReread: "代わりに毎ターン読み直した場合",
     note2: "block は<strong>セッションにつき一度</strong>注入されるのであって、ターンごとではありません——50 ターンでも一度分です。二つ目の数字は索引可能なソース全体で、ファイルを読んで把握する方式が最大どれだけ掛かりうるかの上限として示しています。agent が全部読むという予測ではありません。どちらの数字もモデルを呼ばずに出しています。",
     kScanned: "走査したファイル", kRedacted: "秘匿処理が変更したファイル",
-    note3: "数えるだけで、決して表示しません。<code>redact.scrub</code> がリポジトリのテキストに対して、モデルへ届く前に走ることを示しています——これはシークレットスキャナではなく、何がどこで一致したかをあなたにも誰にも伝えません。一致するのは本物の鍵よりテスト用データであることが多いです。",
+    note3: "数えるだけで、決して表示しません。<code>redact.scrub</code> はモデルに届く前にリポジトリのテキストを処理し、二つの異なる問題を扱います。<strong>認証情報</strong>は隣に語があります——<code>api_key</code>、<code>password</code>、<code>Authorization</code>——その語が手がかりです。<strong>個人データ</strong>にはそれがありません。カード番号や身分証番号はただの数字の並びで、それが何かをテキストは語らないので、代わりに CHECKSUM で捕まえます。これはシークレットスキャナではなく、何がどこで一致したかを誰にも伝えません。一致するのは本物の鍵よりテスト用データであることが多いです。",
     becomes: "{repo} の索引可能なソースが、セッションあたり {bytes} バイトの注入になります。",
     loadingPy: "Python ランタイムを読み込み中——約 10 MB、以降はキャッシュされます…",
     loadingCh: "chamnan を読み込み中…",
@@ -585,6 +604,10 @@ const T = {
   },
 
   es: {
+    running: "ejecutando chamnan {v}",
+    drift: "Medido el 2026-09-07. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
+    missed: "{n} archivo(s) no se pudieron descargar y no están en estas cifras: el valor de fuente queda así de bajo.",
+    oversize: "Se omitieron {n} archivo(s) de más de 2 MB sin descargarlos, porque chamnan tampoco indexa un archivo de ese tamaño.",
     getTitle: "¿Te convencen las cifras? Instálalo",
     getBody: "Dos órdenes y luego un comando de barra dentro de un repositorio en el que trabajes de verdad. Es un plugin de Claude Code, solo biblioteca estándar de Python, y todo lo que escribe se queda en <code>.chamnan/</code> dentro de tu repositorio.",
     getLink: "chamnan en GitHub: el código y la evidencia completa, incluida la que va en su contra",
@@ -638,14 +661,14 @@ const T = {
     foot1: "chamnan es un espacio de contexto para agentes de programación.",
     footLink: "Código y la evidencia completa, incluidas las mediciones que van en su contra",
     foot2: "Esta página ejecuta los módulos reales de chamnan mediante Pyodide, no una reimplementación, así que los números son los de la propia herramienta. Tu navegador lee el contenido del repositorio directamente desde una CDN pública y no se envía a ningún otro sitio.",
-    card1: "1 · El mapa", card2: "2 · Cincuenta turnos", card3: "3 · Credenciales",
+    card1: "1 · El mapa", card2: "2 · Cincuenta turnos", card3: "3 · Credenciales y datos personales",
     kFiles: "archivos indexados", kSrc: "fuente descargada", kMap: "MAP.md en disco",
     kInj: "inyectado por sesión", kCeil: "tope",
     note1: "MAP.md se escribe en disco para hacerle grep, nunca para leerlo entero. Solo se inyecta el bloque plegado, y está acotado por el tope por grande que sea el repositorio.",
     kBlock: "bloque, por sesión", kTurns: "× 50 turnos, una sesión", kReread: "releer en cada turno",
     note2: "El bloque se inyecta <strong>una vez por sesión</strong>, no por turno, así que cincuenta turnos lo pagan una sola vez. La segunda cifra es todo el código indexable, mostrada como cota de lo que podría costar orientarse leyendo archivos, no como predicción de que un agente los leería todos. No se llamó a ningún modelo para producir ninguna de las dos.",
     kScanned: "archivos analizados", kRedacted: "archivos que el redactor alteró",
-    note3: "Se cuentan, nunca se muestran. Esto demuestra que <code>redact.scrub</code> se ejecuta sobre el texto del repositorio antes de que nada llegue al modelo: no es un escáner de secretos, y esta página no te dirá ni a ti ni a nadie qué encontró ni dónde. Lo que coincide suele ser material de prueba, no una clave real.",
+    note3: "Se cuentan, nunca se muestran. <code>redact.scrub</code> recorre el texto del repositorio antes de que nada llegue al modelo, y cubre dos problemas distintos. Las <strong>credenciales</strong> llevan una palabra al lado — <code>api_key</code>, <code>password</code>, <code>Authorization</code> — y esa palabra es el ancla. Los <strong>datos personales</strong> no la llevan: un número de tarjeta o un documento de identidad son dígitos sueltos y nada dice qué son, así que se detectan por CHECKSUM. Esto no es un escáner de secretos y no dirá a nadie qué encontró ni dónde. Lo que coincide suele ser material de prueba, no una clave real.",
     becomes: "de código indexable en {repo} se convierte en {bytes} bytes inyectados una vez por sesión.",
     loadingPy: "Cargando el entorno de Python — unos 10 MB, después queda en caché…",
     loadingCh: "Cargando chamnan…",
@@ -734,7 +757,7 @@ document.getElementById("pre").innerHTML = PRE.map(([r,l,skb,inj,ratio]) =>
 
 const $ = id => document.getElementById(id);
 const statusEl = $("status"), out = $("out");
-let pyodide = null, EXT = null, booting = null;
+let pyodide = null, EXT = null, booting = null, CHAMNAN_VERSION = null;
 
 function say(msg, pct){
   statusEl.innerHTML = msg + (pct === undefined ? "" :
@@ -793,8 +816,12 @@ async function listing(owner, repo){
   // spent the quota and still failed.
   if (refused) say(t("tooBig"));
   const tree = await gh(`https://api.github.com/repos/${owner}/${repo}/git/trees/HEAD?recursive=1`);
+  // `type === "blob"` is true of a SYMLINK too, and a symlink's content is its target path — a
+  // line of text that would be fetched, indexed and counted as source. Mode 120000 is the only
+  // thing that distinguishes it, and jsDelivr's listing excludes them already, so this path was
+  // the only one that let them through (R13 agent 4, reproduced on microsoft/vscode).
   const files = (tree.tree || [])
-    .filter(n => n.type === "blob")
+    .filter(n => n.type === "blob" && n.mode !== "120000")
     .map(n => ({path: n.path, size: n.size || 0}));
   if (!files.length) throw new Error(t("noFiles"));
   return {ref: "HEAD", via: "github", files, truncated: !!tree.truncated};
@@ -819,7 +846,13 @@ function boot(){
     say(t("loadingPy"));
     const py = await loadPyodide();
     say(t("loadingCh"));
-    const files = await (await fetch("lib/manifest.json")).json();
+    const manifest = await (await fetch("lib/manifest.json")).json();
+    const files = manifest.modules || manifest;      // an older bundle was a bare array
+    if (manifest.version){
+      CHAMNAN_VERSION = manifest.version;
+      const el = document.getElementById("ver");
+      if (el) el.textContent = t("running", {v: manifest.version});
+    }
     try { py.FS.mkdir("/lib"); } catch (e) { /* already there on a repeat run */ }
     for (const f of files){
       const res = await fetch("lib/" + f);
@@ -869,8 +902,13 @@ async function measure(owner, repo){
     return i > 0 && EXT.has(b.path.slice(i).toLowerCase());
   });
   if (!want.length) throw new Error(t("noFiles"));
-  const declared = want.reduce((n, b) => n + b.size, 0);
-  const take = want.slice(0, CAP);
+  // Skipped BEFORE the fetch, not after. `mapper` refuses a file over 2 MB, but it only sees one
+  // once the browser has already downloaded it — and torvalds/linux carries 57 tracked-extension
+  // files past that line. The listing gives the size up front, so the bytes are never pulled.
+  // A size of 0 means the listing did not say; those are still fetched rather than assumed small.
+  const TOO_BIG = 2 * 1024 * 1024;
+  const oversize = want.filter(b => b.size > TOO_BIG).length;
+  const take = want.filter(b => b.size <= TOO_BIG).slice(0, CAP);
 
   pyodide.runPython(`
 import shutil, pathlib
@@ -1003,7 +1041,9 @@ json.dumps({
 `);
   const r = JSON.parse(raw);
   r.src_bytes = bytes; r.fetched = got; r.total_blobs = want.length;
-  r.declared = declared;
+  // `declared` used to be computed here and never read — dead arithmetic on every run.
+  r.missed = take.length - got;          // fetches that failed mid-run, which used to be silent
+  r.oversize = oversize;
   r.capped = want.length > take.length || !!truncated;
   r.via = via;
   // The language is derived from what was actually indexed rather than asked of GitHub's API,
@@ -1061,6 +1101,8 @@ function render(r){
     </div>
   </div>
   <p class="temp">${t("resultTemp")}</p>
+  ${r.missed > 0 ? `<p class="note">${t("missed", {n: num(r.missed)})}</p>` : ""}
+  ${r.oversize > 0 ? `<p class="note">${t("oversize", {n: num(r.oversize)})}</p>` : ""}
   ${r.capped ? `<p class="note">${t("sampled", {got: num(r.fetched), total: num(r.total_blobs), cap: num(CAP)})}</p>` : ""}`;
 }
 
