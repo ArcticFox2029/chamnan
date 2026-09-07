@@ -1873,6 +1873,55 @@ _TOO_BIG_TO_READ_IN_FULL = (
     "come when you need one of them in full.")
 
 
+
+def _what_this_index_leaves_out(root):
+    """Lines naming the files this run could not index, or [] when it indexed everything.
+
+    🐛 [2026-09-07] `SKIPPED_TOO_LARGE`, `SKIPPED_TOO_MANY_LINES` and `SKIPPED_BINARY` are filled on
+    every run and printed to a TERMINAL — which a session never sees. `MAP.md` is the one artifact
+    SessionStart injects, and it named none of them: a 2 MB module and a binary behind a `.py`
+    suffix were simply absent, with the header above stating a file count that silently excluded
+    them. An index that is missing a file is worse than one that says it is missing it, which is
+    this project's own stated position on staleness applied to absence (R12 agent 5).
+    
+    The comment beside `SKIPPED_BUILD_DIR` conceded this in passing more than a year of commits ago
+    — "SKIPPED_TOO_LARGE and SKIPPED_BINARY above are written and never read by anything but a
+    test" — and used it as a reason not to report build directories the same way. The concession
+    outlived the excuse.
+
+    Capped and one line per reason: this is a header, not a report, and `chamnan-map` still prints
+    the full lists to the terminal for anyone who wants them.
+    """
+    # 🐛 Repository-RELATIVE. These lists hold absolute paths, and MAP.md is committed: the first
+    # version of this wrote one developer's machine layout into it, which is the same defect fixed
+    # in `chamnan-timeline --files` the same morning. A path that will not relativise is a path
+    # outside the repository and keeps its own name rather than being mangled into something that
+    # looks like one.
+    def _rel(path):
+        try:
+            return str(Path(path).resolve().relative_to(Path(root).resolve()).as_posix())
+        except (ValueError, OSError):
+            return Path(path).name
+
+    def _named(paths, limit=4):
+        shown = ", ".join(f"`{mdblock.as_quoted(_rel(p), 60)}`" for p in list(paths)[:limit])
+        more = len(paths) - limit
+        return shown + (f", and {more} more" if more > 0 else "")
+
+    out = []
+    if SKIPPED_TOO_LARGE:
+        out.append(f"**{len(SKIPPED_TOO_LARGE)} file(s) are too large to index** — "
+                   f"{_named([p for p, _ in SKIPPED_TOO_LARGE])}. "
+                   f"`chamnan-peek <path>` reads the shape of one without loading it.")
+    if SKIPPED_TOO_MANY_LINES:
+        out.append(f"**{len(SKIPPED_TOO_MANY_LINES)} file(s) have too many lines to index** — "
+                   f"{_named([p for p, _ in SKIPPED_TOO_MANY_LINES])}.")
+    if SKIPPED_BINARY:
+        out.append(f"**{len(SKIPPED_BINARY)} file(s) are binary despite a source suffix** — "
+                   f"{_named(SKIPPED_BINARY)}.")
+    return (out + [""]) if out else []
+
+
 def _built_from(root):
     """` Built from <sha>.` when the tree is a git checkout, else "" -- the commit this map describes.
 
@@ -1911,6 +1960,7 @@ def _render(files, root):
         "",
         _HOW_TO_READ,
         "",
+    ] + _what_this_index_leaves_out(root) + [
         "## Quick Index",
         "",
     ]
