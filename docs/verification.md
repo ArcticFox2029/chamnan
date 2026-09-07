@@ -90,29 +90,56 @@ Choose the number by what actually changed, not by diff size:
 
 Documentation-only work is not a functional change and should not be described as one in the notes.
 
-**3. The commit is on a branch, and the pull request is green.**
+**3. The candidate goes to the private mirror first, and only a green one goes public.**
 
-`main` is protected. A direct `git push origin main` is rejected with
-`GH006: Protected branch update failed` — and has been for every release since 1.18.0, so this is
-the normal path and not an exception to it.
+`ArcticFox2029/chamnan-test` is a private clone of this repository carrying the same
+`.github/workflows/tests.yml`, so the same five jobs run there. It exists because a red column is
+information, not something to publish: 1.23.1 spent an evening pushing candidates to the public
+repository and collecting failed runs on it, each one visible forever beside the releases.
+
+Verified 2026-09-08: a pull request opened on the mirror dispatches all five jobs — ubuntu 3.8,
+ubuntu 3.13, macos 3.13, windows 3.8, windows 3.13 — exactly as the public one does. A push to a
+branch alone does not; the workflow fires on `pull_request` and on a push to `main`.
 
 ```bash
-git switch -c release/{version}
-git push -u origin release/{version}
-gh pr create --fill
-gh pr checks --watch          # five jobs: ubuntu, macos, windows, and two lint
+git remote add staging https://github.com/ArcticFox2029/chamnan-test.git   # once per checkout
+git push staging main:main release/{version}:release/{version}
+gh pr create --repo ArcticFox2029/chamnan-test --base main --head release/{version} \
+  --title "{version} release candidate — staging run" --fill
+gh pr checks <n> --repo ArcticFox2029/chamnan-test --watch
 ```
 
-Wait for all five. **Windows is the one that catches what a Mac cannot**, and it has caught a real
-regression in this repository more than once — a `#!/bin/sh` test fixture that will not run, a path
-compared with the wrong separator, a `/nonexistent-...` path that is writable there, and a
-subprocess spawn added per session that took CI from four minutes to nine. A red Windows job is a
-finding, not a flake; read it before re-running it.
+**Push it to the mirror before the local suite finishes, not after.** The two measure different
+things and neither waits on the other: the local run cannot see Windows at all, and CI cannot see
+this machine. Running them in series turned a 12-minute wait into a 22-minute one, several times
+in one evening.
+
+Only once all five are green:
 
 ```bash
+git push -u origin release/{version}
+gh pr create --fill
+gh pr checks --watch
 gh pr merge --squash --delete-branch
 git switch main && git pull
 ```
+
+`main` is protected, and a direct `git push origin main` is rejected with
+`GH006: Protected branch update failed` — that has been true since 1.18.0, so the pull request is
+the normal path rather than an exception to it.
+
+**Windows is the column that catches what a Mac cannot**, and it has caught a real regression here
+more than once — a `#!/bin/sh` fixture that will not run, a path compared with the wrong separator,
+a `/nonexistent-...` path that is writable there, a subprocess spawn added per session, and a lock
+whose timeout was a ceiling on total waiting rather than on waiting without progress. A red Windows
+job is a finding, not a flake; read it before re-running it.
+
+**And before reaching for CI at all, ask whether the platform difference can be squeezed instead.**
+Four of those five were findable from macOS, and the fifth — the lock — was reproduced here in
+thirty seconds by shrinking `LOCK_TIMEOUT` to 0.05 s, which is the 40x that separates the two
+platforms. `tests/test_concurrent_writers.py` runs that squeeze on every platform now. A CI round
+trip is twenty minutes; a squeeze is thirty seconds and it runs on the machine you are already
+sitting at.
 
 Tag after the merge, not before, so the tag never points at a commit no one else can fetch.
 

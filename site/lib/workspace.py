@@ -1599,7 +1599,19 @@ def safe_tool_name(name):
 # behind by a killed process is broken after LOCK_STALE seconds rather than waited on forever, and
 # failing to acquire is not an error: the caller writes anyway. Losing one increment to a busy lock
 # is a worse hint; refusing to record anything is a worse tool.
+# 🐛 [2026-09-08] LOCK_TIMEOUT used to be a ceiling on TOTAL waiting, and that is the wrong
+# quantity. 8 processes x 50 increments is 400 turns through a lock, and on a platform where one
+# turn costs 5 ms the queue drains in 2 seconds while on one where it costs 200 ms it does not --
+# so the same code kept its promise on POSIX and broke it on Windows, where a waiter gave up and
+# wrote unguarded: 41 of 400 increments recorded, silently, forever. Reproduced on macOS by
+# shrinking the ceiling instead of slowing the disk, which is the same experiment: 389/400 at
+# 0.05 s. The 40x between the two is Windows' per-operation cost, not a flaky runner.
+#
+# So it is a ceiling on waiting WITHOUT PROGRESS now. Every time the lock changes hands the
+# waiter's deadline is reset, because a queue that is moving is one worth staying in. LOCK_WAIT_MAX
+# stops a pathological storm from hanging a session outright.
 LOCK_TIMEOUT = 2.0
+LOCK_WAIT_MAX = 30.0
 LOCK_STALE = 30.0
 
 
@@ -1836,7 +1848,12 @@ def exclusive(path):
         lock.parent.mkdir(parents=True, exist_ok=True)
     except OSError:
         pass
-    fd, deadline = None, time.time() + LOCK_TIMEOUT
+    fd = None
+    started = time.time()
+    deadline = started + LOCK_TIMEOUT
+    # What the lock looked like last time we were refused. A change in it means somebody finished
+    # and somebody else started -- the queue is moving, and this waiter's turn is coming.
+    seen = None
     while True:
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
@@ -1873,7 +1890,16 @@ def exclusive(path):
                     continue
             except OSError:
                 pass
-            if time.time() > deadline:
+            now = time.time()
+            try:
+                st = lock.stat()
+                here = (lock.read_bytes(), st.st_mtime_ns, getattr(st, "st_ino", 0))
+            except OSError:
+                here = None
+            if here != seen:
+                seen = here
+                deadline = now + LOCK_TIMEOUT
+            if now > deadline or now - started > LOCK_WAIT_MAX:
                 break
             time.sleep(0.01)
         # 🐛 A lock another process has just unlinked sits in Windows' DELETE-PENDING state for a
@@ -1889,7 +1915,10 @@ def exclusive(path):
         # a lost update on a running total that nothing ever recomputes, so it stays wrong forever.
         # The ubuntu column of the same run raised it zero times, which is why POSIX never saw this.
         except PermissionError:
-            if time.time() > deadline:
+            # DELETE-PENDING is progress by definition: the previous holder is on its way out.
+            now = time.time()
+            deadline = now + LOCK_TIMEOUT
+            if now - started > LOCK_WAIT_MAX:
                 break
             time.sleep(0.01)
         except OSError:

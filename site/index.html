@@ -197,16 +197,18 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 <section>
   <div class="wrap prose measure">
     <h2 data-i18n="h2pre">Measured here already</h2>
-    <p class="lede" data-i18n-html="ledePre">Nine repositories across eight languages, every one measured through this
-      page in a real browser and cross-checked against the same modules run natively. The pattern is
-      the point, not any single ratio: <strong>the source grows sixty-fold down this table and the
-      injected block stays between 6.4 and 6.6 KB.</strong> That is a bound, not compression.</p>
+    <p class="lede" data-i18n-html="ledePre">Thirteen repositories across eight languages, every one measured through
+      this page in a real browser. The pattern is the point, not any single ratio: <strong>the source
+      grows nearly seventy-fold down this table and the injected block stays between 6.2 and
+      6.7 KB.</strong> That is a bound, not compression.</p>
     <div class="scroll">
       <table>
         <thead><tr><th data-i18n="thRepo">repository</th><th data-i18n="thLang">language</th><th data-i18n="thSrc">source</th><th data-i18n="thInj">injected</th><th data-i18n="thRatio">ratio</th></tr></thead>
         <tbody id="pre"></tbody>
       </table>
     </div>
+    <p class="note" data-i18n="drift">Measured 2026-09-08. These repositories are worked on daily, so
+      re-running one today will not match to the byte — the shape holds, the digits move.</p>
     <p class="note" data-i18n="notePre">Source is the bytes of indexable files fetched. Injected is what the SessionStart
       hook writes into the agent's context, after the index is rolled up to its token budget — not
       the on-disk <code>MAP.md</code>, which is larger and is meant to be grepped, never read whole.</p>
@@ -285,7 +287,7 @@ const LANGS = {en:"English", th:"ไทย", zh:"中文", ja:"日本語", es:"Es
 const T = {
   en: {
     running: "running chamnan {v}",
-    drift: "Measured 2026-09-07. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
+    drift: "Measured 2026-09-08. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
     missed: "{n} file(s) could not be downloaded and are not in these numbers — the source figure is that much low.",
     oversize: "{n} file(s) over 2 MB were skipped without downloading them, because chamnan does not index a file that size either.",
     getTitle: "Liked the numbers? Install it",
@@ -365,7 +367,7 @@ const T = {
 
   th: {
     running: "กำลังใช้ chamnan {v}",
-    drift: "วัดเมื่อ 2026-09-07 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
+    drift: "วัดเมื่อ 2026-09-08 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
     missed: "มี {n} ไฟล์ที่ดาวน์โหลดไม่สำเร็จ และไม่ได้อยู่ในตัวเลขนี้ — ค่าซอร์สจึงต่ำกว่าจริงเท่านั้น",
     oversize: "ข้าม {n} ไฟล์ที่ใหญ่เกิน 2 MB โดยไม่ดาวน์โหลด เพราะ chamnan ก็ไม่ index ไฟล์ขนาดนั้นเหมือนกัน",
     getTitle: "ถ้าตัวเลขน่าสนใจ ลองติดตั้งดู",
@@ -445,7 +447,7 @@ const T = {
 
   zh: {
     running: "正在运行 chamnan {v}",
-    drift: "测量于 2026-09-07。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
+    drift: "测量于 2026-09-08。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
     missed: "有 {n} 个文件下载失败，未计入这些数字——源码数值因此偏低。",
     oversize: "跳过了 {n} 个超过 2 MB 的文件且未下载，因为 chamnan 本身也不索引这种大小的文件。",
     getTitle: "觉得数字不错？装上试试",
@@ -525,7 +527,7 @@ const T = {
 
   ja: {
     running: "chamnan {v} で実行中",
-    drift: "2026-09-07 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
+    drift: "2026-09-08 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
     missed: "{n} 件のファイルを取得できず、この数字には含まれていません——ソースの値はその分だけ低く出ています。",
     oversize: "2 MB を超える {n} 件は、ダウンロードせずにスキップしました。chamnan もその大きさのファイルは索引しないためです。",
     getTitle: "数字が気に入ったら、導入してみてください",
@@ -605,7 +607,7 @@ const T = {
 
   es: {
     running: "ejecutando chamnan {v}",
-    drift: "Medido el 2026-09-07. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
+    drift: "Medido el 2026-09-08. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
     missed: "{n} archivo(s) no se pudieron descargar y no están en estas cifras: el valor de fuente queda así de bajo.",
     oversize: "Se omitieron {n} archivo(s) de más de 2 MB sin descargarlos, porque chamnan tampoco indexa un archivo de ese tamaño.",
     getTitle: "¿Te convencen las cifras? Instálalo",
@@ -732,20 +734,23 @@ function applyLang(code){
 })();
 
 const PRE = [
-  // Every row measured through THIS page in a real browser on 2026-09-07. Sorted by source size,
-  // because the bound is the finding rather than any single ratio. torvalds/linux came through the
-  // GitHub fallback because jsDelivr refuses repositories that large.
+  // Measured 2026-09-07 through THIS page in a real browser, re-measured 2026-09-08 with
+  // `site/remeasure.py`, which takes the same listing, the same filters and the same modules
+  // without one. Twelve of the thirteen came back identical; three rows moved and are the
+  // 2026-09-08 figures. Sorted by source size, because the bound is the finding rather than any
+  // single ratio. torvalds/linux comes through the GitHub fallback: jsDelivr refuses a repository
+  // that large.
   ["chalk/chalk","JavaScript",56,2449,24],
   ["facebook/react","JavaScript",257,6649,40],
-  ["psf/requests","Python",392,6344,63],
+  ["psf/requests","Python",392,6345,63],
   ["pallets/flask","Python",576,6391,92],
   ["gin-gonic/gin","Go",660,6636,102],
   ["sinatra/sinatra","Ruby",663,6570,103],
   ["yumiaura/myCat","Mixed",719,6409,115],
-  ["rust-lang/mdBook","Rust",1187,6465,188],
+  ["rust-lang/mdBook","Rust",1190,6470,188],
   ["rails/rails","Ruby",1550,6537,243],
   ["django/django","Python",2209,6245,362],
-  ["torvalds/linux","C",2874,6545,450],
+  ["torvalds/linux","C",3028,6603,470],
   ["tokio-rs/tokio","Rust",3468,6441,551],
   ["vuejs/core","TypeScript",3782,6250,620],
 ];

@@ -17124,6 +17124,65 @@ else:
     check("THE CONCURRENCY SUITE IS PRESENT", False)
 
 
+# ------------------------------------------- what one session start costs in processes
+# 🐛 [2026-09-08] A probe that recognised a git too old for `-C` was correct, shipped, and took
+# Windows CI from 4m16s to 9m25s -- and cost three concurrency checks, because the extra spawns
+# changed the timing the lock was measured under. A spawn is the expensive operation on Windows and
+# this path pays for every one of them at every session, so the count is the thing to watch. It was
+# not watched: the probe went in, the suite stayed green here, and the bill arrived on a machine
+# nobody could run.
+#
+# Measured 2026-09-08 on the fixture below: 2 on a clean repository, 3 with uncommitted files. The
+# ceiling is set one above the dirty case, so a single new spawn on this path fails here rather
+# than in CI. Raising it is a decision, not a formality -- multiply it by every session the plugin
+# ever starts, on the platform where it costs the most.
+SESSION_START_SPAWN_CEILING = 4
+
+_sp = Path(tempfile.mkdtemp(prefix="chamnan-spawns-"))
+(_sp / "probe").mkdir()
+# On PYTHONPATH this loads before anything else, so it sees spawns made during import as well as
+# during the run. subprocess.run, check_output and Popen all end at Popen.__init__.
+(_sp / "probe" / "sitecustomize.py").write_text(
+    "import atexit, os, subprocess\n"
+    "_n = [0]\n"
+    "_real = subprocess.Popen.__init__\n"
+    "def _counting(self, args, *rest, **kw):\n"
+    "    _n[0] += 1\n"
+    "    return _real(self, args, *rest, **kw)\n"
+    "subprocess.Popen.__init__ = _counting\n"
+    "_out = os.environ.get('SPAWN_COUNT_FILE')\n"
+    "if _out:\n"
+    "    atexit.register(lambda: open(_out, 'w').write(str(_n[0])))\n",
+    encoding="utf-8")
+_spw = _sp / "repo"
+(_spw / "src").mkdir(parents=True)
+for _i in range(14):
+    (_spw / "src" / f"m{_i}.py").write_text(
+        f'"""Module {_i}."""\nimport os\n\n\ndef f{_i}():\n    return os.getcwd()\n',
+        encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_spw)], capture_output=True)
+subprocess.run(["git", "-C", str(_spw), "add", "-A"], capture_output=True)
+subprocess.run(["git", "-C", str(_spw), "-c", "user.email=t@t", "-c", "user.name=t",
+                "commit", "-qm", "init"], capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), str(_spw)], capture_output=True)
+# Dirty, which is the more expensive of the two shapes and therefore the one to pin.
+(_spw / "src" / "m0.py").write_text("changed\n", encoding="utf-8")
+(_spw / "src" / "new.py").write_text("untracked\n", encoding="utf-8")
+_spc = _sp / "count"
+subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+               input="{}", text=True, capture_output=True, encoding="utf-8", errors="replace",
+               env=dict(os.environ, PYTHONPATH=str(_sp / "probe"), SPAWN_COUNT_FILE=str(_spc),
+                        CLAUDE_PROJECT_DIR=str(_spw)))
+_spawned = int(_spc.read_text(encoding="utf-8")) if _spc.is_file() else -1
+print(f"      DETAIL  one session start on a dirty repository spawned {_spawned} process(es)")
+check("A SESSION START SPAWNS NO MORE PROCESSES THAN IT USED TO",
+      0 < _spawned <= SESSION_START_SPAWN_CEILING)
+# A count of zero would mean the probe did not load and this check measured nothing -- the failure
+# mode that makes a sweep pass while reading an empty room.
+check("...and the counter actually ran, rather than reporting a silent zero", _spawned > 0)
+_rmtree(_sp, ignore_errors=True)
+
+
 # ------------------------------------------------- every exclusive() caller, not three of them
 # `ws.exclusive` yields False rather than raising when it cannot take the lock, and the block runs
 # anyway. That is a deliberate choice -- refusing to start a session over a lock is worse than the
