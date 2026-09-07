@@ -34,6 +34,11 @@ print = redact.emit  # noqa: A001
 
 
 def main(argv):
+    # Before help. These three answer help for a BARE call too, so `--version` has to be
+    # tested first or it would print usage instead. See workspace.wants_version.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
     if not argv or ws.wants_help(argv):
         print(__doc__.strip())
         return 0 if argv else 2

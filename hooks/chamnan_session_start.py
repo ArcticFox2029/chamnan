@@ -1049,6 +1049,16 @@ def main():
                        # standard this file sets for every other notice in it.
                        f"If that newer install is gone for good, clear it with "
                        f"`echo {ws.plugin_version(HERE.parent)} > .chamnan/.version`.\n")
+            # The banner says an older build is live. This says what that already cost, and it is
+            # the half a user can act on: `ensure()` kept these keys instead of dropping them, so
+            # they are still in the file — but only because THIS build knows to. Any build older
+            # than 2026-09-07 running here will delete them, silently, on its next touch.
+            if ws.LAST_CONFIG_KEYS_KEPT:
+                kept = ", ".join(f"`{mdblock.as_quoted(k)}`" for k in ws.LAST_CONFIG_KEYS_KEPT)
+                out.append(f"  Settings in `config.json` that only the newer build understands were "
+                           f"KEPT rather than dropped: {kept}. An older chamnan will delete them — "
+                           f"`{ws.plugin_version(HERE.parent)}` keeps them because `.version` says a "
+                           f"newer one has been here.\n")
 
         if cfg.get("ledger", True):
             # Always the first thing in the injection, and gated on nothing but the flag itself --
