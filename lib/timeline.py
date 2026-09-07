@@ -364,7 +364,9 @@ def open_titles(root, count=INJECT_OPEN):
     lines = []
     for last, path, n in rows[:count]:
         when = f", last {last}" if last else ""
-        lines.append(f"- **{mdblock.one_line(title_of(path, texts[path]))}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
+        # `title_of` returns a thread file's `# ` heading with no length limit of any kind, and
+        # `count=3` caps the number of threads rather than the size of one.
+        lines.append(f"- **{mdblock.one_line_capped(title_of(path, texts[path]))}** — {n} entr{'y' if n == 1 else 'ies'}{when} "
                      f"(`{mdblock.as_quoted(path.name)}`)")
     if len(rows) > count:
         lines.append(f"- _…and {len(rows) - count} more open in `.chamnan/{DIRNAME}/`_")

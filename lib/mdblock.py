@@ -160,6 +160,46 @@ def as_quoted(value, limit=80):
     return text if len(text) <= limit else whole_graphemes(text[:limit - 1]) + "…"
 
 
+# The per-item ceiling on repository-authored FREE TEXT that is injected into every session.
+#
+# 120 because `memory.MAX_TITLE_CHARS` had already picked it for exactly this hazard and had the
+# only written reasoning on the question: a title longer than this "is also almost certainly the
+# wrong thing to have written as a title in the first place, so truncating it doubles as a visible
+# nudge to shorten it". Three sibling sections that inject the same kind of string by the same
+# pattern -- a small COUNT cap, then one line per item -- never got it, so this is the shared
+# definition rather than a fourth copy of the number.
+#
+# Characters and not tokens, deliberately, and this is the opposite call from `sessions.
+# MAX_CARRY_TOKENS`: that cap bounds a BODY, where the whole point is how much context is paid for,
+# and Thai paying 1.99x for the same text was a real inequity. This one bounds a single line whose
+# job is to be READ AND RECOGNISED. A token cap here would show a Thai user 60 characters of their
+# own milestone title where an English user sees 120 -- the reader loses, to save ~30 tokens on an
+# item that is already one of at most sixteen. Measured on the finding's own fixture: a 908-character
+# constraint bullet costs 384.4 tokens uncapped; at 200 characters it costs 78.4, and the remaining
+# Thai/Latin spread inside that is under 40 tokens per item.
+INJECTED_ITEM_CHARS = 120
+
+
+def one_line_capped(value, limit=INJECTED_ITEM_CHARS):
+    """`one_line`, cut to `limit` characters, ending on a whole grapheme.
+
+    The sibling of `as_quoted` for text that is NOT wrapped in backticks: `as_quoted` makes a value
+    inert inside chamnan's own sentence and caps it at 80; this caps a value that is quoted as the
+    REPOSITORY's own voice, inside the fence, where backticks are legitimate content and must
+    survive.
+
+    Why it exists: `one_line` folds and sanitises and **truncates nothing**, which is correct for a
+    value being written to a file and wrong for one being injected into every session. Three
+    sections read as bounded because they cap how MANY items they show, and a count cap is not a
+    length cap -- one paragraph-length entry cost 384 tokens, every session, for as long as it
+    stayed in the top few.
+    """
+    text = one_line(value)
+    if len(text) <= limit:
+        return text
+    return whole_graphemes(text[:limit]).rstrip() + "\u2026"
+
+
 def demote_headings(text):
     """`text` with every non-fenced ATX heading turned into inert text.
 
