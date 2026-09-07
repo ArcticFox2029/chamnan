@@ -16471,10 +16471,10 @@ _sw_spec.loader.exec_module(_sw)
 # filter could not see at all), an underscore-delimited one (which it could), and a bare blob with
 # no prefix of its own, caught only by the `key = value` SHAPE the tokeniser also destroys.
 _secrets = {
-    "anthropic": "sk-ant-api03-PLANTEDSECRETVALUEXYZ123456789ABCDEFGH",
-    "slack": "xoxb-1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUvWx",
-    "gitlab": "glpat-ABCDEFGHIJKLMNOPQRST",
-    "github": "ghp_PLANTEDSECRETVALUEXYZ123456789ABCD",
+    "anthropic": fake("sk-", "ant-", "api03-", "PLANTEDSECRETVALUEXYZ123456789ABCDEFGH"),
+    "slack": fake("xox", "b-", "1234567890-0987654321-AbCdEfGhIjKlMnOpQrStUvWx"),
+    "gitlab": fake("glp", "at-", "ABCDEFGHIJKLMNOPQRST"),
+    "github": fake("gh", "p_", "PLANTEDSECRETVALUEXYZ123456789ABCD"),
     "bare-hex-by-shape": "9f8e7d6c5b4a39281706f5e4d3c2b1a0",
 }
 # Real surrounding content, because MIN_TOKENS wants 8 distinct 4+ character identifiers and the
