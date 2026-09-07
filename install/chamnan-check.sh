@@ -82,13 +82,25 @@ fi
 # --- python -----------------------------------------------------------------------------------
 # Three names, in the order that gets the right answer most often. `python3` first because that is
 # what the shebangs say; `py -3` last because it is Windows-only and launches whatever is newest.
+#
+# 🐛 [2026-09-07] Windows ships a `python3.exe`/`python.exe` "App Execution Alias" stub when no real
+# Python is installed: it is ON PATH, it exists, and running it prints an error and opens the Store.
+# This loop committed to the first name that existed and never asked whether it WORKED, so the
+# stub's error text parsed to version "was" — which fails the numeric test below and reported
+# "python was — too old". A brand-new Windows user was told to upgrade a Python they do not have,
+# at the exact moment they most need the right diagnosis (R10 agent 1).
+#
+# So a candidate has to answer `-V` successfully before it is accepted, and the loop keeps looking
+# otherwise. `python3` first because that is what the shebangs say; `py -3` last because it is
+# Windows-only and launches whatever is newest.
 PY=""
 for candidate in python3 python py; do
     command -v "$candidate" >/dev/null 2>&1 || continue
     if [ "$candidate" = py ]; then
-        "$candidate" -3 -c "" >/dev/null 2>&1 || continue
+        "$candidate" -3 -V >/dev/null 2>&1 || continue
         PY="$candidate -3"
     else
+        "$candidate" -V >/dev/null 2>&1 || continue
         PY="$candidate"
     fi
     break
@@ -122,8 +134,14 @@ say "  system      $FAMILY$WSL"
 if [ "$PY_OK" = 1 ]; then
     say "  python      $PY_VER  ($PY)"
 else
-    if [ -n "$PY" ]; then
+    if [ -n "$PY" ] && [ "$MAJ" != 0 ]; then
         say "  python      $PY_VER — too old, chamnan needs $MIN_MAJOR.$MIN_MINOR or newer"
+    elif [ -n "$PY" ]; then
+        # It answered `-V` but not with a version. Whatever it is, "too old" is the wrong advice
+        # and the number it would quote is not a number.
+        say "  python      found on PATH as \`$PY\` but it does not report a version"
+        say "              — install a real Python; on Windows, disable the Store alias in"
+        say "                Settings > Apps > App execution aliases if that is what is there"
     else
         say "  python      NOT FOUND"
     fi

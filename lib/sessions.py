@@ -201,6 +201,15 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
     unfinished, never why, and a real record supersedes it entirely. This is the floor, not a
     replacement.
     """
+    # 🐛 [2026-09-07] A missing git and a directory that is not a repository both made `git_owns`
+    # answer False, and this returned "" for either — so on a machine without git the section that
+    # tells a session where it stopped just vanished, with nothing anywhere saying why. The two need
+    # different answers: not-a-repository is correctly silent (there is genuinely nothing to say),
+    # while git-not-installed is a thing the reader can fix and would want to (R10 agent 1).
+    if not ws.git_is_installed():
+        return ("**Where the last session stopped** — not available: `git` is not on this machine's "
+                "PATH, and this section is read from the working tree. Everything else in this "
+                "block works without it.")
     if not ws.git_owns(root):
         # 🐛 [2026-09-06] Without this, a directory holding a `.git` git itself refuses -- an
         # interrupted `git init`, a copied-without-contents `.git` -- made every call below walk up
