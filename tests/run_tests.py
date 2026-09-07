@@ -2056,9 +2056,28 @@ check("...and is told so rather than left to guess", "just been created" in no_w
 # "SETTLED -- do not raise these again" and "Not this project -- do not audit" both sat below the
 # old 4,000-character cut. Both headings were pinned by hand as part of doing this stage (see
 # .chamnan/STATE.md); this checks the mechanism actually rescues them there, not just in a fixture.
-live_root = Path("/Users/wasuplao/Documents/Lumin-App")
-live_state = live_root / ".chamnan" / "STATE.md"
-if live_state.is_file():
+# 🐛 [2026-09-07] This was `Path("/Users/<name>/Documents/Lumin-App")` — one developer's home
+# directory, hardcoded in a file that ships to everyone who clones the repository. Two things wrong
+# with it and the smaller one is the leak: the project's own rule is that a machine-specific path
+# must never reach a commit, and this one had been published for weeks.
+#
+# The larger one is that the check could never run for anybody else. Guarded by `is_file()`, it was
+# a silent skip on every machine but one — a check that looks like coverage and is not, which is the
+# shape this suite spends most of its comments warning about.
+#
+# An environment variable instead: the owner sets CHAMNAN_LIVE_WORKSPACE and gets the check, anyone
+# else gets a skip that SAYS it skipped. Deriving it from ROOT was considered and rejected — this
+# file already carries a bug report about two blocks that used `ROOT.parent.parent` and passed only
+# because the author's clone happened to sit inside another chamnan workspace.
+_live_env = os.environ.get("CHAMNAN_LIVE_WORKSPACE", "").strip()
+live_root = Path(_live_env) if _live_env else None
+live_state = (live_root / ".chamnan" / "STATE.md") if live_root else None
+if live_root is None:
+    print("  [SKIP] live-workspace pin check — set CHAMNAN_LIVE_WORKSPACE=<repo with a .chamnan> "
+          "to run it")
+elif not live_state.is_file():
+    print(f"  [SKIP] live-workspace pin check — no .chamnan/STATE.md under {live_root}")
+if live_state is not None and live_state.is_file():
     live_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=live_root).stdout
     # 🐛 These two asserted that the strings appear in stdout, and they passed for weeks while the
@@ -20072,6 +20091,52 @@ for _hf in _hook_files:
 check("...nor on a payload that is not an object, or not JSON", not _hook_garbage)
 for _hg in _hook_garbage[:12]:
     print("      ", _hg)
+
+
+# ------------------------------------------- a home directory in a file that ships
+# 🐛 [2026-09-07] Two tracked files carried a real home directory to everyone who cloned the
+# repository: `bench/smoke_smallchat.json` recorded `/Users/<name>/Documents/test-chamnan/smallchat`
+# as the corpus it measured, and this suite hardcoded `/Users/<name>/Documents/Lumin-App` for a
+# check that could therefore only ever run on one machine. The project's rule is that a
+# machine-specific path must never reach a commit, and neither of these was typed by hand — the
+# benchmark's own tool wrote one automatically, which is why the fix went into `run_bench.py` and
+# not only into its output.
+#
+# Derived over tracked files rather than over a list, so a third one is caught the day it is added.
+# Placeholder forms are what a comment SHOULD use to describe this, so they are allowed by name.
+_PLACEHOLDER_USERS = ("/Users/alice", "/Users/me/", "/Users/<name>", "/Users/you", "/Users/user")
+_HOMEDIR = re.compile(r"/(?:Users|home)/[A-Za-z][A-Za-z0-9._-]*")
+_leaked = []
+_scanned = 0
+for _rel in subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace").stdout.split("\n"):
+    _rel = _rel.strip()
+    if not _rel:
+        continue
+    _p = ROOT / _rel
+    try:
+        _text = _p.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        continue
+    _scanned += 1
+    for _line_no, _line in enumerate(_text.splitlines(), 1):
+        for _m in _HOMEDIR.finditer(_line):
+            if any(_line[_m.start():].startswith(ph) for ph in _PLACEHOLDER_USERS):
+                continue
+            _leaked.append(f"{_rel}:{_line_no}  {_m.group(0)}")
+check("the home-directory sweep read the tracked files it is meant to police", _scanned >= 40)
+check("NO TRACKED FILE CARRIES A REAL HOME DIRECTORY", not _leaked)
+for _l in _leaked[:10]:
+    print("      ", _l)
+# ...and the sweep must be able to SEE one, or an empty list proves only that the regex is broken.
+# 🐛 The first version of this proof wrote the probe as a LITERAL, and the sweep above — correctly —
+# reported it as a leak in the very file that defines the sweep. Assembled at run time instead: the
+# check still proves the regex fires, and there is no home-directory string in the file to find.
+_probe_hit = "/" + "Users" + "/somebody/Documents/x"
+_probe_ok = "/" + "Users" + "/alice/Documents/x"
+check("...and the sweep would catch one if it were there", bool(_HOMEDIR.search(_probe_hit)))
+check("...while leaving a placeholder path alone",
+      any(_probe_ok.startswith(ph) for ph in _PLACEHOLDER_USERS))
 
 
 # ---------------------------------------------------------------- cleanup
