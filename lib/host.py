@@ -67,11 +67,18 @@ _AGENTS = {
         "home": (".claude/",),
     },
     "cursor": {
-        # NOT measured: Cursor was not installed on the machine this was written on, so no claim is
-        # made about an environment variable it may or may not set. File markers only, which is the
-        # honest limit of what is known -- `.cursor/rules/` is the current convention and
-        # `.cursorrules` the legacy single-file one.
-        "env": (),
+        # 🎯 [2026-09-08] The comment here used to say no claim was made about an environment
+        # variable "it may or may not set", because Cursor was not installed on the machine this
+        # was written on. Cursor's own terminal documentation names one: `CURSOR_AGENT`, offered
+        # for exactly this purpose -- "use the CURSOR_AGENT environment variable in your shell
+        # config to detect when Cursor is running". Fetched from the vendor's page rather than
+        # taken from a search summary, which this project has already been caught doing once.
+        #
+        # It is RUNNING-tier evidence, which is the strongest kind here and the kind only two of
+        # twenty-three agents had: a file marker says somebody once used this agent in this
+        # repository, an env var says it is the process asking right now (R2 acc3 adapters).
+        # `.cursor/rules/` is the current file convention and `.cursorrules` the legacy one.
+        "env": ("CURSOR_AGENT",),
         "repo": (".cursor/", ".cursorrules"),
         "home": (".cursor/",),
     },

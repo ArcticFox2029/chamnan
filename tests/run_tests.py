@@ -17191,6 +17191,56 @@ else:
     check("THE CONCURRENCY SUITE IS PRESENT", False)
 
 
+# ------------------------------------------- which twelve skills a session is told about
+# 🐛 [2026-09-08] The cap chose WHICH twelve by filename alphabet, and skills were the third member
+# of a three-way set to need the same fix: the tools index beside them ranks by run count then
+# recency, and `memory.titles()` was fixed the same day for the identical reason. Measured on this
+# repository at the time: 20 skills, 8 invisible -- including the one written the day before to stop
+# a repeated mistake, cut from every session because its name begins with a w (R2 acc3, and reported
+# twice before that without being acted on).
+#
+# The fixture makes the two orders disagree completely, so a regression cannot pass by accident:
+# alphabetically the OLD skills win every slot, by recency the NEW ones take ten of twelve.
+_so = Path(tempfile.mkdtemp(prefix="chamnan-skillorder-")) / "repo"
+(_so / "src").mkdir(parents=True)
+(_so / "src" / "a.py").write_text('"""Module."""\ndef f():\n    return 1\n', encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_so)], capture_output=True)
+_sod = _so / ".chamnan" / "skills"
+_sod.mkdir(parents=True)
+_so_now = time.time()
+for _i in range(10):
+    (_sod / f"aaa_old_{_i:02d}.md").write_text(f"# Old skill {_i}\n\nWhat it covers.\n",
+                                               encoding="utf-8")
+    os.utime(_sod / f"aaa_old_{_i:02d}.md", (_so_now, _so_now - 90 * 86400 - _i))
+    (_sod / f"zzz_new_{_i:02d}.md").write_text(f"# New skill {_i}\n\nWhat it covers.\n",
+                                               encoding="utf-8")
+    os.utime(_sod / f"zzz_new_{_i:02d}.md", (_so_now, _so_now - _i))
+_so_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                         cwd=str(_so), input="{}", text=True, capture_output=True,
+                         encoding="utf-8", errors="replace",
+                         env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_so)))
+_so_sec = (_so_out.stdout.split("Recorded procedures", 1)[-1].split("###", 1)[0]
+           if "Recorded procedures" in _so_out.stdout else "")
+_so_named = [ln.split("`")[1] for ln in _so_sec.splitlines() if ln.strip().startswith("- `")]
+_so_new = sum(1 for n in _so_named if n.startswith("zzz_new"))
+print(f"      DETAIL  skills named: {len(_so_named)}, of which written recently: {_so_new}")
+check("THE SKILLS A SESSION IS TOLD ABOUT ARE THE NEWEST, NOT THE ALPHABETICALLY FIRST",
+      len(_so_named) > 0 and _so_new >= len(_so_named) - 2)
+# ...and the tie-break is the filename, which is what makes it safe on a fresh clone: git does not
+# preserve mtimes, so every file carries the checkout time and the order returns to what it was.
+for _f in _sod.glob("*.md"):
+    os.utime(_f, (_so_now, _so_now))
+_so_tied = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          cwd=str(_so), input="{}", text=True, capture_output=True,
+                          encoding="utf-8", errors="replace",
+                          env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_so))).stdout
+_so_tsec = (_so_tied.split("Recorded procedures", 1)[-1].split("###", 1)[0]
+            if "Recorded procedures" in _so_tied else "")
+check("...and with every mtime identical, as after a clone, the order is the filename again",
+      "aaa_old_00.md" in _so_tsec)
+_rmtree(_so.parent, ignore_errors=True)
+
+
 # ------------------------------------------- what one session start costs in processes
 # 🐛 [2026-09-08] A probe that recognised a git too old for `-C` was correct, shipped, and took
 # Windows CI from 4m16s to 9m25s -- and cost three concurrency checks, because the extra spawns
@@ -21051,6 +21101,66 @@ for _fn_label, _fn_text in (("a card number", "\t".join(["4111", "1111", "1111",
           _rd.PLACEHOLDER in _rd.scrub(_fn_text))
 check("...and the gate that decides whether to run at all reads the SAME separator set",
       _rd._SEP in _rd._A_LONG_DIGIT_RUN.pattern)
+
+# 🐛 [2026-09-08] Four more from the same false-negative direction, one round later. Three of them
+# are a rule spelled locally where a shared one exists, or a convention mistaken for a rule -- the
+# defect this file already carries three comments about (R2 agent 2).
+#
+# The fixtures are built with the module's OWN checkers rather than written by hand. Twice in one
+# day a hand-written "valid" identifier here was not valid, and each time it looked exactly like a
+# leak: a check that fabricates its own subject is measuring the fixture.
+# The check digits are COMPUTED rather than searched for: a brute force over the last two digits of
+# one fixed base found nothing and left `None` to be sliced, which the assertion below caught. Three
+# times in one day a hand-made identifier here was invalid and looked exactly like a leak.
+def _fn2_make_cpf(base):
+    """Brazil's CPF, with both check digits derived. `base` is the first nine digits."""
+    digits = [int(c) for c in base]
+    for weights in (range(10, 1, -1), range(11, 1, -1)):
+        total = sum(d * w for d, w in zip(digits, weights))
+        digits.append(0 if (11 - total % 11) >= 10 else 11 - total % 11)
+    return "".join(str(d) for d in digits)
+
+
+_fn2_cpf = _fn2_make_cpf("111444777")
+if not _rd._cpf(f"{_fn2_cpf[:3]}.{_fn2_cpf[3:6]}.{_fn2_cpf[6:9]}-{_fn2_cpf[9:]}"):
+    _fn2_cpf = None
+_fn2_ad = next((("23456789012" + d) for d in "0123456789"
+                if _rd._aadhaar("23456789012" + d)), None)
+check("the fixtures below are valid by the module's own checkers, not by hand",
+      bool(_fn2_cpf) and bool(_fn2_ad))
+
+# 1. The one rule in the file that was not case-insensitive. A country code is conventionally upper
+#    case; a value pasted out of a database or lower-cased by a logger is neither invalid nor rare.
+check("AN IBAN IS REDACTED IN LOWER CASE, LIKE EVERY OTHER RULE IN THIS FILE",
+      _rd.PLACEHOLDER in _rd.scrub("wire to de89370400440532013000 today")
+      and _rd.PLACEHOLDER in _rd.scrub("DE89370400440532013000"))
+
+# 2. Slack rotated its token format in 2021 and the pattern still knew only the pre-rotation
+#    prefixes, so a rotated token leaked with the word "token" on the same line.
+for _fn2_label, _fn2_tok in (("rotation-era refresh", fake("xox", "e-1-", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4")),
+                             ("rotation-era access", fake("xox", "e.", "xox", "p-1-", "A1b2C3d4E5f6G7h8I9j0K1l2")),
+                             ("the older bot token", fake("xox", "b-1-", "A1b2C3d4E5f6G7h8I9j0K1l2"))):
+    check(f"...and a Slack token is redacted whichever era it is from: {_fn2_label}",
+          _rd.PLACEHOLDER in _rd.scrub(f"token: {_fn2_tok}"))
+
+# 3. CPF's separator was a literal dot while `_SEP` sat two hundred lines up -- the fourth rule in
+#    this file found spelling its own copy of a shared set.
+for _fn2_sep in (".", " ", "-"):
+    _fn2_v = (f"{_fn2_cpf[:3]}{_fn2_sep}{_fn2_cpf[3:6]}{_fn2_sep}"
+              f"{_fn2_cpf[6:9]}{_fn2_sep}{_fn2_cpf[9:]}")
+    check(f"...and a CPF separated by {_fn2_sep!r} is redacted, not only the dotted form",
+          _rd.PLACEHOLDER in _rd.scrub(_fn2_v))
+check("...and CPF reads the shared separator set rather than its own copy",
+      _rd._SEP in _rd._CPF_DOTTED.pattern)
+
+# 4. The gate is doing the real work here -- Verhoeff passes 9.99% of random 12-digit numbers -- so
+#    a missing word is a leak, and "UID" is what the number is ordinarily called.
+_fn2_ad_spaced = f"{_fn2_ad[:4]} {_fn2_ad[4:8]} {_fn2_ad[8:]}"
+for _fn2_word in ("aadhaar", "UID", "uidai"):
+    check(f"...and an Aadhaar number is redacted beside the word {_fn2_word!r}",
+          _rd.PLACEHOLDER in _rd.scrub(f"{_fn2_word}: {_fn2_ad_spaced}"))
+check("...while the same digits with no word near them are still left alone, on purpose",
+      _rd.PLACEHOLDER not in _rd.scrub(f"reference {_fn2_ad_spaced} in the ledger"))
 
 # A wider net is not allowed to cost the false-positive side anything. Both numbers below were
 # measured before the fix and are unchanged after it.

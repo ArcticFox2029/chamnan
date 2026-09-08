@@ -217,6 +217,9 @@ def main():
     parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
     parser.add_argument("--write", default=None, choices=adapters.names(),
                         help="set this agent up to read the block")
+    parser.add_argument("--written-agents", action="store_true",
+                        help="name each agent whose context file exists here AND was written by "
+                             "chamnan, one per line; what the pre-commit hook loops over")
     parser.add_argument("--emit", default=None, choices=adapters.names(),
                         help="print the block in this agent's own wire format")
     parser.add_argument("--window", type=int, default=None,
@@ -320,6 +323,39 @@ def main():
     _notice = _budget_notice(body, profile or profiles.DEFAULT)
     if _notice:
         sys.stderr.write(_notice)
+
+    # 🐛 [2026-09-08] `chamnan-map --install-git-hook` refreshed .chamnan/MAP.md on every commit and
+    # nothing else, so Claude Code and Gemini -- which get a live session hook and need no file --
+    # were the only agents kept current, while the twenty-one reading a written snapshot kept the
+    # one from the day they were set up. Reproduced: after a commit adding a file, MAP.md named it
+    # and `.cursor/rules/chamnan.mdc` had the identical md5 and always would. The README calls that
+    # hook the thing which automates exactly this (R2 acc3 adapters).
+    #
+    # This branch NAMES the agents and writes nothing; the hook loops and calls `--write` for each.
+    # Doing the writing here would mean either a second copy of the fifty-line write path below --
+    # which is the defect this repository pays for most often -- or a subprocess, and this command
+    # deliberately imports none: the session hook is an extensionless shebang script that Windows
+    # cannot execute by path, and the suite asserts the absence.
+    #
+    # Only files that EXIST and that chamnan wrote are named. A file somebody wrote themselves is
+    # never rewritten by a commit, and an agent never set up here does not acquire a config file
+    # because somebody committed.
+    if args.written_agents:
+        for name in adapters.names():
+            adapter = adapters.for_agent(name)
+            target = getattr(adapter, "TARGET", None)
+            if not target:
+                continue
+            try:
+                path = adapters.safe_target(root, target)
+                if path is None or not path.is_file():
+                    continue
+                if adapters._looks_generated(path.read_text(encoding="utf-8-sig",
+                                                            errors="replace")):
+                    print(name)
+            except (ValueError, OSError):
+                continue
+        return 0
 
     if args.write:
         # 🐛 A written file is a SNAPSHOT and said nothing about being one. Claude Code and Gemini

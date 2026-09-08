@@ -59,6 +59,34 @@ Read the block itself for the answer: a repository with no index says so in it, 
 first` — described a fallback that only fires when the hook produces no output at all, which it no
 longer does; that string is still in the code and is no longer the signal to watch for.
 
+## While releases are paused, the notes are still written
+
+chamnan has no outside users yet, so a release buys nothing and costs an evening — the owner decides
+when that changes, and until they say so nothing here is bumped, tagged or published. **Work does
+not pause with it, and neither does the note-writing.**
+
+Every change that lands locally gets its entry under **Unreleased** in `CHANGELOG.md`, on the day it
+lands, written by whoever did it. Not at release time.
+
+The reason is not tidiness. A note reconstructed six weeks later from commit messages is a worse
+note, because the thing worth writing down — why this was done, what it cost, what it would have
+cost not to — was in one person's head on one afternoon and is nowhere else. Assembling a release
+from a written Unreleased section takes minutes; excavating one from `git log` takes a day and
+still loses the reasoning.
+
+Two rules for that section:
+
+- **No version number.** Numbering it puts a version in this file that no tag matches, which is the
+  same confusion the pause already causes on a development machine: the marketplace entry there is
+  `source: directory`, so `claude plugin update chamnan` deploys the working checkout and the
+  installed copy then reports the last released number while running newer code. Check
+  `git log v<version>..HEAD` before believing a version string on a machine that develops chamnan.
+- **`git log v<version>..HEAD` is the authoritative list**; the section is what those commits would
+  say to a reader who was not there. If the two disagree, the log is right and the section is behind.
+
+When a release does happen, the checklist below picks up unchanged — the Unreleased section becomes
+the new version's section, and everything the checklist asks for is already written.
+
 ## Release checklist
 
 Work down it. Each step is a command whose output you can read, not a judgement call.

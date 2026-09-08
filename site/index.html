@@ -394,6 +394,7 @@ const T = {
     drift: "Measured 2026-09-08. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
     missed: "{n} file(s) could not be downloaded and are not in these numbers — the source figure is that much low.",
     oversize: "{n} file(s) over 2 MB were skipped without downloading them, because chamnan does not index a file that size either.",
+    escaping: "{n} path(s) in the listing did not stay inside the repository once normalised and were refused before being fetched. A repository can carry one; this page will not write it.",
     getTitle: "Liked the numbers? Install it",
     getBody: "Two commands, then one slash command inside a repository you actually work in. It is a Claude Code plugin, Python standard library only, and everything it writes stays in <code>.chamnan/</code> inside your repository.",
     getLink: "chamnan on GitHub — the source, and the full evidence including what argues against it",
@@ -474,6 +475,7 @@ const T = {
     drift: "วัดเมื่อ 2026-09-08 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
     missed: "มี {n} ไฟล์ที่ดาวน์โหลดไม่สำเร็จ และไม่ได้อยู่ในตัวเลขนี้ — ค่าซอร์สจึงต่ำกว่าจริงเท่านั้น",
     oversize: "ข้าม {n} ไฟล์ที่ใหญ่เกิน 2 MB โดยไม่ดาวน์โหลด เพราะ chamnan ก็ไม่ index ไฟล์ขนาดนั้นเหมือนกัน",
+    escaping: "{n} path ใน listing ออกนอกขอบเขต repository หลัง normalise จึงถูกปฏิเสธก่อนดาวน์โหลด repository สร้างแบบนี้ได้ แต่หน้านี้จะไม่เขียนลงไป",
     getTitle: "ถ้าตัวเลขน่าสนใจ ลองติดตั้งดู",
     getBody: "สองคำสั่ง แล้วสั่ง slash command อีกครั้งใน repository ที่ทำงานจริง เป็นปลั๊กอินของ Claude Code ใช้ Python standard library ล้วน และทุกอย่างที่มันเขียนอยู่ใน <code>.chamnan/</code> ใน repository ของคุณเอง",
     getLink: "chamnan บน GitHub — ซอร์สโค้ด และหลักฐานทั้งหมด รวมถึงส่วนที่โต้แย้งตัวมันเอง",
@@ -554,6 +556,7 @@ const T = {
     drift: "测量于 2026-09-08。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
     missed: "有 {n} 个文件下载失败，未计入这些数字——源码数值因此偏低。",
     oversize: "跳过了 {n} 个超过 2 MB 的文件且未下载，因为 chamnan 本身也不索引这种大小的文件。",
+    escaping: "listing 中有 {n} 个路径规范化后不在仓库内，已在下载前拒绝。仓库可以包含这种路径，但本页不会写入。",
     getTitle: "觉得数字不错？装上试试",
     getBody: "两条命令，然后在你真正在用的仓库里运行一个斜杠命令。它是 Claude Code 插件，只用 Python 标准库，写入的一切都留在你仓库里的 <code>.chamnan/</code> 中。",
     getLink: "GitHub 上的 chamnan——源码，以及包括反对意见在内的完整证据",
@@ -634,6 +637,7 @@ const T = {
     drift: "2026-09-08 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
     missed: "{n} 件のファイルを取得できず、この数字には含まれていません——ソースの値はその分だけ低く出ています。",
     oversize: "2 MB を超える {n} 件は、ダウンロードせずにスキップしました。chamnan もその大きさのファイルは索引しないためです。",
+    escaping: "listing 内の {n} 件は正規化するとリポジトリの外に出るため、取得前に拒否しました。リポジトリはそうした経路を持てますが、このページは書き込みません。",
     getTitle: "数字が気に入ったら、導入してみてください",
     getBody: "コマンド二つ、そのあと実際に作業しているリポジトリでスラッシュコマンドを一度。Claude Code のプラグインで、Python 標準ライブラリのみ、書き込むものはすべてあなたのリポジトリ内の <code>.chamnan/</code> に収まります。",
     getLink: "GitHub の chamnan — ソースと、反証も含めた根拠のすべて",
@@ -714,6 +718,7 @@ const T = {
     drift: "Medido el 2026-09-08. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
     missed: "{n} archivo(s) no se pudieron descargar y no están en estas cifras: el valor de fuente queda así de bajo.",
     oversize: "Se omitieron {n} archivo(s) de más de 2 MB sin descargarlos, porque chamnan tampoco indexa un archivo de ese tamaño.",
+    escaping: "{n} ruta(s) del listado no permanecían dentro del repositorio tras normalizarlas y se rechazaron antes de descargarlas. Un repositorio puede llevar una; esta página no la escribirá.",
     getTitle: "¿Te convencen las cifras? Instálalo",
     getBody: "Dos órdenes y luego un comando de barra dentro de un repositorio en el que trabajes de verdad. Es un plugin de Claude Code, solo biblioteca estándar de Python, y todo lo que escribe se queda en <code>.chamnan/</code> dentro de tu repositorio.",
     getLink: "chamnan en GitHub: el código y la evidencia completa, incluida la que va en su contra",
@@ -1234,6 +1239,7 @@ function render(r){
   <p class="temp">${t("resultTemp")}</p>
   ${r.missed > 0 ? `<p class="note">${t("missed", {n: num(r.missed)})}</p>` : ""}
   ${r.oversize > 0 ? `<p class="note">${t("oversize", {n: num(r.oversize)})}</p>` : ""}
+  ${r.escaping > 0 ? `<p class="note">${t("escaping", {n: num(r.escaping)})}</p>` : ""}
   ${r.capped ? `<p class="note">${t("sampled", {got: num(r.fetched), total: num(r.total_blobs), cap: num(CAP)})}</p>` : ""}`;
 }
 
