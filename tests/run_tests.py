@@ -22357,6 +22357,92 @@ check("...and with no AGENTS.md at all there is nothing to warn about",
 check("...and an AGENTS.md the USER wrote is not a duplicate of anything",
       "twice" not in _write_agent("roo"))
 
+
+# ------------------------- Korea's Resident Registration Number, 2026-09-08 (R3 agent 2, measured)
+# The fourth instance of a pattern already three deep — Thai national ID, CPF, Aadhaar — and built
+# only after the measurement the round that proposed it said it had NOT made: the checksum alone
+# admits 10.03% of random 13-digit runs (20,053 of 200,000), so it cannot stand without the
+# keyword; over 1,357 real files here, 3,856 thirteen-digit runs, 389 passing the checksum, 4 with
+# a context word, and all four were the worked example in the report itself. Zero with the gate.
+_RRN = "6405041024014"
+_RRN_BAD = "6405041024015"
+_RRN_W = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
+
+
+def _rrn_valid(n):
+    return (11 - sum(int(d) * w for d, w in zip(n[:12], _RRN_W)) % 11) % 10 == int(n[12])
+
+
+check("the RRN fixture passes the scheme's own check digit before it is used", _rrn_valid(_RRN))
+check("...and the deliberately-invalid one does not", not _rrn_valid(_RRN_BAD))
+check("...and the module agrees with the arithmetic beside it", _rd._rrn(_RRN) and not _rd._rrn(_RRN_BAD))
+for _kr_label, _kr_text in (
+        ("Hangul label, dashed", "주민등록번호: 640504-1024014 확인 완료"),
+        ("English label, bare", f"resident registration number {_RRN} on file"),
+        ("an assignment", f'rrn = "{_RRN}"'),
+        ("the label on the line above", f"주민번호\n{_RRN}\n"),
+        ("the short Hangul form", f"주민번호: {_RRN}")):
+    check(f"A KOREAN RRN WITH ITS CONTEXT WORD IS REDACTED: {_kr_label}",
+          _RRN not in _rd.scrub(_kr_text) and "640504-1024014" not in _rd.scrub(_kr_text))
+# The half that decides whether the rule may exist: one in ten random runs passes the checksum, so
+# without the keyword this would redact timestamps and order numbers.
+for _kr_label, _kr_text in (
+        ("a 13-digit run with no label at all", f"timestamp {_RRN} in millis"),
+        ("...and one under an unrelated label", f"order id {_RRN}"),
+        ("the right label beside a number that FAILS the checksum",
+         f"resident registration number {_RRN_BAD} typo"),
+        ("a seventh digit that is never issued",
+         "resident registration number 6405040024014 on file")):
+    check(f"...and this is left exactly as it was: {_kr_label}", _rd.scrub(_kr_text) == _kr_text)
+
+
+# ---------------------- the block log, written every session and read by nothing, 2026-09-08
+# 🐛 `blocklog.trend()`'s own docstring says "For `chamnan-report`, and for a person asking 'did
+# something change?'" — a function that names its consumer, and that consumer never called it.
+# Forty-two real records sat unread here, saying the block had been within 53 bytes of its ceiling
+# for six sessions running, so sections were being dropped every session with nothing saying so.
+_bt = Path(tempfile.mkdtemp(prefix="chamnan_blocktrend_"))
+subprocess.run(["git", "init", "-q"], cwd=_bt, check=True)
+(_bt / "src").mkdir()
+(_bt / "src" / "a.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_bt,
+               capture_output=True, text=True, encoding="utf-8")
+
+
+def _report(cwd=_bt):
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=cwd,
+                       capture_output=True, text=True, encoding="utf-8")
+    return r.stdout + r.stderr
+
+
+check("A WORKSPACE WITH NO BLOCK LOG SAYS NOTHING ABOUT IT",
+      "What each session was handed" not in _report())
+_bt_log = ws.workspace(_bt) / _blocklog.LOG
+_bt_log.parent.mkdir(parents=True, exist_ok=True)
+_bt_log.write_text("\n".join(json.dumps({"bytes": b, "sec": {}}) for b in (3000, 3100, 3050)) + "\n",
+                   encoding="utf-8")
+_bt_small = _report()
+check("...and with a log well under the ceiling it REPORTS", "3,050 bytes of" in _bt_small)
+check("...and does not warn, because a warning on every run is one nobody reads",
+      "of the ceiling" in _bt_small and "⚠" not in _bt_small)
+_bt_log.write_text("\n".join(json.dumps({"bytes": b, "sec": {}})
+                             for b in (fit.CEILING - 120, fit.CEILING - 53)) + "\n",
+                   encoding="utf-8")
+_bt_near = _report()
+check("...and WARNS within a tenth of the ceiling, where sections are being dropped",
+      "⚠" in _bt_near and "of the ceiling" in _bt_near)
+check("...and names the command that says WHICH sections went", "--explain" in _bt_near)
+
+# The vendor fact this file now carries, checked twice against AWS's own announcement before it was
+# written into shipped code. Asserted so a future edit cannot quietly drop the dates.
+_aq = (ROOT / "lib" / "adapters" / "amazonq.py").read_text(encoding="utf-8")
+check("THE AMAZON Q SUNSET IS RECORDED WHERE A MAINTAINER WILL SEE IT",
+      "2027-04-30" in _aq and "2026-05-15" in _aq)
+check("...with the source, so the claim can be checked rather than believed",
+      "aws.amazon.com" in _aq)
+check("...and it says the adapter is still correct, not that it should be deleted",
+      "Kept rather than removed" in _aq)
+
 # ------------------------------------------- the false NEGATIVES, which nothing here measured
 # 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
 # against random input before its rule shipped. A reader of the release notes asked the obvious

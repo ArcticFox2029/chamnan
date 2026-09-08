@@ -1530,6 +1530,25 @@ _THAI_ID_WORD = re.compile(
     r"|เลขประจำตัวประชาชน|บัตรประชาชน|ประชาชน)(?![a-z])")
 
 
+# Korea's 13-digit Resident Registration Number, written `YYMMDD-Sxxxxxx`. It carries a birth date
+# and a sex digit, which makes it the most revealing identifier in this file, and it is here for the
+# reason Aadhaar is: this module already holds a Thai national ID, a Brazilian CPF and an Indian
+# Aadhaar, so this is a fourth instance of a pattern three deep rather than a new mechanism
+# (R3 agent 2, which reproduced the pass-through and computed its fixture from a cited worked
+# example rather than inventing one).
+#
+# MEASURED before building, because the round that proposed it said plainly it had not been: the
+# checksum alone admits 10.03% of random 13-digit strings (20,053 of 200,000), so it cannot stand
+# without the keyword -- exactly Aadhaar's situation and the same answer. Over 1,357 real files
+# here: 3,856 thirteen-digit runs, 389 passing the checksum, 4 with a context word beside them, and
+# all four were the worked example inside the report that proposed this. Zero false positives with
+# the gate, which is the bar each of the other three schemes cites.
+_RRN_DASHED = re.compile(r"(?<![0-9])([0-9]{6})" + _SEP + r"([1-8][0-9]{6})(?![0-9])")
+_RRN_BARE = re.compile(r"(?<![0-9A-Za-z_-])([0-9]{6}[1-8][0-9]{6})(?![0-9A-Za-z_-])")
+_RRN_WORD = re.compile(
+    r"(?i)(?<![a-z])(resident[_ -]?registration|rrn|korean[_ -]?id"
+    r"|주민등록번호|주민번호)(?![a-z])")
+
 # ---- identifiers that are not Thai, because we do not get to know where the user is
 #
 # 🎯 [2026-09-07 owner] "we have no way of knowing what nationality the user is, but looking at it
@@ -1644,6 +1663,22 @@ _VERHOEFF_P = (
     (5, 8, 0, 3, 7, 9, 6, 1, 4, 2), (8, 9, 1, 6, 0, 4, 3, 5, 2, 7),
     (9, 4, 5, 3, 1, 2, 6, 8, 7, 0), (4, 2, 8, 6, 5, 7, 3, 9, 0, 1),
     (2, 7, 9, 3, 8, 0, 6, 4, 1, 5), (7, 0, 4, 6, 9, 1, 3, 2, 5, 8))
+
+
+def _rrn(text):
+    """Korea's Resident Registration Number: first 12 digits weighted 2..9,2..5, mod 11.
+
+    Never used without a keyword. The check digit is one decimal, so one in ten random 13-digit
+    runs passes -- measured at 10.03% over 200,000 of them, which is why the gate is not optional.
+
+    The seventh digit encodes century and sex and is 1-8 for a number that was actually issued; 0
+    and 9 are not, so the patterns require that range and it costs nothing on the true-positive side.
+    """
+    n = re.sub(r"[^0-9]", "", text)
+    if len(n) != 13 or n[6] in "09":
+        return False
+    weights = (2, 3, 4, 5, 6, 7, 8, 9, 2, 3, 4, 5)
+    return (11 - sum(int(d) * w for d, w in zip(n[:12], weights)) % 11) % 10 == int(n[12])
 
 
 def _aadhaar(text):
@@ -1983,6 +2018,12 @@ def _redact_personal_data(text):
         # forgotten in the identical ones beside it this repository's recurring defect.
         spans += [m.span(1) for m in _IBAN.finditer(folded) if _iban(m.group(1))]
         spans += [m.span(1) for m in _CPF_DOTTED.finditer(folded) if _cpf(m.group(1))]
+        # Korea, gated for the same reason Aadhaar is and in the same shape: one in ten random runs
+        # passes the checksum, so the keyword is what makes this a finding rather than a guess.
+        if _RRN_WORD.search(context):
+            spans += [(m.start(1), m.end(2)) for m in _RRN_DASHED.finditer(folded)
+                      if _rrn(m.group(1) + m.group(2))]
+            spans += [m.span(1) for m in _RRN_BARE.finditer(folded) if _rrn(m.group(1))]
         if _AADHAAR_WORD.search(context):
             spans += [m.span(1) for m in _AADHAAR.finditer(folded) if _aadhaar(m.group(1))]
 
