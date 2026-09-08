@@ -1470,7 +1470,13 @@ def main():
             if _thread_clash:
                 names = "; ".join(
                     ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _thread_clash)
-                open_threads += (
+                # 🐛 [2026-09-08] Appended AFTER `redact.scrub` had already run on `open_threads`,
+                # so the FILENAMES in this warning reached the block unscrubbed -- and a filename is
+                # attacker-controlled in a repository somebody else wrote. `AKIAIOSFODNN7EXAMPLE.md`
+                # went in whole. The skills version of this same warning, added in the same commit,
+                # scrubs correctly; two of the three copies did not. Found within the hour by the
+                # round pointed at what had just changed (R7 agent 2).
+                open_threads += redact.scrub(
                     f"\n- ⚠️ These thread files differ only by case or Unicode normalisation "
                     f"({names}). They are listed above as separate work and a case-insensitive "
                     f"filesystem keeps only one of them.")
@@ -1515,7 +1521,10 @@ def main():
             if _sess_clash:
                 names = "; ".join(
                     ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _sess_clash)
-                carried = (carried + "\n\n" if carried else "") + (
+                # Scrubbed for the same reason as the threads warning above: the filenames are
+                # repository content, `carried` was already scrubbed before this point, and a
+                # secret-shaped name would otherwise ride into the block on the warning about it.
+                carried = (carried + "\n\n" if carried else "") + redact.scrub(
                     f"⚠️ Two session records differ only by case or Unicode normalisation "
                     f"({names}). A case-insensitive filesystem keeps ONE, and which one is read "
                     f"back here is decided by modification time, which a clone resets. Rename one "

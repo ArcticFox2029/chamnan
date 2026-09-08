@@ -300,6 +300,41 @@ repository so the values cannot be written here, but the silence is closed: a qu
 truth is now reported UNSCORED and named, the four whose truth is mechanically derivable carry the
 command that derives it, and the scorer returns "not checked" rather than "fine".
 
+### A hidden line break inside one value freed every secret below it
+
+`_redact_secret_lists`, added earlier the same day, split its input with `splitlines()`. That breaks
+on eight characters besides `\n` — vertical tab, form feed, the file/group/record separators,
+NEL, and Unicode's own line and paragraph separators. A value carrying any of them was cut in half,
+the tail read as a line that is not a `- item`, the block loop exited, and every sibling secret below
+it stayed in the clear with a `<REDACTED>` printed on the line above. Eight of eight reproduced.
+
+YAML defines its block structure with `\n` and nothing else, so `\n` is what the scan splits on now.
+A `\r` survives the rejoin and a CRLF file comes back with its CRLFs.
+
+### A filename is repository content, and two of three warnings forgot it
+
+Three copies of the same collision warning went in together. The skills one wrapped its filenames in
+`redact.scrub`; the threads and sessions ones appended theirs after the surrounding text had already
+been scrubbed, so the names reached the injected block untouched. A filename is written by whoever
+wrote the repository, so `AKIAIOSFODNN7EXAMPLE.md` rode in whole.
+
+The check that guards it drives every store that can carry a filename into the block, rather than
+naming the two lines that were wrong — three identical features with one of them correct is exactly
+the shape a call-site check misses the fourth time.
+
+### A name that describes a secret is not a secret
+
+`password_policy = "minimum-twelve-characters"` came back as `password_policy = "<REDACTED>"`. This
+module's own opening comment calls a false positive the more expensive error: a missed secret leaves
+a reader where they already were, while an index full of placeholders is not an index.
+
+The cause was two independently hand-written exemption lists that disagree — one had `url`,
+`endpoint` and `ttl`, the other `regex`, `id` and `class`, and neither had `policy`. Both now carry
+the words a config file puts next to a credential to describe how it behaves rather than to hold it:
+rotation, days, window, level, limit, mode, rate, length, format, strength, age, interval, attempts,
+retries, timeout. A check asserts the two spellings stay equal, because two lists that must agree and
+are written twice is how this happened.
+
 ### The rest
 
 The first-session banner contradicted itself on two of its three branches — an unwritable repository

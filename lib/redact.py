@@ -234,7 +234,13 @@ SECRET_WORDS = (
 _NOT_A_CREDENTIAL_NAME = re.compile(
     r"(?:_|\b)(?:re|regex|rx|pattern|patterns|prefix|suffix|header|headers|field|fields|column|"
     r"columns|param|params|arg|args|label|labels|id|ids|name|names|type|types|kind|order|sort|"
-    r"index|idx|map|maps|dict|list|set|count|len|size|fn|func|cls|class)$", re.I)
+    r"index|idx|map|maps|dict|list|set|count|len|size|fn|func|cls|class"
+    # The same configuration-about-a-secret words the suffix tuple gets. Defined below this point in
+    # the file, so they are spelled here rather than interpolated -- and a check asserts the two
+    # spellings stay equal, because two lists that must agree and are written twice is exactly how
+    # this file got a shipped false positive in the first place.
+    r"|policy|policies|rotation|days|window|level|limit|mode|rate|length|format|strength|age"
+    r"|interval|attempts|retries|timeout)$", re.I)
 
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
@@ -538,11 +544,29 @@ def _is_never_opened_name(name):
 # Added the whole class rather than `uri` alone: every one of these names a LOCATION or a PARTY, and
 # none of them has ever been the name of a credential. `issuer` and `audience` are the JWT claim
 # names, which appear beside real secrets in exactly these files and are not secret themselves.
+# 🐛 [2026-09-08] `password_policy = "minimum-twelve-characters"` came back as
+# `password_policy = "<REDACTED>"`. A shipped FALSE POSITIVE, which this layer treats as the more
+# expensive kind of error -- a missed secret leaves a reader where they already were, while an index
+# full of `<REDACTED>` is not an index. `policy` was in neither this tuple nor the tail regex
+# `_NOT_A_CREDENTIAL_NAME` below, and the two lists are independently hand-written and disagree
+# about which words name a MECHANISM: this one alone had `url`, `endpoint`, `ttl`, `expiry`, and the
+# other alone had `regex`, `id`, `kind`, `count`, `class`.
+#
+# The words added here are the ones a configuration file puts NEXT to a credential to describe how
+# it behaves rather than to hold it: a rotation interval, a length rule, a rate limit, a mode. Both
+# lists get them, because adding to one and not the other is the defect this whole file keeps
+# producing. They are NOT unified into a single vocabulary -- the two answer the same question at
+# different positions and each carries members the other would be wrong to inherit
+# (`password_class` is a mechanism; `password_url` is arguably not) -- and that unification needs a
+# measured pass of its own (R6 acc2, which named the gap and put the merge out of its own scope).
+_CONFIG_ABOUT_A_SECRET = ("policy", "policies", "rotation", "days", "window", "level", "limit",
+                          "mode", "rate", "length", "format", "strength", "age", "interval",
+                          "attempts", "retries", "timeout")
 NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "url", "urls",
                    "uri", "uris", "endpoint", "endpoints", "host", "hostname", "domain",
                    "origin", "issuer", "audience",
                    "provider", "algorithm", "algo", "type", "method", "scheme",
-                   "header", "enabled", "required", "ttl", "expiry", "field")
+                   "header", "enabled", "required", "ttl", "expiry", "field") + _CONFIG_ABOUT_A_SECRET
 
 
 # The word after "Authorization:" is the scheme, never the credential — the credential is the token
@@ -1579,7 +1603,18 @@ def _redact_secret_lists(text):
                 f"[{','.join(_list_element(x) for x in m.group(4).split(','))}]")
 
     text = _LIST_OPEN.sub(_inline, text)
-    lines = text.splitlines(keepends=True)
+    # 🐛 [2026-09-08] This used `splitlines()`, which breaks on eight characters besides `\n`:
+    # `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029. A value containing any of them was cut
+    # in half, the tail read as a line that is not a `- item`, the block loop exited, and EVERY
+    # sibling secret below it was left in the clear -- with a `<REDACTED>` printed on the line above,
+    # which is worse than a plain miss because it says the line was handled. Reproduced 8 of 8, in
+    # code written hours earlier the same day (R7 agent 1).
+    #
+    # YAML defines its block structure with `\n` and nothing else, so `\n` is what this splits on.
+    # A `\r` stays at the end of its piece and survives the rejoin, and the eight characters above
+    # stay inside the value where they belong.
+    lines = [ln + "\n" for ln in text.split("\n")]
+    lines[-1] = lines[-1][:-1]          # the split leaves no newline after the last piece
     out, i = [], 0
     while i < len(lines):
         out.append(lines[i])
