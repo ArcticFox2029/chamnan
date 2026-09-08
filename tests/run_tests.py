@@ -15497,47 +15497,6 @@ check("...and uses it only to label the report, never to pick a package manager"
 
 
 
-# ------------------------------------------- every OS branch, run for real, on a fake machine
-# The preflight's whole job is to be right on a machine that is NOT this one. Describing that in a
-# comment is not a test, and no container runtime is available here -- so the machine is faked in
-# a temp directory instead: a `uname` that reports Linux, a package manager that exists only as an
-# empty executable, and PATH pointing at nothing else. The real script runs, takes the real branch,
-# and prints the real command. Nothing is installed and nothing outside the temp directory is read.
-#
-# Reproduce or revert any row below by hand:
-#     mkdir /tmp/fake && printf '#!/bin/sh\necho Linux\n' > /tmp/fake/uname && chmod +x /tmp/fake/*
-#     touch /tmp/fake/apt-get && chmod +x /tmp/fake/apt-get
-#     env -i PATH=/tmp/fake sh install/chamnan-check.sh
-def _fake_machine(system, tools=(), python_version=None):
-    """A directory that behaves like another machine when placed alone on PATH."""
-    box = Path(tempfile.mkdtemp(prefix="chamnan-fakeos-"))
-    (box / "uname").write_text(f"#!/bin/sh\necho {system}\n", encoding="utf-8")
-    (box / "uname").chmod(0o755)
-    # The coreutils the script itself calls. Symlinked to the real ones: faking `awk` would be
-    # testing the fake rather than the script.
-    for tool in ("sh", "awk", "cut", "grep", "printf"):
-        real = shutil.which(tool)
-        if real and not (box / tool).exists():
-            os.symlink(real, box / tool)
-    for tool in tools:
-        (box / tool).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        (box / tool).chmod(0o755)
-    if python_version:
-        (box / "python3").write_text(f"#!/bin/sh\necho 'Python {python_version}'\n", encoding="utf-8")
-        (box / "python3").chmod(0o755)
-    return box
-
-
-def _on_fake(system, tools=(), python_version=None):
-    box = _fake_machine(system, tools, python_version)
-    try:
-        done = subprocess.run(["sh", str(_check_sh)], capture_output=True, text=True, encoding="utf-8", errors="replace",
-                              env={"PATH": str(box), "HOME": str(box)})
-        return done.returncode, done.stdout
-    finally:
-        _rmtree(box, ignore_errors=True)
-
-
 # --------------------------------------- this suite must launch commands the way Windows can
 # 🐛 Twenty-six checks ran `subprocess.run([str(ROOT / "bin" / "chamnan-x")])`, launching an
 # extensionless script by path. POSIX resolves that through the shebang; Windows raises
@@ -17226,7 +17185,7 @@ else:
 
 # ------------------------------------------- the whole family, not two members of it
 # 🐛 [2026-09-08] Two lists that cap what a session sees were found ordering by filename alphabet,
-# and each was fixed on its own, with its own hand-built fixture, hours apart -- `memory.titles()`
+# and each was fixed on its own, with its own hand-built fixture, hours apart -- `memory_mod.titles()`
 # and the skills index. They are the same bug and the block injects a dozen capped lists, so this
 # asks the FAMILY rather than the members: for every store that is one file per entry and gets
 # truncated on the way in, does a freshly written entry beat an older one whose name sorts first?
@@ -17287,7 +17246,7 @@ _rmtree(_fam.parent, ignore_errors=True)
 # ------------------------------------------- which twelve skills a session is told about
 # 🐛 [2026-09-08] The cap chose WHICH twelve by filename alphabet, and skills were the third member
 # of a three-way set to need the same fix: the tools index beside them ranks by run count then
-# recency, and `memory.titles()` was fixed the same day for the identical reason. Measured on this
+# recency, and `memory_mod.titles()` was fixed the same day for the identical reason. Measured on this
 # repository at the time: 20 skills, 8 invisible -- including the one written the day before to stop
 # a repeated mistake, cut from every session because its name begins with a w (R2 acc3, and reported
 # twice before that without being acted on).
@@ -23767,6 +23726,210 @@ if _hook_crashes:
 check("NO HOOK EXITS NON-ZERO ON MALFORMED INPUT, WHICHEVER HOOK AND WHATEVER THE GARBAGE",
       not _hook_crashes)
 
+
+# ------------------------------------------- what a written agent file costs, said at write time
+# 🐛 [2026-09-08] `--write <agent>` printed the path and nothing else, and on this repository the
+# file it creates is 18,805 bytes / 7,959 tokens against the hook's 8,942 / 3,799 — the same
+# information, roughly twice the size, read by that tool at the start of every session it opens
+# here. That difference is DELIBERATE and documented: `output_byte_ceiling` is the host truncating
+# a hook's stdout at around ten thousand bytes, a property of the harness, and a file on disk has
+# no such cut (`profiles.py` says so in as many words). What was wrong is that the person who typed
+# the command was never told the number, at the one moment they have both the figure and the
+# choice — which is the same reasoning the duplicate-delivery warning beside it already runs on
+# (R7 agent 6, measured; the design was read before it was changed, and was not changed).
+_r20 = Path(tempfile.mkdtemp(prefix="chamnan-writecost-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_r20)], capture_output=True)
+    (_r20 / "a.py").write_text("# a\ndef a():\n    return 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
+                   cwd=str(_r20))
+    _r20_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"),
+                               "--write", "generic"], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", cwd=str(_r20)).stdout
+    _r20_file = _r20 / "AGENTS.md"
+    check("a written agent file exists to be priced", _r20_file.is_file())
+    _r20_want = tokens.estimate(_r20_file.read_text(encoding="utf-8"))
+    check("WRITING AN AGENT FILE SAYS WHAT IT WILL COST THAT AGENT, EVERY SESSION",
+          f"{_r20_want:,.0f} tokens" in _r20_out and "every session" in _r20_out)
+    # Silence when the comparison does not apply: this file is well under the hook's ceiling, and a
+    # line explaining a difference that is not there would be noise.
+    check("...and says nothing about the hook's ceiling when the file is under it",
+          _r20_file.stat().st_size < fit.CEILING and "capped at" not in _r20_out)
+finally:
+    _rmtree(_r20, ignore_errors=True)
+# The threshold is the hook's own constant, not a literal beside it: two numbers meaning one thing,
+# kept by hand, is what this repository records failing more often than anything else.
+_r20_src = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
+check("...and the ceiling it compares against is the one the hook actually uses",
+      "_fit.CEILING" in _r20_src and "9000" not in _r20_src.split("def main")[-1])
+
+
+# ------------------------------------------- a cap that ranks by filename hides the newest thing
+# 🐛 [2026-09-08] Two separate defects on one day, in one file, found and fixed one at a time:
+# `memory_mod.titles()` and the injected skills list both took `.glob("*.md")` order — filename
+# alphabet — and then capped it, so an entry written yesterday was permanently invisible while a
+# ten-day-old one starting with an earlier letter was shown forever. Measured at the time: 20 skills
+# here, 8 of them never injected, including one written the day before to stop a repeated mistake
+# and cut from every session because its name begins with a w.
+#
+# Each fix arrived with its own hand-built fixture. Nothing asked the question of the family, which
+# is why the second one existed at all (R2 acc3, suite blindspots). Two checks below: the shape,
+# derived from source so a fifth member cannot join quietly, and the behaviour, driven.
+_r19_glob = re.compile(r'\.glob\((["\'])\*\.md\1\)')
+_r19_unranked = []
+for _r19_f in sorted(list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").glob("*.py"))):
+    _r19_lines = _r19_f.read_text(encoding="utf-8", errors="replace").split("\n")
+    for _r19_i, _r19_ln in enumerate(_r19_lines):
+        if _r19_ln.lstrip().startswith("#") or not _r19_glob.search(_r19_ln):
+            continue
+        _r19_win = "\n".join(_r19_lines[max(0, _r19_i - 2):_r19_i + 7])
+        _r19_ranked = any(_k in _r19_win for _k in ("key=", "st_mtime", "mtime", "reverse=True"))
+        _r19_capped = bool(re.search(r"\[:\s*\w+\s*\]|\[-\s*\w+\s*:\]", _r19_win))
+        if _r19_capped and not _r19_ranked:
+            _r19_unranked.append(f"{_r19_f.relative_to(ROOT)}:{_r19_i + 1}")
+if _r19_unranked:
+    print("      capped with no ranking key: " + ", ".join(_r19_unranked[:6]))
+check("NO CAPPED LIST OF WORKSPACE FILES IS ORDERED BY FILENAME ALONE", not _r19_unranked)
+
+# And the behaviour, because a source shape is not an outcome. A fresh entry whose name sorts LAST
+# must survive a cap that an old entry whose name sorts FIRST does not.
+_r19_ws = Path(tempfile.mkdtemp(prefix="chamnan-recency-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_r19_ws)], capture_output=True)
+    (_r19_ws / "a.py").write_text("# a\nx = 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
+                   cwd=str(_r19_ws))
+    _r19_dec = _r19_ws / ".chamnan" / "memory" / "decisions"
+    _r19_dec.mkdir(parents=True, exist_ok=True)
+    _r19_old_time = time.time() - 60 * 60 * 24 * 30
+    for _r19_n in range(memory_mod.MAX_TITLES + 3):
+        _r19_p = _r19_dec / f"aaa-old-{_r19_n:02d}.md"
+        _r19_p.write_text(f"# An old decision {_r19_n}\n\nbody\n", encoding="utf-8")
+        os.utime(_r19_p, (_r19_old_time, _r19_old_time))
+    _r19_new = _r19_dec / "zzz-written-just-now.md"
+    _r19_new.write_text("# The decision made a minute ago\n\nbody\n", encoding="utf-8")
+    # `titles()` returns everything, ordered; the cap is applied by the injector that renders it.
+    # So the question to ask here is about the ORDER — is the fresh entry inside the window the cap
+    # will keep — not about the length, which was this check's first and wrong version.
+    _r19_titles = memory_mod.titles(_r19_ws)
+    _r19_kept = _r19_titles[:memory_mod.MAX_TITLES]
+    check("A DECISION WRITTEN JUST NOW SURVIVES A CAP AN OLD ONE DOES NOT",
+          any("made a minute ago" in _t for _c, _t, _f in _r19_kept))
+    check("...and there really were more entries than the cap keeps, or nothing was proved",
+          len(_r19_titles) > memory_mod.MAX_TITLES)
+
+    # The same question of the skills list, which broke the same way in the same day.
+    _r19_sk = _r19_ws / ".chamnan" / "skills"
+    _r19_sk.mkdir(parents=True, exist_ok=True)
+    for _r19_n in range(12):
+        _r19_p = _r19_sk / f"aaa_old_{_r19_n:02d}.md"
+        _r19_p.write_text(f"# Old skill {_r19_n}\n\nWhat it covers.\n", encoding="utf-8")
+        os.utime(_r19_p, (_r19_old_time, _r19_old_time))
+    (_r19_sk / "zzz_written_just_now.md").write_text(
+        "# The skill written a minute ago\n\nWhat it covers.\n", encoding="utf-8")
+    _r19_block = subprocess.run([sys.executable, str(HOOK)], input="{}", capture_output=True,
+                                text=True, encoding="utf-8", errors="replace",
+                                cwd=str(_r19_ws)).stdout
+    check("...and so does a skill written just now", "zzz_written_just_now.md" in _r19_block)
+finally:
+    _rmtree(_r19_ws, ignore_errors=True)
+
+# ------------------------------------------- a hook file nothing registers never runs
+# 🐛 [2026-09-08] The pairing between `hooks/hooks.json` and `hooks/chamnan_*.py` was asserted in
+# ONE direction — every registered command is a file that exists — and the other direction is the
+# one that fails silently: a hook written, committed and never registered simply never runs, and
+# nothing anywhere says so. Both sets are equal today, which is what makes now the cheap moment to
+# pin it. The idea came from reading another project's build-time drift assertion between two
+# config files that have to agree (R13, context-mode).
+_r21_hj = json.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_r21_referenced = set(re.findall(r"chamnan_[a-z_]+\.py", json.dumps(_r21_hj)))
+_r21_on_disk = {p.name for p in (ROOT / "hooks").glob("chamnan_*.py")}
+if _r21_on_disk - _r21_referenced:
+    print("      hook file(s) nothing registers: "
+          + ", ".join(sorted(_r21_on_disk - _r21_referenced)))
+check("EVERY HOOK FILE THIS PLUGIN SHIPS IS REGISTERED, OR IT NEVER RUNS",
+      not (_r21_on_disk - _r21_referenced))
+check("...and the other direction still holds, which was the half already checked",
+      not (_r21_referenced - _r21_on_disk))
+check("...over a real set, not an empty one", len(_r21_on_disk) >= 6)
+
+# ------------------------------------------- a vendor fact confirmed and written where it is read
+# `.windsurf/rules/` is documented by the vendor as legacy and `.devin/rules/` as preferred, both
+# fetched 2026-09-08. The target is deliberately NOT changed — "legacy, still read" is not
+# "removed" — and the reasoning lives in the adapter so a later round sizing the retarget does not
+# begin by re-fetching the same two pages (R8 agent 16).
+_r21_ws_src = (ROOT / "lib" / "adapters" / "windsurf.py").read_text(encoding="utf-8")
+check("windsurf's adapter records that its own path is the vendor's legacy one",
+      "legacy" in _r21_ws_src.lower() and ".devin/rules/" in _r21_ws_src)
+check("...and still writes to the path it has always written to, which is the decision",
+      adapters_mod.for_agent("windsurf").TARGET == ".windsurf/rules/chamnan.md")
+check("...and is in the set that also reads the root AGENTS.md, which that engine implies",
+      "windsurf" in adapters_mod.ALSO_READS_AGENTS_MD)
+
+# ------------------------------------------- two agent definitions, and the third one nobody wrote yet
+# 🐛 [2026-09-08] `agents/*.md` is a family of two, and every field in its frontmatter is load-
+# bearing in a way that fails quietly when it is absent: no `model:` and the host picks one, which
+# on a file-commenting agent is the difference between haiku and something twenty times the price;
+# no `tools:` and it gets whatever the default is, which for an agent documented as "read-only,
+# reports, never fixes" would be a promise the definition does not keep; no `description:` and
+# nothing can decide when to dispatch it. None of that is checked anywhere.
+#
+# Two members is the cheap moment: the sweep costs nothing to write now and the third agent cannot
+# arrive without it (R2 agent 5, "cheap insurance, while the set is only two members"). This is the
+# repository's most-recorded defect asked in advance instead of after.
+_r22_agents = sorted((ROOT / "agents").glob("*.md"))
+check(f"the agent definitions are a real set to sweep: {len(_r22_agents)} found",
+      len(_r22_agents) >= 2)
+_r22_missing = []
+_r22_models = {}
+for _r22_a in _r22_agents:
+    _r22_head = _r22_a.read_text(encoding="utf-8", errors="replace").split("---", 2)
+    _r22_fm = _r22_head[1] if len(_r22_head) > 2 else ""
+    for _r22_field in ("name", "description", "tools", "model"):
+        if not re.search(rf"^{_r22_field}:\s*\S", _r22_fm, re.M):
+            _r22_missing.append(f"{_r22_a.name}: no {_r22_field}")
+    _r22_m = re.search(r"^model:\s*(\S+)", _r22_fm, re.M)
+    if _r22_m:
+        _r22_models[_r22_a.name] = _r22_m.group(1)
+    if not re.search(r"^name:\s*" + re.escape(_r22_a.stem) + r"\s*$", _r22_fm, re.M):
+        _r22_missing.append(f"{_r22_a.name}: name does not match the filename")
+if _r22_missing:
+    print("      " + "; ".join(_r22_missing[:6]))
+check("EVERY AGENT THIS PLUGIN SHIPS DECLARES ITS NAME, PURPOSE, TOOLS AND MODEL",
+      not _r22_missing)
+# The model is the one field with a cost attached, so it is also checked for being a model rather
+# than a typo: a value the host does not recognise is not an error, it is a silent fallback.
+check("...and every declared model is one this plugin means to pay for",
+      _r22_models and all(_r22_m in ("haiku", "sonnet", "opus", "inherit")
+                          for _r22_m in _r22_models.values()))
+
+# ------------------------------------------- a block that exists twice is a block one edit forgets
+# 🐛 [2026-09-08] Two verbatim duplications found in this file on one day. The Windows-shims block
+# was six checks and a subprocess run twice for one answer, so the suite's own total counted them
+# twice. `_fake_machine` and its whole explanatory comment were defined twice, 103 lines apart,
+# byte-for-byte — harmless while identical, because the later definition silently wins, and a trap
+# the day somebody edits one of them: no error, no failing check, and the copy they did not edit is
+# the one that runs.
+#
+# Both were found by sweeping rather than by reading, so the sweep is what is kept.
+_r23_lines = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8").split("\n")
+_r23_win = 12
+_r23_seen, _r23_dups = {}, []
+for _r23_i in range(len(_r23_lines) - _r23_win):
+    _r23_chunk = _r23_lines[_r23_i:_r23_i + _r23_win]
+    # Comment-only and blank-heavy runs repeat legitimately — a shared preamble above two fixtures
+    # is prose, not code that runs twice.
+    if sum(1 for _l in _r23_chunk if _l.strip() and not _l.strip().startswith("#")) < 8:
+        continue
+    _r23_key = hashlib.sha1("\n".join(_r23_chunk).encode("utf-8")).hexdigest()
+    if _r23_key in _r23_seen and _r23_i - _r23_seen[_r23_key] > _r23_win:
+        _r23_dups.append((_r23_seen[_r23_key] + 1, _r23_i + 1))
+    else:
+        _r23_seen.setdefault(_r23_key, _r23_i)
+if _r23_dups:
+    print("      identical runs at lines: "
+          + ", ".join(f"{_a} and {_b}" for _a, _b in _r23_dups[:5]))
+check(f"NO {_r23_win}-LINE RUN OF THIS SUITE EXISTS TWICE", not _r23_dups)
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
