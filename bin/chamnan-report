@@ -642,6 +642,35 @@ def print_usage(root):
         for name, runs in tools:
             print(f"  {mdblock.as_quoted(name, 60):<{twidth}}   "
                   f"{runs:>3} run{'s' if runs != 1 else ''}")
+    # 🐛 [2026-09-08] `runs` is incremented by `record_call`, which only ever fires for a name in
+    # `tools/index.json`, and the only two writers of that file are `chamnan-promote` and
+    # `chamnan-candidates promote`. A script a person DROPPED INTO `tools/` -- which this project's
+    # own README documents as normal use -- is invisible to every mechanism here for asking whether
+    # a tool still earns its place. Measured on this repository: 43 files in `tools/`, 3 registered,
+    # and the 40 include `preflight.py`, `run_tests.py` and `map_claim_check.py` (R11 agent 1).
+    #
+    # A fact, not a verdict: a repository that deliberately keeps hand-written scripts there is not
+    # doing anything wrong, and a line reading "N need fixing" would be one more notice that fires
+    # on everything and gets skipped. Silent when the two agree.
+    _tdir = ws.workspace(root) / "tools"
+    if _tdir.is_dir():
+        # `__init__.py` is package scaffolding, not a tool anybody promotes; naming it would be
+        # the same "advice they cannot act on" chamnan-map already refuses to give.
+        _files = [p for p in _tdir.iterdir()
+                  if p.is_file() and p.suffix in (".py", ".sh", ".js") and p.name != "__init__.py"]
+        _registered = {name for name, _ in tools}
+        _untracked = [p for p in _files if p.name not in _registered]
+        if _untracked:
+            print(f"\n  {len(_untracked)} of {len(_files)} file(s) in tools/ are not registered, "
+                  f"so nothing above can say whether they are still used:")
+            # Most recently touched first. An alphabetical slice reads as a ranking while being
+            # arbitrary -- the exact trap `scan_env`'s own comment records paying for once.
+            _shown = sorted(_untracked, key=lambda p: p.stat().st_mtime, reverse=True)[:4]
+            print("    " + ", ".join(mdblock.as_quoted(p.name, 40) for p in _shown)
+                  + (f" +{len(_untracked) - len(_shown)} more" if len(_untracked) > len(_shown)
+                     else "") + "  (most recently changed first)")
+            print("    `chamnan-promote <file> --desc \"...\"` registers one; a script placed here "
+                  "by hand works either way.")
     print()
 
 

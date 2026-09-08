@@ -398,17 +398,36 @@ def list_undocumented(root):
     `.chamnan/`, nothing the indexer cannot describe anyway.
     """
     mapper.reset_skips()
-    missing = []
+    missing, seen = [], 0
     for f in mapper.scan(root):
+        seen += 1
         rel = str((root / f["path"]).relative_to(root).as_posix())
         if (not f["doc"] and f.get("describable", True) and not f.get("generated")
                 and not rel.startswith(".chamnan/")):
             missing.append(rel)
     for path in sorted(missing):
         print(mdblock.as_quoted(path, 200))
-    if not missing:
+    # 🐛 [2026-09-08] `missing` is empty for two different reasons and this said the same sentence
+    # for both: every file really is documented, and chamnan read no files at all. On a real CPAN
+    # distribution (21 `.t`, 6 `.pm`, 7 extensionless) the previous run's own suggested next step --
+    # this exact command -- answered "every file the index can describe already has an opening
+    # comment" and exited 0, carrying no trace of the language gap the summary one screen up had
+    # just printed. The user follows chamnan's own instruction and is told they are done, having had
+    # not one line of their code read (R10 agent 4, reproduced on Email-MIME).
+    if not missing and seen:
         print("chamnan: every file the index can describe already has an opening comment",
               file=sys.stderr)
+    elif not missing:
+        _unknown = ", ".join(f"{ext} x{n}" for ext, n in
+                             mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
+        _rest = len(mapper.SKIPPED_UNKNOWN_EXT) - 4
+        print("chamnan: no file here has a missing comment because no file here was read — "
+              "the index describes 0 files", file=sys.stderr)
+        if _unknown:
+            print(f"  chamnan has no reader for the extensions present: {_unknown}"
+                  + (f" +{_rest} more" if _rest > 0 else ""), file=sys.stderr)
+            print("  Adding comments would change nothing here. `chamnan-map` says what it did "
+                  "index and by what route.", file=sys.stderr)
     return 0
 
 
@@ -565,9 +584,11 @@ def main(argv):
             why.append(f"{len(mapper.SKIPPED_TOO_LARGE)} over the size limit "
                        f"({assets_mod.human_bytes(mapper.MAX_FILE_BYTES)})")
         if mapper.SKIPPED_BUILD_DIR:
+            _dirs = sorted(mapper.SKIPPED_BUILD_DIR)
+            _dmore = len(_dirs) - 6
             why.append("under directories that look like build output: "
-                       + ", ".join(mdblock.as_quoted(d, 60)
-                                   for d in sorted(mapper.SKIPPED_BUILD_DIR)[:6]))
+                       + ", ".join(mdblock.as_quoted(d, 60) for d in _dirs[:6])
+                       + (f" +{_dmore} more" if _dmore > 0 else ""))
         if mapper.SKIPPED_TOO_MANY_LINES:
             why.append(f"{len(mapper.SKIPPED_TOO_MANY_LINES)} over the line limit "
                        f"({mapper.MAX_FILE_LINES:,} lines)")
@@ -576,9 +597,17 @@ def main(argv):
         if mapper.SKIPPED_GENERATED:
             why.append(f"{len(mapper.SKIPPED_GENERATED)} declared linguist-generated")
         if mapper.SKIPPED_UNKNOWN_EXT:
+            # 🐛 [2026-09-08] Cut at four with no "…and N more", while the three sibling lines
+            # in this same file (`not indexed, over the size limit`, `read as build output`) all
+            # print `+N more` for exactly this. A repository with seven unreadable extensions was
+            # told about three of them and given no sign the list ended early — the shape this
+            # codebase records more often than any other, a rule applied to some members of a set
+            # and forgotten in the identical ones beside it (R10 agent 4).
             _top = ", ".join(f"{mdblock.as_quoted(ext, 24)} x{n}" for ext, n in
                              mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
-            why.append(f"extensions chamnan does not read: {_top}")
+            _more = len(mapper.SKIPPED_UNKNOWN_EXT) - 4
+            why.append(f"extensions chamnan does not read: {_top}"
+                       + (f" +{_more} more" if _more > 0 else ""))
         print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
         for reason in why:
             print(f"  every candidate was excluded — {reason}", file=sys.stderr)
@@ -626,6 +655,28 @@ def main(argv):
                       f"below the {assets_mod.MIN_FILES} it takes to describe a directory as stored "
                       f"material, so there is nothing to write. A repository with that many in one "
                       f"directory does get a map.", file=sys.stderr)
+            # 🐛 [2026-09-08] This returned without creating the workspace, and every other command
+            # answers "no .chamnan/ workspace here — run `chamnan-map` first". So a repository that is
+            # mostly documentation or data sent its owner in a circle: run map, be told there is no
+            # source; run anything else, be told to run map. Reproduced on a two-file repo against five
+            # commands (R10 agent 4).
+            #
+            # The index really cannot be built, and that stays true — exit 1, no MAP.md. What changes
+            # is that the half of chamnan needing no source files at all (sessions, decisions, threads,
+            # environments) becomes reachable. Refusing the workspace refused those too, and nothing
+            # said so.
+            # `--measure` observes and writes nothing, which is the whole point of the flag and
+            # the defect that was fixed to make it true. Creating a workspace here would undo that
+            # for exactly the trees this branch exists for.
+            if "--measure" in argv:
+                return 1
+            try:
+                ws.ensure(root)
+                print("  the workspace itself is created, so the parts that need no index — "
+                      "`chamnan-timeline`, `chamnan-env`, `chamnan-report` — work here.",
+                      file=sys.stderr)
+            except ws.NotAWorkspace as _err:
+                print(f"  and the workspace could not be created either: {_err}", file=sys.stderr)
             return 1
         print("  chamnan can still describe this tree by another route — writing the map.",
               file=sys.stderr)
@@ -786,8 +837,11 @@ def main(argv):
         print(f"  not indexed, binary content behind a source extension: "
               f"{len(mapper.SKIPPED_BINARY)} file(s)")
     if getattr(tree, "UNREADABLE", None):
-        _un = ", ".join(mdblock.as_quoted(u, 60) for u in sorted(tree.UNREADABLE)[:4])
-        print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}")
+        _unread = sorted(tree.UNREADABLE)
+        _unmore = len(_unread) - 4
+        _un = ", ".join(mdblock.as_quoted(u, 60) for u in _unread[:4])
+        print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}"
+              + (f" +{_unmore} more" if _unmore > 0 else ""))
     if mapper.SKIPPED_GENERATED:
         print(f"  not indexed, declared linguist-generated in .gitattributes: "
               f"{len(mapper.SKIPPED_GENERATED)} file(s)")
@@ -815,8 +869,14 @@ def main(argv):
     _unknown = [(ext, n) for ext, n in mapper.SKIPPED_UNKNOWN_EXT.most_common()
                 if ext in _assets.UNEXTRACTED_SOURCE]
     if _unknown:
+        # 🐛 [2026-09-08] Cut at three with no "…and N more" — the same omission as the
+        # `extensions chamnan does not read` line above, in the same file, one screen apart, while
+        # three other lines between them print `+N more` correctly. Measured on a fixture with five
+        # unreadable source extensions: three named, two gone, nothing saying so (R10 agent 4).
         _named = ", ".join(f"{n:,} {ext}" for ext, n in _unknown[:3])
-        print(f"  not indexed, no reader for the extension: {_named}")
+        _more_ext = len(_unknown) - 3
+        print(f"  not indexed, no reader for the extension: {_named}"
+              + (f" +{_more_ext} more" if _more_ext > 0 else ""))
         print("    chamnan reads the languages in mapper.EXT_LANG; these are not among them.")
         print("  (git-tracked directories with these names ARE indexed; these are not tracked)")
     # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
@@ -845,6 +905,14 @@ def main(argv):
     _gen = generated_count(files)
     skipped = len(files) - total - _gen
     note = f", {skipped} with no code to describe" if skipped else ""
+    # 🐛 [2026-09-08] The bar is computed over the files chamnan CAN read, and said so nowhere. On a
+    # Solidity library the score and the fix-it list were both about the build tooling, and a total
+    # gap in the repository's actual subject matter never read as worse than ordinary
+    # under-documentation (R10 agent 4). The line naming the unreadable extensions is printed above,
+    # but nothing connected it to the number a reader takes away. This is the connection, and it
+    # appears only when there is something to connect.
+    if _unknown and total:
+        note += f", of the {total} chamnan can read"
     print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%{note})")
     # Stated rather than silently dropped, the same way a .gitattributes-declared file is. A count
     # that quietly excludes files is a count nobody can check.
@@ -861,6 +929,9 @@ def main(argv):
         for path, count, msg in mapper.PARSE_WARNINGS[:4]:
             rel = path.replace(str(root) + "/", "")
             print(f"    {rel} — {msg}")
+        _pwmore = len(mapper.PARSE_WARNINGS) - 4
+        if _pwmore > 0:
+            print(f"    +{_pwmore} more")
         print("  Harmless today; several of these become hard errors in a future Python, and")
         print("  py_compile does not report them, so nothing else in a normal check will.")
 
@@ -904,7 +975,25 @@ def main(argv):
     else:
         print(f"\n  Under the {budget:,}-token session budget — injected per session as-is,"
               f" one line per file.")
-    if pct < 70:
+    if total == 0:
+        # 🐛 [2026-09-08] `pct = have / total * 100 if total else 0` makes a repository with nothing
+        # indexable read as 0% documented, which satisfies `pct < 70` exactly as a real, badly
+        # documented codebase does. So the loudest, most action-shaped text in the whole run -- "the
+        # single biggest lever on this map's usefulness", with a `/chamnan:bootstrap` agent dispatch
+        # under it -- pointed at zero files, while the sentence that actually explains the situation
+        # sat one screen higher in plainer text. Reproduced on Example.jl and on Email-MIME
+        # (R10 agent 4). Nothing to have a lever on is a different fact from a lot of undocumented
+        # code, and it gets its own sentence rather than the other one's.
+        _unknown = ", ".join(f"{ext} x{n}" for ext, n in
+                             mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
+        _rest = len(mapper.SKIPPED_UNKNOWN_EXT) - 4
+        print("\n  No file here was indexed, so there is no comment coverage to improve.")
+        if _unknown:
+            print(f"  What is here is in extensions chamnan has no reader for: {_unknown}"
+                  + (f" +{_rest} more" if _rest > 0 else ""))
+            print("  The sections above are written from what chamnan CAN read of this tree —")
+            print("  its deployment shape, its stored material, its configuration.")
+    elif pct < 70:
         # 🐛 A new user with one real file was told to add a comment to a file chamnan itself had
         # installed under `.chamnan/tools/`. Suggesting somebody comment the tool's own
         # scaffolding is advice they cannot act on and would be wrong to.

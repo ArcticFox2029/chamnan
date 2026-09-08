@@ -498,8 +498,13 @@ def peek_sqlite(path, find=None):
                 n = con.execute(f"SELECT count(*) FROM '{name}'").fetchone()[0]
             except sqlite3.Error:
                 n = "?"
-            out.append(f"  `{name}` ({n:,} rows) — " + ", ".join(cols[:12]) if isinstance(n, int)
-                       else f"  `{name}` — " + ", ".join(cols[:12]))
+            # 🐛 [2026-09-08] Cut at twelve with no sign the list ended early, in the one
+            # command whose whole claim is that its answer substitutes for opening the file. A
+            # 30-column table read as a 12-column one.
+            _cmore = len(cols) - 12
+            _cols = ", ".join(cols[:12]) + (f" +{_cmore} more" if _cmore > 0 else "")
+            out.append(f"  `{name}` ({n:,} rows) — " + _cols if isinstance(n, int)
+                       else f"  `{name}` — " + _cols)
         if find:
             out.append(f"\ntables or columns matching {find!r}: " +
                        ", ".join(t for t in tables if find.lower() in t.lower()))
@@ -623,10 +628,14 @@ def peek_binary(path):
         return [f"could not read this file at all: {type(err).__name__}: {err}"]
     kind = _identify(raw) or "unrecognised"
     printable = sum(32 <= b < 127 or b in (9, 10, 13) for b in raw)
-    strings = re.findall(rb"[ -~]{6,}", raw)[:8]
+    # Not capped here: the line below reports how many were FOUND and how many it shows, and a cap
+    # at the find step would have made that count a description of the cap instead of the file.
+    strings = re.findall(rb"[ -~]{6,}", raw)
     return [f"{kind}; {printable * 100 // max(len(raw), 1)}% printable in the first 4KB",
             "crc32 of first 4KB: " + format(binascii.crc32(raw) & 0xFFFFFFFF, "08x"),
-            "readable strings: " + ", ".join(s.decode("ascii")[:40] for s in strings[:5])]
+            (f"readable strings ({len(strings)} of at least 6 characters found in the first "
+             f"4KB, {min(5, len(strings))} shown): "
+             + ", ".join(s.decode("ascii")[:40] for s in strings[:5]))]
 
 
 def _first_bytes(path, count):

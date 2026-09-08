@@ -186,12 +186,12 @@ _CAN_SYMLINK = _probe_symlink()
 _CAN_DENY_READ = _probe_deny_read()
 _CAN_DENY_WRITE = _probe_deny_write()
 if not _CAN_DENY_WRITE:
-    print("  [SKIP] unwritable-directory checks — os.chmod does not restrict a directory here")
+    skip("  [SKIP] unwritable-directory checks — os.chmod does not restrict a directory here")
 if not _CAN_DENY_READ:
-    print("  [SKIP] unreadable-directory checks — this platform does not honour chmod 000 "
+    skip("  [SKIP] unreadable-directory checks — this platform does not honour chmod 000 "
           "against the owner")
 if not _CAN_SYMLINK:
-    print("  [SKIP] symlink checks — this process cannot create symlinks here "
+    skip("  [SKIP] symlink checks — this process cannot create symlinks here "
           "(Windows without Developer Mode, or a restricted container)")
 
 sys.path.insert(0, str(ROOT / "lib"))
@@ -243,6 +243,16 @@ def fake(*parts):
 
 PASSED = 0
 FAILED = []
+# Checks this platform could not run. Every `[SKIP]` line goes through `skip()` below so the total
+# at the end can say so -- see the note there for what a silent skip cost.
+SKIPPED = 0
+
+
+def skip(text):
+    """Print a `[SKIP]` line and count it. One counter, so the totals line cannot drift from it."""
+    global SKIPPED
+    SKIPPED += 1
+    print(text)
 
 
 def check(name, condition):
@@ -2095,10 +2105,10 @@ _live_env = os.environ.get("CHAMNAN_LIVE_WORKSPACE", "").strip()
 live_root = Path(_live_env) if _live_env else None
 live_state = (live_root / ".chamnan" / "STATE.md") if live_root else None
 if live_root is None:
-    print("  [SKIP] live-workspace pin check — set CHAMNAN_LIVE_WORKSPACE=<repo with a .chamnan> "
+    skip("  [SKIP] live-workspace pin check — set CHAMNAN_LIVE_WORKSPACE=<repo with a .chamnan> "
           "to run it")
 elif not live_state.is_file():
-    print(f"  [SKIP] live-workspace pin check — no .chamnan/STATE.md under {live_root}")
+    skip(f"  [SKIP] live-workspace pin check — no .chamnan/STATE.md under {live_root}")
 if live_state is not None and live_state.is_file():
     live_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")], input="{}",
                               capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=live_root).stdout
@@ -5306,7 +5316,7 @@ try:
     if (_repo / "sub" / "stays.py").is_file():
         check("...while a symlink staying inside it is kept", "sub/stays.py" in _found)
     else:
-        print("  [SKIP] relative symlink did not resolve on this platform — walker check skipped")
+        skip("  [SKIP] relative symlink did not resolve on this platform — walker check skipped")
     check("a broken symlink is dropped rather than raising", "broken.py" not in _found)
     check("ordinary files are unaffected", "real.py" in _found)
 except (OSError, NotImplementedError):
@@ -9922,7 +9932,7 @@ if _POSIX_SHELL:
         ["sh", "-c", f"ulimit -f 1; exec {sys.executable} {ROOT / 'bin' / 'chamnan-map'}"],
         cwd=str(_at), capture_output=True, text=True, encoding="utf-8", errors="replace")
 else:
-    print("  [SKIP] interrupted-rebuild check — needs a POSIX shell for `ulimit -f`")
+    skip("  [SKIP] interrupted-rebuild check — needs a POSIX shell for `ulimit -f`")
 if _interrupted is not None:
     check("AN INTERRUPTED REBUILD DOES NOT REPLACE THE INDEX WITH HALF OF ONE",
           _atmap.read_text(encoding="utf-8") == _good)
@@ -11751,7 +11761,7 @@ try:
     finally:
         os.chmod(_probe, 0o755)
     if not _chmod_bites:
-        print("  [SKIP] unwritable-repository banner check — this platform does not honour "
+        skip("  [SKIP] unwritable-repository banner check — this platform does not honour "
               "chmod against the owner")
     for _label, _ro_fs, _extra, _want in (
             ("writable", False, {}, "has just been created"),
@@ -11863,7 +11873,7 @@ try:
     _mf.chmod(0o755)
     # The executable bit is a POSIX concept; Windows does not carry one a rename could drop.
     if _mf.stat().st_mode & 0o111 == 0:
-        print("  [SKIP] executable-bit check — this platform has no executable bit to preserve")
+        skip("  [SKIP] executable-bit check — this platform has no executable bit to preserve")
     else:
         ws.atomic_write_text(_mf, "#!/bin/sh\necho two\n")
         check("AN ATOMIC WRITE IS A WRITE, NOT ALSO A PERMISSIONS CHANGE",
@@ -13038,7 +13048,7 @@ if (_esc / "app" / "src" / "inside.py").is_file():
     check("...while a symlink to a file genuinely inside it is still followed",
           "inside.py" in {q.name for q in _tree2.files(_esc / "app")})
 else:
-    print("  [SKIP] relative symlink did not resolve — inside-the-repo follow check skipped")
+    skip("  [SKIP] relative symlink did not resolve — inside-the-repo follow check skipped")
 _rmtree(_esc, ignore_errors=True)
 
 # ------------------------------ the first thing a new user sees, on a repository unlike this one
@@ -14438,7 +14448,7 @@ if _slroot.resolve() not in _dangling_resolved.parents:
     check("...while a dangling link pointing outside is refused",
           not _ws.inside(_slroot / "dangling", _slroot))
 else:
-    print("  [SKIP] dangling-symlink check — this platform resolves it back inside the root")
+    skip("  [SKIP] dangling-symlink check — this platform resolves it back inside the root")
 _rmtree(_slroot.parent, ignore_errors=True)
 
 
@@ -15306,7 +15316,7 @@ def _run_check(path_value):
 # skipped and SAID to be skipped -- a fake pass is worse than a gap, because a gap is visible.
 _sh_before = tally()
 if not _POSIX_SHELL:
-    print(f"  [SKIP] {_SH_CHECKS} preflight checks — this platform has no POSIX shell to run "
+    skip(f"  [SKIP] {_SH_CHECKS} preflight checks — this platform has no POSIX shell to run "
           f"install/chamnan-check.sh with. install/chamnan-check.cmd is its counterpart here.")
 else:
     # A machine that has everything: exit 0, and it says there is nothing to install.
@@ -15446,7 +15456,7 @@ _OS_ROWS = (
 _OS_SKIPPED = len(_OS_ROWS) * 2 + 3
 _os_before = tally()
 if not _POSIX_SHELL:
-    print(f"  [SKIP] {_OS_SKIPPED} faked-OS checks — no POSIX shell here to run "
+    skip(f"  [SKIP] {_OS_SKIPPED} faked-OS checks — no POSIX shell here to run "
           f"install/chamnan-check.sh with")
 else:
     for _system, _tools, _expect, _label in _OS_ROWS:
@@ -16059,7 +16069,7 @@ if _CAN_SYMLINK:
           "exists" not in _zrefused.lower() and "not found" not in _zrefused.lower())
     _rmtree(_oracle.parent, ignore_errors=True)
 else:
-    print("  [SKIP] adapter symlink-escape checks — this process cannot create symlinks here")
+    skip("  [SKIP] adapter symlink-escape checks — this process cannot create symlinks here")
 
 # `safe_target` must be the only way to a write target, or the next adapter reintroduces the hole.
 _adapter_src = "".join(
@@ -16207,7 +16217,7 @@ for _n in _IMPACT_SIZES:
 _clock_res = time.get_clock_info("process_time").resolution
 _measurable = min(_imp_times.values()) > max(_clock_res * 20, 0.020)
 if not _measurable:
-    print(f"  [SKIP] impact-map scaling — this platform's process_time resolves to "
+    skip(f"  [SKIP] impact-map scaling — this platform's process_time resolves to "
           f"{_clock_res * 1000:.1f} ms and the corpus runs in "
           f"{min(_imp_times.values()) * 1000:.0f}-{max(_imp_times.values()) * 1000:.0f} ms, "
           f"so a doubling ratio here would be reading the clock, not the code")
@@ -16477,7 +16487,7 @@ if _CAN_SYMLINK:
     check("...and through the fast path, which must not weaken it",
           not _ws.inside(_evil, _hoist, _resolved_root=_hoist.resolve()))
 else:
-    print("  [SKIP] inside()-hoist symlink checks — this process cannot create symlinks here")
+    skip("  [SKIP] inside()-hoist symlink checks — this process cannot create symlinks here")
 
 # The fast path is internal and optional: every existing caller passes two arguments and must get
 # exactly the old behaviour. Asserted by agreement, not by reading the signature.
@@ -16524,7 +16534,7 @@ if _POSIX:
     _rmtree(_hl_victim.parent, ignore_errors=True)
     _rmtree(_hl_ok.parent, ignore_errors=True)
 else:
-    print("  [SKIP] hardlink checks — os.link is not available the same way here")
+    skip("  [SKIP] hardlink checks — os.link is not available the same way here")
 
 # ------------------------------------------- a zip member's claimed size is written by the zip
 # 🐛 Every `zf.read(name)` in peek read a whole member unbounded. A 59 KB crafted `.xlsx` drove
@@ -20653,7 +20663,7 @@ if _CAN_DENY_WRITE:
             print(f"      {_c}: exit ok={_ok} missing={_missing}")
     _rmtree(_nw_root.parent, ignore_errors=True)
 else:
-    print(f"  [SKIP] {2} write-honesty checks — os.chmod does not restrict a directory here")
+    skip(f"  [SKIP] {2} write-honesty checks — os.chmod does not restrict a directory here")
 
 
 # ------------------------------------------- a workspace in a monorepo subproject
@@ -21262,7 +21272,7 @@ print(json.dumps({
     _rmtree(_go, ignore_errors=True)
 else:
     _OLDGIT_SKIPPED = 4
-    print(f"  [SKIP] {_OLDGIT_SKIPPED} old-git checks — the fixture is a /bin/sh "
+    skip(f"  [SKIP] {_OLDGIT_SKIPPED} old-git checks — the fixture is a /bin/sh "
           f"shim named git, which this platform cannot execute")
 
 # The Quick Index parse is memoised on the text, because two callers in one firing were each
@@ -22517,6 +22527,62 @@ _wa_targets = [adapters_mod.for_agent(n).TARGET for n in _wa_names]
 check(f"...once per FILE, not once per agent name ({_wa_targets})",
       len(set(_wa_targets)) == len(_wa_targets))
 
+
+# ------------------------- code joined to what the repository already learned, 2026-09-08
+# The other half of the join `timeline.for_path` already did. That one answers "what has HAPPENED
+# to this file"; `memory.knowledge_for` answers "what was DECIDED about it, what went wrong with
+# it, what rule covers it" — and nothing asked it, so `chamnan-impact` could name what imports a
+# file and never what the repository had already learned about it.
+#
+# DECLARED, not inferred, and the measurement that decided it: a first version matched backticked
+# filenames in the prose and found 55 "files" in this workspace, most of which were not files —
+# `1.6.0` and `v1.9.0` are versions, `127.0.0.1` a host, and `os.replace`, `ws.exclusive`,
+# `sessions.prune`, `permissions.ask` are functions. Every one is a backticked token with a dot in
+# it, which is what `style.css` is too.
+check("the shared join key has one definition", hasattr(_mb_shared := mdblock, "names_the_path"))
+check("...and one spelling of the field", hasattr(mdblock, "files_named"))
+for _decl, _tgt, _want in (
+        ("src/app.py", "src/app.py", True),
+        ("src/app.py", "app.py", True),
+        ("src/vendor/app.py", "app.py", True),
+        ("app.py", "src/app.py", False),
+        ("other/app.py", "src/app.py", False),
+        ("", "src/app.py", False),
+        ("src/app.py", "", False)):
+    check(f"join: declared `{_decl}` names `{_tgt}` -> {_want}",
+          mdblock.names_the_path(_decl, _tgt) is _want)
+check("the Files line is read with backticks and commas removed",
+      mdblock.files_named("**Files:** `src/a.py`, `src/b.py`") == ["src/a.py", "src/b.py"])
+check("...and text with no Files line declares nothing",
+      mdblock.files_named("# A note\n\nprose only\n") == [])
+
+_kf = Path(tempfile.mkdtemp(prefix="chamnan_knowledge_"))
+ws.ensure(str(_kf))
+for _cat, _name, _body in (
+        ("decisions", "why-redis.md",
+         "# Session persistence uses Redis\n\n**Files:** `src/auth/token.py`\n"),
+        ("incidents", "refresh-loop.md",
+         "# Refresh-token loop after restart\n\n**Files:** `src/auth/token.py`\n"),
+        ("lessons", "no-retry.md",
+         "# Do not retry refresh on invalid_grant\n\n**Files:** `src/auth/token.py`\n"),
+        ("rules", "elsewhere.md", "# A rule about billing\n\n**Files:** `src/billing/invoice.py`\n"),
+        ("lessons", "declares-nothing.md", "# Prose only\n\nno Files line here\n")):
+    _d = _kf / ".chamnan" / "memory" / _cat
+    _d.mkdir(parents=True, exist_ok=True)
+    (_d / _name).write_text(_body, encoding="utf-8")
+_kf_hits = memory_mod.knowledge_for(_kf, "src/auth/token.py")
+check("KNOWLEDGE DECLARING A FILE IS FOUND FOR THAT FILE", len(_kf_hits) == 3)
+check("...across every category, not only the one that happened to be checked",
+      {c for c, _, _ in _kf_hits} == {"decisions", "incidents", "lessons"})
+check("...and a record about a DIFFERENT file is not attached to this one",
+      "elsewhere" not in str(_kf_hits))
+check("...and one that declares nothing answers nothing",
+      memory_mod.knowledge_for(_kf, "src/nothing/here.py") == [])
+# The direction the sibling join had to give up: a bare name must not collect every file that ends
+# with it, or one file's incident history attaches to every `__init__.py` in the repository.
+check("...and a record naming `src/auth/token.py` does NOT answer for `src/vendor/token.py`",
+      memory_mod.knowledge_for(_kf, "src/vendor/token.py") == [])
+
 # ------------------------------------------- the false NEGATIVES, which nothing here measured
 # 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
 # against random input before its rule shipped. A reader of the release notes asked the obvious
@@ -23000,6 +23066,322 @@ for _keep, _label in (("ปกติ ทุกอย่าง fine — ok", "Tha
     check(f"...while ordinary text survives ({_label})", _rd.for_a_terminal(_keep) == _keep)
 
 
+# ------------------------------------------- peek follows a link the repository chose
+# 🐛 [2026-09-08] peek reads a file straight into the transcript and followed a symlink without
+# asking where it went, so a repository shipping `docs/notes.md -> ~/.ssh/id_rsa` got that key
+# printed under a name the model picked out of chamnan's own index. The line is at ESCAPE, not at
+# "outside": a path the caller names outside the repository is the caller's own explicit choice and
+# stays readable, which is why `chamnan-peek /var/.../bomb.xlsx` above still works.
+_esc = Path(tempfile.mkdtemp(prefix="chamnan-peek-escape-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_esc)], capture_output=True)
+    (_esc / "real.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    _outside = _esc.parent / "outside_target.txt"
+    _outside.write_text("SECRET_FROM_OUTSIDE_THE_REPO\n", encoding="utf-8")
+    os.symlink(_outside, _esc / "notes.md")
+    _pkbin = [sys.executable, str(ROOT / "bin" / "chamnan-peek")]
+    _kw = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_esc))
+
+    _ok = subprocess.run(_pkbin + ["real.py"], **_kw)
+    check("peek still reads an ordinary file inside the repository",
+          _ok.returncode == 0 and "real.py" in _ok.stdout)
+
+    _leak = subprocess.run(_pkbin + ["notes.md"], **_kw)
+    check("A LINK INSIDE THE REPOSITORY POINTING OUT IS REFUSED, NOT FOLLOWED",
+          _leak.returncode != 0
+          and "SECRET_FROM_OUTSIDE_THE_REPO" not in (_leak.stdout + _leak.stderr))
+    check("...and the refusal says which of the two facts made it one",
+          "points outside it" in _leak.stderr)
+
+    # The half that keeps this a boundary rather than a blanket refusal.
+    _named = subprocess.run(_pkbin + [str(_outside)], **_kw)
+    check("...while a path the caller names outside the repository is still their own choice",
+          _named.returncode == 0 and "outside_target.txt" in _named.stdout)
+
+    _gone = subprocess.run(_pkbin + ["nope.py"], **_kw)
+    check("...and a missing path is still reported as missing, not as an escape",
+          _gone.returncode == 1 and "not a file" in _gone.stderr)
+finally:
+    _rmtree(_esc, ignore_errors=True)
+    _rmtree(_esc.parent / "outside_target.txt", ignore_errors=True)
+
+# ------------------------------------------- a repository with nothing indexable is not a dead end
+# 🐛 [2026-09-08] `chamnan-map` returned without creating the workspace when no source file could
+# be indexed, and every other command answers "no .chamnan/ workspace here — run `chamnan-map`
+# first". A documentation or data repository was sent in a circle. The index really cannot be
+# built and that stays true (exit 1, no MAP.md); what changes is that the half of chamnan needing
+# no index at all becomes reachable.
+_docs = Path(tempfile.mkdtemp(prefix="chamnan-docsonly-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_docs)], capture_output=True)
+    (_docs / "README.md").write_text("# README\n\nnothing here\n", encoding="utf-8")
+    (_docs / "data.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    _dm = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         cwd=str(_docs))
+    check("a repository with no indexable source still gets no map and a non-zero exit",
+          _dm.returncode == 1 and not (_docs / ".chamnan" / "MAP.md").exists())
+    check("BUT THE WORKSPACE IS CREATED, SO THE INDEX-FREE COMMANDS ARE REACHABLE",
+          (_docs / ".chamnan").is_dir())
+    check("...and the message names them rather than leaving the user to guess",
+          "chamnan-timeline" in _dm.stderr)
+    # Driven, not asserted from the message: the claim is that they WORK here.
+    for _cmd in ("chamnan-timeline", "chamnan-env"):
+        _r = subprocess.run([sys.executable, str(ROOT / "bin" / _cmd)], capture_output=True,
+                            text=True, encoding="utf-8", errors="replace", cwd=str(_docs))
+        check(f"...{_cmd} answers here instead of sending the user back to chamnan-map",
+              _r.returncode == 0 and "run `chamnan-map` first" not in (_r.stdout + _r.stderr))
+finally:
+    _rmtree(_docs, ignore_errors=True)
+
+# ------------------------------------------- the totals line counts what ran, not what was covered
+# 🐛 [2026-09-08] The suite's last line said only what RAN, and on Windows that is a smaller suite:
+# one commit reported 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows, all three
+# green, with nothing anywhere saying they measured different things. Every skip already prints its
+# reason; what never happened was carrying the count to the line a reader takes the number from.
+_suite_src = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+# Built at runtime, not written whole: a literal here would match ITSELF in this file and make the
+# check fail on its own source. It did, the first time it was run.
+_mark = "[" + "SKIP]"
+check("no " + _mark + " line is printed outside the counter",
+      _suite_src.count('print("  ' + _mark) == 0 and _suite_src.count('print(f"  ' + _mark) == 0)
+check("EVERY " + _mark + " EMITTER GOES THROUGH skip(), SO THE COUNT CANNOT DRIFT FROM THE LINES",
+      _suite_src.count('skip("  ' + _mark) + _suite_src.count('skip(f"  ' + _mark) >= 19)
+check("...and the totals line reports that count rather than dropping it",
+      "SKIPPED} block(s) skipped on this platform" in _suite_src)
+check("...while the N/N form the docs and CI parse is unchanged",
+      re.search(r'print\(f"\\n\{PASSED\}/\{total\} checks passed"', _suite_src) is not None)
+
+# ------------------------------------------- the C rules anchored on ASCII, one position deep
+# 🐛 [2026-09-08] `mark_aware` expands every `\w` in these patterns, so the REST of a name has been
+# Unicode-aware all along and the FIRST character class was left `[A-Za-z_]`. A C function whose
+# RETURN TYPE starts with a non-ASCII letter is not mis-named in the index, it is absent from it.
+# The comment recording the same fix for Ruby says C was checked and passed — true of a non-ASCII
+# function NAME, which is what was tested, and false of the return type, which is the position the
+# anchor actually guards.
+_c_src = ("Ünsigned add(int a){ return a; }\n"
+          "int plain(int b){ return b; }\n"
+          "Ünsigned proto(int c);\n")
+_c_found = {n.split("(")[0] for n in
+            [x[0] for x in mapper.extract_regex(_c_src, "c")[1]]}
+check("a C function whose return type is non-ASCII is indexed", "add" in _c_found)
+check("...and so is its prototype", "proto" in _c_found)
+check("...without losing the ASCII one beside it", "plain" in _c_found)
+# The set, not the member: the anchor is a per-rule decision, so walk the raw table.
+_mapper_src_now = (ROOT / "lib" / "mapper.py").read_text(encoding="utf-8")
+# The RAW table, before the mark_aware pass rebuilds it — the anchors are written here.
+_rules_src = _mapper_src_now[_mapper_src_now.index("REGEX_RULES = {"):
+                             _mapper_src_now.index("REGEX_RULES = {lang:")]
+_ascii_anchors = [ln.strip()[:80] for ln in _rules_src.split("\n")
+                  if "[A-Za-z_]" in ln and not ln.strip().startswith("#")]
+check("NO LANGUAGE RULE STILL ANCHORS A DECLARATION WITH AN ASCII-ONLY LETTER CLASS",
+      not _ascii_anchors)
+
+# ------------------------------------------- mark_aware closed a class one character early
+# 🐛 [2026-09-08] `[]...]` and `[^]...]` are the standard way to put a literal `]` in a character
+# class. This rewriter read that first `]` as the close, so every `\w` after it was expanded as if
+# OUTSIDE a class — a different regex that still compiles, which is the failure mode this codebase
+# warns about most. Nothing shipped uses the idiom today; it is fixed because the next person to
+# write a language rule would have had no way to see it.
+for _pat, _label in ((r"^[]a]\w$", "a literal ] leading the class"),
+                     (r"^[^]a]\w$", "a literal ] leading a negated class")):
+    _rw = unicode_marks.mark_aware(_pat)
+    try:
+        re.compile(_rw)
+        _compiles = True
+    except re.error:
+        _compiles = False
+    check(f"mark_aware rewrites {_label} into something that compiles", _compiles)
+check("...and the class still means what Python's own parser says it means",
+      bool(re.match(unicode_marks.mark_aware(r"^[]a]$"), "]"))
+      and bool(re.match(unicode_marks.mark_aware(r"^[]a]$"), "a"))
+      and not re.match(unicode_marks.mark_aware(r"^[]a]$"), "b"))
+check("...and the \\w AFTER the class is expanded as an outside-class \\w, which was the real damage",
+      unicode_marks.mark_aware(r"[]a]\w").startswith("[]a][\\w"))
+# Unchanged for every other class shape, which is what makes this safe to land: a `\w` outside a
+# class becomes its own bracketed class, a `\w` inside one is spliced into the class it is in.
+for _plain, _starts in ((r"[abc]\w", "[abc][\\w"),
+                        (r"[a\]b]\w", "[a\\]b][\\w"),
+                        (r"[^abc]\w", "[^abc][\\w"),
+                        (r"\w[abc]", "[\\w")):
+    check(f"...{_plain!r} is rewritten with the class boundary where Python puts it",
+          unicode_marks.mark_aware(_plain).startswith(_starts))
+check("...and a \\w INSIDE a class is still spliced into that class, not bracketed again",
+      unicode_marks.mark_aware(r"[\w-]").startswith("[\\w") and
+      not unicode_marks.mark_aware(r"[\w-]").startswith("[[\\w"))
+
+
+# ------------------------------------------- a repository chamnan reads nothing of
+# 🐛 [2026-09-08] Three separate ways the zero-source case lied. `pct = have/total if total else 0`
+# made "nothing to document" indistinguishable from "badly documented", so the loudest line in the
+# run — "the single biggest lever on this map's usefulness", with an agent dispatch under it —
+# pointed at zero files. `--undocumented`, the command that run tells you to run next, answered
+# "every file the index can describe already has an opening comment" and exited 0. And the bar's
+# denominator counted only what chamnan can read, saying so nowhere. Reproduced by R10 agent 4 on
+# Email-MIME and Example.jl; driven here on a fixture with the same shape.
+_none = Path(tempfile.mkdtemp(prefix="chamnan-nosource-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_none)], capture_output=True)
+    # Five distinct extensions on purpose: the lines cut at four and at three, so a fixture with
+    # four would pass whether or not they disclose the cut.
+    for _i, _ext in enumerate(("pm", "pm", "pm", "t", "t", "t", "t", "pl", "pod", "hs")):
+        (_none / f"f{_i}.{_ext}").write_text("package X;\n1;\n", encoding="utf-8")
+    _kw = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_none))
+    _nm = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], **_kw)
+    check("a zero-source repository is not told it has a documentation lever",
+          "single biggest lever" not in _nm.stdout)
+    check("...and is told what it actually has instead",
+          "no comment coverage to improve" in _nm.stdout
+          and "no reader for" in _nm.stdout)
+    check("...and the coverage bar claims nothing about files nobody read",
+          "0/0 files (0%)" in _nm.stdout and "chamnan can read" not in _nm.stdout)
+    # The two truncating lines, against a fixture with five unreadable extensions.
+    check("THE UNREADABLE-EXTENSION LINES SAY WHEN THE LIST ENDED EARLY",
+          _nm.stderr.count("more") >= 1 and "+1 more" in _nm.stdout)
+
+    _nu = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--undocumented"],
+                         **_kw)
+    check("THE COMMAND THE RUN SUGGESTS DOES NOT SAY 'ALL CLEAR' OVER A REPOSITORY IT NEVER READ",
+          "already has an opening comment" not in _nu.stderr)
+    check("...it says why there is nothing to list",
+          "no file here was read" in _nu.stderr and "0 files" in _nu.stderr)
+    check("...and names the extensions that made it so",
+          "no reader for the extensions present" in _nu.stderr)
+finally:
+    _rmtree(_none, ignore_errors=True)
+
+# The other half: a repository chamnan reads PART of, where the note is the honest one, and one it
+# reads all of, where the note would be noise.
+_part = Path(tempfile.mkdtemp(prefix="chamnan-partsource-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_part)], capture_output=True)
+    (_part / "one.py").write_text("# does a thing\ndef a():\n    return 1\n", encoding="utf-8")
+    (_part / "two.py").write_text("def b():\n    return 2\n", encoding="utf-8")
+    for _e in ("pm", "t", "pl"):
+        (_part / f"f.{_e}").write_text("x\n", encoding="utf-8")
+    _pm = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
+                         text=True, encoding="utf-8", errors="replace", cwd=str(_part))
+    check("THE COVERAGE BAR SAYS ITS DENOMINATOR EXCLUDES WHAT CHAMNAN CANNOT READ",
+          "of the 2 chamnan can read" in _pm.stdout)
+    for _e in ("pm", "t", "pl"):
+        (_part / f"f.{_e}").unlink()
+    _pm2 = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
+                          text=True, encoding="utf-8", errors="replace", cwd=str(_part))
+    check("...and says nothing when there is nothing excluded",
+          "chamnan can read" not in _pm2.stdout and "described" in _pm2.stdout)
+finally:
+    _rmtree(_part, ignore_errors=True)
+
+# ------------------------------------------- the population, not the two the report named
+# The repository's most-recorded defect is a rule applied to some members of a set and forgotten in
+# the identical ones beside it. R10 agent 4 named two truncating lines with no "+N more"; deriving
+# the population from the source found three more in the same file. This is that derivation, kept
+# so the next one cannot be added silently.
+_map_src_lines = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8").split("\n")
+_CUT = re.compile(r"\[:\d+\]|most_common\(\d+\)")
+_CODE = re.compile(r"=\s|\bfor\b|join\(|print\(|append\(")
+_silent_cuts = []
+for _i, _ln in enumerate(_map_src_lines):
+    if _ln.strip().startswith("#") or not _CUT.search(_ln) or not _CODE.search(_ln):
+        continue
+    if "more" not in "\n".join(_map_src_lines[max(0, _i - 3):_i + 16]):
+        _silent_cuts.append(f"{_i + 1}: {_ln.strip()[:70]}")
+check("EVERY TRUNCATED LIST IN chamnan-map SAYS THE LIST WAS TRUNCATED", not _silent_cuts)
+
+# ------------------------------------------- the same shape, two files over
+_wide = Path(tempfile.mkdtemp(prefix="chamnan-wide-")) / "wide.db"
+try:
+    import sqlite3 as _sq3
+    _con = _sq3.connect(_wide)
+    _con.execute("CREATE TABLE wide (" + ", ".join(f"c{_i} TEXT" for _i in range(30)) + ")")
+    _con.commit()
+    _con.close()
+    _wp = peek_mod.peek(str(_wide))
+    check("a 30-column table is not reported as a 12-column one", "+18 more" in _wp)
+finally:
+    _rmtree(_wide.parent, ignore_errors=True)
+
+_blob = Path(tempfile.mkdtemp(prefix="chamnan-blob-")) / "blob.bin"
+try:
+    _blob.write_bytes(b"\x00\x01" + b"".join(f"readable_string_{_i:02d}".encode() + b"\x00"
+                                             for _i in range(12)))
+    _bp = peek_mod.peek(str(_blob))
+    check("a sample of a binary's strings is presented as a sample, with the real count",
+          "12 of at least 6 characters" in _bp and "5 shown" in _bp)
+finally:
+    _rmtree(_blob.parent, ignore_errors=True)
+
+# 🐛 [2026-09-08] `_compose_services` cut at 40 and the renderer disclosed `_+N_` from the list it
+# was handed, so the cut was invisible to the only code that could have reported it.
+_many = "services:\n" + "".join(f"  svc{_i:03d}:\n    image: x\n" for _i in range(60))
+check("A CAP AT EXTRACTION CANNOT BE DISCLOSED BY THE RENDERER, SO THERE IS NONE",
+      len(deploy_mod._compose_services(_many)) == 60)
+
+# ------------------------------------------- the one identifier regex the generic fix never reached
+check("a non-ASCII C include guard is recognised",
+      mapper._guard_names("#ifndef ชื่อ_H\n#define ชื่อ_H\n")
+      == {"ชื่อ_H"})
+check("...and an ASCII one still is",
+      mapper._guard_names("#ifndef FOO_H\n#define FOO_H\n") == {"FOO_H"})
+check("...and a mismatched pair is still not one",
+      mapper._guard_names("#ifndef FOO_H\n#define BAR_H\n") == set())
+
+# ------------------------------------------- a docstring citing a check that does not exist
+# 🐛 [2026-09-08] `unicode_marks.py` cited `test_combining_marks_constant_is_current`, a pytest-style
+# name this suite's convention could never have produced — every check here is `check("...", cond)`.
+# Someone grepping for it to re-run it in isolation found only the docstring.
+_um_doc = (ROOT / "lib" / "unicode_marks.py").read_text(encoding="utf-8")[:1200]
+_cited = re.search(r'the check named "([^"]+)"', _um_doc.replace("\n", " "))
+check("unicode_marks names the check that guards it", _cited is not None)
+if _cited:
+    check("...and that check is really in the suite, by the name the docstring gives",
+          _cited.group(1).replace("  ", " ") in _suite_src.replace("\n", " ").replace("  ", " "))
+
+# ------------------------------------------- report can only report on what somebody registered
+_treg = Path(tempfile.mkdtemp(prefix="chamnan-toolsreg-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_treg)], capture_output=True)
+    (_treg / "a.py").write_text("# a\nx = 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
+                   cwd=str(_treg))
+    _tools_dir = _treg / ".chamnan" / "tools"
+    _tools_dir.mkdir(parents=True, exist_ok=True)
+    _rep = [sys.executable, str(ROOT / "bin" / "chamnan-report")]
+    _kw2 = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_treg))
+    _r0 = subprocess.run(_rep, **_kw2)
+    check("a workspace with no tools at all says nothing about registration",
+          "not registered" not in _r0.stdout)
+    (_tools_dir / "dropped_in.py").write_text("# placed by hand\n", encoding="utf-8")
+    (_tools_dir / "__init__.py").write_text("", encoding="utf-8")
+    _r1 = subprocess.run(_rep, **_kw2)
+    check("A SCRIPT DROPPED INTO tools/ IS REPORTED AS UNREPORTABLE, NOT IGNORED",
+          "1 of 1 file(s) in tools/ are not registered" in _r1.stdout
+          and "dropped_in.py" in _r1.stdout)
+    check("...and package scaffolding is not counted as a tool nobody promoted",
+          "__init__.py" not in _r1.stdout)
+finally:
+    _rmtree(_treg, ignore_errors=True)
+
+# ------------------------------------------- the Windows matrix never reached the shim path
+# 🐛 [2026-09-08] Every `.cmd` shim resolves `py -3`, which is the runner image's own newest Python
+# rather than the one this matrix leg pinned. Read from run 34156254867: the "python 3.8" leg and
+# the "python 3.13" leg both got 3.14.7. So the version axis covered these entry points at no
+# pinned version at all, including the 3.8 floor the job exists to prove.
+_wf = (ROOT / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8")
+check("the Windows entry points are reached once under the interpreter the matrix pinned",
+      "python bin\\chamnan-map --help" in _wf and "python bin\\chamnan-context --detect ." in _wf)
+check("...without replacing the py -3 path, which is what a real user runs",
+      "bin\\chamnan-map.cmd --help" in _wf)
+# 🐛 [2026-09-08] `install/chamnan-check.cmd` said "has never been executed on Windows" while CI had
+# been executing it on every windows-latest leg. Both halves are pinned, so the note cannot go stale
+# in either direction.
+_cmd_src = (ROOT / "install" / "chamnan-check.cmd").read_text(encoding="utf-8", errors="replace")
+check("the preflight .cmd does not claim it has never run on Windows",
+      "has never been executed on Windows" not in _cmd_src)
+check("...and the CI step that disproves that claim still exists",
+      "install\\chamnan-check.cmd" in _wf)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
@@ -23009,5 +23391,14 @@ _rmtree(fixture)
 _rmtree(nested.parent.parent, ignore_errors=True)
 
 total = PASSED + len(FAILED)
-print(f"\n{PASSED}/{total} checks passed")
+# 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
+# reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all
+# three jobs go green with nothing anywhere saying they measured different things. Each of those
+# points already prints a `[SKIP]` line with a reason; what never happened was carrying the count
+# to the end, which is where the number a reader takes away is written. A green run certifying a
+# smaller suite than it appears to is the false-confidence failure this project calls worse than a
+# red one (R10 agent 1, measured against real CI logs).
+print(f"\n{PASSED}/{total} checks passed"
+      + (f", {SKIPPED} block(s) skipped on this platform — the [SKIP] lines above say why"
+         if SKIPPED else ""))
 sys.exit(1 if FAILED else 0)

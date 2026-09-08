@@ -190,7 +190,11 @@ def describe(path):
         end = head.find("\n---", 3)
         for line in head[3:end if end > 0 else len(head)].splitlines():
             if line.strip().lower().startswith("description:"):
-                return mdblock.as_quoted(line.split(":", 1)[1], 110)
+                # 🐛 [2026-09-08] One function, two returns, and only the SECOND one scrubbed --
+                # the comment below it explains the ordering carefully and this path, six lines
+                # up, was never given it. A skill's frontmatter is a committed file in somebody
+                # else's repository, so its `description:` is as attacker-controlled as its body.
+                return mdblock.as_quoted(redact.scrub(line.split(":", 1)[1]), 110)
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -1010,7 +1014,11 @@ def main():
         # The CLI and the hook disagreed about whether the repository was usable, and nothing told
         # the person which one to believe. One sentence, once per session, saying what to do.
         if not any((root / m).exists() for m in ws.VCS_MARKERS):
-            print(f"## chamnan\n_`{mdblock.as_quoted(root.name, 60)}` is not under version control, "
+            # Scrubbed like every other name this block prints. A directory name is an unlikely
+            # place for a credential, and "unlikely" is the judgement that has been wrong at every
+            # one of these sites -- uniform costs microseconds and removes the judgement.
+            print(f"## chamnan\n_`{mdblock.as_quoted(redact.scrub(root.name), 60)}` "
+                  f"is not under version control, "
                   f"so no workspace was created here. Run `chamnan-map` in it to create one anyway; "
                   f"after that, every session works as in a repository._")
             return 0
@@ -1180,7 +1188,10 @@ def main():
                 # file is type-checked against DEFAULT_CONFIG; these are kept precisely BECAUSE
                 # they are unrecognised, so a bound is the only thing available (R12 agent 2).
                 _shown = sorted(ws.LAST_CONFIG_KEYS_KEPT)[:KEPT_KEYS_NAMED]
-                kept = ", ".join(f"`{mdblock.as_quoted(k)}`" for k in _shown)
+                # The names come from a committed `config.json` in somebody else's repository,
+                # and this line reaches the block in chamnan's own voice. Scrubbed like the sibling
+                # warnings below it, which say the same thing about filenames (R7 agent 2).
+                kept = ", ".join(f"`{mdblock.as_quoted(redact.scrub(k))}`" for k in _shown)
                 if len(ws.LAST_CONFIG_KEYS_KEPT) > len(_shown):
                     kept += f" +{len(ws.LAST_CONFIG_KEYS_KEPT) - len(_shown)} more"
                 out.append(f"  Settings in `config.json` that only the newer build understands were "
@@ -1349,7 +1360,8 @@ def main():
                     # Filenames are chosen by whoever wrote the clone, and this line prints them
                     # in chamnan's own voice, outside the fence. Made inert before interpolation.
                     what = (f"**{n} file(s) are not in it** — "
-                            + ", ".join(f"`{mdblock.as_quoted(e)}`" for e in examples)
+                            + ", ".join(f"`{mdblock.as_quoted(redact.scrub(e))}`"
+                                        for e in examples)
                             + ("…" if n > len(examples) else "") + ". ") if n else ""
                     # The offer to install the hook goes only to a repo that has not installed it.
                     # Repeating it to someone who has is how a warning stops being read.
@@ -1799,7 +1811,8 @@ def main():
             # noise: in ordinary operation this list is empty, and the alternative is a setting that
             # silently does nothing -- the failure this whole area was just fixed for.
             out.insert(0, f"_⚠ context profile "
-                          f"`{mdblock.as_quoted(UNKNOWN_PROFILE[0], 40)}` is not one of "
+                          f"`{mdblock.as_quoted(redact.scrub(UNKNOWN_PROFILE[0]), 40)}` "
+                          f"is not one of "
                           f"{', '.join('`' + n + '`' for n in profiles.names())}. This session is "
                           f"running on `{profiles.DEFAULT}`; fix `context_profile` in "
                           f"`.chamnan/config.json` or `CHAMNAN_CONTEXT_PROFILE`._\n")
@@ -1812,7 +1825,8 @@ def main():
             # now and it is interpolated here, so the line tells the reader which mistake they made.
             _fix = ("fix the syntax" if _bad_cfg == "does not parse"
                     else "wrap the settings in `{ }`")
-            out.insert(0, f"_⚠ `.chamnan/config.json` {mdblock.as_quoted(_bad_cfg, 120)}. "
+            out.insert(0, f"_⚠ `.chamnan/config.json` "
+                          f"{mdblock.as_quoted(redact.scrub(_bad_cfg), 120)}. "
                           "This session is running on DEFAULTS and every value set in that file is "
                           f"being ignored. It has NOT been overwritten; {_fix} and it takes "
                           "effect on the next session._\n")

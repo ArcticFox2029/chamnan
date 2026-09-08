@@ -15,6 +15,7 @@ Understands CSV/TSV, JSON, ZIP-based formats including .xlsx/.docx/.apk, tar arc
 PDF, PNG/JPEG/GIF, and plain text; identifies and measures the rest. Standard library only, so it
 runs wherever python3 does and installs nothing.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 
 import peek as peek_mod  # noqa: E402
 import redact
+import mdblock  # noqa: E402
 import workspace as ws  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
@@ -58,6 +60,26 @@ def main(argv):
         print(f"chamnan-peek: unknown flag {_bad[0]} — try --help", file=sys.stderr)
         return 2
     target = argv[0]
+    # 🐛 [2026-09-08] peek reads a file straight into the transcript, and it followed a symlink
+    # without asking where the link went. A repository that ships `docs/notes.md -> ~/.ssh/id_rsa`
+    # got that key printed, and the name the model chose it by came out of chamnan's own index
+    # (R10 agent 2, reproduced before this was written). `workspace.inside` exists for exactly this
+    # shape and its docstring records the same leak reaching the injected block.
+    #
+    # The line is drawn at ESCAPE, not at "outside": a path the caller names outside the repository
+    # -- `chamnan-peek ~/Downloads/report.csv` -- is the caller's own explicit choice and stays
+    # allowed. What is refused is a path that LOOKS like a repository file and is not one, because
+    # there the repository chose the target and the reader could not tell. `chamnan-map` refuses
+    # both because it writes an index of a tree; this reads one file somebody asked for by name.
+    # Decided this way once — do not "make it consistent" with map by refusing outside paths too.
+    _asked = Path(target)
+    _root = ws.find_root()
+    _named_inside = any(r in Path(os.path.abspath(target)).parents for r in (_root, _root.resolve()))
+    if _asked.exists() and _named_inside and not ws.inside(_asked, _root):
+        print(f"chamnan-peek: {mdblock.as_quoted(target, 100)} is inside this repository but "
+              f"points outside it — this command reads a file into the transcript, and a link the "
+              f"repository chose does not get to choose what lands there", file=sys.stderr)
+        return 2
     find = None
     budget = peek_mod.DEFAULT_BUDGET
     if "--find" in argv:

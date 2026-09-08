@@ -592,7 +592,13 @@ def _is_ignored(root, path):
     try:
         # check-ignore is asked about one specific path, so it is scoped by construction.
         if ws.git_can_speak_for(root):
-            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
+            # `--` so a path can never be read as an option. Not a live defect: the only caller
+            # passes an absolute path whose name is literally `.env`, so nothing here can start
+            # with a dash today. It is here because the guard belongs at the call, not in the
+            # caller's current shape -- a future caller passing a repository-controlled relative
+            # name would otherwise get `unknown option` from git, and this function's degrade path
+            # answers "not ignored" for anything git refuses to answer.
+            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(path)],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, timeout=10)
             if r.returncode in (0, 1):

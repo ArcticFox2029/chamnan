@@ -389,7 +389,7 @@ def for_path(root, target):
                     # an impact answer. The other direction is kept: an entry written with the full
                     # path still answers a query made from a subdirectory, which is what the
                     # docstring actually promises.
-                    if f == t or f.endswith("/" + t):
+                    if mdblock.names_the_path(f, t):
                         hits.append((path, date, note))
                         matched = True
                         break
