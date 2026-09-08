@@ -112,6 +112,28 @@ def _inside(root, rel):
 # Rows carrying a function/class claim that this checker deliberately does not verify, because
 # the file is not Python. Named per file, so the headline can say how much of the map it is quiet
 # about instead of scoring 100% over the part it happened to cover.
+def _is_python(path, source):
+    """Whether this file is Python, by the same standard the indexer used to index it.
+
+    🐛 [2026-09-09] This asked `path.suffix == ".py"`, and the reason above it is sound — a regex
+    scoring its own accuracy on JavaScript measures the regex, not the map. But the discriminator
+    was wrong for the eleven files it matters most for: every `bin/chamnan-*` command is Python
+    with no extension, indexed as Python through its shebang by `mapper._lang_from_shebang`, and
+    skipped here for not being spelled `.py`. So the checker verified 1,313 claims and quietly said
+    nothing about the function and class counts of chamnan's own command surface -- and the line
+    that reports what went unchecked, added the day before, is what surfaced it.
+
+    Read from the source already in hand rather than re-opening the file: `#!/usr/bin/env python3`
+    is what `mapper` looks for, and this asks the same question of the same bytes.
+    """
+    if path.suffix == ".py":
+        return True
+    if path.suffix:
+        return False
+    first = source.split("\n", 1)[0] if source else ""
+    return first.startswith("#!") and "python" in first
+
+
 UNCHECKED_CLAIMS = []
 
 
@@ -163,7 +185,7 @@ def check_map(map_path, root=ROOT, verbose=False):
         if lines_c:
             record("lines", len(src.splitlines()) == int(lines_c),
                    f"{rel}: says {lines_c}L, has {len(src.splitlines())}L")
-        if p.suffix == ".py":
+        if _is_python(p, src):
             fns, cls = _top_level(src)
             if fn_c and fns is not None:
                 record("functions", fns == int(fn_c), f"{rel}: says {fn_c}fn, has {fns}")
