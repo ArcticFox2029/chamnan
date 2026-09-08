@@ -182,6 +182,18 @@ def _probe_deny_write():
         _rmtree(box, ignore_errors=True)
 
 
+# Checks this platform could not run. Every `[SKIP]` line goes through `skip()` below so the total
+# at the end can say so -- see the note there for what a silent skip cost.
+SKIPPED = 0
+
+
+def skip(text):
+    """Print a `[SKIP]` line and count it. One counter, so the totals line cannot drift from it."""
+    global SKIPPED
+    SKIPPED += 1
+    print(text)
+
+
 _CAN_SYMLINK = _probe_symlink()
 _CAN_DENY_READ = _probe_deny_read()
 _CAN_DENY_WRITE = _probe_deny_write()
@@ -243,16 +255,6 @@ def fake(*parts):
 
 PASSED = 0
 FAILED = []
-# Checks this platform could not run. Every `[SKIP]` line goes through `skip()` below so the total
-# at the end can say so -- see the note there for what a silent skip cost.
-SKIPPED = 0
-
-
-def skip(text):
-    """Print a `[SKIP]` line and count it. One counter, so the totals line cannot drift from it."""
-    global SKIPPED
-    SKIPPED += 1
-    print(text)
 
 
 def check(name, condition):
@@ -23426,6 +23428,16 @@ finally:
 # always-succeeding shell after it. lefthook's installed hook ends in a plain call, and after the
 # append it kept PRINTING its failure while `git commit` returned 0 and the commit landed. Driven
 # here with /bin/sh against a hand-written gate rather than reasoned from the shape (R9 agent 2).
+# 🐛 [2026-09-09] This block drove `/bin/sh` directly and there is no `/bin/sh` on Windows: both
+# windows-latest legs died on the regression-suite step while the same commit was green locally at
+# 4,400/4,400. `_POSIX_SHELL` has existed for this since before today and every other shell-driving
+# check in this file uses it — this one was written without asking what the file already had, which
+# is the defect this repository records more than any other, in its own test suite.
+#
+# The install paths that do NOT need a shell — the exec refusal, the generated-hooks-directory
+# refusal, uninstall — stay outside the gate, because they are the half Windows can still check.
+if not _POSIX_SHELL:
+    skip("  [SKIP] hook exit-status checks — they drive a POSIX shell, and this platform has none")
 _r14_hk = Path(tempfile.mkdtemp(prefix="chamnan-hook-"))
 try:
     subprocess.run(["git", "init", "-q", str(_r14_hk)], capture_output=True)
@@ -23438,9 +23450,11 @@ try:
     # A gate whose ENFORCEMENT is its last command's status — the shape that was broken.
     _r14_pre.write_text('#!/bin/sh\necho "gate ran"\nexit 1\n', encoding="utf-8")
     _r14_pre.chmod(0o755)
-    _r14_before = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
-    check("the fixture gate really blocks before chamnan touches it", _r14_before.returncode == 1)
+    if _POSIX_SHELL:
+        _r14_before = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace")
+        check("the fixture gate really blocks before chamnan touches it",
+              _r14_before.returncode == 1)
     # This one ends in `exit`, so the install must refuse rather than append dead code.
     _r14_ref = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -23451,26 +23465,29 @@ try:
     # The dangerous shape: enforcement by the last command's status, with no trailing `exit`.
     _r14_pre.write_text('#!/bin/sh\necho "gate ran"\nfalse\n', encoding="utf-8")
     _r14_pre.chmod(0o755)
-    _r14_b2 = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
-    check("...and so does the shape with no trailing exit at all", _r14_b2.returncode != 0)
+    if _POSIX_SHELL:
+        _r14_b2 = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace")
+        check("...and so does the shape with no trailing exit at all", _r14_b2.returncode != 0)
     _r14_ins = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
                           capture_output=True, text=True, encoding="utf-8", errors="replace",
                           cwd=str(_r14_hk))
     check("chamnan appends to it", _r14_ins.returncode == 0 and "appended" in _r14_ins.stdout)
-    _r14_after = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
-    check("APPENDING TO A HOOK DOES NOT CHANGE WHETHER IT BLOCKS A COMMIT",
-          _r14_after.returncode == _r14_b2.returncode)
+    if _POSIX_SHELL:
+        _r14_after = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace")
+        check("APPENDING TO A HOOK DOES NOT CHANGE WHETHER IT BLOCKS A COMMIT",
+              _r14_after.returncode == _r14_b2.returncode)
     check("...and the install says so, because nothing on disk would tell the user otherwise",
           "still blocks" in _r14_ins.stdout)
     # Anything the user appends AFTER chamnan must still run — which a bare `exit` would have killed.
     _r14_pre.write_text(_r14_pre.read_text(encoding="utf-8") + '\necho "user line after chamnan"\n',
                     encoding="utf-8")
-    _r14_after2 = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
-                                encoding="utf-8", errors="replace")
-    check("...and a line appended after chamnan's block still runs",
-          "user line after chamnan" in _r14_after2.stdout)
+    if _POSIX_SHELL:
+        _r14_after2 = subprocess.run(["/bin/sh", str(_r14_pre)], capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace")
+        check("...and a line appended after chamnan's block still runs",
+              "user line after chamnan" in _r14_after2.stdout)
 
     # Uninstall takes back chamnan's block and leaves the rest.
     _r14_un = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"),
@@ -24145,14 +24162,70 @@ if _r28_loaded:
         _r28_bench._report_refusals(_r28_same)
     check("...and nothing at all is said when the arms agree, which is every ordinary run",
           _r28_quiet.getvalue() == "")
-    # The committed results are the evidence behind the README's figures, so the delta they hold
-    # must still be visible from them and not only from a fixture.
-    _r28_real = json.loads((ROOT / "bench" / "results.json").read_text(encoding="utf-8"))
-    _r28_out = io.StringIO()
-    with contextlib.redirect_stdout(_r28_out):
-        _r28_bench._report_refusals(_r28_real)
-    check("...and the committed results still show the one they were run on",
-          "secret-probe" in _r28_out.getvalue())
+    # 🐛 [2026-09-09] This read `bench/results.json` unconditionally, and that file is NOT tracked —
+    # it exists on the machine that ran the benchmark and in no clone. Every non-Windows CI leg died
+    # here with a FileNotFoundError while the same commit was green locally, which is the whole
+    # reason a release gate runs somewhere other than the machine that wrote the code.
+    _r28_results = ROOT / "bench" / "results.json"
+    if _r28_results.is_file():
+        _r28_real = json.loads(_r28_results.read_text(encoding="utf-8"))
+        _r28_out = io.StringIO()
+        with contextlib.redirect_stdout(_r28_out):
+            _r28_bench._report_refusals(_r28_real)
+        check("...and the committed results still show the one they were run on",
+              "secret-probe" in _r28_out.getvalue())
+    else:
+        skip("  [SKIP] the recorded benchmark results — bench/results.json is not in the checkout")
+
+# ------------------------------------------- what only Windows would have told us
+# 🐛 [2026-09-09] Windows is the leg that fails every release, and every time it is the same
+# shape: a check written on a Mac reaches for something Windows does not have, the local suite goes
+# green, and ten minutes of CI is spent saying so. This release it was four calls to `/bin/sh` in a
+# block written without asking what this file already had — `_POSIX_SHELL` has guarded exactly this
+# since long before today, and every other shell-driving check in the file uses it.
+#
+# So the guard is derived here instead, where it costs a second: a POSIX-only construct outside a
+# platform gate is named on the machine that wrote it. Windows still runs the real suite; what this
+# removes is finding out from CI what a grep could have said.
+_win_hostile = []
+# Only what has actually broken a Windows run. `os.symlink` and `chmod 000` were in the first
+# version of this list and came straight back out: eight symlink call sites have passed windows CI
+# for releases, so the runner grants the privilege, and a check that fires on eight things that
+# work is the "warning nobody reads" this file names as its own worst outcome. What is left is
+# what is genuinely ABSENT on Windows rather than merely different.
+_WIN_ONLY = (
+    (re.compile(r'"/bin/[a-z]+"'), "an absolute POSIX interpreter path"),
+    (re.compile(r'subprocess\.run\(\[\s*"(sh|bash|ln|uname|chmod)"'), "a POSIX-only executable"),
+    (re.compile(r"os\.getuid\(|os\.geteuid\(|import resource\b"), "a POSIX-only module"),
+)
+_win_text = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+_win_src = _win_text.split("\n")
+# Lines inside a `def` are guarded by whoever CALLS it, which no amount of looking upward can see:
+# `_run_check` and `_on_fake` both shell out and both are only ever called under a platform gate.
+# So helper bodies are excluded rather than guessed at.
+_win_in_def = set()
+for _wnode in ast.walk(ast.parse(_win_text)):
+    if isinstance(_wnode, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        _win_in_def.update(range(_wnode.lineno, (_wnode.end_lineno or _wnode.lineno) + 1))
+for _wi, _wl in enumerate(_win_src):
+    if _wl.lstrip().startswith("#") or (_wi + 1) in _win_in_def:
+        continue
+    if "re.compile(" in _wl:          # this check's own pattern table
+        continue
+    for _wpat, _wwhy in _WIN_ONLY:
+        if not _wpat.search(_wl):
+            continue
+        # Guarded when a platform gate governs it: the same line, or any of the twelve above it at
+        # a shallower indent, which is what an `if _POSIX...:` wrapping a block looks like.
+        _wwin = _win_src[max(0, _wi - 12):_wi + 1]
+        if any(("_POSIX" in _g or "os.name" in _g or "sys.platform" in _g) for _g in _wwin):
+            continue
+        _win_hostile.append(f"{_wi + 1}: {_wwhy} — {_wl.strip()[:60]}")
+if _win_hostile:
+    for _wh in _win_hostile[:8]:
+        print(f"      {_wh}")
+check("NO POSIX-ONLY CONSTRUCT IN THIS SUITE SITS OUTSIDE A PLATFORM GATE", not _win_hostile)
+
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
