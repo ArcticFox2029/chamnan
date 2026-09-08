@@ -55,6 +55,10 @@ DEFAULT_CONFIG = {
     # every token budget and still lose its whole second half. 9,000 leaves margin under a limit
     # that is not ours to change. Set 0 to switch the ceiling off and take the host's cut instead.
     "output_byte_ceiling": 9000,
+    # The rules section's own budget, in characters. It had none until 2026-09-09 and was fixed at
+    # 1,500 from a day when this repository had one rule; the two sections beside it in the block
+    # have had a dial all along.
+    "rules_char_budget": 1500,
     # Mention it when a read is about to pull in a lock file, a minified bundle or a very large
     # file. A notice, never a block — the one time someone genuinely needs to read package-lock.json
     # is the one time refusing would be most wrong.
@@ -263,6 +267,7 @@ _NON_NEGATIVE = ("log_retention_days", "session_retention_days", "index_token_bu
 _UPPER_BOUND = {
     "output_byte_ceiling": 9_500,        # the host's own cut is around 10,000 and is positional
     "index_token_budget": 100_000,
+    "rules_char_budget": 20_000,
     "state_token_budget": 100_000,
     "log_retention_days": 3_650,
     "session_retention_days": 3_650,

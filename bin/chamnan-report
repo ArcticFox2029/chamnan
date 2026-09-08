@@ -46,6 +46,7 @@ import tools_index  # noqa: E402
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
+import state as state_mod  # noqa: E402
 import host  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
@@ -319,10 +320,13 @@ def print_inventory(root):
     """
     rows = ledger.inventory(root)
     print("Knowledge inventory")
-    width = max(len(label) for label, _, _ in rows)
-    for label, count, last_ts in rows:
+    width = max(len(label) for label, _, _, _ in rows)
+    for label, count, last_ts, _stamped in rows:
         noun = "entry" if count == 1 else "entries"
-        print(f"  {label:<{width}}   {count:>3} {noun:<8}   last write {ledger.humanize_age(last_ts)}")
+        # "as of" for a date a person stamped, "last write" for a time the filesystem recorded.
+        # One heading over both was printing "last write" over a date that is not one.
+        _when = "as of     " if _stamped else "last write"
+        print(f"  {label:<{width}}   {count:>3} {noun:<8}   {_when} {ledger.humanize_age(last_ts)}")
 
     # 🐛 [2026-09-06] Nothing anywhere showed which settings this repository had actually changed.
     # Two config defects found today were both invisible for the same reason: `context_profile` set
@@ -429,6 +433,71 @@ def print_inventory(root):
     # Here, where a person is asking about workspace health, the count that is silent in a session
     # is the one worth saying — including how many DO hold, because that is the number that makes
     # "3 unverifiable" mean something.
+    # 🐛 [2026-09-09] A person adding a tenth rule has no reason to suspect that four of their
+    # earlier ones stopped arriving in full. The budget was set when this repository had ONE rule
+    # and never moved; by nine, five were reaching sessions as a name and nothing said so anywhere a
+    # person looks. Counting bytes against a ceiling is the tool's job, not theirs — and when the
+    # answer is "they no longer fit", the useful thing is not a warning but the two moves that fix
+    # it, named against the rules that are actually the candidates.
+    try:
+        _rp_fit, _rp_title, _rp_chars, _rp_budget = memory.rules_pressure(root)
+    except Exception:
+        _rp_fit, _rp_title, _rp_chars, _rp_budget = [], [], 0, 0
+    # 🐛 [2026-09-09] Three things this tool knew and never told the person who owns the workspace,
+    # all found in one evening by somebody USING it rather than reading it:
+    #
+    #   · rules that outgrew their budget and now arrive as a title;
+    #   · a STATE.md that outgrew its own budget — measured on a second real workspace at 13,474
+    #     bytes on disk delivering 4,003, so 70% of what its owner wrote never reached a session;
+    #   · a workspace with no session records at all, where "where the last session stopped" is
+    #     empty every time by construction and the morning's work is gone by the evening.
+    #
+    # Each is invisible from every number a person would think to check: that second workspace's
+    # block was 7,997 bytes against a 9,000 ceiling with no section dropped. Nobody can be asked to
+    # count bytes against a budget they have never seen.
+    #
+    # One paragraph, assembled as a list and printed once. This screen is opened to answer one
+    # question, and the suite holds it under eighty print calls for that reason.
+    _short = []
+    if _rp_title:
+        _short.append(
+            f"{len(_rp_title)} of {len(_rp_fit) + len(_rp_title)} rule(s) reach a session as a "
+            f"title only ({_rp_chars:,} characters against a {_rp_budget:,} budget): "
+            + ", ".join(mdblock.as_quoted(_t, 40) for _t in _rp_title[:3])
+            + (f" +{len(_rp_title) - 3} more" if len(_rp_title) > 3 else "")
+            + ". A rule about a KIND of work belongs in `.chamnan/skills/`, read when that work "
+              "starts; one that applies with no task in progress stays here, and "
+              "`rules_char_budget` is what gives it room.")
+    try:
+        _st_file = ws.workspace(root) / "STATE.md"
+        _st_raw = _st_file.read_text(encoding="utf-8-sig", errors="replace") if _st_file.is_file() else ""
+        # Rendered the way the hook renders it, with the same budget, so this cannot drift from what
+        # a session is handed. `age_out` is deliberately not applied: it removes sections somebody
+        # let go stale, which is a different question from what the budget cut.
+        _st_sent = len(state_mod.render(
+            _st_raw, ws.load_config(root).get("state_token_budget", 1700), "STATE.md")[0].encode()
+        ) if _st_raw else 0
+        _st_disk = len(_st_raw.encode())
+    except Exception:
+        _st_disk = _st_sent = 0
+    if _st_disk and _st_sent and _st_sent < _st_disk * 0.8:
+        _short.append(
+            f"STATE.md is {_st_disk:,} bytes and {_st_sent:,} of them reach a session "
+            f"({_st_sent * 100 // _st_disk}%). The rest is named at the end of that section and "
+            f"nothing fetches it. What belongs there is what is OPEN — settled decisions, "
+            f"boundaries and how-to belong in `memory/` and `skills/`, read when they apply.")
+    try:
+        _sess_n = len(list((ws.workspace(root) / "sessions").glob("*.md")))
+    except OSError:
+        _sess_n = 0
+    if not _sess_n:
+        _short.append(
+            "No session records at all, so \"where the last session stopped\" is empty every time "
+            "and yesterday's work reaches today only if somebody typed it into STATE.md. "
+            "`/chamnan:resume` at the end of a session is what fills it.")
+    if _short:
+        print("\nWhat this workspace is not delivering\n  " + "\n  ".join(_short))
+
     try:
         _rc_titled = memory.rules_with_titles(root)
         _rc_results = rulecheck.run(root, _rc_titled) if _rc_titled else []

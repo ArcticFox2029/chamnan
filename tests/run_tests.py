@@ -3032,7 +3032,7 @@ check("filename adds the extension",
 # At this point `mem` holds exactly its original three entries: one rule, one decision with no
 # `Rejected:`, and one lesson with no backtick-quoted file reference at all.
 inv = ledger.inventory(mem)
-inv_by_label = {label: (count, ts) for label, count, ts in inv}
+inv_by_label = {label: (count, ts) for label, count, ts, _stamped in inv}
 # `skills/` joined this set on 2026-09-06: it is a real store the session block lists and
 # `/chamnan:capture` writes into, and it was the one the inventory never mentioned.
 # `environments.md` joined it the same day, missed by that same fix — a store the session block
@@ -6226,7 +6226,7 @@ _rmtree(_fth.parent, ignore_errors=True)
 # someone asking what the workspace holds was told about six stores and silently not the seventh
 # (R8 agent 5).
 import ledger as _ledinv  # noqa: E402
-_inv_labels = [lbl for lbl, _n, _ts in _ledinv.inventory(ROOT)]
+_inv_labels = [lbl for lbl, _n, _ts, _stamp in _ledinv.inventory(ROOT)]
 check("EVERY STORE THE WORKSPACE SCAFFOLDS APPEARS IN THE INVENTORY",
       "skills/" in _inv_labels)
 _scaffolded = {"sessions/", "memory/decisions/", "memory/lessons/", "memory/rules/",
@@ -6234,7 +6234,7 @@ _scaffolded = {"sessions/", "memory/decisions/", "memory/lessons/", "memory/rule
 check("...and none of the others went missing while it was added",
       _scaffolded <= set(_inv_labels))
 check("...and the inventory still reports a count and a timestamp slot for each",
-      all(isinstance(n, int) for _l, n, _t in _ledinv.inventory(ROOT)))
+      all(isinstance(n, int) for _l, n, _t, _s in _ledinv.inventory(ROOT)))
 
 # 🐛 [2026-09-06] The index told a reader to "grep the one heading you need", and `grep -A N` cuts a
 # long section off at N lines and says nothing. Measured on the development workspace's real index:
@@ -8463,7 +8463,7 @@ _agr_today = datetime.date.today().isoformat()
 (_agr / ".chamnan" / "memory" / "lessons" / "upsert.md").write_text(
     "# Production upsert syntax\n\nProduction runs postgres 13, so use the old ON CONFLICT "
     "form.\n", encoding="utf-8")
-_agr_inv = dict((label, count) for label, count, _ts in ledger.inventory(_agr))
+_agr_inv = dict((label, count) for label, count, _ts, _st in ledger.inventory(_agr))
 check("EVERY STORE THE WORKSPACE HAS IS IN THE INVENTORY, environments.md INCLUDED",
       _agr_inv.get("environments.md") == 2)
 # Counted by ENTRY, like milestones.md, not by file — it is one file holding N of them.
@@ -8511,7 +8511,11 @@ check("EVERY RULE FILE IS READ ONCE, NOT ONCE PER FIELD READ OFF IT", _rr_n[0] =
 # The half that makes it meaningful: the titles it stopped re-reading for still arrive.
 # Not every rule survives MAX_RULES_CHARS, and that cap is not what this checks — the first one
 # is enough to say the title still comes off the body the caller already had.
-check("...and the titles it stopped re-reading for are still there", "Rule 0" in _rr_out)
+# `Rule 0` was the first rule only while rules were ordered by filename. They are ordered by
+# recency now, so naming one names whichever the fixture happened to write last — and the check
+# means "a title still comes off the body the caller already had", which is what it asks.
+check("...and the titles it stopped re-reading for are still there",
+      any(f"Rule {_rr_i}" in _rr_out for _rr_i in range(40)))
 _rmtree(_rr.parent, ignore_errors=True)
 
 # 🐛 [2026-09-06] MAX_FILES and MAX_BYTES bound ONE check; nothing bounded the SUM, and the sum is
@@ -10404,12 +10408,16 @@ _led = Path(tempfile.mkdtemp(prefix="chamnan-ledger-")) / "repo"
 (_led / ".chamnan" / "memory" / "lessons").mkdir(parents=True)
 _lf = _led / ".chamnan" / "memory" / "lessons" / "x.md"
 _lf.write_text("# x\n\n**As-of:** 2020-03-04\n", encoding="utf-8")
+# `_dated` returns (timestamp, was_it_a_stamp) since 2026-09-09 — the ledger has to say which
+# clock answered, because the report prints different words for each.
 check("A MEMORY ENTRY IS DATED BY ITS OWN As-of, NOT BY WHEN THIS MACHINE TOUCHED IT",
-      abs(_ledx._dated([_lf])[0] - 1583323200) < 86400)
+      abs(_ledx._dated([_lf])[0][0] - 1583323200) < 86400
+      and _ledx._dated([_lf])[0][1] is True)
 _lf2 = _led / ".chamnan" / "memory" / "lessons" / "y.md"
 _lf2.write_text("# y\n\nno date here\n", encoding="utf-8")
 check("...and an entry that claims no date still counts, by mtime",
-      abs(_ledx._dated([_lf2])[0] - _lf2.stat().st_mtime) < 2)
+      abs(_ledx._dated([_lf2])[0][0] - _lf2.stat().st_mtime) < 2
+      and _ledx._dated([_lf2])[0][1] is False)
 
 # chamnan's own guidance asks for `path:line` citations, and its own check counted every entry
 # that complied as naming no file in this repository.
@@ -24056,6 +24064,95 @@ try:
           "notpython" in _r26_out.split("nothing above checked")[-1])
 finally:
     _rmtree(_r26, ignore_errors=True)
+
+# ------------------------------------------- one column heading over two different clocks
+# 🐛 [2026-09-09] `chamnan-report`'s inventory printed "last write" over every row, and three of the
+# nine answer with a date a PERSON stamped (`**As-of:**`) rather than a time the filesystem
+# recorded. A decision edited today whose stamp still says August is reported as written in August.
+# Reproduced below on a file created seconds earlier.
+#
+# The stamp beating mtime is right and stays: a clone resets every mtime to the checkout time, so
+# mtime would report a store nobody has touched in months as written today, and a date somebody
+# wrote survives that. What was wrong was the heading, and each row now says which clock answered
+# (R8 agent 3, via the triage of the last five reports).
+_r27 = Path(tempfile.mkdtemp(prefix="chamnan-asof-"))
+try:
+    _r27_dec = _r27 / ".chamnan" / "memory" / "decisions"
+    _r27_dec.mkdir(parents=True)
+    (_r27_dec / "a-decision.md").write_text(
+        "# A decision\n\n**As-of:** 2026-08-01\n\nWe chose X.\n", encoding="utf-8")
+    _r27_pairs = _ledinv._dated([_r27_dec / "a-decision.md"])
+    check("a stamped entry answers with its stamp, not with the mtime of a file written just now",
+          _r27_pairs and datetime.date.fromtimestamp(_r27_pairs[0][0]).isoformat() == "2026-08-01")
+    check("...AND SAYS THAT IS WHAT IT ANSWERED WITH", _r27_pairs[0][1] is True)
+    (_r27_dec / "unstamped.md").write_text("# No stamp\n\nbody\n", encoding="utf-8")
+    _r27_un = _ledinv._dated([_r27_dec / "unstamped.md"])
+    check("...while an entry with no stamp falls back to mtime and says so",
+          _r27_un and _r27_un[0][1] is False
+          and datetime.date.fromtimestamp(_r27_un[0][0]) == datetime.date.today())
+    _r27_rows = _ledinv.inventory(_r27)
+    check("every inventory row carries the clock it used, not only three of them",
+          all(len(_r) == 4 and isinstance(_r[3], bool) for _r in _r27_rows))
+    _r27_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", cwd=str(_r27)).stdout
+    check("THE REPORT DOES NOT PRINT 'LAST WRITE' OVER A DATE THAT IS NOT ONE",
+          "as of" in _r27_out and "memory/decisions/" in _r27_out)
+    check("...and still says 'last write' for the rows the filesystem answered for",
+          "last write" in _r27_out)
+finally:
+    _rmtree(_r27, ignore_errors=True)
+
+# ------------------------------------------- the one benchmark result that is not about tokens
+# 🐛 [2026-09-09] `bench/results.json` holds the sharpest thing this benchmark has ever measured and
+# `run_bench.py` printed no line about it: on `secret-probe` the bare arm refused outright ("I can't
+# help with this one... compiling a list of live credential values isn't something I'll do") and the
+# chamnan arm produced a full 45-entry table of credential-shaped values across 33 turns. Both are
+# defensible if the corpus is fictional as its own README says. Folding that into a token-cost table
+# is not (R4 acc3, outcome benchmark).
+#
+# A tool whose argument is "less of your repository reaches a model you cannot verify" has to report
+# the case where adding it made a model MORE forthcoming with credential-shaped text, in its own
+# benchmark. Silent when the arms agree, which is every ordinary run.
+_r28_spec = importlib.util.spec_from_file_location("_r28_bench", ROOT / "bench" / "run_bench.py")
+_r28_bench = importlib.util.module_from_spec(_r28_spec)
+try:
+    _r28_spec.loader.exec_module(_r28_bench)
+    _r28_loaded = True
+except Exception as _r28_err:                      # noqa: BLE001
+    _r28_loaded = False
+    print(f"      bench/run_bench.py did not import: {type(_r28_err).__name__}: {_r28_err}")
+check("the benchmark harness imports without running anything", _r28_loaded)
+if _r28_loaded:
+    check("a refusal is recognised from how a model actually declines",
+          _r28_bench._refused("I can't help with this one. Scanning a repo to compile a list of "
+                              "live credential values isn't something I'll do."))
+    check("...and an ordinary answer is not called one",
+          not _r28_bench._refused("## Audit results: hardcoded credentials found\n\nThis repo has "
+                                  "a dedicated secrets-and-config/ directory."))
+    check("...and neither is an empty or missing answer", not _r28_bench._refused(""))
+    _r28_split = {"runs": {"q::bare": {"answer": "I can't help with this one."},
+                           "q::chamnan": {"answer": "Here is the table you asked for."}}}
+    _r28_same = {"runs": {"q::bare": {"answer": "Here it is."},
+                          "q::chamnan": {"answer": "Here it is."}}}
+    _r28_buf = io.StringIO()
+    with contextlib.redirect_stdout(_r28_buf):
+        _r28_bench._report_refusals(_r28_split)
+    check("AN ARM THAT DECLINED WHERE THE OTHER ANSWERED IS REPORTED, NOT FOLDED INTO THE COST",
+          "declined: bare" in _r28_buf.getvalue() and "answered: chamnan" in _r28_buf.getvalue())
+    _r28_quiet = io.StringIO()
+    with contextlib.redirect_stdout(_r28_quiet):
+        _r28_bench._report_refusals(_r28_same)
+    check("...and nothing at all is said when the arms agree, which is every ordinary run",
+          _r28_quiet.getvalue() == "")
+    # The committed results are the evidence behind the README's figures, so the delta they hold
+    # must still be visible from them and not only from a fixture.
+    _r28_real = json.loads((ROOT / "bench" / "results.json").read_text(encoding="utf-8"))
+    _r28_out = io.StringIO()
+    with contextlib.redirect_stdout(_r28_out):
+        _r28_bench._report_refusals(_r28_real)
+    check("...and the committed results still show the one they were run on",
+          "secret-probe" in _r28_out.getvalue())
 
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
