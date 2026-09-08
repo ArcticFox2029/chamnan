@@ -83,6 +83,67 @@ def record(root, body, ceiling=None, when=None):
         return False
 
 
+# How many earlier records a judgement is made against. Ten sessions is a few days of ordinary
+# use — long enough that one unusual block does not move the median, short enough that a section
+# deliberately switched off last week is not still expected today.
+WINDOW = 10
+# Below this share of the trailing median, a block did not get smaller, something went missing.
+# Chosen from the defect it is named for: a tools-index bug dropped ~257 bytes from an ~8,900-byte
+# block, which is 3% of it — anything remotely near half is far past ordinary variation.
+COLLAPSE_SHARE = 0.5
+# A section has to have been there for at least this share of the window before its absence counts
+# as a loss. Without it, a section that appeared once is reported as "dropped" on the very next run.
+PRESENT_ENOUGH = 0.5
+
+
+def check(root, window=WINDOW):
+    """What changed about the SHAPE of the last block that a person would want told.
+
+    A list of sentences, empty when there is nothing to say — the silence-on-no-news convention
+    `pointer.py` and `ledger.py` already keep. Judged against the records before it rather than
+    against a fixed number, because "8,900 bytes" is normal for one repository and impossible for
+    another.
+
+    🐛 [2026-09-08] This module's docstring names three real defects, each unnoticed for hours, and
+    says they are "obvious in a column of numbers" — and nothing ever looked at the column.
+    `chamnan-report` printed the sizes and a ceiling warning, which catches a block growing TOO BIG
+    and none of the three: a truncated block, a byte collapse, a section silently gone. Replayed
+    over this repository's own 36 real records the three checks fire zero times, and substituting
+    one field to recreate each defect fires exactly the right one (R7 agent 5, whose prototype this
+    is).
+    """
+    records = trend(root, last=window + 1)
+    if not records:
+        return []
+    now, prior = records[-1], records[:-1]
+    out = []
+    if now.get("early"):
+        out.append("the last block stopped early — it was cut, not shortened, so everything "
+                   "after the cut never reached the session")
+    sizes = [r["bytes"] for r in prior if isinstance(r.get("bytes"), int)]
+    size_now = now.get("bytes")
+    if sizes and isinstance(size_now, int):
+        ordered = sorted(sizes)
+        mid = len(ordered) // 2
+        median = ordered[mid] if len(ordered) % 2 else (ordered[mid - 1] + ordered[mid]) / 2
+        if median and size_now < median * COLLAPSE_SHARE:
+            out.append(f"the last block was {size_now:,} bytes against a recent median of "
+                       f"{median:,.0f} — a {100 - int(size_now * 100 // max(median, 1))}% drop, which is "
+                       f"content missing rather than content shrinking")
+    if prior:
+        seen = {}
+        for r in prior:
+            for name in (r.get("sec") or {}):
+                seen[name] = seen.get(name, 0) + 1
+        floor = len(prior) * PRESENT_ENOUGH
+        gone = sorted(n for n, c in seen.items()
+                      if c >= floor and n not in (now.get("sec") or {}))
+        if gone:
+            out.append("section(s) the last block did not carry, having carried them in at least "
+                       "half of the ten before it: " + ", ".join(gone))
+    return out
+
+
 def trend(root, last=10):
     """The most recent records, oldest first. For `chamnan-report`, and for a person asking
     "did something change?" — which is the only question this log exists to answer."""

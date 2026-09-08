@@ -598,6 +598,12 @@ def print_block_trend(root):
         print(f"  ⚠ within {ceiling - now:,} bytes of the ceiling. Sections are being dropped to")
         print("    fit — `chamnan-map --explain` names which, and `.chamnan/config.json` turns off")
         print("    the ones this repository does not need.")
+    # 🐛 [2026-09-08] The lines above answer "is the block too big", which is one of four questions
+    # this log can answer and the only one that was being asked. The other three are the defects
+    # `blocklog.py`'s own docstring was written around — a cut block, a byte collapse, a section
+    # gone — and each of them went unnoticed for hours when it really happened (R7 agent 5).
+    for _finding in blocklog.check(root):
+        print(f"  ⚠ {_finding}")
 
 
 def print_usage(root):
@@ -639,9 +645,22 @@ def print_usage(root):
     if tools:
         print("\nPromoted tools")
         twidth = max(len(name) for name, _ in tools)
+        # 🐛 [2026-09-08] `runs` was the only field printed, and two more were being written on
+        # every call. `stderr_seen` is a WEAK signal by this module's own account -- plenty of
+        # correct commands write progress there -- so it is said only when it is every run and
+        # there have been enough runs to mean something, the same high bar `workflows.REPEAT_AT`
+        # keeps for its own noisy signal. `interrupted` needs no threshold: a command the user
+        # stopped is an unambiguous fact, and what it MEANS is still theirs to decide (R7 agent 5).
+        _signals = tools_index.signals(root)
         for name, runs in tools:
+            _r, _int, _err = _signals.get(name, (runs, 0, 0))
+            _note = ""
+            if _int:
+                _note += f" · {_int} interrupted"
+            if runs >= 3 and _err == runs:
+                _note += " · wrote to stderr every run"
             print(f"  {mdblock.as_quoted(name, 60):<{twidth}}   "
-                  f"{runs:>3} run{'s' if runs != 1 else ''}")
+                  f"{runs:>3} run{'s' if runs != 1 else ''}{_note}")
     # 🐛 [2026-09-08] `runs` is incremented by `record_call`, which only ever fires for a name in
     # `tools/index.json`, and the only two writers of that file are `chamnan-promote` and
     # `chamnan-candidates promote`. A script a person DROPPED INTO `tools/` -- which this project's

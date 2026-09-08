@@ -292,6 +292,24 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
     return entry, (now_flaggable and not was_flaggable)
 
 
+def signals(root):
+    """`{name: (runs, interrupted, stderr_seen)}` — the two fields `usage()` leaves behind.
+
+    🐛 [2026-09-08] `record_call()` has been maintaining `interrupted` and `stderr_seen` since
+    Stage 10, this module's docstring calls them "the two honest signals", and `usage()` — the one
+    function anything reads this file back with — returns `(name, runs)` and drops both. Measured
+    on this repository: `extract_findings.py` wrote to stderr on all ten of its recorded runs and
+    `chamnan-report` said "10 runs", so noticing it meant knowing `tools/index.json` exists and
+    computing the ratio by hand (R7 agent 5).
+
+    A separate function rather than a wider `usage()`: that one's two-tuple shape is asserted in
+    the suite and read by a caller that wants exactly it, and widening a return type to add a field
+    one caller needs is how a signature ends up meaning two things.
+    """
+    return {e["name"]: (e.get("runs", 0), e.get("interrupted", 0), e.get("stderr_seen", 0))
+            for e in load(root)}
+
+
 def usage(root):
     """(name, runs) for every registered tool, in registration order — the read side of the `runs`
     counter `record_call()` writes on every matched Bash call. Stage 11's whole job here: this

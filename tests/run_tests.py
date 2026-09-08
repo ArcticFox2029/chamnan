@@ -23657,6 +23657,107 @@ finally:
     _rmtree(_r16, ignore_errors=True)
 
 
+# ------------------------------------------- the column of numbers nobody read
+# 🐛 [2026-09-08] `blocklog.py`'s docstring names three real defects, each unnoticed for hours, and
+# says they are "obvious in a column of numbers" — and nothing looked at the column.
+# `chamnan-report` printed sizes and a ceiling warning, which catches a block growing too BIG and
+# none of the three: a cut block, a byte collapse, a section silently gone (R7 agent 5).
+import blocklog as _bl
+
+
+def _r17_log(records):
+    """A workspace whose block-shape log holds exactly these records."""
+    d = Path(tempfile.mkdtemp(prefix="chamnan-blocklog-"))
+    (d / ".chamnan" / "logs").mkdir(parents=True)
+    (d / ".chamnan" / "logs" / "block_shape.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    return d
+
+
+_r17_healthy = [{"bytes": 8900 + _i, "sec": {"Architecture index": 4000, "Rules": 900},
+                 "early": False} for _i in range(11)]
+_r17_dirs = []
+try:
+    _r17_a = _r17_log(_r17_healthy)
+    _r17_dirs.append(_r17_a)
+    check("a healthy run of blocks says nothing at all", _bl.check(_r17_a) == [])
+
+    _r17_cut = [dict(_r) for _r in _r17_healthy]
+    _r17_cut[-1]["early"] = True
+    _r17_b = _r17_log(_r17_cut)
+    _r17_dirs.append(_r17_b)
+    check("A BLOCK THAT WAS CUT RATHER THAN SHORTENED IS REPORTED",
+          any("stopped early" in _f for _f in _bl.check(_r17_b)))
+
+    _r17_drop = [dict(_r) for _r in _r17_healthy]
+    _r17_drop[-1] = dict(_r17_drop[-1], **{"bytes": 257})
+    _r17_c = _r17_log(_r17_drop)
+    _r17_dirs.append(_r17_c)
+    _r17_said = _bl.check(_r17_c)
+    check("...and so is a collapse against the recent median, with both numbers",
+          any("257" in _f and "8,9" in _f and "drop" in _f for _f in _r17_said))
+
+    _r17_gone = [dict(_r, sec=dict(_r["sec"])) for _r in _r17_healthy]
+    _r17_gone[-1]["sec"].pop("Rules")
+    _r17_d = _r17_log(_r17_gone)
+    _r17_dirs.append(_r17_d)
+    check("...and a section that was there all along and is not any more",
+          any("Rules" in _f and "did not carry" in _f for _f in _bl.check(_r17_d)))
+
+    # The half that keeps it from firing on ordinary use: a section seen once is not "dropped".
+    _r17_rare = [dict(_r, sec=dict(_r["sec"])) for _r in _r17_healthy]
+    _r17_rare[0]["sec"]["Environments"] = 300
+    _r17_e = _r17_log(_r17_rare)
+    _r17_dirs.append(_r17_e)
+    check("...while a section that appeared once is not called a loss", _bl.check(_r17_e) == [])
+    check("...and a workspace with no log at all is silent rather than an error",
+          _bl.check(Path(tempfile.gettempdir()) / "chamnan-no-such-workspace-r17") == [])
+finally:
+    for _d in _r17_dirs:
+        _rmtree(_d, ignore_errors=True)
+
+# ------------------------------------------- two signals written every call and printed nowhere
+# 🐛 [2026-09-08] `record_call()` has maintained `interrupted` and `stderr_seen` since Stage 10 —
+# this module's docstring calls them "the two honest signals" — and `usage()`, the one function
+# anything reads the file back with, returns `(name, runs)` and drops both. Measured on this
+# repository: a tool wrote to stderr on all ten of its runs and the report said "10 runs".
+_r17_ti = Path(tempfile.mkdtemp(prefix="chamnan-signals-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_r17_ti)], capture_output=True)
+    (_r17_ti / "a.py").write_text("# a\nx = 1\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
+                   cwd=str(_r17_ti))
+    for _name in ("noisy.sh", "quiet.sh", "stopped.sh", "toofew.sh"):
+        tools_index.register(_r17_ti, {"name": _name, "desc": "x"})
+    for _ in range(4):
+        tools_index.record_call(_r17_ti, "noisy.sh", stderr_nonempty=True)
+        tools_index.record_call(_r17_ti, "quiet.sh")
+    tools_index.record_call(_r17_ti, "stopped.sh", interrupted=True)
+    for _ in range(2):
+        tools_index.record_call(_r17_ti, "toofew.sh", stderr_nonempty=True)
+
+    _r17_sig = tools_index.signals(_r17_ti)
+    check("THE TWO SIGNALS ARE READABLE, NOT ONLY WRITABLE",
+          _r17_sig["noisy.sh"] == (4, 0, 4) and _r17_sig["stopped.sh"][1] == 1)
+    check("...and usage() keeps the two-tuple its own callers ask for",
+          all(len(_t) == 2 for _t in tools_index.usage(_r17_ti)))
+
+    _r17_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", cwd=str(_r17_ti)).stdout
+    _r17_line = {ln.split()[0].strip("`"): ln for ln in _r17_out.split("\n")
+                 if ln.strip().startswith(("noisy", "quiet", "stopped", "toofew", "`"))}
+    check("a tool that wrote to stderr on every run is said so", "stderr every run" in _r17_out)
+    check("...and one that did not is left alone",
+          "quiet.sh" in _r17_out and "stderr" not in _r17_line.get("quiet.sh", ""))
+    check("...and a stopped run is reported with no threshold at all",
+          "1 interrupted" in _r17_out)
+    check("...while two runs out of two is below the bar this signal is kept quiet under",
+          "stderr" not in _r17_line.get("toofew.sh", ""))
+finally:
+    _rmtree(_r17_ti, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
