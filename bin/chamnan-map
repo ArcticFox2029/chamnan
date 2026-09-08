@@ -67,6 +67,12 @@ HOOK_BODY = """{marker}
 # Keeps .chamnan/MAP.md in step with the code. A stale index is worse than none: it is confidently
 # wrong, and the next session believes it. Never fails a commit — if chamnan errors, the commit
 # proceeds and the index is simply not refreshed.
+# ACDR is Added, Copied, Deleted, Renamed -- deliberately not M. Editing a file leaves the index
+# behind, and that is the accepted half of the trade: measured on this repository, 297 of 355
+# non-merge commits (83.7%) touch only existing files, and the rebuild is a FULL rescan, 107s on
+# 1,032 files, in the foreground of the commit. Running it on every M would put two minutes between
+# a person and their commit, most of the time. The staleness is covered instead by the session-start
+# warning, and `chamnan-map --install-git-hook` says all of this out loud at install time.
 if command -v chamnan-map >/dev/null 2>&1; then
   if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
     chamnan-map >/dev/null 2>&1 || true

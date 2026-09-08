@@ -4485,6 +4485,13 @@ for chunk in plain_for_price.split("\n### "):
         rules_chunk = "\n### " + chunk.rstrip() + "\n"
         break
 reported = re.search(r"Rules this repository works under\s+([\d,]+)", priced)
+# 🐛 [2026-09-08] The two checks below sat behind a bare `if` with no else, so a change to the
+# heading text or to the accounting format would stop running them and the suite would stay green
+# with nothing said. The population is asserted instead of skipped, because unlike the
+# live-workspace check above this is not an environment condition -- the fixture always produces
+# both, and their absence IS the regression (R4 acc3 backlog triage, ranked first of the round).
+check("the priced-section fixture still produces a rules section and a reported figure to check",
+      bool(rules_chunk) and bool(reported))
 if rules_chunk and reported:
     want = round(_tok.estimate(rules_chunk))
     got = int(reported.group(1).replace(",", ""))
@@ -4660,6 +4667,11 @@ _rmtree(oldws.parent, ignore_errors=True)
 # The report must add up: what it attributes to sections plus the remainder is the real total.
 nums = [int(x.replace(",", "")) for x in re.findall(r"^\s*\S.*?\s(\d[\d,]*)\s{3}", r.stdout, re.M)]
 total_m = re.search(r"— ([\d,]+) tokens injected", r.stdout)
+# Same shape, same reason: `--explain` always prints per-section figures and a total on this
+# fixture, so parsing neither means the report format moved, not that there was nothing to add up.
+check(f"--explain still prints per-section figures and a total to reconcile: "
+      f"{len(nums)} figures, total {'found' if total_m else 'MISSING'}",
+      bool(total_m) and bool(nums))
 if total_m and nums:
     check("the section costs and the remainder add up to the reported total",
           sum(nums) == int(total_m.group(1).replace(",", "")))
@@ -20184,6 +20196,49 @@ check("...while two genuinely different names are still two",
 _thai = "\u0e19\u0e42\u0e22\u0e1a\u0e32\u0e22-\u0e01\u0e32\u0e23\u0e40\u0e07\u0e34\u0e19"
 check("...and Thai text has no NFC/NFD twin to collide with",
       _ud.normalize("NFC", _thai) == _ud.normalize("NFD", _thai))
+
+# Derived: which of the named listings actually call case_collisions. Read from source so a fourth
+# store added later shows up as a missing key rather than as silence.
+_collision_callers = {}
+for _cp in (ROOT / "lib" / "memory.py", ROOT / "hooks" / "chamnan_session_start.py"):
+    _csrc = _cp.read_text(encoding="utf-8")
+    try:
+        _ctree = ast.parse(_csrc)
+    except SyntaxError:
+        continue
+    for _cn in ast.walk(_ctree):
+        if isinstance(_cn, ast.FunctionDef):
+            _collision_callers.setdefault(_cn.name, []).append(
+                ast.get_source_segment(_csrc, _cn) or "")
+# The skills listing lives inside one long hook function, so it is matched by its own marker rather
+# than by a function name: the block that builds the skills section.
+_hook_src = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_sk_start = _hook_src.find('(wsdir / "skills").glob("*.md")')
+_collision_callers["skills"] = [_hook_src[_sk_start:_sk_start + 3000]] if _sk_start >= 0 else []
+check("the skills listing was located in the hook, so the check below has a subject",
+      bool(_collision_callers["skills"]))
+
+# 🐛 [2026-09-08] `case_collisions` guards the stores whose filenames a PERSON types. It was wired
+# into rules and into decisions/lessons, and not into the skills listing -- the fourth member of
+# that set, and the one a report had flagged without anyone building a fixture for it.
+#
+# Built one: writing `café-deploy.md` precomposed and then decomposed left ONE file on this
+# machine's APFS, the first name carrying the second file's content, and the session block printed
+# `café-deploy.md — Completely different content.` with nothing to say a skill had been destroyed.
+#
+# The set is NOT every store that globs `*.md`. `candidates` and `timeline` derive their filename
+# through a `slug()` that already reduces to lowercase ASCII, so a collision there is an EXACT name
+# clash their own guards handle and `case_collisions` could never fire on. Wiring it in would have
+# read as coverage while covering nothing -- which is why this check names the four by the property
+# that matters (a hand-typed filename) rather than by the glob they share.
+_typed_name_stores = ("rules_text", "titles", "skills")
+_scs = [n for n in _typed_name_stores
+        if any("case_collisions" in _seg for _seg in _collision_callers.get(n, []))]
+check(f"EVERY STORE WITH HAND-TYPED FILENAMES CHECKS FOR A COLLAPSING NAME PAIR: {_scs}",
+      len(_scs) == len(_typed_name_stores))
+for _n in _typed_name_stores:
+    if _n not in _scs:
+        print(f"      a person names these files and nothing warns when two collapse: {_n}")
 
 # 🐛 [2026-09-06] All four `slug()` functions ended `... or "session"` / `"entry"` / `"thread"` /
 # `"candidate"` — the same latent bug written four times. The reduction keeps `[a-zA-Z0-9]` and
