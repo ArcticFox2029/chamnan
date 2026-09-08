@@ -67,7 +67,7 @@ def directory(root):
 # a narrower collision is the wrong trade (R13 agent 3).
 def slug(sequence):
     joined = "-".join(sequence)
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", joined.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(joined)
     return mdblock.filename_safe(s[:60].rstrip("-")
                                  or mdblock.fallback_name(joined, "candidate"))
 

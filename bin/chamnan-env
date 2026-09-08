@@ -67,7 +67,7 @@ def cmd_list(root):
 
 def cmd_show(root, name):
     for e in env.entries(root):
-        if e["name"].lower() == name.lower():
+        if mdblock.canonical_title(e["name"]) == mdblock.canonical_title(name):
             print(env.render_entry(
                 e["name"], e["platform"],
                 ", ".join(f"{k} {v}" for k, v in sorted(e["versions"].items())),
@@ -88,7 +88,8 @@ def cmd_set(root, name, platform, versions, constraints, checked):
     if ws.refuse_to_write():
         return 1
     prior = next((e for e in env.entries(root)
-                  if e["name"].strip().lower() == name.strip().lower()), None)
+                  if mdblock.canonical_title(e["name"])
+                  == mdblock.canonical_title(name)), None)
     if prior:
         if platform is None:
             platform = prior["platform"]

@@ -15081,11 +15081,43 @@ check("junie reads its own directory, not the root AGENTS.md",
 check("...which is a different file from the one generic writes",
       adapters_mod.for_agent("junie").TARGET != adapters_mod.for_agent("generic").TARGET)
 
-# `.goosehints` has no suffix. An ignore rule written as `*.goosehints` never matches it, which is
-# the kind of thing that is only found after the file is committed.
+# 🐛 [2026-09-08] The comment here claimed `*.goosehints` "never matches" a file with no suffix, and
+# the check asserted the ignore line does not start with `*` as if that were the reason. Both were
+# wrong and both shipped: git's `*` matches the empty string, so `*.goosehints` ignores
+# `.goosehints` perfectly well. The check passed on correct code for an incorrect reason, which is
+# the failure that survives longest -- nothing ever goes red to correct it.
+#
+# The leading slash is still right, for the opposite reason: it is the only form that ignores THIS
+# file and nothing else. Driven through git rather than asserted, because that is what got this
+# wrong the first time.
+_gi = Path(tempfile.mkdtemp(prefix="chamnan-gooseignore-"))
+subprocess.run(["git", "init", "-q", str(_gi)], capture_output=True)
+(_gi / ".goosehints").write_text("root\n", encoding="utf-8")
+(_gi / "sub").mkdir()
+(_gi / "sub" / ".goosehints").write_text("a developer's own, deliberately\n", encoding="utf-8")
+
+
+def _ignored_under(rule):
+    (_gi / ".gitignore").write_text(rule + "\n", encoding="utf-8")
+    out = subprocess.run(["git", "-C", str(_gi), "status", "--porcelain", "--ignored"],
+                         capture_output=True, text=True,
+                         encoding="utf-8", errors="replace").stdout
+    return sorted(line[3:].strip() for line in out.splitlines() if line.startswith("!!"))
+
+
 _goose_line = adapters_mod.ignore_line("goose")
-check("the goose ignore line matches a file with no extension",
-      _goose_line == "/.goosehints" and not _goose_line.startswith("*"))
+check("the goose ignore line is anchored to the repository root",
+      _goose_line == "/.goosehints")
+check("...and git really does ignore chamnan's own file with it",
+      ".goosehints" in _ignored_under(_goose_line))
+check("...AND LEAVES A DEVELOPER'S OWN NESTED .goosehints ALONE, WHICH IS THE POINT",
+      "sub/" not in _ignored_under(_goose_line))
+# The claim this replaced, tested rather than believed: the star form is not broken, it is too wide.
+check("the `*` form is not broken — the old comment said it was",
+      ".goosehints" in _ignored_under("*.goosehints"))
+check("...it is too WIDE, which is the real reason not to use it",
+      "sub/" in _ignored_under("*.goosehints"))
+_rmtree(_gi, ignore_errors=True)
 
 # Every module must be reachable and every alias must land somewhere real -- a typo in either
 # table produces a name that accepts --write and then does nothing.
@@ -20198,6 +20230,104 @@ check("...and the fallback stem is plain ASCII a filesystem cannot object to",
       _fb.isascii() and not (set(_fb) & _WINDOWS_FORBIDS))
 check("...and candidates, whose input is a command sequence, is in the set too",
       _cand.slug(["\u0e17\u0e14\u0e2a\u0e2d\u0e1a"]) != _cand.slug(["\u0e23\u0e32\u0e22\u0e07\u0e32\u0e19"]))
+
+# 🐛 [2026-09-08] The SAME four functions, the other half of the same line. The reduction ran on the
+# RAW title, while the `fallback_name` beside it normalised first and said in its docstring why --
+# so the rule was applied on the branch where a title has no Latin letters and skipped on the branch
+# that names the file. A precomposed `Café migration` reduced to `caf-migration` (the lone é is not
+# in `[a-zA-Z0-9]`, so it became a separator) and its decomposed twin to `cafe-migration` (the bare
+# `e` survived, only the combining accent went). Which form a title arrives in is not the writer's
+# choice: macOS input, a paste out of a browser and a file read off HFS+ disagree. Reproduced
+# end-to-end through `chamnan-timeline new` -- one person, one thread name, two threads on disk,
+# both listed under the same title (R3, from a report that proposed the wrong fix for it).
+_accent_pairs = [(_ud.normalize("NFC", "Café migration"), _ud.normalize("NFD", "Café migration")),
+                 (_ud.normalize("NFC", "naïve retry"), _ud.normalize("NFD", "naïve retry"))]
+check("the accent fixture really is two different byte strings",
+      all(a != b for a, b in _accent_pairs))
+for _label, _fn, _wrap in (("sessions", _sess.slug, False), ("memory", _mem.slug, False),
+                           ("timeline", _tlm.slug, False), ("candidates", _cand.slug, True)):
+    for _a, _b in _accent_pairs:
+        _x, _y = ([_a], [_b]) if _wrap else (_a, _b)
+        check(f"ONE TITLE TYPED TWO WAYS IS ONE FILENAME: {_label} {_a.split()[0]!r}",
+              _fn(_x) == _fn(_y))
+    _one = _fn(["Café migration"] if _wrap else "Café migration")
+    check(f"...and the accented letter survives as its base letter, not as a hyphen: {_label}",
+          _one == "cafe-migration")
+# Derived from source, so a fifth slug() written the old way is caught rather than missed. The
+# population is asserted for the same reason the audit above asserts its own.
+_raw_reducers = [n for n, _ in _slug_owners]
+_via_helper = []
+for _sp, _ssrc in _runtime_sources():
+    try:
+        _stree = ast.parse(_ssrc)
+    except (SyntaxError, ValueError):
+        continue
+    for _sn in ast.walk(_stree):
+        if isinstance(_sn, ast.FunctionDef) and _sn.name == "slug":
+            _sbody = ast.get_source_segment(_ssrc, _sn) or ""
+            _via_helper.append((_sp.name, "ascii_stem" in _sbody
+                                and "[^a-zA-Z0-9]" not in _sbody))
+check(f"the reduction audit sees the same population as the fallback audit: {len(_via_helper)}",
+      len(_via_helper) == len(_slug_owners) and len(_via_helper) >= 4)
+check("EVERY slug() REDUCES THROUGH THE SHARED HELPER, NOT ITS OWN COPY OF THE REGEX",
+      all(_ok for _n, _ok in _via_helper))
+for _n, _ok in _via_helper:
+    if not _ok:
+        print("      reduces a raw title itself, so an accent splits it in two:", _n)
+
+# 🐛 [2026-09-08] Fixing the NAME without fixing the COMPARISON moves the split one layer up rather
+# than closing it. `timeline._distinct_slug` asked `title_of(path).strip().lower() == title.strip()
+# .lower()`, which does not normalise: both spellings now reached `cafe-migration.md`, the file on
+# disk was judged to hold a DIFFERENT title, and the second was given a hash suffix and became a
+# second thread anyway. `environments.upsert` and two lookups in `bin/chamnan-env` compared the same
+# way -- `chamnan-env set préprod` twice declared two environments, both named `préprod`,
+# contradicting each other on platform, with `show` answering from whichever it reached first.
+check("CANONICAL TITLE FOLDS NORMALISATION, WHITESPACE AND CASE",
+      mdblock.canonical_title(_ud.normalize("NFC", "Café  Migration"))
+      == mdblock.canonical_title(_ud.normalize("NFD", "café migration")))
+check("...while two genuinely different titles do not fold together",
+      mdblock.canonical_title("café migration") != mdblock.canonical_title("cafe migration"))
+# Derived: every case-insensitive comparison of a NAME in the shipped code goes through it. Listed
+# by file so a new one shows up as a name rather than as a count.
+_raw_cmp = []
+for _sp, _ssrc in _runtime_sources():
+    for _i, _line in enumerate(_ssrc.splitlines(), 1):
+        if "canonical_title" in _line or _line.lstrip().startswith("#"):
+            continue
+        if re.search(r'(name|title)[^=!<>]{0,30}\.lower\(\)\s*[=!]=', _line) or \
+           re.search(r'[=!]=\s*(name|title)[^=!<>]{0,30}\.lower\(\)', _line):
+            _raw_cmp.append(f"{_sp.name}:{_i}")
+check(f"NO NAME IS COMPARED BY .lower() ALONE, WHICH DOES NOT NORMALISE: {_raw_cmp}",
+      not _raw_cmp)
+
+# The property the person actually cares about, driven through the write paths rather than through
+# the naming functions: name one thing twice and get one thing. Both stores, because both had it.
+import environments as _envm  # noqa: E402
+_nrm = Path(tempfile.mkdtemp(prefix="chamnan-norm-")) / "repo"
+(_nrm / ".chamnan").mkdir(parents=True)
+try:
+    for _form in ("NFC", "NFD"):
+        _tlm.create(_nrm, _ud.normalize(_form, "Café migration"), "2026-09-08")
+    _threads = _tlm.threads(_nrm)
+    check(f"ONE THREAD NAMED TWO WAYS IS ONE THREAD ON DISK: {[p.name for p in _threads]}",
+          len(_threads) == 1)
+    # ...and the collision guard the fix runs through is still doing its own job.
+    _tlm.create(_nrm, "Fix Auth!!!", "2026-09-08")
+    _tlm.create(_nrm, "Fix, Auth", "2026-09-08")
+    check("...while two DIFFERENT titles that reduce to one stem stay two threads",
+          len(_tlm.threads(_nrm)) == 3)
+    for _form in ("NFC", "NFD"):
+        _envm.upsert(_nrm, _ud.normalize(_form, "préprod"),
+                     _envm.render_entry(_ud.normalize(_form, "préprod"),
+                                        f"linux/{_form.lower()}", "", [], "2026-09-08"))
+    _envs = _envm.entries(_nrm)
+    check(f"ONE ENVIRONMENT NAMED TWO WAYS IS ONE ENTRY: {[e['name'] for e in _envs]}",
+          len(_envs) == 1)
+    _envm.upsert(_nrm, "staging", _envm.render_entry("staging", "linux/amd64", "", [], "2026-09-08"))
+    check("...while a genuinely different environment is still added",
+          len(_envm.entries(_nrm)) == 2)
+finally:
+    _rmtree(_nrm.parent, ignore_errors=True)
 
 
 # 🐛 [2026-09-06] The session block promises "Nothing writes here unless you ask", and the skills it

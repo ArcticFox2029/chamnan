@@ -312,6 +312,38 @@ _WINDOWS_RESERVED = frozenset(
     + [f"com{i}" for i in "123456789¹²³"] + [f"lpt{i}" for i in "123456789¹²³"])
 
 
+def ascii_stem(source):
+    """The `[a-z0-9-]` reduction all four `slug()` functions do, done once and done accent-safe.
+
+    🐛 [2026-09-08] Every `slug()` in this package reduced its title with
+    `re.sub(r"[^a-zA-Z0-9]+", "-", title.lower())` on the RAW string, and the same four functions
+    each ended `or fallback_name(...)`, which normalises to NFC first and says in its own docstring
+    why. So the normalisation was applied on the branch where a title has no Latin letters at all,
+    and skipped on the branch where it decides the filename -- the rule applied to one member of a
+    set and forgotten in the identical one beside it, written four times.
+
+    What it cost: a precomposed `Café migration` (U+00E9) reduced to `caf-migration`, because the
+    single é is not in `[a-zA-Z0-9]` and became a separator. Its decomposed twin (`e` + U+0301)
+    reduced to `cafe-migration`, because the bare `e` survived and only the combining accent was
+    dropped. Two files, two list entries, both titled `Café migration`, from one person naming one
+    thread -- reproduced through `chamnan-timeline new`. Which form a title arrives in is not the
+    person's choice: macOS input, a paste out of a browser, and a file read off HFS+ disagree.
+
+    Decomposing and dropping the combining marks fixes both halves at once. The two forms converge,
+    and they converge on the READABLE name -- `cafe-migration`, not `caf-migration` -- so a letter
+    that carries an accent survives as its base letter instead of turning into a hyphen. ASCII-only
+    is kept deliberately, for the reason `sessions.slug` states: these stems are read in a directory
+    listing and in a git diff.
+
+    Verified before shipping that no `.chamnan` file anywhere on this machine changes stem under it:
+    the readable form is a different name from the old one for accented titles, and a rename is a
+    cost this had to be worth. Nothing had one.
+    """
+    bare = "".join(c for c in unicodedata.normalize("NFD", source)
+                   if not unicodedata.combining(c))
+    return re.sub(r"[^a-zA-Z0-9]+", "-", bare.strip().lower()).strip("-")
+
+
 def filename_safe(stem):
     """`stem`, or `_stem` when Windows would treat it as a device rather than a file.
 
@@ -322,6 +354,41 @@ def filename_safe(stem):
     so nothing a user typed is altered -- only where chamnan puts its own file.
     """
     return f"_{stem}" if stem.split(".", 1)[0].lower() in _WINDOWS_RESERVED else stem
+
+
+def filesystem_key(name):
+    """The key under which a filesystem considers two NAMES to be one file.
+
+    NFC then casefold, and deliberately NOT the whitespace collapse `canonical_title` does: `a b.md`
+    and `a  b.md` are two files on every filesystem there is, so folding them would warn about a
+    collision that cannot happen. A title is a thing a person means; a filename is a thing a
+    filesystem resolves, and they are not the same equivalence.
+
+    One spelling of the fold, used by every caller, because the alternative is what this repository
+    keeps producing: `memory.case_collisions` built this key inline and `adapters.generic` built a
+    weaker one (`.lower()`, no normalisation) five files away, so the function whose entire job is to
+    warn about a name pair the filesystem will collapse was blind to half of them.
+    """
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def canonical_title(source):
+    """One spelling for a title, so two spellings of the same title compare equal.
+
+    NFC because a precomposed and a decomposed `é` are the same letter; whitespace collapsed because
+    a title that picked up a double space on the way in is the same title; casefold because case is
+    not part of a name here. The same equivalence `memory.case_collisions` uses on filenames, which
+    is deliberate: a comparison that disagrees with the collision detector would let one of them
+    call two things the same while the other called them different.
+
+    🐛 [2026-09-08] `timeline._distinct_slug` compared with `.strip().lower()` and hashed with
+    `" ".join(title.split()).lower()`, both on the raw string. With `ascii_stem` normalising the
+    STEM, both spellings of `Café migration` reached `cafe-migration.md` -- and then this comparison
+    said the file already on disk held a DIFFERENT title, so the second one was given a hash suffix
+    and became a second thread anyway. Fixing the name without fixing the comparison moved the split
+    one layer up rather than closing it.
+    """
+    return " ".join(unicodedata.normalize("NFC", source).split()).casefold()
 
 
 def fallback_name(source, kind):
@@ -345,5 +412,5 @@ def fallback_name(source, kind):
     hashing the raw bytes would give them two different files. See memory.case_collisions.
     """
     import hashlib
-    canonical = " ".join(unicodedata.normalize("NFC", source).split()).casefold()
+    canonical = canonical_title(source)
     return f"{kind}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:8]}"

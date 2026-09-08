@@ -123,6 +123,84 @@ optional. That number is now measured by a check rather than believed, so a futu
 share cannot quietly starve the index. The 17.5% itself is left as it is: whether that is the right
 split is a design decision, not a defect.
 
+### One name, typed two ways, became two of everything
+
+Every `slug()` in the package reduced a title to `[a-z0-9-]` with the same line of code, run on the
+raw string — while the `fallback_name` on the line below it normalised to NFC first and explained in
+its own docstring why. So the rule was applied on the branch that handles a title with no Latin
+letters at all, and skipped on the branch that decides the filename. Four functions, four times.
+
+A precomposed `Café migration` reduced to `caf-migration`: the lone `é` is not in `[a-zA-Z0-9]`, so
+it became a separator and took the `e` with it. Its decomposed twin — the same word, spelled as `e`
+plus a combining accent — reduced to `cafe-migration`, because the bare `e` survived and only the
+accent was dropped. Which spelling a title arrives in is not something the person typing it chooses:
+macOS text input, a paste out of a browser and a file read off an HFS+ disk disagree. One person
+naming one thread got two threads, listed under the same title, and no signal that anything was
+wrong.
+
+The reduction is one shared function now, and it decomposes and drops the combining marks rather
+than normalising to NFC — the two spellings converge, and they converge on the readable name. An
+accented letter survives as its base letter instead of turning into a hyphen. Verified before
+shipping that no existing `.chamnan` file anywhere on this machine changes name under the new rule.
+
+Fixing the name was half of it. `chamnan-timeline`'s collision guard then compared the title on disk
+to the title being written with `.strip().lower()`, which does not normalise either, decided the
+existing file held a different title, and gave the second one a hash suffix — a second thread again,
+one layer up. The same comparison shape turned up in two more places, and the reproduction there is
+worse than a duplicate thread: `chamnan-env set préprod` run twice declared two environments both
+named `préprod`, contradicting each other on platform and versions, with `chamnan-env show`
+answering from whichever it reached first. An environment is a description of a deployment target;
+two of them is worse than none.
+
+Both audits are derived from the source rather than listed by hand, and both assert their own
+population, so a fifth `slug()` written the old way or a new `.lower()` comparison of a name fails
+the suite instead of joining the set quietly.
+
+### A secret containing its own `=` came back with a marker printed beside it
+
+The bare-assignment rule steps over a type annotation before the value — `val apiKey: String = "..."`
+— and the step had no anchor after it. The quoted rule's closing quote is its backstop: guess the
+type wrong and the quote is not there, so the regex backtracks. The bare rule's value pattern
+matches anything, so a wrong guess simply succeeds.
+
+A value containing its own `=` makes that guess wrong every time. Base64 padding, which every
+16-byte key ends in, and `KEY=VALUE;KEY=VALUE` connection strings, which is how Azure Storage, ODBC
+and JDBC are written. Measured on an Azure connection string: **23 of the 24 characters of the
+AccountKey came back in the clear, with `<REDACTED>` printed immediately after them.** That is worse
+than a plain miss. A miss leaves the model seeing what it would have seen anyway; a marker tells a
+reviewer the line was handled when it was not, which converts an unknown into a false assurance.
+
+Two more from the same pass. A JWT signed with `alg:none` — RFC 7519 permits an empty signature
+segment, and it is the classic forgery shape — failed the rule's eight-character floor on that
+segment, so the one token most worth flagging was the one the pattern could not see; header and
+claims payload went through whole. And Go's `var apiPassword string = <unquoted>`: the
+type-before-assign shape was wired into the quoted rule and nowhere else, so the identical line
+without quotes passed through untouched.
+
+Recall and precision are unchanged at 98.2% / 100%, 0 of 43 ordinary strings damaged.
+
+### A comment that was wrong, and a check that passed for its reason
+
+`adapters/goose.py` said a `.gitignore` rule written as `*.goosehints` "never matches" a file with
+no extension, and `run_tests.py` asserted the ignore line does not begin with `*` as though that
+were why. Both were false and both shipped: git's `*` matches the empty string, so `*.goosehints`
+ignores `.goosehints` perfectly well. The check passed on correct code for an incorrect reason,
+which is the failure that survives longest, because nothing ever goes red to correct it.
+
+The leading slash is still right, for the opposite reason — measured through git rather than
+asserted, since asserting is what got it wrong the first time:
+
+| rule | what git ignores |
+|---|---|
+| `*.goosehints` | `.goosehints` **and** `sub/` |
+| `.goosehints` | `.goosehints` **and** `sub/` |
+| `/.goosehints` | `.goosehints` |
+
+`/.goosehints` is the only form that ignores chamnan's own file and leaves a `.goosehints` a
+developer wrote deliberately in a subdirectory alone — which Goose reads, walking up from the
+working directory. Anchoring is about not ignoring somebody else's file, not about matching this
+one.
+
 ### The rest
 
 The first-session banner contradicted itself on two of its three branches — an unwritable repository

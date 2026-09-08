@@ -67,7 +67,7 @@ def slug(title):
     function cannot know whether a name collides; only the directory can. So this stays readable
     and guessable, and create() disambiguates when it actually has to.
     """
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:50].rstrip("-")
                                  or mdblock.fallback_name(title, "thread"))
 
@@ -76,11 +76,11 @@ def _distinct_slug(directory_, title):
     """`slug(title)`, or that plus a short hash when the name is taken by a DIFFERENT title."""
     base = slug(title)
     path = directory_ / f"{base}.md"
-    if not path.is_file() or title_of(path).strip().lower() == title.strip().lower():
+    want = mdblock.canonical_title(title)
+    if not path.is_file() or mdblock.canonical_title(title_of(path)) == want:
         return base
     import hashlib
-    canonical = " ".join(title.split()).lower()
-    return f"{base}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
+    return f"{base}-{hashlib.sha1(want.encode('utf-8')).hexdigest()[:6]}"
 
 
 def threads(root):

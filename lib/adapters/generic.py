@@ -48,9 +48,17 @@ def render(body):
 def _warn_about_a_differently_cased_sibling(path):
     """Say so when a file differing from `path` only by case already exists beside it."""
     import sys as _sys
+    import mdblock
     try:
+        # 🐛 [2026-09-08] `.lower()` folds case and does not normalise, so this function -- whose
+        # entire job is to warn about a name pair the filesystem will collapse into one file --
+        # was blind to the half of them that differ by Unicode normalisation. A precomposed
+        # `Café.md` and its decomposed twin render identically and collapse on APFS and NTFS
+        # exactly as a case pair does. `memory.case_collisions` had already been fixed for this;
+        # the fix was not carried the five files to here.
         siblings = [n for n in os.listdir(str(path.parent))
-                    if n != path.name and n.lower() == path.name.lower()]
+                    if n != path.name
+                    and mdblock.filesystem_key(n) == mdblock.filesystem_key(path.name)]
     except OSError:
         return
     for name in siblings:
