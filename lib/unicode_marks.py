@@ -1,6 +1,7 @@
 """The Unicode combining marks, as a regular-expression character-class body.
 
-**Generated. Do not hand-edit** -- `test_combining_marks_constant_is_current` in the suite rebuilds
+**Generated. Do not hand-edit** -- the check named "the generated combining-mark
+constant still covers every Mn/Mc codepoint" in the suite rebuilds
 this from `unicodedata` and fails if the two disagree, so a Python release that adds a mark is a
 red check rather than a name that quietly stops being indexed.
 
@@ -93,6 +94,16 @@ def mark_aware(pattern):
         ch = pattern[i]
         if ch == "[" and not in_class:
             in_class = True
+            # A `]` immediately after `[` or `[^` is a literal member of the class, not its close.
+            # Copied through here so the loop below never sees it as a boundary.
+            if pattern[i + 1:i + 2] == "^":
+                out.append(ch)
+                i += 1
+                ch = pattern[i]
+            if pattern[i + 1:i + 2] == "]":
+                out.append(ch)
+                i += 1
+                ch = pattern[i]
         elif ch == "]" and in_class:
             in_class = False
         out.append(ch)

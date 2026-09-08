@@ -180,6 +180,41 @@ def dangling_citations(root):
     return [(slug, places) for slug, places in found.items()]
 
 
+def knowledge_for(root, target):
+    """[(category, path, title)] for every memory entry that DECLARES `target` on a `Files:` line.
+
+    The other half of the join `timeline.for_path` already does. That one answers "what has HAPPENED
+    to this file"; this answers "what was DECIDED about it, what went wrong with it, and what rule
+    covers it" -- and until now nothing did, so `chamnan-impact` and the file pointer could name
+    what imports a file and never what the repository had already learned about it.
+
+    **Declared, not inferred.** The first version of this matched backticked filenames in the prose,
+    and measuring it on this workspace is what killed it: of 55 "files" it found, most were not
+    files. `1.6.0` and `v1.9.0` are versions, `127.0.0.1` and `luminapp.xyz` are hosts, and
+    `os.replace`, `ws.exclusive`, `sessions.prune` and `permissions.ask` are functions -- every one
+    of them a backticked token with a dot in it, which is exactly what `style.css` is too. A
+    directory match was worse: `Work-Mode/chamnan` named in one rule attached that rule to every
+    file in the plugin, so the pointer would have said the same four things about every file in the
+    repository, which is how a reader learns to stop reading it.
+
+    `Files:` is the join key here for the same reason `timeline.py`'s docstring gives for threads:
+    free prose is not a join key. The cost is honest and worth stating -- an entry that does not
+    declare its files answers nothing, and on the day this was written that was every entry in this
+    workspace. It fills as records are written, which is the same way every other store here fills.
+    """
+    hits = []
+    for category in ("decisions", "incidents", "lessons", "rules"):
+        for entry in entries(root, category):
+            try:
+                text = entry.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            if any(mdblock.names_the_path(declared, target)
+                   for declared in mdblock.files_named(text)):
+                hits.append((category, entry, title_of(entry, text)))
+    return sorted(hits, key=lambda h: (h[0], h[2]))
+
+
 def case_collisions(paths):
     """Group `paths` whose filename stems collide once the filesystem is done with them.
 

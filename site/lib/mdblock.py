@@ -275,6 +275,44 @@ def demote_headings(text):
     return "\n".join(out)
 
 
+# The `**Files:**` line, which is this workspace's join key between a record and the code it is
+# about. `timeline.py`'s own docstring states the contract -- "Files: is the join key, and it is
+# checked ... free prose is not a join key" -- and this is that line's one definition, so a second
+# store gaining the field cannot gain a second spelling of it with it.
+FILES_FIELD = re.compile(r"^\*\*Files:\*\*\s*(.+?)\s*$", re.M)
+
+
+def files_named(text):
+    """Every path a record declares on its `**Files:**` line(s), backticks and commas removed."""
+    out = []
+    for line in FILES_FIELD.findall(text or ""):
+        for piece in line.split(","):
+            piece = piece.strip().strip("`").strip().lstrip("./")
+            if piece:
+                out.append(piece)
+    return out
+
+
+def names_the_path(declared, target):
+    """Whether a record that declared `declared` is about `target`.
+
+    Exact, or a suffix on a path boundary -- an entry written with the full path still answers a
+    query made from a subdirectory. Deliberately NOT the other direction.
+
+    🐛 The fuzzy form `target.endswith("/" + declared)` was tried in `timeline.for_path` and had to
+    be taken out: an entry naming a bare `app.py` answered queries about `src/app.py`,
+    `src/vendor/app.py` and `totally/unrelated/app.py` alike, so in any repository with an
+    `index.js` or an `__init__.py` in several packages, one file's rollback history was attached to
+    every sibling. This helper exists so the second store to want this join gets the rule that
+    survived rather than the one that was tried first.
+    """
+    declared = str(declared).strip().strip("`").lstrip("./")
+    target = str(target).strip().strip("`").lstrip("./")
+    if not declared or not target:
+        return False
+    return declared == target or declared.endswith("/" + target)
+
+
 def cut_outside_a_fence(text, cut):
     """`cut`, moved back to the end of the last complete line that is not inside a fence.
 

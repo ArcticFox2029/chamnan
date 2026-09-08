@@ -210,8 +210,14 @@ def _compose_services(body):
     if not hits:
         return []
     depth = min(len(indent.expandtabs(2)) for indent, _ in hits)
+    # 🐛 [2026-09-08] This ended `[:40]`, and the renderer that shows these prints
+    # `_+{len(svc)-kept}_` from the list it is handed — so a compose file with 60 services reported
+    # a total of 40 and a "+N" measured against 40, with the other 20 gone and nothing saying so.
+    # A cap at extraction cannot be disclosed by a caller that never sees what was cut. The render
+    # already bounds its own output by token budget (`_within`), which is where a bound belongs,
+    # so this one was doing no work except corrupting the count.
     return [name for indent, name in hits
-            if len(indent.expandtabs(2)) == depth][:40]
+            if len(indent.expandtabs(2)) == depth]
 
 
 def _helm_images(text):

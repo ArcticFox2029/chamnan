@@ -1209,12 +1209,12 @@ REGEX_RULES = {
     # pointer, span several lines, or sit behind a macro. These catch the common shapes and miss
     # the exotic ones, which is the accepted trade for an index — a miss costs one grep.
     "c": [
-        ("func", r"^[A-Za-z_][\w \t\*&:<>,]*?\b(\w+)\s*\(([^;)]*)\)\s*(?:const\s*)?\{"),
+        ("func", r"^[^\W\d][\w \t\*&:<>,]*?\b(\w+)\s*\(([^;)]*)\)\s*(?:const\s*)?\{"),
         # A header holds prototypes, which end in ";" and never in "{". Matching only definitions
         # meant 11 header files in a firmware tree contributed 2 symbols between them, while the
         # whole point of a header is to declare what the module offers.
         ("func", r"^(?!\s*(?:typedef|return|else|extern\s+\"C\")\b)"
-                 r"[A-Za-z_][\w \t\*&]*?\b(\w+)\s*\(([^;{)]*)\)\s*;"),
+                 r"[^\W\d][\w \t\*&]*?\b(\w+)\s*\(([^;{)]*)\)\s*;"),
         ("class", r"^\s*(?:typedef\s+)?(?:struct|class|union|enum)\s+(\w+)"),
         ("const", r"^\s*#define\s+([A-Z][A-Z0-9_]{2,})"),
     ],
@@ -1350,7 +1350,15 @@ KEYWORD_DEFINED = {"rs", "rb", "py", "go", "ex", "nim", "php", "swift", "kotlin"
 # the file being included twice and describes nothing about what the file does. Every C and C++
 # header has one, so listing it as a constant put one pure-noise entry in every header's row --
 # `BOARD_ESP32_H` beside `LED_PIN` and `I2C_SDA`, which are the real ones a reader wants.
-_INCLUDE_GUARD = re.compile(r"^[ \t]*#\s*ifndef[ \t]+(\w+)[ \t]*\r?\n[ \t]*#\s*define[ \t]+\1\b",
+# 🐛 [2026-09-08] `REGEX_RULES` and `impact.IMPORT_PATTERNS` both get `mark_aware` applied over
+# the whole table; this one is compiled on its own line and was the only identifier-capturing regex
+# in the file the generic fix never reached. `_guard_names` returned the ASCII guard and an empty
+# set for a Thai-named one — a total miss, not a truncated name (R10 agent 3). Low severity, since
+# guard macros are ASCII by convention, and fixed anyway because it is a literal instance of the
+# failure class this file's history is built around: the rule applied to the table and forgotten in
+# the member beside it.
+_INCLUDE_GUARD = re.compile(mark_aware(
+    r"^[ \t]*#\s*ifndef[ \t]+(\w+)[ \t]*\r?\n[ \t]*#\s*define[ \t]+\1\b"),
                             re.M)
 
 
