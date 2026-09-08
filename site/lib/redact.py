@@ -1081,6 +1081,21 @@ def scrub(text, windowed=True):
     text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
                               [_spaced, _flag])
     text = PGPASS_LINE.sub(rf"\1{PLACEHOLDER}", text)
+    # 🐛 [2026-09-08] Every rule above needs the naming word and the value on the SAME line, and a
+    # two-column export puts them one row apart in the same COLUMN instead. `username,password`
+    # followed by `admin,Hunter2Password!` leaked completely -- comma, quoted-comma and semicolon
+    # alike -- and so did the pipe-delimited form a markdown table produces. That is not one rule
+    # missing a case: it is the file's whole adjacency architecture meeting a shape it has no
+    # reader for, and a database dump, a password-manager export and a spreadsheet paste all
+    # produce it (R2 agent 2).
+    #
+    # Deliberately narrow, because a wide rule here destroys the index this tool exists to write.
+    # A header is only a header when a field is EXACTLY a credential or personal-data word -- not a
+    # substring of one -- and the rows under it are only rows while they split on the same
+    # delimiter into the same number of fields. `a, b = 1, 2` above `c, d = 3, 4` has two fields
+    # each and no field equal to a secret word, so it is untouched; a table whose shape breaks ends
+    # the run rather than redacting the rest of the document.
+    text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
     text = _redact_personal_data(text)
@@ -1458,6 +1473,70 @@ def _thai_national_id(digits):
 # the defect this file already warns about two hundred lines up, in its own words, about a
 # different pair. Built from `_SEP` now, so there is one list.
 _A_LONG_DIGIT_RUN = re.compile(r"[0-9](?:[0-9]|" + _SEP + r"){10,}[0-9]")
+
+
+# The delimiters a real export uses. `|` is here for the markdown table form, which is how a
+# credential table reaches a README or an issue comment.
+_COLUMN_DELIMS = (",", ";", "\t", "|")
+# A field is a header only when the WHOLE field is one of these -- not a substring of it -- so
+# `tokenizer_config` in a header row cannot make a column of ordinary values disappear.
+#
+# Written out rather than derived from `SECRET_WORDS`. Reusing that constant was the first attempt
+# and it is a regex with its own alternation and boundaries, built to match a word ANYWHERE inside
+# an identifier; slicing it into an anchored whole-field test produced a pattern that did not
+# compile, and the version that did compile would have matched things this must not. A short
+# explicit list that says what it means beats a clever derivation that means something else --
+# and unlike two rule tables that must agree, this one is checked against its own behaviour by
+# the tests beneath it rather than by matching another list.
+_HEADER_WORD = re.compile(
+    r"""^\s*["']?\s*(?:password|passwd|pwd|secret|token|api[_ -]?key|apikey|key|auth"""
+    r"""|credential|credentials|private[_ -]?key|access[_ -]?key|secret[_ -]?key"""
+    r"""|card|card[_ -]?number|pan|iban|cpf|aadhaar|uid"""
+    r"""|national[_ -]?id|citizen[_ -]?id|id[_ -]?card)\s*["']?\s*$""", re.I)
+
+
+def _split_row(line, delim):
+    """Fields of one delimited row, quotes stripped. None when the line is not that shape."""
+    if delim not in line:
+        return None
+    parts = [f.strip().strip('"').strip("'").strip() for f in line.split(delim)]
+    return parts if len(parts) >= 2 else None
+
+
+def _redact_delimited_columns(text):
+    """Redact the values under a column whose HEADER names a credential or an identifier."""
+    lines = text.split("\n")
+    out = list(lines)
+    i = 0
+    while i < len(lines):
+        header = None
+        for delim in _COLUMN_DELIMS:
+            fields = _split_row(lines[i], delim)
+            if not fields:
+                continue
+            marked = [n for n, f in enumerate(fields) if _HEADER_WORD.match(f)]
+            if marked:
+                header = (delim, len(fields), marked)
+                break
+        if header is None:
+            i += 1
+            continue
+        delim, width, marked = header
+        j = i + 1
+        while j < len(lines):
+            row = _split_row(lines[j], delim)
+            # The run ends the moment the shape does. A table followed by prose must not turn the
+            # prose into redactions, and a blank line ends it too.
+            if row is None or len(row) != width:
+                break
+            raw = lines[j].split(delim)
+            for n in marked:
+                if n < len(raw) and raw[n].strip():
+                    raw[n] = PLACEHOLDER
+            out[j] = delim.join(raw)
+            j += 1
+        i = j if j > i + 1 else i + 1
+    return "\n".join(out)
 
 
 def _redact_personal_data(text):
