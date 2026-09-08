@@ -13516,9 +13516,10 @@ check("...including the stripped and kept-newline forms",
       and bool(_rd._YAML_BLOCK_OPENER.search("k: |+  \n  x\n")))
 # The real guarantee: on a document carrying neither trigger, scrubbing is unchanged from what the
 # other rules alone produce — the pre-filters remove work, never coverage.
-_plain = "def f():\n    return 1\n\nAPI_KEY = 'sk_live_0123456789abcdef'\n"
+_plain_key = fake("sk_", "live_", "0123456789abcdef")
+_plain = "def f():\n    return 1\n\nAPI_KEY = '" + _plain_key + "'\n"
 check("an ordinary document is still scrubbed by the rules that do apply",
-      "sk_live_0123456789abcdef" not in _rd.scrub(_plain))
+      _plain_key not in _rd.scrub(_plain))
 
 
 # ------------------------------ `password: String` is a type, and the redactor was eating it
@@ -22682,9 +22683,16 @@ check("AN IBAN IS REDACTED IN LOWER CASE, LIKE EVERY OTHER RULE IN THIS FILE",
 
 # 2. Slack rotated its token format in 2021 and the pattern still knew only the pre-rotation
 #    prefixes, so a rotated token leaked with the word "token" on the same line.
-for _fn2_label, _fn2_tok in (("rotation-era refresh", fake("xox", "e-1-", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4")),
-                             ("rotation-era access", fake("xox", "e.", "xox", "p-1-", "A1b2C3d4E5f6G7h8I9j0K1l2")),
-                             ("the older bot token", fake("xox", "b-1-", "A1b2C3d4E5f6G7h8I9j0K1l2"))):
+# 🐛 [2026-09-09] Written as three literals, and `fake()` -- forty lines of docstring above,
+# whose second sentence is that GitHub's push protection blocked this repository's first push over
+# exactly this shape -- was not used for any of them. The push of this release was blocked at all
+# three. A helper that exists to stop one thing, in the same file as the thing it did not stop.
+for _fn2_label, _fn2_tok in (("rotation-era refresh",
+                              fake("xox", "e-1-", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4")),
+                             ("rotation-era access",
+                              fake("xox", "e.", "xox", "p-1-", "A1b2C3d4E5f6G7h8I9j0K1l2")),
+                             ("the older bot token",
+                              fake("xox", "b-1-", "A1b2C3d4E5f6G7h8I9j0K1l2"))):
     check(f"...and a Slack token is redacted whichever era it is from: {_fn2_label}",
           _rd.PLACEHOLDER in _rd.scrub(f"token: {_fn2_tok}"))
 
@@ -22697,6 +22705,29 @@ for _fn2_sep in (".", " ", "-"):
           _rd.PLACEHOLDER in _rd.scrub(_fn2_v))
 check("...and CPF reads the shared separator set rather than its own copy",
       _rd._SEP in _rd._CPF_DOTTED.pattern)
+
+# ------------------- no fixture in this file is a token a scanner would stop, 2026-09-09
+# `fake()` assembles a test credential at runtime so nothing in this file matches a secret
+# scanner. It was used for some Slack fixtures and not for the ones beside them, and the
+# consequence is not cosmetic: GitHub push protection refuses the whole push, so a release cannot
+# leave this machine and neither can a fork's first commit. Derived over the file rather than
+# pinned to the three that were wrong -- the next fixture added has the same choice to make.
+_tokshapes = [
+    ("Slack", re.compile(r"[\"']xox[bpesa][-.][A-Za-z0-9.-]{12,}")),
+    ("GitHub", re.compile(r"[\"'](?:ghp|gho|ghs|ghu)_[A-Za-z0-9]{20,}")),
+    ("GitLab", re.compile(r"[\"']glpat-[A-Za-z0-9_-]{16,}")),
+    ("Stripe", re.compile(r"[\"']sk_live_[A-Za-z0-9]{16,}")),
+    ("Anthropic", re.compile(r"[\"']sk-ant-[A-Za-z0-9-]{16,}")),
+]
+_tokhits = []
+for _tn, _tp in _tokshapes:
+    for _tl, _tline in enumerate(_suite_src.split("\n"), 1):
+        if _tp.search(_tline):
+            _tokhits.append(f"{_tn} at line {_tl}")
+check("NO CREDENTIAL FIXTURE IN THIS FILE IS WRITTEN AS A LITERAL A SCANNER WOULD STOP",
+      not _tokhits, saw="\n".join(_tokhits))
+check("...and the pattern really does see the shape it is looking for",
+      bool(_tokshapes[0][1].search('x = "xox' + 'b-1-A1b2C3d4E5f6G7h8I9j0K1l2"')))
 
 # 4. The gate is doing the real work here -- Verhoeff passes 9.99% of random 12-digit numbers -- so
 #    a missing word is a leak, and "UID" is what the number is ordinarily called.
