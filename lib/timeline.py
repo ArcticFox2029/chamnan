@@ -263,8 +263,18 @@ def append(root, ident, date, note, files=None):
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")
-    existing = path.read_text(encoding="utf-8-sig", errors="replace").rstrip("\n")
-    ws.write_or_raise(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
+    # 🐛 [2026-09-08] Read, append in memory, write back -- with no lock, so a second writer's
+    # snapshot replaced the first's entry entirely. `ws.rewrite_shared` exists because six writers
+    # were found doing this and `milestones.py` measured five of six appends vanishing; three
+    # writers never adopted it and this was one. Measured the same way here: 5 of 60 concurrent
+    # entries lost, 8.3%, valid Markdown throughout and no error anywhere (R2 agent 3).
+    #
+    # Two accounts on one machine, or a session and a commit hook, is an ordinary afternoon rather
+    # than an edge case -- and a thread entry is something a person typed a reason into.
+    def _appended(existing):
+        return (existing or "").rstrip("\n") + "\n\n" + "\n".join(body).strip() + "\n"
+
+    ws.rewrite_shared(path, _appended)
     return path
 
 
@@ -275,18 +285,25 @@ def set_status(root, ident, status):
     path = resolve(root, ident)
     if path is None:
         return None
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
-    if _STATUS.search(text):
-        text = _STATUS.sub(f"**Status:** {status}", text, count=1)
-    else:
-        lines = text.splitlines()
-        # Same shared reader `title_of` twelve lines up already uses: a thread headed with a CJK
-        # keyboard's U+3000 had its **Status:** line inserted ABOVE its own title, which is how a
-        # status ends up looking like the file's heading.
-        at = 1 if lines and mdblock.heading_title(lines[0]) is not None else 0
-        lines.insert(at, f"\n**Status:** {status}")
-        text = "\n".join(lines)
-    ws.write_or_raise(path, text.rstrip("\n") + "\n")
+    # 🐛 [2026-09-08] The read happens inside the lock now, for the reason its sibling `append`
+    # twenty lines up carries at length: read-modify-write with no lock loses the other writer's
+    # work entirely, and this file has two such writers rather than one. Closing only the one that
+    # was measured would be the half-applied fix this repository pays for most often (R2 agent 3).
+    def _with_status(existing):
+        text = existing or ""
+        if _STATUS.search(text):
+            text = _STATUS.sub(f"**Status:** {status}", text, count=1)
+        else:
+            lines = text.splitlines()
+            # Same shared reader `title_of` twelve lines up already uses: a thread headed with a
+            # CJK keyboard's U+3000 had its **Status:** line inserted ABOVE its own title, which is
+            # how a status ends up looking like the file's heading.
+            at = 1 if lines and mdblock.heading_title(lines[0]) is not None else 0
+            lines.insert(at, f"\n**Status:** {status}")
+            text = "\n".join(lines)
+        return text.rstrip("\n") + "\n"
+
+    ws.rewrite_shared(path, _with_status)
     return path
 
 

@@ -13,6 +13,7 @@ against measured 64 seconds — not something to do on an interactive question. 
 choice is that the answer is only as fresh as the last `chamnan-map`, so the age of the index is
 printed with every answer rather than left for the reader to assume.
 """
+import importlib.util
 import pathlib
 import sys
 from datetime import datetime, timezone
@@ -33,15 +34,53 @@ import redact  # noqa: E402
 print = redact.emit  # noqa: A001
 
 
-def _index_age(map_path):
+def _index_age(map_path, root=None):
+    """How old the index is, and -- more importantly -- whether the code has moved since.
+
+    🐛 [2026-09-08] This measured age against the CLOCK and nothing else, so an index built an hour
+    ago read "built today" while a file added five minutes ago imported the very symbol being asked
+    about. The command then said "nothing imports it", which is not a stale answer but a WRONG one:
+    the reader changes the thing freely on the strength of it. Reproduced by adding an importing
+    file to a fixture and asking again (R2 agent 4).
+    #
+    `index_is_behind` already answers this correctly, by comparing the index against the mtimes of
+    the files mapper would index, and it lived in the SessionStart hook with exactly one caller --
+    the hook itself. It is loaded here the way `chamnan-context` already loads that hook, rather
+    than copied: a second implementation of a staleness rule is how the two come to disagree, and
+    this file is fixing an instance of precisely that.
+    """
     try:
         ts = map_path.stat().st_mtime
     except OSError:
         return "unknown age"
     days = int((datetime.now(timezone.utc).timestamp() - ts) // 86400)
-    if days <= 0:
-        return "built today"
-    return f"built {days} day{'s' if days != 1 else ''} ago"
+    age = "built today" if days <= 0 else f"built {days} day{'s' if days != 1 else ''} ago"
+    if root is None:
+        return age
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "chamnan_session_start", HERE.parent / "hooks" / "chamnan_session_start.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        behind, edited = module.index_is_behind(root, map_path)
+    except Exception:
+        # Never fails the command over its own footnote. An answer without the staleness note is
+        # worse than one with it and better than no answer at all.
+        return age
+    if not behind:
+        return age + ", current with the code"
+    # `edited` is a LIST of names, and interpolating it whole printed `['src/newcomer.py']` at the
+    # reader -- a Python repr in a sentence written for a person. One name is enough to make the
+    # warning actionable; the count says whether there is more.
+    if isinstance(edited, (list, tuple, set)):
+        names = sorted(str(e) for e in edited)
+        first = names[0] if names else ""
+        more = f" and {len(names) - 1} more" if len(names) > 1 else ""
+    else:
+        first, more = str(edited or ""), ""
+    named = f", newest change `{mdblock.as_quoted(first, 60)}`{more}" if first else ""
+    return (f"{age} but THE CODE HAS MOVED SINCE{named} — rebuild with `chamnan-map` before "
+            f"trusting this")
 
 
 def main(argv):
@@ -111,7 +150,7 @@ def main(argv):
     if resolved is None and not history:
         print(f"chamnan: nothing recorded for {mdblock.as_quoted(target, 100)}")
         if map_path.is_file():
-            print(f"  no incoming references in the index ({_index_age(map_path)}), and no thread "
+            print(f"  no incoming references in the index ({_index_age(map_path, root)}), and no thread "
                   f"entry names it")
             if on_disk:
                 print(f"  a file nothing imports and nothing has happened to is the cheap case — "
@@ -140,9 +179,9 @@ def main(argv):
             print(f"  tested by {shown}{more}")
         elif edges["used_by"]:
             print(f"  tested by nothing the index can see — a change here is unguarded")
-        print(f"  (from `{map_path.relative_to(root).as_posix()}`, {_index_age(map_path)})")
+        print(f"  (from `{map_path.relative_to(root).as_posix()}`, {_index_age(map_path, root)})")
     elif map_path.is_file():
-        print(f"  nothing imports it, per `{map_path.relative_to(root).as_posix()}` ({_index_age(map_path)})")
+        print(f"  nothing imports it, per `{map_path.relative_to(root).as_posix()}` ({_index_age(map_path, root)})")
 
     if history:
         print(f"\n  {len(history)} thread entr{'y' if len(history) == 1 else 'ies'} name this file:")

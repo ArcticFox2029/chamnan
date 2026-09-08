@@ -55,6 +55,28 @@ written the day before to stop a repeated mistake and cut because its name begin
 Both sort by mtime with the filename as tie-break. After a clone every mtime is the checkout time,
 so the order falls back to exactly the previous behaviour rather than to something arbitrary.
 
+### Every agent gets a fresh index, not only the two with a live hook
+
+`chamnan-map --install-git-hook` rebuilt the internal index on every commit and stopped there.
+Claude Code and Gemini get a session hook and need no file; the other twenty-one read a snapshot,
+and every one of them kept the snapshot from the day it was set up — while the README describes
+that hook as the thing which keeps them fresh. A commit adding a file now updates the file each
+agent actually reads, and a config file somebody wrote by hand is still never touched.
+
+Cursor's own terminal documentation names an environment variable this project's detection table
+said no claim could be made about, because Cursor was not installed on the machine it was written
+on. `CURSOR_AGENT` is read now: three of twenty-three agents can be detected while running, rather
+than two.
+
+### Checks that ask the family rather than three of its members
+
+Seven of the defects above were one shape — a rule applied to some members of a set and forgotten
+in the identical ones beside it — and each was found by reading code, one at a time. Two sweeps
+close that: every hook is driven with nine malformed payloads a real client can send, and every
+capped store is asked whether an entry written today beats a four-month-old one whose filename
+sorts earlier. Both assert their population as well as their property, because a sweep that reaches
+nothing passes silently.
+
 ### The rest
 
 The first-session banner contradicted itself on two of its three branches — an unwritable repository

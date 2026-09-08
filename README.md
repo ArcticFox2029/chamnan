@@ -769,11 +769,13 @@ how you remove it.
 ## Language
 
 chamnan writes the comments and procedures it generates in English by default. Those strings are
-re-read on every session, and English carries the same meaning in fewer tokens — measured at 1.53x
-for Thai versus English across three matched sentence pairs.
+re-read on every session, and English carries the same meaning in fewer tokens — roughly half again
+as many for Thai as for English, across three matched sentence pairs.
 
-**That figure was measured with a local model's tokenizer, not Claude's.** Take it as a direction,
-not a number: the ratio is real, its exact size on Claude is unverified here.
+**That comparison used a local model's tokenizer, not Claude's, and no script or corpus for it is
+committed here.** It is a direction, not a measurement: a repository that publishes a token
+calibration harness in `lib/tokens.py` should not print two decimal places for a ratio nobody can
+reproduce from this tree. The direction is not in doubt; the digits were.
 
 It is a default, not a rule. A team whose reviewers do not read English is better served by
 comments they will actually read, and the plugin does not argue:
