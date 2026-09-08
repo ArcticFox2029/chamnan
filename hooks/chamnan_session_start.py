@@ -163,13 +163,6 @@ _MD_MARKUP = re.compile(r"[*_`]")
 _LEADING_MARKUP = re.compile(r"^[>*\-\s]+")
 
 
-def _mtime_or_zero(path):
-    """Last-modified time, or 0 when it cannot be read -- which sorts the entry last rather than
-    dropping it, the same choice `milestones` makes for an entry with no date: it still exists."""
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
 
 
 def describe(path):
@@ -1678,7 +1671,7 @@ def main():
             skills = ([p for p in sorted((wsdir / "skills").glob("*.md"))
                        if ws.inside(p, root) and not ws.is_store_index(p)]
                       if (wsdir / "skills").is_dir() else [])
-            skills.sort(key=lambda p: (-_mtime_or_zero(p), p.name))
+            skills.sort(key=lambda p: (-memory.mtime_or_zero(p), p.name))
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
                 # session is that the agent loads one on demand — and it cannot decide which one to load

@@ -104,20 +104,38 @@ def _milestone_timestamps(root):
 
 def _dated(paths):
     """One timestamp per memory entry, read from its own `**As-of:**` line when present and from
-    mtime otherwise. A hand-written entry with no As-of still counts, just less precisely."""
+    mtime otherwise. A hand-written entry with no As-of still counts, just less precisely.
+
+    **The As-of wins over a newer mtime on purpose, and that is why the caller has to say so.** A
+    clone resets every mtime to the checkout time, which would report a store somebody has not
+    touched in months as written today; the stamp a person wrote survives that and is the more
+    reliable clock. What it is NOT is a record of when the file was last written -- a decision
+    edited today whose stamp still says August is reported as August, correctly by this function's
+    own contract and falsely under a column headed "last write" (R8 agent 3, reproduced: a file
+    created seconds earlier reported as written 39 days ago).
+
+    So this returns which clock it used, and the caller prints the words that match it.
+    """
     out = []
     for p in paths:
-        ts = None
+        ts, stamped = None, False
         try:
             m = _AS_OF.search(p.read_text(encoding="utf-8-sig", errors="replace"))
             if m:
-                ts = _ymd_to_ts(*m.groups())
+                ts, stamped = _ymd_to_ts(*m.groups()), True
             if ts is None:
                 ts = p.stat().st_mtime
         except OSError:
             continue
-        out.append(ts)
+        out.append((ts, stamped))
     return out
+
+
+def _newest(pairs):
+    """(timestamp, was_it_a_stamp) for the most recent of `_dated`'s pairs, or (None, False)."""
+    if not pairs:
+        return None, False
+    return max(pairs, key=lambda pair: pair[0])
 
 
 def _session_timestamps(paths):
@@ -151,7 +169,7 @@ def snapshot(root, now=None):
     thread_files = _files(root, "threads")   # None until 1.6.0 creates the directory
 
     memory_files = (decisions or []) + (lessons or []) + (rules or [])
-    memory_mtimes = _dated(memory_files)
+    memory_mtimes = [ts for ts, _stamped in _dated(memory_files)]
 
     session_ts = _session_timestamps(sessions or [])
     milestone_ts = _milestone_timestamps(root)
@@ -276,21 +294,31 @@ def inventory(root, now=None):
     def last(ts):
         return max(ts) if ts else None
 
+    # 🐛 [2026-09-09] Every row was `(label, count, timestamp)` and the report printed
+    # "last write" over all of them -- while three of the nine answer with a date a PERSON stamped
+    # rather than a time the filesystem recorded. A decision edited today whose `**As-of:**` still
+    # says August is reported as written in August. Reproduced: a file created seconds earlier came
+    # back as "last write 39 days ago" (R8 agent 3).
+    #
+    # The stamp beating mtime is right and stays: a clone resets every mtime to the checkout time,
+    # which would report a store nobody has touched in months as written today, and a date somebody
+    # wrote survives that. What was wrong is one column heading covering two different clocks. Each
+    # row now carries which one answered, and the caller prints words that match.
     return [
-        ("sessions/", len(sessions), last(_session_timestamps(sessions))),
-        ("memory/decisions/", len(decisions), last(_dated(decisions))),
-        ("memory/lessons/", len(lessons), last(_dated(lessons))),
-        ("memory/rules/", len(rules), last(_dated(rules))),
-        ("milestones.md", len(ms), last(_milestone_timestamps(root))),
-        ("candidates/", len(cand), last(_mtimes(cand))),
-        ("threads/", len(thr), last(_mtimes(thr))),
+        ("sessions/", len(sessions), last(_session_timestamps(sessions)), False),
+        ("memory/decisions/", len(decisions)) + _newest(_dated(decisions)),
+        ("memory/lessons/", len(lessons)) + _newest(_dated(lessons)),
+        ("memory/rules/", len(rules)) + _newest(_dated(rules)),
+        ("milestones.md", len(ms), last(_milestone_timestamps(root)), True),
+        ("candidates/", len(cand), last(_mtimes(cand)), False),
+        ("threads/", len(thr), last(_mtimes(thr)), False),
         # By mtime, not by an As-of trailer: a skill is a procedure, not a dated claim, and the
         # write skills do not stamp one on it.
-        ("skills/", len(skl), last(_mtimes(skl))),
+        ("skills/", len(skl), last(_mtimes(skl)), False),
         # None when nothing in it carries a Checked: date, which is the honest answer -- an
         # environment nobody has confirmed has no last-write worth reporting, and `chamnan-env`
         # says so in its own words.
-        ("environments.md", len(envs), last(env_ts)),
+        ("environments.md", len(envs), last(env_ts), True),
     ]
 
 

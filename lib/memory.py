@@ -36,7 +36,34 @@ CATEGORIES = ("decisions", "lessons", "rules")
 # Rules reach every session, so they are capped. Roughly a third of state_token_budget's
 # char-equivalent (see lib/state.py): a repository with more than this in standing constraints has
 # a documentation problem, not a memory problem.
-MAX_RULES_CHARS = 1500
+# 🐛 [2026-09-09] Hardcoded at 1,500 on 2026-08-20, when this repository had ONE rule. By
+# 2026-09-09 it had nine, totalling 22,669 characters, and the budget had never moved — so four
+# rules arrived with a body and five arrived as a title, and which four was decided by the first
+# letter of the filename. Measured on the real block the same day: `Work in flight` 4,702 bytes,
+# rules 1,972, the architecture index 1,680, against a 9,000-byte ceiling.
+#
+# The other two of those three have a config key (`state_token_budget`, `index_token_budget`) and
+# an owner can raise them. The rules section — the one carrying the standing instructions a person
+# gave and expects to be followed — was the only one nobody could give more room to. That is the
+# defect: not the number, the absence of the dial.
+#
+# The default stays 1,500 so no existing workspace changes shape on upgrade. `fit.shrink` still
+# arbitrates against the ceiling afterwards, which is what stops a large value simply cutting the
+# index instead.
+DEFAULT_RULES_CHARS = 1500
+MAX_RULES_CHARS = DEFAULT_RULES_CHARS
+
+
+def rules_budget(root=None):
+    """The rules section's character budget: `rules_char_budget` in config, else the default."""
+    if root is None:
+        return MAX_RULES_CHARS
+    try:
+        import workspace as _ws
+        value = _ws.load_config(root).get("rules_char_budget")
+    except Exception:                        # noqa: BLE001 — config must never break the block
+        return MAX_RULES_CHARS
+    return value if isinstance(value, int) and 300 <= value <= 20_000 else MAX_RULES_CHARS
 
 # Titles only, for the two categories that are read on demand.
 MAX_TITLES = 8
@@ -324,10 +351,36 @@ def unresolved_conflict(body):
     return opened and closed
 
 
+def mtime_or_zero(path):
+    """Last-modified time, or 0 when it cannot be read -- which sorts the entry last rather than
+    dropping it, the same choice `milestones` makes for an entry with no date: it still exists.
+
+    🐛 [2026-09-09] Written here as a second copy of the one the session-start hook already had,
+    four lines apart in behaviour and identical in effect. Two copies of one rule is the defect
+    this repository records more than any other, and it was caught by the caller sweep in
+    `before_the_suite.py` rather than by reading — which is the argument for that sweep.
+    """
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
     out, titles = [], []
-    rule_paths = entries(root, "rules")
+    # 🐛 [2026-09-09] `entries()` returns filename order, and the budget carries about four rules
+    # out of nine here — so which rules got a BODY was decided by their first letter. A rule written
+    # tonight, in response to something said four times, sat under `s` and arrived as a title while
+    # a months-old one under `l` arrived in full. Every rule is still NAMED, which is what stops
+    # this being a disappearance; what alphabet was deciding is which ones the agent can actually
+    # read without opening a file.
+    #
+    # Newest first, filename as the tie-break, the same ordering the skills list and
+    # `memory.titles()` were given the day before for the identical reason. After a clone every
+    # mtime is the checkout time, and then this falls back to exactly the previous behaviour.
+    rule_paths = sorted(entries(root, "rules"),
+                        key=lambda p: (-mtime_or_zero(p), p.name))
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
     for path in rule_paths:
         try:
@@ -371,7 +424,8 @@ def rules_text(root):
     if not out:
         return ""
     joined = "\n\n".join(out)
-    if len(joined) <= MAX_RULES_CHARS:
+    cap = rules_budget(root)
+    if len(joined) <= cap:
         return joined
     # 🐛 A single overall cap, so ONE long rule ate the whole budget and every rule after it was
     # dropped. Measured on the repository this was built in: two rules totalling 6,392 characters
@@ -382,7 +436,7 @@ def rules_text(root):
     # A per-rule share first, so every rule gets a turn before any rule gets a second helping. The
     # whole-budget cut below still runs afterwards and is still what guarantees the total — this
     # only changes WHICH characters survive to reach it.
-    share = max(300, MAX_RULES_CHARS // max(len(out), 1))
+    share = max(300, cap // max(len(out), 1))
     if len(out) > 1 and any(len(o) > share for o in out):
         trimmed = []
         for body, title in zip(out, titles):
@@ -392,7 +446,7 @@ def rules_text(root):
                 trimmed.append(_cut_clean(body, share) +
                                f"\n\n_…the rest of **{mdblock.one_line(title)}** is in `.chamnan/memory/rules/`._")
         joined = "\n\n".join(trimmed)
-        if len(joined) <= MAX_RULES_CHARS:
+        if len(joined) <= cap:
             return joined
     # 🐛 Two things went wrong at this cut, and both were silent.
     #
@@ -405,7 +459,7 @@ def rules_text(root):
     # starved `c-prod.md` — "Never write to prod" — out of the injection entirely, under a notice
     # that said only how many rules exist. A rule that does not arrive is the one case where saying
     # which one is missing costs a line and buys everything.
-    cut = state._safe_cut(joined, MAX_RULES_CHARS)
+    cut = state._safe_cut(joined, cap)
     kept = joined[:cut].rstrip()
     missing = [t for t in titles if t not in kept]
     tail = f"\n\n_…more rules in `.chamnan/memory/rules/` — {len(out)} in total."
@@ -415,6 +469,32 @@ def rules_text(root):
             tail += f", and {len(missing) - 6} more"
         tail += "."
     return kept + tail + "_"
+
+
+def rules_pressure(root):
+    """Which rules reach a session in full, which arrive as a title only, and how far over the
+    budget the store is. `(fitted, title_only, chars, budget)`.
+
+    🐛 [2026-09-09] Nothing anywhere reported this. `MAX_RULES_CHARS` was set when this repository
+    had one rule; by the time it had nine, four arrived with a body and five arrived as a name, and
+    the only way to find out was to run the hook and read the block by eye. A person adding a tenth
+    rule has no reason to suspect their earlier ones stopped arriving — the tool has to notice, and
+    the person cannot be asked to count bytes.
+
+    Read from the same function the session actually gets, so this cannot drift from it: whatever
+    `rules_text` decided is what a title is checked against.
+    """
+    titled = rules_with_titles(root)
+    if not titled:
+        return [], [], 0, rules_budget(root)
+    delivered = rules_text(root)
+    fitted, title_only = [], []
+    for title, body in titled:
+        # A rule is "fitted" when a distinctive sentence of its body survived, not merely its name:
+        # the drop notice lists every title, so a title in the text proves nothing on its own.
+        probe = _flatten(body)[len(title):][:120].strip()
+        (fitted if probe and probe[:60] in delivered else title_only).append(title)
+    return fitted, title_only, sum(len(b) for _t, b in titled), rules_budget(root)
 
 
 def rules_with_titles(root):
