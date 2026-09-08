@@ -44,6 +44,7 @@ import candidates  # noqa: E402
 import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
+import memory  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
 # like it could carry a secret today. Five findings running came from one store having a guarded
@@ -77,6 +78,16 @@ def cmd_list(root):
         print(f"[{i}] {_title(p)}")
         print(f"    observed {f.get('observed', '?')} time(s) · last seen {f.get('last seen', '?')} "
               f"· {f.get('provenance', '?')}")
+    # 🐛 [2026-09-08] Same gap as threads/ and sessions/, and the mildest of the three: this store
+    # is not injected into a session, so a person has to run this command before a collapsing pair
+    # does any harm. Warned anyway -- the call is already computed elsewhere and four lines here is
+    # cheaper than being the one member of the set that was left out again.
+    clash = memory.case_collisions(found)
+    for group in clash:
+        names = ", ".join(g.name for g in group)
+        print(f"\n  warning: {names} differ only by case or Unicode normalisation. A "
+              f"case-insensitive filesystem keeps ONE of them; rename one before confirming "
+              f"either.")
     print("\nconfirm/reject/edit by number or by name — see `chamnan-candidates --help`")
     return 0
 

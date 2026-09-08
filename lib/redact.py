@@ -1126,6 +1126,9 @@ def scrub(text, windowed=True):
     # delimiter into the same number of fields. `a, b = 1, 2` above `c, d = 3, 4` has two fields
     # each and no field equal to a secret word, so it is untouched; a table whose shape breaks ends
     # the run rather than redacting the rest of the document.
+    # Before the column rule and before the personal-data pass: a list is a value shape, and
+    # the rules that follow read one value per name.
+    text = _redact_secret_lists(text)
     text = _redact_delimited_columns(text)
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
@@ -1532,6 +1535,69 @@ def _split_row(line, delim):
         return None
     parts = [f.strip().strip('"').strip("'").strip() for f in line.split(delim)]
     return parts if len(parts) >= 2 else None
+
+
+# 🐛 [2026-09-08] Every assignment rule above answers "name, separator, ONE value" and stops,
+# because that is what an assignment is. A list is the other shape a config file uses for the same
+# job -- rotated keys, a pool of tokens, two passwords during a migration -- and under those rules
+# the first element was redacted and the rest printed beside it. Measured on a three-element JSON
+# array of generic secrets: one redacted, two in the clear, with a `<REDACTED>` at the front of them
+# saying the line had been handled. A YAML block sequence was missed outright (R3 agent 2).
+_LIST_OPEN = re.compile(
+    r"(?<![\w-])(['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)\1(\s*[:=]\s*)\[([^\[\]]*)\]", re.I)
+# A YAML block sequence: the key alone on its line, then indented `- item` lines under it.
+_BLOCK_KEY = re.compile(
+    r"^(\s*['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)(['\"]?\s*:\s*)$", re.I)
+_BLOCK_ITEM = re.compile(r"^(\s+-\s+)(['\"]?)(.+?)\2(\s*)$")
+# A bare number in such a list is a port, a retry count or a length, not a credential. Redacting it
+# costs a reader information and hides nothing, and it is the one element type that is safe to keep.
+_JUST_A_NUMBER = re.compile(r"[-+]?\d+(?:\.\d+)?")
+
+
+def _list_element(raw):
+    """One element of a secret-named list, replaced but still recognisable as an element."""
+    stripped = raw.strip()
+    if not stripped or _JUST_A_NUMBER.fullmatch(stripped):
+        return raw
+    if len(stripped) > 1 and stripped[0] in "'\"" and stripped[-1] == stripped[0]:
+        return raw.replace(stripped, f"{stripped[0]}{PLACEHOLDER}{stripped[0]}", 1)
+    return raw.replace(stripped, PLACEHOLDER, 1)
+
+
+def _redact_secret_lists(text):
+    """Redact EVERY element of a list held by a secret-named key, not just the first.
+
+    Two shapes, because config files use both: an inline `[...]` on one line (JSON, TOML, a Python
+    literal, YAML flow style) and YAML's block sequence, where the key sits alone and the values are
+    indented `- ` lines under it. Anything that is not one of those comes back untouched.
+
+    The key must still be secret-NAMED; this widens what counts as the value, not what counts as a
+    secret. `hosts: ["db1", "db2"]` and `ports:` with numbers under it are left exactly as they were.
+    """
+    def _inline(m):
+        return (f"{m.group(1)}{m.group(2)}{m.group(1)}{m.group(3)}"
+                f"[{','.join(_list_element(x) for x in m.group(4).split(','))}]")
+
+    text = _LIST_OPEN.sub(_inline, text)
+    lines = text.splitlines(keepends=True)
+    out, i = [], 0
+    while i < len(lines):
+        out.append(lines[i])
+        if _BLOCK_KEY.match(lines[i].rstrip("\n")):
+            i += 1
+            while i < len(lines):
+                m = _BLOCK_ITEM.match(lines[i].rstrip("\n"))
+                if not m:
+                    break
+                nl = "\n" if lines[i].endswith("\n") else ""
+                body = m.group(3)
+                keep = bool(_JUST_A_NUMBER.fullmatch(body.strip()))
+                out.append(f"{m.group(1)}{m.group(2)}{body if keep else PLACEHOLDER}"
+                           f"{m.group(2)}{m.group(4)}{nl}")
+                i += 1
+            continue
+        i += 1
+    return "".join(out)
 
 
 def _redact_delimited_columns(text):

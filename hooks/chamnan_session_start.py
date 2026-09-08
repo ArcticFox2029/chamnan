@@ -802,7 +802,21 @@ def dead_entries(root, map_text):
                 rel = dirpath[cut:]
                 for f in filenames:
                     present.add(f"{rel}/{f}" if rel else f)
-            dead = [n for n in ordered if n.rstrip("/") not in present]
+            # 🐛 [2026-09-08] The set holds the filenames `os.walk` reported, compared as exact
+            # Python strings; the stat branch below asks `.exists()`, which the FILESYSTEM resolves.
+            # On macOS and Windows that resolution is case-insensitive, so one function gave two
+            # opposite answers to the identical drift -- a map naming `casefile.py` for a
+            # `CaseFile.py` on disk read as 1 dead entry above 2,000 names and 0 below it, decided
+            # by nothing but how many files the repository has.
+            #
+            # Folding case in the set would be wrong the other way: on a case-SENSITIVE checkout
+            # those really are two files and a genuine dead entry would be hidden. So the literal
+            # test stands, and only the names it calls dead are confirmed with `.exists()` -- the
+            # same question the other branch asks, answered by the same filesystem. A healthy map
+            # pays for zero of these; a lying one pays one call per lie, which it is reporting
+            # anyway.
+            dead = [n for n in ordered
+                    if n.rstrip("/") not in present and not (root / n).exists()]
         else:
             dead = [n for n in ordered if not (root / n).exists()]
         return len(dead), len(named), dead[:3]
@@ -1444,6 +1458,22 @@ def main():
             # starting. "We have tried to fix this three times" is the line nobody can reconstruct
             # from a git log, and it costs about as much to say as a milestone title.
             open_threads = redact.scrub(timeline.open_titles(root))
+            # 🐛 [2026-09-08] `slug()` reduces a thread name to lowercase ASCII, so chamnan cannot
+            # CREATE two files that differ only by case or normalisation. That was the argument for
+            # leaving this store out, and it covers only half the question: `threads()` globs the
+            # directory and lists whatever is in it, including a file somebody copied, hand-wrote,
+            # or another tool left. Reproduced with two thread files differing only by the
+            # normalisation of one letter -- both injected here as unrelated open work, so an agent
+            # would carry two lines of work that are one, and a clone to a case-insensitive machine
+            # would then keep one of them without saying which.
+            _thread_clash = memory.case_collisions(timeline.threads(root))
+            if _thread_clash:
+                names = "; ".join(
+                    ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _thread_clash)
+                open_threads += (
+                    f"\n- ⚠️ These thread files differ only by case or Unicode normalisation "
+                    f"({names}). They are listed above as separate work and a case-insensitive "
+                    f"filesystem keeps only one of them.")
             if open_threads:
                 out.append(section(
                     "Open threads — lines of work still in flight",
@@ -1467,6 +1497,29 @@ def main():
                 # two dozen agents, calls the same function without this argument and keeps them.
                 carried = redact.scrub(
                     sessions.where_git_says_you_stopped(root, name_files=False))
+            # 🐛 [2026-09-08] `sessions/` is the fourth store whose filenames a PERSON types --
+            # `skills/remember`'s sibling, `skills/resume/SKILL.md`, tells the agent to write
+            # `.chamnan/sessions/YYYY-MM-DD-short-slug.md` directly rather than through
+            # `sessions.slug()`. It is also the WORST of the four, which this file's own comment in
+            # `lib/sessions.py` already said: every other store needs a command before a collision
+            # is visible, and this one is injected on every session with no user action at all.
+            #
+            # Reproduced: two records dated the same day differing only by case, one saying an
+            # incident is closed and the other saying production is down. On a case-insensitive
+            # filesystem one survives -- the first name carrying the second file's content. On a
+            # case-sensitive checkout both live and `latest()` picks by an mtime tie-break that a
+            # fresh clone resets, so which of two contradictory records reaches the model is
+            # decided by nothing. (R5 acc3 windows semantics, which argued it correctly where an
+            # earlier round argued the same shape for two stores it cannot apply to.)
+            _sess_clash = memory.case_collisions(sessions.records(root))
+            if _sess_clash:
+                names = "; ".join(
+                    ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _sess_clash)
+                carried = (carried + "\n\n" if carried else "") + (
+                    f"⚠️ Two session records differ only by case or Unicode normalisation "
+                    f"({names}). A case-insensitive filesystem keeps ONE, and which one is read "
+                    f"back here is decided by modification time, which a clone resets. Rename one "
+                    f"before trusting anything above.")
             if carried:
                 out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
 

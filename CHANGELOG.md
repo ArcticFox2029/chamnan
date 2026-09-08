@@ -234,6 +234,72 @@ rebuild is a full rescan at 107s on 1,032 files — was recorded, but 216 lines 
 beside the sentence that tells the user about it. Someone reading the hook body saw `ACDR` with no
 explanation. It is written where the decision is now, and it travels into the installed hook file.
 
+### A list of secrets kept everything after the first one
+
+Every assignment rule answers "name, separator, one value" and stops, because that is what an
+assignment is. A list is the other shape a config file uses for the same job — rotated keys, a token
+pool, two passwords during a migration. Measured on a three-element JSON array: the first element
+redacted, the other two printed beside it, with a `<REDACTED>` at the front saying the line had been
+handled. A YAML block sequence was missed outright.
+
+Both shapes are covered now — an inline `[...]` on one line (JSON, TOML, a Python literal, YAML flow
+style) and YAML's block sequence, quoted or bare. A number among the elements is kept: a port, a
+retry count and a length are not credentials, and redacting one costs a reader information while
+hiding nothing. The key must still be secret-named, so `hosts: [...]` and `keywords = [...]` come
+back byte-identical. Recall and precision unchanged at 98.2% / 100%, 0 of 43 ordinary strings damaged.
+
+### The stores that were left out of this morning's collision fix
+
+`memory.case_collisions` guards a name pair that a case-insensitive filesystem will silently collapse
+into one file. This morning it reached `skills/`; three more stores had the same shape and no guard.
+
+`sessions/` is the one that matters, and the codebase already said so — `lib/sessions.py`'s own
+comment calls it "the worst of the four", because every other store needs a command before anyone
+sees the damage and this one is injected into every session with no user action at all. Two records
+dated the same day, one saying an incident is closed and the other that production is down: on a
+case-insensitive filesystem one survives carrying the other's content, and on a case-sensitive
+checkout both live and the tie is broken by a modification time that a fresh clone resets.
+
+`threads/` and `candidates/` follow. Those two were argued out of scope earlier the same day on the
+grounds that their filenames are derived through a `slug()` reducing to lowercase ASCII, so chamnan
+cannot create a colliding pair — which is true, and answers only half the question. Both functions
+glob a directory and list whatever is in it, including a file somebody copied, hand-wrote, or another
+tool left behind.
+
+### An index that reported a file missing because of how many files there were
+
+`dead_entries()` switches comparison strategy above two thousand names: below it, one `.exists()` per
+name, which the filesystem resolves case-insensitively on macOS and Windows; above it, a set built
+from `os.walk` and compared as exact strings, which does not. A map naming `casefile.py` for a
+`CaseFile.py` on disk therefore read as one dead entry on a large repository and none on a small one,
+decided by nothing but the file count.
+
+Folding case in the set would be wrong the other way — on a case-sensitive checkout those really are
+two files. So the literal test stands and only the names it calls dead are confirmed with
+`.exists()`: the same question the other branch asks, answered by the same filesystem. A healthy map
+pays for none of these.
+
+### Two figures in the documentation that could not be checked
+
+The corpus coverage was quoted as 514 of 529 files (97%) in the prose explaining why the number went
+down, and as 517/529 (98%) in a sample terminal output 147 lines later — the pre-correction figure,
+still presented as what a reader following the reproduction steps should expect. Reported three times
+across three rounds before this.
+
+And the Thai-versus-English token ratio was cited in two places from a measurement whose sentences
+were never committed. The README was honest about it, declining to print digits for a number nobody
+could reproduce. `bench/script_ratio.py` carries the sentences now and prints 1.63x mean over a
+1.50x–1.85x range, and a check asserts the documentation quotes what the script actually outputs.
+
+### The benchmark measured what it cost and never whether it worked
+
+`bench/questions.json` says in its own note that every question "must have a checkable ground truth".
+None of the ten carried one, and `run_bench.py` scored nothing — so twenty recorded cells answer
+"what did this cost" while looking like they answer "did this work". The corpus is not in this
+repository so the values cannot be written here, but the silence is closed: a question with no ground
+truth is now reported UNSCORED and named, the four whose truth is mechanically derivable carry the
+command that derives it, and the scorer returns "not checked" rather than "fine".
+
 ### The rest
 
 The first-session banner contradicted itself on two of its three branches — an unwritable repository
