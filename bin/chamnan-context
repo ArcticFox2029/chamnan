@@ -408,9 +408,30 @@ def main():
                   f"here — so this block now reaches it twice every session, and costs twice. Keep "
                   f"whichever suits you and delete the other: this file carries {args.write}'s own "
                   f"frontmatter, {_root_file} is read by every agent that has no file of its own.")
-        # Declaring a ceiling bounds chamnan's own share; it cannot bound a file that also holds
-        # what the user wrote. Measured against the finished file, which is the thing the agent
-        # will actually read and truncate.
+        # 🐛 [2026-09-08] `CEILING` means "the byte limit that agent's delivery imposes, or None
+        # when there is none" -- a statement about the VENDOR. Fifteen of twenty-three adapters have
+        # None, and what fell out of that is a decision nobody made: an agent whose vendor imposes
+        # no limit is handed roughly twice what Claude Code's own hook is allowed. Measured on this
+        # repository, same information both ways: `--emit generic` 18,805 bytes / 7,959 tokens
+        # against the hook's 8,942 bytes / 3,799 (R7 agent 6).
+        #
+        # Not capped here, and that is deliberate: a file has no host truncation to protect it
+        # from, more of the index is genuinely useful to a tool that will not be re-handed it every
+        # turn, and silently halving what twenty vendors get is a bigger change than a round should
+        # make on its own. What was actually wrong is that the person who typed this command was
+        # never told the number. This is the moment they have both the figure and the choice, which
+        # is the same reasoning the duplicate-delivery warning above already runs on.
+        if written.is_file():
+            _cost = tokens_mod.estimate(written.read_text(encoding="utf-8", errors="replace"))
+            import fit as _fit
+            _hook = _fit.CEILING
+            print(f"  {_cost:,.0f} tokens, read by {args.write} at the start of every session it "
+                  f"opens here.")
+            if written.stat().st_size > _hook:
+                print(f"  Claude Code's own block is capped at {_hook:,} bytes because its host "
+                      f"truncates past that;")
+                print(f"  a file has no such limit, so this one carries more of the index. Delete "
+                      f"it to stop paying.")
         limit = getattr(adapters.for_agent(args.write), "CEILING", None)
         if limit and written.is_file():
             size = written.stat().st_size
