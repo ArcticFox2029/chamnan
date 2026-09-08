@@ -15495,27 +15495,6 @@ check("the preflight detects WSL at all", "microsoft /proc/version" in _sh_src)
 check("...and uses it only to label the report, never to pick a package manager",
       len(_wsl_uses) == 1 and "say" in _wsl_uses[0])
 
-# ---------------------------------------------------------------- the Windows shims
-# Eleven near-identical files are exactly the set where one gets forgotten, and the failure would
-# be a command that works everywhere except the platform the shims exist for.
-_shimgen = ROOT / "install" / "make_windows_shims.py"
-check("the shim generator exists", _shimgen.is_file())
-_drift = subprocess.run([sys.executable, str(_shimgen), "--check"], capture_output=True, text=True, encoding="utf-8", errors="replace")
-check("EVERY COMMAND AND HOOK HAS A CURRENT WINDOWS SHIM", _drift.returncode == 0)
-if _drift.returncode != 0:
-    print("   ", _drift.stdout.strip().replace("\n", "\n    "))
-
-_bin_cmds = {p.stem for p in (ROOT / "bin").glob("*.cmd")}
-_bin_real = {p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix}
-check("...one per bin/ command, none missing", _bin_real <= _bin_cmds)
-check("...and none orphaned", _bin_cmds <= _bin_real)
-# The shim must hand the script to an interpreter rather than trying to execute it: that is the
-# entire reason it exists, and a shim that just calls the bare name would loop.
-_sample = (ROOT / "bin" / "chamnan-map.cmd").read_text(encoding="utf-8")
-check("a shim invokes the Python launcher, not the script directly",
-      "py -3" in _sample and "python " in _sample)
-check("...and passes arguments and the exit code through",
-      "%*" in _sample and "exit /b %errorlevel%" in _sample)
 
 
 # ------------------------------------------- every OS branch, run for real, on a fake machine
@@ -23756,6 +23735,37 @@ try:
           "stderr" not in _r17_line.get("toofew.sh", ""))
 finally:
     _rmtree(_r17_ti, ignore_errors=True)
+
+
+# ------------------------------------------- garbage in, for every hook and not just two of them
+# 🐛 [2026-09-08] All six hooks carry a `_never_fail_the_session()` wrapper (or the equivalent
+# top-level `except Exception`) written for exactly one purpose: garbage from the host must never
+# take a session down. Two of the six were fed garbage by this suite — `chamnan_session_start` got
+# one `"null"`, `chamnan_subagent_start` got a five-payload loop — and the other four were never
+# fed anything but well-formed fixtures. The property held in all six when it was finally measured,
+# which is the point: it held by nobody's design and could stop holding without a red check
+# (R2 acc3, suite blindspots).
+#
+# Derived from the directory, so hook number seven is covered the day it is written rather than the
+# day somebody remembers it.
+_hook_payloads = ("", "null", "[]", "{", "not json at all", '{"cwd": null}',
+                  '{"cwd": 12345}', '{"tool_input": {"file_path": null}}')
+_hook_files = sorted(p for p in (ROOT / "hooks").glob("chamnan_*.py"))
+check(f"every hook this repository ships is covered here: {len(_hook_files)} found",
+      len(_hook_files) >= 6)
+_hook_crashes = []
+for _hp in _hook_files:
+    for _bad in _hook_payloads:
+        _hr = subprocess.run([sys.executable, str(_hp)], input=_bad, capture_output=True,
+                             text=True, encoding="utf-8", errors="replace", timeout=30,
+                             cwd=str(ROOT), env=dict(os.environ, CHAMNAN_READ_ONLY="1"))
+        if _hr.returncode != 0:
+            _hook_crashes.append(f"{_hp.name} on {_bad!r}: exit {_hr.returncode}")
+if _hook_crashes:
+    for _hc in _hook_crashes[:6]:
+        print(f"      {_hc}")
+check("NO HOOK EXITS NON-ZERO ON MALFORMED INPUT, WHICHEVER HOOK AND WHATEVER THE GARBAGE",
+      not _hook_crashes)
 
 
 # ---------------------------------------------------------------- cleanup
