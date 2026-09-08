@@ -74,6 +74,28 @@ def entries(root, category):
 # people and by the write skills, in STATE.md, session records, threads and dated logs.
 CITATION = re.compile(r"memory[:\s]+`([a-z0-9][a-z0-9._-]*)`", re.I)
 
+# 🐛 [2026-09-08] The OTHER syntax, and the one the memory store's own entries actually use.
+# `dangling_citations` exists to catch a pointer to an entry nobody wrote, and it could not see
+# nine `[[slug]]` links across eight files in this repository's live workspace -- two of which
+# point at slugs that exist nowhere, confirmed against the files on disk. One store, two citation
+# formats, and only one of them checked: the same shape this codebase carries more fixes for than
+# any other, in the function whose entire job is to find broken pointers (R7 agent 3).
+#
+# A `[[...]]` may carry a path (`[[../lessons/some-slug]]`) or a `.md`, because that is how people
+# write them; both are reduced to the bare stem, which is what an entry is named by. A link whose
+# target RESOLVES as a real file relative to the citing document is not a memory citation at all --
+# `[[../../../CLAUDE.md]]` is a link to the repository's own file, and reporting it as dangling
+# would be a false positive in a report whose value depends on every line being real.
+WIKILINK = re.compile(r"\[\[([^\]|#\n]{1,200})\]\]")
+
+
+def _wikilink_slug(target):
+    """The entry name a `[[...]]` target refers to, or None when it is not one."""
+    stem = target.strip().rsplit("/", 1)[-1]
+    if stem.lower().endswith(".md"):
+        stem = stem[:-3]
+    return stem if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", stem, re.I) else None
+
 
 def dangling_citations(root):
     r"""[(slug, [(file, line), …]), …] for every ``memory `slug``` reference that names no entry.
@@ -127,14 +149,34 @@ def dangling_citations(root):
         # citation wrapped across two lines is a real and common shape. It cost a detection the
         # moment it was introduced — rancher went from two dangling slugs to one — which is why
         # this is written the slower way on purpose.
-        for m in CITATION.finditer(text):
-            slug = m.group(1)
-            if slug in known:
-                continue
-            where = (f"{f.relative_to(wsdir).as_posix()}", text.count("\n", 0, m.start()) + 1)
-            found.setdefault(slug, [])
-            if where not in found[slug]:
-                found[slug].append(where)
+        # Both citation formats, from one loop, so a third cannot be added to one and forgotten
+        # in the other. `CITATION` is the prose form; `WIKILINK` is what the entries themselves use.
+        for pattern in (CITATION, WIKILINK):
+            for m in pattern.finditer(text):
+                if pattern is CITATION:
+                    slug = m.group(1)
+                    # 🐛 [2026-09-08] An entry's slug is its filename WITHOUT `.md` -- that is what
+                    # the write skills produce and what a citation is written from. So a backticked
+                    # token that still carries the extension is a FILENAME, and this rule was
+                    # reporting `Memory: ``MEMORY.md`` index now truncates at 25KB` -- a changelog
+                    # line about a file -- as a pointer to a memory entry nobody wrote. One wrong
+                    # line costs this report more than it looks: it is read to decide whether the
+                    # other lines are worth chasing.
+                    if slug.lower().endswith(".md"):
+                        continue
+                else:
+                    slug = _wikilink_slug(m.group(1))
+                    # A link that resolves to a real file beside the citing document is a file
+                    # link, not a memory citation, and it is not this function's business.
+                    if slug is None or (f.parent / m.group(1).strip()).exists():
+                        continue
+                if slug in known:
+                    continue
+                where = (f"{f.relative_to(wsdir).as_posix()}",
+                         text.count("\n", 0, m.start()) + 1)
+                found.setdefault(slug, [])
+                if where not in found[slug]:
+                    found[slug].append(where)
     return [(slug, places) for slug, places in found.items()]
 
 

@@ -2,18 +2,35 @@
 
 Trae reads EVERY `.md` under `.trae/rules/`, not one reserved name: its own documentation walks a
 user through creating `ci-rules.md`, `general-rules.md` and others, and the scan is recursive to
-three levels for subdirectory scope. So `project_rules.md` is chamnan's choice of filename, which is
-the right call — a name of its own cannot collide with a rule file the repository already had — and
-an earlier version of this docstring, which said Trae "reads one specific name", was wrong about the
-vendor rather than about the code (R7/R8 agent 1, checked against docs.trae.ai). Its frontmatter keys are `alwaysApply`,
+three levels for subdirectory scope. So `project_rules.md` is chamnan's choice of
+filename, and an earlier version of this docstring, which said Trae "reads one specific name", was
+wrong about the vendor rather than about the code (R7/R8 agent 1, checked against docs.trae.ai).
+
+That earlier version also said the chosen name "cannot collide with a rule file the repository
+already had", and that was wrong in the other direction: `project_rules.md` is the name Trae's own
+documentation walks a user through creating, so it is the ONE name in that directory most likely to
+be taken. See the paragraph below for what happens when it is — and note that the correction here
+and the correction there had to be made together, because a fix to one paragraph that leaves its
+sibling standing is how this file came to say two different things in the first place. Its frontmatter keys are `alwaysApply`,
 `globs` and `description` -- the same three Cursor uses, which is not a coincidence and is not a
 reason to share code with it either.
 
-**The filename is fixed, and that is the difference that matters here.** Every other file adapter
-writes `chamnan.md` alongside whatever else is in the directory. Trae reads one specific name, so
-this adapter owns a file a user may also want to write in themselves. There is no marker-region
-merge for it, because the file is small and the honest failure is visible: if they had one, it is
-replaced, and `--write trae` is not a command anyone runs by accident.
+**The filename is chamnan's choice, and a user may plausibly have made the same one.** Every other
+file adapter writes `chamnan.md` alongside whatever else is in the directory; this one writes
+`project_rules.md`, which is the name Trae's own documentation walks a user through creating. So
+this adapter can want a file somebody already wrote.
+
+That is handled, and not here: the shared writer in `__init__.py` refuses to replace a target that
+does not itself begin as chamnan output, so a hand-written `project_rules.md` is left alone and the
+command fails loudly. There is no marker-region merge because there does not need to be one.
+
+🐛 [2026-09-08] This paragraph used to open "**The filename is fixed** ... Trae reads one specific
+name", and end "if they had one, it is replaced". Both halves were false by then and both had
+already been corrected elsewhere: the vendor fact two paragraphs above (Trae reads EVERY `.md`
+under `.trae/rules/`), and the overwrite behaviour in `__init__.py`'s shared writer. Each fix
+landed BESIDE the claim it retracted rather than over it, so a reader who stopped at paragraph one
+got the right answer and a reader who continued to the design rationale got the wrong one, with a
+justification built on it (R8 agent 1).
 """
 
 NAME = "trae"

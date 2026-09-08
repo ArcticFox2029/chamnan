@@ -32,6 +32,7 @@ worth keeping — and why a `Checked:` date is the only honest way to say how mu
 import datetime
 import re
 import mdblock
+import redact
 import workspace as ws  # noqa: E402
 
 FILENAME = "environments.md"
@@ -190,14 +191,31 @@ def render_entry(name, platform="", versions="", constraints=(), checked=""):
     # Folded onto one line each, for the reason milestones.render_entry() spells out: this file is
     # read back by its `## ` headings, and a name carrying a newline wrote a second environment
     # that silently absorbed the platform and constraints meant for the first.
-    name, platform = mdblock.one_line(name), mdblock.one_line(platform)
-    versions, checked = mdblock.one_line(versions), mdblock.one_line(checked)
+# 🐛 [2026-09-08] The READ side of these three stores was hardened and the WRITE side was never
+# re-asked. `redact.emit` shadows `print` in `bin/chamnan-env`, `bin/chamnan-timeline` and
+# `bin/chamnan-promote`, so an agent reading a command's stdout sees a scrubbed value -- and
+# `git add` reads the FILE, not the stdout. Reproduced end to end: `chamnan-timeline add
+# deploy-notes "rotated the key, new value is AKIAIOSFODNN7EXAMPLE"` wrote that key verbatim into
+# `.chamnan/threads/deploy-notes.md`, which `git check-ignore` confirms is not ignored, and which
+# the README tells people to commit. `scrub()` catches it; nothing was calling `scrub()`.
+#
+# Scrubbed BEFORE the one-line fold, not after: the multi-line rules (a YAML block, a secret-named
+# list) need the newlines to see the shape, and folding first destroys exactly the structure they
+# match on. R8 agent 2.
+    #
+    # Every field, not the obvious one: a connection string reaches `--constraint` as readily as
+    # `--platform`, and picking which field "could hold a secret" is the judgement that was wrong
+    # every previous time this file made it.
+    name = mdblock.one_line(redact.scrub(name))
+    platform = mdblock.one_line(redact.scrub(platform))
+    versions = mdblock.one_line(redact.scrub(versions))
+    checked = mdblock.one_line(redact.scrub(checked))
     parts = [f"## {name}", ""]
     if platform:
         parts.append(f"**Platform:** {platform}")
     if versions:
         parts.append(f"**Versions:** {versions}")
-    bullets = [b for b in (mdblock.one_line(c) for c in constraints) if b]
+    bullets = [b for b in (mdblock.one_line(redact.scrub(c)) for c in constraints) if b]
     if bullets:
         parts.append("**Constraints:**")
         parts.extend(f"- {b}" for b in bullets)

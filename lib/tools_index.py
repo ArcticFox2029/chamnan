@@ -27,6 +27,7 @@ its limits, never invent a confidence number to paper over not having one.
 import json
 from datetime import datetime
 
+import redact
 import workspace as ws
 
 # Three of the same signal in a row is worth a look; matches REPEAT_AT elsewhere in this plugin
@@ -163,7 +164,10 @@ def _save(root, entries):
         raise OSError(why)
     if not ws.atomic_write_text(path(root),
                                 json.dumps(entries, indent=1, ensure_ascii=False) + "\n"):
-        raise OSError(f"could not write {path(root)}")
+        # The shared helper, not a second sentence: it is the one place that knows to say
+        # "CHAMNAN_READ_ONLY is set" rather than leaving the caller to guess at permissions.
+        # `chamnan-promote` and `chamnan-candidates promote` both surface this message.
+        raise OSError(ws.write_failure_text(path(root)))
 
 
 def register(root, entry):
@@ -208,7 +212,11 @@ def _register_locked(root, entry):
     entries = load(root)
     entries.append({
         "name": entry["name"],
-        "desc": entry.get("desc", ""),
+        # The description is free text a person typed at `chamnan-promote --desc`, and it
+        # lands in `.chamnan/tools/index.json`, which is committed. `chamnan-promote --list`
+        # already scrubs this same field on the way OUT (bin/chamnan-promote), which is what made
+        # the gap invisible: the value looked handled everywhere anyone looked. R8 agent 2.
+        "desc": redact.scrub(entry.get("desc", "")),
         "added": entry.get("added", ""),
         "origin": entry.get("origin", ""),
         "runs": entry.get("runs", 0),

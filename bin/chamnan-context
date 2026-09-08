@@ -382,6 +382,20 @@ def main():
             sys.stderr.write(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
             return 1
         print(f"chamnan-context -> {written}")
+        # 🐛 [2026-09-08] Four vendors read their own file AND the root `AGENTS.md` -- Roo Code,
+        # Continue.dev, Windsurf/Devin and GitHub Copilot, each confirmed against the vendor's own
+        # documentation. A user who ran `--write generic` and then `--write roo` now sends the
+        # identical block to that tool twice on every session and pays for it twice: a token-waste
+        # defect in a tool whose whole purpose is to reduce tokens, and nothing said so.
+        #
+        # Said HERE, at the moment the second file is created, because that is the only moment the
+        # person paying has both the information and the choice (R8 agent 16).
+        if args.write in adapters.ALSO_READS_AGENTS_MD and adapters.wrote_the_generic_file(root):
+            _root_file = adapters.for_agent("generic").TARGET
+            print(f"  ⚠ {args.write} also reads the root {_root_file}, which chamnan already wrote "
+                  f"here — so this block now reaches it twice every session, and costs twice. Keep "
+                  f"whichever suits you and delete the other: this file carries {args.write}'s own "
+                  f"frontmatter, {_root_file} is read by every agent that has no file of its own.")
         # Declaring a ceiling bounds chamnan's own share; it cannot bound a file that also holds
         # what the user wrote. Measured against the finished file, which is the thing the agent
         # will actually read and truncate.

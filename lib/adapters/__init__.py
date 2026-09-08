@@ -144,6 +144,51 @@ def names():
     return sorted(set(ADAPTERS) | set(ALIASES))
 
 
+# Agents that read their OWN file AND the root `AGENTS.md`, so a repository that has run both
+# `--write generic` and `--write <this>` sends the identical block to that tool twice, every
+# session, and pays for it twice. Each entry verified against the vendor's own documentation on
+# 2026-09-08 (R8 agent 16):
+#
+#   roo       roocodeinc.github.io/Roo-Code/features/custom-instructions -- merged by default,
+#             opt-OUT via `roo-cline.useAgentRules`, since v3.38
+#   continue  docs.continue.dev/customize/deep-dives/rules -- "alongside .continue/rules"
+#   windsurf  docs.devin.ai/desktop/cascade/agents-md -- the same engine reads both
+#   copilot   docs.github.com/en/copilot/concepts/response-customization -- combines, not chooses
+#
+# These stay as modules rather than becoming aliases: each writes vendor-specific frontmatter
+# (`alwaysApply`, `globs`) that a bare `AGENTS.md` cannot carry, and `roo.py` additionally sidesteps
+# Roo's `.clinerules` legacy-fallback tier. Collapsing them would trade a real capability for a
+# duplicate nobody is forced to create.
+#
+# What this set is FOR: telling the user at the moment they create the duplicate. The round that
+# found this proposed recording it in each adapter's docstring, which reaches a maintainer reading
+# the source and never reaches the person paying the tokens.
+ALSO_READS_AGENTS_MD = frozenset({"roo", "continue", "windsurf", "copilot"})
+
+
+def wrote_the_generic_file(root):
+    """True when the root `AGENTS.md` is here AND is chamnan's own output.
+
+    A file somebody wrote themselves is not a duplicate of anything, so this asks the same question
+    `install()` asks before it replaces a target -- one definition of "chamnan wrote this", not a
+    second one that can disagree with it. A symlink is refused for the reason `read_target` gives.
+    """
+    path = ws.Path(root) / generic.TARGET
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    # 🐛 The first version of this asked `_looks_generated`, which is the shared writer's question
+    # and the wrong one HERE: `generic` has an `install()` of its own and writes a MARKER REGION
+    # into a file the user may also own, so its output starts with `<!-- chamnan:start -->` and
+    # never with the `## chamnan` heading the shared writer looks for. It returned False on a file
+    # chamnan had just written, and the warning below never fired. Ask `generic`'s own marker,
+    # which is the definition that actually applies to this file.
+    return generic.START in text and generic.END in text
+
+
 def safe_target(root, rel):
     """The path `rel` names under `root` — refusing anything that would leave the repository.
 

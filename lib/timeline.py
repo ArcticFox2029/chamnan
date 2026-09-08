@@ -28,6 +28,7 @@ import re
 import subprocess
 
 import mdblock
+import redact
 import workspace as ws  # noqa: E402
 
 DIRNAME = "threads"
@@ -248,7 +249,18 @@ def append(root, ident, date, note, files=None):
     # real. Being later, it won every "last activity" comparison, took the `**Files:**` line that
     # belonged to the real entry, and so answered `for_path()` in its place. A date nobody typed,
     # attached to a file it never touched, reading as a resolution.
-    body = [f"## {date} — {mdblock.one_line(note)}", ""]
+# 🐛 [2026-09-08] The READ side of these three stores was hardened and the WRITE side was never
+# re-asked. `redact.emit` shadows `print` in `bin/chamnan-env`, `bin/chamnan-timeline` and
+# `bin/chamnan-promote`, so an agent reading a command's stdout sees a scrubbed value -- and
+# `git add` reads the FILE, not the stdout. Reproduced end to end: `chamnan-timeline add
+# deploy-notes "rotated the key, new value is AKIAIOSFODNN7EXAMPLE"` wrote that key verbatim into
+# `.chamnan/threads/deploy-notes.md`, which `git check-ignore` confirms is not ignored, and which
+# the README tells people to commit. `scrub()` catches it; nothing was calling `scrub()`.
+#
+# Scrubbed BEFORE the one-line fold, not after: the multi-line rules (a YAML block, a secret-named
+# list) need the newlines to see the shape, and folding first destroys exactly the structure they
+# match on. R8 agent 2.
+    body = [f"## {date} — {mdblock.one_line(redact.scrub(note))}", ""]
     # 🐛 [2026-09-06] The note above was folded and this was not -- the same fix applied to one
     # field of a pair, one line apart, which is this repository's most-repeated defect. A path
     # carrying a newline and a `## chamnan` heading wrote a fabricated section into a file that gets
@@ -259,7 +271,8 @@ def append(root, ident, date, note, files=None):
     # `as_quoted`, not `one_line`: these are rendered INSIDE backticks, and a backtick in the value
     # closes the span early and drops the rest of the line into chamnan's own voice. `as_quoted` is
     # the helper that already exists for a value going into a code span.
-    named = [mdblock.as_quoted(f.strip(), 200) for f in (files or []) if f.strip()]
+    named = [mdblock.as_quoted(redact.scrub(f).strip(), 200)
+             for f in (files or []) if f.strip()]
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")
