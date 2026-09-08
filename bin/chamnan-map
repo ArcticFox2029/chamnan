@@ -63,6 +63,19 @@ if command -v chamnan-map >/dev/null 2>&1; then
   if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
     chamnan-map >/dev/null 2>&1 || true
     git add .chamnan/MAP.md >/dev/null 2>&1 || true
+    # ...and the file each OTHER agent reads. Claude Code and Gemini get a live session hook and
+    # need no file; the other twenty-one read a snapshot, and this hook used to refresh the internal
+    # index and leave every one of those exactly as old as the day it was written -- while the
+    # README called this hook the thing that automates keeping them fresh. `--refresh` rewrites only
+    # files that already exist AND that chamnan wrote, so nothing a person wrote is touched and no
+    # agent acquires a config file because somebody committed. Measured at 0.77s per adapter
+    # against the 2.38s this hook already spends.
+    if command -v chamnan-context >/dev/null 2>&1; then
+      chamnan-context --written-agents 2>/dev/null | while read -r a; do
+        [ -n "$a" ] && chamnan-context --write "$a" >/dev/null 2>&1 || true
+      done
+      git add -u >/dev/null 2>&1 || true
+    fi
   fi
 fi
 # <<< chamnan

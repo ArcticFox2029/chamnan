@@ -163,6 +163,15 @@ _MD_MARKUP = re.compile(r"[*_`]")
 _LEADING_MARKUP = re.compile(r"^[>*\-\s]+")
 
 
+def _mtime_or_zero(path):
+    """Last-modified time, or 0 when it cannot be read -- which sorts the entry last rather than
+    dropping it, the same choice `milestones` makes for an entry with no date: it still exists."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def describe(path):
     """The `description:` line from a skill's frontmatter, which is what makes the registry usable.
 
@@ -1553,9 +1562,23 @@ def main():
             # `ws.is_store_index` drops the directory's own README: it is the index OF this
             # store, not a procedure in it, and here it sorted second of twenty and spent one of
             # twelve slots describing what the folder is (R8 agent 5).
+            # 🐛 [2026-09-08] The cap chose WHICH twelve by filename alphabet, and this is the third
+            # member of a three-way set to need the same fix. The tools index beside it ranks by its
+            # `runs` counter and then by recency, after registration order "held the list for ever:
+            # promote a thirteenth and it was never named in any session"; `memory.titles()` was
+            # fixed the same day for the identical reason. Skills never got it, and the cost is
+            # exact: 20 skills in this repository, 8 of them invisible -- including
+            # `writing_a_check_that_can_fail.md`, written the day before to stop a repeated mistake
+            # and cut from every session because its name begins with a w (R2 acc3, and reported
+            # twice before that without being acted on).
+            #
+            # mtime, with the filename as tie-break, for the reason `memory.py` gives at its own
+            # sort: these files carry no date, and after a clone every mtime is the checkout time,
+            # so the order falls back to exactly the previous behaviour where it cannot do better.
             skills = ([p for p in sorted((wsdir / "skills").glob("*.md"))
                        if ws.inside(p, root) and not ws.is_store_index(p)]
                       if (wsdir / "skills").is_dir() else [])
+            skills.sort(key=lambda p: (-_mtime_or_zero(p), p.name))
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
                 # session is that the agent loads one on demand — and it cannot decide which one to load

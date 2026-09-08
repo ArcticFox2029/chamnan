@@ -97,7 +97,11 @@ PATTERNS = [
     # Provider tokens with unambiguous prefixes — no false positives worth worrying about.
     re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
     re.compile(r"(?<![A-Za-z0-9_-])(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])xox[baprs]-[A-Za-z0-9-]{10,}"),
+    # 🐛 [2026-09-08] `xoxe-` and `xoxe.` are Slack's rotation-era refresh and access
+    # tokens, introduced 2021, and neither matched `xox[baprs]-` -- so a rotated token
+    # leaked in full with the word "token" on the same line (R2 agent 2).
+    re.compile(r"(?<![A-Za-z0-9_-])xox[baprse]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])xoxe\.xox[bp]-[A-Za-z0-9.-]{10,}"),
     # 🐛 `AKIA` alone. AWS issues access key IDs under four prefixes and the commonest one in CI is
     # `ASIA` — the temporary credential every assumed role hands out — which sailed straight through
     # (R5 agent 2, against gitleaks' and detect-secrets' own fixtures).
@@ -875,7 +879,7 @@ _TEMPLATED = re.compile(r"\{[^{}]*\}")
 # PATTERNS. Splitting a key across an interpolation must not be a way through, so the prefix alone
 # disqualifies the exemption.
 _CREDENTIAL_PREFIX = re.compile(
-    r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprs]-|"
+    r"(?:^|[^A-Za-z0-9])(?:sk-|pk-|rk_|ak_|phc_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[baprse]-|"
     r"AKIA|ASIA|ABIA|ACCA|AIza|ya29\.|glpat-|dop_v1_|shpat_|SG\.|npm_|dckr_pat_)", re.I)
 _WEAK_SECRET_WORD = re.compile(r"(?:^|[^A-Za-z])keys?\s*$", re.I)
 
@@ -1330,17 +1334,34 @@ _IBAN_LENGTHS = {
 # People write an IBAN two ways and only two: one unbroken run, or groups of four. " today" is five
 # letters after a space and is neither, so both alternatives below refuse it while the printed forms
 # a bank statement actually uses still match.
-_IBAN = re.compile(r"(?<![A-Za-z0-9])("
+_IBAN = re.compile(r"(?i)(?<![A-Za-z0-9])("
                    r"[A-Z]{2}[0-9]{2}[A-Za-z0-9]{10,30}"                      # one unbroken run
                    r"|[A-Z]{2}[0-9]{2}(?:" + _SEP + r"[A-Za-z0-9]{4}){2,7}"   # groups of four
                    r"(?:" + _SEP + r"[A-Za-z0-9]{1,3})?"                      # a short last group
                    r")(?![A-Za-z0-9])")
+# 🐛 [2026-09-08] `(?i)`, because this was the only rule in the file that was NOT
+# case-insensitive: `de89370400440532013000` leaked in full while the identical number
+# in capitals was redacted. The country code is conventionally upper case and the
+# pattern was written as if that were a rule; it is a convention, and a value pasted
+# out of a database or lower-cased by a logger is neither invalid nor rare. Survived
+# the rewrite this pattern got earlier the same day, which is exactly where a new gap
+# is expected to be (R2 agent 2).
 # Brazil's CPF, in the form people actually write it. The bare 11-digit run is deliberately NOT
 # matched: at 1% it would be tolerable on its own, but 11-digit runs are ordinary in code and the
 # dotted form is what appears in a record somebody pasted.
-_CPF_DOTTED = re.compile(r"(?<![0-9])([0-9]{3}\.[0-9]{3}\.[0-9]{3}-[0-9]{2})(?![0-9])")
+# 🐛 [2026-09-08] The separator was a literal dot, so a CPF written with spaces or hyphens --
+# which is what a spreadsheet export and half the forms in Brazil produce -- leaked whole.
+# `_SEP` is the shared set and this is the FOURTH rule in this file found spelling its own
+# copy of it; the gate above was the third, fixed this morning. The grouping is still
+# required, so the bare 11-digit run stays unmatched for the reason below.
+_CPF_DOTTED = re.compile(r"(?<![0-9])([0-9]{3}" + _SEP + r"[0-9]{3}" + _SEP
+                         + r"[0-9]{3}" + _SEP + r"[0-9]{2})(?![0-9])")
 _AADHAAR = re.compile(r"(?<![0-9])([0-9]{4}" + _SEP + r"?[0-9]{4}" + _SEP + r"?[0-9]{4})(?![0-9])")
-_AADHAAR_WORD = re.compile(r"(?i)(?<![a-z])(aadhaar|aadhar|uidai|\u0906\u0927\u093e\u0930)(?![a-z])")
+# 🐛 [2026-09-08] "UID" was missing -- the acronym UIDAI is named for, and what the number is
+# ordinarily called. The gate exists because Verhoeff passes 9.99% of random 12-digit
+# numbers, so the word beside it is doing the real work and a missing word is a leak.
+_AADHAAR_WORD = re.compile(
+    r"(?i)(?<![a-z])(aadhaar|aadhar|uidai|uid|\u0906\u0927\u093e\u0930)(?![a-z])")
 
 
 def _iban(text):

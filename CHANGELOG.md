@@ -7,6 +7,71 @@ Release notes for every version. The newest release is also at the top of the
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
 a version history is the one thing a first-time reader never needs.
 
+**Releases are paused, and the section below is why this file still gets written.** chamnan has no
+outside users yet, so shipping a version buys nothing and costs an evening — the owner will decide
+when that changes. Work continues and lands locally in the meantime. Every fix therefore gets its
+entry under **Unreleased** on the day it lands, so that whenever a release does happen its notes are
+assembled rather than excavated from six weeks of commit messages. A note written from a commit log
+weeks later is a worse note: the reason a thing was done is in the head of whoever did it, that day,
+and nowhere else.
+
+Nothing under **Unreleased** has a version number, on purpose. Numbering it would put a version in
+this file that no tag matches, which is the exact confusion the pause already creates on this
+machine — the locally installed plugin reports the last released number while running newer code.
+
+---
+
+## Unreleased
+
+Landed locally, not shipped. `git log v1.23.1..HEAD` is the authoritative list; this is what those
+commits would say to a reader.
+
+### Personal data: the layer had only ever been measured for what it wrongly catches
+
+A reader of the 1.23.1 notes asked whether the redactor's false-NEGATIVE rate had been measured
+against identifiers deliberately shaped to dodge the patterns. It had not — every rule's checksum
+had been measured against random input, which is entirely a false-positive number. Seven leaks
+turned up across two rounds of looking for the opposite:
+
+| what leaked | why nothing caught it |
+|---|---|
+| An IBAN followed by an ordinary word, in 6 of 10 realistic sentences | a space counts as a separator inside the number, so `wire to DE89…3000 today` swallowed the word, the length stopped matching and mod-97 failed. The commonest shape in prose, and the one a corpus of random strings never produces |
+| An IBAN in lower case | the only rule in the file without `(?i)`. A country code is conventionally upper case; a value out of a database or a logger is neither invalid nor rare |
+| An IBAN in fullwidth or Arabic-Indic digits | the one rule of seven reading the raw line instead of the digit-folded copy — in the release that added the fold table for exactly that case |
+| A tab-separated card number or national ID | the cheap gate that decides whether to run the layer at all had its own hand-written copy of the separator set, so adding a tab to the shared one changed nothing |
+| A CPF separated by spaces or hyphens | the same defect one rule over: a literal dot where `_SEP` already existed |
+| Slack's rotation-era tokens (`xoxe-`, `xoxe.xoxp-`) | the pattern knew only the pre-2021 prefixes, so a rotated token leaked with the word "token" beside it |
+| An Aadhaar number beside the word "UID" | the acronym UIDAI is named for was missing from the keyword gate, and the gate is doing the real work — Verhoeff passes 9.99% of random 12-digit numbers |
+
+False positives are unchanged: 0 of 10 ordinary lines, 0 of 2,000 random 13-digit runs.
+
+### Which entries a session is shown was decided by filename alphabet
+
+Three sections cap how many items they inject, and the cap is a choice about what a session never
+sees. The tools index has ranked by use and recency for months; `memory.titles()` and the skills
+list had not. Skills was the visible one: 20 in this repository, **8 invisible**, including the one
+written the day before to stop a repeated mistake and cut because its name begins with a w.
+
+Both sort by mtime with the filename as tie-break. After a clone every mtime is the checkout time,
+so the order falls back to exactly the previous behaviour rather than to something arbitrary.
+
+### The rest
+
+The first-session banner contradicted itself on two of its three branches — an unwritable repository
+was told `.chamnan/` could not be created and, in the same sentence, that the directories inside it
+are ready to write to. Three whole sentences now, and the test reads the whole sentence.
+
+The suite left a system temp directory behind on every local run — 801 of them on the machine this
+was found on, spanning two days. One temp root for the run, removed by `atexit`, rather than a rule
+fifteen call sites have to remember.
+
+The demo page refuses a listing path that does not stay under `/repo` once normalised, and now shows
+the count of paths it refused instead of computing it and throwing it away. Its fonts are served
+from its own origin: two `<link>` tags handed every visitor's IP to a third party before they had
+clicked anything, on a page that says in five languages that nothing leaves their machine.
+
+The README claimed all four operating systems are exercised in CI. Three are.
+
 ---
 
 ## What's new in 1.23.1
