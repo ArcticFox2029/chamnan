@@ -20,6 +20,7 @@ counts, which is worth far less. Reporting coverage tells the user which lever t
 import os
 import re
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -833,6 +834,9 @@ def main(argv):
     text = mapper.render(files, root)
     try:
         out = ws.ensure(root) / "MAP.md"
+        # Whether this repository had an index before this run — the only first-run signal this
+        # command has, and the one moment onboarding advice is worth printing.
+        _first_run = not out.is_file()
     except ws.NotAWorkspace as err:
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
@@ -1069,10 +1073,28 @@ def main(argv):
     if _gen:
         print(f"  not counted, a program wrote them (\"do not edit\"): {_gen} file(s)")
 
-    for label, marker in (("data model", "## Data model\n"), ("API surface", "## API surface"),
-                          ("config", "## Configuration")):
-        if marker in text[:index_chars]:
-            print(f"  + {label} section included")
+    _fired = [label for label, marker in
+              (("data model", "## Data model\n"), ("API surface", "## API surface"),
+               ("config", "## Configuration"), ("deployment", "## Deployment"))
+              if marker in text[:index_chars]]
+    for _label in _fired:
+        print(f"  + {_label} section included")
+    # 🐛 [2026-09-09] "8/8 files (100%)" on a repository holding sixteen, with nothing saying where
+    # the other eight went. They are not lost — a Dockerfile, a compose file, a migration and a
+    # workflow are read by the Deployment, Data model and Configuration sections right above — but
+    # a person doing the obvious "did it index my whole repo?" check gets a number that looks wrong
+    # and has to cross-reference MAP.md to find out it is not (R4 acc3, first ten minutes).
+    #
+    # Separate from the "no reader for the extension" line above, which fires only for extensions
+    # that ARE somebody's source language. `.md`, `.yml` and a Dockerfile are not source and saying
+    # "chamnan cannot read them" would be false; what is true is that they are here, they are not
+    # code, and the sections above are made of them.
+    _other = sum(mapper.SKIPPED_UNKNOWN_EXT.values()) if mapper.SKIPPED_UNKNOWN_EXT else 0
+    if _other and total:
+        _from = (" — the " + ", ".join(_fired) + f" section{'s' if len(_fired) > 1 else ''} above "
+                 f"{'are' if len(_fired) > 1 else 'is'} read from them") if _fired else ""
+        print(f"  {_other} other file(s) here are not code: configuration, documentation, "
+              f"manifests{_from}.")
 
     if mapper.PARSE_WARNINGS:
         print(f"\n  {len(mapper.PARSE_WARNINGS)} file(s) raised a parse warning while being read:")
@@ -1125,6 +1147,25 @@ def main(argv):
     else:
         print(f"\n  Under the {budget:,}-token session budget — injected per session as-is,"
               f" one line per file.")
+    # 🐛 [2026-09-09] Every command in the README's own "From a shell, in the repository" table
+    # answers `command not found` until somebody puts `bin/` on their PATH, and nothing at the
+    # moment of installation says so — the README does, under "Running it on each operating
+    # system", well past Quick Start, which never links to it. Reproduced with PATH filtered:
+    # `chamnan-map --help` exits 127. Inside Claude Code the Bash tool resolves the plugin's bin
+    # regardless, so this is the "driving it from a terminal, or from an agent that is not Claude
+    # Code" case — which is exactly what somebody trying the CLI in their first ten minutes is
+    # doing (R4 acc3, first ten minutes).
+    #
+    # Said once, on the run that creates the index, and only when the name really does not resolve
+    # from this environment. A line that fires on every run is one people stop reading, and the
+    # people who need this one need it exactly once.
+    if _first_run and shutil.which("chamnan-map") is None:
+        _bindir = HERE
+        print(f"\n  These commands are not on your PATH, so `chamnan-map` from a shell will say")
+        print(f"  `command not found`. Inside Claude Code they work regardless. To use them from a")
+        print(f"  terminal, add this line to your shell profile:")
+        print(f"    export PATH=\"{_bindir}:$PATH\"")
+
     if total == 0:
         # 🐛 [2026-09-08] `pct = have / total * 100 if total else 0` makes a repository with nothing
         # indexable read as 0% documented, which satisfies `pct < 70` exactly as a real, badly

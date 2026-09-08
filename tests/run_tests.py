@@ -23931,6 +23931,132 @@ if _r23_dups:
           + ", ".join(f"{_a} and {_b}" for _a, _b in _r23_dups[:5]))
 check(f"NO {_r23_win}-LINE RUN OF THIS SUITE EXISTS TWICE", not _r23_dups)
 
+# ------------------------------------------- "8/8 files (100%)" on a repository holding sixteen
+# 🐛 [2026-09-09] The coverage bar counts SOURCE files, and on a repository whose other half is a
+# Dockerfile, a compose file, a migration, a workflow and a README it said "8/8 files (100%)" with
+# nothing accounting for the other eight. They are not lost — the Deployment, Data model and
+# Configuration sections right above are made of them — but somebody doing the obvious "did it
+# index my whole repo?" check gets a number that looks wrong and has to open MAP.md to find out it
+# is not (R4 acc3, first ten minutes).
+#
+# Deliberately separate from the "no reader for the extension" line, which fires only for
+# extensions that ARE somebody's source language: saying chamnan cannot read a Dockerfile would be
+# false. And found alongside it: `deployment` was missing from the list of sections announced as
+# included, so a Deployment section that fired was never mentioned — three of four, again.
+_r24 = Path(tempfile.mkdtemp(prefix="chamnan-sixteen-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_r24)], capture_output=True)
+    for _r24_i in range(8):
+        (_r24 / f"mod{_r24_i}.py").write_text(
+            f"# does thing {_r24_i}\ndef f{_r24_i}():\n    return {_r24_i}\n", encoding="utf-8")
+    (_r24 / ".env.example").write_text("API_KEY=\n", encoding="utf-8")
+    (_r24 / ".gitignore").write_text("*.pyc\n", encoding="utf-8")
+    (_r24 / "Dockerfile").write_text("FROM python:3.12\n", encoding="utf-8")
+    (_r24 / "docker-compose.yml").write_text(
+        "services:\n  web:\n    image: nginx:1.27\n", encoding="utf-8")
+    (_r24 / "README.md").write_text("# readme\n", encoding="utf-8")
+    (_r24 / "requirements.txt").write_text("flask\n", encoding="utf-8")
+    (_r24 / "migrations").mkdir()
+    (_r24 / "migrations" / "0001_initial.sql").write_text(
+        "CREATE TABLE users (id int);\n", encoding="utf-8")
+    (_r24 / ".github" / "workflows").mkdir(parents=True)
+    (_r24 / ".github" / "workflows" / "tests.yml").write_text("name: t\non: [push]\n",
+                                                              encoding="utf-8")
+    _r24_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", cwd=str(_r24)).stdout
+    check("the bar still counts source, which is what it has always meant",
+          "8/8 files (100%)" in _r24_out)
+    check("A REPOSITORY IS TOLD WHERE ITS NON-SOURCE FILES WENT, NOT LEFT TO COUNT THEM",
+          "8 other file(s) here are not code" in _r24_out)
+    check("...and told which sections were read from them",
+          "read from them" in _r24_out and "deployment" in _r24_out)
+    check("...including the deployment section, which was never announced before",
+          "+ deployment section included" in _r24_out)
+finally:
+    _rmtree(_r24, ignore_errors=True)
+
+# ------------------------------------------- every command in the README's table, not found
+# 🐛 [2026-09-09] `chamnan-map` from a shell answers `command not found` until somebody puts `bin/`
+# on their PATH, and nothing at the moment of installation said so — the README does, under
+# "Running it on each operating system", well past a Quick Start that never links to it. Inside
+# Claude Code the Bash tool resolves the plugin's bin regardless, so this is the terminal case,
+# which is exactly what somebody trying the CLI in their first ten minutes is in (R4 acc3).
+#
+# Said on the run that CREATES the index and only when the name really does not resolve here: a
+# line on every run is one people stop reading, and the people who need this need it once.
+_r24_clean = {_k: _v for _k, _v in os.environ.items()}
+_r24_clean["PATH"] = ":".join(_p for _p in os.environ.get("PATH", "").split(":")
+                              if "chamnan" not in _p.lower())
+_r25 = Path(tempfile.mkdtemp(prefix="chamnan-pathadvice-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_r25)], capture_output=True)
+    (_r25 / "a.py").write_text("# a\ndef a():\n    return 1\n", encoding="utf-8")
+    _r25_first = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", cwd=str(_r25), env=_r24_clean).stdout
+    check("A FIRST RUN SAYS WHY THESE COMMANDS WILL NOT BE FOUND FROM A SHELL",
+          "not on your PATH" in _r25_first)
+    check("...and names the directory to add, rather than describing the problem",
+          str(ROOT / "bin") in _r25_first and "export PATH=" in _r25_first)
+    _r25_again = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", cwd=str(_r25), env=_r24_clean).stdout
+    check("...and never says it twice, because a line on every run is one people stop reading",
+          "not on your PATH" not in _r25_again)
+    _r25_on = Path(tempfile.mkdtemp(prefix="chamnan-onpath-"))
+    try:
+        subprocess.run(["git", "init", "-q", str(_r25_on)], capture_output=True)
+        (_r25_on / "a.py").write_text("# a\ndef a():\n    return 1\n", encoding="utf-8")
+        _r25_env = dict(_r24_clean, PATH=f"{ROOT / 'bin'}:{_r24_clean['PATH']}")
+        _r25_ok = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                                 capture_output=True, text=True, encoding="utf-8",
+                                 errors="replace", cwd=str(_r25_on), env=_r25_env).stdout
+        check("...and says nothing at all to somebody who already did it",
+              "not on your PATH" not in _r25_ok)
+    finally:
+        _rmtree(_r25_on, ignore_errors=True)
+finally:
+    _rmtree(_r25, ignore_errors=True)
+
+# ------------------------------------------- eleven Python files skipped for not being called .py
+# 🐛 [2026-09-09] `map_claim_check.py` verified function and class counts only where
+# `path.suffix == ".py"`. The reasoning above that line is sound — a regex scoring its own accuracy
+# on JavaScript measures the regex, not the map — and the discriminator was wrong for the eleven
+# files it matters most for: every `bin/chamnan-*` command is Python with no extension, indexed as
+# Python through its shebang, and skipped here for being spelled without one. So the checker
+# reported 1,313 claims verified and said nothing at all about chamnan's own command surface.
+#
+# Found by the line added the day before that reports what went UNCHECKED — which is the argument
+# for that line: it did not verify anything, it made a silence visible.
+_r26 = Path(tempfile.mkdtemp(prefix="chamnan-shebang-"))
+try:
+    (_r26 / ".chamnan").mkdir(parents=True)
+    (_r26 / "plain.py").write_text("def one():\n    pass\n", encoding="utf-8")
+    _r26_cmd = _r26 / "shebanged"
+    _r26_cmd.write_text("#!/usr/bin/env python3\ndef one():\n    pass\n\n\ndef two():\n    pass\n",
+                        encoding="utf-8")
+    (_r26 / "notpython").write_text("#!/bin/sh\necho hello\n", encoding="utf-8")
+    (_r26 / ".chamnan" / "MAP.md").write_text(
+        "# Architecture map\n\nGenerated by chamnan. 3 source file(s), 1 characters.\n\n"
+        "## Quick Index\n\n"
+        "**`./`**\n"
+        "- **`plain.py`** (2L, 1fn) — a\n"
+        "- **`shebanged`** (6L, 99fn) — a\n"
+        "- **`notpython`** (2L, 99fn) — a\n", encoding="utf-8")
+    _r26_out = subprocess.run([sys.executable, str(ROOT / "tools" / "map_claim_check.py"),
+                               str(_r26 / ".chamnan" / "MAP.md")],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace").stdout
+    check("A PYTHON FILE WITH NO EXTENSION IS CHECKED LIKE ANY OTHER PYTHON FILE",
+          "shebanged: says 99fn, has 2" in _r26_out)
+    check("...and an ordinary .py file still is",
+          "functions" in _r26_out and "plain.py" not in _r26_out.split("functions —")[-1])
+    check("...while a shell script with a shebang is still left to the unchecked list",
+          "notpython" in _r26_out.split("nothing above checked")[-1])
+finally:
+    _rmtree(_r26, ignore_errors=True)
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a
