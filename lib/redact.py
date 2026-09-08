@@ -226,6 +226,16 @@ SECRET_WORDS = (
     # authenticity in one: only `authentication` was excluded, so a sentence saying what a gate
     # "authenticates" lost its last word. Prose is the other half of this module's trade.
     r"|(?<![A-Za-z])auth(?!ors?\b|entic|orit)"
+    # 🐛 [2026-09-08] Every branch above needs a separator or a capital to find the second
+    # component, and one whole family of spellings has neither: `APIKEY=`, `DBPASSWORD=`,
+    # `SECRETKEY=` are how environment variables are written in real `.env` files and CI settings,
+    # and `key`/`token`'s mandatory-separator rule -- correct, load-bearing, and keeping 70 of 129
+    # ordinary Python lines intact -- refuses every one of them. Measured: four of four passed
+    # through whole (R6). A SHORT EXPLICIT LIST rather than dropping the separator requirement,
+    # because dropping it is what the measurement above says not to do; these are the spellings
+    # observed in tooling, and an eighth belongs here rather than in a looser rule.
+    r"|(?<![A-Za-z])(?:apikey|secretkey|dbpassword|authtoken|accesstoken"
+    r"|sessiontoken|refreshtoken)s?(?![A-Za-z])"
 )
 
 # A compiled regular expression is not a credential, whatever it is called. `TOKEN_RE`,
@@ -349,8 +359,16 @@ ASSIGNED_SECRET_BARE = re.compile(
 # `web.config`, Spring XML and JBoss datasources all put it here, and every assignment rule above
 # requires a literal `[:=]` that element syntax does not have. A whole ecosystem's config format,
 # passing through untouched.
+# 🐛 [2026-09-08] The credential word had to be the FIRST thing in the tag name, so `<password>`
+# was read and `<dbPassword>`, `<userPassword>`, `<clientSecret>` and `<db_password>` were not --
+# and those are the spellings Maven, Spring and .NET actually use. The word list was never the
+# defect; the POSITION was. A lazy run of name components in front of it costs no vocabulary and
+# closes the family (R6, six of six). The component boundaries inside `SECRET_WORDS` still do the
+# discriminating, which is why `<AutoTokenizer>` and `<tokenizerConfig>` stay untouched: `token`
+# there has no separator and no word boundary after it.
 XML_SECRET = re.compile(
-    r"(<\s*(?:\w+:)?(?:" + SECRET_WORDS + r")[\w.-]*\s*(?:\s[^>]*)?>)([^<>]{4,})(</)", re.I)
+    r"(<\s*(?:\w+:)?[\w.-]*?(?:" + SECRET_WORDS + r")[\w.-]*\s*(?:\s[^>]*)?>)"
+    r"([^<>]{4,})(</)", re.I)
 # The hash rocket. After `[:=]` matches the `=`, `\s*` cannot cross the `>` — so the quoted rule
 # found no quote and the bare rule captured `>` alone and failed its six-character floor. This is
 # how `config/database.php` is written in every Laravel app and every Rails `.rb` config.
@@ -1546,11 +1564,49 @@ _COLUMN_DELIMS = (",", ";", "\t", "|")
 # explicit list that says what it means beats a clever derivation that means something else --
 # and unlike two rule tables that must agree, this one is checked against its own behaviour by
 # the tests beneath it rather than by matching another list.
+# 🐛 [2026-09-08] The list above was five words short on the credential side and seven short on the
+# identifier side, and each gap was a silent column leak: `username,passphrase` / `,cred` /
+# `,keypass` / `,storepass` and `name,cc` / `,ccnum` / `,credit` / `,debit` / `,thai_id` /
+# `,aadhar` / `,uidai` all printed the value under them in full. Twelve of twelve reproduced
+# through the real `scrub()` (R6). The same disease this file is full of fixes for: a vocabulary
+# extended in the scanning rules and forgotten in the sibling rule beside them.
+_HEADER_BARE = (
+    r"password|passwd|pwd|passphrase|secret|token|api[_ -]?key|apikey|key|auth"
+    r"|credential|credentials|cred|creds|storepass|keypass"
+    r"|private[_ -]?key|access[_ -]?key|secret[_ -]?key"
+    r"|card|card[_ -]?number|pan|iban|cpf|aadhaar|aadhar|uidai|uid"
+    r"|ccnum|credit|debit"
+    r"|national[_ -]?id|citizen[_ -]?id|id[_ -]?card|idcard|thai[_ -]?id"
+)
+# ...and the compound headers, which no literal list can finish: `db_password`, `user_password`,
+# `api_secret`, `client_secret`, `auth_token` were the five R5 found and there is no reason to
+# believe those are the last five.
+#
+# The word must be the LAST component, and that single positional rule is what makes reuse safe
+# here where a naive `.search()` was not: `db_password` ends in `password` and matches;
+# `password_policy` ends in `policy` and does not, with no exemption list involved at all.
+# Measured 11/11 ordinary headers kept intact -- `password_policy`, `token_ttl`,
+# `key_rotation_days`, `secret_manager_url`, `secret_name`, `api_key_path`, `auth_uri`,
+# `token_type` among them.
+_HEADER_TAIL = r"password|passwd|pwd|passphrase|secret|credential|cred|storepass|keypass"
+# `key` and `token` keep the mandatory-separator requirement they carry in `SECRET_WORDS`, for the
+# same measured reason: without it `monkey` and `turkey` are credential columns. They are already
+# separated here by construction, so they cost nothing extra -- but the CamelCase branch below
+# must stay case-SENSITIVE or `monkey` returns through it.
+#
+# 🐛 The separator is `_` or `-` and NOT a space, and the components may not contain one either.
+# Written first as `[\w -]*[_ -]`, which reads as the same rule and is not: it makes any PHRASE
+# ending in a credential word a header, and this repository's own index contains one --
+# `Run it, press the key, read the answer` is a three-field comma row whose middle field is
+# `press the key`, and the line under it lost its middle field to a `<REDACTED>`. Caught by the
+# check below that asserts this rule changes nothing in the real 298 KB index; a header in a real
+# export is an identifier, so requiring identifier shape costs the rule nothing.
 _HEADER_WORD = re.compile(
-    r"""^\s*["']?\s*(?:password|passwd|pwd|secret|token|api[_ -]?key|apikey|key|auth"""
-    r"""|credential|credentials|private[_ -]?key|access[_ -]?key|secret[_ -]?key"""
-    r"""|card|card[_ -]?number|pan|iban|cpf|aadhaar|uid"""
-    r"""|national[_ -]?id|citizen[_ -]?id|id[_ -]?card)\s*["']?\s*$""", re.I)
+    r"""^\s*["']?\s*(?:"""
+    + _HEADER_BARE
+    + r"""|[\w-]*[_-](?:""" + _HEADER_TAIL + r"""|key|token)s?"""
+    + r"""|(?-i:[a-z0-9]+(?:Password|Passwd|Passphrase|Secret|Token|Key|Credential)s?)"""
+    + r""")\s*["']?\s*$""", re.I)
 
 
 def _split_row(line, delim):
@@ -1559,6 +1615,33 @@ def _split_row(line, delim):
         return None
     parts = [f.strip().strip('"').strip("'").strip() for f in line.split(delim)]
     return parts if len(parts) >= 2 else None
+
+
+# A field of a real HEADER row is a column name: a bare identifier, possibly with spaces or dots.
+# Anything carrying `(`, `[`, `%`, `=`, a quote in the middle or an operator is a line of code that
+# happens to contain commas.
+#
+# 🐛 [2026-09-08] This guard did not exist, and the compound-header branch added the same day made
+# its absence load-bearing: `def log_decision(command, choice, session_key, **kwargs):` is four
+# comma-separated fields, one of them `session_key`, so it was read as a header row -- and the
+# `logger.info(...)` line under it, four fields wide, lost its middle argument to a `<REDACTED>`.
+# Found in this repository's own files, and `api_key` as a function parameter is in every project
+# that calls an API. The bare-word list was only incidentally safe from this: `def get(password,`
+# does not equal `password` as a whole field, so the leading `def get(` hid the problem rather
+# than solving it. Asserted over 866 real files, both directions.
+_HEADER_ROW_FIELD = re.compile(r"^[\w][\w .-]*$")
+
+
+def _is_a_header_row(fields):
+    """True when EVERY field looks like a column name rather than a line of code.
+
+    A field this module has ALREADY replaced counts as a name, because it was one: an earlier rule
+    reaching a header cell first is ordinary — `user | password | api_key` loses its third cell to
+    the spaced-secret rule before this one runs — and without this the whole table stops being a
+    table at that point and every value under it is printed in the clear. Measured on a real file
+    in this repository, where exactly that happened.
+    """
+    return all(f == "" or f == PLACEHOLDER or _HEADER_ROW_FIELD.match(f) for f in fields)
 
 
 # 🐛 [2026-09-08] Every assignment rule above answers "name, separator, ONE value" and stops,
@@ -1647,7 +1730,7 @@ def _redact_delimited_columns(text):
             if not fields:
                 continue
             marked = [n for n, f in enumerate(fields) if _HEADER_WORD.match(f)]
-            if marked:
+            if marked and _is_a_header_row(fields):
                 header = (delim, len(fields), marked)
                 break
         if header is None:
