@@ -21404,6 +21404,101 @@ check("...and so does a change COMMITTED since the index was built, which `statu
       "current with the code" not in _uc_after)
 _rmtree(_uc.parent, ignore_errors=True)
 
+# 🐛 [2026-09-08] `_redact_secret_lists` split its input with `splitlines()`, which breaks on eight
+# characters besides `\n` — `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028, U+2029. A value carrying any
+# of them was cut in half, the tail read as a line that is not a `- item`, the block loop exited, and
+# every sibling secret below was left in the clear with a `<REDACTED>` printed above it. Found within
+# hours of the code being written (R7 agent 1), which is the argument for pointing a round at what
+# just changed rather than only at what is old.
+_LINE_BREAKERS = {"VT": "\v", "FF": "\f", "FS": "\x1c", "GS": "\x1d", "RS": "\x1e",
+                  "NEL": "\x85", "LS": "\u2028", "PS": "\u2029"}
+check(f"the fixture really does use characters splitlines() treats as breaks: {len(_LINE_BREAKERS)}",
+      all(len(("x" + c + "y").splitlines()) == 2 for c in _LINE_BREAKERS.values()))
+for _nm, _ch in sorted(_LINE_BREAKERS.items()):
+    _src = f"passwords:\n  - first{_ch}value\n  - correcthorsebattery\n"
+    check(f"A HIDDEN LINE BREAK INSIDE ONE VALUE DOES NOT FREE ITS SIBLINGS: {_nm}",
+          "correcthorsebattery" not in _rd.scrub(_src))
+# The rejoin must be lossless: a CRLF file has to come back with its CRLFs.
+_crlf = 'passwords:\r\n  - "a1b2c3d4e5"\r\n  - "f6g7h8i9j0"\r\n'
+check("...and a CRLF file keeps its CRLFs through the split and rejoin",
+      _rd.scrub(_crlf).count("\r\n") == _crlf.count("\r\n"))
+check("...and the redaction still happened in it",
+      _rd.scrub(_crlf).count("<REDACTED>") == 2)
+# A file with no trailing newline must not gain one.
+check("...and a file with no trailing newline does not grow one",
+      not _rd.scrub('api_keys = ["a1b2c3d4e5"]').endswith("\n"))
+
+# ------------------------------------- a filename is repository content, and it reaches the block
+# 🐛 [2026-09-08] Three copies of one warning went in together. The skills one wrapped its filenames
+# in `redact.scrub`; the threads and sessions ones appended theirs AFTER the surrounding text had
+# already been scrubbed, so the names went into the injected block untouched. A filename is written
+# by whoever wrote the repository, so `AKIAIOSFODNN7EXAMPLE.md` rode in whole (R7 agent 2).
+#
+# Checked by DRIVING every store that can carry a filename into the block, not by reading the two
+# lines that were wrong. Three identical features and one of them correct is exactly the shape that
+# a check naming specific call sites fails to catch the fourth time.
+_leak_root = Path(tempfile.mkdtemp(prefix="chamnan-fnleak-")) / "repo"
+(_leak_root / "src").mkdir(parents=True)
+(_leak_root / "src" / "a.py").write_text('"""A."""\n', encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_leak_root)], capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_leak_root),
+               capture_output=True)
+_KEYLIKE = "AKIAIOSFODNN7EXAMPLE"
+_ws_leak = _leak_root / ".chamnan"
+for _sub, _fname, _body in (
+        ("skills", f"{_KEYLIKE}.md", "# A skill\n\nordinary text.\n"),
+        ("sessions", f"2026-09-08-{_KEYLIKE}.md", "# A session\n\n**Remaining:** something\n"),
+        ("threads", f"{_KEYLIKE}.md", "# A thread\n\n**Status:** open\n**Started:** 2026-09-08\n"),
+        ("candidates", f"{_KEYLIKE}.md", "# A habit\n\n**Sequence:** git, add\n**Observed:** 3\n")):
+    (_ws_leak / _sub).mkdir(parents=True, exist_ok=True)
+    (_ws_leak / _sub / _fname).write_text(_body, encoding="utf-8")
+_leak_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                           input="{}", capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", cwd=str(_leak_root)).stdout
+check("A SECRET-SHAPED FILENAME NEVER REACHES THE INJECTED BLOCK, FROM ANY STORE",
+      _KEYLIKE not in _leak_out)
+if _KEYLIKE in _leak_out:
+    _at = _leak_out.find(_KEYLIKE)
+    print(f"      it arrived here: {_leak_out[max(0, _at - 90):_at + 40]!r}")
+# The block must still SAY something about those files -- scrubbing the name is not the same as
+# dropping the warning, and a silent scrub would pass the check above for the wrong reason.
+check("...while the block still reports the files it found, with the name redacted",
+      "<REDACTED>" in _leak_out and len(_leak_out) > 200)
+_rmtree(_leak_root.parent, ignore_errors=True)
+
+# ------------------------------------------ a config value ABOUT a secret, redacted as if it were one
+# 🐛 [2026-09-08] `password_policy = "minimum-twelve-characters"` came back as
+# `password_policy = "<REDACTED>"` — a shipped FALSE POSITIVE, which this module's own opening
+# comment calls the more expensive error: an index full of placeholders is not an index.
+#
+# `policy` was in neither of the two hand-written exemption lists, and the two disagree about which
+# words name a mechanism — one alone had `url`/`endpoint`/`ttl`, the other alone `regex`/`id`/`class`.
+# Both got the missing words together, because adding to one and forgetting the other is the defect
+# this file keeps producing (R6 acc2, which found it with the decoy word it had been handed).
+for _decoy in ('password_policy = "minimum-twelve-characters"', "token_ttl = 3600",
+               "key_rotation_days = 30", 'secret_manager_url = "https://vault.internal/v1"',
+               "password_length = 12", "api_key_rate_limit = 100",
+               'secret_rotation_interval = "90d"', 'password_mode = "strict"',
+               "auth_token_timeout = 30", 'api_key_name = "prod-signing"'):
+    check(f"A NAME THAT DESCRIBES A SECRET IS NOT A SECRET: {_decoy[:44]!r}",
+          _rd.scrub(_decoy) == _decoy)
+# ...and widening the exemption must not have cost a real one.
+for _real in ('password = "tr0ub4dor3horsebattery"', "api_key: sk-live-Ab3xY9pQ7mNzKw1",
+              "DATABASE_PASSWORD=hunter2isnotgood", 'client_secret = "9f8e7d6c5b4a3210"',
+              # The tail decides, so a mechanism word in the MIDDLE must not exempt anything.
+              'password_policy_secret = "realsecretvalue123"'):
+    check(f"...while the credential itself still goes: {_real[:44]!r}",
+          "<REDACTED>" in _rd.scrub(_real))
+# The comment beside `_CONFIG_ABOUT_A_SECRET` promises the tail regex carries the same words. Two
+# lists that must agree and are spelled twice is how the false positive above happened, so the
+# promise is checked rather than trusted.
+_missing_from_tail = [w for w in _rd._CONFIG_ABOUT_A_SECRET
+                      if not _rd._NOT_A_CREDENTIAL_NAME.search("x_" + w)]
+check(f"BOTH EXEMPTION LISTS CARRY THE SAME CONFIG WORDS: {_missing_from_tail}",
+      not _missing_from_tail)
+_missing_from_suffixes = [w for w in _rd._CONFIG_ABOUT_A_SECRET if w not in _rd.NAMING_SUFFIXES]
+check(f"...in both directions: {_missing_from_suffixes}", not _missing_from_suffixes)
+
 # ------------------------------------------------- a list of secrets, redacted past its first item
 # 🐛 [2026-09-08] Every assignment rule answers "name, separator, ONE value" and stops, which is what
 # an assignment is. A list is the other shape a config file uses for the same job: rotated keys, a
