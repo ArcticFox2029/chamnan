@@ -184,8 +184,16 @@ def cmd_promote(root, ident, destination=None, name=None):
             print(f"chamnan: {err}", file=sys.stderr)
             return 1
         dest = tools / (safe if Path(safe).suffix else safe + ".sh")
+        # The sibling of the refusal in `chamnan-promote`, and it had the same defect: a file
+        # already sitting in `.chamnan/tools/` could never be registered, because the only command
+        # that registers refused it for being where it belongs. This one WRITES a fresh skeleton
+        # rather than copying an existing file, so "already there" really is a name collision here
+        # and refusing stays right — but the message has to say WHY, or it reads as the same dead
+        # end (2026-09-08).
         if dest.exists():
-            print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
+            print(f"chamnan: {dest.name} already exists — this writes a new skeleton, so pick "
+                  f"another name. To register a script already in .chamnan/tools/, run "
+                  f"`chamnan-promote .chamnan/tools/{dest.name} {dest.stem} --desc \"...\"`.",
                   file=sys.stderr)
             return 1
         # 🐛 SHELL INJECTION, reproduced end to end. `step` comes from a candidate file's

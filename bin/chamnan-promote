@@ -195,10 +195,31 @@ def main(argv):
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
     dest = tools / (safe if Path(safe).suffix else safe + src.suffix)
+    # 🐛 [2026-09-08] `dest.exists()` refused unconditionally, including when the source IS the
+    # destination -- a file already sitting in `.chamnan/tools/`. That is the one case where the
+    # user is not asking for a copy at all, they are asking for the REGISTRATION, and the advice
+    # the refusal gave ("pick another name or edit it in place") answers neither: they do not want
+    # another name, and editing in place does not register anything.
+    #
+    # So the only command that can put a tool in the index could not be used on a tool that was
+    # already in the directory. Measured on this repository: 44 runnable files under
+    # `.chamnan/tools/`, 3 registered, 41 unregisterable — including four written the same day by
+    # the session that found this, one of which is the sweep for exactly this class of defect.
+    # The session block advertises that list under "This repo's own tools — prefer these over
+    # writing a new script", so a reader is told there are three and writes a fourth.
+    #
+    # Overwriting a DIFFERENT file of the same name is still refused, which is what the guard was
+    # for. `samefile` rather than comparing paths: it answers for a symlink and a hardlink too.
+    _already_there = False
     if dest.exists():
-        print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
-              file=sys.stderr)
-        return 1
+        try:
+            _already_there = dest.samefile(src)
+        except OSError:
+            _already_there = False
+        if not _already_there:
+            print(f"chamnan: {dest.name} already exists and is a different file — pick another "
+                  f"name, or edit that one in place", file=sys.stderr)
+            return 1
     # 🐛 `src` is any path on the machine, and what lands in `.chamnan/tools/` is committed by
     # design — it is deliberately NOT in the workspace's ignore rules. So a private key, a
     # credentials file or an `.env` sitting outside the repository could be copied straight into a
@@ -211,7 +232,10 @@ def main(argv):
         print(f"chamnan: {src.name} looks like a credential or key file — refusing to copy it into "
               f"a committed directory. Promote a script, not a secret.", file=sys.stderr)
         return 1
-    shutil.copy2(src, dest)
+    # Nothing to copy when the file is already the destination -- and copying it onto itself is
+    # not a no-op, `shutil.copy2` truncates the source before reading it.
+    if not _already_there:
+        shutil.copy2(src, dest)
     dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     # 🐛 The chmod above says "run this directly" and the line printed below says it too, but a
     # scratch script usually has no shebang — nobody writes one for a file they are about to run
