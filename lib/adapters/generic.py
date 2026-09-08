@@ -67,6 +67,17 @@ def _warn_about_a_differently_cased_sibling(path):
               f"left yours untouched — check which your agent actually reads.", file=_sys.stderr)
 
 
+def wrote_this(text):
+    """Whether `text` already carries chamnan's marker region.
+
+    The shared `_looks_generated` cannot answer for this adapter: it looks for a `## chamnan`
+    heading or a frontmatter block, and this one writes a MARKER REGION into a file the user may
+    also own, so its output starts with `<!-- chamnan:start -->`. See the note on `wrote_this` in
+    `__init__.py` for what that cost.
+    """
+    return START in text and END in text
+
+
 def install(root, body, command=""):
     """Replace chamnan's region in `AGENTS.md`, leaving every other byte of it alone.
 

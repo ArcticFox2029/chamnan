@@ -35,6 +35,11 @@ def render(body):
     return f"{MARKER}\n{body.rstrip()}\n"
 
 
+def wrote_this(text):
+    """Whether `text` opens with this adapter's own marker. See `wrote_this` in `__init__.py`."""
+    return text.lstrip().startswith(MARKER)
+
+
 def install(root, body, command=""):
     """Write `.rules`, unless doing so would hide a file Zed is already reading.
 

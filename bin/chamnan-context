@@ -341,17 +341,29 @@ def main():
     # never rewritten by a commit, and an agent never set up here does not acquire a config file
     # because somebody committed.
     if args.written_agents:
+        # ONE NAME PER FILE, not one per agent. Fourteen names resolve to the root `AGENTS.md`
+        # -- `generic` and its thirteen aliases -- and this list is what the pre-commit hook loops
+        # over calling `--write` on each. Naming all fourteen would rewrite the same file fourteen
+        # times per commit at a measured 0.77s each: ten seconds added to every commit that adds,
+        # deletes or renames a file, for a result identical to writing it once. The flag's own help
+        # says it is what the hook loops over, so answering per FILE is answering the question it
+        # was asked (2026-09-08).
+        seen = set()
         for name in adapters.names():
             adapter = adapters.for_agent(name)
             target = getattr(adapter, "TARGET", None)
-            if not target:
+            if not target or target in seen:
                 continue
             try:
                 path = adapters.safe_target(root, target)
                 if path is None or not path.is_file():
                     continue
-                if adapters._looks_generated(path.read_text(encoding="utf-8-sig",
+                # Asked of the adapter, not of the shared predicate: fifteen of these names write
+                # a format `_looks_generated` was never about, so this printed none of them and the
+                # hook's refresh loop refreshed none of them (2026-09-08).
+                if adapters.wrote_this(name, path.read_text(encoding="utf-8-sig",
                                                             errors="replace")):
+                    seen.add(target)
                     print(name)
             except (ValueError, OSError):
                 continue

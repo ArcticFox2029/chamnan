@@ -84,11 +84,27 @@ if command -v chamnan-map >/dev/null 2>&1; then
     # files that already exist AND that chamnan wrote, so nothing a person wrote is touched and no
     # agent acquires a config file because somebody committed. Measured at 0.77s per adapter
     # against the 2.38s this hook already spends.
+    # 🐛 [2026-09-08] This ended in a bare `git add -u`, which stages EVERY modification to EVERY
+    # tracked file in the working tree. Reproduced end to end: a developer stages one file, leaves
+    # an edit to another deliberately unstaged, commits with the message "add newfeature.txt only",
+    # and the commit contains the unstaged edit too -- no error, no diff shown, nothing said. The
+    # comment above still reads "nothing a person wrote is touched", which was true of what gets
+    # REWRITTEN and false of what gets STAGED, because `git add -u` does not know which file
+    # chamnan just wrote (R9 agent 2, and reproduced again here before this was changed).
+    #
+    # A tool installed into somebody else's repository putting work into their commit that they
+    # deliberately held back is the worst thing in this file. Staging exactly what was rewritten is
+    # what the sibling line above already does for MAP.md, by naming the path.
+    #
+    # The path comes from the command that wrote it rather than from a table here: `--write` prints
+    # `chamnan-context -> <path>`, so there is one source for "which file did this touch" instead
+    # of a second list that can disagree with the adapters.
     if command -v chamnan-context >/dev/null 2>&1; then
       chamnan-context --written-agents 2>/dev/null | while read -r a; do
-        [ -n "$a" ] && chamnan-context --write "$a" >/dev/null 2>&1 || true
+        [ -n "$a" ] || continue
+        written=$(chamnan-context --write "$a" 2>/dev/null | sed -n 's/^chamnan-context -> //p' | head -1)
+        [ -n "$written" ] && git add -- "$written" >/dev/null 2>&1 || true
       done
-      git add -u >/dev/null 2>&1 || true
     fi
   fi
 fi
