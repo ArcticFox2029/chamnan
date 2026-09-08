@@ -77,6 +77,52 @@ capped store is asked whether an entry written today beats a four-month-old one 
 sorts earlier. Both assert their population as well as their property, because a sweep that reaches
 nothing passes silently.
 
+### A password column was safe as long as it was called something the checksum recognised
+
+Every rule in the redactor answers a question about ONE value: does this look like a card number,
+does this pass mod-97, is this the shape of a token. That is the right question for prose and the
+wrong one for a table. A CSV or TSV pasted into a session — an export, a fixture, three rows off a
+support ticket — carries its meaning in the header, and the values underneath are frequently
+nothing a checksum can recognise: `hunter2`, `sk-local-dev`, an internal id with no check digit.
+Each column was judged alone, found unremarkable, and passed through whole.
+
+The layer now reads the header row. A column headed `password`, `secret`, `token`, `api_key`,
+`iban`, `cpf`, `aadhaar`, `card` or one of a dozen relatives has its VALUES redacted for the rest of
+the file, regardless of what they look like — the header is the evidence, not the digits. Comma,
+semicolon, tab and pipe are all recognised, and a line that is not a table of that shape is returned
+untouched, checked by asserting that ordinary prose comes back byte-identical.
+
+The header list is written out by hand rather than reused from the existing secret-word pattern. A
+shared list would have been shorter and would have been wrong: that pattern is built to match a
+word *inside* a sentence, and reusing it here silently changed what the whole file matches.
+
+### An index reported as current while the code had already moved
+
+`chamnan-impact` says what imports a symbol, and it answers from the index rather than from the
+files, so it has to say when the index is behind. Its staleness question was one `git diff` against
+the commit the index was stamped at — and git's diff, by documented design, does not list a file
+that has never been added. A source file created five minutes ago and not yet staged was invisible:
+the tool answered "nothing imports this" about a symbol something had just started importing, and
+said the index was current with the code while doing it. That is a wrong answer, not a stale one.
+
+Both questions are asked again — `git diff` for what changed in tracked files and in commits since
+the stamp, then `git status --porcelain` for what git has never seen. Neither is sufficient alone,
+and the second runs only when the first says clean, which is 48 ms on a repository this size and
+skipped entirely on a dirty tree.
+
+The test that was supposed to cover this passed for the wrong reason: its fixture had no commit at
+all, so git could not answer, the modification-time fallback caught the change, and the check never
+touched the path that was broken. It commits first now, like every real repository.
+
+### What the optional sections cost, added up
+
+Four sections of the session block each carry a share of the token budget, and each share was chosen
+on its own — measured against real repositories, defended in its own comment, never once summed. The
+four come to 0.825, leaving 17.5% for the Quick Index, which is the one section that is never
+optional. That number is now measured by a check rather than believed, so a future change to any one
+share cannot quietly starve the index. The 17.5% itself is left as it is: whether that is the right
+split is a design decision, not a defect.
+
 ### The rest
 
 The first-session banner contradicted itself on two of its three branches — an unwritable repository

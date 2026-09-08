@@ -21162,6 +21162,144 @@ check("...and an IBAN needs a real country code of that country's length",
 check("...and the Aadhaar check is the reason it is keyword-gated, not a formality",
       _rd._aadhaar(_ad) and not _rd._aadhaar(_ad[:-1] + str((int(_ad[-1]) + 1) % 10)))
 
+# ------------------------------------------- an index reported current while the code moved
+# 🐛 [2026-09-08] `_map_is_current_by_git` was collapsed from two git calls to one to save 0.08s,
+# and the collapse lost a whole class of change: an untracked file is not in a `git diff`, by git's
+# own design. A source file created five minutes ago and not yet added was invisible, the index was
+# reported current, and `chamnan-impact` answered "nothing imports it" about a symbol something had
+# just started importing -- a wrong answer, not a stale one (R2 agent 6).
+#
+# The first fixture written for this created the file in a repository with NO COMMIT, so git could
+# not answer at all and the mtime fallback caught it: the test passed on a path that was never the
+# broken one. This one commits first, which is what every real repository has done.
+_uc = Path(tempfile.mkdtemp(prefix="chamnan-untracked-")) / "repo"
+(_uc / "src").mkdir(parents=True)
+(_uc / "src" / "target.py").write_text(
+    '"""Target."""\n\n\ndef used_by_nobody_yet():\n    return 1\n', encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_uc)], capture_output=True)
+subprocess.run(["git", "-C", str(_uc), "add", "-A"], capture_output=True)
+subprocess.run(["git", "-C", str(_uc), "-c", "user.email=t@t", "-c", "user.name=t",
+                "commit", "-qm", "init"], capture_output=True)
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_uc),
+               capture_output=True)
+(_uc / "src" / "newcomer.py").write_text(
+    '"""Added after the index was built."""\nfrom target import used_by_nobody_yet\n', 
+    encoding="utf-8")
+_uc_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-impact"), "src/target.py"],
+                         cwd=str(_uc), capture_output=True, text=True,
+                         encoding="utf-8", errors="replace").stdout
+check("AN UNTRACKED FILE STILL MAKES THE INDEX STALE, AND THE ANSWER SAYS SO",
+      "current with the code" not in _uc_out)
+if "current with the code" in _uc_out:
+    print("      DETAIL  a new importing file was created and the tool called the index current")
+# ...and the half the single call DID get right must not regress: a commit made after the stamp is
+# invisible to `git status`, which is why both questions are asked.
+subprocess.run(["git", "-C", str(_uc), "add", "-A"], capture_output=True)
+subprocess.run(["git", "-C", str(_uc), "-c", "user.email=t@t", "-c", "user.name=t",
+                "commit", "-qm", "add newcomer"], capture_output=True)
+_uc_after = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-impact"), "src/target.py"],
+                           cwd=str(_uc), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace").stdout
+check("...and so does a change COMMITTED since the index was built, which `status` alone misses",
+      "current with the code" not in _uc_after)
+_rmtree(_uc.parent, ignore_errors=True)
+
+# ------------------------------------------- four shares of one budget, added up at last
+# 🐛 [2026-09-08] Four optional sections draw from `index_token_budget`, each declaring its own
+# share in one of three modules, and nothing anywhere added them up. They sum to 0.825, so a
+# repository with all four leaves 17.5% of the budget -- 525 tokens of 3,000 -- for the Quick Index
+# the file exists to hold. Nobody chose that; it is what four independent decisions came to
+# (R2 agent 5).
+#
+# The shares are collected from the SOURCE rather than listed here, so a fifth section added
+# tomorrow is counted whether or not anyone remembers this check. That is the whole point: the
+# defect was possible because the sum existed nowhere.
+_bs_shares = {}
+for _bs_mod, _bs_names in (("catalogs", ("ROUTES_BUDGET_SHARE", "ENV_BUDGET_SHARE")),
+                           ("schema", ("SCHEMA_BUDGET_SHARE",)),
+                           ("deploy", ("DEPLOY_BUDGET_SHARE",))):
+    _bs_m = importlib.import_module(_bs_mod)
+    for _bs_n in _bs_names:
+        _bs_shares[f"{_bs_mod}.{_bs_n}"] = getattr(_bs_m, _bs_n)
+# Anything named like a budget share that this list does not know about is the case the check is
+# for: it must be counted, not ignored, or the sweep is back to a hand-written list of three.
+for _bs_mod in ("catalogs", "schema", "deploy", "assets", "impact", "rollup"):
+    try:
+        _bs_m = importlib.import_module(_bs_mod)
+    except Exception:
+        continue
+    for _bs_attr in dir(_bs_m):
+        if _bs_attr.endswith("_BUDGET_SHARE"):
+            _bs_shares.setdefault(f"{_bs_mod}.{_bs_attr}", getattr(_bs_m, _bs_attr))
+_bs_total = sum(_bs_shares.values())
+print(f"      DETAIL  optional section shares: "
+      + ", ".join(f"{k.split('.')[-1].replace('_BUDGET_SHARE','').lower()} {v:.3f}"
+                  for k, v in sorted(_bs_shares.items()))
+      + f" = {_bs_total:.3f}")
+check(f"THE OPTIONAL SECTIONS' SHARES OF ONE BUDGET STILL SUM TO WHAT WAS MEASURED "
+      f"({_bs_total:.3f})",
+      abs(_bs_total - tokens_mod.OPTIONAL_SECTION_SHARES) < 0.0005)
+check("...and they leave the Quick Index a majority of nothing — it is a minority, on purpose "
+      "recorded rather than chosen",
+      _bs_total < 1.0)
+# The floor compounds where the budget is small: four sections cannot go below 120 tokens each
+# however little there is to spend, so a user who lowers the budget does not get a proportionally
+# smaller index -- they get almost none.
+_bs_small = sum(tokens_mod.section_budget(v, 800) for v in _bs_shares.values())
+print(f"      DETAIL  at a configured budget of 800, the sections take {_bs_small} "
+      f"and the index is left {800 - _bs_small}")
+check("...and the 120-token floor is what makes a small budget bite, which is recorded not fixed",
+      _bs_small > 800 * _bs_total)
+
+# ------------------------------------------- a name and its value one ROW apart, not one line
+# 🐛 [2026-09-08] Every credential rule in `redact.py` needs the naming word and the value on the
+# same physical line, and a two-column export puts them one row apart in the same COLUMN instead.
+# `username,password` above `admin,Hunter2Password!` leaked completely -- comma, quoted comma,
+# semicolon, tab and the pipe form a markdown table produces. Not one rule missing a case: the
+# file's whole adjacency architecture meeting a shape it had no reader for, and a database dump,
+# a password-manager export and a spreadsheet paste all produce it (R2 agent 2).
+for _dc_label, _dc_text, _dc_secret in (
+        ("comma", "username,password\nadmin,Hunter2Password!\n", "Hunter2Password!"),
+        ("quoted comma", 'user,password\n"admin","Hunter2Password!"\n', "Hunter2Password!"),
+        ("semicolon", "user;password;role\nadmin;Hunter2Password!;root\n", "Hunter2Password!"),
+        ("tab", "user\tapi_key\nadmin\tAKIAIOSFODNN7EXAMPLE\n", "AKIAIOSFODNN7EXAMPLE"),
+        ("a markdown table", "| user | password |\n| admin | Hunter2Password! |\n",
+         "Hunter2Password!"),
+        ("every row, not only the first", "user,password\na,pw1\nb,pw2\nc,pw3\n", "pw3")):
+    check(f"A VALUE UNDER A CREDENTIAL COLUMN IS REDACTED: {_dc_label}",
+          _dc_secret not in _rd.scrub(_dc_text))
+
+# The other half, and the half that decides whether this rule may exist at all: a wide rule here
+# destroys the index this tool is for. The header must be the WHOLE field, the rows must keep the
+# shape, and the run must end where the table does.
+for _dc_label, _dc_text in (
+        ("a tuple unpacked over two lines", "a, b = 1, 2\nc, d = 3, 4\n"),
+        ("a table of prices", "item,price\napple,3\nbanana,5\n"),
+        ("prose that contains commas", "first, second, third\nfourth, fifth, sixth\n"),
+        ("a header that merely CONTAINS a secret word", "tokenizer_config,value\nfoo,bar\n")):
+    check(f"...and ordinary text with the same shape is untouched: {_dc_label}",
+          _rd.PLACEHOLDER not in _rd.scrub(_dc_text))
+# A table followed by a paragraph: the run must stop at the blank line rather than redacting on
+# through the prose, which is the failure mode that would make this rule unshippable.
+_dc_mixed = _rd.scrub("user,password\nadmin,secret1\n\nThis paragraph, with commas, follows.\n")
+check("...and the run ends where the table does, not at the end of the document",
+      "This paragraph, with commas, follows." in _dc_mixed
+      and _rd.PLACEHOLDER in _dc_mixed)
+# Measured on the real index this repository generates: a rule that costs it anything is the wrong
+# rule, whatever it catches.
+_dc_map = (ROOT.parent.parent / ".chamnan" / "MAP.md")
+if _dc_map.is_file():
+    _dc_src = _dc_map.read_text(encoding="utf-8", errors="replace")
+    # Written first as `scrub(x).count(...) == scrub(x).count(...)`, which compares a value with
+    # itself and passes forever -- the exact shape `.chamnan/skills/writing_a_check_that_can_fail.md`
+    # is about, caught here by reading it back before running it. The property is that THIS rule
+    # leaves the index alone, so the rule is what gets called.
+    _dc_after = _rd._redact_delimited_columns(_dc_src)
+    check("...and this rule alone changes nothing in the index the tool exists to write",
+          _dc_after == _dc_src)
+    print(f"      DETAIL  real index {len(_dc_src):,} chars, "
+          f"{abs(len(_dc_after) - len(_dc_src)):,} characters changed by the column rule")
+
 # ------------------------------------------- the false NEGATIVES, which nothing here measured
 # 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
 # against random input before its rule shipped. A reader of the release notes asked the obvious

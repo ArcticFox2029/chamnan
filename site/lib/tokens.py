@@ -193,6 +193,31 @@ def fits(text, budget):
 # The rule is here, in the module both of them already import, rather than exported from one
 # renderer to the other -- a section renderer added next year needs the budget available where it
 # looks for token arithmetic, not in whichever sibling happened to be fixed first.
+# 🎯 [2026-09-08] Four optional sections draw from `index_token_budget` and each declares its own
+# share, in three different modules, and until this line nothing in the codebase added them up:
+#
+#     routes  0.400  (catalogs.ROUTES_BUDGET_SHARE)
+#     env     0.133  (catalogs.ENV_BUDGET_SHARE)
+#     schema  0.167  (schema.SCHEMA_BUDGET_SHARE)
+#     deploy  0.125  (deploy.DEPLOY_BUDGET_SHARE)
+#     ------  -----
+#             0.825
+#
+# A repository that has all four -- a service with an OpenAPI spec, a .env.example, a schema and a
+# deployment manifest is not exotic -- leaves 17.5% of the budget for the Quick Index itself: 525
+# tokens of 3,000. And the 120-token floor below compounds it rather than helping, because four
+# floors are 480 tokens whatever the budget is: at a configured 800, the sections take 693 and the
+# index gets 107.
+#
+# The number here is what the shares SUM TO today, not what anyone chose. It is a ceiling that must
+# not rise by accident, and the suite fails if it does -- which is the thing that was missing, since
+# a fifth section could have been added tomorrow with nobody the wiser. Whether 17.5% for the index
+# is the right split is a design decision about what a user pays for every session, and it is the
+# owner's rather than a passing fix's; the measurement is recorded so the decision can be made with
+# numbers instead of impressions (R2 agent 5).
+OPTIONAL_SECTION_SHARES = 0.825
+
+
 def section_budget(share, configured=None):
     """A section's token budget as a share of the index budget the user actually configured.
 

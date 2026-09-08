@@ -247,13 +247,13 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 <body>
 
 <header>
-  <div class="wrap">
+  <div class="wrap measure">
     <div class="topline">
       <p class="eyebrow" data-i18n="eyebrow">chamnan · measured in your browser</p>
       <select id="lang" aria-label="Language"></select>
     </div>
     <h1 data-i18n="h1">Paste a GitHub repository. See what chamnan would put in an agent's context.</h1>
-    <div class="measure">
+    <div>
       <p data-i18n="intro">Paste any public GitHub repository. chamnan's own code runs here, in this tab, and reports
          what it would inject into a coding agent's context. Nothing is uploaded and there is no
          server — the page reads the repository from GitHub the same way your browser reads any
@@ -268,7 +268,7 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 </header>
 
 <section>
-  <div class="wrap">
+  <div class="wrap measure">
     <h2 data-i18n="h2measure">Measure a repository</h2>
     <ol class="steps">
       <li data-i18n="step1">Paste the URL of any public GitHub repository into the box below.</li>
@@ -301,7 +301,7 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 <section>
   <div class="wrap prose measure">
     <h2 data-i18n="h2pre">Measured here already</h2>
-    <p class="lede" data-i18n-html="ledePre">Thirteen repositories across eight languages, every one measured through
+    <p class="lede" data-i18n-html="ledePre">Fourteen repositories across eight languages, every one measured through
       this page in a real browser. The pattern is the point, not any single ratio: <strong>the source
       grows nearly seventy-fold down this table and the injected block stays between 6.2 and
       6.7 KB.</strong> That is a bound, not compression.</p>
@@ -433,7 +433,7 @@ const T = {
     tryLabel: "Try:",
     idle: "Idle. The first run downloads the Python runtime (~10 MB), then it is cached.",
     h2pre: "Measured here already",
-    ledePre: "Thirteen repositories across eight languages, every one measured through this page in a real browser. The pattern is the point, not any single ratio: <strong>the source grows nearly seventy-fold down this table and the injected block stays between 6.2 and 6.7 KB.</strong> That is a bound, not compression.",
+    ledePre: "Fourteen repositories across eight languages, every one measured through this page in a real browser. The pattern is the point, not any single ratio: <strong>the source grows nearly seventy-fold down this table and the injected block holds between 6.2 and 6.7 KB for every repository but the smallest.</strong> That is a bound, not compression.",
     thRepo: "repository", thLang: "language", thSrc: "source", thInj: "injected", thRatio: "ratio",
     notePre: "Source is the bytes of indexable files fetched. Injected is what the SessionStart hook writes into the agent's context, after the index is rolled up to its token budget — not the on-disk MAP.md, which is larger and is meant to be grepped, never read whole.",
     h2limits: "What this page cannot show you",
@@ -514,7 +514,7 @@ const T = {
     tryLabel: "ลอง:",
     idle: "พร้อมใช้งาน ครั้งแรกจะดาวน์โหลด Python runtime (~10 MB) หลังจากนั้นจะถูก cache ไว้",
     h2pre: "ที่วัดไว้แล้ว",
-    ledePre: "13 repository จาก 8 ภาษา ทุกอันวัดผ่านหน้านี้ในเบราว์เซอร์จริง สิ่งสำคัญคือรูปแบบ ไม่ใช่ตัวเลขอันใดอันหนึ่ง: <strong>ซอร์สโตขึ้นเกือบเจ็ดสิบเท่าเมื่อไล่ลงมาตามตาราง แต่ block ที่ใส่เข้าไปอยู่ระหว่าง 6.2 ถึง 6.7 KB ตลอด</strong> นั่นคือการมีขอบเขต ไม่ใช่การบีบอัด",
+    ledePre: "14 repository จาก 8 ภาษา ทุกอันวัดผ่านหน้านี้ในเบราว์เซอร์จริง สิ่งสำคัญคือรูปแบบ ไม่ใช่ตัวเลขอันใดอันหนึ่ง: <strong>ซอร์สโตขึ้นเกือบเจ็ดสิบเท่าเมื่อไล่ลงมาตามตาราง แต่ block ที่ใส่เข้าไปอยู่ระหว่าง 6.2 ถึง 6.7 KB ตลอด ยกเว้น repository ที่เล็กที่สุด</strong> นั่นคือการมีขอบเขต ไม่ใช่การบีบอัด",
     thRepo: "repository", thLang: "ภาษา", thSrc: "ซอร์ส", thInj: "ที่ใส่เข้าไป", thRatio: "อัตราส่วน",
     notePre: "ซอร์สคือจำนวนไบต์ของไฟล์ที่ index ได้ ส่วน \"ที่ใส่เข้าไป\" คือสิ่งที่ SessionStart hook เขียนลง context ของ agent หลังจากย่อ index ให้พอดี token budget แล้ว — ไม่ใช่ MAP.md บนดิสก์ ซึ่งใหญ่กว่าและมีไว้ให้ grep ไม่ใช่ให้อ่านทั้งไฟล์",
     h2limits: "สิ่งที่หน้านี้แสดงให้ดูไม่ได้",
@@ -595,7 +595,7 @@ const T = {
     tryLabel: "试试：",
     idle: "待机。首次运行会下载 Python 运行时（约 10 MB），之后会被缓存。",
     h2pre: "已经测过的",
-    ledePre: "8 种语言的 13 个仓库，每一个都通过本页在真实浏览器中测量。重点是规律，而不是某个比值：<strong>沿着表格往下，源码增长了近七十倍，注入的 block 始终在 6.2 到 6.7 KB 之间。</strong>这是上界，不是压缩。",
+    ledePre: "8 种语言的 14 个仓库，每一个都通过本页在真实浏览器中测量。重点是规律，而不是某个比值：<strong>沿着表格往下，源码增长了近七十倍，除最小的仓库外，注入的 block 始终在 6.2 到 6.7 KB 之间。</strong>这是上界，不是压缩。",
     thRepo: "仓库", thLang: "语言", thSrc: "源码", thInj: "注入", thRatio: "比值",
     notePre: "源码是所抓取的可索引文件的字节数。注入指的是 SessionStart hook 在把索引压缩到 token 预算之后，写入 agent context 的内容——不是磁盘上的 MAP.md，那个更大，是用来 grep 的，不是通读的。",
     h2limits: "这个页面无法向你展示的",
@@ -676,7 +676,7 @@ const T = {
     tryLabel: "例：",
     idle: "待機中。初回は Python ランタイム（約 10 MB）をダウンロードし、以降はキャッシュされます。",
     h2pre: "すでに計測済み",
-    ledePre: "8 言語 13 リポジトリを、すべてこのページ経由で実際のブラウザ上で計測しました。重要なのは個々の比率ではなく傾向です：<strong>表を下に辿るとソースは約 70 倍に増えるのに、注入される block は 6.2〜6.7 KB のままです。</strong>これは圧縮ではなく上限です。",
+    ledePre: "8 言語 14 リポジトリを、すべてこのページ経由で実際のブラウザ上で計測しました。重要なのは個々の比率ではなく傾向です：<strong>表を下に辿るとソースは約 70 倍に増えるのに、最小のリポジトリを除き、注入される block は 6.2〜6.7 KB のままです。</strong>これは圧縮ではなく上限です。",
     thRepo: "リポジトリ", thLang: "言語", thSrc: "ソース", thInj: "注入", thRatio: "比",
     notePre: "ソースは取得した索引可能ファイルのバイト数です。注入とは、索引を token 予算まで畳んだ後に SessionStart hook が agent の context に書き込む内容であり、ディスク上の MAP.md ではありません。あちらはもっと大きく、grep するためのもので、通読するものではありません。",
     h2limits: "このページでは示せないこと",
@@ -757,7 +757,7 @@ const T = {
     tryLabel: "Prueba:",
     idle: "En espera. La primera ejecución descarga el entorno de Python (~10 MB); después queda en caché.",
     h2pre: "Ya medidos aquí",
-    ledePre: "Trece repositorios en ocho lenguajes, todos medidos a través de esta página en un navegador real. Lo importante es el patrón, no una proporción concreta: <strong>el código fuente crece casi setenta veces al bajar por la tabla y el bloque inyectado se mantiene entre 6,2 y 6,7 KB.</strong> Eso es una cota, no compresión.",
+    ledePre: "Catorce repositorios en ocho lenguajes, todos medidos a través de esta página en un navegador real. Lo importante es el patrón, no una proporción concreta: <strong>el código fuente crece casi setenta veces al bajar por la tabla y el bloque inyectado se mantiene entre 6,2 y 6,7 KB en todos los repositorios salvo el más pequeño.</strong> Eso es una cota, no compresión.",
     thRepo: "repositorio", thLang: "lenguaje", thSrc: "fuente", thInj: "inyectado", thRatio: "proporción",
     notePre: "«Fuente» son los bytes de los archivos indexables descargados. «Inyectado» es lo que el hook de SessionStart escribe en el contexto del agente, después de plegar el índice a su presupuesto de tokens; no es el MAP.md en disco, que es mayor y está pensado para hacerle grep, nunca para leerlo entero.",
     h2limits: "Lo que esta página no puede enseñarte",
@@ -850,6 +850,7 @@ const PRE = [
   // single ratio. torvalds/linux comes through the GitHub fallback: jsDelivr refuses a repository
   // that large.
   ["chalk/chalk","JavaScript",56,2449,24],
+  ["fastapi/fastapi","Python",61,6454,10],
   ["facebook/react","JavaScript",257,6649,40],
   ["psf/requests","Python",392,6345,63],
   ["pallets/flask","Python",576,6391,92],

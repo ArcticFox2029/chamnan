@@ -501,21 +501,47 @@ def _map_is_current_by_git(root, map_path):
         if not m:
             return False
         stamped = m.group(1)
+        # 🐛 [2026-09-08] This was ONE call, collapsed from two to save 0.08s, and the collapse lost
+        # a whole class of change. `git diff <A> -- <pathspec>` compares commit A against the
+        # working tree for files git is TRACKING; an untracked file is not in a diff, by git's own
+        # design. So a source file created five minutes ago and not yet added was invisible, the
+        # index was reported current, and `chamnan-impact` then answered "nothing imports it" about
+        # a symbol something had just started importing. Not a stale answer -- a wrong one, which
+        # is the failure this whole function exists to prevent (R2 agent 6).
+        #
+        # The comment this replaces claimed the single call was "verified equivalent" across "a new
+        # untracked source file". It was not. Measured across five states, neither command is right
+        # on its own:
+        #
+        #     state                        diff clean   status empty
+        #     nothing changed              yes          yes
+        #     a tracked file edited        no           no
+        #     a NEW untracked file         YES (wrong)  no
+        #     a new file, staged           no           no
+        #     a commit since the stamp     no           YES (wrong)
+        #
+        # `diff` alone misses what is untracked; `status` alone misses what was committed since the
+        # stamp. Both are needed, and the second only runs when the first says clean -- which is
+        # precisely when this function is about to claim the index is current, and the only moment
+        # a wrong answer costs anything. Measured at 48 ms on this repository, paid on a clean tree
+        # and skipped on a dirty one.
+        #
         # Both argv lists are single literals on purpose: a guard in the suite reads every
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
-        # One call, not two. `git diff <A> -- <pathspec>` with a SINGLE ref already compares
-        # commit A against the working tree — committed history since A and uncommitted changes
-        # together — which is exactly the question, and what the `diff <A> HEAD` plus `status`
-        # pair was spelling out in two processes. Verified equivalent across a clean tree, an
-        # uncommitted edit, that edit committed, a workspace-only change, a new untracked source
-        # file, and a staged-but-uncommitted edit; measured 0.192s to 0.110s on the whole hook,
-        # and every session pays this (R3 agent 1).
         diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "--",
                                ".", ":(exclude).chamnan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=5)
-        return diff.returncode == 0      # 1 = something changed; 128 = unknown stamp or no git
+        if diff.returncode != 0:
+            return False      # 1 = something changed; 128 = unknown stamp or no git
+        untracked = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--",
+                                    ".", ":(exclude).chamnan"],
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=5)
+        if untracked.returncode != 0:
+            return False      # cannot confirm, so do not claim current
+        return not untracked.stdout.strip()
     except (OSError, subprocess.SubprocessError, ValueError):
         return False
 
