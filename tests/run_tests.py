@@ -17054,15 +17054,36 @@ _rmtree(_esc, ignore_errors=True)
 # clean clone that a correct run was wrong by an order of magnitude (R1 acc3, untrue docs). Any
 # literal N/N in prose is the same trap: it is a measurement of one moment, written where nothing
 # re-measures it. The docs say N/N now, and this keeps it that way.
+# 🐛 [2026-09-09] The pattern had no thousands separator in it, so `4,405/4,405 checks passed` --
+# the shape the suite itself prints once it is past a thousand checks, which is every run for
+# months -- walked straight through the guard that exists to catch exactly that sentence. The
+# number this was written to stop is now the only number it could not see.
+#
+# The scan skips a `## What's new in <version>` section, and that is a boundary rather than an
+# exemption: a versioned release note is a record of one moment ON PURPOSE and is never re-measured
+# -- 1.24.0's note has to keep saying what 1.24.0 measured. What this check exists to stop is a
+# document telling a READER what they should expect to see today, which is what `docs/` and the
+# rest of the README do. So a literal count is refused everywhere except inside a section that is
+# dated by its own heading.
 _counted = []
 for _dp in sorted(list((ROOT / "docs").glob("*.md")) + [ROOT / "README.md",
                                                         ROOT / "CONTRIBUTING.md"]):
     if not _dp.is_file():
         continue
+    _in_note = False
     for _n, _dl in enumerate(_dp.read_text(encoding="utf-8").split("\n"), 1):
-        if re.search(r"\b\d+\s*/\s*\d+\s+checks passed", _dl):
+        if _dl.startswith("## "):
+            _in_note = bool(re.match(r"## What's new in \d", _dl))
+        if _in_note:
+            continue
+        if re.search(r"\b[\d,]+\s*/\s*[\d,]+\s+checks passed", _dl):
             _counted.append(f"{_dp.name}:{_n}")
-check("NO DOCUMENT PRINTS A LITERAL SUITE COUNT THAT NOTHING RE-MEASURES", not _counted)
+check("NO DOCUMENT PRINTS A LITERAL SUITE COUNT THAT NOTHING RE-MEASURES", not _counted,
+      saw="\n".join(_counted))
+# The half that keeps the boundary honest: the widened pattern must really see the shape that got
+# through, or this is a comment claiming a fix rather than a check performing one.
+check("...and the pattern now sees a count written with thousands separators",
+      bool(re.search(r"\b[\d,]+\s*/\s*[\d,]+\s+checks passed", "  4,405/4,405 checks passed")))
 
 # 🐛 [2026-09-06] The same trap one step over: the "In one screen" summary told a skimmer the page
 # was 1,900 lines when it was 2,329 — 21.5% out, and drifting further with every section added. On

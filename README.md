@@ -118,7 +118,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.23.1](#whats-new-in-1231) · [Commands](#commands)
+[What's new in 1.24.0](#whats-new-in-1240) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -494,204 +494,326 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.23.1
+## What's new in 1.24.0
 
-**Measure this on your own repository before installing anything:
-[arcticfox2029.github.io/chamnan-measure](https://arcticfox2029.github.io/chamnan-measure/)**
+**A context tool fails quietly.** The block fits, nothing errors, every number on screen looks
+healthy — and a third of what you wrote is not reaching the session.
 
-Paste a public GitHub repository. The page runs chamnan's real modules through Pyodide — not a
-re-implementation — and reports what would be injected per session, what the redactor would alter,
-and a 50-turn simulation over that repository's own files. No server, nothing uploaded, no API key
-asked for, and the source it downloads is deleted the moment the numbers exist. Five languages.
+This one was found in ordinary use rather than by reading code: a workspace that kept forgetting,
+where work done in the morning was gone by the afternoon and answers came back confident and
+unsourced. Measuring it turned up several things chamnan already knew and had never told anyone.
 
-The rest of this release is one defect, found in fourteen places, plus two things the tool could
-not previously say about itself.
+The rest is **219 defect records**, and they fall into a handful of shapes. They were found by the
+reports of **37 research rounds**, each named on the row of the attached index that carries the
+fix — which is also where the running totals live, so they are not repeated here.
 
-### A rule applied to some members of a set, and forgotten in the identical ones beside it
+### What this workspace is not delivering
 
-Every item below is that shape. They were found by separate research rounds, in code written
-months apart, which is why they are worth naming together rather than listed as unrelated fixes.
+`chamnan-report` has a new section. It is silent when there is nothing to say. On the workspace
+where the forgetting was reported, it said this:
 
-**A rule file's glob could end a session's context, permanently.** `Path.glob` raises
-`NotImplementedError` — not `ValueError`, not `OSError` — for any pattern beginning with `/`, and
-`rulecheck` caught the other two. One committed line reading ``**Check:** absent `X` in every
-`/etc/*` `` left `run()`, hit the session-start hook's blanket `except Exception`, and ended the
-injected block where it stood: milestones, the last session's handoff, the tools index, open
-threads and the reply style stopped being injected, every session, under a message that never named
-the rule. A rule file arrives with a clone, so this needed no local access.
+```
+What this workspace is not delivering
+  STATE.md is 13,474 bytes and 3,812 of them reach a session (28%). The rest is named at the
+  end of that section and nothing fetches it.
+  No session records at all, so "where the last session stopped" is empty every time and
+  yesterday's work reaches today only if somebody typed it into STATE.md.
+  5 of 9 rule(s) reach a session as a title only (24,293 characters against a 1,500 budget).
+```
 
-**A committed tools index did the same through a different field.** `sort(key=lambda t: -(t.get(
-"runs") or 0))` on `"runs": "12"` is `-"12"`, a `TypeError`. The name in that file was validated,
-because a name becomes a path; the other fields were trusted, and a sort key is exactly where an
-untrusted field turns into arithmetic.
+Its block was 7,997 bytes against a 9,000-byte ceiling with no section dropped: every number a
+person would think to check said it was fine. Nobody can be asked to count bytes against a budget
+they have never seen, so the tool counts them.
 
-**All three context-injecting hooks failed to strip zero-width characters, each differently.**
-Two bypassed the `print` shadow with a raw write; the third called it faithfully on the finished
-JSON, by which point `json.dumps` has escaped every smuggled code point to `\uXXXX` text that no
-character filter matches and Claude Code decodes straight back. Reproduced end to end: 44 Unicode
-Tag characters in, an instruction back out.
+`rules_char_budget` is the new setting behind the third line. **Every rule is always NAMED in the
+block**; this decides how many arrive with their body rather than their title. It was hardcoded at
+1,500 characters on a day when the repository it was written in had one rule; by nine rules, five
+were arriving as names and nothing anywhere said so. A rule about a KIND of work belongs in
+`.chamnan/skills/`, read when that work starts — which is what the report now suggests, naming the
+candidates.
 
-**Eleven places wrapped a repository-derived name in backticks and folded it with `one_line`
-instead of making it inert with `as_quoted`.** A filename carrying a backtick closes its own code
-span, and everything after it stops being the repository's data and becomes chamnan's formatting.
-A report named two of them; the sweep found nine more across five modules and a hook.
+### Things chamnan measured and never read back
 
-**`rulecheck` could name a file outside the repository even though it could not read one** — the
-offenders list came from a second, uncontained glob, and that line prints outside the
-`[repo:nonce]` fence in chamnan's own voice.
+**`blocklog` has recorded the shape of every session block since Stage 10, and nothing read it.**
+Its own docstring names three defects that each went unnoticed for hours — a block cut rather than
+shortened, ~257 bytes and a section lost to a tools-index bug, a banner that jumped to 34,728 bytes
+— and says "all three are obvious in a column of numbers". `chamnan-report` now checks that column
+for exactly those three: `early` straight through, a byte collapse against the trailing median
+rather than a fixed number, and a section carried in at least half the window and not in the last
+block. Replayed over 36 real records it is silent; each defect recreated by substituting one field
+fires exactly one line.
 
-**The forged-milestone detector was wrong in both directions, and its sibling had none at all.**
-`rstrip("\n")` removes the blank line it is trying to detect, so two legitimate field-less entries
-were flagged while one invisible trailing space hid a real forgery. `timeline` had no detector,
-although the comment above its entry regex already said it was "the same shape as milestones'".
-A planted `## 2099-12-31` takes the top slot of the Open-threads section and pushes real threads
-down.
+**`interrupted` and `stderr_seen` have been maintained on every tool call since Stage 10** and
+printed nowhere. One tool here had written to stderr on all ten of its recorded runs while the
+report said "10 runs". Both are reported now — stderr only at three runs or more with every one
+noisy, because it is a weak signal; `interrupted` with no threshold at all, because a command
+somebody stopped is an unambiguous fact.
 
-**`--version` answered a refusal instead of the version** in exactly the two cases its own comment
-says it must survive. Six of nine commands put the check first; three put it below the
-no-workspace exit and the feature-disabled exit, and the existing sweep passed because it ran every
-command inside a healthy workspace — the one state nobody is in when they ask.
+**`tools/index.json` tracked 3 of the 43 scripts in `tools/`.** The other forty had been placed
+there by hand, which the README documents as normal, and were invisible to every mechanism chamnan
+has for asking whether a tool still earns its place — including the pre-commit gate and the
+regression suite themselves. They are named now, most recently changed first.
 
-**The downgrade banner had no bound and `fit.shrink` cannot drop it.** A committed `.version` of
-`999.0.0` plus 500 unknown config keys took the hook's stdout to 34,728 bytes against a 9,000-byte
-ceiling, truncated mid-key-name at the host's 2,048.
+**`chamnan-context --write <agent>` printed the path and nothing else.** The file it creates is
+18,805 bytes / 7,959 tokens on this repository, against the hook's 8,942 / 3,799 for the same
+information, and that difference is deliberate: `output_byte_ceiling` is the host truncating a
+hook's stdout, and a file on disk has no such cut. What was wrong is that the person typing the
+command was never told the number, at the one moment they have both the figure and the choice.
 
-**The `MIN_FILES` cliff was explained by a count the gate does not use.** `assets.scan()` applies
-the floor per top-level directory; the explanation summed globally, so twelve unindexable files
-split six-and-six across two directories got the silent exit 1 with no explanation.
+**The benchmark folded away the one result it produces that is not about tokens.** On the
+credential-audit question the bare arm refused outright and the chamnan arm produced a 45-entry
+table; both are defensible on a corpus its own README calls fictional, and reporting neither is
+not. `run_bench.py` now prints the refusal-versus-compliance delta separately from cost and from
+scoring.
 
-**A heredoc body was scanned as shell.** Every `;` `&&` `||` `|` inside one split the command and
-each fragment's first word became a fabricated step. Five of the eight candidates in this
-repository's own queue carried the token `s` as a result — the `s` of `sed -i '' 's/…/…/'` written
-inside a `python3 - <<'PY'` block, read as a command name.
+### The commit hook, and what it did to repositories that were not ours
 
-### Where processes cannot be spawned, and where git cannot answer
+**It could put work into commits you did not stage.** The hook ended in `git add -u`, which stages
+every modification to every tracked file. Reproduced end to end: stage one file, leave another edit
+deliberately unstaged, commit with a message naming the first — and the commit contains both, with
+no error and nothing shown. It now stages only the paths it wrote, taken from each command's own
+output rather than from a second list that can disagree with it.
 
-Fourteen handlers around a git call named "git is not installed" and "git said something odd".
-None named `NotImplementedError`, which is how an environment with no process layer fails —
-Pyodide and WASM, and some restricted sandboxes and CI containers. chamnan did not fall back to its
-no-git behaviour, which it has and is tested for; it raised out of `mapper.scan()` and took the
-whole index with it. There is now one `git_cannot_answer()` with fourteen callers and a check that
-finds every handler wrapping a subprocess call and requires it to use that definition — which
-caught a fifteenth site the first fix had missed.
+**Appending to an existing hook could disable that hook.** A POSIX hook exits with its LAST
+command's status, and chamnan appended always-succeeding shell after it. lefthook's installed hook
+ends in a plain call; a hand-written `! git diff --cached | grep -q TODO` ends in a test. Both kept
+PRINTING their failure and stopped BLOCKING the commit, with nothing on disk to say the gate had
+stopped gating. The original status is captured and handed back through `( exit $status )` — a
+subshell rather than a bare `exit`, so a line the user appends after chamnan still runs.
 
-Two more thresholds in the same family: `git_is_installed()` answered "a file called git exists",
-which is true of a git too old for `-C` (added in 1.8.5, 2013 — RHEL 7 and CentOS 7 shipped
-1.8.3.1 for years), so the diagnostic added for a missing git never fired and every git-derived
-section went silent. And `git_owns()` used `--absolute-git-dir`, which arrived in git 2.13 (2017),
-so a bare repository was unrecognised by the git Ubuntu 14.04 and 16.04 shipped. Both fixed, and
-the message now names the real cause: telling somebody who has git that git is missing sends them
-to install what is already there.
+**Two neighbouring installs reported success and did nothing at all.** `pre-commit install`'s hook
+is an if/elif/else whose every branch ends in `exec`, which replaces the process — so the append
+landed after a line nothing reaches, the install said it was installed, and the index never
+refreshed once. husky v9 points `core.hooksPath` at `.husky/_`, a directory it generates and
+gitignores: the file chamnan wrote was untracked and would be overwritten by the next
+`npm install`. Both are refused now, each naming the one line to add by hand and where.
 
-### Two things chamnan could not previously say about itself
+**And `--uninstall-git-hook` exists.** Every tool chamnan appends beside — husky, lefthook,
+pre-commit — ships one. It removes chamnan's block and its status-preserving preamble and nothing
+else, and deletes the file only when it held nothing but chamnan's block.
 
-**The file beside the block is finally counted.** `chamnan-report` now reports the agent context
-files loaded into the same window as chamnan's own block. Measured on this repository: the block is
-8,925 bytes against its own 9,000-byte ceiling, and `CLAUDE.md` is 17,116 against no budget at all.
-Derived from the vendor table, so it covers all twenty-four agents rather than Claude alone, and
-stated as a measurement rather than as advice — a long context file is frequently the correct one.
+### A cap that chose what you see by the first letter of a filename
 
-**Every session now records the SHAPE of the block it was handed**, in `logs/block_shape.jsonl`:
-byte totals, per-section sizes, and whether the block stopped early. Not the text — the block is
-reassembled from files already in git, so a copy buys nothing that re-running the hook does not.
-What cannot be regenerated is what yesterday's block looked like, and all three truncation defects
-above are obvious in a column of numbers. 188 bytes a session against the block's ~9,000, bounded
-by record count so it cannot grow without limit, and it honours `CHAMNAN_READ_ONLY` so
-`chamnan-map --preview` still writes nothing.
+**Twenty skills in this repository, eight of them never injected** — including one written the day
+before to stop a repeated mistake, cut from every session because its name began with a w. The
+same shape was found in memory titles, in the lessons a session is shown, in the tools index and
+in the rules section, each fixed alone before anybody asked the question of the family. All of
+them rank by recency now, with the filename as the tie-break, because after a clone every mtime is
+the checkout time and the order should fall back to exactly the previous behaviour rather than to
+noise.
+
+A derived check now fails if a new capped list of workspace files is added without a ranking key.
+
+### Checks that reported a pass they had not performed
+
+**`chamnan-age` printed "every version named in stored knowledge is still declared" over a check
+that had skipped files.** An entry it could not open was dropped from the loop in silence — one
+`chmod 000` was the entire difference between a correctly detected finding and a clean pass, in the
+module whose own docstring spends four paragraphs on a false all-clear being worse than no check at
+all. Unreadable entries are counted and named. `deploy_drift()` had the same shape one function
+down: `except Exception: return []` made a broken scanner indistinguishable from a repository with
+no manifests.
+
+**`map_claim_check.py` verified 1,313 claims and said nothing about chamnan's own command
+surface.** It checked function and class counts only where `path.suffix == ".py"` — sound
+reasoning, wrong discriminator, because every `bin/chamnan-*` command is Python with no extension
+and is indexed as Python through its shebang. Eleven files, now checked like any other.
+
+**The suite's totals line said only what RAN.** One commit reported 3,846 checks on ubuntu-latest,
+3,844 on macOS and 3,783 on windows — 63 fewer — and all three went green with nothing saying they
+had measured different things. Every skipped block already printed its reason; the count now
+reaches the line a reader takes the number from.
+
+**Malformed-payload safety was tested for two of the six hooks.** All six carry a wrapper written
+for exactly one purpose — garbage from the host must never take a session down — and four of them
+had never been fed any. The property held in all six when it was finally measured, which is the
+point: it held by nobody's design.
+
+### Reads and writes that were not bounded, and locks that were not held
+
+**Three stores did read-modify-write with no lock at all** while their siblings held one, so a
+second writer's work was lost. **`peek_pdf` had no size bound and a quadratic extraction regex** —
+a 1.5 MB crafted PDF held the real CLI for 16 seconds. **Several reads took a repository file
+whole** while `mapper` refused anything over the same limit, and the limit itself was written out
+by hand in three places.
+
+### Credentials that were reaching the model
+
+Three families the redactor could not see, and one place it marked where nothing was.
+
+**A credential name with no separator in it.** `PGPASSWORD` — Postgres's own environment variable —
+along with `APISECRET`, `CLIENTSECRET`, `APITOKEN`, `ACCESSKEY` and `PRIVATEKEY` leaked in full,
+because every rule needed a separator or a capital to find the second word. **Bare `pass` was
+missing from the word list entirely**, which is Ansible's own `ansible_ssh_pass` and
+`ansible_become_pass`. **The personal-data gate read the current line only**, so a value followed
+by its label — the ordinary shape of a chat transcript or a support ticket — leaked a
+checksum-valid national ID.
+
+**A list of secrets under one key kept everything after the first.** Every assignment rule answers
+"name, separator, ONE value" and stops, which is right for an assignment and wrong for a JSON array
+or a YAML block sequence. **A value containing its own `=`** — base64 padding, or an ODBC
+connection string packing several `KEY=VALUE` pairs — lost the redaction almost entirely while a
+`<REDACTED>` marker sat beside the plaintext saying otherwise.
+
+Also: Slack's rotation-era `xoxe-` prefixes, a JWT whose third segment is shorter than eight
+characters, a CPF written with spaces, an IBAN compared against the unfolded line where its six
+sibling rules used the folded one, and `<password>` as an XML tag where the credential word was not
+first.
+
+And the other direction: **`api_key_env = "MY_SECRET1"` holds the NAME of an environment variable,
+not a secret**, and was being redacted.
+
+### Unicode, in the places it had been fixed once already
+
+**A C function whose return type is not ASCII was absent from the index** — not mis-named, absent.
+The same fix had been made for Ruby weeks earlier and recorded as checked for C, which was true of
+the function's NAME and false of its return type, which is the position the anchor actually guards.
+
+**`[]…]` and `[^]…]` — the standard way to put a literal `]` in a character class — were rewritten
+into a different regex that still compiles.** Nothing shipped uses the idiom, so this was dormant
+rather than live; it is fixed because a wrong answer with nothing to signal it is the failure this
+codebase warns about most, and the next person to write a language rule would have had no way to
+see it.
+
+**A thread name was reduced to lowercase ASCII to make its slug**, so two Thai names became one
+file. Case-collision detection reached some stores and not others; it now reaches threads,
+sessions, candidates and the skills listing.
+
+### Lists that were cut short without saying so
+
+Seven of them, in one file and the two beside it. A repository with seven unreadable extensions was
+told about three. A 30-column SQLite table was reported as a 12-column one. A compose file with
+sixty services reported forty — because the cap was applied at extraction, where the renderer that
+prints `+N more` could not see it.
+
+### Windows was running a different program
+
+Four defects that were only ever wrong on Windows, and one that was only ever wrong on the Pythons
+most people run. None of them errored anywhere. Each was a rule that held on the platform it was
+written on.
+
+**A symlink pointing out of the repository was read into the transcript.** `chamnan-peek` refuses a
+link that a repository chose whose target sits outside it — that guard compared a resolved path
+against an unresolved one. On macOS and Linux the two spellings always agree, because `getcwd()`
+returns a canonical path with no links in it. Windows returns whatever string the process was
+started with, short `PROGRA~1`-style components included, so the two sides could not match and the
+guard was simply absent. It resolves the containing directory now, which normalises the name
+without following the link being judged.
+
+**The commit hook has never refreshed an agent file on Windows.** It rebuilds the index and stages
+it, then reads back which agent files chamnan wrote and refreshes each. Under git's bundled shell
+Python ends every line with CR LF, `read -r` keeps the CR, and an agent name carrying one is not a
+name chamnan accepts — so the loop wrote and staged nothing, on every commit, since the loop was
+written. The index looked healthy throughout, because the line above it parses no output.
+
+**The one instruction a new Windows user is given did nothing when pasted.** A first run that
+cannot find these commands on your PATH prints the line to add. It printed `export PATH="…:$PATH"`
+to every operating system — three things Windows does not have. It prints the PowerShell form
+there, and the suite now asks for the shell it is actually running under rather than for the text
+it expected.
+
+**A `.cmd` shim ran a different interpreter than the job that tested it.** Every shim resolves
+`py -3`, which is right for a real user — it is what the python.org installer puts on PATH — and on
+a runner it means the image's newest Python. Read from a real run: the "python 3.8" job and the
+"python 3.13" job both resolved to 3.14.7, so the version axis never reached the shim path at all.
+The shims keep `py -3`; a new step reaches the same entry points with the interpreter that was
+pinned.
+
+**And on every Python before 3.13, a file the index could not read vanished without a word.** A
+symlink loop makes `Path.resolve()` raise, and the walk caught that and dropped the entry in
+silence — the one exit from that function that recorded nothing, while every other exit reports
+what it refused. 3.13 rewrote `resolve()` to return a path instead of raising, so the same tree was
+reported honestly there and silently truncated on 3.8 through 3.12, under a coverage bar reading
+100% over a smaller set than the one it walked.
+
+`_redact_secret_lists` also split its input with `splitlines()`, which breaks on eight characters
+besides `\n`.
+
+A failing check now prints what it saw, not only what it expected. Three of the findings above were
+diagnosed from that line.
+
+### Vendor facts, re-fetched from each vendor's own page
+
+Amazon Q Developer is in its sunset window and AWS names Kiro as the successor — the adapter stays,
+since existing subscribers are real users until 2027, and now says so. `roo.py` claimed Kilo Code
+"gets its own module rather than an alias", which was false in the commit that wrote it. `trae.py`
+contradicted itself across two paragraphs because a correction had landed beside the claim it was
+correcting rather than over it. GitHub Copilot combines `AGENTS.md` with `.instructions.md` rather
+than choosing, so a repository that ran both `--write generic` and `--write copilot` pays twice —
+warned at the moment the second file is created. `.windsurf/rules/` is the vendor's documented
+legacy path and `.devin/rules/` the preferred one; the target is deliberately unchanged, because
+"legacy, still read" is not "removed".
 
 ### Also
 
-`dead_entries` claimed to be bounded by the index budget and was not: it stated every name in the
-on-disk `MAP.md`, 250 ms at fifty thousand. It now walks the tree once above a threshold and stats
-below it, because which is cheaper is a ratio and not a rule — 68 ms for the same exact answer, and
-the measured crossover is written beside the constant so the next reader does not re-derive it.
+- **A repository chamnan cannot index is no longer a dead end.** It got exit 1 and no workspace
+  while every other command answered "run `chamnan-map` first". The index still cannot be built;
+  the half of chamnan that needs no index now works there.
+- **`--undocumented` said "every file already has an opening comment" over a repository it had read
+  nothing of**, on a real CPAN distribution, following chamnan's own suggested next step.
+- **"8/8 files (100%)" on a repository holding sixteen** now says where the other eight went and
+  which sections were read from them.
+- **A first run says why these commands are not on your PATH**, once, naming the directory — and
+  says nothing to anyone who has already done it, or to any session inside Claude Code, where they
+  resolve regardless.
+- **`chamnan-map --help` printed two flags in its table and then named them both as undocumented
+  three lines below.** Two hand-kept lists of the same flags. Four commands also accepted
+  `--list`/`-l` without naming it; a check now walks every command's accepted flags against its own
+  help.
+- **The knowledge inventory printed "last write" over a date a person had stamped.** A file written
+  today came back as written 39 days ago. Each row says which clock answered.
+- **`chamnan-impact` answers with what this repository already decided** about the file you are
+  about to change.
+- The suite left 779 directories in the system temp folder, ran one block twice, and defined one
+  helper twice, a hundred lines apart.
 
-### Card numbers and national IDs, in the scripts people actually type them in
+### Verify it yourself
 
-The redactor already refused to let a credit-card number or a Thai national ID reach a model, and
-this release found the hole in how: **every pattern was written in ASCII `[0-9]`, and Python's `re`
-does not match a Thai digit with it.** A checksum-valid national ID typed as ๑๒๓๔๕๖๗๘๙๐๑๒๓ — the
-ordinary way to write one in the one market this plugin was built for — went through untouched,
-sitting next to the Thai keyword the rule looks for. The same was true of Arabic-Indic, Persian,
-Devanagari, Tamil and fullwidth digits. Two separate research agents found it in one round, which
-is how a gap that wide survives: nobody had typed a number in anything but ASCII.
+One command re-runs every check this note quotes and prints what actually happened on your machine:
 
-It is one fold table now, applied before matching rather than added to every character class,
-because a rule spelled into six places is the defect this repository pays for most often. The fold
-is codepoint-for-codepoint, so the span found in the folded text is the span replaced in the
-original.
+```bash
+git clone https://github.com/ArcticFox2029/chamnan && cd chamnan
+python3 tools/verify_release.py
+```
 
-What the layer covers, and why each rule is shaped the way it is:
+```
+chamnan 1.24.0 — verifying this release's own claims
 
-| | |
-|---|---|
-| **Credit cards** | Luhn **and** an issuer prefix that is actually issued — Visa, Mastercard including the 2-series, American Express, Discover, JCB, UnionPay. Grouped 4-4-4-4 and Amex's 4-6-5, separated by space, dash, dot, NBSP or the narrow spaces a spreadsheet or PDF copy-paste produces. `4111.1111.1111.1111` used to pass through whole, with the word "card" on the same line. |
-| **Thai national ID** | Checksum and a word naming it on the same line. |
-| **IBAN** | mod-97 over the 77-country length table. |
-| **CPF** (Brazil) | mod-11, dotted form. |
-| **Aadhaar** (India) | Verhoeff, keyword-gated. |
+  running the regression suite — about fifteen minutes, no output until it ends
+  ✓ 4,406/4,406 checks passed in 14.7 minutes, 0 failing, 0 traceback(s)
+  ✓ 1,340 of 1,340 index claims true (100.0%)
+  · 7 function bodies written in more than one file — advisory, not a gate
 
-**Each of those earned its shape from a measurement taken before the rule was written**, because
-the answer decided the design. A Luhn check passes **9.8% of random 16-digit numbers**, and the
-Thai national-ID checksum passes **10.0% of epoch-millisecond timestamps** — the commonest 13-digit
-run in any log or JSON file. A checksum alone would therefore destroy one timestamp in ten. So
-every rule here is checksum **and** context: the conventional grouped form, which nothing else is
-written in, or a word on the same line naming what the number is. A bare undelimited run with no
-word near it is left alone on purpose. IBAN mod-97 passes 1.02% of random alphanumerics and CPF
-1.03%, so shape alone is enough for those two; Aadhaar's Verhoeff passes 9.99%, so it is gated like
-the Thai ID and for the same reason.
+VERIFIED — 4,406 of 4,406 checks pass and 1,340 of 1,340 index claims are true, on this
+machine, from this checkout.
+```
 
-One false positive is accepted and the reasoning is in the code beside it: `device_id =
-4737-0000-0000-0002` is redacted, because it is card-shaped in every way this module can test. That
-costs a model one opaque `<REDACTED>` in a file regenerated from source. The other way round puts a
-live card number in the block that goes to the provider on every session, and those are not
-comparable.
+No network, no dependencies, no API key: the plugin is standard library only and so is the
+verifier. It exits non-zero if anything it checked disagrees with this note, and says which.
 
-The invisible-character filter gained the code points Unicode itself deprecates and the invisible
-math operators, and deliberately did NOT gain the other sixty-two format characters that survive
-it — ZWJ holds a family emoji together, ZWNJ separates a Persian verb prefix, and the bidi marks,
-Arabic number signs and Hangul fillers are ordinary letters in languages this tool indexes.
+**The suite's totals line is the proof, not the absence of failures.** A run that dies mid-way
+prints a traceback and no failure lines at all, so a `grep` for them reads zero over a run that
+stopped early. `verify_release.py` refuses to report a result when that line is missing, which is
+the one thing a person re-running this by hand is most likely to miss.
 
-`chamnan-map`'s unindexed tally no longer swallows files a person placed in `.chamnan/tools/`
-alongside their own scripts; the CI workflow says out loud that `"3.8"` resolves to different
-interpreters per OS; and the release checklist in `docs/verification.md` now states what every
-release note must carry, starting with the number of checks that passed.
+### Where each fix came from — attached to this release
 
-### The file lock kept its promise on Linux and macOS and broke it on Windows
+**`INDEX_CITED_IN_CODE.md` is attached to this release as a file**, so it can be read without
+cloning anything and without trusting this page.
 
-Every session's bookkeeping goes through one mutex, and under real contention on Windows it was
-handing the same file to two writers. Eight processes making four hundred increments recorded
-forty-one of them. Nothing raised, nothing corrupted a file; the running total was simply wrong
-afterwards, permanently, because nothing recomputes it.
+It links every defect recorded in chamnan's own source to the commit that fixed it, and — where the
+research report that found it survives — to that report. Its own counts move every time a round is
+archived, which is why they are not quoted here: read the file rather than this page for them. Every claim in the notes above can be
+followed to a diff. It is generated rather than written, from the source and from git:
 
-The mechanism was in the waiter rather than in any timeout. Checking who holds a lock means reading
-the lock, the poll did that every ten milliseconds, and **Windows refuses to delete a file another
-process holds open** — Python's `open()` there does not grant delete sharing. So the holder's own
-release failed silently and the lock outlived its owner, and nothing could break it afterwards:
-the age rule spares a lock whose PID is still alive, and that PID belonged to a process that was
-alive and had simply moved on. Every other writer then waited out its ceiling and wrote unguarded.
+```bash
+python3 .chamnan/tools/research_citations.py --write
+```
 
-The poll uses `os.stat` now, which does not pin the file, and opens the lock only once it is older
-than a quarter-second — a critical section here is a few milliseconds, so in a healthy workspace no
-waiter ever opens it, while a lock left by a crashed process still gets read and broken. The
-release retries its delete twelve times over a quarter-second, and a waiter's deadline now resets
-whenever the lock changes hands, because a queue that is moving is one worth staying in.
+The index is deliberately narrower than the research archive it is built from: the archive holds
+every round including the ones that measured a dead end, and the index holds only what reached the
+code. A report nobody implemented is not evidence for anything.
 
-This is one defect and it produced five different numbers — 31, 41, 83, 187 and 207 of 400 — which
-is what a collision rate looks like when it is reported as a count.
-
-Two checks were added so the next one is found on a laptop rather than in CI: the concurrency suite
-re-runs its storm under a ceiling scaled to what one lock cycle costs **on the machine running it**,
-and a session start is now measured for the number of processes it spawns, because a correct probe
-added to that path once took the Windows job from 4m16s to 9m25s and nothing was counting.
-
----
-
-**3,846 of 3,846 checks passed** on macOS 15 / Python 3.14.7, concurrency 34 of 34, and the CI
-matrix runs the same suite on ubuntu-latest, macos-latest and windows-latest at Python 3.8 and 3.13
-— all five green. The demo page's sample table was re-measured on 2026-09-08 by `site/remeasure.py`,
-which reproduces the browser without one: ten of thirteen rows came back identical to the byte, and
-`psf/requests`, `rust-lang/mdBook` and `torvalds/linux` moved and carry their new figures.
 
 ## Bootstrap does not rewrite your code
 
