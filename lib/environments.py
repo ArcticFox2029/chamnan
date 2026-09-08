@@ -214,22 +214,35 @@ def upsert(root, name, entry_text):
     something IS, and two `## production` headings in one file would leave a reader with no way to
     tell which is current. Returns (path, replaced).
     """
+    # 🐛 [2026-09-08] Read the whole file, edit in memory, write it back -- with no lock, so the
+    # last writer's snapshot became the entire file. `ws.rewrite_shared` was built for exactly this
+    # after six writers were found doing it and milestones.py measured five of six entries
+    # vanishing; three writers never adopted it, and this was one. Measured here the same way: 2 of
+    # 20 concurrent environment entries lost, 10%, valid Markdown throughout and no error anywhere
+    # (R2 agent 3).
+    #
+    # The read happens INSIDE the lock, which is the whole reason this is `rewrite_shared` and not a
+    # lock around the write: reading first and locking second leaves the same race with a smaller
+    # window, which is the version of this fix that looks right and is not.
     p = path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    text = p.read_text(encoding="utf-8-sig", errors="replace") if p.is_file() else ""
-    if not text.strip():
-        text = HEADER + "\n"
+    replaced = [False]
 
-    found = list(_ENV.finditer(mdblock.masked(text)))
-    for i, m in enumerate(found):
-        if m.group(1).strip().lower() != name.strip().lower():
-            continue
-        end = found[i + 1].start() if i + 1 < len(found) else len(text)
-        text = text[:m.start()] + entry_text.strip() + "\n\n" + text[end:]
-        ws.write_or_raise(p, text.rstrip("\n") + "\n")
+    def _upserted(existing):
+        text = existing if (existing or "").strip() else HEADER + "\n"
+        found = list(_ENV.finditer(mdblock.masked(text)))
+        for i, m in enumerate(found):
+            if m.group(1).strip().lower() != name.strip().lower():
+                continue
+            end = found[i + 1].start() if i + 1 < len(found) else len(text)
+            replaced[0] = True
+            return (text[:m.start()] + entry_text.strip() + "\n\n"
+                    + text[end:]).rstrip("\n") + "\n"
+        return text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
+
+    ws.rewrite_shared(p, _upserted)
+    if replaced[0]:
         return p, True
-
-    ws.write_or_raise(p, text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n")
     return p, False
 
 

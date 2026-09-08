@@ -51,7 +51,17 @@ def load_results():
 
 
 def save_results(data):
-    RESULTS.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    # 🐛 [2026-09-08] `ensure_ascii=False` with no `encoding=` is the one pairing in this tree that
+    # can fail on the file it just produced. `Path.write_text` without an encoding uses the
+    # platform default, which on a Windows console is a legacy code page rather than UTF-8, and the
+    # committed `bench/results.json` ALREADY holds arrow characters outside cp1252 -- so re-saving
+    # the real, tracked file raises UnicodeEncodeError there and the run's results are lost at the
+    # last step. Reproduced by proxy on this machine, which defaults to UTF-8, by passing
+    # `encoding="cp1252"` to the same call (R2 agent 3).
+    #
+    # `ensure_ascii=False` is kept: the arrows are the point, and escaping them would make the file
+    # unreadable to the person it is written for.
+    RESULTS.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def run_once(prompt, cwd, arm_flags, timeout=900):

@@ -2,8 +2,16 @@
 """chamnan-map — build .chamnan/MAP.md from the repository's source, and report what it cost.
 
 The map exists so an agent can answer "which file do I open for X" without reading or grepping the
-tree. Measured across three real repositories (Python, JS+shell, mixed), the Quick Index came to
-0.3-3.1% of the source it indexes, and answered 6 of 6 navigation questions on its own.
+tree, and it answered 6 of 6 navigation questions on its own when that was measured.
+
+🐛 [2026-09-08] The share it costs was written here as "0.3-3.1%" and the project's own published
+reproduction corpus measures 3.9% -- a claim narrower than the evidence beside it (R2 agent 4).
+Re-measured live rather than adjusted on paper: 0.3% on chamnan itself (106 files) and 0.8% on the
+repository it develops in (328 files), both today, both with this command. So: **0.3-3.9% of the
+source it indexes**, and the spread is not noise. It moves with how much of a repository is source
+rather than data, and with how many directories that source is spread across -- a roll-up over
+four directories and one over four hundred are different numbers for identical code, which
+`lib/rollup.py` documents at its own cliff.
 
 The coverage number printed at the end is not decoration. The index is built from each file's
 opening comment, so a repository that does not write them gets an index of filenames and function
