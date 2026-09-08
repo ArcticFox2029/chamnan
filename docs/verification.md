@@ -34,6 +34,54 @@ There is no pytest, no fixtures directory and no configuration file. A check is 
 `check(name, condition)` in `tests/run_tests.py`, and the suite uses only the standard library —
 so if it runs on your Python, it runs.
 
+## The defect this repository produces more than any other
+
+Before writing a check, know what this codebase gets wrong. One shape accounts for more of its bugs
+than every other cause combined: **a rule is applied to one member of a set and forgotten in the
+identical ones beside it.** Counted on 2026-09-08 by grepping the `🐛` records in the source itself,
+there are 18 distinct recorded instances across 22 files — and every one was found by a person
+reading code, one at a time, weeks or months after the fix beside it shipped.
+
+Six of them, so the shape is recognisable rather than abstract:
+
+| the fix | where it was not applied |
+|---|---|
+| `case_collisions`, wired into `rules_text` | decisions and lessons, identical shape, no guard |
+| `ws.rewrite_shared`, written after six unguarded writers were found | three of the six never adopted it, and each lost data the same way |
+| `CHAMNAN_READ_ONLY`, checked at five call sites in `workspace.py` | every other module |
+| `ws.inside`, guarding `memory/` and `skills/` | `threads/` — a committed symlink there printed a file from outside the repository |
+| a distinct fallback stem, so a title with no Latin letters gets its own filename | all four `slug()` functions had the bug; it was the same line written four times |
+| NFC normalisation before an ASCII reduction, in `fallback_name` | the branch directly above it in the same four functions |
+
+The reason it survives is not carelessness, it is where the record goes. Each instance was written
+down **where it happened**, in the comment above the line — the right place for the reason and the
+wrong place for the pattern. Fifty-one comments describing one disease, and until this section, no
+page saying it is one.
+
+### What this means for a check you are about to write
+
+**Enumerate the set, then assert the set.** A check that names three files passes forever while a
+fourth is added broken. A check earns its place only if it derives its own subjects — from the AST,
+from the source text, from the filesystem — and then **asserts that it matched something**. A sweep
+that reaches nothing passes silently, which is worse than no sweep, because it reads as coverage.
+
+The worked examples are in `tests/run_tests.py`: the two `slug()` audits walk every `FunctionDef`
+named `slug` in the shipped modules, assert the population is at least four, and only then assert
+the property of each one found. The hook sweep drives every hook in `hooks/` with nine malformed
+payloads rather than listing three of them by name.
+
+### And a fix that looks redundant is not, unless the code says why
+
+The mirror image of the same failure is a later session undoing a fix because nothing beside it
+explained the cost. `_map_is_current_by_git` asked git two questions; a session collapsed them into
+one to save 48 ms, and a single `git diff` is blind to untracked files by git's own documented
+design — so `chamnan-impact` reported an index as current with the code while a newly created,
+unstaged file that imported the target sat right there. Restored, with the measured 48 ms written
+into the comment so the next reader weighs it instead of guessing.
+
+**A decision recorded only in a commit message will be re-litigated.** Put the number next to the
+thing it justifies.
+
 ## Smoke test on a real repository
 
 The suite proves the parts work. This proves the plugin works end to end. Run it from inside any
@@ -58,6 +106,34 @@ Read the block itself for the answer: a repository with no index says so in it, 
 `chamnan-map`. The older instruction here — look for `nothing to inject yet — run chamnan-map
 first` — described a fallback that only fires when the hook produces no output at all, which it no
 longer does; that string is still in the code and is no longer the signal to watch for.
+
+## While releases are paused, the notes are still written
+
+chamnan has no outside users yet, so a release buys nothing and costs an evening — the owner decides
+when that changes, and until they say so nothing here is bumped, tagged or published. **Work does
+not pause with it, and neither does the note-writing.**
+
+Every change that lands locally gets its entry under **Unreleased** in `CHANGELOG.md`, on the day it
+lands, written by whoever did it. Not at release time.
+
+The reason is not tidiness. A note reconstructed six weeks later from commit messages is a worse
+note, because the thing worth writing down — why this was done, what it cost, what it would have
+cost not to — was in one person's head on one afternoon and is nowhere else. Assembling a release
+from a written Unreleased section takes minutes; excavating one from `git log` takes a day and
+still loses the reasoning.
+
+Two rules for that section:
+
+- **No version number.** Numbering it puts a version in this file that no tag matches, which is the
+  same confusion the pause already causes on a development machine: the marketplace entry there is
+  `source: directory`, so `claude plugin update chamnan` deploys the working checkout and the
+  installed copy then reports the last released number while running newer code. Check
+  `git log v<version>..HEAD` before believing a version string on a machine that develops chamnan.
+- **`git log v<version>..HEAD` is the authoritative list**; the section is what those commits would
+  say to a reader who was not there. If the two disagree, the log is right and the section is behind.
+
+When a release does happen, the checklist below picks up unchanged — the Unreleased section becomes
+the new version's section, and everything the checklist asks for is already written.
 
 ## Release checklist
 

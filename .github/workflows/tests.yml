@@ -124,6 +124,25 @@ jobs:
           bin\chamnan-map.cmd --help
           bin\chamnan-context.cmd --detect .
 
+      - name: ...and the same entry points under the interpreter this matrix leg pinned
+        if: runner.os == 'Windows'
+        # 🐛 [2026-09-08] Every `.cmd` shim resolves its interpreter with `py -3` — correct for a
+        # real user, since that is what the python.org installer puts on PATH and it means "newest
+        # 3.x". On a runner it means the image's OWN pre-installed Python, not the one setup-python
+        # just installed for this leg. Read from run 34156254867: the "python 3.8" job and the
+        # "python 3.13" job both resolved `py -3` to the identical 3.14.7. So the two Windows-only
+        # steps above have never executed at any pinned version, and the 3.8-floor job — whose
+        # entire reason for existing is to prove that floor — proves it for everything except this
+        # code path (R10 agent 1, against real CI logs).
+        #
+        # The shims keep `py -3`: that IS the end-user path and this does not replace it. This step
+        # reaches the same entry points with the bare `python` the matrix pinned, so the version
+        # axis covers them at least once per leg as well.
+        shell: cmd
+        run: |
+          python bin\chamnan-map --help
+          python bin\chamnan-context --detect .
+
       - name: The preflight runs where there is no POSIX shell
         if: runner.os == 'Windows'
         shell: cmd

@@ -275,6 +275,76 @@ def demote_headings(text):
     return "\n".join(out)
 
 
+# The `**Files:**` line, which is this workspace's join key between a record and the code it is
+# about. `timeline.py`'s own docstring states the contract -- "Files: is the join key, and it is
+# checked ... free prose is not a join key" -- and this is that line's one definition, so a second
+# store gaining the field cannot gain a second spelling of it with it.
+FILES_FIELD = re.compile(r"^\*\*Files:\*\*\s*(.+?)\s*$", re.M)
+
+
+def files_named(text):
+    """Every path a record declares on its `**Files:**` line(s), backticks and commas removed."""
+    out = []
+    for line in FILES_FIELD.findall(text or ""):
+        for piece in line.split(","):
+            piece = piece.strip().strip("`").strip().lstrip("./")
+            if piece:
+                out.append(piece)
+    return out
+
+
+def names_the_path(declared, target):
+    """Whether a record that declared `declared` is about `target`.
+
+    Exact, or a suffix on a path boundary -- an entry written with the full path still answers a
+    query made from a subdirectory. Deliberately NOT the other direction.
+
+    🐛 The fuzzy form `target.endswith("/" + declared)` was tried in `timeline.for_path` and had to
+    be taken out: an entry naming a bare `app.py` answered queries about `src/app.py`,
+    `src/vendor/app.py` and `totally/unrelated/app.py` alike, so in any repository with an
+    `index.js` or an `__init__.py` in several packages, one file's rollback history was attached to
+    every sibling. This helper exists so the second store to want this join gets the rule that
+    survived rather than the one that was tried first.
+    """
+    declared = str(declared).strip().strip("`").lstrip("./")
+    target = str(target).strip().strip("`").lstrip("./")
+    if not declared or not target:
+        return False
+    return declared == target or declared.endswith("/" + target)
+
+
+def cut_outside_a_fence(text, cut):
+    """`cut`, moved back to the end of the last complete line that is not inside a fence.
+
+    A budget cut is a character index and markdown structure is not, so a cut lands wherever the
+    budget ran out -- mid-word, and worse, inside a ``` block, which leaves the fence open. Every
+    line after it then renders as code, including the marker that says the text was truncated and
+    every section injected after it.
+
+    🐛 [2026-09-08] This lived in `lib/state.py` as `_safe_cut`, private to the one caller that
+    had been bitten. Four other places cut markdown by a token budget -- `lib/rollup.py` twice,
+    `lib/sessions.py` and `lib/peek.py` -- and each backed up to a LINE boundary with
+    `rsplit("\n", 1)` and stopped there, which is the half of the job that does not close a fence.
+    Reproduced at four of five budgets on a document with one code block (R8 agent 8).
+
+    The sibling `close_dangling_fence` below answers the same question the other way, by appending
+    a closing marker. That one is right where the text has already been cut and cannot be re-cut;
+    this one is right where the cut is still being chosen, because it loses a line rather than
+    inventing one.
+    """
+    if cut >= len(text):
+        return len(text)
+    at, safe = 0, 0
+    for line, in_fence in fenced_lines(text):
+        nxt = at + len(line) + 1
+        if nxt > cut:
+            break
+        at = nxt
+        if not in_fence:
+            safe = at
+    return safe if safe else cut
+
+
 def close_dangling_fence(text):
     """`text`, with a closing fence appended if it ends still inside one left open.
 
@@ -312,6 +382,38 @@ _WINDOWS_RESERVED = frozenset(
     + [f"com{i}" for i in "123456789¹²³"] + [f"lpt{i}" for i in "123456789¹²³"])
 
 
+def ascii_stem(source):
+    """The `[a-z0-9-]` reduction all four `slug()` functions do, done once and done accent-safe.
+
+    🐛 [2026-09-08] Every `slug()` in this package reduced its title with
+    `re.sub(r"[^a-zA-Z0-9]+", "-", title.lower())` on the RAW string, and the same four functions
+    each ended `or fallback_name(...)`, which normalises to NFC first and says in its own docstring
+    why. So the normalisation was applied on the branch where a title has no Latin letters at all,
+    and skipped on the branch where it decides the filename -- the rule applied to one member of a
+    set and forgotten in the identical one beside it, written four times.
+
+    What it cost: a precomposed `Café migration` (U+00E9) reduced to `caf-migration`, because the
+    single é is not in `[a-zA-Z0-9]` and became a separator. Its decomposed twin (`e` + U+0301)
+    reduced to `cafe-migration`, because the bare `e` survived and only the combining accent was
+    dropped. Two files, two list entries, both titled `Café migration`, from one person naming one
+    thread -- reproduced through `chamnan-timeline new`. Which form a title arrives in is not the
+    person's choice: macOS input, a paste out of a browser, and a file read off HFS+ disagree.
+
+    Decomposing and dropping the combining marks fixes both halves at once. The two forms converge,
+    and they converge on the READABLE name -- `cafe-migration`, not `caf-migration` -- so a letter
+    that carries an accent survives as its base letter instead of turning into a hyphen. ASCII-only
+    is kept deliberately, for the reason `sessions.slug` states: these stems are read in a directory
+    listing and in a git diff.
+
+    Verified before shipping that no `.chamnan` file anywhere on this machine changes stem under it:
+    the readable form is a different name from the old one for accented titles, and a rename is a
+    cost this had to be worth. Nothing had one.
+    """
+    bare = "".join(c for c in unicodedata.normalize("NFD", source)
+                   if not unicodedata.combining(c))
+    return re.sub(r"[^a-zA-Z0-9]+", "-", bare.strip().lower()).strip("-")
+
+
 def filename_safe(stem):
     """`stem`, or `_stem` when Windows would treat it as a device rather than a file.
 
@@ -322,6 +424,54 @@ def filename_safe(stem):
     so nothing a user typed is altered -- only where chamnan puts its own file.
     """
     return f"_{stem}" if stem.split(".", 1)[0].lower() in _WINDOWS_RESERVED else stem
+
+
+def filesystem_key(name):
+    """The key under which macOS APFS considers two NAMES to be one file.
+
+    NFC then casefold, and deliberately NOT the whitespace collapse `canonical_title` does: `a b.md`
+    and `a  b.md` are two files on every filesystem there is, so folding them would warn about a
+    collision that cannot happen. A title is a thing a person means; a filename is a thing a
+    filesystem resolves, and they are not the same equivalence.
+
+    One spelling of the fold, used by every caller, because the alternative is what this repository
+    keeps producing: `memory.case_collisions` built this key inline and `adapters.generic` built a
+    weaker one (`.lower()`, no normalisation) five files away, so the function whose entire job is to
+    warn about a name pair the filesystem will collapse was blind to half of them.
+
+    The first line names the OS on purpose. It used to say "a filesystem", which is broader than
+    anything that was ever checked, and the summary line is the half a reader takes away. `casefold()` is FULL Unicode folding, a many-to-one map: `"\u00df"` folds
+    to `"ss"` and `"\ufb01"` folds to `"fi"`. On macOS APFS that is exactly right, verified with real
+    files on an ordinary default-formatted volume -- writing `strasse.md` and then `stra\u00dfe.md`
+    leaves ONE file holding the second write, and a `\ufb01` ligature behaves the same way. NTFS
+    folds through an upcase table instead, which is one-to-one, so on Windows those are two files
+    and this key would warn about a collision that cannot happen there.
+
+    Left as it is, deliberately, and the direction is the reason: the error this makes is a warning
+    nobody needed, and the opposite error is one file quietly replacing another with nothing on
+    screen. A key that over-matches costs a reader a glance; a key that under-matches costs them the
+    file. Measured 2026-09-08 (R7 agent 1).
+    """
+    return unicodedata.normalize("NFC", name).casefold()
+
+
+def canonical_title(source):
+    """One spelling for a title, so two spellings of the same title compare equal.
+
+    NFC because a precomposed and a decomposed `é` are the same letter; whitespace collapsed because
+    a title that picked up a double space on the way in is the same title; casefold because case is
+    not part of a name here. The same equivalence `memory.case_collisions` uses on filenames, which
+    is deliberate: a comparison that disagrees with the collision detector would let one of them
+    call two things the same while the other called them different.
+
+    🐛 [2026-09-08] `timeline._distinct_slug` compared with `.strip().lower()` and hashed with
+    `" ".join(title.split()).lower()`, both on the raw string. With `ascii_stem` normalising the
+    STEM, both spellings of `Café migration` reached `cafe-migration.md` -- and then this comparison
+    said the file already on disk held a DIFFERENT title, so the second one was given a hash suffix
+    and became a second thread anyway. Fixing the name without fixing the comparison moved the split
+    one layer up rather than closing it.
+    """
+    return " ".join(unicodedata.normalize("NFC", source).split()).casefold()
 
 
 def fallback_name(source, kind):
@@ -345,5 +495,5 @@ def fallback_name(source, kind):
     hashing the raw bytes would give them two different files. See memory.case_collisions.
     """
     import hashlib
-    canonical = " ".join(unicodedata.normalize("NFC", source).split()).casefold()
+    canonical = canonical_title(source)
     return f"{kind}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:8]}"

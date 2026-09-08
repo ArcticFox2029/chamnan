@@ -5,9 +5,113 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Measure chamnan on any GitHub repository</title>
 <meta name="description" content="Paste a public GitHub repository URL and this page measures, in your browser, what chamnan would inject into a coding agent's context. Runs chamnan's real Python modules via Pyodide. Nothing is uploaded; there is no server.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Served from this origin. The remote stylesheet these replace handed every visitor's IP
+   and User-Agent to a third party before they had clicked anything, on a page whose own
+   text says nothing leaves their machine. Same faces, same design, no third party. */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/IBMPlexMono-400-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(fonts/IBMPlexMono-400-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(fonts/IBMPlexMono-500-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(fonts/IBMPlexMono-500-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(fonts/IBMPlexMono-600-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(fonts/IBMPlexMono-600-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/IBMPlexSans-400-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/IBMPlexSans-400-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/IBMPlexSans-500-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 500;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/IBMPlexSans-500-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/IBMPlexSans-600-latin-ext.woff2) format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-stretch: 100%;
+  font-display: swap;
+  src: url(fonts/IBMPlexSans-600-latin.woff2) format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+</style>
 <style>
 :root{
   --ground:#FBFBF8; --surface:#FFFFFF; --sunk:#F4F4EF;
@@ -143,13 +247,13 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 <body>
 
 <header>
-  <div class="wrap">
+  <div class="wrap measure">
     <div class="topline">
       <p class="eyebrow" data-i18n="eyebrow">chamnan · measured in your browser</p>
       <select id="lang" aria-label="Language"></select>
     </div>
     <h1 data-i18n="h1">Paste a GitHub repository. See what chamnan would put in an agent's context.</h1>
-    <div class="measure">
+    <div>
       <p data-i18n="intro">Paste any public GitHub repository. chamnan's own code runs here, in this tab, and reports
          what it would inject into a coding agent's context. Nothing is uploaded and there is no
          server — the page reads the repository from GitHub the same way your browser reads any
@@ -164,7 +268,7 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 </header>
 
 <section>
-  <div class="wrap">
+  <div class="wrap measure">
     <h2 data-i18n="h2measure">Measure a repository</h2>
     <ol class="steps">
       <li data-i18n="step1">Paste the URL of any public GitHub repository into the box below.</li>
@@ -197,7 +301,7 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 <section>
   <div class="wrap prose measure">
     <h2 data-i18n="h2pre">Measured here already</h2>
-    <p class="lede" data-i18n-html="ledePre">Thirteen repositories across eight languages, every one measured through
+    <p class="lede" data-i18n-html="ledePre">Fourteen repositories across eight languages, every one measured through
       this page in a real browser. The pattern is the point, not any single ratio: <strong>the source
       grows nearly seventy-fold down this table and the injected block stays between 6.2 and
       6.7 KB.</strong> That is a bound, not compression.</p>
@@ -239,8 +343,8 @@ python3 /path/to/chamnan/bin/chamnan-map</code></pre>
 </section>
 
 <section>
-  <div class="wrap">
-    <div class="limits measure">
+  <div class="wrap measure">
+    <div class="limits">
       <h2 data-i18n="h2limits">What this page cannot show you</h2>
       <p class="kept" data-i18n="nothingKept">Nothing is stored.</p>
       <div class="prose">
@@ -290,6 +394,7 @@ const T = {
     drift: "Measured 2026-09-08. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
     missed: "{n} file(s) could not be downloaded and are not in these numbers — the source figure is that much low.",
     oversize: "{n} file(s) over 2 MB were skipped without downloading them, because chamnan does not index a file that size either.",
+    escaping: "{n} path(s) in the listing did not stay inside the repository once normalised and were refused before being fetched. A repository can carry one; this page will not write it.",
     getTitle: "Liked the numbers? Install it",
     getBody: "Two commands, then one slash command inside a repository you actually work in. It is a Claude Code plugin, Python standard library only, and everything it writes stays in <code>.chamnan/</code> inside your repository.",
     getLink: "chamnan on GitHub — the source, and the full evidence including what argues against it",
@@ -328,7 +433,7 @@ const T = {
     tryLabel: "Try:",
     idle: "Idle. The first run downloads the Python runtime (~10 MB), then it is cached.",
     h2pre: "Measured here already",
-    ledePre: "Thirteen repositories across eight languages, every one measured through this page in a real browser. The pattern is the point, not any single ratio: <strong>the source grows nearly seventy-fold down this table and the injected block stays between 6.2 and 6.7 KB.</strong> That is a bound, not compression.",
+    ledePre: "Fourteen repositories across eight languages, every one measured through this page in a real browser. The pattern is the point, not any single ratio: <strong>the source grows nearly seventy-fold down this table and the injected block holds between 6.2 and 6.7 KB for every repository but the smallest.</strong> That is a bound, not compression.",
     thRepo: "repository", thLang: "language", thSrc: "source", thInj: "injected", thRatio: "ratio",
     notePre: "Source is the bytes of indexable files fetched. Injected is what the SessionStart hook writes into the agent's context, after the index is rolled up to its token budget — not the on-disk MAP.md, which is larger and is meant to be grepped, never read whole.",
     h2limits: "What this page cannot show you",
@@ -370,6 +475,7 @@ const T = {
     drift: "วัดเมื่อ 2026-09-08 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
     missed: "มี {n} ไฟล์ที่ดาวน์โหลดไม่สำเร็จ และไม่ได้อยู่ในตัวเลขนี้ — ค่าซอร์สจึงต่ำกว่าจริงเท่านั้น",
     oversize: "ข้าม {n} ไฟล์ที่ใหญ่เกิน 2 MB โดยไม่ดาวน์โหลด เพราะ chamnan ก็ไม่ index ไฟล์ขนาดนั้นเหมือนกัน",
+    escaping: "{n} path ใน listing ออกนอกขอบเขต repository หลัง normalise จึงถูกปฏิเสธก่อนดาวน์โหลด repository สร้างแบบนี้ได้ แต่หน้านี้จะไม่เขียนลงไป",
     getTitle: "ถ้าตัวเลขน่าสนใจ ลองติดตั้งดู",
     getBody: "สองคำสั่ง แล้วสั่ง slash command อีกครั้งใน repository ที่ทำงานจริง เป็นปลั๊กอินของ Claude Code ใช้ Python standard library ล้วน และทุกอย่างที่มันเขียนอยู่ใน <code>.chamnan/</code> ใน repository ของคุณเอง",
     getLink: "chamnan บน GitHub — ซอร์สโค้ด และหลักฐานทั้งหมด รวมถึงส่วนที่โต้แย้งตัวมันเอง",
@@ -408,7 +514,7 @@ const T = {
     tryLabel: "ลอง:",
     idle: "พร้อมใช้งาน ครั้งแรกจะดาวน์โหลด Python runtime (~10 MB) หลังจากนั้นจะถูก cache ไว้",
     h2pre: "ที่วัดไว้แล้ว",
-    ledePre: "13 repository จาก 8 ภาษา ทุกอันวัดผ่านหน้านี้ในเบราว์เซอร์จริง สิ่งสำคัญคือรูปแบบ ไม่ใช่ตัวเลขอันใดอันหนึ่ง: <strong>ซอร์สโตขึ้นเกือบเจ็ดสิบเท่าเมื่อไล่ลงมาตามตาราง แต่ block ที่ใส่เข้าไปอยู่ระหว่าง 6.2 ถึง 6.7 KB ตลอด</strong> นั่นคือการมีขอบเขต ไม่ใช่การบีบอัด",
+    ledePre: "14 repository จาก 8 ภาษา ทุกอันวัดผ่านหน้านี้ในเบราว์เซอร์จริง สิ่งสำคัญคือรูปแบบ ไม่ใช่ตัวเลขอันใดอันหนึ่ง: <strong>ซอร์สโตขึ้นเกือบเจ็ดสิบเท่าเมื่อไล่ลงมาตามตาราง แต่ block ที่ใส่เข้าไปอยู่ระหว่าง 6.2 ถึง 6.7 KB ตลอด ยกเว้น repository ที่เล็กที่สุด</strong> นั่นคือการมีขอบเขต ไม่ใช่การบีบอัด",
     thRepo: "repository", thLang: "ภาษา", thSrc: "ซอร์ส", thInj: "ที่ใส่เข้าไป", thRatio: "อัตราส่วน",
     notePre: "ซอร์สคือจำนวนไบต์ของไฟล์ที่ index ได้ ส่วน \"ที่ใส่เข้าไป\" คือสิ่งที่ SessionStart hook เขียนลง context ของ agent หลังจากย่อ index ให้พอดี token budget แล้ว — ไม่ใช่ MAP.md บนดิสก์ ซึ่งใหญ่กว่าและมีไว้ให้ grep ไม่ใช่ให้อ่านทั้งไฟล์",
     h2limits: "สิ่งที่หน้านี้แสดงให้ดูไม่ได้",
@@ -450,6 +556,7 @@ const T = {
     drift: "测量于 2026-09-08。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
     missed: "有 {n} 个文件下载失败，未计入这些数字——源码数值因此偏低。",
     oversize: "跳过了 {n} 个超过 2 MB 的文件且未下载，因为 chamnan 本身也不索引这种大小的文件。",
+    escaping: "listing 中有 {n} 个路径规范化后不在仓库内，已在下载前拒绝。仓库可以包含这种路径，但本页不会写入。",
     getTitle: "觉得数字不错？装上试试",
     getBody: "两条命令，然后在你真正在用的仓库里运行一个斜杠命令。它是 Claude Code 插件，只用 Python 标准库，写入的一切都留在你仓库里的 <code>.chamnan/</code> 中。",
     getLink: "GitHub 上的 chamnan——源码，以及包括反对意见在内的完整证据",
@@ -488,7 +595,7 @@ const T = {
     tryLabel: "试试：",
     idle: "待机。首次运行会下载 Python 运行时（约 10 MB），之后会被缓存。",
     h2pre: "已经测过的",
-    ledePre: "8 种语言的 13 个仓库，每一个都通过本页在真实浏览器中测量。重点是规律，而不是某个比值：<strong>沿着表格往下，源码增长了近七十倍，注入的 block 始终在 6.2 到 6.7 KB 之间。</strong>这是上界，不是压缩。",
+    ledePre: "8 种语言的 14 个仓库，每一个都通过本页在真实浏览器中测量。重点是规律，而不是某个比值：<strong>沿着表格往下，源码增长了近七十倍，除最小的仓库外，注入的 block 始终在 6.2 到 6.7 KB 之间。</strong>这是上界，不是压缩。",
     thRepo: "仓库", thLang: "语言", thSrc: "源码", thInj: "注入", thRatio: "比值",
     notePre: "源码是所抓取的可索引文件的字节数。注入指的是 SessionStart hook 在把索引压缩到 token 预算之后，写入 agent context 的内容——不是磁盘上的 MAP.md，那个更大，是用来 grep 的，不是通读的。",
     h2limits: "这个页面无法向你展示的",
@@ -530,6 +637,7 @@ const T = {
     drift: "2026-09-08 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
     missed: "{n} 件のファイルを取得できず、この数字には含まれていません——ソースの値はその分だけ低く出ています。",
     oversize: "2 MB を超える {n} 件は、ダウンロードせずにスキップしました。chamnan もその大きさのファイルは索引しないためです。",
+    escaping: "listing 内の {n} 件は正規化するとリポジトリの外に出るため、取得前に拒否しました。リポジトリはそうした経路を持てますが、このページは書き込みません。",
     getTitle: "数字が気に入ったら、導入してみてください",
     getBody: "コマンド二つ、そのあと実際に作業しているリポジトリでスラッシュコマンドを一度。Claude Code のプラグインで、Python 標準ライブラリのみ、書き込むものはすべてあなたのリポジトリ内の <code>.chamnan/</code> に収まります。",
     getLink: "GitHub の chamnan — ソースと、反証も含めた根拠のすべて",
@@ -568,7 +676,7 @@ const T = {
     tryLabel: "例：",
     idle: "待機中。初回は Python ランタイム（約 10 MB）をダウンロードし、以降はキャッシュされます。",
     h2pre: "すでに計測済み",
-    ledePre: "8 言語 13 リポジトリを、すべてこのページ経由で実際のブラウザ上で計測しました。重要なのは個々の比率ではなく傾向です：<strong>表を下に辿るとソースは約 70 倍に増えるのに、注入される block は 6.2〜6.7 KB のままです。</strong>これは圧縮ではなく上限です。",
+    ledePre: "8 言語 14 リポジトリを、すべてこのページ経由で実際のブラウザ上で計測しました。重要なのは個々の比率ではなく傾向です：<strong>表を下に辿るとソースは約 70 倍に増えるのに、最小のリポジトリを除き、注入される block は 6.2〜6.7 KB のままです。</strong>これは圧縮ではなく上限です。",
     thRepo: "リポジトリ", thLang: "言語", thSrc: "ソース", thInj: "注入", thRatio: "比",
     notePre: "ソースは取得した索引可能ファイルのバイト数です。注入とは、索引を token 予算まで畳んだ後に SessionStart hook が agent の context に書き込む内容であり、ディスク上の MAP.md ではありません。あちらはもっと大きく、grep するためのもので、通読するものではありません。",
     h2limits: "このページでは示せないこと",
@@ -610,6 +718,7 @@ const T = {
     drift: "Medido el 2026-09-08. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
     missed: "{n} archivo(s) no se pudieron descargar y no están en estas cifras: el valor de fuente queda así de bajo.",
     oversize: "Se omitieron {n} archivo(s) de más de 2 MB sin descargarlos, porque chamnan tampoco indexa un archivo de ese tamaño.",
+    escaping: "{n} ruta(s) del listado no permanecían dentro del repositorio tras normalizarlas y se rechazaron antes de descargarlas. Un repositorio puede llevar una; esta página no la escribirá.",
     getTitle: "¿Te convencen las cifras? Instálalo",
     getBody: "Dos órdenes y luego un comando de barra dentro de un repositorio en el que trabajes de verdad. Es un plugin de Claude Code, solo biblioteca estándar de Python, y todo lo que escribe se queda en <code>.chamnan/</code> dentro de tu repositorio.",
     getLink: "chamnan en GitHub: el código y la evidencia completa, incluida la que va en su contra",
@@ -648,7 +757,7 @@ const T = {
     tryLabel: "Prueba:",
     idle: "En espera. La primera ejecución descarga el entorno de Python (~10 MB); después queda en caché.",
     h2pre: "Ya medidos aquí",
-    ledePre: "Trece repositorios en ocho lenguajes, todos medidos a través de esta página en un navegador real. Lo importante es el patrón, no una proporción concreta: <strong>el código fuente crece casi setenta veces al bajar por la tabla y el bloque inyectado se mantiene entre 6,2 y 6,7 KB.</strong> Eso es una cota, no compresión.",
+    ledePre: "Catorce repositorios en ocho lenguajes, todos medidos a través de esta página en un navegador real. Lo importante es el patrón, no una proporción concreta: <strong>el código fuente crece casi setenta veces al bajar por la tabla y el bloque inyectado se mantiene entre 6,2 y 6,7 KB en todos los repositorios salvo el más pequeño.</strong> Eso es una cota, no compresión.",
     thRepo: "repositorio", thLang: "lenguaje", thSrc: "fuente", thInj: "inyectado", thRatio: "proporción",
     notePre: "«Fuente» son los bytes de los archivos indexables descargados. «Inyectado» es lo que el hook de SessionStart escribe en el contexto del agente, después de plegar el índice a su presupuesto de tokens; no es el MAP.md en disco, que es mayor y está pensado para hacerle grep, nunca para leerlo entero.",
     h2limits: "Lo que esta página no puede enseñarte",
@@ -741,6 +850,7 @@ const PRE = [
   // single ratio. torvalds/linux comes through the GitHub fallback: jsDelivr refuses a repository
   // that large.
   ["chalk/chalk","JavaScript",56,2449,24],
+  ["fastapi/fastapi","Python",61,6454,10],
   ["facebook/react","JavaScript",257,6649,40],
   ["psf/requests","Python",392,6345,63],
   ["pallets/flask","Python",576,6391,92],
@@ -902,7 +1012,28 @@ async function measure(owner, repo){
 
   say(t("reading"));
   const {ref, via, files: blobs, truncated} = await listing(owner, repo);
+  // A path is only used if it stays under /repo once normalised. `git mktree` accepts a SUBTREE
+  // named `..`, and a recursive walk of that tree emits `../evil.py` -- verified 2026-09-08, along
+  // with git's own refusals: `fsck --strict` flags it `hasDotdot` and `read-tree` calls it an
+  // invalid path, so GitHub's push-time fsck almost certainly rejects such a repository today.
+  //
+  // "Almost certainly, today, on one of the two listing sources" is not a memory-safety argument.
+  // Without this the page writes an attacker-named path into its own filesystem and is protected
+  // only by somebody else's validation, which it does not control and is not told about when it
+  // changes. Three lines, no measurable cost, and the dependency is gone (R1 agents 1 and 2, who
+  // reached opposite conclusions -- each had tested a different half).
+  const contained = path => {
+    const parts = [];
+    for (const part of ("repo/" + path).split("/")) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") { parts.pop(); continue; }
+      parts.push(part);
+    }
+    return parts[0] === "repo" && parts.length > 1;
+  };
+  const escaping = blobs.filter(b => !contained(b.path)).length;
   const want = blobs.filter(b => {
+    if (!contained(b.path)) return false;
     const i = b.path.lastIndexOf(".");
     return i > 0 && EXT.has(b.path.slice(i).toLowerCase());
   });
@@ -1049,6 +1180,7 @@ json.dumps({
   // `declared` used to be computed here and never read — dead arithmetic on every run.
   r.missed = take.length - got;          // fetches that failed mid-run, which used to be silent
   r.oversize = oversize;
+  r.escaping = escaping;   // paths that would have left /repo, refused before the fetch
   r.capped = want.length > take.length || !!truncated;
   r.via = via;
   // The language is derived from what was actually indexed rather than asked of GitHub's API,
@@ -1108,6 +1240,7 @@ function render(r){
   <p class="temp">${t("resultTemp")}</p>
   ${r.missed > 0 ? `<p class="note">${t("missed", {n: num(r.missed)})}</p>` : ""}
   ${r.oversize > 0 ? `<p class="note">${t("oversize", {n: num(r.oversize)})}</p>` : ""}
+  ${r.escaping > 0 ? `<p class="note">${t("escaping", {n: num(r.escaping)})}</p>` : ""}
   ${r.capped ? `<p class="note">${t("sampled", {got: num(r.fetched), total: num(r.total_blobs), cap: num(CAP)})}</p>` : ""}`;
 }
 

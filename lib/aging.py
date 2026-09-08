@@ -151,11 +151,24 @@ def check(root, now=None):
     declared_names = set(fresh_versions) | set(cold_versions)
 
     findings, unverifiable = [], []
+    UNREADABLE.clear()
     for category in memory.CATEGORIES:
         for path in memory.entries(root, category):
             try:
                 text = path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
+                # 🐛 [2026-09-08] `continue` and nothing else, so an entry that could not be opened
+                # left `findings`, `unverifiable` and `refusal` all untouched and the caller printed
+                # "every version named in stored knowledge is still declared by some environment".
+                # Reproduced: one `chmod 000` on a rule file turned a correctly detected finding
+                # into a clean pass, with the file the only difference between the two runs.
+                #
+                # This module's docstring spends four paragraphs on exactly this — "a false
+                # all-clear is worse than no check at all, because it stops somebody looking" — and
+                # builds the flagged/unverifiable/silent split so that "no findings" and "no check
+                # happened" can never print as the same sentence. The split covered a cold
+                # environment and not an unreadable entry (R9 agent 1).
+                UNREADABLE.append(f"{category}/{path.name}")
                 continue
             seen = set()
             for name, claimed in claims_in(text):
@@ -172,6 +185,16 @@ def check(root, now=None):
                     findings.append((category, path.name, name, claimed,
                                      fresh_versions.get(name, [])))
     return findings, unverifiable, None
+
+
+# Memory entries the last `check()` could not open. A list rather than a count, because the
+# caller has to be able to name them: "3 could not be read" sends somebody looking at the wrong
+# three as easily as the right ones.
+UNREADABLE = []
+
+# Why the last `deploy_drift()` compared nothing, when the reason was a failure rather than an
+# absence. Empty after a scan that worked, whether or not it found anything.
+DRIFT_ERROR = []
 
 
 def deploy_drift(root):
@@ -203,10 +226,18 @@ def deploy_drift(root):
     fresh = [e for e in envs if e["name"] not in stale]
     if not fresh:
         return []
+    # 🐛 [2026-09-08] `except Exception: return []` swallowed a real scanner bug and returned the
+    # same empty list as "this repository has no manifests" — so a broken `deploy.scan()` reads at
+    # every call site as "nothing disagrees", which is this module's own named worst outcome one
+    # function above. The scan really can fail on somebody else's repository (a manifest chamnan
+    # has never seen), so crashing `chamnan-age` over it is wrong too; what was missing was the
+    # third state (R9 agent 1).
+    DRIFT_ERROR.clear()
     try:
         import deploy
         images = deploy.scan(root).get("images") or []
-    except Exception:
+    except Exception as err:
+        DRIFT_ERROR.append(f"{type(err).__name__}: {err}")
         return []
 
     running = {}

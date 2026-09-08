@@ -144,6 +144,76 @@ def names():
     return sorted(set(ADAPTERS) | set(ALIASES))
 
 
+# Agents that read their OWN file AND the root `AGENTS.md`, so a repository that has run both
+# `--write generic` and `--write <this>` sends the identical block to that tool twice, every
+# session, and pays for it twice. Each entry verified against the vendor's own documentation on
+# 2026-09-08 (R8 agent 16):
+#
+#   roo       roocodeinc.github.io/Roo-Code/features/custom-instructions -- merged by default,
+#             opt-OUT via `roo-cline.useAgentRules`, since v3.38
+#   continue  docs.continue.dev/customize/deep-dives/rules -- "alongside .continue/rules"
+#   windsurf  docs.devin.ai/desktop/cascade/agents-md -- the same engine reads both
+#   copilot   docs.github.com/en/copilot/concepts/response-customization -- combines, not chooses
+#
+# These stay as modules rather than becoming aliases: each writes vendor-specific frontmatter
+# (`alwaysApply`, `globs`) that a bare `AGENTS.md` cannot carry, and `roo.py` additionally sidesteps
+# Roo's `.clinerules` legacy-fallback tier. Collapsing them would trade a real capability for a
+# duplicate nobody is forced to create.
+#
+# What this set is FOR: telling the user at the moment they create the duplicate. The round that
+# found this proposed recording it in each adapter's docstring, which reaches a maintainer reading
+# the source and never reaches the person paying the tokens.
+ALSO_READS_AGENTS_MD = frozenset({"roo", "continue", "windsurf", "copilot"})
+
+
+def wrote_this(name, text):
+    """Whether `text` is what THIS adapter writes -- asked of the adapter, not guessed centrally.
+
+    🐛 [2026-09-08] `--written-agents` asked `_looks_generated` for every adapter, and that
+    function answers for the SHARED writer: a `## chamnan` heading, or a frontmatter block opening
+    with one. Four adapters have an `install()` of their own and none of them writes that shape --
+    `generic` and its fourteen aliases write a marker region into `AGENTS.md`, `hermes` and `zed`
+    open with markers of their own, and `gemini` merges JSON. So fifteen of the names this command
+    can be given were never reported as written, and the pre-commit hook's refresh loop -- the
+    feature the README calls the thing that keeps the other agents' files fresh -- silently
+    refreshed none of them, including the root `AGENTS.md` that every alias points at.
+
+    Reproduced by writing each adapter's file into a fixture and asking: 15 of them unrecognised.
+
+    The answer is to ask the module that knows. Each of the four defines `wrote_this`; everything
+    else falls back to the shared predicate, which is correct for it by construction because the
+    shared WRITER is what produced it.
+    """
+    adapter = for_agent(name)
+    if adapter is None:
+        return False
+    own = getattr(adapter, "wrote_this", None)
+    return bool(own(text)) if own else _looks_generated(text)
+
+
+def wrote_the_generic_file(root):
+    """True when the root `AGENTS.md` is here AND is chamnan's own output.
+
+    A file somebody wrote themselves is not a duplicate of anything, so this asks the same question
+    `install()` asks before it replaces a target -- one definition of "chamnan wrote this", not a
+    second one that can disagree with it. A symlink is refused for the reason `read_target` gives.
+    """
+    path = ws.Path(root) / generic.TARGET
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    # 🐛 The first version of this asked `_looks_generated`, which is the shared writer's question
+    # and the wrong one HERE: `generic` writes a MARKER REGION into a file the user may also own,
+    # so its output never carries the `## chamnan` heading that predicate looks for. It returned
+    # False on a file chamnan had just written and the warning never fired. Fixed then by reading
+    # `generic`'s marker inline -- which was the same mistake one level down, a second place that
+    # knows what generic's output looks like. `wrote_this` is the one place now.
+    return wrote_this(generic.NAME, text)
+
+
 def safe_target(root, rel):
     """The path `rel` names under `root` — refusing anything that would leave the repository.
 

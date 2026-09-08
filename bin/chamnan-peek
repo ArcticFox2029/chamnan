@@ -15,6 +15,7 @@ Understands CSV/TSV, JSON, ZIP-based formats including .xlsx/.docx/.apk, tar arc
 PDF, PNG/JPEG/GIF, and plain text; identifies and measures the rest. Standard library only, so it
 runs wherever python3 does and installs nothing.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 
 import peek as peek_mod  # noqa: E402
 import redact
+import mdblock  # noqa: E402
 import workspace as ws  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
@@ -31,6 +33,16 @@ import workspace as ws  # noqa: E402
 # numbers" is exactly the judgement that was wrong each time. Uniform is cheaper to keep true than
 # correct-per-file. See redact.emit.
 print = redact.emit  # noqa: A001
+
+
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ('--find', '--budget')
+TAKES_VALUE = ('--find', '--budget')
+TAKES_REST = ()
 
 
 def main(argv):
@@ -42,7 +54,52 @@ def main(argv):
     if not argv or ws.wants_help(argv):
         print(__doc__.strip())
         return 0 if argv else 2
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-peek: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
     target = argv[0]
+    # 🐛 [2026-09-08] peek reads a file straight into the transcript, and it followed a symlink
+    # without asking where the link went. A repository that ships `docs/notes.md -> ~/.ssh/id_rsa`
+    # got that key printed, and the name the model chose it by came out of chamnan's own index
+    # (R10 agent 2, reproduced before this was written). `workspace.inside` exists for exactly this
+    # shape and its docstring records the same leak reaching the injected block.
+    #
+    # The line is drawn at ESCAPE, not at "outside": a path the caller names outside the repository
+    # -- `chamnan-peek ~/Downloads/report.csv` -- is the caller's own explicit choice and stays
+    # allowed. What is refused is a path that LOOKS like a repository file and is not one, because
+    # there the repository chose the target and the reader could not tell. `chamnan-map` refuses
+    # both because it writes an index of a tree; this reads one file somebody asked for by name.
+    # Decided this way once — do not "make it consistent" with map by refusing outside paths too.
+    _asked = Path(target)
+    _root = ws.find_root()
+    # 🐛 [2026-09-09] One side of this comparison was resolved and the other was not, so the guard
+    # was absent wherever the two spellings of a path differ. `find_root()` returns a RESOLVED path;
+    # `os.path.abspath` only joins the name onto `os.getcwd()`. On POSIX that is harmless -- getcwd
+    # returns a canonical path with no links in it, which is why this passed on macOS and Linux for
+    # as long as it existed. Windows does not: GetCurrentDirectory hands back whatever string the
+    # process was started with, short 8.3 components and all, so a repository reached through a path
+    # like `C:\Users\RUNNER~1\...` produced `_named_inside = False`, and the link pointing out of
+    # the repository was read into the transcript exactly as it was before the guard was written.
+    # Found by chamnan's own Windows CI, where TEMP has that shape.
+    #
+    # The parent is resolved rather than the path itself: resolving the path would follow the very
+    # link being judged and answer about the TARGET. The directory holding it has no final link in
+    # it, so this normalises short names, junctions and symlinked parents while still asking about
+    # the place the caller named. Equality as well as `parents` -- a file sitting directly in the
+    # root is inside it.
+    try:
+        _named_dir = Path(os.path.abspath(target)).parent.resolve()
+        _root_dir = Path(_root).resolve()
+        _named_inside = _named_dir == _root_dir or _root_dir in _named_dir.parents
+    except (OSError, RuntimeError, ValueError):
+        _named_inside = False
+    if _asked.exists() and _named_inside and not ws.inside(_asked, _root):
+        print(f"chamnan-peek: {mdblock.as_quoted(target, 100)} is inside this repository but "
+              f"points outside it — this command reads a file into the transcript, and a link the "
+              f"repository chose does not get to choose what lands there", file=sys.stderr)
+        return 2
     find = None
     budget = peek_mod.DEFAULT_BUDGET
     if "--find" in argv:

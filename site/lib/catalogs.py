@@ -207,6 +207,14 @@ def _grpc(root):
     for path in tree.by_suffix(root, ".proto"):
         if any(q in SKIP_PARTS for q in _rel_parts(path, root)) or not _outside(path, _nest):
             continue
+# 🐛 [2026-09-08] Every read below took a repository file WHOLE with no size ceiling, on every
+# ordinary `chamnan-map` / `chamnan-context` run, while `mapper` three files away refuses anything
+# over `tree.MAX_FILE_BYTES`. A generated `.proto`, a bundled OpenAPI document or a vendored spec
+# is exactly the file that is huge, and this is a passive path nobody opts into. The second
+# instance of the class R7 agent 2 found in `peek.py`, in a call site R7 did not check
+# (R8 agent 2). Skip, not truncate: half a spec parsed is an answer nobody can check.
+        if not tree.within_size(path):
+            continue
         try:
             text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
@@ -220,6 +228,10 @@ def _grpc(root):
 
 def _grpc_source(root, service):
     for path in tree.by_suffix(root, ".proto"):
+        # The same ceiling its sibling `_grpc` above takes. Two loops over the same suffix in the
+        # same file, and guarding one of them is how this codebase produces its commonest defect.
+        if not tree.within_size(path):
+            continue
         try:
             if re.search(rf"^\s*service\s+{re.escape(service)}\s*\{{", 
                          path.read_text(encoding="utf-8-sig", errors="replace"), re.M):
@@ -265,6 +277,8 @@ def _spec_files(root):
         in_spec_dir = any(q.lower() in SPEC_DIRS for q in path.parts[:-1])
         if not (named or in_spec_dir):
             continue
+        if not tree.within_size(path):
+            continue
         try:
             text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
@@ -285,6 +299,8 @@ def _readable(root, patterns):
             if path in seen or any(p in SKIP_PARTS for p in _rel_parts(path, root)) \
                     or not _outside(path, _nest) \
                     or not path.is_file() or redact.is_blocked(path):
+                continue
+            if not tree.within_size(path):
                 continue
             seen.add(path)
             try:
@@ -328,6 +344,11 @@ def _django_mounts(root, files):
         # field (a caller that assembled its own, a future test fixture).
         text = f.get("_source")
         if text is None:
+            # `mapper._scan()` vetted what it holds against the same ceiling, so a hit on
+            # `_source` above is already bounded. THIS branch is the one that reads a file nobody
+            # checked, which is what makes the guard belong here rather than at the top.
+            if not tree.within_size(root / f["path"]):
+                continue
             try:
                 text = (root / f["path"]).read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
@@ -380,6 +401,11 @@ def scan_routes(root, files):
         # Same reuse as _django_mounts above -- `mapper._scan()` already holds this text.
         text = f.get("_source")
         if text is None:
+            # `mapper._scan()` vetted what it holds against the same ceiling, so a hit on
+            # `_source` above is already bounded. THIS branch is the one that reads a file nobody
+            # checked, which is what makes the guard belong here rather than at the top.
+            if not tree.within_size(path):
+                continue
             try:
                 text = path.read_text(encoding="utf-8-sig", errors="replace")
             except OSError:
@@ -566,7 +592,13 @@ def _is_ignored(root, path):
     try:
         # check-ignore is asked about one specific path, so it is scoped by construction.
         if ws.git_can_speak_for(root):
-            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", str(path)],
+            # `--` so a path can never be read as an option. Not a live defect: the only caller
+            # passes an absolute path whose name is literally `.env`, so nothing here can start
+            # with a dash today. It is here because the guard belongs at the call, not in the
+            # caller's current shape -- a future caller passing a repository-controlled relative
+            # name would otherwise get `unknown option` from git, and this function's degrade path
+            # answers "not ignored" for anything git refuses to answer.
+            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(path)],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, timeout=10)
             if r.returncode in (0, 1):
@@ -595,7 +627,10 @@ def _ignored_by_files(root, path):
             rel = path.relative_to(d).as_posix()
         except ValueError:
             continue
-        for line in gi.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+        # A `.gitignore` is small in every repository anyone has, and this reads it once per
+        # path walked, so an unbounded one is paid for thousands of times rather than once. The
+        # ceiling costs nothing and removes the "in every repository anyone has" from the sentence.
+        for line in tree.read_capped(gi).splitlines():
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
@@ -647,6 +682,11 @@ def scan_env(root, files):
         # from any source file), so before this it was the least selective of the three re-reads.
         text = f.get("_source")
         if text is None:
+            # `mapper._scan()` vetted what it holds against the same ceiling, so a hit on
+            # `_source` above is already bounded. THIS branch is the one that reads a file nobody
+            # checked, which is what makes the guard belong here rather than at the top.
+            if not tree.within_size(root / f["path"]):
+                continue
             try:
                 text = (root / f["path"]).read_text(encoding="utf-8-sig", errors="replace")
             except OSError:

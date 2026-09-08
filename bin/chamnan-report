@@ -26,6 +26,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import aging  # noqa: E402
+import blocklog  # noqa: E402
+import fit  # noqa: E402
 import environments  # noqa: E402
 import ledger  # noqa: E402
 # 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
@@ -44,6 +46,7 @@ import tools_index  # noqa: E402
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
+import state as state_mod  # noqa: E402
 import host  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
@@ -317,10 +320,13 @@ def print_inventory(root):
     """
     rows = ledger.inventory(root)
     print("Knowledge inventory")
-    width = max(len(label) for label, _, _ in rows)
-    for label, count, last_ts in rows:
+    width = max(len(label) for label, _, _, _ in rows)
+    for label, count, last_ts, _stamped in rows:
         noun = "entry" if count == 1 else "entries"
-        print(f"  {label:<{width}}   {count:>3} {noun:<8}   last write {ledger.humanize_age(last_ts)}")
+        # "as of" for a date a person stamped, "last write" for a time the filesystem recorded.
+        # One heading over both was printing "last write" over a date that is not one.
+        _when = "as of     " if _stamped else "last write"
+        print(f"  {label:<{width}}   {count:>3} {noun:<8}   {_when} {ledger.humanize_age(last_ts)}")
 
     # 🐛 [2026-09-06] Nothing anywhere showed which settings this repository had actually changed.
     # Two config defects found today were both invisible for the same reason: `context_profile` set
@@ -427,6 +433,71 @@ def print_inventory(root):
     # Here, where a person is asking about workspace health, the count that is silent in a session
     # is the one worth saying — including how many DO hold, because that is the number that makes
     # "3 unverifiable" mean something.
+    # 🐛 [2026-09-09] A person adding a tenth rule has no reason to suspect that four of their
+    # earlier ones stopped arriving in full. The budget was set when this repository had ONE rule
+    # and never moved; by nine, five were reaching sessions as a name and nothing said so anywhere a
+    # person looks. Counting bytes against a ceiling is the tool's job, not theirs — and when the
+    # answer is "they no longer fit", the useful thing is not a warning but the two moves that fix
+    # it, named against the rules that are actually the candidates.
+    try:
+        _rp_fit, _rp_title, _rp_chars, _rp_budget = memory.rules_pressure(root)
+    except Exception:
+        _rp_fit, _rp_title, _rp_chars, _rp_budget = [], [], 0, 0
+    # 🐛 [2026-09-09] Three things this tool knew and never told the person who owns the workspace,
+    # all found in one evening by somebody USING it rather than reading it:
+    #
+    #   · rules that outgrew their budget and now arrive as a title;
+    #   · a STATE.md that outgrew its own budget — measured on a second real workspace at 13,474
+    #     bytes on disk delivering 4,003, so 70% of what its owner wrote never reached a session;
+    #   · a workspace with no session records at all, where "where the last session stopped" is
+    #     empty every time by construction and the morning's work is gone by the evening.
+    #
+    # Each is invisible from every number a person would think to check: that second workspace's
+    # block was 7,997 bytes against a 9,000 ceiling with no section dropped. Nobody can be asked to
+    # count bytes against a budget they have never seen.
+    #
+    # One paragraph, assembled as a list and printed once. This screen is opened to answer one
+    # question, and the suite holds it under eighty print calls for that reason.
+    _short = []
+    if _rp_title:
+        _short.append(
+            f"{len(_rp_title)} of {len(_rp_fit) + len(_rp_title)} rule(s) reach a session as a "
+            f"title only ({_rp_chars:,} characters against a {_rp_budget:,} budget): "
+            + ", ".join(mdblock.as_quoted(_t, 40) for _t in _rp_title[:3])
+            + (f" +{len(_rp_title) - 3} more" if len(_rp_title) > 3 else "")
+            + ". A rule about a KIND of work belongs in `.chamnan/skills/`, read when that work "
+              "starts; one that applies with no task in progress stays here, and "
+              "`rules_char_budget` is what gives it room.")
+    try:
+        _st_file = ws.workspace(root) / "STATE.md"
+        _st_raw = _st_file.read_text(encoding="utf-8-sig", errors="replace") if _st_file.is_file() else ""
+        # Rendered the way the hook renders it, with the same budget, so this cannot drift from what
+        # a session is handed. `age_out` is deliberately not applied: it removes sections somebody
+        # let go stale, which is a different question from what the budget cut.
+        _st_sent = len(state_mod.render(
+            _st_raw, ws.load_config(root).get("state_token_budget", 1700), "STATE.md")[0].encode()
+        ) if _st_raw else 0
+        _st_disk = len(_st_raw.encode())
+    except Exception:
+        _st_disk = _st_sent = 0
+    if _st_disk and _st_sent and _st_sent < _st_disk * 0.8:
+        _short.append(
+            f"STATE.md is {_st_disk:,} bytes and {_st_sent:,} of them reach a session "
+            f"({_st_sent * 100 // _st_disk}%). The rest is named at the end of that section and "
+            f"nothing fetches it. What belongs there is what is OPEN — settled decisions, "
+            f"boundaries and how-to belong in `memory/` and `skills/`, read when they apply.")
+    try:
+        _sess_n = len(list((ws.workspace(root) / "sessions").glob("*.md")))
+    except OSError:
+        _sess_n = 0
+    if not _sess_n:
+        _short.append(
+            "No session records at all, so \"where the last session stopped\" is empty every time "
+            "and yesterday's work reaches today only if somebody typed it into STATE.md. "
+            "`/chamnan:resume` at the end of a session is what fills it.")
+    if _short:
+        print("\nWhat this workspace is not delivering\n  " + "\n  ".join(_short))
+
     try:
         _rc_titled = memory.rules_with_titles(root)
         _rc_results = rulecheck.run(root, _rc_titled) if _rc_titled else []
@@ -558,6 +629,52 @@ def command_summaries():
     return out
 
 
+def print_block_trend(root):
+    """What the injected block has cost lately, and whether it is up against its ceiling.
+
+    🐛 [2026-09-08] `blocklog.record()` has written one line per session start since Stage 10, and
+    `blocklog.trend()`'s own docstring says "For `chamnan-report`, and for a person asking 'did
+    something change?'" -- a function that names its consumer, and that consumer never called it.
+    Forty-two real records sat unread in this repository, and what they said mattered: the block
+    had been sitting at 8,947 bytes against a 9,000-byte ceiling for six sessions running, which
+    means sections were being dropped to fit, every session, with nothing anywhere saying so
+    (R7 agent 5, selected over its sibling proposal after the measurement).
+
+    The ceiling is not chamnan's own preference. Claude Code truncates a SessionStart hook's stdout
+    at around ten thousand bytes -- still open, filed today as anthropics/claude-code#91614 -- so a
+    block that grows past it does not get shortened, it gets CUT, mid-sentence, and everything
+    after is gone. Which is why "how close am I" is a question worth answering out loud.
+    """
+    records = blocklog.trend(root, last=10)
+    if not records:
+        return
+    sizes = [r.get("bytes", 0) for r in records if isinstance(r.get("bytes"), int)]
+    if not sizes:
+        return
+    now, ceiling = sizes[-1], fit.CEILING
+    print("\nWhat each session was handed")
+    share = now * 100 // max(ceiling, 1)
+    print(f"  last block          {now:,} bytes of {ceiling:,}  ({share}% of the ceiling)")
+    if len(sizes) > 1:
+        low, high = min(sizes), max(sizes)
+        moved = sizes[-1] - sizes[0]
+        way = "grown" if moved > 0 else "shrunk" if moved < 0 else "not moved"
+        print(f"  over {len(sizes)} sessions    {low:,}-{high:,} bytes, {way}"
+              + (f" by {abs(moved):,}" if moved else ""))
+    # Said only when it is true, and said with the number rather than as advice: a warning that
+    # fires on every ordinary run is one people stop reading, and this one is meant to be rare.
+    if share >= 90:
+        print(f"  ⚠ within {ceiling - now:,} bytes of the ceiling. Sections are being dropped to")
+        print("    fit — `chamnan-map --explain` names which, and `.chamnan/config.json` turns off")
+        print("    the ones this repository does not need.")
+    # 🐛 [2026-09-08] The lines above answer "is the block too big", which is one of four questions
+    # this log can answer and the only one that was being asked. The other three are the defects
+    # `blocklog.py`'s own docstring was written around — a cut block, a byte collapse, a section
+    # gone — and each of them went unnoticed for hours when it really happened (R7 agent 5).
+    for _finding in blocklog.check(root):
+        print(f"  ⚠ {_finding}")
+
+
 def print_usage(root):
     """Counts, never a savings figure — a tokens-saved number would be invented, and this project
     already retired an "Engineer Scoreboard" for measuring what is easy instead of what matters.
@@ -597,9 +714,51 @@ def print_usage(root):
     if tools:
         print("\nPromoted tools")
         twidth = max(len(name) for name, _ in tools)
+        # 🐛 [2026-09-08] `runs` was the only field printed, and two more were being written on
+        # every call. `stderr_seen` is a WEAK signal by this module's own account -- plenty of
+        # correct commands write progress there -- so it is said only when it is every run and
+        # there have been enough runs to mean something, the same high bar `workflows.REPEAT_AT`
+        # keeps for its own noisy signal. `interrupted` needs no threshold: a command the user
+        # stopped is an unambiguous fact, and what it MEANS is still theirs to decide (R7 agent 5).
+        _signals = tools_index.signals(root)
         for name, runs in tools:
+            _r, _int, _err = _signals.get(name, (runs, 0, 0))
+            _note = ""
+            if _int:
+                _note += f" · {_int} interrupted"
+            if runs >= 3 and _err == runs:
+                _note += " · wrote to stderr every run"
             print(f"  {mdblock.as_quoted(name, 60):<{twidth}}   "
-                  f"{runs:>3} run{'s' if runs != 1 else ''}")
+                  f"{runs:>3} run{'s' if runs != 1 else ''}{_note}")
+    # 🐛 [2026-09-08] `runs` is incremented by `record_call`, which only ever fires for a name in
+    # `tools/index.json`, and the only two writers of that file are `chamnan-promote` and
+    # `chamnan-candidates promote`. A script a person DROPPED INTO `tools/` -- which this project's
+    # own README documents as normal use -- is invisible to every mechanism here for asking whether
+    # a tool still earns its place. Measured on this repository: 43 files in `tools/`, 3 registered,
+    # and the 40 include `preflight.py`, `run_tests.py` and `map_claim_check.py` (R11 agent 1).
+    #
+    # A fact, not a verdict: a repository that deliberately keeps hand-written scripts there is not
+    # doing anything wrong, and a line reading "N need fixing" would be one more notice that fires
+    # on everything and gets skipped. Silent when the two agree.
+    _tdir = ws.workspace(root) / "tools"
+    if _tdir.is_dir():
+        # `__init__.py` is package scaffolding, not a tool anybody promotes; naming it would be
+        # the same "advice they cannot act on" chamnan-map already refuses to give.
+        _files = [p for p in _tdir.iterdir()
+                  if p.is_file() and p.suffix in (".py", ".sh", ".js") and p.name != "__init__.py"]
+        _registered = {name for name, _ in tools}
+        _untracked = [p for p in _files if p.name not in _registered]
+        if _untracked:
+            print(f"\n  {len(_untracked)} of {len(_files)} file(s) in tools/ are not registered, "
+                  f"so nothing above can say whether they are still used:")
+            # Most recently touched first. An alphabetical slice reads as a ranking while being
+            # arbitrary -- the exact trap `scan_env`'s own comment records paying for once.
+            _shown = sorted(_untracked, key=lambda p: p.stat().st_mtime, reverse=True)[:4]
+            print("    " + ", ".join(mdblock.as_quoted(p.name, 40) for p in _shown)
+                  + (f" +{len(_untracked) - len(_shown)} more" if len(_untracked) > len(_shown)
+                     else "") + "  (most recently changed first)")
+            print("    `chamnan-promote <file> --desc \"...\"` registers one; a script placed here "
+                  "by hand works either way.")
     print()
 
 
@@ -741,6 +900,7 @@ def main(argv):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
     print_inventory(root)
+    print_block_trend(root)
     print_usage(root)
     project_dir = encoded_dir(root)
     entries = []

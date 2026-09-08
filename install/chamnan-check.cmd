@@ -5,8 +5,12 @@ rem The batch twin of install/chamnan-check.sh, and deliberately much smaller. I
 rem case: native cmd.exe or PowerShell with no Git Bash and no WSL, where the .sh cannot run. If
 rem you have either of those, run the .sh instead -- it detects more and explains more.
 rem
-rem HONESTY NOTE, and it is the reason this file is as short as it is: it was written on macOS and
-rem has never been executed on Windows. No developer machine here can run it. So it uses only
+rem HONESTY NOTE, and it is the reason this file is as short as it is: it was written on macOS,
+rem where no developer machine can run it. It IS executed on Windows now -- `.github/workflows/
+rem tests.yml` runs it on every windows-latest leg ("The preflight runs where there is no POSIX
+rem shell") -- so the claim this line carried until 2026-09-08, that no Windows machine had ever
+rem run it, was disproven by log output already in hand (R10 agent 1). What has not changed is why
+rem it is written this way: it uses only
 rem `where`, `if errorlevel` and `echo` -- the batch constructs least likely to be wrong -- and it
 rem installs nothing by itself. If it misbehaves, the two commands it prints are the whole content
 rem and can be run by hand.

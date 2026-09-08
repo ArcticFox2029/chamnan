@@ -43,6 +43,7 @@ import impact as impact_mod
 import redact
 import schema as schema_mod
 import tokens
+import tree
 import workspace as ws
 from unicode_marks import mark_aware
 
@@ -81,7 +82,9 @@ SKIP_DIRS = {
 # `ace-builds`, `bootstrap-datepicker`, `Sparkle`, `puphpet`, `admin_media`, `xvba_modules`) are a
 # list of specific bundled libraries from another era and are a maintenance liability here, not a
 # rule.
-MAX_FILE_BYTES = 2_000_000
+# One number, in `tree`, which nothing else imports and everything can reach. Kept under this
+# name because the suite, `bin/chamnan-map` and this file's own comments all say it.
+MAX_FILE_BYTES = tree.MAX_FILE_BYTES
 
 # 🐛 [2026-09-06] The byte ceiling assumes cost is roughly proportional to file SIZE, and for
 # ordinary source it is. For a file that is mostly newlines separating trivial statements it is
@@ -668,7 +671,7 @@ MAGIC_COMMENT = re.compile(
 # Narrow on purpose. A Python or Go file with long lines is a style, not a build artefact, and
 # calling it generated would silence the coverage nudge on hand-written code -- the same
 # over-skipping mistake that cost coveragepy 29% of its index under a build-output directory name.
-MINIFIABLE_EXTS = frozenset({".js", ".mjs", ".cjs", ".css", ".scss"})
+# DERIVED from `EXT_LANG` below rather than written out -- see the assignment after it.
 MINIFIED_AVG_LINE = 110
 SOURCEMAP_REF = re.compile(r"^\s*(?://[#@]|/\*[#@])\s*sourceMappingURL=", re.M)
 
@@ -1103,7 +1106,11 @@ def extract_python(source, path, lang='py'):
 # declaration rather than something nested inside a function body.
 REGEX_RULES = {
     "js": [
-        ("func", r"^(?:export\s+)?(?:async\s+)?function\s*\*?\s+(\w+)\s*\(([^)]*)\)"),
+        # 🐛 `export default function Foo()` was invisible while `export default class Foo`
+        # was not: the class rule three lines down already carried `default` and the func rule
+        # beside it never gained it (R8 agent 14).
+        ("func", r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s+(\w+)"
+                 r"\s*\(([^)]*)\)"),
         # 🐛 `[^)]*` let a `(` into the parameter capture, so `const I18N = (() => {...})()` -- a
         # module-scoped IIFE, the standard shape for a lazily-built singleton -- matched as a
         # function named I18N with the parameter list `(`, and MAP.md carried `I18N(()`, `Audio(()`
@@ -1126,7 +1133,12 @@ REGEX_RULES = {
         ("const", r"^(?:export\s+)?const\s+([A-Z][A-Z0-9_]{2,})\s*="),
     ],
     "go": [
-        ("func", r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(([^)]*)\)"),
+        # 🐛 [2026-09-08] A generic parameter list sits between the NAME and the opening paren, and only
+    # Rust's rule below allowed for it -- so `func Map[T, U any](...)`, `func map<T, U>(...)` and
+    # `public T Get<T>(int id)` were each entirely invisible to the index, in three languages,
+    # while the identical construct worked in the fourth. Go spells it with square brackets and
+    # the others with angle ones (R8 agent 14).
+    ("func", r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*(?:\[[^\]]*\])?\s*\(([^)]*)\)"),
         ("class", r"^type\s+(\w+)\s+struct"),
         ("const", r"^(?:const|var)\s+([A-Z][A-Za-z0-9_]{2,})\s*="),
     ],
@@ -1197,21 +1209,27 @@ REGEX_RULES = {
     # pointer, span several lines, or sit behind a macro. These catch the common shapes and miss
     # the exotic ones, which is the accepted trade for an index — a miss costs one grep.
     "c": [
-        ("func", r"^[A-Za-z_][\w \t\*&:<>,]*?\b(\w+)\s*\(([^;)]*)\)\s*(?:const\s*)?\{"),
+        ("func", r"^[^\W\d][\w \t\*&:<>,]*?\b(\w+)\s*\(([^;)]*)\)\s*(?:const\s*)?\{"),
         # A header holds prototypes, which end in ";" and never in "{". Matching only definitions
         # meant 11 header files in a firmware tree contributed 2 symbols between them, while the
         # whole point of a header is to declare what the module offers.
         ("func", r"^(?!\s*(?:typedef|return|else|extern\s+\"C\")\b)"
-                 r"[A-Za-z_][\w \t\*&]*?\b(\w+)\s*\(([^;{)]*)\)\s*;"),
+                 r"[^\W\d][\w \t\*&]*?\b(\w+)\s*\(([^;{)]*)\)\s*;"),
         ("class", r"^\s*(?:typedef\s+)?(?:struct|class|union|enum)\s+(\w+)"),
         ("const", r"^\s*#define\s+([A-Z][A-Z0-9_]{2,})"),
     ],
     "cs": [
-        ("func", r"^\s*(?:(?:public|private|protected|internal|static|async|override|virtual)\s+)+(?!record\s|class\s|struct\s|interface\s)[\w<>\[\],\.]+\s+(\w+)\s*\(([^)]*)\)"),
+        ("func", r"^\s*(?:(?:public|private|protected|internal|static|async|override"
+                 r"|virtual|sealed)\s+)+(?!record\s|class\s|struct\s|interface\s)"
+                 r"[\w<>\[\],\.]+\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)"),
         ("class", r"^\s*(?:public\s+|internal\s+)?(?:sealed\s+|abstract\s+|static\s+|partial\s+)*(?:class|struct|interface|record|enum)\s+(\w+)"),
     ],
     "swift": [
-        ("func", r"^\s*(?:(?:public|private|internal|open|static|class)\s+)*func\s+(\w+)\s*\(([^)]*)\)"),
+        # `@objc dynamic func` and `mutating func` are ordinary Swift and were not in the
+        # modifier list either, so those definitions were invisible for a second reason.
+        ("func", r"^\s*(?:(?:public|private|internal|open|static|class|final|mutating"
+                 r"|override|@objc|dynamic|nonisolated)\s+)*func\s+(\w+)\s*(?:<[^>]*>)?"
+                 r"\s*\(([^)]*)\)"),
         ("class", r"^\s*(?:public\s+)?(?:final\s+)?(?:class|struct|enum|protocol|extension)\s+(\w+)"),
     ],
     "dart": [
@@ -1284,6 +1302,27 @@ EXT_LANG = {
     # existing REGEX_RULES/LINE_COMMENT/FILE_DOC_MARKER entries for "js" already cover TS syntax.
     ".svelte": "js", ".vue": "js", ".astro": "js",
 }
+
+# 🐛 [2026-09-08] This was a hand-written `frozenset({".js", ".mjs", ".cjs", ".css", ".scss"})`
+# while `EXT_LANG` directly above routes `.jsx`, `.ts` and `.tsx` through the SAME "js" extractor.
+# So a bundled TypeScript file -- including a `.d.ts` rollup, since `Path("foo.d.ts").suffix` is
+# `.ts` -- was never recognised as build output: it counted against description coverage and was
+# listed under `--undocumented`, sending somebody to write an opening comment on a bundle. The
+# identical content saved as `.js` was correctly called generated. Reproduced with a 300-line
+# licence banner over ~2,000 minified functions on one line (R8 agent 11).
+#
+# Derived now, so the next extension added to the js family is covered by arriving there. The two
+# subtractions are the whole judgement, and each is narrow:
+#
+# - the single-file component formats are authored markup wrapping one code block, and
+#   `_sfc_extraction_source` feeds the extractor only that block. A long line in a `.vue` file is a
+#   template, not a bundle, and calling it generated would silence the coverage nudge on code
+#   somebody wrote by hand -- the over-skipping mistake the comment at MINIFIED_AVG_LINE warns about.
+# - the stylesheet extensions are not in `EXT_LANG` at all (they carry no symbols to extract), so
+#   they are added back explicitly.
+_AUTHORED_SFC_EXTS = frozenset({".svelte", ".vue", ".astro"})
+MINIFIABLE_EXTS = (frozenset(_e for _e, _lang in EXT_LANG.items() if _lang == "js")
+                   - _AUTHORED_SFC_EXTS) | frozenset({".css", ".scss"})
 # Leading comment markers stripped when harvesting a file's opening comment as its summary.
 # Control flow reads exactly like a call, and the per-language rules cannot tell them apart: Dart's
 # `for (var i = 0; i < 16; i++) {` fits "name(args) {" perfectly, and Kotlin's `= when(status) {`
@@ -1311,7 +1350,15 @@ KEYWORD_DEFINED = {"rs", "rb", "py", "go", "ex", "nim", "php", "swift", "kotlin"
 # the file being included twice and describes nothing about what the file does. Every C and C++
 # header has one, so listing it as a constant put one pure-noise entry in every header's row --
 # `BOARD_ESP32_H` beside `LED_PIN` and `I2C_SDA`, which are the real ones a reader wants.
-_INCLUDE_GUARD = re.compile(r"^[ \t]*#\s*ifndef[ \t]+(\w+)[ \t]*\r?\n[ \t]*#\s*define[ \t]+\1\b",
+# 🐛 [2026-09-08] `REGEX_RULES` and `impact.IMPORT_PATTERNS` both get `mark_aware` applied over
+# the whole table; this one is compiled on its own line and was the only identifier-capturing regex
+# in the file the generic fix never reached. `_guard_names` returned the ASCII guard and an empty
+# set for a Thai-named one — a total miss, not a truncated name (R10 agent 3). Low severity, since
+# guard macros are ASCII by convention, and fixed anyway because it is a literal instance of the
+# failure class this file's history is built around: the rule applied to the table and forgotten in
+# the member beside it.
+_INCLUDE_GUARD = re.compile(mark_aware(
+    r"^[ \t]*#\s*ifndef[ \t]+(\w+)[ \t]*\r?\n[ \t]*#\s*define[ \t]+\1\b"),
                             re.M)
 
 
@@ -1623,6 +1670,33 @@ def _inside_workspace(path, root):
     return parts[at + 1:at + 2] != ("tools",)
 
 
+def _unreadable(root, path):
+    """Record a file the walk could not read, so the counts below it exclude it OUT LOUD.
+
+    🐛 [2026-09-08] `indexable()` had three `except OSError: continue` branches -- the `stat()`,
+    the `read_bytes()` and the NUL sniff -- and not one of them recorded anything. Every OTHER
+    exclusion in the same function lands in a `SKIPPED_*` list that `chamnan-map` prints, so a file
+    dropped for any other reason degrades the reported coverage honestly while a file dropped for
+    THIS reason left the coverage bar reading 100% over a smaller set. That is the "false
+    confidence rather than degraded confidence" the comment forty lines up already names as the
+    worse kind, in the same function, three branches later.
+
+    A two-hop symlink loop is the shape that found it (R8 agent 7): it passes `tree.py`'s escape
+    guard, then raises ELOOP here. The other two branches are its siblings and were silent for the
+    same reason, so all three are wired up rather than the one that was reported.
+
+    `tree.UNREADABLE` rather than a fourth list of our own: it already exists for exactly this
+    question, `bin/chamnan-map` already prints it as "COULD NOT BE READ, so the counts below
+    exclude them", and a second list would be a second thing to remember to report.
+    """
+    try:
+        tree.UNREADABLE.add(str(path.relative_to(root).as_posix()))
+    except (ValueError, TypeError):
+        # Outside `root`, or not a path we can relativise. Losing the name is better than losing
+        # the run: this function is only ever called from an `except` that is already recovering.
+        pass
+
+
 def indexable(root, nested=None, with_text=False, sniff=True):
     """Yield (path, lang) for exactly the files that belong in this repository's index, or
     (path, lang, text) when `with_text` asks for the content too.
@@ -1648,6 +1722,18 @@ def indexable(root, nested=None, with_text=False, sniff=True):
         nested = _nested_repo_dirs(root)
     for path in tree.files(root):
         if not path.is_file():
+            # 🐛 [2026-09-08] This dropped everything `is_file()` refuses, in silence -- and one of
+            # the things it refuses is a symlink the walk found BY NAME whose target does not
+            # resolve: a broken link, or a loop. `tree.files()` yields it, this line removes it, no
+            # count changes, and the run prints "1/1 files (100%)" over a tree that has three. That
+            # is the "false confidence rather than degraded confidence" this file names elsewhere
+            # as the worse kind, and it was the drop nobody could see (R8 agent 7).
+            #
+            # A directory, a socket or a fifo is NOT recorded: `is_file()` is right to refuse those
+            # and there is nothing a reader would want said about them. The discriminator is
+            # `is_symlink() and not exists()` -- a name the walk offered that resolves to nothing.
+            if path.is_symlink() and not path.exists():
+                _unreadable(root, path)
             continue
         if nested and _under_nested(path, nested):
             continue          # a checkout inside this checkout is not this repository's source
@@ -1738,6 +1824,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
                 SKIPPED_TOO_LARGE.append((path, size))
                 continue
         except OSError:
+            _unreadable(root, path)
             continue
         # Binary content under a source extension. A PNG saved as asset.py was read with
         # errors="replace" and indexed as code: 351 "lines" counted from newline bytes inside the
@@ -1751,6 +1838,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             try:
                 raw = path.read_bytes()
             except OSError:
+                _unreadable(root, path)
                 continue
             # 🐛 [2026-09-06] The ceiling was enforced on `stat()` nineteen lines above and never on
             # the bytes actually read, so a file that GREW between the two passed a check on a size
@@ -1784,6 +1872,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
                         SKIPPED_BINARY.append(path)
                         continue
             except OSError:
+                _unreadable(root, path)
                 continue
             yield path, lang
         else:
@@ -1822,6 +1911,10 @@ def reset_skips():
     SKIPPED_UNKNOWN_EXT.clear()
     SKIPPED_UNKNOWN_DIR.clear()
     PARSE_WARNINGS.clear()
+    # `tree.UNREADABLE` is the same family and was the one member with a different lifetime: it
+    # cleared itself on every walk, so a build that walks twice reported none of what the first
+    # walk could not read. Same list, same lifetime as the rest now (2026-09-08).
+    tree.UNREADABLE.clear()
 
 
 def _scan(root):

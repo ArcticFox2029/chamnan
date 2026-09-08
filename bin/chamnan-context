@@ -217,6 +217,9 @@ def main():
     parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
     parser.add_argument("--write", default=None, choices=adapters.names(),
                         help="set this agent up to read the block")
+    parser.add_argument("--written-agents", action="store_true",
+                        help="name each agent whose context file exists here AND was written by "
+                             "chamnan, one per line; what the pre-commit hook loops over")
     parser.add_argument("--emit", default=None, choices=adapters.names(),
                         help="print the block in this agent's own wire format")
     parser.add_argument("--window", type=int, default=None,
@@ -321,6 +324,51 @@ def main():
     if _notice:
         sys.stderr.write(_notice)
 
+    # 🐛 [2026-09-08] `chamnan-map --install-git-hook` refreshed .chamnan/MAP.md on every commit and
+    # nothing else, so Claude Code and Gemini -- which get a live session hook and need no file --
+    # were the only agents kept current, while the twenty-one reading a written snapshot kept the
+    # one from the day they were set up. Reproduced: after a commit adding a file, MAP.md named it
+    # and `.cursor/rules/chamnan.mdc` had the identical md5 and always would. The README calls that
+    # hook the thing which automates exactly this (R2 acc3 adapters).
+    #
+    # This branch NAMES the agents and writes nothing; the hook loops and calls `--write` for each.
+    # Doing the writing here would mean either a second copy of the fifty-line write path below --
+    # which is the defect this repository pays for most often -- or a subprocess, and this command
+    # deliberately imports none: the session hook is an extensionless shebang script that Windows
+    # cannot execute by path, and the suite asserts the absence.
+    #
+    # Only files that EXIST and that chamnan wrote are named. A file somebody wrote themselves is
+    # never rewritten by a commit, and an agent never set up here does not acquire a config file
+    # because somebody committed.
+    if args.written_agents:
+        # ONE NAME PER FILE, not one per agent. Fourteen names resolve to the root `AGENTS.md`
+        # -- `generic` and its thirteen aliases -- and this list is what the pre-commit hook loops
+        # over calling `--write` on each. Naming all fourteen would rewrite the same file fourteen
+        # times per commit at a measured 0.77s each: ten seconds added to every commit that adds,
+        # deletes or renames a file, for a result identical to writing it once. The flag's own help
+        # says it is what the hook loops over, so answering per FILE is answering the question it
+        # was asked (2026-09-08).
+        seen = set()
+        for name in adapters.names():
+            adapter = adapters.for_agent(name)
+            target = getattr(adapter, "TARGET", None)
+            if not target or target in seen:
+                continue
+            try:
+                path = adapters.safe_target(root, target)
+                if path is None or not path.is_file():
+                    continue
+                # Asked of the adapter, not of the shared predicate: fifteen of these names write
+                # a format `_looks_generated` was never about, so this printed none of them and the
+                # hook's refresh loop refreshed none of them (2026-09-08).
+                if adapters.wrote_this(name, path.read_text(encoding="utf-8-sig",
+                                                            errors="replace")):
+                    seen.add(target)
+                    print(name)
+            except (ValueError, OSError):
+                continue
+        return 0
+
     if args.write:
         # 🐛 A written file is a SNAPSHOT and said nothing about being one. Claude Code and Gemini
         # CLI get a session hook, so their block is rebuilt every session and cannot go stale; the
@@ -346,9 +394,44 @@ def main():
             sys.stderr.write(f"chamnan-context: cannot write {args.write}'s target: {exc}\n")
             return 1
         print(f"chamnan-context -> {written}")
-        # Declaring a ceiling bounds chamnan's own share; it cannot bound a file that also holds
-        # what the user wrote. Measured against the finished file, which is the thing the agent
-        # will actually read and truncate.
+        # 🐛 [2026-09-08] Four vendors read their own file AND the root `AGENTS.md` -- Roo Code,
+        # Continue.dev, Windsurf/Devin and GitHub Copilot, each confirmed against the vendor's own
+        # documentation. A user who ran `--write generic` and then `--write roo` now sends the
+        # identical block to that tool twice on every session and pays for it twice: a token-waste
+        # defect in a tool whose whole purpose is to reduce tokens, and nothing said so.
+        #
+        # Said HERE, at the moment the second file is created, because that is the only moment the
+        # person paying has both the information and the choice (R8 agent 16).
+        if args.write in adapters.ALSO_READS_AGENTS_MD and adapters.wrote_the_generic_file(root):
+            _root_file = adapters.for_agent("generic").TARGET
+            print(f"  ⚠ {args.write} also reads the root {_root_file}, which chamnan already wrote "
+                  f"here — so this block now reaches it twice every session, and costs twice. Keep "
+                  f"whichever suits you and delete the other: this file carries {args.write}'s own "
+                  f"frontmatter, {_root_file} is read by every agent that has no file of its own.")
+        # 🐛 [2026-09-08] `CEILING` means "the byte limit that agent's delivery imposes, or None
+        # when there is none" -- a statement about the VENDOR. Fifteen of twenty-three adapters have
+        # None, and what fell out of that is a decision nobody made: an agent whose vendor imposes
+        # no limit is handed roughly twice what Claude Code's own hook is allowed. Measured on this
+        # repository, same information both ways: `--emit generic` 18,805 bytes / 7,959 tokens
+        # against the hook's 8,942 bytes / 3,799 (R7 agent 6).
+        #
+        # Not capped here, and that is deliberate: a file has no host truncation to protect it
+        # from, more of the index is genuinely useful to a tool that will not be re-handed it every
+        # turn, and silently halving what twenty vendors get is a bigger change than a round should
+        # make on its own. What was actually wrong is that the person who typed this command was
+        # never told the number. This is the moment they have both the figure and the choice, which
+        # is the same reasoning the duplicate-delivery warning above already runs on.
+        if written.is_file():
+            _cost = tokens_mod.estimate(written.read_text(encoding="utf-8", errors="replace"))
+            import fit as _fit
+            _hook = _fit.CEILING
+            print(f"  {_cost:,.0f} tokens, read by {args.write} at the start of every session it "
+                  f"opens here.")
+            if written.stat().st_size > _hook:
+                print(f"  Claude Code's own block is capped at {_hook:,} bytes because its host "
+                      f"truncates past that;")
+                print(f"  a file has no such limit, so this one carries more of the index. Delete "
+                      f"it to stop paying.")
         limit = getattr(adapters.for_agent(args.write), "CEILING", None)
         if limit and written.is_file():
             size = written.stat().st_size

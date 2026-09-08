@@ -93,6 +93,28 @@ def _is_ours(group):
                for h in group.get("hooks", []) if True)
 
 
+def wrote_this(text):
+    """Whether these settings already carry a SessionStart group chamnan registered.
+
+    JSON, not text with a marker in it, which is why this adapter has to answer for itself: the
+    question "did chamnan write this" has a different shape in every format. `_is_ours` above is
+    the same predicate `install` uses to find its own entry, so there is one definition of ours
+    rather than two that can disagree.
+    """
+    try:
+        settings = json.loads(text)
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        # `RecursionError` because a settings file nested past the interpreter's limit is a
+        # settings file this cannot read, not a crash to hand the caller. Every `json.loads` in
+        # this package carries it, and a check asserts the family — which is what caught this one
+        # the same hour it was written.
+        return False
+    if not isinstance(settings, dict):
+        return False
+    groups = (settings.get("hooks") or {}).get("SessionStart")
+    return isinstance(groups, list) and any(_is_ours(g) for g in groups)
+
+
 def install(root, body, command):
     """Register the SessionStart hook in `.gemini/settings.json`, preserving everything else.
 

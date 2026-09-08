@@ -5,7 +5,7 @@
 `.chamnan/candidates/` (see lib/candidates.py) the moment it crosses the detection threshold. This
 is the other half: looking at what accumulated, and deciding what to do with each one.
 
-  chamnan-candidates                       list what is waiting (same as `list`)
+  chamnan-candidates                       list what is waiting (same as `list`, `--list`, `-l`)
   chamnan-candidates confirm <id>          mark reviewed and worth keeping (Provenance -> ai-confirmed)
   chamnan-candidates reject <id>           delete it — not a routine worth keeping
   chamnan-candidates edit <id>             print the file's path, to open and adjust by hand
@@ -44,6 +44,7 @@ import candidates  # noqa: E402
 import tools_index  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
+import memory  # noqa: E402
 
 # Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
 # like it could carry a secret today. Five findings running came from one store having a guarded
@@ -77,6 +78,16 @@ def cmd_list(root):
         print(f"[{i}] {_title(p)}")
         print(f"    observed {f.get('observed', '?')} time(s) · last seen {f.get('last seen', '?')} "
               f"· {f.get('provenance', '?')}")
+    # 🐛 [2026-09-08] Same gap as threads/ and sessions/, and the mildest of the three: this store
+    # is not injected into a session, so a person has to run this command before a collapsing pair
+    # does any harm. Warned anyway -- the call is already computed elsewhere and four lines here is
+    # cheaper than being the one member of the set that was left out again.
+    clash = memory.case_collisions(found)
+    for group in clash:
+        names = ", ".join(g.name for g in group)
+        print(f"\n  warning: {names} differ only by case or Unicode normalisation. A "
+              f"case-insensitive filesystem keeps ONE of them; rename one before confirming "
+              f"either.")
     print("\nconfirm/reject/edit by number or by name — see `chamnan-candidates --help`")
     return 0
 
@@ -173,8 +184,16 @@ def cmd_promote(root, ident, destination=None, name=None):
             print(f"chamnan: {err}", file=sys.stderr)
             return 1
         dest = tools / (safe if Path(safe).suffix else safe + ".sh")
+        # The sibling of the refusal in `chamnan-promote`, and it had the same defect: a file
+        # already sitting in `.chamnan/tools/` could never be registered, because the only command
+        # that registers refused it for being where it belongs. This one WRITES a fresh skeleton
+        # rather than copying an existing file, so "already there" really is a name collision here
+        # and refusing stays right — but the message has to say WHY, or it reads as the same dead
+        # end (2026-09-08).
         if dest.exists():
-            print(f"chamnan: {dest.name} already exists — pick another name or edit it in place",
+            print(f"chamnan: {dest.name} already exists — this writes a new skeleton, so pick "
+                  f"another name. To register a script already in .chamnan/tools/, run "
+                  f"`chamnan-promote .chamnan/tools/{dest.name} {dest.stem} --desc \"...\"`.",
                   file=sys.stderr)
             return 1
         # 🐛 SHELL INJECTION, reproduced end to end. `step` comes from a candidate file's
@@ -225,8 +244,12 @@ def cmd_promote(root, ident, destination=None, name=None):
                 pass
             print(f"chamnan: could not register {dest.name!r} in the tools index: {err}",
                   file=sys.stderr)
-            print("  nothing was left behind -- the candidate is still there. Fix the underlying "
-                  "issue (often the index file's permissions) and run this again.", file=sys.stderr)
+            # 🐛 [2026-09-08] This guessed at permissions while the line above it now carries
+            # the real reason from `ws.write_failure_text` -- so under `CHAMNAN_READ_ONLY=1` the
+            # two printed together contradicted each other, and the guess is the one a reader
+            # acts on because it is the one phrased as advice. Say what is true instead.
+            print("  nothing was left behind -- the candidate is still there. Fix what the line "
+                  "above names and run this again.", file=sys.stderr)
             return 1
         p.unlink()
         rel = dest.relative_to(root).as_posix()
@@ -322,6 +345,16 @@ def cmd_demote(root, tool_name):
     return 0
 
 
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ('--list', '-l')
+TAKES_VALUE = ()
+TAKES_REST = ()
+
+
 def main(argv):
     # \U0001f41b [2026-09-07] FIRST, before `find_root`. This block already carried the sentence
     # "including one that would otherwise refuse the arguments beside it", and in this command it
@@ -358,6 +391,11 @@ def main(argv):
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-candidates: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
 
     cmd, *rest = argv
     if cmd not in ("confirm", "reject", "edit", "promote", "demote"):

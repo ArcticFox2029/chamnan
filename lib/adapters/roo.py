@@ -17,8 +17,17 @@ written `.clinerules/chamnan.md` for Cline would have that silently stop being r
 moment anyone added `.roo/rules/`. Writing the modern path directly means Roo's own precedence
 never has to be reasoned about.
 
-Kilo Code is a fork of Roo and reads the same tiers under its own directory name; it gets its own
-module rather than an alias, because "a fork today" is not a promise about tomorrow.
+Kilo Code is a fork of Roo and reads the same tiers under its own directory name. It is an ALIAS
+to `generic` (root `AGENTS.md`), not a module of its own -- `ALIASES["kilo"]` in `__init__.py`, and
+there has never been a `kilo.py`.
+
+🐛 [2026-09-08] This paragraph used to say the opposite: that Kilo "gets its own module rather than
+an alias, because 'a fork today' is not a promise about tomorrow." That was false in the commit
+that wrote it -- `55c32f0a` made Kilo an alias and, in this sibling file, claimed it had not, and
+its own message even lists Kilo among the eight agents that became aliases. Not staleness from a
+later change: wrong the moment it was written, and it sat in the shipped docstring for five days
+across several research rounds, because every round checked this file against Roo's behaviour and
+none checked its prose against `__init__.py`'s table (R8 agent 1).
 
 **The extension was archived on 2026-05-15** (RooCodeInc/Roo-Code, `archived: true`, confirmed via
 the GitHub API 2026-09-05). Kept rather than removed: an archived extension still runs for everyone

@@ -709,7 +709,8 @@ def _enforce(out, map_rel, budget):
 
     note, cut = _note_for([], None), ""
     for _ in range(3):
-        keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
+        keep = mdblock.cut_outside_a_fence(out, tokens.cut_at(
+            out, max(budget - tokens.estimate(note), 1)))
         cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
         fresh = _note_for([h for h in _headings(out) if h not in _headings(cut)],
                           _trimmed_in(cut))
@@ -717,6 +718,7 @@ def _enforce(out, map_rel, budget):
             break
         note = fresh
     # One last cut against the note that is actually going out, so the total never exceeds budget.
-    keep = tokens.cut_at(out, max(budget - tokens.estimate(note), 1))
+    keep = mdblock.cut_outside_a_fence(out, tokens.cut_at(
+        out, max(budget - tokens.estimate(note), 1)))
     cut = out[:keep].rsplit("\n", 1)[0] if "\n" in out[:keep] else out[:keep]
     return cut + note

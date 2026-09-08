@@ -28,6 +28,7 @@ import re
 import subprocess
 
 import mdblock
+import redact
 import workspace as ws  # noqa: E402
 
 DIRNAME = "threads"
@@ -67,7 +68,7 @@ def slug(title):
     function cannot know whether a name collides; only the directory can. So this stays readable
     and guessable, and create() disambiguates when it actually has to.
     """
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:50].rstrip("-")
                                  or mdblock.fallback_name(title, "thread"))
 
@@ -76,11 +77,11 @@ def _distinct_slug(directory_, title):
     """`slug(title)`, or that plus a short hash when the name is taken by a DIFFERENT title."""
     base = slug(title)
     path = directory_ / f"{base}.md"
-    if not path.is_file() or title_of(path).strip().lower() == title.strip().lower():
+    want = mdblock.canonical_title(title)
+    if not path.is_file() or mdblock.canonical_title(title_of(path)) == want:
         return base
     import hashlib
-    canonical = " ".join(title.split()).lower()
-    return f"{base}-{hashlib.sha1(canonical.encode('utf-8')).hexdigest()[:6]}"
+    return f"{base}-{hashlib.sha1(want.encode('utf-8')).hexdigest()[:6]}"
 
 
 def threads(root):
@@ -248,7 +249,18 @@ def append(root, ident, date, note, files=None):
     # real. Being later, it won every "last activity" comparison, took the `**Files:**` line that
     # belonged to the real entry, and so answered `for_path()` in its place. A date nobody typed,
     # attached to a file it never touched, reading as a resolution.
-    body = [f"## {date} — {mdblock.one_line(note)}", ""]
+# 🐛 [2026-09-08] The READ side of these three stores was hardened and the WRITE side was never
+# re-asked. `redact.emit` shadows `print` in `bin/chamnan-env`, `bin/chamnan-timeline` and
+# `bin/chamnan-promote`, so an agent reading a command's stdout sees a scrubbed value -- and
+# `git add` reads the FILE, not the stdout. Reproduced end to end: `chamnan-timeline add
+# deploy-notes "rotated the key, new value is AKIAIOSFODNN7EXAMPLE"` wrote that key verbatim into
+# `.chamnan/threads/deploy-notes.md`, which `git check-ignore` confirms is not ignored, and which
+# the README tells people to commit. `scrub()` catches it; nothing was calling `scrub()`.
+#
+# Scrubbed BEFORE the one-line fold, not after: the multi-line rules (a YAML block, a secret-named
+# list) need the newlines to see the shape, and folding first destroys exactly the structure they
+# match on. R8 agent 2.
+    body = [f"## {date} — {mdblock.one_line(redact.scrub(note))}", ""]
     # 🐛 [2026-09-06] The note above was folded and this was not -- the same fix applied to one
     # field of a pair, one line apart, which is this repository's most-repeated defect. A path
     # carrying a newline and a `## chamnan` heading wrote a fabricated section into a file that gets
@@ -259,12 +271,23 @@ def append(root, ident, date, note, files=None):
     # `as_quoted`, not `one_line`: these are rendered INSIDE backticks, and a backtick in the value
     # closes the span early and drops the rest of the line into chamnan's own voice. `as_quoted` is
     # the helper that already exists for a value going into a code span.
-    named = [mdblock.as_quoted(f.strip(), 200) for f in (files or []) if f.strip()]
+    named = [mdblock.as_quoted(redact.scrub(f).strip(), 200)
+             for f in (files or []) if f.strip()]
     if named:
         body.append("**Files:** " + ", ".join(f"`{f}`" for f in named))
         body.append("")
-    existing = path.read_text(encoding="utf-8-sig", errors="replace").rstrip("\n")
-    ws.write_or_raise(path, existing + "\n\n" + "\n".join(body).strip() + "\n")
+    # 🐛 [2026-09-08] Read, append in memory, write back -- with no lock, so a second writer's
+    # snapshot replaced the first's entry entirely. `ws.rewrite_shared` exists because six writers
+    # were found doing this and `milestones.py` measured five of six appends vanishing; three
+    # writers never adopted it and this was one. Measured the same way here: 5 of 60 concurrent
+    # entries lost, 8.3%, valid Markdown throughout and no error anywhere (R2 agent 3).
+    #
+    # Two accounts on one machine, or a session and a commit hook, is an ordinary afternoon rather
+    # than an edge case -- and a thread entry is something a person typed a reason into.
+    def _appended(existing):
+        return (existing or "").rstrip("\n") + "\n\n" + "\n".join(body).strip() + "\n"
+
+    ws.rewrite_shared(path, _appended)
     return path
 
 
@@ -275,18 +298,25 @@ def set_status(root, ident, status):
     path = resolve(root, ident)
     if path is None:
         return None
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
-    if _STATUS.search(text):
-        text = _STATUS.sub(f"**Status:** {status}", text, count=1)
-    else:
-        lines = text.splitlines()
-        # Same shared reader `title_of` twelve lines up already uses: a thread headed with a CJK
-        # keyboard's U+3000 had its **Status:** line inserted ABOVE its own title, which is how a
-        # status ends up looking like the file's heading.
-        at = 1 if lines and mdblock.heading_title(lines[0]) is not None else 0
-        lines.insert(at, f"\n**Status:** {status}")
-        text = "\n".join(lines)
-    ws.write_or_raise(path, text.rstrip("\n") + "\n")
+    # 🐛 [2026-09-08] The read happens inside the lock now, for the reason its sibling `append`
+    # twenty lines up carries at length: read-modify-write with no lock loses the other writer's
+    # work entirely, and this file has two such writers rather than one. Closing only the one that
+    # was measured would be the half-applied fix this repository pays for most often (R2 agent 3).
+    def _with_status(existing):
+        text = existing or ""
+        if _STATUS.search(text):
+            text = _STATUS.sub(f"**Status:** {status}", text, count=1)
+        else:
+            lines = text.splitlines()
+            # Same shared reader `title_of` twelve lines up already uses: a thread headed with a
+            # CJK keyboard's U+3000 had its **Status:** line inserted ABOVE its own title, which is
+            # how a status ends up looking like the file's heading.
+            at = 1 if lines and mdblock.heading_title(lines[0]) is not None else 0
+            lines.insert(at, f"\n**Status:** {status}")
+            text = "\n".join(lines)
+        return text.rstrip("\n") + "\n"
+
+    ws.rewrite_shared(path, _with_status)
     return path
 
 
@@ -359,7 +389,7 @@ def for_path(root, target):
                     # an impact answer. The other direction is kept: an entry written with the full
                     # path still answers a query made from a subdirectory, which is what the
                     # docstring actually promises.
-                    if f == t or f.endswith("/" + t):
+                    if mdblock.names_the_path(f, t):
                         hits.append((path, date, note))
                         matched = True
                         break

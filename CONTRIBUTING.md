@@ -67,6 +67,13 @@ announces it. The redaction cases exist for exactly that reason and are the ones
 Assert both directions. A redactor that replaces everything passes any "did it hide the secret"
 test perfectly, so the suite also checks that commit hashes, UUIDs and version strings survive.
 
+Assert the SET, not three of its members. The bug this codebase produces more often than any other
+is a rule applied to one member of a set and forgotten in the identical ones beside it — 18 recorded
+instances across 22 files, each found by a person reading code long after the fix beside it shipped.
+A check that names three files passes forever while a fourth is added broken, so derive the subjects
+from the source or the filesystem and assert that you matched something. `docs/verification.md` has
+the tally, six worked examples, and the reason the pattern kept surviving being written down.
+
 ## Adding language support
 
 Most languages need two small additions to `lib/mapper.py`:

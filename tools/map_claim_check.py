@@ -109,6 +109,34 @@ def _inside(root, rel):
     return target if target == base or base in target.parents else None
 
 
+# Rows carrying a function/class claim that this checker deliberately does not verify, because
+# the file is not Python. Named per file, so the headline can say how much of the map it is quiet
+# about instead of scoring 100% over the part it happened to cover.
+def _is_python(path, source):
+    """Whether this file is Python, by the same standard the indexer used to index it.
+
+    🐛 [2026-09-09] This asked `path.suffix == ".py"`, and the reason above it is sound — a regex
+    scoring its own accuracy on JavaScript measures the regex, not the map. But the discriminator
+    was wrong for the eleven files it matters most for: every `bin/chamnan-*` command is Python
+    with no extension, indexed as Python through its shebang by `mapper._lang_from_shebang`, and
+    skipped here for not being spelled `.py`. So the checker verified 1,313 claims and quietly said
+    nothing about the function and class counts of chamnan's own command surface -- and the line
+    that reports what went unchecked, added the day before, is what surfaced it.
+
+    Read from the source already in hand rather than re-opening the file: `#!/usr/bin/env python3`
+    is what `mapper` looks for, and this asks the same question of the same bytes.
+    """
+    if path.suffix == ".py":
+        return True
+    if path.suffix:
+        return False
+    first = source.split("\n", 1)[0] if source else ""
+    return first.startswith("#!") and "python" in first
+
+
+UNCHECKED_CLAIMS = []
+
+
 def check_map(map_path, root=ROOT, verbose=False):
     text = map_path.read_text(encoding="utf-8", errors="replace")
     results = {k: [0, 0, []] for k in
@@ -157,12 +185,21 @@ def check_map(map_path, root=ROOT, verbose=False):
         if lines_c:
             record("lines", len(src.splitlines()) == int(lines_c),
                    f"{rel}: says {lines_c}L, has {len(src.splitlines())}L")
-        if p.suffix == ".py":
+        if _is_python(p, src):
             fns, cls = _top_level(src)
             if fn_c and fns is not None:
                 record("functions", fns == int(fn_c), f"{rel}: says {fn_c}fn, has {fns}")
             if cls_c and cls is not None:
                 record("classes", cls == int(cls_c), f"{rel}: says {cls_c}cls, has {cls}")
+        elif fn_c or cls_c:
+            # 🐛 [2026-09-08] The scoping above is right — a regex scoring its own accuracy on
+            # JavaScript measures the regex, not the map — and it never reached the reader. A
+            # function or class claim on a non-Python row was not checked, not counted, and not
+            # subtracted from anything, so a repository whose non-Python claims were wildly wrong
+            # still printed `ALL … 100.0%`. Reproduced on a two-file fixture with 99 functions
+            # claimed for a JS file that has 3 (R9 agent 1). Recorded here so the headline can say
+            # what it did not look at.
+            UNCHECKED_CLAIMS.append(rel)
 
     # --- Full Detail: every named symbol should still be defined in its own file -----------------
     current, src = None, ""
@@ -205,6 +242,7 @@ def main():
     # test against a fixture, which is part of why the parser breakage went three days unnoticed.
     # `<repo>/.chamnan/MAP.md` is where chamnan puts it, so two parents up is the repository.
     root = target.resolve().parents[1] if target.resolve().parent.name == ".chamnan" else ROOT
+    UNCHECKED_CLAIMS.clear()
     results, n = check_map(target, root=root, verbose=verbose)
     print(f"{target}  —  {n:,} indexed file(s)\n")
     print(f"  {'claim':<12} {'checked':>8} {'true':>8} {'rate':>8}")
@@ -215,6 +253,17 @@ def main():
         rate = f"{k / c * 100:.1f}%" if c else "—"
         print(f"  {kind:<12} {c:>8,} {k:>8,} {rate:>8}")
     print(f"  {'ALL':<12} {tot:>8,} {ok:>8,} {ok / tot * 100 if tot else 0:>7.1f}%")
+    if UNCHECKED_CLAIMS:
+        _u = len(UNCHECKED_CLAIMS)
+        print(f"\n  {_u} non-Python row(s) carry a function or class claim that nothing above "
+              f"checked.")
+        print(f"  The rate is over what WAS checked. Counting them would score the extractor's "
+              f"regex,")
+        print(f"  not the map, which is why they are named rather than scored:")
+        for _row in UNCHECKED_CLAIMS[:6]:
+            print(f"    {_row}")
+        if _u > 6:
+            print(f"    +{_u - 6} more")
 
     for kind, (c, k, bad) in results.items():
         if bad:

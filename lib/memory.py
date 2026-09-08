@@ -36,7 +36,34 @@ CATEGORIES = ("decisions", "lessons", "rules")
 # Rules reach every session, so they are capped. Roughly a third of state_token_budget's
 # char-equivalent (see lib/state.py): a repository with more than this in standing constraints has
 # a documentation problem, not a memory problem.
-MAX_RULES_CHARS = 1500
+# 🐛 [2026-09-09] Hardcoded at 1,500 on 2026-08-20, when this repository had ONE rule. By
+# 2026-09-09 it had nine, totalling 22,669 characters, and the budget had never moved — so four
+# rules arrived with a body and five arrived as a title, and which four was decided by the first
+# letter of the filename. Measured on the real block the same day: `Work in flight` 4,702 bytes,
+# rules 1,972, the architecture index 1,680, against a 9,000-byte ceiling.
+#
+# The other two of those three have a config key (`state_token_budget`, `index_token_budget`) and
+# an owner can raise them. The rules section — the one carrying the standing instructions a person
+# gave and expects to be followed — was the only one nobody could give more room to. That is the
+# defect: not the number, the absence of the dial.
+#
+# The default stays 1,500 so no existing workspace changes shape on upgrade. `fit.shrink` still
+# arbitrates against the ceiling afterwards, which is what stops a large value simply cutting the
+# index instead.
+DEFAULT_RULES_CHARS = 1500
+MAX_RULES_CHARS = DEFAULT_RULES_CHARS
+
+
+def rules_budget(root=None):
+    """The rules section's character budget: `rules_char_budget` in config, else the default."""
+    if root is None:
+        return MAX_RULES_CHARS
+    try:
+        import workspace as _ws
+        value = _ws.load_config(root).get("rules_char_budget")
+    except Exception:                        # noqa: BLE001 — config must never break the block
+        return MAX_RULES_CHARS
+    return value if isinstance(value, int) and 300 <= value <= 20_000 else MAX_RULES_CHARS
 
 # Titles only, for the two categories that are read on demand.
 MAX_TITLES = 8
@@ -73,6 +100,28 @@ def entries(root, category):
 # `see memory `slug``, `memory: `slug``, or a bare ``slug`` next to the word memory. Written by
 # people and by the write skills, in STATE.md, session records, threads and dated logs.
 CITATION = re.compile(r"memory[:\s]+`([a-z0-9][a-z0-9._-]*)`", re.I)
+
+# 🐛 [2026-09-08] The OTHER syntax, and the one the memory store's own entries actually use.
+# `dangling_citations` exists to catch a pointer to an entry nobody wrote, and it could not see
+# nine `[[slug]]` links across eight files in this repository's live workspace -- two of which
+# point at slugs that exist nowhere, confirmed against the files on disk. One store, two citation
+# formats, and only one of them checked: the same shape this codebase carries more fixes for than
+# any other, in the function whose entire job is to find broken pointers (R7 agent 3).
+#
+# A `[[...]]` may carry a path (`[[../lessons/some-slug]]`) or a `.md`, because that is how people
+# write them; both are reduced to the bare stem, which is what an entry is named by. A link whose
+# target RESOLVES as a real file relative to the citing document is not a memory citation at all --
+# `[[../../../CLAUDE.md]]` is a link to the repository's own file, and reporting it as dangling
+# would be a false positive in a report whose value depends on every line being real.
+WIKILINK = re.compile(r"\[\[([^\]|#\n]{1,200})\]\]")
+
+
+def _wikilink_slug(target):
+    """The entry name a `[[...]]` target refers to, or None when it is not one."""
+    stem = target.strip().rsplit("/", 1)[-1]
+    if stem.lower().endswith(".md"):
+        stem = stem[:-3]
+    return stem if re.fullmatch(r"[a-z0-9][a-z0-9._-]*", stem, re.I) else None
 
 
 def dangling_citations(root):
@@ -127,15 +176,70 @@ def dangling_citations(root):
         # citation wrapped across two lines is a real and common shape. It cost a detection the
         # moment it was introduced — rancher went from two dangling slugs to one — which is why
         # this is written the slower way on purpose.
-        for m in CITATION.finditer(text):
-            slug = m.group(1)
-            if slug in known:
-                continue
-            where = (f"{f.relative_to(wsdir).as_posix()}", text.count("\n", 0, m.start()) + 1)
-            found.setdefault(slug, [])
-            if where not in found[slug]:
-                found[slug].append(where)
+        # Both citation formats, from one loop, so a third cannot be added to one and forgotten
+        # in the other. `CITATION` is the prose form; `WIKILINK` is what the entries themselves use.
+        for pattern in (CITATION, WIKILINK):
+            for m in pattern.finditer(text):
+                if pattern is CITATION:
+                    slug = m.group(1)
+                    # 🐛 [2026-09-08] An entry's slug is its filename WITHOUT `.md` -- that is what
+                    # the write skills produce and what a citation is written from. So a backticked
+                    # token that still carries the extension is a FILENAME, and this rule was
+                    # reporting `Memory: ``MEMORY.md`` index now truncates at 25KB` -- a changelog
+                    # line about a file -- as a pointer to a memory entry nobody wrote. One wrong
+                    # line costs this report more than it looks: it is read to decide whether the
+                    # other lines are worth chasing.
+                    if slug.lower().endswith(".md"):
+                        continue
+                else:
+                    slug = _wikilink_slug(m.group(1))
+                    # A link that resolves to a real file beside the citing document is a file
+                    # link, not a memory citation, and it is not this function's business.
+                    if slug is None or (f.parent / m.group(1).strip()).exists():
+                        continue
+                if slug in known:
+                    continue
+                where = (f"{f.relative_to(wsdir).as_posix()}",
+                         text.count("\n", 0, m.start()) + 1)
+                found.setdefault(slug, [])
+                if where not in found[slug]:
+                    found[slug].append(where)
     return [(slug, places) for slug, places in found.items()]
+
+
+def knowledge_for(root, target):
+    """[(category, path, title)] for every memory entry that DECLARES `target` on a `Files:` line.
+
+    The other half of the join `timeline.for_path` already does. That one answers "what has HAPPENED
+    to this file"; this answers "what was DECIDED about it, what went wrong with it, and what rule
+    covers it" -- and until now nothing did, so `chamnan-impact` and the file pointer could name
+    what imports a file and never what the repository had already learned about it.
+
+    **Declared, not inferred.** The first version of this matched backticked filenames in the prose,
+    and measuring it on this workspace is what killed it: of 55 "files" it found, most were not
+    files. `1.6.0` and `v1.9.0` are versions, `127.0.0.1` and `luminapp.xyz` are hosts, and
+    `os.replace`, `ws.exclusive`, `sessions.prune` and `permissions.ask` are functions -- every one
+    of them a backticked token with a dot in it, which is exactly what `style.css` is too. A
+    directory match was worse: `Work-Mode/chamnan` named in one rule attached that rule to every
+    file in the plugin, so the pointer would have said the same four things about every file in the
+    repository, which is how a reader learns to stop reading it.
+
+    `Files:` is the join key here for the same reason `timeline.py`'s docstring gives for threads:
+    free prose is not a join key. The cost is honest and worth stating -- an entry that does not
+    declare its files answers nothing, and on the day this was written that was every entry in this
+    workspace. It fills as records are written, which is the same way every other store here fills.
+    """
+    hits = []
+    for category in ("decisions", "incidents", "lessons", "rules"):
+        for entry in entries(root, category):
+            try:
+                text = entry.read_text(encoding="utf-8-sig", errors="replace")
+            except OSError:
+                continue
+            if any(mdblock.names_the_path(declared, target)
+                   for declared in mdblock.files_named(text)):
+                hits.append((category, entry, title_of(entry, text)))
+    return sorted(hits, key=lambda h: (h[0], h[2]))
 
 
 def case_collisions(paths):
@@ -168,7 +272,7 @@ def case_collisions(paths):
     """
     groups = {}
     for p in paths:
-        groups.setdefault(unicodedata.normalize("NFC", p.stem).casefold(), []).append(p)
+        groups.setdefault(mdblock.filesystem_key(p.stem), []).append(p)
     return [sorted(g) for g in groups.values() if len(g) > 1]
 
 
@@ -247,10 +351,36 @@ def unresolved_conflict(body):
     return opened and closed
 
 
+def mtime_or_zero(path):
+    """Last-modified time, or 0 when it cannot be read -- which sorts the entry last rather than
+    dropping it, the same choice `milestones` makes for an entry with no date: it still exists.
+
+    🐛 [2026-09-09] Written here as a second copy of the one the session-start hook already had,
+    four lines apart in behaviour and identical in effect. Two copies of one rule is the defect
+    this repository records more than any other, and it was caught by the caller sweep in
+    `before_the_suite.py` rather than by reading — which is the argument for that sweep.
+    """
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
     out, titles = [], []
-    rule_paths = entries(root, "rules")
+    # 🐛 [2026-09-09] `entries()` returns filename order, and the budget carries about four rules
+    # out of nine here — so which rules got a BODY was decided by their first letter. A rule written
+    # tonight, in response to something said four times, sat under `s` and arrived as a title while
+    # a months-old one under `l` arrived in full. Every rule is still NAMED, which is what stops
+    # this being a disappearance; what alphabet was deciding is which ones the agent can actually
+    # read without opening a file.
+    #
+    # Newest first, filename as the tie-break, the same ordering the skills list and
+    # `memory.titles()` were given the day before for the identical reason. After a clone every
+    # mtime is the checkout time, and then this falls back to exactly the previous behaviour.
+    rule_paths = sorted(entries(root, "rules"),
+                        key=lambda p: (-mtime_or_zero(p), p.name))
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
     for path in rule_paths:
         try:
@@ -294,7 +424,8 @@ def rules_text(root):
     if not out:
         return ""
     joined = "\n\n".join(out)
-    if len(joined) <= MAX_RULES_CHARS:
+    cap = rules_budget(root)
+    if len(joined) <= cap:
         return joined
     # 🐛 A single overall cap, so ONE long rule ate the whole budget and every rule after it was
     # dropped. Measured on the repository this was built in: two rules totalling 6,392 characters
@@ -305,7 +436,7 @@ def rules_text(root):
     # A per-rule share first, so every rule gets a turn before any rule gets a second helping. The
     # whole-budget cut below still runs afterwards and is still what guarantees the total — this
     # only changes WHICH characters survive to reach it.
-    share = max(300, MAX_RULES_CHARS // max(len(out), 1))
+    share = max(300, cap // max(len(out), 1))
     if len(out) > 1 and any(len(o) > share for o in out):
         trimmed = []
         for body, title in zip(out, titles):
@@ -315,7 +446,7 @@ def rules_text(root):
                 trimmed.append(_cut_clean(body, share) +
                                f"\n\n_…the rest of **{mdblock.one_line(title)}** is in `.chamnan/memory/rules/`._")
         joined = "\n\n".join(trimmed)
-        if len(joined) <= MAX_RULES_CHARS:
+        if len(joined) <= cap:
             return joined
     # 🐛 Two things went wrong at this cut, and both were silent.
     #
@@ -328,7 +459,7 @@ def rules_text(root):
     # starved `c-prod.md` — "Never write to prod" — out of the injection entirely, under a notice
     # that said only how many rules exist. A rule that does not arrive is the one case where saying
     # which one is missing costs a line and buys everything.
-    cut = state._safe_cut(joined, MAX_RULES_CHARS)
+    cut = state._safe_cut(joined, cap)
     kept = joined[:cut].rstrip()
     missing = [t for t in titles if t not in kept]
     tail = f"\n\n_…more rules in `.chamnan/memory/rules/` — {len(out)} in total."
@@ -338,6 +469,32 @@ def rules_text(root):
             tail += f", and {len(missing) - 6} more"
         tail += "."
     return kept + tail + "_"
+
+
+def rules_pressure(root):
+    """Which rules reach a session in full, which arrive as a title only, and how far over the
+    budget the store is. `(fitted, title_only, chars, budget)`.
+
+    🐛 [2026-09-09] Nothing anywhere reported this. `MAX_RULES_CHARS` was set when this repository
+    had one rule; by the time it had nine, four arrived with a body and five arrived as a name, and
+    the only way to find out was to run the hook and read the block by eye. A person adding a tenth
+    rule has no reason to suspect their earlier ones stopped arriving — the tool has to notice, and
+    the person cannot be asked to count bytes.
+
+    Read from the same function the session actually gets, so this cannot drift from it: whatever
+    `rules_text` decided is what a title is checked against.
+    """
+    titled = rules_with_titles(root)
+    if not titled:
+        return [], [], 0, rules_budget(root)
+    delivered = rules_text(root)
+    fitted, title_only = [], []
+    for title, body in titled:
+        # A rule is "fitted" when a distinctive sentence of its body survived, not merely its name:
+        # the drop notice lists every title, so a title in the text proves nothing on its own.
+        probe = _flatten(body)[len(title):][:120].strip()
+        (fitted if probe and probe[:60] in delivered else title_only).append(title)
+    return fitted, title_only, sum(len(b) for _t, b in titled), rules_budget(root)
 
 
 def rules_with_titles(root):
@@ -393,8 +550,34 @@ def titles(root):
                 title = ("⚠ " + title + " — this filename collides with another in the same store, "
                          "differing only by case or Unicode form; one of the two files may hold the "
                          "other's body. Read them before trusting either.")
-            found.append((category, title, path.name))
-    return found
+            found.append((category, title, path.name, _written_at(path)))
+    # 🐛 [2026-09-08] The cap below chose which entries a session sees BY FILENAME ALPHABET, so a
+    # lesson written today lost its slot to one written months ago whose title happens to start with
+    # an earlier letter. Reproduced on this repository's own store: two entries committed that day
+    # were absent from the block while an older one was shown (R1 agent 4).
+    #
+    # Both siblings that face the identical "more entries than the cap" problem already sort by
+    # recency -- `milestones.recent_titles` and `timeline.open_titles` -- and `rules_text` in THIS
+    # file was fixed for an adjacent version of it four days earlier. One more member of a set that
+    # did not get the rule.
+    #
+    # It is mtime rather than a date in the file, because these entries carry no date: they are a
+    # heading and a body, and inventing a metadata format for them is a bigger change than the bug.
+    # mtime is meaningless straight after a clone -- git does not preserve it, so every file gets
+    # the checkout time -- and that case falls back exactly to the previous behaviour, because the
+    # filename is the tie-break. Where it is meaningful is a workspace somebody is actually writing
+    # in, which is the only place the bug was ever felt.
+    found.sort(key=lambda row: (-row[3], row[0], row[2]))
+    return [(cat, title, name) for cat, title, name, _ in found]
+
+
+def _written_at(path):
+    """Last-modified time, or 0 when it cannot be read -- which sorts the entry to the end rather
+    than dropping it, on the same reasoning as `milestones`' undated entries: it still happened."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 # 🐛 [2026-08-27] title_of() reads a `# ` heading with no length limit of its own, and this was the
@@ -454,7 +637,7 @@ def slug(title):
     # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:50].rstrip("-")
                                  or mdblock.fallback_name(title, "entry"))
 

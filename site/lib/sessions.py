@@ -389,7 +389,8 @@ def carry_forward(root):
         body = "\n\n".join(f"**{mdblock.one_line_capped(title)}**\n\n{text}"
                            for title, text in carried)
     if tokens.estimate(body) > MAX_CARRY_TOKENS:
-        body = body[:tokens.cut_at(body, MAX_CARRY_TOKENS)].rsplit("\n", 1)[0] + \
+        body = body[:mdblock.cut_outside_a_fence(
+            body, tokens.cut_at(body, MAX_CARRY_TOKENS))].rsplit("\n", 1)[0] + \
             f"\n\n_…truncated — read `{mdblock.as_quoted(group[0].name)}` for the rest._"
     return f"{head}\n\n{body}"
 
@@ -411,6 +412,15 @@ def prune(root, days):
 
     Unbounded is not an option. These accumulate one per working session, in a directory that is
     committed, in somebody else's repository.
+
+    ONE FILE IS ALWAYS SPARED when the pass would take every one -- `keep_the_newest`. That is
+    deliberate and it is the difference between this docstring and the truth: a directory holding
+    nothing but aged files keeps its newest, however far past the window it is, and a directory
+    holding exactly one aged file never empties at all. The guard cannot tell "a clock jumped 400
+    days and doomed everything at once" from "this directory went quiet a month ago", because from
+    the mtimes alone those look identical. Judged from the user's side, the trade is not close: one
+    stale file left behind is invisible, and a whole retention store wiped by a clock glitch is not.
+    Reproduced 2026-09-08 (R7 agent 3); the claim above used to be stated without this paragraph.
     """
     d = directory(root)
     if not d.is_dir() or not days:
@@ -468,7 +478,7 @@ def slug(title):
     # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:40].rstrip("-")
                                  or mdblock.fallback_name(title, "session"))
 

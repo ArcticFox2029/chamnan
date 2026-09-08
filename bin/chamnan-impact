@@ -13,6 +13,7 @@ against measured 64 seconds — not something to do on an interactive question. 
 choice is that the answer is only as fresh as the last `chamnan-map`, so the age of the index is
 printed with every answer rather than left for the reader to assume.
 """
+import importlib.util
 import pathlib
 import sys
 from datetime import datetime, timezone
@@ -21,7 +22,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import impact as impact_mod  # noqa: E402
-import mdblock  # noqa: E402
+import mdblock
+import memory  # noqa: E402
 import timeline  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
@@ -33,15 +35,63 @@ import redact  # noqa: E402
 print = redact.emit  # noqa: A001
 
 
-def _index_age(map_path):
+def _index_age(map_path, root=None):
+    """How old the index is, and -- more importantly -- whether the code has moved since.
+
+    🐛 [2026-09-08] This measured age against the CLOCK and nothing else, so an index built an hour
+    ago read "built today" while a file added five minutes ago imported the very symbol being asked
+    about. The command then said "nothing imports it", which is not a stale answer but a WRONG one:
+    the reader changes the thing freely on the strength of it. Reproduced by adding an importing
+    file to a fixture and asking again (R2 agent 4).
+    #
+    `index_is_behind` already answers this correctly, by comparing the index against the mtimes of
+    the files mapper would index, and it lived in the SessionStart hook with exactly one caller --
+    the hook itself. It is loaded here the way `chamnan-context` already loads that hook, rather
+    than copied: a second implementation of a staleness rule is how the two come to disagree, and
+    this file is fixing an instance of precisely that.
+    """
     try:
         ts = map_path.stat().st_mtime
     except OSError:
         return "unknown age"
     days = int((datetime.now(timezone.utc).timestamp() - ts) // 86400)
-    if days <= 0:
-        return "built today"
-    return f"built {days} day{'s' if days != 1 else ''} ago"
+    age = "built today" if days <= 0 else f"built {days} day{'s' if days != 1 else ''} ago"
+    if root is None:
+        return age
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "chamnan_session_start", HERE.parent / "hooks" / "chamnan_session_start.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        behind, edited = module.index_is_behind(root, map_path)
+    except Exception:
+        # Never fails the command over its own footnote. An answer without the staleness note is
+        # worse than one with it and better than no answer at all.
+        return age
+    if not behind:
+        return age + ", current with the code"
+    # `edited` is a LIST of names, and interpolating it whole printed `['src/newcomer.py']` at the
+    # reader -- a Python repr in a sentence written for a person. One name is enough to make the
+    # warning actionable; the count says whether there is more.
+    if isinstance(edited, (list, tuple, set)):
+        names = sorted(str(e) for e in edited)
+        first = names[0] if names else ""
+        more = f" and {len(names) - 1} more" if len(names) > 1 else ""
+    else:
+        first, more = str(edited or ""), ""
+    named = f", newest change `{mdblock.as_quoted(first, 60)}`{more}" if first else ""
+    return (f"{age} but THE CODE HAS MOVED SINCE{named} — rebuild with `chamnan-map` before "
+            f"trusting this")
+
+
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ()
+TAKES_VALUE = ()
+TAKES_REST = ()
 
 
 def main(argv):
@@ -53,6 +103,11 @@ def main(argv):
     if not argv or ws.wants_help(argv):
         print(__doc__.strip())
         return 0 if argv else 2
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-impact: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
 
     root = ws.find_root()
     wsdir = ws.workspace(root)
@@ -107,12 +162,18 @@ def main(argv):
     # The thread join runs whether or not the index has anything, because the two halves answer
     # different questions and a file with no dependents can still have been rolled back twice.
     history = timeline.for_path(root, target) if ws.enabled("timeline", root) else []
+    # The other half of the same join. `timeline.for_path` answers "what has HAPPENED to this
+    # file"; this answers "what was DECIDED about it, what went wrong with it, what rule covers
+    # it" -- and nothing asked it before, so this command could name what imports a file and never
+    # what the repository had already learned about it. Same join key, same matching rule, one
+    # definition in `mdblock.names_the_path` (2026-09-08).
+    knowledge = memory.knowledge_for(root, target) if ws.enabled("memory", root) else []
 
-    if resolved is None and not history:
+    if resolved is None and not history and not knowledge:
         print(f"chamnan: nothing recorded for {mdblock.as_quoted(target, 100)}")
         if map_path.is_file():
-            print(f"  no incoming references in the index ({_index_age(map_path)}), and no thread "
-                  f"entry names it")
+            print(f"  no incoming references in the index ({_index_age(map_path, root)}), no thread "
+                  f"entry names it, and nothing in memory/ declares it on a `Files:` line")
             if on_disk:
                 print(f"  a file nothing imports and nothing has happened to is the cheap case — "
                       f"change it freely")
@@ -140,9 +201,9 @@ def main(argv):
             print(f"  tested by {shown}{more}")
         elif edges["used_by"]:
             print(f"  tested by nothing the index can see — a change here is unguarded")
-        print(f"  (from `{map_path.relative_to(root).as_posix()}`, {_index_age(map_path)})")
+        print(f"  (from `{map_path.relative_to(root).as_posix()}`, {_index_age(map_path, root)})")
     elif map_path.is_file():
-        print(f"  nothing imports it, per `{map_path.relative_to(root).as_posix()}` ({_index_age(map_path)})")
+        print(f"  nothing imports it, per `{map_path.relative_to(root).as_posix()}` ({_index_age(map_path, root)})")
 
     if history:
         print(f"\n  {len(history)} thread entr{'y' if len(history) == 1 else 'ies'} name this file:")
@@ -150,6 +211,19 @@ def main(argv):
             print(f"    {date} — {note}")
             print(f"               on {timeline.title_of(path)}")
         print("\n  `chamnan-timeline show <name>` for the whole thread.")
+
+    if knowledge:
+        # Grouped by kind, because the four answer different questions and a flat list reads as one
+        # undifferentiated pile: a decision says why it is this way, an incident says what went
+        # wrong, a lesson says what not to do again, a rule says what must hold.
+        print(f"\n  what this repository already decided about it:")
+        _last = None
+        for _cat, _path, _title in knowledge:
+            if _cat != _last:
+                print(f"    {_cat}")
+                _last = _cat
+            print(f"      {mdblock.as_quoted(_title, 90)}")
+            print(f"        {_path.relative_to(root).as_posix()}")
     return 0
 
 

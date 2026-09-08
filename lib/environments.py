@@ -32,6 +32,7 @@ worth keeping — and why a `Checked:` date is the only honest way to say how mu
 import datetime
 import re
 import mdblock
+import redact
 import workspace as ws  # noqa: E402
 
 FILENAME = "environments.md"
@@ -190,14 +191,31 @@ def render_entry(name, platform="", versions="", constraints=(), checked=""):
     # Folded onto one line each, for the reason milestones.render_entry() spells out: this file is
     # read back by its `## ` headings, and a name carrying a newline wrote a second environment
     # that silently absorbed the platform and constraints meant for the first.
-    name, platform = mdblock.one_line(name), mdblock.one_line(platform)
-    versions, checked = mdblock.one_line(versions), mdblock.one_line(checked)
+# 🐛 [2026-09-08] The READ side of these three stores was hardened and the WRITE side was never
+# re-asked. `redact.emit` shadows `print` in `bin/chamnan-env`, `bin/chamnan-timeline` and
+# `bin/chamnan-promote`, so an agent reading a command's stdout sees a scrubbed value -- and
+# `git add` reads the FILE, not the stdout. Reproduced end to end: `chamnan-timeline add
+# deploy-notes "rotated the key, new value is AKIAIOSFODNN7EXAMPLE"` wrote that key verbatim into
+# `.chamnan/threads/deploy-notes.md`, which `git check-ignore` confirms is not ignored, and which
+# the README tells people to commit. `scrub()` catches it; nothing was calling `scrub()`.
+#
+# Scrubbed BEFORE the one-line fold, not after: the multi-line rules (a YAML block, a secret-named
+# list) need the newlines to see the shape, and folding first destroys exactly the structure they
+# match on. R8 agent 2.
+    #
+    # Every field, not the obvious one: a connection string reaches `--constraint` as readily as
+    # `--platform`, and picking which field "could hold a secret" is the judgement that was wrong
+    # every previous time this file made it.
+    name = mdblock.one_line(redact.scrub(name))
+    platform = mdblock.one_line(redact.scrub(platform))
+    versions = mdblock.one_line(redact.scrub(versions))
+    checked = mdblock.one_line(redact.scrub(checked))
     parts = [f"## {name}", ""]
     if platform:
         parts.append(f"**Platform:** {platform}")
     if versions:
         parts.append(f"**Versions:** {versions}")
-    bullets = [b for b in (mdblock.one_line(c) for c in constraints) if b]
+    bullets = [b for b in (mdblock.one_line(redact.scrub(c)) for c in constraints) if b]
     if bullets:
         parts.append("**Constraints:**")
         parts.extend(f"- {b}" for b in bullets)
@@ -214,22 +232,41 @@ def upsert(root, name, entry_text):
     something IS, and two `## production` headings in one file would leave a reader with no way to
     tell which is current. Returns (path, replaced).
     """
+    # 🐛 [2026-09-08] Read the whole file, edit in memory, write it back -- with no lock, so the
+    # last writer's snapshot became the entire file. `ws.rewrite_shared` was built for exactly this
+    # after six writers were found doing it and milestones.py measured five of six entries
+    # vanishing; three writers never adopted it, and this was one. Measured here the same way: 2 of
+    # 20 concurrent environment entries lost, 10%, valid Markdown throughout and no error anywhere
+    # (R2 agent 3).
+    #
+    # The read happens INSIDE the lock, which is the whole reason this is `rewrite_shared` and not a
+    # lock around the write: reading first and locking second leaves the same race with a smaller
+    # window, which is the version of this fix that looks right and is not.
     p = path(root)
     p.parent.mkdir(parents=True, exist_ok=True)
-    text = p.read_text(encoding="utf-8-sig", errors="replace") if p.is_file() else ""
-    if not text.strip():
-        text = HEADER + "\n"
+    replaced = [False]
 
-    found = list(_ENV.finditer(mdblock.masked(text)))
-    for i, m in enumerate(found):
-        if m.group(1).strip().lower() != name.strip().lower():
-            continue
-        end = found[i + 1].start() if i + 1 < len(found) else len(text)
-        text = text[:m.start()] + entry_text.strip() + "\n\n" + text[end:]
-        ws.write_or_raise(p, text.rstrip("\n") + "\n")
+    def _upserted(existing):
+        text = existing if (existing or "").strip() else HEADER + "\n"
+        found = list(_ENV.finditer(mdblock.masked(text)))
+        for i, m in enumerate(found):
+            # Canonical, not `.lower()`: `chamnan-env set préprod` typed with a precomposed
+            # é and again with a decomposed one declared TWO environments, both named
+            # `préprod`, contradicting each other on platform and versions -- reproduced
+            # 2026-09-08. An environment is a fact about a deployment target; two of them
+            # is worse than none, because `chamnan-env show` answers with whichever it
+            # reaches first.
+            if mdblock.canonical_title(m.group(1)) != mdblock.canonical_title(name):
+                continue
+            end = found[i + 1].start() if i + 1 < len(found) else len(text)
+            replaced[0] = True
+            return (text[:m.start()] + entry_text.strip() + "\n\n"
+                    + text[end:]).rstrip("\n") + "\n"
+        return text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n"
+
+    ws.rewrite_shared(p, _upserted)
+    if replaced[0]:
         return p, True
-
-    ws.write_or_raise(p, text.rstrip("\n") + "\n\n" + entry_text.strip() + "\n")
     return p, False
 
 

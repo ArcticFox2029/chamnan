@@ -27,6 +27,7 @@ its limits, never invent a confidence number to paper over not having one.
 import json
 from datetime import datetime
 
+import redact
 import workspace as ws
 
 # Three of the same signal in a row is worth a look; matches REPEAT_AT elsewhere in this plugin
@@ -163,7 +164,10 @@ def _save(root, entries):
         raise OSError(why)
     if not ws.atomic_write_text(path(root),
                                 json.dumps(entries, indent=1, ensure_ascii=False) + "\n"):
-        raise OSError(f"could not write {path(root)}")
+        # The shared helper, not a second sentence: it is the one place that knows to say
+        # "CHAMNAN_READ_ONLY is set" rather than leaving the caller to guess at permissions.
+        # `chamnan-promote` and `chamnan-candidates promote` both surface this message.
+        raise OSError(ws.write_failure_text(path(root)))
 
 
 def register(root, entry):
@@ -208,7 +212,11 @@ def _register_locked(root, entry):
     entries = load(root)
     entries.append({
         "name": entry["name"],
-        "desc": entry.get("desc", ""),
+        # The description is free text a person typed at `chamnan-promote --desc`, and it
+        # lands in `.chamnan/tools/index.json`, which is committed. `chamnan-promote --list`
+        # already scrubs this same field on the way OUT (bin/chamnan-promote), which is what made
+        # the gap invisible: the value looked handled everywhere anyone looked. R8 agent 2.
+        "desc": redact.scrub(entry.get("desc", "")),
         "added": entry.get("added", ""),
         "origin": entry.get("origin", ""),
         "runs": entry.get("runs", 0),
@@ -282,6 +290,24 @@ def record_call(root, name, interrupted=False, stderr_nonempty=False):
         now_flaggable = entry.get("interrupted", 0) >= FLAG_AT
         _save(root, entries)
     return entry, (now_flaggable and not was_flaggable)
+
+
+def signals(root):
+    """`{name: (runs, interrupted, stderr_seen)}` — the two fields `usage()` leaves behind.
+
+    🐛 [2026-09-08] `record_call()` has been maintaining `interrupted` and `stderr_seen` since
+    Stage 10, this module's docstring calls them "the two honest signals", and `usage()` — the one
+    function anything reads this file back with — returns `(name, runs)` and drops both. Measured
+    on this repository: `extract_findings.py` wrote to stderr on all ten of its recorded runs and
+    `chamnan-report` said "10 runs", so noticing it meant knowing `tools/index.json` exists and
+    computing the ratio by hand (R7 agent 5).
+
+    A separate function rather than a wider `usage()`: that one's two-tuple shape is asserted in
+    the suite and read by a caller that wants exactly it, and widening a return type to add a field
+    one caller needs is how a signature ends up meaning two things.
+    """
+    return {e["name"]: (e.get("runs", 0), e.get("interrupted", 0), e.get("stderr_seen", 0))
+            for e in load(root)}
 
 
 def usage(root):

@@ -81,7 +81,20 @@ def _walk(root):
     # that exact scenario as the reason its guard exists.
     #
     # Collected, never raised: every scanner shares this one walk and a session must still start.
-    UNREADABLE.clear()
+    #
+    # 🐛 [2026-09-08] This used to `UNREADABLE.clear()` here, on every walk. Every sibling in the
+    # family -- `mapper.SKIPPED_TOO_LARGE`, `SKIPPED_BINARY`, all of them -- accumulates for the RUN
+    # and is reset once by `mapper.reset_skips()`, and `bin/chamnan-map` reads all of them together
+    # at the end as if they had the same lifetime. They did not: a map build walks more than once,
+    # so the second walk wiped the first walk's record and the line that prints it
+    # ("COULD NOT BE READ, so the counts below exclude them") had almost nothing left to print, ever.
+    # Reproduced by spying on `_walk`: two calls, the second starting with the first's two entries
+    # and clearing them. One member of a set with a different lifetime from the rest, which is this
+    # repository's most-repeated defect wearing a different hat.
+    #
+    # Reset with the others now. The direction is deliberate and the sibling comment already argues
+    # it: over-reporting costs a reader a name they see twice, under-reporting costs them a file
+    # that vanished from a report claiming to be complete.
 
     def _note(err):
         try:
@@ -145,6 +158,21 @@ def _walk(root):
                 # RuntimeError("Symlink loop from ..."), which this except never caught. That
                 # escaped the walk, killed mapper.scan(), and with it every other section of
                 # chamnan-map -- assets, catalogs, deploy and schema all share this walk.
+                #
+                # 🐛 [2026-09-09] Caught, and then dropped in SILENCE -- the one exit from this
+                # walk that recorded nothing, while `_note` above records an unreadable DIRECTORY
+                # and `mapper.indexable` records an unresolvable link it is handed. This branch
+                # took the link away before `indexable` could ever see it, so on the Pythons that
+                # raise here the accounting had nothing to account for: `chamnan-map` printed
+                # "1/1 files (100%)" over a tree whose other two entries it had quietly refused.
+                #
+                # It read as a version difference and is not one. Python 3.13 rewrote
+                # `Path.resolve()` onto `os.path.realpath(strict=False)`, which returns a path for
+                # a symlink loop instead of raising; 3.8 through 3.12 raise RuntimeError. So the
+                # SAME tree was reported honestly on 3.13 and silently truncated on every older
+                # interpreter chamnan supports -- and the check that covers it passed on the
+                # version the author happened to run.
+                UNREADABLE.add(str((rel_dir / name).as_posix()))
                 continue          # a broken, looping or unresolvable link is not indexable either
             files.append(rel_dir / name)
     files.sort()
@@ -227,3 +255,47 @@ def matching(root, pattern):
 
 # The old name for `vcs_dirs`, kept because it is what the one external caller and the suite say.
 git_dirs = vcs_dirs
+
+
+# The one size ceiling, and the module that has no imports of its own is where it belongs so that
+# every walker can reach it. Two million bytes: past that a file is a bundle, a vendored tree, a
+# fixture or a database dump, and reading it whole costs seconds and gains an index nothing.
+#
+# 🐛 [2026-09-08] This number was written out by hand in three places -- `mapper.MAX_FILE_BYTES`,
+# `peek.ZIP_MEMBER_CEILING` (whose comment says "matching mapper.MAX_FILE_BYTES", which is a
+# promise a comment cannot keep) and `peek.ROW_CAP` -- and NOT written at all in the two places
+# that most needed it: `lib/catalogs.py` read every `.proto` and every API-spec file whole on every
+# ordinary map build, and `peek.peek_source` read a whole source file with no bound while the
+# `mapper` beside it refused anything over this size. A 150 MB file hung `chamnan-peek` for over
+# 150 seconds (R7 agent 2, R8 agent 2).
+MAX_FILE_BYTES = 2_000_000
+
+
+def within_size(path, limit=MAX_FILE_BYTES):
+    """True when `path` is small enough to read whole. False for a bundle or a dump.
+
+    SKIP rather than truncate is the policy `mapper` set and this keeps: half a file parsed is an
+    answer nobody can check, and `mapper` records what it skipped (`SKIPPED_TOO_LARGE`) so the
+    coverage number degrades honestly instead of staying at 100% over a smaller set.
+
+    A file that cannot be stat'd is treated as too large, because the alternative is reading it.
+    """
+    try:
+        return path.stat().st_size <= limit
+    except OSError:
+        return False
+
+
+def read_capped(path, limit=MAX_FILE_BYTES, encoding="utf-8-sig"):
+    """At most `limit` bytes of `path`, decoded. For a PREVIEW, where truncation is the point.
+
+    The other half of `within_size`, and the two are deliberately different answers to the same
+    question: an INDEX skips a file it cannot read whole, because a partial index lies about what
+    a file contains; a PREVIEW truncates, because a preview never claimed to be complete and its
+    caller prints a truncation notice.
+
+    Bounded on the way IN, not after reading: `path.read_text()[:limit]` has already spent the
+    memory and the seconds this exists to save.
+    """
+    with open(path, "rb") as handle:
+        return handle.read(limit).decode(encoding, errors="replace")

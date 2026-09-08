@@ -2,6 +2,7 @@
 """chamnan-env — the constraints nobody writes down and everybody re-learns.
 
   chamnan-env                              list declared environments and their constraints
+  chamnan-env --list  (or -l)              the same list, when a flag reads better in a script
   chamnan-env show <name>                  one environment in full
   chamnan-env set <name> [options]         declare or update one environment
   chamnan-env check                        which entries nobody has confirmed lately
@@ -67,7 +68,7 @@ def cmd_list(root):
 
 def cmd_show(root, name):
     for e in env.entries(root):
-        if e["name"].lower() == name.lower():
+        if mdblock.canonical_title(e["name"]) == mdblock.canonical_title(name):
             print(env.render_entry(
                 e["name"], e["platform"],
                 ", ".join(f"{k} {v}" for k, v in sorted(e["versions"].items())),
@@ -88,7 +89,8 @@ def cmd_set(root, name, platform, versions, constraints, checked):
     if ws.refuse_to_write():
         return 1
     prior = next((e for e in env.entries(root)
-                  if e["name"].strip().lower() == name.strip().lower()), None)
+                  if mdblock.canonical_title(e["name"])
+                  == mdblock.canonical_title(name)), None)
     if prior:
         if platform is None:
             platform = prior["platform"]
@@ -134,6 +136,16 @@ def _today():
     return datetime.now().astimezone().strftime("%Y-%m-%d")
 
 
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ('--checked', '--constraint', '--platform', '--versions', '--list', '-l')
+TAKES_VALUE = ('--checked', '--constraint', '--platform', '--versions')
+TAKES_REST = ()
+
+
 def main(argv):
     # \U0001f41b [2026-09-07] FIRST, before `find_root`. This block already carried the sentence
     # "including one that would otherwise refuse the arguments beside it", and in this command it
@@ -169,6 +181,11 @@ def main(argv):
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-env: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
 
     cmd, *rest = argv
     if cmd == "check":

@@ -163,6 +163,8 @@ _MD_MARKUP = re.compile(r"[*_`]")
 _LEADING_MARKUP = re.compile(r"^[>*\-\s]+")
 
 
+
+
 def describe(path):
     """The `description:` line from a skill's frontmatter, which is what makes the registry usable.
 
@@ -181,7 +183,11 @@ def describe(path):
         end = head.find("\n---", 3)
         for line in head[3:end if end > 0 else len(head)].splitlines():
             if line.strip().lower().startswith("description:"):
-                return mdblock.as_quoted(line.split(":", 1)[1], 110)
+                # 🐛 [2026-09-08] One function, two returns, and only the SECOND one scrubbed --
+                # the comment below it explains the ordering carefully and this path, six lines
+                # up, was never given it. A skill's frontmatter is a committed file in somebody
+                # else's repository, so its `description:` is as attacker-controlled as its body.
+                return mdblock.as_quoted(redact.scrub(line.split(":", 1)[1]), 110)
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
@@ -492,21 +498,47 @@ def _map_is_current_by_git(root, map_path):
         if not m:
             return False
         stamped = m.group(1)
+        # 🐛 [2026-09-08] This was ONE call, collapsed from two to save 0.08s, and the collapse lost
+        # a whole class of change. `git diff <A> -- <pathspec>` compares commit A against the
+        # working tree for files git is TRACKING; an untracked file is not in a diff, by git's own
+        # design. So a source file created five minutes ago and not yet added was invisible, the
+        # index was reported current, and `chamnan-impact` then answered "nothing imports it" about
+        # a symbol something had just started importing. Not a stale answer -- a wrong one, which
+        # is the failure this whole function exists to prevent (R2 agent 6).
+        #
+        # The comment this replaces claimed the single call was "verified equivalent" across "a new
+        # untracked source file". It was not. Measured across five states, neither command is right
+        # on its own:
+        #
+        #     state                        diff clean   status empty
+        #     nothing changed              yes          yes
+        #     a tracked file edited        no           no
+        #     a NEW untracked file         YES (wrong)  no
+        #     a new file, staged           no           no
+        #     a commit since the stamp     no           YES (wrong)
+        #
+        # `diff` alone misses what is untracked; `status` alone misses what was committed since the
+        # stamp. Both are needed, and the second only runs when the first says clean -- which is
+        # precisely when this function is about to claim the index is current, and the only moment
+        # a wrong answer costs anything. Measured at 48 ms on this repository, paid on a clean tree
+        # and skipped on a dirty one.
+        #
         # Both argv lists are single literals on purpose: a guard in the suite reads every
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
-        # One call, not two. `git diff <A> -- <pathspec>` with a SINGLE ref already compares
-        # commit A against the working tree — committed history since A and uncommitted changes
-        # together — which is exactly the question, and what the `diff <A> HEAD` plus `status`
-        # pair was spelling out in two processes. Verified equivalent across a clean tree, an
-        # uncommitted edit, that edit committed, a workspace-only change, a new untracked source
-        # file, and a staged-but-uncommitted edit; measured 0.192s to 0.110s on the whole hook,
-        # and every session pays this (R3 agent 1).
         diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "--",
                                ".", ":(exclude).chamnan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=5)
-        return diff.returncode == 0      # 1 = something changed; 128 = unknown stamp or no git
+        if diff.returncode != 0:
+            return False      # 1 = something changed; 128 = unknown stamp or no git
+        untracked = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--",
+                                    ".", ":(exclude).chamnan"],
+                                   capture_output=True, text=True, encoding="utf-8",
+                                   errors="replace", timeout=5)
+        if untracked.returncode != 0:
+            return False      # cannot confirm, so do not claim current
+        return not untracked.stdout.strip()
     except (OSError, subprocess.SubprocessError, ValueError):
         return False
 
@@ -767,7 +799,21 @@ def dead_entries(root, map_text):
                 rel = dirpath[cut:]
                 for f in filenames:
                     present.add(f"{rel}/{f}" if rel else f)
-            dead = [n for n in ordered if n.rstrip("/") not in present]
+            # 🐛 [2026-09-08] The set holds the filenames `os.walk` reported, compared as exact
+            # Python strings; the stat branch below asks `.exists()`, which the FILESYSTEM resolves.
+            # On macOS and Windows that resolution is case-insensitive, so one function gave two
+            # opposite answers to the identical drift -- a map naming `casefile.py` for a
+            # `CaseFile.py` on disk read as 1 dead entry above 2,000 names and 0 below it, decided
+            # by nothing but how many files the repository has.
+            #
+            # Folding case in the set would be wrong the other way: on a case-SENSITIVE checkout
+            # those really are two files and a genuine dead entry would be hidden. So the literal
+            # test stands, and only the names it calls dead are confirmed with `.exists()` -- the
+            # same question the other branch asks, answered by the same filesystem. A healthy map
+            # pays for zero of these; a lying one pays one call per lie, which it is reporting
+            # anyway.
+            dead = [n for n in ordered
+                    if n.rstrip("/") not in present and not (root / n).exists()]
         else:
             dead = [n for n in ordered if not (root / n).exists()]
         return len(dead), len(named), dead[:3]
@@ -961,7 +1007,11 @@ def main():
         # The CLI and the hook disagreed about whether the repository was usable, and nothing told
         # the person which one to believe. One sentence, once per session, saying what to do.
         if not any((root / m).exists() for m in ws.VCS_MARKERS):
-            print(f"## chamnan\n_`{mdblock.as_quoted(root.name, 60)}` is not under version control, "
+            # Scrubbed like every other name this block prints. A directory name is an unlikely
+            # place for a credential, and "unlikely" is the judgement that has been wrong at every
+            # one of these sites -- uniform costs microseconds and removes the judgement.
+            print(f"## chamnan\n_`{mdblock.as_quoted(redact.scrub(root.name), 60)}` "
+                  f"is not under version control, "
                   f"so no workspace was created here. Run `chamnan-map` in it to create one anyway; "
                   f"after that, every session works as in a repository._")
             return 0
@@ -1131,7 +1181,10 @@ def main():
                 # file is type-checked against DEFAULT_CONFIG; these are kept precisely BECAUSE
                 # they are unrecognised, so a bound is the only thing available (R12 agent 2).
                 _shown = sorted(ws.LAST_CONFIG_KEYS_KEPT)[:KEPT_KEYS_NAMED]
-                kept = ", ".join(f"`{mdblock.as_quoted(k)}`" for k in _shown)
+                # The names come from a committed `config.json` in somebody else's repository,
+                # and this line reaches the block in chamnan's own voice. Scrubbed like the sibling
+                # warnings below it, which say the same thing about filenames (R7 agent 2).
+                kept = ", ".join(f"`{mdblock.as_quoted(redact.scrub(k))}`" for k in _shown)
                 if len(ws.LAST_CONFIG_KEYS_KEPT) > len(_shown):
                     kept += f" +{len(ws.LAST_CONFIG_KEYS_KEPT) - len(_shown)} more"
                 out.append(f"  Settings in `config.json` that only the newer build understands were "
@@ -1300,7 +1353,8 @@ def main():
                     # Filenames are chosen by whoever wrote the clone, and this line prints them
                     # in chamnan's own voice, outside the fence. Made inert before interpolation.
                     what = (f"**{n} file(s) are not in it** — "
-                            + ", ".join(f"`{mdblock.as_quoted(e)}`" for e in examples)
+                            + ", ".join(f"`{mdblock.as_quoted(redact.scrub(e))}`"
+                                        for e in examples)
                             + ("…" if n > len(examples) else "") + ". ") if n else ""
                     # The offer to install the hook goes only to a repo that has not installed it.
                     # Repeating it to someone who has is how a warning stops being read.
@@ -1409,6 +1463,28 @@ def main():
             # starting. "We have tried to fix this three times" is the line nobody can reconstruct
             # from a git log, and it costs about as much to say as a milestone title.
             open_threads = redact.scrub(timeline.open_titles(root))
+            # 🐛 [2026-09-08] `slug()` reduces a thread name to lowercase ASCII, so chamnan cannot
+            # CREATE two files that differ only by case or normalisation. That was the argument for
+            # leaving this store out, and it covers only half the question: `threads()` globs the
+            # directory and lists whatever is in it, including a file somebody copied, hand-wrote,
+            # or another tool left. Reproduced with two thread files differing only by the
+            # normalisation of one letter -- both injected here as unrelated open work, so an agent
+            # would carry two lines of work that are one, and a clone to a case-insensitive machine
+            # would then keep one of them without saying which.
+            _thread_clash = memory.case_collisions(timeline.threads(root))
+            if _thread_clash:
+                names = "; ".join(
+                    ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _thread_clash)
+                # 🐛 [2026-09-08] Appended AFTER `redact.scrub` had already run on `open_threads`,
+                # so the FILENAMES in this warning reached the block unscrubbed -- and a filename is
+                # attacker-controlled in a repository somebody else wrote. `AKIAIOSFODNN7EXAMPLE.md`
+                # went in whole. The skills version of this same warning, added in the same commit,
+                # scrubs correctly; two of the three copies did not. Found within the hour by the
+                # round pointed at what had just changed (R7 agent 2).
+                open_threads += redact.scrub(
+                    f"\n- ⚠️ These thread files differ only by case or Unicode normalisation "
+                    f"({names}). They are listed above as separate work and a case-insensitive "
+                    f"filesystem keeps only one of them.")
             if open_threads:
                 out.append(section(
                     "Open threads — lines of work still in flight",
@@ -1432,6 +1508,32 @@ def main():
                 # two dozen agents, calls the same function without this argument and keeps them.
                 carried = redact.scrub(
                     sessions.where_git_says_you_stopped(root, name_files=False))
+            # 🐛 [2026-09-08] `sessions/` is the fourth store whose filenames a PERSON types --
+            # `skills/remember`'s sibling, `skills/resume/SKILL.md`, tells the agent to write
+            # `.chamnan/sessions/YYYY-MM-DD-short-slug.md` directly rather than through
+            # `sessions.slug()`. It is also the WORST of the four, which this file's own comment in
+            # `lib/sessions.py` already said: every other store needs a command before a collision
+            # is visible, and this one is injected on every session with no user action at all.
+            #
+            # Reproduced: two records dated the same day differing only by case, one saying an
+            # incident is closed and the other saying production is down. On a case-insensitive
+            # filesystem one survives -- the first name carrying the second file's content. On a
+            # case-sensitive checkout both live and `latest()` picks by an mtime tie-break that a
+            # fresh clone resets, so which of two contradictory records reaches the model is
+            # decided by nothing. (R5 acc3 windows semantics, which argued it correctly where an
+            # earlier round argued the same shape for two stores it cannot apply to.)
+            _sess_clash = memory.case_collisions(sessions.records(root))
+            if _sess_clash:
+                names = "; ".join(
+                    ", ".join(mdblock.as_quoted(g.name) for g in group) for group in _sess_clash)
+                # Scrubbed for the same reason as the threads warning above: the filenames are
+                # repository content, `carried` was already scrubbed before this point, and a
+                # secret-shaped name would otherwise ride into the block on the warning about it.
+                carried = (carried + "\n\n" if carried else "") + redact.scrub(
+                    f"⚠️ Two session records differ only by case or Unicode normalisation "
+                    f"({names}). A case-insensitive filesystem keeps ONE, and which one is read "
+                    f"back here is decided by modification time, which a clone resets. Rename one "
+                    f"before trusting anything above.")
             if carried:
                 out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
 
@@ -1553,9 +1655,23 @@ def main():
             # `ws.is_store_index` drops the directory's own README: it is the index OF this
             # store, not a procedure in it, and here it sorted second of twenty and spent one of
             # twelve slots describing what the folder is (R8 agent 5).
+            # 🐛 [2026-09-08] The cap chose WHICH twelve by filename alphabet, and this is the third
+            # member of a three-way set to need the same fix. The tools index beside it ranks by its
+            # `runs` counter and then by recency, after registration order "held the list for ever:
+            # promote a thirteenth and it was never named in any session"; `memory.titles()` was
+            # fixed the same day for the identical reason. Skills never got it, and the cost is
+            # exact: 20 skills in this repository, 8 of them invisible -- including
+            # `writing_a_check_that_can_fail.md`, written the day before to stop a repeated mistake
+            # and cut from every session because its name begins with a w (R2 acc3, and reported
+            # twice before that without being acted on).
+            #
+            # mtime, with the filename as tie-break, for the reason `memory.py` gives at its own
+            # sort: these files carry no date, and after a clone every mtime is the checkout time,
+            # so the order falls back to exactly the previous behaviour where it cannot do better.
             skills = ([p for p in sorted((wsdir / "skills").glob("*.md"))
                        if ws.inside(p, root) and not ws.is_store_index(p)]
                       if (wsdir / "skills").is_dir() else [])
+            skills.sort(key=lambda p: (-memory.mtime_or_zero(p), p.name))
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
                 # session is that the agent loads one on demand — and it cannot decide which one to load
@@ -1566,6 +1682,26 @@ def main():
                                  f"{describe(s) or 'no description — add one'}")
                 if len(skills) > MAX_TOOLS:
                     lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
+                # 🐛 [2026-09-08] Skill filenames are typed by a person, not derived through any
+                # `slug()`, so the normalisation fix that closed this for threads and candidates does
+                # not reach here. Reproduced: writing `café-deploy.md` precomposed and then
+                # decomposed leaves ONE file on this machine's APFS -- the first name carrying the
+                # second file's content -- and the listing printed `café-deploy.md — Completely
+                # different content.` with nothing to say a skill had been destroyed. `Rollback.md`
+                # and `rollback.md` do the same.
+                #
+                # The warning can only fire on a case-SENSITIVE checkout, where both files still
+                # exist; that is the point, and `memory.case_collisions` says so at its own
+                # definition. It is the last moment before a sync to a Mac or a Windows box silently
+                # keeps one of them. Wired into rules, decisions and lessons already; this was the
+                # member of that set nobody had built a fixture for.
+                clashing = memory.case_collisions(skills)
+                for group in clashing:
+                    names = ", ".join(f"`{mdblock.as_quoted(g.name)}`" for g in group)
+                    lines.append(
+                        f"- ⚠️ {names} differ only by case or Unicode normalisation. A "
+                        f"case-insensitive filesystem keeps ONE of them — check which survives "
+                        f"before this workspace is cloned to macOS or Windows.")
                 out.append(section(
                     "Recorded procedures — read the one that matches before starting that kind of task",
                     # The last of the injected sections to reach the block unscrubbed. A skill's
@@ -1624,20 +1760,32 @@ def main():
             # Three states, three sentences. Collapsing the last two would tell a `--preview`
             # reader their repository is unwritable, which is a different problem from the one
             # they have and would send them to fix the wrong thing.
-            if wsdir.is_dir():
-                _made = "has just been created"
-            elif ws.read_only():
-                _made = "would be created on the first real session — this is a preview, so it was not"
-            else:
-                _made = "could not be created, because this repository is not writable"
-            out.append(section(
-                "chamnan is set up in this repository",
-                f"`.chamnan/` {_made} — `memory/`, `sessions/`, `threads/`, `skills/`, "
-                "`tools/` and `config.json` are ready to write to, and empty on purpose.\n\n"
+            # 🐛 [2026-09-08] ...and the fix above patched the LEADING clause only. The rest of the
+            # sentence was written for the success case and was appended to all three, so a reader
+            # on an unwritable repository was told in one breath that `.chamnan/` could not be
+            # created and that the directories inside it are "ready to write to". The regression
+            # test asserted the leading clause and passed straight over the contradiction (R1
+            # agent 3). Three states, three WHOLE sentences now -- a shared tail is what made a
+            # three-way branch produce a two-thirds-wrong answer.
+            _inside = "`memory/`, `sessions/`, `threads/`, `skills/`, `tools/` and `config.json`"
+            _index_hint = (
                 "Nothing has been indexed yet. `chamnan-map` builds the architecture index, and "
-                "inside Claude Code `/chamnan:bootstrap` builds it and records a baseline; the write "
-                "skills listed above work from now on, whether or not that has been run.",
-                "(generated)"))
+                "inside Claude Code `/chamnan:bootstrap` builds it and records a baseline; the "
+                "write skills listed above work from now on, whether or not that has been run.")
+            if wsdir.is_dir():
+                _body = (f"`.chamnan/` has just been created — {_inside} are ready to write to, "
+                         f"and empty on purpose.\n\n{_index_hint}")
+            elif ws.read_only():
+                _body = (f"`.chamnan/` would be created on the first real session — this is a "
+                         f"preview, so nothing was written. {_inside} are what it will hold, and "
+                         f"none of them exists yet.\n\n{_index_hint}")
+            else:
+                _body = (f"`.chamnan/` could not be created, because this repository is not "
+                         f"writable. {_inside} do not exist and cannot be written to, so nothing "
+                         f"is being recorded — chamnan keeps reading what it can and stays quiet "
+                         f"about the rest. Making the repository writable, or pointing "
+                         f"`CLAUDE_PROJECT_DIR` at a copy that is, restores all of it.")
+            out.append(section("chamnan is set up in this repository", _body, "(generated)"))
         elif not (wsdir / "MAP.md").is_file():
             # 🐛 The section above is said ONCE, on the session that created the workspace. A user
             # who was not paying attention that minute never hears it again: every session after
@@ -1656,7 +1804,8 @@ def main():
             # noise: in ordinary operation this list is empty, and the alternative is a setting that
             # silently does nothing -- the failure this whole area was just fixed for.
             out.insert(0, f"_⚠ context profile "
-                          f"`{mdblock.as_quoted(UNKNOWN_PROFILE[0], 40)}` is not one of "
+                          f"`{mdblock.as_quoted(redact.scrub(UNKNOWN_PROFILE[0]), 40)}` "
+                          f"is not one of "
                           f"{', '.join('`' + n + '`' for n in profiles.names())}. This session is "
                           f"running on `{profiles.DEFAULT}`; fix `context_profile` in "
                           f"`.chamnan/config.json` or `CHAMNAN_CONTEXT_PROFILE`._\n")
@@ -1669,7 +1818,8 @@ def main():
             # now and it is interpolated here, so the line tells the reader which mistake they made.
             _fix = ("fix the syntax" if _bad_cfg == "does not parse"
                     else "wrap the settings in `{ }`")
-            out.insert(0, f"_⚠ `.chamnan/config.json` {mdblock.as_quoted(_bad_cfg, 120)}. "
+            out.insert(0, f"_⚠ `.chamnan/config.json` "
+                          f"{mdblock.as_quoted(redact.scrub(_bad_cfg), 120)}. "
                           "This session is running on DEFAULTS and every value set in that file is "
                           f"being ignored. It has NOT been overwritten; {_fix} and it takes "
                           "effect on the next session._\n")

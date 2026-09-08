@@ -2,8 +2,16 @@
 """chamnan-map — build .chamnan/MAP.md from the repository's source, and report what it cost.
 
 The map exists so an agent can answer "which file do I open for X" without reading or grepping the
-tree. Measured across three real repositories (Python, JS+shell, mixed), the Quick Index came to
-0.3-3.1% of the source it indexes, and answered 6 of 6 navigation questions on its own.
+tree, and it answered 6 of 6 navigation questions on its own when that was measured.
+
+🐛 [2026-09-08] The share it costs was written here as "0.3-3.1%" and the project's own published
+reproduction corpus measures 3.9% -- a claim narrower than the evidence beside it (R2 agent 4).
+Re-measured live rather than adjusted on paper: 0.3% on chamnan itself (106 files) and 0.8% on the
+repository it develops in (328 files), both today, both with this command. So: **0.3-3.9% of the
+source it indexes**, and the spread is not noise. It moves with how much of a repository is source
+rather than data, and with how many directories that source is spread across -- a roll-up over
+four directories and one over four hundred are different numbers for identical code, which
+`lib/rollup.py` documents at its own cliff.
 
 The coverage number printed at the end is not decoration. The index is built from each file's
 opening comment, so a repository that does not write them gets an index of filenames and function
@@ -12,6 +20,7 @@ counts, which is worth far less. Reporting coverage tells the user which lever t
 import os
 import re
 import subprocess
+import shutil
 import sys
 from pathlib import Path
 
@@ -59,10 +68,53 @@ HOOK_BODY = """{marker}
 # Keeps .chamnan/MAP.md in step with the code. A stale index is worse than none: it is confidently
 # wrong, and the next session believes it. Never fails a commit — if chamnan errors, the commit
 # proceeds and the index is simply not refreshed.
+# ACDR is Added, Copied, Deleted, Renamed -- deliberately not M. Editing a file leaves the index
+# behind, and that is the accepted half of the trade: measured on this repository, 297 of 355
+# non-merge commits (83.7%) touch only existing files, and the rebuild is a FULL rescan, 107s on
+# 1,032 files, in the foreground of the commit. Running it on every M would put two minutes between
+# a person and their commit, most of the time. The staleness is covered instead by the session-start
+# warning, and `chamnan-map --install-git-hook` says all of this out loud at install time.
 if command -v chamnan-map >/dev/null 2>&1; then
   if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
     chamnan-map >/dev/null 2>&1 || true
     git add .chamnan/MAP.md >/dev/null 2>&1 || true
+    # ...and the file each OTHER agent reads. Claude Code and Gemini get a live session hook and
+    # need no file; the other twenty-one read a snapshot, and this hook used to refresh the internal
+    # index and leave every one of those exactly as old as the day it was written -- while the
+    # README called this hook the thing that automates keeping them fresh. `--refresh` rewrites only
+    # files that already exist AND that chamnan wrote, so nothing a person wrote is touched and no
+    # agent acquires a config file because somebody committed. Measured at 0.77s per adapter
+    # against the 2.38s this hook already spends.
+    # 🐛 [2026-09-08] This ended in a bare `git add -u`, which stages EVERY modification to EVERY
+    # tracked file in the working tree. Reproduced end to end: a developer stages one file, leaves
+    # an edit to another deliberately unstaged, commits with the message "add newfeature.txt only",
+    # and the commit contains the unstaged edit too -- no error, no diff shown, nothing said. The
+    # comment above still reads "nothing a person wrote is touched", which was true of what gets
+    # REWRITTEN and false of what gets STAGED, because `git add -u` does not know which file
+    # chamnan just wrote (R9 agent 2, and reproduced again here before this was changed).
+    #
+    # A tool installed into somebody else's repository putting work into their commit that they
+    # deliberately held back is the worst thing in this file. Staging exactly what was rewritten is
+    # what the sibling line above already does for MAP.md, by naming the path.
+    #
+    # The path comes from the command that wrote it rather than from a table here: `--write` prints
+    # `chamnan-context -> <path>`, so there is one source for "which file did this touch" instead
+    # of a second list that can disagree with the adapters.
+    # 🐛 [2026-09-09] `tr -d '\\r'` on both readings, and it is not cosmetic: without it this loop
+    # had never refreshed a single agent file on Windows. Python ends every line with CR LF there,
+    # `read -r` keeps the CR, and `chamnan-context --write "generic<CR>"` is a choice argparse
+    # refuses -- so every name in the loop was rejected and nothing was written or staged. The
+    # `chamnan-map` line above survived because it parses no output. Silent in both directions: the
+    # hook reported nothing, the commit simply did not carry the refreshed file, and the README goes
+    # on calling this hook the thing that keeps those files current. Found by chamnan's own Windows
+    # CI, whose commit stat showed MAP.md refreshed and AGENTS.md untouched.
+    if command -v chamnan-context >/dev/null 2>&1; then
+      chamnan-context --written-agents 2>/dev/null | tr -d '\\r' | while read -r a; do
+        [ -n "$a" ] || continue
+        written=$(chamnan-context --write "$a" 2>/dev/null | tr -d '\\r' | sed -n 's/^chamnan-context -> //p' | head -1)
+        [ -n "$written" ] && git add -- "$written" >/dev/null 2>&1 || true
+      done
+    fi
   fi
 fi
 # <<< chamnan
@@ -125,7 +177,11 @@ def preview(root, explain=False):
 _hooks_dir = ws.git_hooks_dir
 
 
-_UNREACHABLE_TAIL = re.compile(r"^\s*exit\s+\d*\s*$")
+_UNREACHABLE_TAIL = re.compile(r"^\s*(?:exit\s+\d*|exec\s+\S.*)\s*$")
+# `exec` replaces the process image, so nothing in the file after it runs -- on any path that
+# reaches it. A hook whose branches all end in one is unreachable at the bottom even though its
+# last LINE is a `fi`.
+_EXECS = re.compile(r"^[ \t]*exec[ \t]+\S", re.M)
 
 
 def _ends_unreachable(script):
@@ -134,6 +190,12 @@ def _ends_unreachable(script):
     Read from the end backwards over blanks and comments only. An `exit 0` inside an `if` or a
     function is not the end of the script, and treating it as one would refuse a hook that is
     perfectly fine to append to.
+
+    🐛 [2026-09-08] `exit` only, so `pre-commit install`'s own hook -- an if/elif/else whose every
+    branch ends in `exec "$INSTALL_PYTHON" -mpre_commit …` or `exit 1`, with a `fi` as the last
+    line -- was appended to, reported as installed, and never ran once. Reproduced: `.chamnan/`
+    did not exist after a commit that added a file (R9 agent 2). Two shapes were missing, a
+    trailing `exec` and unreachability reached by BRANCHING rather than by one flat tail.
     """
     for line in reversed(script.splitlines()):
         stripped = line.strip()
@@ -141,6 +203,18 @@ def _ends_unreachable(script):
             continue
         return bool(_UNREACHABLE_TAIL.match(line))
     return False
+
+
+def _exec_before_the_end(script):
+    """True when an `exec` runs somewhere that can stop this script before its end.
+
+    Deliberately blunt: ANY `exec <command>` line, at any indent. A hook with an `exec` in one
+    branch and a reachable tail in another is refused too, and that is the conservative direction
+    -- the alternative is what was measured, an install that prints success and never runs. The
+    refusal tells the reader the one line to add themselves, which is what this file already does
+    for a hook ending in `exit`.
+    """
+    return bool(_EXECS.search(script))
 
 
 def _show(path, root):
@@ -180,6 +254,25 @@ def _is_bare(root):
     return out.returncode == 0 and out.stdout.strip() == "true"
 
 
+def _is_generated_hooks_dir(root, hooks):
+    """True when git is pointed at a hooks directory the project generates and ignores.
+
+    Asked of git rather than matched against a list of tool names: husky is the case that was
+    measured, and `check-ignore` answers for lefthook, a homegrown script, or whatever comes next,
+    without this file having to know any of them. A directory that does not exist yet cannot be
+    reported ignored, which is the right answer -- chamnan creating it is not the failure this
+    guards against.
+    """
+    if not hooks.is_dir() or not ws.git_owns(root):
+        return False
+    try:
+        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(hooks)],
+                           capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
@@ -211,6 +304,30 @@ def install_git_hook(root):
               "pre-commit hook here could never run. Install it in a working clone instead.",
               file=sys.stderr)
         return 1
+    # 🐛 [2026-09-08] husky v9 points `core.hooksPath` at `.husky/_`, a directory it GENERATES and
+    # gitignores wholesale. `git_hooks_dir` resolves that correctly -- it is the file git really
+    # loads -- and writing there is still wrong: the result is untracked, so it does not survive a
+    # teammate's clone, and husky's own `prepare` script overwrites the directory on the next
+    # `npm install`. Reproduced end to end: `git ls-files .husky/_/pre-commit` came back empty and
+    # the appended block never ran (R9 agent 2). husky's own tracker carries the same complaint
+    # from a real project, for the same reason.
+    #
+    # The honest options are refuse, or point at the human-editable file one level up. This does
+    # both: it refuses, and it names the file.
+    if _is_generated_hooks_dir(root, hooks):
+        _human = hooks.parent / "pre-commit" if hooks.name == "_" else None
+        print(f"chamnan: {_show(hooks, root)} is generated and gitignored — a hook written there "
+              f"is untracked and is overwritten the next time the project reinstalls its hooks.",
+              file=sys.stderr)
+        if _human is not None:
+            print(f"  Add this line to {_show(_human, root)} instead, which is the file "
+                  f"people edit:", file=sys.stderr)
+        else:
+            print("  Add this line to the hook file your project actually keeps in git:",
+                  file=sys.stderr)
+        print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
+              file=sys.stderr)
+        return 1
     hooks.mkdir(parents=True, exist_ok=True)
     target = hooks / "pre-commit"
     body = HOOK_BODY.format(marker=HOOK_MARKER)
@@ -224,6 +341,14 @@ def install_git_hook(root):
         # and it never ran once, which is the stale index the README warns is worse than none.
         # Refused rather than worked around: prepending would change when the user's own hook
         # runs, and editing their script is not this tool's call to make.
+        if not _ends_unreachable(existing) and _exec_before_the_end(existing):
+            print(f"chamnan: {_show(target, root)} runs `exec`, which replaces the process — "
+                  f"anything appended after it never runs.", file=sys.stderr)
+            print("  That is the shape `pre-commit install` writes. Add this line yourself, "
+                  "above the exec:", file=sys.stderr)
+            print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
+                  file=sys.stderr)
+            return 1
         if _ends_unreachable(existing):
             print(f"chamnan: {_show(target, root)} ends in an unconditional `exit`, so "
                   f"anything appended after it would never run.", file=sys.stderr)
@@ -246,12 +371,35 @@ def install_git_hook(root):
         # hooks directory (a raw FileNotFoundError traceback out of the chmod below, because the
         # file the write never created is not there) and on a read-only existing hook file (exit 0,
         # "appended", no change on disk) -- R7 agent 1, findings 4 and 5.
+        # 🐛 [2026-09-08] The append ended with chamnan's own always-succeeding shell, and a
+        # POSIX hook's exit status is whatever its LAST command returned. So a hook that enforced
+        # anything by its final command's status — lefthook's installed hook, which ends in a plain
+        # `call_lefthook run "pre-commit"`, or any hand-written `! git diff --cached | grep -q TODO`
+        # — kept PRINTING its failure and stopped BLOCKING the commit. Reproduced on both: lefthook
+        # printed `fail` and `git commit` returned 0 and the commit landed (R9 agent 2).
+        #
+        # `_ends_unreachable` above refuses the opposite case, chamnan's block becoming dead code.
+        # This is the same class from the other side and the more dangerous half: nothing on disk
+        # says the gate stopped gating, and the person who installed a linter months ago has no
+        # reason to re-test it because a plugin refreshed an index.
+        #
+        # `( exit $status )` rather than a bare `exit`: it restores the status without ending the
+        # script, so anything the user appends AFTER chamnan still runs. Writing a real `exit` here
+        # would make their next hook dead code — which is the exact thing this file refuses to do
+        # to them twenty lines above.
+        _keep = ("# chamnan: remember the status your hook above produced, so appending to it "
+                 "cannot\n# change whether it blocks a commit.\n_chamnan_prev_status=$?\n\n")
+        _restore = ("\n# chamnan: hand your hook's own status back to git. A subshell rather than "
+                    "`exit`, so\n# anything appended after this still runs.\n"
+                    "( exit $_chamnan_prev_status )\n")
         try:
-            ws.write_or_raise(target, existing.rstrip() + "\n\n" + body)
+            ws.write_or_raise(target, existing.rstrip() + "\n\n" + _keep + body + _restore)
         except OSError as err:
             print(f"chamnan: {err}", file=sys.stderr)
             return 1
         print(f"chamnan: appended to your existing {_show(target, root)}")
+        print("  Your hook's own exit status is preserved, so whatever it blocked before, "
+              "it still blocks.")
     else:
         try:
             ws.write_or_raise(target, "#!/bin/sh\n\n" + body)
@@ -292,12 +440,57 @@ def install_git_hook(root):
             print("  On a tree this size you may prefer to run `chamnan-map` by hand instead.")
     except Exception:
         pass          # a nicety; never the reason an install fails
-    print(f"  Remove it by deleting the block marked '{HOOK_MARKER}'.")
+    print("  Remove it with `chamnan-map --uninstall-git-hook`.")
     return 0
 
 
-KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure",
-               "--undocumented", "--verify", "-h", "--help")
+def uninstall_git_hook(root):
+    """Take chamnan's block back out of the hook, and nothing else.
+
+    🐛 [2026-09-08] There was no way to do this but by hand, while every tool this one appends
+    beside -- husky, lefthook, pre-commit -- ships a dedicated uninstall command. The install
+    message named the marker and left the editing to the reader, which is a fair instruction and a
+    bad answer for the one thing a person wants at the moment they have decided they do not want
+    this plugin in their commits (R9 agent 2).
+
+    Exact by construction: chamnan only ever APPENDS, so its block runs from its marker (or from
+    the status-preserving preamble written just above it) to the end of the file. Nothing before
+    that is read, matched or rewritten -- somebody else's hook is not this command's to edit.
+    """
+    hooks = _hooks_dir(root)
+    target = (hooks / "pre-commit") if hooks is not None else None
+    if target is None or not target.is_file():
+        print("chamnan: no pre-commit hook here to take anything out of", file=sys.stderr)
+        return 1
+    text = target.read_text(encoding="utf-8-sig", errors="replace")
+    if HOOK_MARKER not in text:
+        print(f"chamnan: {_show(target, root)} has no chamnan block in it — nothing removed",
+              file=sys.stderr)
+        return 1
+    cut = text.index(HOOK_MARKER)
+    head = text[:cut]
+    # The preamble is chamnan's too, and leaving `_chamnan_prev_status=$?` behind would leave a
+    # variable set from whatever ran last and nothing reading it.
+    marker_line = head.rfind("# chamnan: remember the status")
+    if marker_line != -1:
+        head = head[:marker_line]
+    rest = head.rstrip()
+    if not rest or rest == "#!/bin/sh":
+        target.unlink()
+        print(f"chamnan: removed {_show(target, root)} — it held nothing but chamnan's block")
+        return 0
+    try:
+        ws.write_or_raise(target, rest + "\n")
+    except OSError as err:
+        print(f"chamnan: {err}", file=sys.stderr)
+        return 1
+    print(f"chamnan: removed chamnan's block from {_show(target, root)}; the rest of your hook "
+          f"is untouched")
+    return 0
+
+
+KNOWN_FLAGS = ("--install-git-hook", "--uninstall-git-hook", "--explain", "--preview",
+               "--measure", "--undocumented", "--verify", "-h", "--help")
 
 
 def _paths_being_dropped(map_path, files, root):
@@ -355,17 +548,36 @@ def list_undocumented(root):
     `.chamnan/`, nothing the indexer cannot describe anyway.
     """
     mapper.reset_skips()
-    missing = []
+    missing, seen = [], 0
     for f in mapper.scan(root):
+        seen += 1
         rel = str((root / f["path"]).relative_to(root).as_posix())
         if (not f["doc"] and f.get("describable", True) and not f.get("generated")
                 and not rel.startswith(".chamnan/")):
             missing.append(rel)
     for path in sorted(missing):
         print(mdblock.as_quoted(path, 200))
-    if not missing:
+    # 🐛 [2026-09-08] `missing` is empty for two different reasons and this said the same sentence
+    # for both: every file really is documented, and chamnan read no files at all. On a real CPAN
+    # distribution (21 `.t`, 6 `.pm`, 7 extensionless) the previous run's own suggested next step --
+    # this exact command -- answered "every file the index can describe already has an opening
+    # comment" and exited 0, carrying no trace of the language gap the summary one screen up had
+    # just printed. The user follows chamnan's own instruction and is told they are done, having had
+    # not one line of their code read (R10 agent 4, reproduced on Email-MIME).
+    if not missing and seen:
         print("chamnan: every file the index can describe already has an opening comment",
               file=sys.stderr)
+    elif not missing:
+        _unknown = ", ".join(f"{ext} x{n}" for ext, n in
+                             mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
+        _rest = len(mapper.SKIPPED_UNKNOWN_EXT) - 4
+        print("chamnan: no file here has a missing comment because no file here was read — "
+              "the index describes 0 files", file=sys.stderr)
+        if _unknown:
+            print(f"  chamnan has no reader for the extensions present: {_unknown}"
+                  + (f" +{_rest} more" if _rest > 0 else ""), file=sys.stderr)
+            print("  Adding comments would change nothing here. `chamnan-map` says what it did "
+                  "index and by what route.", file=sys.stderr)
     return 0
 
 
@@ -421,18 +633,25 @@ def main(argv):
         # Derived from KNOWN_FLAGS rather than typed out again, so a flag added later cannot be
         # missing from this list without also being missing from the parser that accepts it.
         print("\nOptions")
-        for _flag, _what in (
+        # 🐛 [2026-09-08] The table below and the "also accepted, undocumented" line under it were
+        # two hand-kept lists of the same flags, and they had already drifted: `--undocumented` and
+        # `--verify` were printed in the table AND then named as undocumented, three lines apart,
+        # in the one output a stranger reads to find out what this command does. Derived from the
+        # table now, so the second line cannot describe a flag the first one just documented --
+        # the population, not the member, which is the failure this repository records most.
+        _rows = (
                 ("--preview", "print the index that WOULD be built, and write nothing"),
                 ("--explain", "where the session-start block's tokens go, section by section"),
                 ("--measure", "what this index costs against the session budget"),
                 ("--undocumented", "every file with no opening comment, one path per line"),
                 ("--verify", "check the index's claims against the tree; exit 1 if any is false"),
                 ("--install-git-hook", "rebuild the map on every commit (opt-in, never destructive)"),
-                ("-h, --help", "this text")):
+                ("--uninstall-git-hook", "take that block back out, leaving the rest of the hook"),
+                ("-h, --help", "this text"))
+        for _flag, _what in _rows:
             print(f"  {_flag:<20} {_what}")
-        _undocumented = [f for f in KNOWN_FLAGS
-                         if f not in ("-h", "--help")
-                         and f not in ("--preview", "--explain", "--measure", "--install-git-hook")]
+        _documented = {f.strip() for row in _rows for f in row[0].split(",")}
+        _undocumented = [f for f in KNOWN_FLAGS if f not in _documented]
         if _undocumented:
             print(f"  (also accepted, undocumented: {', '.join(_undocumented)})")
         print("\n  chamnan-map <dir> [<dir> ...]   index only those directories")
@@ -445,6 +664,8 @@ def main(argv):
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
+    if "--uninstall-git-hook" in argv:
+        return uninstall_git_hook(root)
     if "--undocumented" in argv:
         return list_undocumented(root)
     if "--verify" in argv:
@@ -522,9 +743,11 @@ def main(argv):
             why.append(f"{len(mapper.SKIPPED_TOO_LARGE)} over the size limit "
                        f"({assets_mod.human_bytes(mapper.MAX_FILE_BYTES)})")
         if mapper.SKIPPED_BUILD_DIR:
+            _dirs = sorted(mapper.SKIPPED_BUILD_DIR)
+            _dmore = len(_dirs) - 6
             why.append("under directories that look like build output: "
-                       + ", ".join(mdblock.as_quoted(d, 60)
-                                   for d in sorted(mapper.SKIPPED_BUILD_DIR)[:6]))
+                       + ", ".join(mdblock.as_quoted(d, 60) for d in _dirs[:6])
+                       + (f" +{_dmore} more" if _dmore > 0 else ""))
         if mapper.SKIPPED_TOO_MANY_LINES:
             why.append(f"{len(mapper.SKIPPED_TOO_MANY_LINES)} over the line limit "
                        f"({mapper.MAX_FILE_LINES:,} lines)")
@@ -533,9 +756,17 @@ def main(argv):
         if mapper.SKIPPED_GENERATED:
             why.append(f"{len(mapper.SKIPPED_GENERATED)} declared linguist-generated")
         if mapper.SKIPPED_UNKNOWN_EXT:
+            # 🐛 [2026-09-08] Cut at four with no "…and N more", while the three sibling lines
+            # in this same file (`not indexed, over the size limit`, `read as build output`) all
+            # print `+N more` for exactly this. A repository with seven unreadable extensions was
+            # told about three of them and given no sign the list ended early — the shape this
+            # codebase records more often than any other, a rule applied to some members of a set
+            # and forgotten in the identical ones beside it (R10 agent 4).
             _top = ", ".join(f"{mdblock.as_quoted(ext, 24)} x{n}" for ext, n in
                              mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
-            why.append(f"extensions chamnan does not read: {_top}")
+            _more = len(mapper.SKIPPED_UNKNOWN_EXT) - 4
+            why.append(f"extensions chamnan does not read: {_top}"
+                       + (f" +{_more} more" if _more > 0 else ""))
         print(f"chamnan: no recognised source files under {target}", file=sys.stderr)
         for reason in why:
             print(f"  every candidate was excluded — {reason}", file=sys.stderr)
@@ -583,12 +814,37 @@ def main(argv):
                       f"below the {assets_mod.MIN_FILES} it takes to describe a directory as stored "
                       f"material, so there is nothing to write. A repository with that many in one "
                       f"directory does get a map.", file=sys.stderr)
+            # 🐛 [2026-09-08] This returned without creating the workspace, and every other command
+            # answers "no .chamnan/ workspace here — run `chamnan-map` first". So a repository that is
+            # mostly documentation or data sent its owner in a circle: run map, be told there is no
+            # source; run anything else, be told to run map. Reproduced on a two-file repo against five
+            # commands (R10 agent 4).
+            #
+            # The index really cannot be built, and that stays true — exit 1, no MAP.md. What changes
+            # is that the half of chamnan needing no source files at all (sessions, decisions, threads,
+            # environments) becomes reachable. Refusing the workspace refused those too, and nothing
+            # said so.
+            # `--measure` observes and writes nothing, which is the whole point of the flag and
+            # the defect that was fixed to make it true. Creating a workspace here would undo that
+            # for exactly the trees this branch exists for.
+            if "--measure" in argv:
+                return 1
+            try:
+                ws.ensure(root)
+                print("  the workspace itself is created, so the parts that need no index — "
+                      "`chamnan-timeline`, `chamnan-env`, `chamnan-report` — work here.",
+                      file=sys.stderr)
+            except ws.NotAWorkspace as _err:
+                print(f"  and the workspace could not be created either: {_err}", file=sys.stderr)
             return 1
         print("  chamnan can still describe this tree by another route — writing the map.",
               file=sys.stderr)
     text = mapper.render(files, root)
     try:
         out = ws.ensure(root) / "MAP.md"
+        # Whether this repository had an index before this run — the only first-run signal this
+        # command has, and the one moment onboarding advice is worth printing.
+        _first_run = not out.is_file()
     except ws.NotAWorkspace as err:
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
@@ -626,9 +882,22 @@ def main(argv):
     # concurrent rebuilds: two of three runs produced a MAP.md carrying content from BOTH builds
     # interleaved, and the losing process exited 0 having installed the corrupted file. The
     # `os.replace` was never the problem; the shared staging name is.
+    # 🐛 [2026-09-08] `--measure` was in KNOWN_FLAGS and in the help, and had NO branch of its
+    # own -- it fell straight through to here and rebuilt and overwrote MAP.md, mtime and all,
+    # while sitting in the help beside `--verify` ("check the index's claims... exit 1 if any is
+    # false") and `--preview` ("write nothing"). A flag whose name means observe, listed among the
+    # flags that observe, that silently rewrites the largest artefact in the workspace, is a trap
+    # rather than an option (R7 agent 4). The measurement it prints is produced above this line, so
+    # skipping the write costs the flag nothing.
+    _measure_only = "--measure" in argv
     try:
-        if not ws.atomic_write_text(out, text):
-            raise OSError(f"could not write {out}")
+        if not _measure_only and not ws.atomic_write_text(out, text):
+            # 🐛 [2026-09-08] This built its own sentence, and so did `tools_index.py` -- two of the
+            # four write-failure sites in the tree, while the other two went through the shared
+            # helper. Under `CHAMNAN_READ_ONLY=1` the hand-rolled one says only "could not write",
+            # so a reader is sent hunting file permissions for a variable they set themselves.
+            # The set-not-the-member defect, in the failure path of the largest write chamnan makes.
+            raise OSError(ws.write_failure_text(out))
     except OSError as err:
         # 🐛 The first version of this fix fell back to `out.write_text(text)` here, "so a failed
         # run does not lose its output" — and the fixture caught it in one run: the fallback hit
@@ -667,7 +936,20 @@ def main(argv):
             print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
         except ValueError:
             print(f"chamnan: scanning {root}")
-    print(f"chamnan-map -> {_show(out, root)}{scope}")
+    # 🐛 [2026-09-08] `--measure` was in KNOWN_FLAGS and in the help and had NO branch of its own,
+    # so it fell through to the write path and silently rebuilt and overwrote MAP.md -- mtime and
+    # all -- while sitting in the help beside `--verify` ("exit 1 if any claim is false") and
+    # `--preview` ("write nothing"). A flag whose name means observe, listed among the flags that
+    # observe, that rewrites the largest artefact in the workspace, is a trap rather than an option
+    # (R7 agent 4).
+    #
+    # The skip is at the write and NOT here: the measurement this flag exists to print is produced
+    # by the lines BELOW, and the first version of this fix returned early and printed no
+    # measurement at all -- a flag that did the wrong thing replaced by one that did nothing.
+    if _measure_only:
+        print(f"chamnan-map: measured {_show(out, root)}{scope} — nothing was written")
+    else:
+        print(f"chamnan-map -> {_show(out, root)}{scope}")
     # len(files), not `total`. `total` is the DESCRIBABLE subset -- the denominator of the coverage
     # bar two lines down -- and printing it here labelled "source file(s)" put two different
     # populations on one line: a file count that excluded the undescribable files beside a token
@@ -717,8 +999,11 @@ def main(argv):
         print(f"  not indexed, binary content behind a source extension: "
               f"{len(mapper.SKIPPED_BINARY)} file(s)")
     if getattr(tree, "UNREADABLE", None):
-        _un = ", ".join(mdblock.as_quoted(u, 60) for u in sorted(tree.UNREADABLE)[:4])
-        print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}")
+        _unread = sorted(tree.UNREADABLE)
+        _unmore = len(_unread) - 4
+        _un = ", ".join(mdblock.as_quoted(u, 60) for u in _unread[:4])
+        print(f"  COULD NOT BE READ, so the counts below exclude them: {_un}"
+              + (f" +{_unmore} more" if _unmore > 0 else ""))
     if mapper.SKIPPED_GENERATED:
         print(f"  not indexed, declared linguist-generated in .gitattributes: "
               f"{len(mapper.SKIPPED_GENERATED)} file(s)")
@@ -746,8 +1031,14 @@ def main(argv):
     _unknown = [(ext, n) for ext, n in mapper.SKIPPED_UNKNOWN_EXT.most_common()
                 if ext in _assets.UNEXTRACTED_SOURCE]
     if _unknown:
+        # 🐛 [2026-09-08] Cut at three with no "…and N more" — the same omission as the
+        # `extensions chamnan does not read` line above, in the same file, one screen apart, while
+        # three other lines between them print `+N more` correctly. Measured on a fixture with five
+        # unreadable source extensions: three named, two gone, nothing saying so (R10 agent 4).
         _named = ", ".join(f"{n:,} {ext}" for ext, n in _unknown[:3])
-        print(f"  not indexed, no reader for the extension: {_named}")
+        _more_ext = len(_unknown) - 3
+        print(f"  not indexed, no reader for the extension: {_named}"
+              + (f" +{_more_ext} more" if _more_ext > 0 else ""))
         print("    chamnan reads the languages in mapper.EXT_LANG; these are not among them.")
         print("  (git-tracked directories with these names ARE indexed; these are not tracked)")
     # 🐛 ZeroDivisionError when the scan finds no code -- a namespace package of empty
@@ -776,22 +1067,51 @@ def main(argv):
     _gen = generated_count(files)
     skipped = len(files) - total - _gen
     note = f", {skipped} with no code to describe" if skipped else ""
+    # 🐛 [2026-09-08] The bar is computed over the files chamnan CAN read, and said so nowhere. On a
+    # Solidity library the score and the fix-it list were both about the build tooling, and a total
+    # gap in the repository's actual subject matter never read as worse than ordinary
+    # under-documentation (R10 agent 4). The line naming the unreadable extensions is printed above,
+    # but nothing connected it to the number a reader takes away. This is the connection, and it
+    # appears only when there is something to connect.
+    if _unknown and total:
+        note += f", of the {total} chamnan can read"
     print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%{note})")
     # Stated rather than silently dropped, the same way a .gitattributes-declared file is. A count
     # that quietly excludes files is a count nobody can check.
     if _gen:
         print(f"  not counted, a program wrote them (\"do not edit\"): {_gen} file(s)")
 
-    for label, marker in (("data model", "## Data model\n"), ("API surface", "## API surface"),
-                          ("config", "## Configuration")):
-        if marker in text[:index_chars]:
-            print(f"  + {label} section included")
+    _fired = [label for label, marker in
+              (("data model", "## Data model\n"), ("API surface", "## API surface"),
+               ("config", "## Configuration"), ("deployment", "## Deployment"))
+              if marker in text[:index_chars]]
+    for _label in _fired:
+        print(f"  + {_label} section included")
+    # 🐛 [2026-09-09] "8/8 files (100%)" on a repository holding sixteen, with nothing saying where
+    # the other eight went. They are not lost — a Dockerfile, a compose file, a migration and a
+    # workflow are read by the Deployment, Data model and Configuration sections right above — but
+    # a person doing the obvious "did it index my whole repo?" check gets a number that looks wrong
+    # and has to cross-reference MAP.md to find out it is not (R4 acc3, first ten minutes).
+    #
+    # Separate from the "no reader for the extension" line above, which fires only for extensions
+    # that ARE somebody's source language. `.md`, `.yml` and a Dockerfile are not source and saying
+    # "chamnan cannot read them" would be false; what is true is that they are here, they are not
+    # code, and the sections above are made of them.
+    _other = sum(mapper.SKIPPED_UNKNOWN_EXT.values()) if mapper.SKIPPED_UNKNOWN_EXT else 0
+    if _other and total:
+        _from = (" — the " + ", ".join(_fired) + f" section{'s' if len(_fired) > 1 else ''} above "
+                 f"{'are' if len(_fired) > 1 else 'is'} read from them") if _fired else ""
+        print(f"  {_other} other file(s) here are not code: configuration, documentation, "
+              f"manifests{_from}.")
 
     if mapper.PARSE_WARNINGS:
         print(f"\n  {len(mapper.PARSE_WARNINGS)} file(s) raised a parse warning while being read:")
         for path, count, msg in mapper.PARSE_WARNINGS[:4]:
             rel = path.replace(str(root) + "/", "")
             print(f"    {rel} — {msg}")
+        _pwmore = len(mapper.PARSE_WARNINGS) - 4
+        if _pwmore > 0:
+            print(f"    +{_pwmore} more")
         print("  Harmless today; several of these become hard errors in a future Python, and")
         print("  py_compile does not report them, so nothing else in a normal check will.")
 
@@ -835,7 +1155,56 @@ def main(argv):
     else:
         print(f"\n  Under the {budget:,}-token session budget — injected per session as-is,"
               f" one line per file.")
-    if pct < 70:
+    # 🐛 [2026-09-09] Every command in the README's own "From a shell, in the repository" table
+    # answers `command not found` until somebody puts `bin/` on their PATH, and nothing at the
+    # moment of installation says so — the README does, under "Running it on each operating
+    # system", well past Quick Start, which never links to it. Reproduced with PATH filtered:
+    # `chamnan-map --help` exits 127. Inside Claude Code the Bash tool resolves the plugin's bin
+    # regardless, so this is the "driving it from a terminal, or from an agent that is not Claude
+    # Code" case — which is exactly what somebody trying the CLI in their first ten minutes is
+    # doing (R4 acc3, first ten minutes).
+    #
+    # Said once, on the run that creates the index, and only when the name really does not resolve
+    # from this environment. A line that fires on every run is one people stop reading, and the
+    # people who need this one need it exactly once.
+    if _first_run and shutil.which("chamnan-map") is None:
+        _bindir = HERE
+        print(f"\n  These commands are not on your PATH, so `chamnan-map` from a shell will say")
+        print(f"  `command not found`. Inside Claude Code they work regardless. To use them from a")
+        print(f"  terminal, add this line to your shell profile:")
+        # 🐛 [2026-09-09] One line, `export PATH="…:$PATH"`, printed to every operating system.
+        # On Windows it is wrong three times over -- `export` is not a command there, `$PATH` is
+        # not the variable, and `:` is not the separator -- so the single instruction chamnan gives
+        # a Windows user in their first ten minutes does nothing when they paste it, and the
+        # message that sends them to a shell profile does not say which one. The suite asserted
+        # the bash text was present, on Windows too, so the platform where the advice was useless
+        # was the platform confirming it. Same shape as the defect this release is named for.
+        if os.name == "nt":
+            print(f"    $env:Path = \"{_bindir};$env:Path\"          # this PowerShell session")
+            print(f"  To keep it, add the same line to the file $PROFILE names, or set it under")
+            print(f"  System Properties -> Environment Variables.")
+        else:
+            print(f"    export PATH=\"{_bindir}:$PATH\"")
+
+    if total == 0:
+        # 🐛 [2026-09-08] `pct = have / total * 100 if total else 0` makes a repository with nothing
+        # indexable read as 0% documented, which satisfies `pct < 70` exactly as a real, badly
+        # documented codebase does. So the loudest, most action-shaped text in the whole run -- "the
+        # single biggest lever on this map's usefulness", with a `/chamnan:bootstrap` agent dispatch
+        # under it -- pointed at zero files, while the sentence that actually explains the situation
+        # sat one screen higher in plainer text. Reproduced on Example.jl and on Email-MIME
+        # (R10 agent 4). Nothing to have a lever on is a different fact from a lot of undocumented
+        # code, and it gets its own sentence rather than the other one's.
+        _unknown = ", ".join(f"{ext} x{n}" for ext, n in
+                             mapper.SKIPPED_UNKNOWN_EXT.most_common(4))
+        _rest = len(mapper.SKIPPED_UNKNOWN_EXT) - 4
+        print("\n  No file here was indexed, so there is no comment coverage to improve.")
+        if _unknown:
+            print(f"  What is here is in extensions chamnan has no reader for: {_unknown}"
+                  + (f" +{_rest} more" if _rest > 0 else ""))
+            print("  The sections above are written from what chamnan CAN read of this tree —")
+            print("  its deployment shape, its stored material, its configuration.")
+    elif pct < 70:
         # 🐛 A new user with one real file was told to add a comment to a file chamnan itself had
         # installed under `.chamnan/tools/`. Suggesting somebody comment the tool's own
         # scaffolding is advice they cannot act on and would be wrong to.
@@ -861,9 +1230,29 @@ def main(argv):
             print(f"    …and {total - have - len(missing)} more — "
                   f"`chamnan-map --undocumented` lists every one, a path per line.")
         if ws.enabled("agents", root):
-            print(f"  Ask Claude: \"add a one-line opening comment to every file "
+            # 🐛 [2026-09-08] "Ask Claude", printed unconditionally, to a reader who might be in
+            # Cursor's terminal or Aider's. The ADVICE is agent-agnostic — add a one-line opening
+            # comment — and only the vendor name made it Claude's. `/chamnan:bootstrap` really is
+            # Claude Code only, so it is named only when Claude Code is what is running; every
+            # other agent gets the same instruction addressed to it, which it can carry out
+            # (R2 acc3, adapters).
+            #
+            # "your agent" rather than a per-vendor display name: a label table would be
+            # twenty-four more strings that have to agree with `host._AGENTS`, which is the
+            # two-lists-kept-by-hand shape this repository keeps paying for. The one name worth
+            # printing is the one that unlocks a command, and that is decided by detection.
+            import host as _host
+            _who, _strength = _host.primary(root)
+            # RUNNING evidence only. A `~/.claude/` on the machine says Claude Code was installed
+            # here once; it does not say Claude Code is the process reading this line, and on a
+            # machine with both installed it is exactly the wrong answer for somebody in Cursor's
+            # terminal -- which is the reader this finding was about.
+            _is_claude = _who == "claude" and _strength == _host.RUNNING
+            print(f"  Ask {'Claude' if _is_claude else 'your agent'}: "
+                  f"\"add a one-line opening comment to every file "
                   f"`chamnan-map --undocumented` lists\"")
-            print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")
+            if _is_claude:
+                print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")
         else:
             # agents are switched off, so pointing at an agent the user disabled would be noise.
             print(f"  Agents are disabled in .chamnan/config.json, so add these by hand or")
