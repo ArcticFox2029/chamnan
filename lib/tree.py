@@ -158,6 +158,21 @@ def _walk(root):
                 # RuntimeError("Symlink loop from ..."), which this except never caught. That
                 # escaped the walk, killed mapper.scan(), and with it every other section of
                 # chamnan-map -- assets, catalogs, deploy and schema all share this walk.
+                #
+                # 🐛 [2026-09-09] Caught, and then dropped in SILENCE -- the one exit from this
+                # walk that recorded nothing, while `_note` above records an unreadable DIRECTORY
+                # and `mapper.indexable` records an unresolvable link it is handed. This branch
+                # took the link away before `indexable` could ever see it, so on the Pythons that
+                # raise here the accounting had nothing to account for: `chamnan-map` printed
+                # "1/1 files (100%)" over a tree whose other two entries it had quietly refused.
+                #
+                # It read as a version difference and is not one. Python 3.13 rewrote
+                # `Path.resolve()` onto `os.path.realpath(strict=False)`, which returns a path for
+                # a symlink loop instead of raising; 3.8 through 3.12 raise RuntimeError. So the
+                # SAME tree was reported honestly on 3.13 and silently truncated on every older
+                # interpreter chamnan supports -- and the check that covers it passed on the
+                # version the author happened to run.
+                UNREADABLE.add(str((rel_dir / name).as_posix()))
                 continue          # a broken, looping or unresolvable link is not indexable either
             files.append(rel_dir / name)
     files.sort()

@@ -257,13 +257,25 @@ PASSED = 0
 FAILED = []
 
 
-def check(name, condition):
+def check(name, condition, saw=None):
+    """`saw` is printed ONLY on failure: what this check actually observed.
+
+    Written 2026-09-09 after a CI round was spent on four FAIL lines that named the expectation and
+    nothing else. Three of them ran only on a platform this machine is not, so the whole diagnosis
+    had to come from re-reading source and reasoning about an operating system rather than from
+    evidence -- and one guess was wrong, which cost a second round. A failing check that already
+    holds the answer should hand it over. It stays off the passing path so nothing is added to the
+    output of a green run.
+    """
     global PASSED
     if condition:
         PASSED += 1
     else:
         FAILED.append(name)
         print(f"  FAIL  {name}")
+        if saw is not None:
+            for _sl in str(saw).splitlines()[:6]:
+                print(f"        SAW  {_sl[:200]}")
 
 
 def tally():
@@ -22453,8 +22465,14 @@ check("A COMMIT DOES NOT CARRY WORK THE DEVELOPER LEFT UNSTAGED",
 check("...and that edit is still sitting there unstaged, where they left it",
       "shared.txt" in _hk_run("git", "diff", "--name-only").stdout)
 # ...and the half the hook exists for still happens: the agent's file is refreshed AND staged.
+_hk_stat = _hk_run("git", "show", "--stat", "HEAD").stdout
 check("...while the agent file the hook refreshed IS in the commit",
-      "AGENTS.md" in _hk_run("git", "show", "--stat", "HEAD").stdout)
+      "AGENTS.md" in _hk_stat,
+      saw=f"commit stat: {_hk_stat.strip()!r}\n"
+          f"hook installed: {(_hk / '.git' / 'hooks' / 'pre-commit').is_file()}\n"
+          f"AGENTS.md present: {(_hk / 'AGENTS.md').is_file()}\n"
+          f"AGENTS.md changed by the hook: "
+          f"{(_hk / 'AGENTS.md').read_text(encoding='utf-8') != _hk_before}")
 check("...and nothing chamnan wrote is left dirty behind it",
       _hk_run("git", "status", "--short", "AGENTS.md").stdout.strip() == "")
 
@@ -23035,11 +23053,14 @@ try:
           _ok.returncode == 0 and "real.py" in _ok.stdout)
 
     _leak = subprocess.run(_pkbin + ["notes.md"], **_kw)
+    _leak_saw = (f"rc={_leak.returncode} cwd={_esc} resolved={_esc.resolve()}\n"
+                 f"stdout={_leak.stdout[:200]!r}\nstderr={_leak.stderr[:200]!r}")
     check("A LINK INSIDE THE REPOSITORY POINTING OUT IS REFUSED, NOT FOLLOWED",
           _leak.returncode != 0
-          and "SECRET_FROM_OUTSIDE_THE_REPO" not in (_leak.stdout + _leak.stderr))
+          and "SECRET_FROM_OUTSIDE_THE_REPO" not in (_leak.stdout + _leak.stderr),
+          saw=_leak_saw)
     check("...and the refusal says which of the two facts made it one",
-          "points outside it" in _leak.stderr)
+          "points outside it" in _leak.stderr, saw=_leak_saw)
 
     # The half that keeps this a boundary rather than a blanket refusal.
     _named = subprocess.run(_pkbin + [str(_outside)], **_kw)
@@ -24022,8 +24043,13 @@ try:
                                 errors="replace", cwd=str(_r25), env=_r24_clean).stdout
     check("A FIRST RUN SAYS WHY THESE COMMANDS WILL NOT BE FOUND FROM A SHELL",
           "not on your PATH" in _r25_first)
+    # The instruction has to be runnable in the shell the reader is actually in; asserting the
+    # bash spelling on every platform is how it stayed wrong on Windows.
+    _r25_verb = "$env:Path =" if os.name == "nt" else "export PATH="
     check("...and names the directory to add, rather than describing the problem",
-          str(ROOT / "bin") in _r25_first and "export PATH=" in _r25_first)
+          str(ROOT / "bin") in _r25_first and _r25_verb in _r25_first)
+    check("...in a form the shell on THIS platform will actually run",
+          ("export PATH=" in _r25_first) == (os.name != "nt"))
     _r25_again = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                                 capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", cwd=str(_r25), env=_r24_clean).stdout
@@ -24033,7 +24059,12 @@ try:
     try:
         subprocess.run(["git", "init", "-q", str(_r25_on)], capture_output=True)
         (_r25_on / "a.py").write_text("# a\ndef a():\n    return 1\n", encoding="utf-8")
-        _r25_env = dict(_r24_clean, PATH=f"{ROOT / 'bin'}:{_r24_clean['PATH']}")
+        # 🐛 [2026-09-09] Joined with a literal `:`, which is the separator on exactly the two
+        # platforms this passed on. Windows separates PATH with `;`, so both jobs there built one
+        # nonsense entry, `chamnan-map` correctly said the directory was not on PATH, and the check
+        # read that correct answer as a defect. The check is about a user who HAS put the directory
+        # on their PATH, and on Windows it had never once described one.
+        _r25_env = dict(_r24_clean, PATH=f"{ROOT / 'bin'}{os.pathsep}{_r24_clean['PATH']}")
         _r25_ok = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                                  capture_output=True, text=True, encoding="utf-8",
                                  errors="replace", cwd=str(_r25_on), env=_r25_env).stdout
