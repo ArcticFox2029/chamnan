@@ -23620,6 +23620,43 @@ _r14_documented_flags = set(re.findall(r"^  (--[\w-]+)", _r14_maph, re.M))
 check("no flag is documented and then called undocumented in the same help",
       not [f for f in _r14_documented_flags if _r14_undoc_line and f in _r14_undoc_line[0]])
 
+# ------------------------------------------- "Ask Claude", printed to whoever is running it
+# 🐛 [2026-09-08] `chamnan-map`'s comment-coverage suggestion said "Ask Claude" unconditionally, to
+# a reader who might be in Cursor's terminal or Aider's, and pointed at `/chamnan:bootstrap` — a
+# Claude Code slash command that exists for none of the other twenty-two vendors. The advice itself
+# is agent-agnostic; only the vendor name made it Claude's (R2 acc3, adapters).
+#
+# The name is printed on RUNNING evidence only. A `~/.claude/` says Claude Code was installed on
+# this machine once, not that it is the process reading the line — and on a machine with both
+# installed, HOME evidence gives exactly the wrong answer to the reader this is about.
+_r16 = Path(tempfile.mkdtemp(prefix="chamnan-ask-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_r16)], capture_output=True)
+    for _i in range(3):
+        (_r16 / f"f{_i}.py").write_text(f"def f{_i}():\n    return {_i}\n", encoding="utf-8")
+    _r16_env = {k: v for k, v in os.environ.items()
+                if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CURSOR_AGENT")}
+    _r16_run = lambda e: subprocess.run(
+        [sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", cwd=str(_r16), env=dict(_r16_env, **e)).stdout
+    _r16_none = _r16_run({})
+    check("THE SUGGESTION DOES NOT NAME A VENDOR THAT IS NOT THE ONE RUNNING IT",
+          "Ask your agent" in _r16_none and "Ask Claude" not in _r16_none)
+    check("...and does not offer a slash command only one vendor has",
+          "/chamnan:bootstrap" not in _r16_none)
+    _r16_claude = _r16_run({"CLAUDECODE": "1"})
+    check("...while Claude Code, which really does have it, is still named",
+          "Ask Claude" in _r16_claude and "/chamnan:bootstrap" in _r16_claude)
+    _r16_cursor = _r16_run({"CURSOR_AGENT": "1"})
+    check("...and another vendor's live process gets the agent-neutral wording",
+          "Ask your agent" in _r16_cursor and "Ask Claude" not in _r16_cursor)
+    check("...and the advice itself is identical in all three, which is the point",
+          all("add a one-line opening comment to every file" in _t
+              for _t in (_r16_none, _r16_claude, _r16_cursor)))
+finally:
+    _rmtree(_r16, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- cleanup
 os.chdir(ROOT)
 # Not ignore_errors: this failed silently for the whole life of the shadowing bug above, and a

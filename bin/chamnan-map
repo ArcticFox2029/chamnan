@@ -1169,9 +1169,29 @@ def main(argv):
             print(f"    …and {total - have - len(missing)} more — "
                   f"`chamnan-map --undocumented` lists every one, a path per line.")
         if ws.enabled("agents", root):
-            print(f"  Ask Claude: \"add a one-line opening comment to every file "
+            # 🐛 [2026-09-08] "Ask Claude", printed unconditionally, to a reader who might be in
+            # Cursor's terminal or Aider's. The ADVICE is agent-agnostic — add a one-line opening
+            # comment — and only the vendor name made it Claude's. `/chamnan:bootstrap` really is
+            # Claude Code only, so it is named only when Claude Code is what is running; every
+            # other agent gets the same instruction addressed to it, which it can carry out
+            # (R2 acc3, adapters).
+            #
+            # "your agent" rather than a per-vendor display name: a label table would be
+            # twenty-four more strings that have to agree with `host._AGENTS`, which is the
+            # two-lists-kept-by-hand shape this repository keeps paying for. The one name worth
+            # printing is the one that unlocks a command, and that is decided by detection.
+            import host as _host
+            _who, _strength = _host.primary(root)
+            # RUNNING evidence only. A `~/.claude/` on the machine says Claude Code was installed
+            # here once; it does not say Claude Code is the process reading this line, and on a
+            # machine with both installed it is exactly the wrong answer for somebody in Cursor's
+            # terminal -- which is the reader this finding was about.
+            _is_claude = _who == "claude" and _strength == _host.RUNNING
+            print(f"  Ask {'Claude' if _is_claude else 'your agent'}: "
+                  f"\"add a one-line opening comment to every file "
                   f"`chamnan-map --undocumented` lists\"")
-            print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")
+            if _is_claude:
+                print(f"  (/chamnan:bootstrap dispatches a cheap-model agent to do exactly this)")
         else:
             # agents are switched off, so pointing at an agent the user disabled would be noise.
             print(f"  Agents are disabled in .chamnan/config.json, so add these by hand or")
