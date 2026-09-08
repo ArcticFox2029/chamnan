@@ -22486,8 +22486,19 @@ check("...and nothing chamnan wrote is left dirty behind it",
 # "places this script reads output produced by a Python program", and the next one added would have
 # the same defect for the same reason. `command -v` and a bare invocation are excluded -- they
 # consume nothing.
-_hk_body = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
-_hk_between = _hk_body.split('HOOK_BODY = """', 1)[1].split('"""', 1)[0]
+# The string as PYTHON EVALUATES IT, not as it is spelled in the file. `HOOK_BODY` is not a raw
+# string, so `\\r` in the source is a real carriage return in the hook that gets installed -- and a
+# check reading the source text sees the two characters and says the escape is present while the
+# installed file holds a control character instead. That exact confusion is how a CR was shipped
+# into the hook on 2026-09-09 with this check passing; the sibling check that reads the INSTALLED
+# file ("AN INSTALLED SHELL SCRIPT CARRIES LF ENDINGS") is what caught it, on all five CI jobs.
+_hk_between = next(
+    _n.value.value for _n in ast.parse(
+        (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")).body
+    if isinstance(_n, ast.Assign) and getattr(_n.targets[0], "id", "") == "HOOK_BODY")
+check("...and the hook body carries no control character of its own",
+      not [c for c in _hk_between if ord(c) < 32 and c != "\n"],
+      saw=sorted({repr(c) for c in _hk_between if ord(c) < 32 and c != "\n"}))
 # A single `|`, never `||`: the first pipes chamnan's output into something that reads it, the
 # second is `or else` and consumes nothing. Matching both put `chamnan-map … || true` in the
 # population and reported a defect where there is nothing to strip.
