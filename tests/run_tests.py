@@ -17191,6 +17191,66 @@ else:
     check("THE CONCURRENCY SUITE IS PRESENT", False)
 
 
+# ------------------------------------------- the whole family, not two members of it
+# 🐛 [2026-09-08] Two lists that cap what a session sees were found ordering by filename alphabet,
+# and each was fixed on its own, with its own hand-built fixture, hours apart -- `memory.titles()`
+# and the skills index. They are the same bug and the block injects a dozen capped lists, so this
+# asks the FAMILY rather than the members: for every store that is one file per entry and gets
+# truncated on the way in, does a freshly written entry beat an older one whose name sorts first?
+#
+# Seven of the seventeen defects fixed today were a rule applied to some members of a set and
+# forgotten in the identical ones beside it, and each was found one at a time by a person reading
+# code. A check that walks the set is the only thing that finds the next one without them
+# (R2 acc3, ranked second of five and the one that generalises).
+#
+# Behavioural, not structural: it does not look for the word "mtime" in a sort key, because a
+# correct rewrite that spells it differently must not fail and a wrong one that keeps the word must
+# not pass. It writes two entries, makes the alphabet and the clock disagree, and reads the block.
+_fam = Path(tempfile.mkdtemp(prefix="chamnan-family-")) / "repo"
+(_fam / "src").mkdir(parents=True)
+(_fam / "src" / "a.py").write_text('"""Module."""\ndef f():\n    return 1\n', encoding="utf-8")
+subprocess.run(["git", "init", "-q", str(_fam)], capture_output=True)
+_fam_now = time.time()
+# store directory, how many entries to write, the heading the block puts them under
+_fam_stores = [
+    (".chamnan/memory/decisions", "Recorded decisions"),
+    (".chamnan/memory/lessons", "Recorded decisions"),
+    (".chamnan/skills", "Recorded procedures"),
+]
+for _fam_rel, _ in _fam_stores:
+    _fam_dir = _fam / _fam_rel
+    _fam_dir.mkdir(parents=True, exist_ok=True)
+    for _i in range(12):
+        (_fam_dir / f"aaa_old_{_i:02d}.md").write_text(f"# Old entry {_i}\n\nBody.\n",
+                                                       encoding="utf-8")
+        os.utime(_fam_dir / f"aaa_old_{_i:02d}.md", (_fam_now, _fam_now - 120 * 86400 - _i))
+    (_fam_dir / "zzz_written_today.md").write_text(
+        "# Written today\n\nThe entry a session must not miss.\n", encoding="utf-8")
+    os.utime(_fam_dir / "zzz_written_today.md", (_fam_now, _fam_now))
+_fam_out = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                          cwd=str(_fam), input="{}", text=True, capture_output=True,
+                          encoding="utf-8", errors="replace",
+                          env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_fam))).stdout
+_fam_missing = []
+for _fam_rel, _fam_heading in _fam_stores:
+    if _fam_heading not in _fam_out:
+        continue          # the section was dropped to fit; that is a different mechanism
+    _fam_sec = _fam_out.split(_fam_heading, 1)[-1].split("###", 1)[0]
+    if "zzz_written_today" not in _fam_sec:
+        _fam_missing.append(_fam_rel)
+_fam_seen = [r for r, h in _fam_stores if h in _fam_out]
+check(f"EVERY CAPPED STORE SHOWS TODAY'S ENTRY OVER A FOUR-MONTH-OLD ONE "
+      f"({len(_fam_seen)} of {len(_fam_stores)} sections reached the block)",
+      not _fam_missing)
+if _fam_missing:
+    print(f"      DETAIL  ordered by filename alphabet, so today's entry is invisible: {_fam_missing}")
+# A family sweep that reached no section would pass while testing nothing, which is the failure
+# this repository has a skill about. The population is the assertion's other half.
+check("...and at least one of those sections actually reached the block, so the sweep is not vacuous",
+      bool(_fam_seen))
+_rmtree(_fam.parent, ignore_errors=True)
+
+
 # ------------------------------------------- which twelve skills a session is told about
 # 🐛 [2026-09-08] The cap chose WHICH twelve by filename alphabet, and skills were the third member
 # of a three-way set to need the same fix: the tools index beside them ranks by run count then
@@ -18136,6 +18196,49 @@ try:
     check("...and the fixture really did carry the bytes, so the sweep is not vacuous",
           any(c in (_hw / "STATE.md").read_text(encoding="utf-8") for c in _CTRL_BYTES))
 finally:
+
+    # 🐛 [2026-09-08] Malformed-payload crash safety was tested for two of the six hooks, by name,
+    # while the table above already enumerates all six for a different property. A hook that raises
+    # is not a wrong number in a report -- it is a session that starts with no context and a user
+    # who is told nothing about why, which is the failure this whole plugin exists to avoid. The
+    # sweep it needed was one more loop over a list already built (R2 acc3, ranked first of five for
+    # value per line added).
+    #
+    # The host sends this JSON; chamnan does not choose it. Every shape below is one a real client
+    # can produce -- a truncated write, an empty pipe, a field that is null where a string was
+    # promised, a top-level array, an encoding nobody expected. A hook must survive all of them and
+    # exit 0, because a non-zero exit from a SessionStart hook is what makes Claude Code show the
+    # user an error instead of a session.
+    _bad_payloads = [
+        ("empty stdin", ""),
+        ("not JSON at all", "this is not json"),
+        ("truncated mid-object", '{"hook_event_name": "SessionStart", "cw'),
+        ("a top-level array", '[{"hook_event_name": "SessionStart"}]'),
+        ("a top-level string", '"SessionStart"'),
+        ("null where a string was promised", '{"hook_event_name": null, "cwd": null}'),
+        ("a number where an object was promised", '{"hook_event_name": "PreToolUse",'
+                                                  ' "tool_input": 42}'),
+        ("deeply nested nonsense", '{"hook_event_name": {"a": {"b": {"c": [1, 2, {"d": null}]}}}}'),
+        ("a UTF-8 BOM in front of valid JSON", '\ufeff{"hook_event_name": "SessionStart"}'),
+    ]
+    _crashed = []
+    for _hk in sorted((ROOT / "hooks").glob("chamnan_*.py")):
+        for _bad_label, _bad in _bad_payloads:
+            _br = subprocess.run([sys.executable, str(_hk)], input=_bad, capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace", cwd=str(ROOT),
+                                 timeout=60)
+            if _br.returncode != 0 or "Traceback" in _br.stderr:
+                _crashed.append(f"{_hk.name} on {_bad_label}: rc={_br.returncode}")
+    check(f"EVERY HOOK SURVIVES A MALFORMED PAYLOAD FROM THE HOST "
+          f"({len(list((ROOT / 'hooks').glob('chamnan_*.py')))} hooks x {len(_bad_payloads)} shapes)",
+          not _crashed)
+    for _c in _crashed[:6]:
+        print(f"      DETAIL  {_c}")
+    # A sweep that ran over no hooks would pass silently, which is the shape this file has a skill
+    # about. Assert the population as well as the property.
+    check("...and the sweep really drove every hook, rather than finding none",
+          len(list((ROOT / "hooks").glob("chamnan_*.py"))) >= 6)
+
     _rmtree(_hr, ignore_errors=True)
 
 
