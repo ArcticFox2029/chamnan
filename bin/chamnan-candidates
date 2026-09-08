@@ -236,8 +236,12 @@ def cmd_promote(root, ident, destination=None, name=None):
                 pass
             print(f"chamnan: could not register {dest.name!r} in the tools index: {err}",
                   file=sys.stderr)
-            print("  nothing was left behind -- the candidate is still there. Fix the underlying "
-                  "issue (often the index file's permissions) and run this again.", file=sys.stderr)
+            # 🐛 [2026-09-08] This guessed at permissions while the line above it now carries
+            # the real reason from `ws.write_failure_text` -- so under `CHAMNAN_READ_ONLY=1` the
+            # two printed together contradicted each other, and the guess is the one a reader
+            # acts on because it is the one phrased as advice. Say what is true instead.
+            print("  nothing was left behind -- the candidate is still there. Fix what the line "
+                  "above names and run this again.", file=sys.stderr)
             return 1
         p.unlink()
         rel = dest.relative_to(root).as_posix()
@@ -333,6 +337,16 @@ def cmd_demote(root, tool_name):
     return 0
 
 
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ('--list', '-l')
+TAKES_VALUE = ()
+TAKES_REST = ()
+
+
 def main(argv):
     # \U0001f41b [2026-09-07] FIRST, before `find_root`. This block already carried the sentence
     # "including one that would otherwise refuse the arguments beside it", and in this command it
@@ -369,6 +383,11 @@ def main(argv):
     if ws.wants_help(argv):
         print(__doc__.strip())
         return 0
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-candidates: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
 
     cmd, *rest = argv
     if cmd not in ("confirm", "reject", "edit", "promote", "demote"):

@@ -115,6 +115,16 @@ def _origin_for(src, root):
         return src.name
 
 
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ('--list', '-l', '--desc')
+TAKES_VALUE = ()
+TAKES_REST = ('--desc',)
+
+
 def main(argv):
     # Before help. These three answer help for a BARE call too, so `--version` has to be
     # tested first or it would print usage instead. See workspace.wants_version.
@@ -127,7 +137,28 @@ def main(argv):
         print(__doc__.strip() if __doc__ else
               "chamnan-promote <file> <name> --desc \"what it does\"")
         return 0
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-promote: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
     root = ws.find_root()
+    # 🐛 [2026-09-08] Seven sibling commands refuse here and name `chamnan-map` as the way out;
+    # this one and `chamnan-candidates promote` instead called `ws.ensure()` further down and
+    # BOOTSTRAPPED THE WHOLE WORKSPACE in silence. The eighth member of a set of eight, doing the
+    # opposite of the other seven, with no message either way (R7 agent 4).
+    #
+    # Refusing is the right side to be on, judged from the user's side: somebody running
+    # `chamnan-promote` in a directory with no `.chamnan/` has almost certainly mistyped a path or
+    # is standing in the wrong repository, and the outcome they least want is a new workspace
+    # scaffolded where they did not ask for one -- in somebody else's project, appearing in
+    # `git status` with no clue which command made it. `chamnan-map` creates workspaces, says so,
+    # and is what the other seven point at.
+    if not ws.workspace(root).is_dir():
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
+        return 1
     if not ws.enabled("promote", root):
         print("chamnan: promote is disabled in .chamnan/config.json")
         return 0
@@ -219,8 +250,10 @@ def main(argv):
         except OSError:
             pass
         print(f"chamnan: could not register {dest.name!r} in the tools index: {err}", file=sys.stderr)
-        print("  nothing was left behind -- fix the underlying issue (often the index file's "
-              "permissions) and run this again.", file=sys.stderr)
+        # 🐛 [2026-09-08] The sibling of the line in `chamnan-candidates`, and it had the same
+        # defect: it guessed "permissions" while the line above it now names the real cause.
+        print("  nothing was left behind -- fix what the line above names and run this again.",
+              file=sys.stderr)
         return 1
     rel = dest.relative_to(root).as_posix()
     print(f"chamnan: promoted -> {rel}")

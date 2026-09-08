@@ -30,6 +30,7 @@ from pathlib import Path
 import mapper
 import redact
 import tokens
+import tree
 DEFAULT_BUDGET = 400           # tokens of output; the whole point is to stay small
 SAMPLE_ROWS = 3
 MAX_MEMBERS = 25
@@ -370,7 +371,9 @@ def _unxml(s):
 # Two million bytes, matching `mapper.MAX_FILE_BYTES`: past that this command is not previewing a
 # document any more. Read through `open()` rather than `read()` so the bound applies to the
 # DECOMPRESSED stream, not to a size the archive claims.
-ZIP_MEMBER_CEILING = 2_000_000
+# 🐛 The comment above says "matching mapper.MAX_FILE_BYTES", which is a promise a comment
+# cannot keep -- the two were independent literals. Same constant now, so they cannot drift.
+ZIP_MEMBER_CEILING = tree.MAX_FILE_BYTES
 
 
 def _zread(zf, name, limit=ZIP_MEMBER_CEILING):
@@ -600,13 +603,45 @@ def peek_text(path, find=None):
 
 
 def peek_binary(path):
-    raw = path.open("rb").read(4096)
+    """The last-resort description of a file: what it looks like, and nothing decoded.
+
+    🐛 [2026-09-08] This raised, and one of its three callers is the `except Exception` that exists
+    so "a malformed file must not crash the caller" -- so a file that disappeared between the
+    dispatch and the recovery produced an uncaught `FileNotFoundError` and a raw traceback, out of
+    the branch whose whole job is to stop that. Reproduced by the round that found it, which had
+    deleted its own fixture during cleanup while the command was still running (R7 agent 2).
+    Guarded HERE rather than at the recovery site, because all three callers need it and guarding
+    the one that was seen failing is how this codebase produces its commonest defect.
+
+    The handle is closed explicitly too: `path.open("rb").read(...)` leaves it to the collector,
+    and on Windows an open handle is what stops the next caller deleting the file.
+    """
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(4096)
+    except OSError as err:
+        return [f"could not read this file at all: {type(err).__name__}: {err}"]
     kind = _identify(raw) or "unrecognised"
     printable = sum(32 <= b < 127 or b in (9, 10, 13) for b in raw)
     strings = re.findall(rb"[ -~]{6,}", raw)[:8]
     return [f"{kind}; {printable * 100 // max(len(raw), 1)}% printable in the first 4KB",
             "crc32 of first 4KB: " + format(binascii.crc32(raw) & 0xFFFFFFFF, "08x"),
             "readable strings: " + ", ".join(s.decode("ascii")[:40] for s in strings[:5])]
+
+
+def _first_bytes(path, count):
+    """The first `count` bytes, with the handle closed. `b""` when the file cannot be read.
+
+    The dispatch below sniffs for a SQLite header this way, and wrote it as
+    `path.open("rb").read(15)` -- a handle left to the collector, inside the condition of an `elif`
+    chain, on a path that may not be readable at all. On Windows an open handle is also what stops
+    the next caller deleting the file.
+    """
+    try:
+        with path.open("rb") as handle:
+            return handle.read(count)
+    except OSError:
+        return b""
 
 
 # ------------------------------------------------------------------ dispatch
@@ -641,7 +676,11 @@ def peek_source(path, find=None):
     Same extractor as the index, so a file peeked and a file indexed agree with each other.
     """
     lang = mapper.EXT_LANG.get(path.suffix.lower())
-    source = path.read_text(encoding=_text_encoding(path) or "utf-8-sig", errors="replace")
+    # 🐛 [2026-09-08] Read whole, with no bound, while `mapper` refuses anything over the same
+    # ceiling and every other reader in this file has one: a 150 MB file hung `chamnan-peek` for
+    # over 150 seconds. A preview TRUNCATES rather than skipping -- unlike the index, it never
+    # claimed to be complete, and the caller already prints a truncation notice (R7 agent 2).
+    source = tree.read_capped(path, encoding=_text_encoding(path) or "utf-8-sig")
     out = []
     try:
         summary, functions, classes, _rest = mapper._extract_one(source, str(path), lang)
@@ -752,7 +791,7 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
             body = peek_zip(path, find)
         elif ext in (".tar", ".tgz") or path.name.endswith((".tar.gz", ".tar.bz2", ".tar.xz")):
             body = peek_tar(path, find)
-        elif ext in (".db", ".sqlite", ".sqlite3") or path.open("rb").read(15) == b"SQLite format 3":
+        elif ext in (".db", ".sqlite", ".sqlite3") or _first_bytes(path, 15) == b"SQLite format 3":
             body = peek_sqlite(path, find)
         elif ext == ".pdf":
             body = peek_pdf(path, find)
@@ -773,7 +812,7 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
                 *peek_binary(path)]
 
     out = "\n".join(header + [""] + [str(x) for x in body])
-    cut = tokens.cut_at(out, budget)
+    cut = mdblock.cut_outside_a_fence(out, tokens.cut_at(out, budget))
     if cut < len(out):
         out = out[:cut] + f"\n\n_[truncated at {budget} tokens — narrow it with --find]_"
     # One choke point, matching how the map is scrubbed. peek reads .env, .ini, .yaml and source

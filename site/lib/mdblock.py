@@ -275,6 +275,38 @@ def demote_headings(text):
     return "\n".join(out)
 
 
+def cut_outside_a_fence(text, cut):
+    """`cut`, moved back to the end of the last complete line that is not inside a fence.
+
+    A budget cut is a character index and markdown structure is not, so a cut lands wherever the
+    budget ran out -- mid-word, and worse, inside a ``` block, which leaves the fence open. Every
+    line after it then renders as code, including the marker that says the text was truncated and
+    every section injected after it.
+
+    🐛 [2026-09-08] This lived in `lib/state.py` as `_safe_cut`, private to the one caller that
+    had been bitten. Four other places cut markdown by a token budget -- `lib/rollup.py` twice,
+    `lib/sessions.py` and `lib/peek.py` -- and each backed up to a LINE boundary with
+    `rsplit("\n", 1)` and stopped there, which is the half of the job that does not close a fence.
+    Reproduced at four of five budgets on a document with one code block (R8 agent 8).
+
+    The sibling `close_dangling_fence` below answers the same question the other way, by appending
+    a closing marker. That one is right where the text has already been cut and cannot be re-cut;
+    this one is right where the cut is still being chosen, because it loses a line rather than
+    inventing one.
+    """
+    if cut >= len(text):
+        return len(text)
+    at, safe = 0, 0
+    for line, in_fence in fenced_lines(text):
+        nxt = at + len(line) + 1
+        if nxt > cut:
+            break
+        at = nxt
+        if not in_fence:
+            safe = at
+    return safe if safe else cut
+
+
 def close_dangling_fence(text):
     """`text`, with a closing fence appended if it ends still inside one left open.
 
@@ -357,7 +389,7 @@ def filename_safe(stem):
 
 
 def filesystem_key(name):
-    """The key under which a filesystem considers two NAMES to be one file.
+    """The key under which macOS APFS considers two NAMES to be one file.
 
     NFC then casefold, and deliberately NOT the whitespace collapse `canonical_title` does: `a b.md`
     and `a  b.md` are two files on every filesystem there is, so folding them would warn about a
@@ -368,6 +400,19 @@ def filesystem_key(name):
     keeps producing: `memory.case_collisions` built this key inline and `adapters.generic` built a
     weaker one (`.lower()`, no normalisation) five files away, so the function whose entire job is to
     warn about a name pair the filesystem will collapse was blind to half of them.
+
+    The first line names the OS on purpose. It used to say "a filesystem", which is broader than
+    anything that was ever checked, and the summary line is the half a reader takes away. `casefold()` is FULL Unicode folding, a many-to-one map: `"\u00df"` folds
+    to `"ss"` and `"\ufb01"` folds to `"fi"`. On macOS APFS that is exactly right, verified with real
+    files on an ordinary default-formatted volume -- writing `strasse.md` and then `stra\u00dfe.md`
+    leaves ONE file holding the second write, and a `\ufb01` ligature behaves the same way. NTFS
+    folds through an upcase table instead, which is one-to-one, so on Windows those are two files
+    and this key would warn about a collision that cannot happen there.
+
+    Left as it is, deliberately, and the direction is the reason: the error this makes is a warning
+    nobody needed, and the opposite error is one file quietly replacing another with nothing on
+    screen. A key that over-matches costs a reader a glance; a key that under-matches costs them the
+    file. Measured 2026-09-08 (R7 agent 1).
     """
     return unicodedata.normalize("NFC", name).casefold()
 

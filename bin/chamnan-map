@@ -653,9 +653,22 @@ def main(argv):
     # concurrent rebuilds: two of three runs produced a MAP.md carrying content from BOTH builds
     # interleaved, and the losing process exited 0 having installed the corrupted file. The
     # `os.replace` was never the problem; the shared staging name is.
+    # 🐛 [2026-09-08] `--measure` was in KNOWN_FLAGS and in the help, and had NO branch of its
+    # own -- it fell straight through to here and rebuilt and overwrote MAP.md, mtime and all,
+    # while sitting in the help beside `--verify` ("check the index's claims... exit 1 if any is
+    # false") and `--preview` ("write nothing"). A flag whose name means observe, listed among the
+    # flags that observe, that silently rewrites the largest artefact in the workspace, is a trap
+    # rather than an option (R7 agent 4). The measurement it prints is produced above this line, so
+    # skipping the write costs the flag nothing.
+    _measure_only = "--measure" in argv
     try:
-        if not ws.atomic_write_text(out, text):
-            raise OSError(f"could not write {out}")
+        if not _measure_only and not ws.atomic_write_text(out, text):
+            # 🐛 [2026-09-08] This built its own sentence, and so did `tools_index.py` -- two of the
+            # four write-failure sites in the tree, while the other two went through the shared
+            # helper. Under `CHAMNAN_READ_ONLY=1` the hand-rolled one says only "could not write",
+            # so a reader is sent hunting file permissions for a variable they set themselves.
+            # The set-not-the-member defect, in the failure path of the largest write chamnan makes.
+            raise OSError(ws.write_failure_text(out))
     except OSError as err:
         # 🐛 The first version of this fix fell back to `out.write_text(text)` here, "so a failed
         # run does not lose its output" — and the fixture caught it in one run: the fallback hit
@@ -694,7 +707,20 @@ def main(argv):
             print(f"chamnan: run from {where}/ — scanning the repository above it, {root.name}/")
         except ValueError:
             print(f"chamnan: scanning {root}")
-    print(f"chamnan-map -> {_show(out, root)}{scope}")
+    # 🐛 [2026-09-08] `--measure` was in KNOWN_FLAGS and in the help and had NO branch of its own,
+    # so it fell through to the write path and silently rebuilt and overwrote MAP.md -- mtime and
+    # all -- while sitting in the help beside `--verify` ("exit 1 if any claim is false") and
+    # `--preview` ("write nothing"). A flag whose name means observe, listed among the flags that
+    # observe, that rewrites the largest artefact in the workspace, is a trap rather than an option
+    # (R7 agent 4).
+    #
+    # The skip is at the write and NOT here: the measurement this flag exists to print is produced
+    # by the lines BELOW, and the first version of this fix returned early and printed no
+    # measurement at all -- a flag that did the wrong thing replaced by one that did nothing.
+    if _measure_only:
+        print(f"chamnan-map: measured {_show(out, root)}{scope} — nothing was written")
+    else:
+        print(f"chamnan-map -> {_show(out, root)}{scope}")
     # len(files), not `total`. `total` is the DESCRIBABLE subset -- the denominator of the coverage
     # bar two lines down -- and printing it here labelled "source file(s)" put two different
     # populations on one line: a file count that excluded the undescribable files beside a token

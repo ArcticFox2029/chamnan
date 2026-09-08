@@ -584,6 +584,15 @@ def prune_logs(root=None):
 
     Files in SELF_PRUNING_LOGS are skipped -- they bound themselves by record, on a longer window,
     and deleting the file discards history the record-level rule was keeping on purpose.
+
+    ONE FILE IS ALWAYS SPARED when the pass would take every one -- `keep_the_newest`. That is
+    deliberate and it is the difference between this docstring and the truth: a directory holding
+    nothing but aged files keeps its newest, however far past the window it is, and a directory
+    holding exactly one aged file never empties at all. The guard cannot tell "a clock jumped 400
+    days and doomed everything at once" from "this directory went quiet a month ago", because from
+    the mtimes alone those look identical. Judged from the user's side, the trade is not close: one
+    stale file left behind is invisible, and a whole retention store wiped by a clock glitch is not.
+    Reproduced 2026-09-08 (R7 agent 3); the claim above used to be stated without this paragraph.
     """
     import time
     ws_dir = workspace(root)
@@ -2182,15 +2191,38 @@ def wants_help(argv):
     return any(a in HELP_FLAGS for a in (argv or []))
 
 
-def unknown_flags(argv, known):
+def unknown_flags(argv, known, takes_value=(), takes_rest=()):
     """Flags in `argv` that `known` does not list — so a command can refuse rather than ignore.
 
     A misspelt flag silently dropped means the command does something other than what was asked
     with nothing on screen to say so. `chamnan-map` has refused unknown flags for this reason since
     it grew its own; the commands beside it accepted anything and ran their default action.
+
+    🐛 [2026-09-08] Only three of ten commands called this, and the seven that did not could not
+    have: every VALUE was read as a flag, so `chamnan-promote --desc "-n means dry run"` would have
+    been refused for the value it was given. That is why `takes_value` and `takes_rest` exist —
+    the helper had to learn the shape of a value before the set could adopt it, and adopting it in
+    three commands and stopping is how this project produces its commonest defect (R7 agent 4).
+
+    `takes_value` names flags whose NEXT argument is a value: `--budget 400`, `--platform "..."`.
+    `takes_rest` names flags that swallow everything after them: `--desc` takes the rest of the
+    line so a description need not be quoted, and `--files` takes every remaining path. A flag in
+    either list stops its own values being judged; anything before it is still judged normally.
     """
     allowed = set(known) | set(HELP_FLAGS) | set(VERSION_FLAGS)
-    return [a for a in (argv or []) if a.startswith("-") and a not in allowed]
+    bad, skip = [], False
+    for i, arg in enumerate(argv or []):
+        if arg in takes_rest:
+            break
+        if skip:
+            skip = False
+            continue
+        if arg in takes_value:
+            skip = True
+            continue
+        if arg.startswith("-") and arg not in allowed:
+            bad.append(arg)
+    return bad
 
 
 def config_is_malformed(root):

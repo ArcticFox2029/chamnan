@@ -47,7 +47,15 @@ PLACEHOLDER = "<REDACTED>"
 # The trailing class carries `…` on purpose: summaries are clipped before they reach the index, so
 # the last word of a truncated docstring arrives as `functionality.…` and stopped looking like a
 # word for the sake of one character.
-_PLAIN_WORD = re.compile("^[A-Za-z][a-z]{1,17}[.,;:!?)\\]\u2026\"'`]*$")
+# 🐛 [2026-09-08] One word only, so `short-lived`, `read-only` and `well-known` were not prose
+# to this guard -- and every adjacency rule that consults it therefore treated them as values.
+# `the session token is short-lived by design` came back with `<REDACTED>` where the adjective
+# was. Each PART still has to be an ordinary lower-case word with no digits, which is what keeps
+# `sk-proj-abcd1234`, `hunter2-hunter2` and `abc-def-ghi-jkl-mno` out: a credential is not two or
+# three all-alphabetic English words joined by hyphens. Checked against every word the one-word
+# version accepted -- same answer on all of them.
+_PLAIN_WORD = re.compile(
+    "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]\u2026\"'`]*$")
 
 
 def _is_a_plain_word(value):
@@ -86,6 +94,81 @@ def _is_a_type_annotation(match):
     depth_brace = before.count("{") - before.count("}")
     depth_brack = before.count("[") - before.count("]")
     return depth_paren > 0 and depth_brace <= 0 and depth_brack <= 0
+
+
+# A statement that DECLARES something. No configuration format writes one: a `.env` file has no
+# `let`, a YAML document has no `interface`, and `.properties` has no `readonly`. That is what
+# makes this a safe discriminator where "the value is spelled like a type" is not -- the function
+# above says why, and its own history is the argument: a rule that judged the value alone let
+# `password: Correcthorsebatterystaple` walk out in the clear.
+# How far back a declaration keyword may sit from the name it declares. `public static readonly`
+# is 24 characters; 48 clears every modifier stack these languages allow and nothing more.
+_DECLARATION_REACH = 48
+_DECLARATION_KEYWORD = re.compile(
+    r"(?:^|[^\w.])(?:let|var|const|val|readonly|declare|public|private|protected|internal"
+    r"|static|final|interface|type|struct|class|enum|record|protocol|extension"
+    r"|func|fn|def|fun|sub|property)\s", re.I)
+
+# The primitive type names, which are what a field declaration inside a braced block ends up
+# holding once the declaring keyword is a line or more above it:
+#
+#     interface Config {
+#       apiKey: string;          <- no keyword on THIS line
+#     }
+#
+# Bounded to a closed list rather than a shape, because a shape is what the first version of the
+# function above tried and it was wrong in both directions.
+_PRIMITIVE_TYPE = re.compile(
+    r"^(?:string|str|int|integer|number|num|float|double|decimal|bool|boolean|byte|bytes"
+    r"|char|long|short|any|unknown|never|void|null|nil|none|object|date|datetime|uuid|guid"
+    r"|list|dict|map|array|set|tuple|error|time|duration|interface\{\})[;,)\]}]*$", re.I)
+
+# A dotted run of identifier components with at least one capitalised: `P256.Signing.PrivateKey`,
+# `System.Security.Cryptography.RSA`. Swift, C# and Java spell a fully-qualified type this way, and
+# a credential is not written with dots between capitalised words.
+_QUALIFIED_TYPE = re.compile(r"^[A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)+[;,)\]}]*$")
+
+
+def _declares_a_type(match):
+    """True when `name:` is followed by a TYPE because the line DECLARES `name`.
+
+    🐛 [2026-09-08] The function above answers this question for a parameter list and only for a
+    parameter list -- an unclosed `(` before the name, a `,` or `)` after the value. A declaration
+    statement has neither, so `let privateKey: P256.Signing.PrivateKey`, `var apiKey: String` and
+    `interface Config { apiKey: string; }` each had their TYPE NAME replaced with `<REDACTED>`,
+    destroying the one piece of information the line carried and protecting nothing. Shipped in
+    1.23.1; every TypeScript, Swift and Kotlin repository this indexed lost those lines. Matches
+    gitleaks/gitleaks#2182, which is the same defect in the same position (R8 agent 9).
+
+    Three signals, any one of which is enough, and each chosen because a configuration format
+    cannot produce it: a declaration keyword on the line, a primitive type name as the whole value,
+    or a fully-qualified dotted type. The value-shape signals are deliberately closed lists, not
+    patterns -- see `_is_a_type_annotation` for what judging the value by its shape cost.
+    """
+    value = (match.group(2) or "").strip()
+    # 🐛 A type annotation's value is the LAST thing on its line. Without that test the primitive
+    # list turns an English sentence into a declaration: `password: unknown ask the platform team`
+    # has `unknown` as its value, `unknown` is a TypeScript type, and the guard exempted a line
+    # whose value is a real answer to "what is the password". Caught by a check that already
+    # existed for exactly this sentence — which is why the value-shape branches are gated on the
+    # line ending here, and the declaration-keyword branch below is not: a keyword is proof on its
+    # own, a type NAME is only proof when nothing follows it.
+    _tail = match.string[match.end(2):].split("\n", 1)[0].strip()
+    if _tail in ("", ";", ",", ")", "}", "];", ";}", "}}"):
+        if _PRIMITIVE_TYPE.match(value) or _QUALIFIED_TYPE.match(value):
+            return True
+    # 🐛 [2026-09-08] Bounded to the run immediately before the name. The first version searched
+    # "the line", and a line is not always short: `bench/results.json` holds a whole markdown
+    # document inside one JSON string, where `\n` is two characters and the physical line is
+    # thousands long -- so the word `service` somewhere far earlier exempted
+    # `OF_TELEMETRY_GATEWAY_HMAC_SECRET: 9xTvB5dLpYcH8wJgE4aUdTr3nQ7kR2mZ`, which had been
+    # redacted until this guard was added. A real declaration keyword is ADJACENT to the name it
+    # declares -- `let x`, `public var y` -- so a short window is not a weakening, it is the rule
+    # stated correctly. Caught by sweeping both versions of `scrub()` over all 875 files and
+    # reading every line that stopped being redacted; no decoy list contained this one.
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    prefix = match.string[max(line_start, match.start() - _DECLARATION_REACH):match.start()]
+    return bool(_DECLARATION_KEYWORD.search(prefix))
 
 
 # `Authorization: Bearer <jwt>` and `Basic <base64>` — but "Basic Authentication" is a phrase, and
@@ -165,6 +248,17 @@ LATE_PREFIXES = [
     # exactly what the index should still say.
     re.compile(r"(?<=[?&])(?:sig|signature|x-amz-signature|awsaccesskeyid|x-goog-signature)"
                r"=([A-Za-z0-9%+/=_.~-]{16,})", re.I),
+    # 🐛 [2026-09-08] Three current, unambiguous prefixes that were simply absent, checked against
+    # gitleaks' own rule source. Each leaked in FULL when pasted bare -- the generic name-based
+    # rules do catch them beside a `KEY=` or a `TOKEN=`, so the gap is exactly the keyword-less
+    # case, which is how a key appears in a README, a changelog, or a pasted terminal line.
+    #
+    # age's is the interesting one: it is the private half of an age keypair, the whole point of
+    # which is that it never leaves the machine, and its fixed `AGE-SECRET-KEY-1` prefix makes it
+    # the least ambiguous credential shape in this list. R8 agent 9.
+    re.compile(r"(?<![A-Za-z0-9_-])AGE-SECRET-KEY-1[0-9A-Za-z]{50,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])pscale_(?:pw|tkn|oauth)_[A-Za-z0-9_.-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9_-]{20,}"),
 ]
 
 # The names that mean "a credential lives here". Written once and shared by the assignment
@@ -250,7 +344,12 @@ _NOT_A_CREDENTIAL_NAME = re.compile(
     # spellings stay equal, because two lists that must agree and are written twice is exactly how
     # this file got a shipped false positive in the first place.
     r"|policy|policies|rotation|days|window|level|limit|mode|rate|length|format|strength|age"
-    r"|interval|attempts|retries|timeout)$", re.I)
+    r"|interval|attempts|retries|timeout"
+    # 🐛 [2026-09-08] `api_key_env = "MY_SECRET1"` holds the NAME of an environment
+    # variable, not the variable's value -- the whole point of the indirection is that
+    # the secret is NOT in the file. Redacting it destroys the one thing the line says
+    # and hides nothing. Matches Yelp/detect-secrets#923 (R8 agent 9).
+    r"|env|envvar|environ|variable|var|varname)$", re.I)
 
 CREDENTIALED_URL = re.compile(
     # `*`, not `+`: redis://:password@host and amqp://:pass@host carry no username at
@@ -355,6 +454,26 @@ ASSIGNED_SECRET_BARE = re.compile(
     r"(?!<REDACTED>)(\S{6,})", re.I)
 # A secret-named assignment whose value is a CALL. What is inside is not knowable from here and the
 # name says it is a credential, so the whole expression goes -- to the end of that line, no further.
+# 🐛 [2026-09-08] Every rule in this file needs a separator: `[:=]`, `=>`, a tag boundary, or the
+# value as the very next token. English needs none. `# Note: the staging API key is
+# tpuf_hmNxzxxxP3yL8R for now` passed through byte for byte -- a clean miss, no marker, in the
+# shape a person uses when they are TELLING somebody a key rather than configuring one: a comment,
+# a chat message, a support ticket, a commit message. Matches protectai/llm-guard#293, whose
+# reporter filed the same sentence (R8 agent 8).
+#
+# The qualifier list is why this is shippable. `SECRET_WORDS` requires a separator before `key` and
+# `token` -- a measured decision that keeps 70 of 129 ordinary Python lines intact -- so "API key"
+# with a SPACE reaches none of the rules. Opening the space generally would make `the token is …`
+# and `the key is …` credential-shaped, and those are sentences. A short list of qualifiers that
+# actually precede a credential does not have that problem, and it is the same trade
+# `_HEADER_WORD` makes one screen down: a short explicit list beats a clever derivation.
+_QUALIFIED_SECRET_PHRASE = (
+    r"(?<![A-Za-z])(?:api|access|secret|private|public|signing|encryption|master"
+    r"|session|refresh|auth|bearer|client|app|service)[ ](?:keys?|tokens?)(?![A-Za-z])")
+COPULA_SECRET = re.compile(
+    r"((?:" + SECRET_WORDS + r"|" + _QUALIFIED_SECRET_PHRASE + r")[\w-]*\s+(?:is|was)\s+)"
+    r"(\S{6,})", re.I)
+
 # A credential written as XML/HTML element text. Maven `settings.xml`, Tomcat `server.xml`, .NET
 # `web.config`, Spring XML and JBoss datasources all put it here, and every assignment rule above
 # requires a literal `[:=]` that element syntax does not have. A whole ecosystem's config format,
@@ -580,11 +699,23 @@ def _is_never_opened_name(name):
 _CONFIG_ABOUT_A_SECRET = ("policy", "policies", "rotation", "days", "window", "level", "limit",
                           "mode", "rate", "length", "format", "strength", "age", "interval",
                           "attempts", "retries", "timeout")
+# 🐛 [2026-09-08] A name that holds the NAME of an environment variable is the one shape where the
+# secret is provably NOT in the file -- that is the entire point of the indirection.
+# `api_key_env = "MY_SECRET1"` was redacted, which destroyed the only thing the line said and hid
+# nothing. Matches Yelp/detect-secrets#923 (R8 agent 9).
+_NAMES_A_VARIABLE = ("env", "envvar", "environ", "variable", "var", "varname")
+# Every tuple whose words must ALSO appear in `_NOT_A_CREDENTIAL_NAME`'s regex, which is defined
+# above this point and therefore spells them out rather than interpolating them. Named as one
+# thing so the check that asserts the two spellings agree cannot be extended for one tuple and
+# forgotten for the next -- which is what happened between these two on the day the second was
+# added, and is the defect this file carries more fixes for than any other.
+_SHARED_EXEMPTION_WORDS = _CONFIG_ABOUT_A_SECRET + _NAMES_A_VARIABLE
 NAMING_SUFFIXES = ("name", "names", "path", "paths", "file", "files", "dir", "url", "urls",
                    "uri", "uris", "endpoint", "endpoints", "host", "hostname", "domain",
                    "origin", "issuer", "audience",
                    "provider", "algorithm", "algo", "type", "method", "scheme",
-                   "header", "enabled", "required", "ttl", "expiry", "field") + _CONFIG_ABOUT_A_SECRET
+                   "header", "enabled", "required", "ttl", "expiry",
+                   "field") + _SHARED_EXEMPTION_WORDS
 
 
 # The word after "Authorization:" is the scheme, never the credential — the credential is the token
@@ -1077,6 +1208,22 @@ def scrub(text, windowed=True):
     text = XML_SECRET.sub(
         lambda m: m.group(0) if _names_a_mechanism(m.group(1), m.group(2))
         else f"{m.group(1)}{PLACEHOLDER}{m.group(3)}", text)
+    # After the assignment rules, never before: a line that any of them can read is read by them,
+    # and this is the loosest rule in the file. It fires only where no separator exists at all.
+    #
+    # `_is_a_plain_word` is the whole precision story. Measured on the sentences a reader actually
+    # writes: `the password is required`, `the api key is missing`, `the token is invalid`, `the
+    # api key is rotated monthly`, `the private key is generated on first run`, `the access token
+    # is refreshed automatically`, `the session token is short-lived by design` -- twelve of twelve
+    # left intact, against six of six real credentials replaced.
+    text = COPULA_SECRET.sub(
+        lambda m: m.group(0)
+        if (_is_a_plain_word(m.group(2))
+            or PLACEHOLDER in m.group(2)
+            or m.group(2).lower().rstrip(".,;:") in SCHEME_WORDS
+            or _is_only_a_template(m.group(2))
+            or _names_a_mechanism(m.group(1), m.group(2)))
+        else f"{m.group(1)}{PLACEHOLDER}", text)
     # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
     # pattern cannot match a document that does not contain those two characters. The word list in
     # front of it is large, so the engine walks the whole document looking for a hit that is
@@ -1140,7 +1287,8 @@ def scrub(text, windowed=True):
         # `'password' =<REDACTED>`, which loses the syntax a reader needs to see what was there.
         or PLACEHOLDER in m.group(2)
         or m.group(2).lower() in SCHEME_WORDS
-        or (m.group(1).rstrip().endswith(":") and _is_a_type_annotation(m))
+        or (m.group(1).rstrip().endswith(":")
+            and (_is_a_type_annotation(m) or _declares_a_type(m)))
         or _value_is_the_key_itself(_full_key_at(m), m.group(2))
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
@@ -1754,6 +1902,28 @@ def _redact_delimited_columns(text):
     return "\n".join(out)
 
 
+# How many lines of REAL CONTENT a label may sit above its value. Blank lines do not count
+# against it, which is what makes "Card on file:\n\n4111 1111 1111 1111" reachable.
+_LABEL_LOOKBACK = 2
+
+
+def _label_window(folded_lines, n):
+    """Line `n` plus up to `_LABEL_LOOKBACK` preceding lines of real content, joined.
+
+    Used for the KEYWORD half of the personal-data gate and nothing else. The value is still
+    matched against line `n` alone, so a span found here still means the same offsets in the
+    original -- which is the property `_DIGIT_FOLD` exists to preserve and that a joined string
+    would otherwise break.
+    """
+    parts, seen, i = [folded_lines[n]], 0, n - 1
+    while i >= 0 and seen < _LABEL_LOOKBACK:
+        if folded_lines[i].strip():
+            parts.append(folded_lines[i])
+            seen += 1
+        i -= 1
+    return "\n".join(parts)
+
+
 def _redact_personal_data(text):
     """Card numbers and national IDs, where the number checks out AND its context agrees.
 
@@ -1765,10 +1935,33 @@ def _redact_personal_data(text):
     if not _A_LONG_DIGIT_RUN.search(text.translate(_DIGIT_FOLD)):
         return text
     out = []
-    for line in text.splitlines(keepends=True):
-        folded = line.translate(_DIGIT_FOLD)
-        has_card_word = bool(_CARD_WORD.search(folded))
-        has_id_word = bool(_THAI_ID_WORD.search(folded))
+    _lines = text.splitlines(keepends=True)
+    _folded = [ln.translate(_DIGIT_FOLD) for ln in _lines]
+    for _n, line in enumerate(_lines):
+        folded = _folded[_n]
+        # 🐛 [2026-09-08] The keyword gate read the CURRENT LINE ONLY, so a label on one line and
+        # its value on the next was invisible to it -- and that is how a YAML block scalar, a
+        # pretty-printed JSON value, a support ticket and a chat transcript are all written.
+        # 16 of 17 generated multi-line shapes passed through whole, each with a valid checksum,
+        # each with no marker beside it. `YAML_BLOCK_SECRET` exists for exactly this problem on the
+        # credential side of this file; nothing equivalent existed here (R5 agent 2, R6 acc2).
+        #
+        # The window is the LABEL side only. The number is still matched in `folded` -- the current
+        # line -- and still has to pass its own checksum, so this widens what counts as context and
+        # not what counts as a match.
+        #
+        # Two lines of real content, measured rather than chosen: every shape in the round needed 0
+        # or 1, and the second is the margin for one blank line between a prose label and its value.
+        # Precision measured on 1,125 real files: 0 hits at a 1-line window, 1 at six lines, and
+        # that one hit was the word "credentials." in prose beside an AWS ARN -- which none of
+        # these three keyword sets matches anyway. That is the honest reason a window is safer here
+        # than it would be on the credential side: this vocabulary is short and specific, and a
+        # checksum still has to pass on top of it. It is a measurement of THIS corpus, not a
+        # guarantee -- a key-rotation runbook full of hashes beside the word "card" would score
+        # worse, and nothing here claims otherwise.
+        context = _label_window(_folded, _n)
+        has_card_word = bool(_CARD_WORD.search(context))
+        has_id_word = bool(_THAI_ID_WORD.search(context))
         spans = []
 
         for m in _CARD_GROUPED.finditer(folded):
@@ -1790,7 +1983,7 @@ def _redact_personal_data(text):
         # forgotten in the identical ones beside it this repository's recurring defect.
         spans += [m.span(1) for m in _IBAN.finditer(folded) if _iban(m.group(1))]
         spans += [m.span(1) for m in _CPF_DOTTED.finditer(folded) if _cpf(m.group(1))]
-        if _AADHAAR_WORD.search(folded):
+        if _AADHAAR_WORD.search(context):
             spans += [m.span(1) for m in _AADHAAR.finditer(folded) if _aadhaar(m.group(1))]
 
         if not spans:

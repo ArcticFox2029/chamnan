@@ -138,18 +138,10 @@ def _safe_cut(text, cut):
     A budget cut is a character index; markdown structure is not. Landing inside a ``` block left
     it unclosed and every later line of the injected block rendered as code.
     """
-    if cut >= len(text):
-        return len(text)
-    at, depth = 0, 0
-    safe = 0
-    for line, in_fence in mdblock.fenced_lines(text):
-        nxt = at + len(line) + 1
-        if nxt > cut:
-            break
-        at = nxt
-        if not in_fence:
-            safe = at
-    return safe if safe else cut
+    # Moved to `mdblock.cut_outside_a_fence` on 2026-09-08, where `fenced_lines` lives and where
+    # the other four callers that cut markdown by a budget can reach it. Kept as a name because
+    # this module's comments refer to it and the indirection costs nothing.
+    return mdblock.cut_outside_a_fence(text, cut)
 
 
 def render(text, budget, path_for_marker):

@@ -33,6 +33,16 @@ import workspace as ws  # noqa: E402
 print = redact.emit  # noqa: A001
 
 
+# 🐛 [2026-09-08] Three of ten commands refused an unknown flag and seven ignored it, running
+# their default action with nothing on screen -- so a typo did something other than what was asked
+# and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
+# it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
+# not the member this round happened to be pointed at (R7 agent 4).
+KNOWN_FLAGS = ('--find', '--budget')
+TAKES_VALUE = ('--find', '--budget')
+TAKES_REST = ()
+
+
 def main(argv):
     # Before help. These three answer help for a BARE call too, so `--version` has to be
     # tested first or it would print usage instead. See workspace.wants_version.
@@ -42,6 +52,11 @@ def main(argv):
     if not argv or ws.wants_help(argv):
         print(__doc__.strip())
         return 0 if argv else 2
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
+    if _bad:
+        print(f"chamnan-peek: unknown flag {_bad[0]} — try --help", file=sys.stderr)
+        return 2
     target = argv[0]
     find = None
     budget = peek_mod.DEFAULT_BUDGET

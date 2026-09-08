@@ -19450,7 +19450,7 @@ if _map.is_file():
 _sa_none = subprocess.run(
     [sys.executable, str(_sa_hook)],
     input=json.dumps({"cwd": tempfile.gettempdir(), "hook_event_name": "SubagentStart"}),
-    capture_output=True, text=True)
+    capture_output=True, text=True, encoding="utf-8")
 check("it is silent where there is no workspace to point at",
       _sa_none.returncode == 0 and not _sa_none.stdout.strip())
 
@@ -19466,7 +19466,7 @@ _sa_fork = subprocess.run(
     [sys.executable, str(_sa_hook)],
     input=json.dumps({"cwd": str(_sa_fix), "hook_event_name": "SubagentStart",
                       "agent_type": "fork"}),
-    capture_output=True, text=True)
+    capture_output=True, text=True, encoding="utf-8")
 check("a fork gets nothing — it already has the parent's context",
       _sa_fork.returncode == 0 and not _sa_fork.stdout.strip())
 _rmtree(_sa_fix, ignore_errors=True)
@@ -21492,11 +21492,12 @@ for _real in ('password = "tr0ub4dor3horsebattery"', "api_key: sk-live-Ab3xY9pQ7
 # The comment beside `_CONFIG_ABOUT_A_SECRET` promises the tail regex carries the same words. Two
 # lists that must agree and are spelled twice is how the false positive above happened, so the
 # promise is checked rather than trusted.
-_missing_from_tail = [w for w in _rd._CONFIG_ABOUT_A_SECRET
+_missing_from_tail = [w for w in _rd._SHARED_EXEMPTION_WORDS
                       if not _rd._NOT_A_CREDENTIAL_NAME.search("x_" + w)]
 check(f"BOTH EXEMPTION LISTS CARRY THE SAME CONFIG WORDS: {_missing_from_tail}",
       not _missing_from_tail)
-_missing_from_suffixes = [w for w in _rd._CONFIG_ABOUT_A_SECRET if w not in _rd.NAMING_SUFFIXES]
+_missing_from_suffixes = [w for w in _rd._SHARED_EXEMPTION_WORDS
+                          if w not in _rd.NAMING_SUFFIXES]
 check(f"...in both directions: {_missing_from_suffixes}", not _missing_from_suffixes)
 
 # ------------------------------------------------- a list of secrets, redacted past its first item
@@ -21800,6 +21801,561 @@ check(f"...and the column rule changes no line of chamnan's own source "
       f"(damaged: {_pop_damaged[:5]})", _pop_damaged == [])
 print(f"      DETAIL  column rule run over {len(_pop_files)} of chamnan's own source files, "
       f"{len(_pop_damaged)} changed")
+
+
+# ------------------------------------ a type annotation is not a value, 2026-09-08 (R8 agent 9)
+# 🐛 Shipped in 1.23.1. `_is_a_type_annotation` answers this question for a PARAMETER LIST and only
+# for one -- an unclosed `(` before the name, a `,` or `)` after the value. A declaration statement
+# has neither, so every TypeScript, Swift and Kotlin repository chamnan indexed had its type names
+# replaced: `let privateKey: P256.Signing.PrivateKey` became `let privateKey: <REDACTED>`, which
+# destroys the only thing the line says and protects nothing. Matches gitleaks/gitleaks#2182.
+for _td in ("let privateKey: P256.Signing.PrivateKey",
+            "var apiKey: String",
+            "const password: string",
+            "interface Config { apiKey: string; }",
+            "  apiKey: string;",
+            "  clientSecret: string;",
+            "  credentials: System.Net.NetworkCredential;",
+            "readonly apiToken: string;",
+            "private password: String",
+            "public var secretKey: SymmetricKey",
+            "password: str",
+            "self.api_key: Optional[str]",
+            "func sign(password: String, page: Page)"):
+    check(f"A TYPE IS NOT A CREDENTIAL: {_td.strip()[:44]}", _rd.scrub(_td) == _td)
+# The other direction, and the reason the guard reads the LINE rather than the value's spelling:
+# `_is_a_type_annotation`'s own docstring records that judging the value alone let
+# `password: Correcthorsebatterystaple` walk out in the clear. It must still not.
+for _tv in ("password: Correcthorsebatterystaple",
+            "api_key: sk-proj-abcd1234efgh5678ijkl",
+            "  password: Tr0ub4dor3Horse9Battery",
+            "client_secret: 8Kx9mQz2Lp4Rt7Vw",
+            "let apiKey: string = 'sk-proj-abcd1234efgh5678'"):
+    check(f"...and a real value in the same position is still redacted: {_tv.strip()[:40]}",
+          _rd.scrub(_tv) != _tv)
+
+# ------------------------------------ prefixes that were simply absent, 2026-09-08 (R8 agent 9)
+# Each leaked in FULL when pasted with no keyword beside it -- which is how a key reaches a README,
+# a changelog or a pasted terminal line. Checked against gitleaks' own rule source.
+for _pf in ("AGE-SECRET-KEY-1QQPQZRFR8HFTQ4MSHDPQFRQZRFR8HFTQ4MSHDPQFRQZRFR8HFTQ4MSH",
+            "pscale_pw_abcdefghij1234567890XYZ",
+            "pscale_tkn_abcdefghij1234567890XYZ",
+            "dp.pt.abcdefghij1234567890XYZabc",
+            "dp.st.abcdefghij1234567890XYZabc"):
+    check(f"A BARE {_pf[:12]}… IS A CREDENTIAL WITH NO KEYWORD BESIDE IT",
+          _rd.PLACEHOLDER in _rd.scrub(f"see {_pf} in the notes"))
+
+# 🐛 A name holding the NAME of an environment variable is the one shape where the secret is
+# provably NOT in the file -- that is the whole point of the indirection. Yelp/detect-secrets#923.
+for _ev in ('api_key_env = "MY_SECRET1"', 'token_env_var = "GITHUB_TOKEN"',
+            'password_variable = "DB_PASS"', 'secret_varname = "STRIPE_KEY"'):
+    check(f"A NAME THAT NAMES A VARIABLE IS NOT THE VARIABLE: {_ev[:34]}", _rd.scrub(_ev) == _ev)
+
+# The population assertion for the pair of exemption lists. The check further up asserted this for
+# `_CONFIG_ABOUT_A_SECRET` alone, so when a SECOND such tuple was added the check did not grow with
+# it -- the same defect one level up. Both are reached through `_SHARED_EXEMPTION_WORDS` now.
+check("there are shared exemption words to check", len(_rd._SHARED_EXEMPTION_WORDS) > 15)
+check("EVERY shared exemption word is in NAMING_SUFFIXES",
+      [w for w in _rd._SHARED_EXEMPTION_WORDS if w not in _rd.NAMING_SUFFIXES] == [])
+check("...and every one is also spelled into the tail regex beside it",
+      [w for w in _rd._SHARED_EXEMPTION_WORDS
+       if not _rd._NOT_A_CREDENTIAL_NAME.search("thing_" + w)] == [])
+
+
+# ---------------------------- what a person types reaches a COMMITTED file, 2026-09-08 (R8 a2)
+# 🐛 The READ side of these three stores was hardened months ago -- `print = redact.emit` at the
+# top of `bin/chamnan-env`, `bin/chamnan-timeline` and `bin/chamnan-promote` -- and the WRITE side
+# was never re-asked. `git add` reads the FILE, not the command's stdout. Reproduced end to end:
+# `chamnan-timeline add deploy-notes "rotated the key, new value is AKIA…"` wrote that key verbatim
+# into `.chamnan/threads/deploy-notes.md`, which `git check-ignore` confirms is not ignored and
+# which the README tells people to commit.
+# `tempfile.tempdir` is redirected to the suite's own tree at the top of this file, and an
+# atexit hook removes the whole thing however the run ended -- so no per-fixture cleanup here.
+_ws_root = Path(tempfile.mkdtemp(prefix="chamnan_writescrub_"))
+subprocess.run(["git", "init", "-q"], cwd=_ws_root, check=True)
+(_ws_root / "app.py").write_text("x = 1\n", encoding="utf-8")
+ws.ensure(str(_ws_root))
+_WS_SECRET = "AKIAIOSFODNN7EXAMPLE"
+
+timeline.create(str(_ws_root), "Deploy notes", "2026-09-08")
+_tl_path = timeline.append(str(_ws_root), "deploy-notes", "2026-09-08",
+                      f"rotated the key, new value is {_WS_SECRET}, deployed to prod",
+                      files=[f"config/{_WS_SECRET}.env"])
+_tl_text = Path(_tl_path).read_text(encoding="utf-8")
+check("A NOTE TYPED AT `chamnan-timeline add` IS SCRUBBED BEFORE IT REACHES THE FILE",
+      _WS_SECRET not in _tl_text and _rd.PLACEHOLDER in _tl_text)
+check("...and so is a FILE NAME passed with it, which is the same field one line later",
+      _tl_text.count(_rd.PLACEHOLDER) >= 2)
+
+envs.upsert(str(_ws_root), "production",
+                envs.render_entry("production", platform=_WS_SECRET, versions="py3.12",
+                                      constraints=[f"conn=postgres://u:{_WS_SECRET}@db/x"],
+                                      checked="2026-09-08"))
+_env_text = (_ws_root / ".chamnan" / "environments.md").read_text(encoding="utf-8")
+check("EVERY FIELD OF `chamnan-env set` IS SCRUBBED, NOT THE OBVIOUS ONE",
+      _WS_SECRET not in _env_text)
+check("...and what is left still says which system it was, which is why this is a scrub not a drop",
+      "postgres://" in _env_text and "@db/x" in _env_text)
+
+tools_index.register(str(_ws_root), {"name": "t", "desc": f"uses the key {_WS_SECRET} to deploy"})
+_ti_text = (_ws_root / ".chamnan" / "tools" / "index.json").read_text(encoding="utf-8")
+check("A `--desc` TYPED AT `chamnan-promote` IS SCRUBBED BEFORE IT REACHES index.json",
+      _WS_SECRET not in _ti_text and _rd.PLACEHOLDER in _ti_text)
+
+# The population half: none of these three files is gitignored, which is what makes the above a
+# leak rather than a mess. Derived from git itself, not asserted from memory.
+for _rel in (".chamnan/threads/deploy-notes.md", ".chamnan/environments.md",
+             ".chamnan/tools/index.json"):
+    _ignored = subprocess.run(["git", "check-ignore", "-q", _rel], cwd=_ws_root).returncode == 0
+    check(f"...and `{_rel}` really is a file git would commit", not _ignored)
+
+# ------------------------------------- a budget cut must not open a fence, 2026-09-08 (R8 a8)
+# 🐛 `lib/state.py` had `_safe_cut` and the four other places that cut markdown by a token budget
+# backed up to a LINE boundary and stopped, which is the half of the job that does not close a
+# fence. Everything after the cut then renders as code -- including the marker saying the text was
+# truncated. Reproduced at 13 of 40 budgets before the fix.
+_fence_doc = ("## Section one\n\nSome prose that runs on for a while so the budget is spent.\n\n"
+              "```python\ndef handler(request):\n    return compute(request.body)\n```\n\n"
+              "## Section two\n\nMore prose after the fence.\n")
+_fence_open = [b for b in range(10, 90, 2)
+               if _fence_doc[:mdblock.cut_outside_a_fence(_fence_doc, tokens.cut_at(_fence_doc, b))]
+               .count("```") % 2]
+check(f"A BUDGET CUT NEVER LEAVES A FENCE OPEN, at any of 40 budgets (open at: {_fence_open[:6]})",
+      _fence_open == [])
+# ...and the old behaviour really did fail, so the check above is measuring something.
+_fence_naive = [b for b in range(10, 90, 2)
+                if _fence_doc[:tokens.cut_at(_fence_doc, b)].rsplit("\n", 1)[0].count("```") % 2]
+check("...and a line-boundary cut alone would have failed, so this check can fail",
+      len(_fence_naive) > 5)
+
+# Derived: EVERY caller of `tokens.cut_at` in lib/ is fence-aware. An enumerated list of four call
+# sites is what let the fifth be forgotten; this finds the sixth.
+_cut_sites, _cut_bare = [], []
+for _cf in sorted(ROOT.glob("lib/**/*.py")):
+    _cl = _cf.read_text(encoding="utf-8", errors="replace").split("\n")
+    for _i, _line in enumerate(_cl):
+        if "cut_at(" not in _line or _line.lstrip().startswith("#") or "def cut_at" in _line:
+            continue
+        # Wide enough to reach past a comment block between the call and its guard: in
+        # `state.py` the `_safe_cut` line sits five lines below the `cut_at` it corrects, with the
+        # comment explaining why in between. A window of three called that site bare, which is a
+        # broken check rather than a found defect.
+        _window = "\n".join(_cl[max(0, _i - 3):_i + 10])
+        _cut_sites.append(f"{_cf.name}:{_i + 1}")
+        if "cut_outside_a_fence" not in _window and "_safe_cut" not in _window:
+            _cut_bare.append(f"{_cf.name}:{_i + 1}")
+check("the sweep found the cut_at call sites at all", len(_cut_sites) >= 4)
+check(f"EVERY cut_at CALLER IN lib/ IS FENCE-AWARE (bare: {_cut_bare})", _cut_bare == [])
+# The count, not the word "none": this line said "none bare" as a literal while the check beside
+# it was reporting one, so the DETAIL contradicted the FAIL directly above it. A diagnostic that
+# cannot disagree with reality is not a diagnostic.
+print(f"      DETAIL  cut_at call sites in lib/: {len(_cut_sites)}, "
+      f"bare: {len(_cut_bare)}")
+
+# ------------------------------ a bundled .ts is build output too, 2026-09-08 (R8 agent 11)
+# 🐛 `MINIFIABLE_EXTS` was a hand-written set while `EXT_LANG` routes `.jsx`, `.ts` and `.tsx`
+# through the SAME "js" extractor, so a bundled TypeScript file -- a `.d.ts` rollup included, since
+# `Path("foo.d.ts").suffix` is `.ts` -- counted against description coverage and was listed under
+# `--undocumented`, sending somebody to comment a bundle. Derived from EXT_LANG now.
+_js_exts = frozenset(e for e, lang in mapper.EXT_LANG.items() if lang == "js")
+check("the js family has members to check", len(_js_exts) >= 6)
+check("EVERY js-family EXTENSION IS EITHER MINIFIABLE OR AN AUTHORED COMPONENT FORMAT",
+      _js_exts - mapper.MINIFIABLE_EXTS - mapper._AUTHORED_SFC_EXTS == frozenset())
+_min_dir = Path(tempfile.mkdtemp(prefix="chamnan_minext_"))
+_min_body = ("\n".join(f"// line {i} of a licence banner" for i in range(300)) + "\n"
+             + "".join(f"function f{i}(a,b){{return a+b}}" for i in range(2000)) + "\n")
+for _me in (".js", ".ts", ".tsx", ".jsx", ".d.ts"):
+    _mf = _min_dir / f"bundle{_me}"
+    _mf.write_text(_min_body, encoding="utf-8")
+    check(f"A MINIFIED `bundle{_me}` IS BUILD OUTPUT", mapper._looks_built(_mf, _min_body))
+_hand = _min_dir / "real.ts"
+_hand_src = "// A hand-written module.\nexport function add(a: number, b: number) {\n  return a + b\n}\n"
+_hand.write_text(_hand_src, encoding="utf-8")
+check("...and a hand-written .ts is not, so the widening did not become an over-skip",
+      not mapper._looks_built(_hand, _hand_src))
+
+
+# ============================================================ R7 agents 2-4, R8 agent 2, 2026-09-08
+
+# 🐛 Three of ten commands refused an unknown flag and seven ran their default action in silence,
+# so a typo did something other than what was asked and said nothing. Derived over `bin/` rather
+# than listed, because a list of seven is what let the eighth be missed.
+_cmds = [f for f in sorted(ROOT.glob("bin/chamnan-*")) if not f.suffix and f.is_file()]
+check("the command sweep found commands at all", len(_cmds) >= 8)
+_no_refusal = []
+for _c in _cmds:
+    _cs = _c.read_text(encoding="utf-8", errors="replace")
+    if not any(m in _cs for m in ("unknown_flags", "ArgumentParser", "unknown flag")):
+        _no_refusal.append(_c.name)
+check(f"EVERY bin/ COMMAND REFUSES AN UNKNOWN FLAG (silent: {_no_refusal})", _no_refusal == [])
+# ...and it refuses by RUNNING, not by containing the word. A flag before the target used to be
+# reported as `not a file: --flagname`.
+for _c in ("chamnan-peek", "chamnan-impact", "chamnan-promote", "chamnan-env",
+           "chamnan-candidates", "chamnan-timeline"):
+    _r = subprocess.run([sys.executable, str(ROOT / "bin" / _c), "--bogus"],
+                        capture_output=True, text=True, encoding="utf-8")
+    check(f"{_c} REFUSES `--bogus` rather than running its default",
+          "unknown flag" in (_r.stderr + _r.stdout) and _r.returncode == 2)
+# The other direction, which is why `ws.unknown_flags` had to learn `takes_value`/`takes_rest`
+# before the seven could adopt it: a VALUE that starts with a dash is not a flag.
+_uf = ws.unknown_flags
+check("a value after a value-taking flag is not judged as a flag",
+      _uf(["--find", "-x", "f.py"], ("--find",), ("--find",), ()) == [])
+check("...and everything after a rest-taking flag is its value",
+      _uf(["t.sh", "n", "--desc", "-n means dry run"], ("--desc",), (), ("--desc",)) == [])
+check("...and a real unknown flag BEFORE one is still caught",
+      _uf(["--bogus", "t.sh", "--desc", "x"], ("--desc",), (), ("--desc",)) == ["--bogus"])
+
+# 🐛 `--measure` sat in the help beside `--verify` ("exit 1 if any claim is false") and `--preview`
+# ("write nothing"), had no branch of its own, and silently rebuilt and overwrote MAP.md.
+_ms_root = Path(tempfile.mkdtemp(prefix="chamnan_measure_"))
+subprocess.run(["git", "init", "-q"], cwd=_ms_root, check=True)
+(_ms_root / "app.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ms_root,
+               capture_output=True, text=True, encoding="utf-8")
+_ms_map = _ms_root / ".chamnan" / "MAP.md"
+check("the --measure fixture built an index to begin with", _ms_map.is_file())
+_ms_before = (_ms_map.stat().st_mtime_ns, _ms_map.read_bytes())
+_ms_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--measure"],
+                         cwd=_ms_root, capture_output=True, text=True, encoding="utf-8")
+check("`chamnan-map --measure` WRITES NOTHING",
+      (_ms_map.stat().st_mtime_ns, _ms_map.read_bytes()) == _ms_before)
+check("...and says so rather than implying it wrote", "nothing was written" in _ms_out.stdout)
+# The first version of this fix returned before the report and printed no measurement at all --
+# a flag that did the wrong thing replaced by one that did nothing.
+check("...and STILL prints the measurement, which is the whole point of the flag",
+      "source file(s)" in _ms_out.stdout and "tokens of code" in _ms_out.stdout)
+
+# 🐛 Seven sibling commands refuse when there is no workspace and name `chamnan-map`; `promote`
+# bootstrapped the whole thing in silence, in somebody else's repository.
+_bs_root = Path(tempfile.mkdtemp(prefix="chamnan_bootstrap_"))
+subprocess.run(["git", "init", "-q"], cwd=_bs_root, check=True)
+(_bs_root / "t.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+_bs = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-promote"),
+                      "t.sh", "mytool", "--desc", "x"], cwd=_bs_root, capture_output=True, text=True, encoding="utf-8")
+check("`chamnan-promote` REFUSES rather than scaffolding a workspace nobody asked for",
+      "no .chamnan/ workspace" in _bs.stderr)
+check("...and really left nothing behind", not (_bs_root / ".chamnan").exists())
+check("...and points at the command that DOES create one", "chamnan-map" in _bs.stderr)
+
+
+# 🐛 `dangling_citations` exists to find a pointer to an entry nobody wrote, and could not see the
+# `[[slug]]` form -- which is the form the memory store's own entries use. One store, two citation
+# formats, one checked, in the function whose entire job is finding broken pointers (R7 agent 3).
+_dc_root = Path(tempfile.mkdtemp(prefix="chamnan_cites_"))
+subprocess.run(["git", "init", "-q"], cwd=_dc_root, check=True)
+(_dc_root / "app.py").write_text("x = 1\n", encoding="utf-8")
+ws.ensure(str(_dc_root))
+_dc_mem = _dc_root / ".chamnan" / "memory" / "lessons"
+_dc_mem.mkdir(parents=True, exist_ok=True)
+(_dc_mem / "a-real-lesson.md").write_text(
+    "# A real lesson\n\nRelated: [[a-real-lesson]], [[missing-by-wikilink]] and\n"
+    "[[../lessons/a-real-lesson]]. Also memory `missing-by-prose` and memory `MEMORY.md`.\n"
+    "And a plain file link: [[../../../README.md]]\n", encoding="utf-8")
+(_dc_root / "README.md").write_text("# readme\n", encoding="utf-8")
+_dc_found = dict(memory_mod.dangling_citations(str(_dc_root)))
+check("A `[[slug]]` POINTING AT NOTHING IS REPORTED", "missing-by-wikilink" in _dc_found)
+check("...and the prose form still is, so the second format did not replace the first",
+      "missing-by-prose" in _dc_found)
+check("...and a `[[slug]]` that RESOLVES is not reported", "a-real-lesson" not in _dc_found)
+check("...and a path form resolving to a real entry is not either",
+      "../lessons/a-real-lesson" not in _dc_found)
+# 🐛 A slug is a filename WITHOUT `.md`, so a backticked token carrying the extension is a
+# FILENAME. This reported `Memory: `MEMORY.md` index now truncates at 25KB` -- a changelog line
+# about a file -- as a dangling entry. One wrong line costs this report more than it looks: it is
+# read to decide whether the other lines are worth chasing.
+check("...and a FILENAME is not a slug, in either format",
+      "MEMORY.md" not in _dc_found and "README.md" not in _dc_found)
+
+# 🐛 `lib/catalogs.py` read every `.proto` and every API-spec file WHOLE, with no ceiling, on every
+# ordinary map build, while `mapper` three files away refuses anything over the same size; and
+# `peek_source` did the same for a source file. One number in `tree` now, and every reader takes it.
+check("there is ONE size ceiling, not a copy per module",
+      mapper.MAX_FILE_BYTES == peek_mod.ZIP_MEMBER_CEILING == tree.MAX_FILE_BYTES)
+_cap_root = Path(tempfile.mkdtemp(prefix="chamnan_ceiling_"))
+subprocess.run(["git", "init", "-q"], cwd=_cap_root, check=True)
+(_cap_root / "app.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+(_cap_root / "huge.proto").write_text(
+    'syntax = "proto3";\nservice S { rpc Go (A) returns (B); }\n'
+    + "// pad\n" * ((tree.MAX_FILE_BYTES // 7) + 5000), encoding="utf-8")
+check("the oversized .proto fixture really is over the ceiling",
+      (_cap_root / "huge.proto").stat().st_size > tree.MAX_FILE_BYTES)
+import time as _cap_time
+_cap_started = _cap_time.time()
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_cap_root,
+               capture_output=True, text=True, encoding="utf-8")
+_cap_took = _cap_time.time() - _cap_started
+# A ceiling, not a timing target: the assertion is that the file was not read, and the duration is
+# printed rather than checked because a machine under load is not a defect.
+check("a repository with an oversized spec file still indexes", (_cap_root / ".chamnan" / "MAP.md").is_file())
+check("...and `tree.within_size` refuses it, which is what stops the read",
+      not tree.within_size(_cap_root / "huge.proto"))
+check("...and accepts an ordinary file, so the guard is not refusing everything",
+      tree.within_size(_cap_root / "app.py"))
+print(f"      DETAIL  map over a {(_cap_root / 'huge.proto').stat().st_size // 1024:,} KB spec file: "
+      f"{_cap_took:.2f}s")
+
+# 🐛 `peek_binary` raised, and one of its three callers is the `except Exception` that exists so
+# "a malformed file must not crash the caller" -- so a file that vanished between the dispatch and
+# the recovery produced a raw traceback out of the branch whose whole job is to stop that.
+_pb_dir = Path(tempfile.mkdtemp(prefix="chamnan_peekbin_"))
+_pb_gone = _pb_dir / "vanished.bin"
+_pb_gone.write_bytes(b"\x00\x01\x02")
+_pb_gone.unlink()
+try:
+    _pb_out = peek_mod.peek_binary(_pb_gone)
+    _pb_raised = None
+except Exception as _pb_err:                                  # noqa: BLE001 - that IS the check
+    _pb_out, _pb_raised = None, _pb_err
+check(f"THE LAST-RESORT READER DOES NOT RAISE ON A FILE THAT IS GONE ({_pb_raised!r})",
+      _pb_raised is None)
+check("...and says so rather than returning an empty description",
+      bool(_pb_out) and "could not read" in _pb_out[0])
+_pb_real = _pb_dir / "real.bin"
+_pb_real.write_bytes(b"readable text here " * 40)
+check("...and an ordinary file still gets its real description",
+      "printable in the first 4KB" in peek_mod.peek_binary(_pb_real)[0])
+
+# 🐛 Every warning the session block prints is scrubbed at the point it is read -- that is the
+# design, stated in the hook's own closing comment. Six sites interpolated a name from disk without
+# it, one of them the OTHER return path of a function whose first return path scrubs (R7 agent 2).
+# Derived, because six was found by reading and the seventh would not be.
+_hook_src = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_hook_lines = _hook_src.split("\n")
+_hook_bare = []
+for _i, _l in enumerate(_hook_lines):
+    if "as_quoted" not in _l or _l.lstrip().startswith("#"):
+        continue
+    if "scrub" not in "\n".join(_hook_lines[max(0, _i - 3):min(len(_hook_lines), _i + 34)]):
+        _hook_bare.append(f"{_i + 1}: {_l.strip()[:60]}")
+check("the hook sweep found as_quoted sites at all", _hook_src.count("as_quoted") >= 10)
+check(f"EVERY NAME THE SESSION BLOCK PRINTS PASSES THROUGH scrub (bare: {_hook_bare})",
+      _hook_bare == [])
+
+
+# ---------------------- a label on one line, its value on the next, 2026-09-08 (R5 a2 / R6 acc2)
+# 🐛 The personal-data keyword gate read the CURRENT LINE ONLY, so 16 of 17 generated multi-line
+# shapes passed through whole -- each with a valid checksum, each with no marker beside it. A YAML
+# block scalar, a pretty-printed JSON value and a support ticket are all written that way.
+#
+# EVERY FIXTURE BELOW IS COMPUTED FROM ITS OWN SCHEME AND ASSERTED VALID FIRST. Five hand-written
+# identifier fixtures produced false leak reports in this project in one day; a fixture that fails
+# its own checksum proves nothing in either direction.
+def _luhn_ok(n):
+    d = [int(c) for c in n][::-1]
+    return sum(sum(divmod(x * 2, 10)) if i % 2 else x for i, x in enumerate(d)) % 10 == 0
+
+
+def _thai_check(first12):
+    return str((11 - sum(int(first12[i]) * (13 - i) for i in range(12)) % 11) % 10)
+
+
+_PD_CARD = "4111111111111111"
+_PD_CARD_BAD = "4111111111111112"
+_PD_THAI = "110170020736" + _thai_check("110170020736")
+_PD_AADHAAR = "347284011350"
+check("the card fixture passes Luhn before it is used as evidence", _luhn_ok(_PD_CARD))
+check("...and the deliberately-invalid one does not", not _luhn_ok(_PD_CARD_BAD))
+check("the Thai ID fixture passes its own check digit",
+      _rd._thai_id(_PD_THAI) if hasattr(_rd, "_thai_id") else _PD_THAI[-1] == _thai_check(_PD_THAI[:12]))
+check("the Aadhaar fixture passes Verhoeff", _rd._aadhaar(_PD_AADHAAR))
+
+for _pd_label, _pd_text, _pd_secret in (
+        ("a YAML block scalar", f"national_id: |\n  {_PD_THAI}\n", _PD_THAI),
+        ("a YAML block scalar, card", f"card_number: |\n  {_PD_CARD}\n", _PD_CARD),
+        ("a YAML block scalar, Aadhaar", f"aadhaar: |\n  {_PD_AADHAAR}\n", _PD_AADHAAR),
+        ("a JSON key with its value on the next line",
+         '{\n  "national_id":\n    "' + _PD_THAI + '"\n}', _PD_THAI),
+        ("a label then the value", f"Card number:\n{_PD_CARD}\n", _PD_CARD),
+        ("a label, a blank line, then the value", f"Card on file:\n\n{_PD_CARD}\n", _PD_CARD),
+        ("a support ticket", f"customer credit card\n{_PD_CARD}\nplease refund", _PD_CARD)):
+    check(f"A LABEL ON THE LINE ABOVE STILL COUNTS AS CONTEXT: {_pd_label}",
+          _pd_secret not in _rd.scrub(_pd_text))
+
+# The other direction, and the half that decides whether the window may exist at all. Each of
+# these is a shape the window makes newly reachable, and none of them may be touched.
+for _pd_label, _pd_text in (
+        ("a heading, then a commit sha",
+         "## Card\n\n9f3dc3f0a1b2c3d4e5f60718293a4b5c6d7e8f90\n"),
+        ("a password heading, then unrelated hex",
+         "Password policy\n\ndeadbeefcafebabe1234567890abcdef\n"),
+        ("the right word beside a number that FAILS its checksum",
+         f"card_number: |\n  {_PD_CARD_BAD}\n"),
+        ("a keyword, then port numbers", "aadhaar docs\n\n8080 9090 3000 5432\n"),
+        ("sixteen digits under no label at all", "value:\n  1234567890123456\n"),
+        ("a label three lines of content above its number",
+         f"Card number:\n\nsome prose here\nmore prose here\n{_PD_CARD}\n")):
+    check(f"...and this is left exactly as it was: {_pd_label}",
+          _rd.PLACEHOLDER not in _rd.scrub(_pd_text))
+
+# The window is the LABEL side only: the number is still matched on its own line and still has to
+# pass its own checksum. Asserted directly, because "widened the gate" and "widened the match" are
+# one edit apart and only one of them is safe.
+check("the window widens the KEYWORD gate and not the match",
+      _rd._label_window(["card number:", "", "4111 1111 1111 1111"], 2).splitlines()[0]
+      == "4111 1111 1111 1111")
+check("...and a blank line does not spend the window",
+      "card number:" in _rd._label_window(["card number:", "", "4111 1111 1111 1111"], 2))
+check("...and it stops at the measured distance rather than scanning the file",
+      "far away" not in _rd._label_window(["far away", "a", "b", "c"], 3))
+
+
+# ------------------------------- a sentence, with no separator anywhere, 2026-09-08 (R8 agent 8)
+# 🐛 Every rule in `redact.py` needs a separator: `[:=]`, `=>`, a tag boundary, or the value as the
+# very next token. English needs none, and `# Note: the staging API key is tpuf_… for now` passed
+# through byte for byte -- a clean miss in the shape a person uses when TELLING somebody a key
+# rather than configuring one. Matches protectai/llm-guard#293.
+for _cp in ("# Note: the staging API key is tpuf_hmNxzxxxP3yL8R for now, rotate before prod",
+            "My API key is tpuf_hmNxzxxxP3yL8R and I need to share it",
+            "the password is Tr0ub4dor3Horse9Battery",
+            "the db password was hunter2hunter2hunter2",
+            "the access token is ghs_abcdefghij1234567890",
+            "our private key is MIIEpAIBAAKCAQEAx7Vk"):
+    check(f"A CREDENTIAL CARRIED BY A COPULA IS REDACTED: {_cp[:44]}", _rd.scrub(_cp) != _cp)
+# The half that decides whether the rule may exist. These are sentences, and this module's measured
+# trade is that destroying one costs more than missing a secret.
+for _cp in ("the password is required", "the api key is missing", "the token is invalid",
+            "the token is 1Password", "the api key is AWS Secrets Manager",
+            "the password is stored in Vault", "the api key is rotated monthly",
+            "the private key is generated on first run",
+            "the access token is refreshed automatically",
+            "the api key is whatever the platform team issued",
+            "the secret is nothing more than a string",
+            "the session token is short-lived by design"):
+    check(f"...and ordinary prose in the same shape is untouched: {_cp[:44]}",
+          _rd.scrub(_cp) == _cp)
+# 🐛 The last of those needed `_is_a_plain_word` to learn a hyphenated compound: `short-lived`,
+# `read-only` and `well-known` were not prose to it, so every adjacency rule that consults it
+# treated them as values. Each PART still has to be an ordinary lower-case word, which is what
+# keeps a credential out.
+for _hw in ("short-lived", "read-only", "well-known", "state-of-the-art", "required"):
+    check(f"`{_hw}` reads as prose", _rd._is_a_plain_word(_hw))
+for _hw in ("sk-proj-abcd1234", "hunter2-hunter2", "abc-def-ghi-jkl-mno-pqr",
+            "tpuf_hmNxzxxxP3yL8R", "Tr0ub4dor3Horse9Battery"):
+    check(f"...and `{_hw}` does not", not _rd._is_a_plain_word(_hw))
+
+# 🐛 The declaration-keyword guard searched "the line", and a line is not always short:
+# `bench/results.json` holds a whole markdown document inside one JSON string where `\n` is two
+# characters, so the word `service` thousands of characters earlier exempted a real HMAC secret
+# that had been redacted until the guard was added. Found by sweeping both versions of `scrub()`
+# over all 875 files and reading every line that stopped being redacted.
+check("A DECLARATION KEYWORD FAR AWAY ON A LONG LINE DOES NOT EXEMPT A SECRET",
+      _rd.PLACEHOLDER in _rd.scrub(
+          "class Foo " + "x" * 400 + " HMAC_SECRET: 9xTvB5dLpYcH8wJgE4aUdTr3nQ7kR2mZ"))
+check("...and one ADJACENT to the name still does, which is what the guard is for",
+      _rd.scrub("public static readonly apiKey: String")
+      == "public static readonly apiKey: String")
+# ...and the value-shape branches need the value to END the line, or an English sentence whose
+# next word happens to be a TypeScript type name reads as a declaration.
+check("A TYPE NAME WITH PROSE AFTER IT IS NOT A DECLARATION",
+      _rd.PLACEHOLDER in _rd.scrub("password: unknown ask the platform team"))
+
+# ------------------- a generic parameter list between the name and the paren, 2026-09-08 (R8 a14)
+# 🐛 It sits between the NAME and the opening paren, and only Rust's rule allowed for it -- so the
+# identical construct worked in one language and hid every definition in three others.
+for _ex_lang, _ex_src, _ex_want in (
+        ("go", "func Map[T, U any](xs []T) []U {\n}\n", "Map"),
+        ("go", "func Plain(xs []int) int {\n}\n", "Plain"),
+        ("go", "func (s *Server) Handle(w Writer) {\n}\n", "Handle"),
+        ("swift", "func map<T, U>(_ xs: [T]) -> [U] {\n}\n", "map"),
+        ("swift", "@objc dynamic func sync(_ x: Int) {\n}\n", "sync"),
+        ("swift", "func plain(_ x: Int) {\n}\n", "plain"),
+        ("cs", "public T Get<T>(int id) where T : class {\n}\n", "Get"),
+        ("cs", "public int Plain(int id) {\n}\n", "Plain"),
+        ("js", "export default function Foo() {}\n", "Foo"),
+        ("js", "export function Bar() {}\n", "Bar"),
+        ("rs", "pub fn map<T, U>(xs: Vec<T>) -> Vec<U> {\n}\n", "map")):
+    _ex_names = [n.split("(")[0] for n, _ in mapper.extract_regex(_ex_src, _ex_lang)[1]]
+    check(f"{_ex_lang}: `{_ex_src.splitlines()[0][:40]}` yields {_ex_want}",
+          _ex_want in _ex_names)
+
+
+# ------------------- a file the walk found and the index will not contain, 2026-09-08 (R8 a7)
+# 🐛 Three layers, and the reported one was the shallowest. `indexable()` opened with
+# `if not path.is_file(): continue`, which silently drops a symlink whose target does not resolve;
+# its three `except OSError: continue` branches recorded nothing either; and `tree.UNREADABLE` --
+# the mechanism `bin/chamnan-map` ALREADY prints -- cleared itself on every walk, so a build that
+# walks twice reported none of what the first walk could not read. That last one meant the report
+# line could almost never print anything at all, for any cause, not just this one.
+_sym = Path(tempfile.mkdtemp(prefix="chamnan_symloop_"))
+subprocess.run(["git", "init", "-q"], cwd=_sym, check=True)
+(_sym / "src").mkdir()
+(_sym / "src" / "real.py").write_text("# A real module.\nx = 1\n", encoding="utf-8")
+os.symlink("loop_b.py", _sym / "src" / "loop_a.py")
+os.symlink("loop_a.py", _sym / "src" / "loop_b.py")
+check("the two-hop symlink loop fixture really does not resolve",
+      (_sym / "src" / "loop_a.py").is_symlink() and not (_sym / "src" / "loop_a.py").exists())
+_sym_run = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_sym,
+                          capture_output=True, text=True, encoding="utf-8")
+_sym_out = _sym_run.stdout + _sym_run.stderr
+check("A FILE THE WALK FOUND AND THE INDEX DROPPED IS NAMED, NOT SILENTLY GONE",
+      "COULD NOT BE READ" in _sym_out)
+check("...and both members of the loop are named, not just the first",
+      "loop_a.py" in _sym_out and "loop_b.py" in _sym_out)
+# The half that decides whether the accounting may exist: an ordinary symlink is not a defect.
+_ok = Path(tempfile.mkdtemp(prefix="chamnan_symok_"))
+subprocess.run(["git", "init", "-q"], cwd=_ok, check=True)
+(_ok / "src").mkdir()
+(_ok / "src" / "a.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+(_ok / "src" / "sub").mkdir()
+(_ok / "src" / "sub" / "c.py").write_text("# In sub.\nz = 3\n", encoding="utf-8")
+os.symlink("a.py", _ok / "src" / "link_ok.py")
+os.symlink("sub", _ok / "src" / "subdir_link")
+_ok_run = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_ok,
+                         capture_output=True, text=True, encoding="utf-8")
+check("...and a symlink that RESOLVES is not reported as unreadable",
+      "COULD NOT BE READ" not in (_ok_run.stdout + _ok_run.stderr))
+
+# 🐛 `tree.UNREADABLE` was the one member of the skip family that cleared itself per WALK while
+# every sibling accumulates per RUN, and `chamnan-map` reads them all together as if their
+# lifetimes matched. Asserted directly, because the symptom above would come back the moment
+# somebody moves the clear() and every other check here would still pass.
+_life = Path(tempfile.mkdtemp(prefix="chamnan_life_"))
+(_life / "a.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+tree.UNREADABLE.clear()
+tree.UNREADABLE.add("planted.py")
+tree.files(_life)
+check("A LATER WALK DOES NOT ERASE WHAT AN EARLIER ONE COULD NOT READ",
+      "planted.py" in tree.UNREADABLE)
+mapper.reset_skips()
+check("...and the run-level reset clears it with its siblings", tree.UNREADABLE == set())
+
+# ----------------------- the block reaching one tool twice, 2026-09-08 (R8 agent 16, verified)
+# 🐛 Four vendors read their own file AND the root `AGENTS.md`, each confirmed against the
+# vendor's own documentation. A user who ran `--write generic` and then `--write roo` sends the
+# identical block to that tool twice every session and pays twice — a token-waste defect in a tool
+# whose purpose is to reduce tokens — and nothing said so.
+_dup = Path(tempfile.mkdtemp(prefix="chamnan_dup_"))
+subprocess.run(["git", "init", "-q"], cwd=_dup, check=True)
+(_dup / "src").mkdir()
+(_dup / "src" / "app.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_dup,
+               capture_output=True, text=True, encoding="utf-8")
+
+
+def _write_agent(name, cwd=_dup):
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-context"), "--write", name],
+                       cwd=cwd, capture_output=True, text=True, encoding="utf-8")
+    return r.stdout + r.stderr
+
+
+check("the duplicate-delivery set is not empty", len(adapters_mod.ALSO_READS_AGENTS_MD) >= 4)
+_write_agent("generic")
+for _da in sorted(adapters_mod.ALSO_READS_AGENTS_MD):
+    check(f"WRITING `{_da}` BESIDE A CHAMNAN-WRITTEN AGENTS.md SAYS THE BLOCK ARRIVES TWICE",
+          "twice" in _write_agent(_da))
+# ...and the three directions where saying it would be wrong.
+_quiet = [a for a in ("cline", "zed", "trae") if a in adapters_mod.names()]
+check("there are agents outside the set to check against", _quiet)
+for _da in _quiet:
+    check(f"...and `{_da}`, which reads no root AGENTS.md, is not warned",
+          "twice" not in _write_agent(_da))
+(_dup / adapters_mod.for_agent("generic").TARGET).unlink()
+check("...and with no AGENTS.md at all there is nothing to warn about",
+      "twice" not in _write_agent("roo"))
+(_dup / adapters_mod.for_agent("generic").TARGET).write_text("# my own notes\n", encoding="utf-8")
+check("...and an AGENTS.md the USER wrote is not a duplicate of anything",
+      "twice" not in _write_agent("roo"))
 
 # ------------------------------------------- the false NEGATIVES, which nothing here measured
 # 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
