@@ -1615,6 +1615,26 @@ def main():
                                  f"{describe(s) or 'no description — add one'}")
                 if len(skills) > MAX_TOOLS:
                     lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
+                # 🐛 [2026-09-08] Skill filenames are typed by a person, not derived through any
+                # `slug()`, so the normalisation fix that closed this for threads and candidates does
+                # not reach here. Reproduced: writing `café-deploy.md` precomposed and then
+                # decomposed leaves ONE file on this machine's APFS -- the first name carrying the
+                # second file's content -- and the listing printed `café-deploy.md — Completely
+                # different content.` with nothing to say a skill had been destroyed. `Rollback.md`
+                # and `rollback.md` do the same.
+                #
+                # The warning can only fire on a case-SENSITIVE checkout, where both files still
+                # exist; that is the point, and `memory.case_collisions` says so at its own
+                # definition. It is the last moment before a sync to a Mac or a Windows box silently
+                # keeps one of them. Wired into rules, decisions and lessons already; this was the
+                # member of that set nobody had built a fixture for.
+                clashing = memory.case_collisions(skills)
+                for group in clashing:
+                    names = ", ".join(f"`{mdblock.as_quoted(g.name)}`" for g in group)
+                    lines.append(
+                        f"- ⚠️ {names} differ only by case or Unicode normalisation. A "
+                        f"case-insensitive filesystem keeps ONE of them — check which survives "
+                        f"before this workspace is cloned to macOS or Windows.")
                 out.append(section(
                     "Recorded procedures — read the one that matches before starting that kind of task",
                     # The last of the injected sections to reach the block unscrubbed. A skill's

@@ -201,6 +201,39 @@ developer wrote deliberately in a subdirectory alone — which Goose reads, walk
 working directory. Anchoring is about not ignoring somebody else's file, not about matching this
 one.
 
+### A skill could be destroyed by another skill and the block listed it as normal
+
+`case_collisions` guards the stores whose filenames a person types, and it was wired into rules and
+into decisions and lessons. The skills listing was the fourth member of that set and had nothing.
+
+The fixture nobody had built found it in one go. Writing `café-deploy.md` precomposed and then
+writing it decomposed leaves ONE file on a case-insensitive filesystem — the first name carrying the
+second file's content — and the session block printed `café-deploy.md — Completely different
+content.` with no sign that a procedure had been overwritten. `Rollback.md` and `rollback.md` behave
+the same way. The warning can only fire on a case-sensitive checkout, where both files still exist,
+and that is the point: it is the last moment before a clone to macOS or Windows silently keeps one.
+
+The check that guards it names the set by the property that matters — a filename a person typed —
+rather than by the `*.md` glob they share. `candidates` and `timeline` glob identically and are
+deliberately NOT in it: both derive their name through a reduction to lowercase ASCII, so the
+mechanism cannot fire there, and wiring it in would have read as coverage while covering nothing.
+
+### Two accounting checks that could have stopped running without saying so
+
+`chamnan-map --explain`'s two reconciliation checks sat behind a bare `if` with no else. A change to
+the heading text or the report format would have stopped them running, with the suite fully green
+and nothing anywhere saying a check had gone quiet. The population is asserted now, which is
+deliberately stronger than skipping: unlike the live-workspace check, these are not environment
+conditions — the fixture always produces both, so their absence is the regression itself.
+
+### The reason for `--diff-filter=ACDR` now sits beside the filter
+
+The git hook rebuilds the index on add, delete and rename, and deliberately not on modify. The
+measurement that justifies it — 297 of 355 non-merge commits touch only existing files, and the
+rebuild is a full rescan at 107s on 1,032 files — was recorded, but 216 lines away from the filter,
+beside the sentence that tells the user about it. Someone reading the hook body saw `ACDR` with no
+explanation. It is written where the decision is now, and it travels into the installed hook file.
+
 ### The rest
 
 The first-session banner contradicted itself on two of its three branches — an unwritable repository
