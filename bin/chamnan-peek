@@ -74,7 +74,27 @@ def main(argv):
     # Decided this way once — do not "make it consistent" with map by refusing outside paths too.
     _asked = Path(target)
     _root = ws.find_root()
-    _named_inside = any(r in Path(os.path.abspath(target)).parents for r in (_root, _root.resolve()))
+    # 🐛 [2026-09-09] One side of this comparison was resolved and the other was not, so the guard
+    # was absent wherever the two spellings of a path differ. `find_root()` returns a RESOLVED path;
+    # `os.path.abspath` only joins the name onto `os.getcwd()`. On POSIX that is harmless -- getcwd
+    # returns a canonical path with no links in it, which is why this passed on macOS and Linux for
+    # as long as it existed. Windows does not: GetCurrentDirectory hands back whatever string the
+    # process was started with, short 8.3 components and all, so a repository reached through a path
+    # like `C:\Users\RUNNER~1\...` produced `_named_inside = False`, and the link pointing out of
+    # the repository was read into the transcript exactly as it was before the guard was written.
+    # Found by chamnan's own Windows CI, where TEMP has that shape.
+    #
+    # The parent is resolved rather than the path itself: resolving the path would follow the very
+    # link being judged and answer about the TARGET. The directory holding it has no final link in
+    # it, so this normalises short names, junctions and symlinked parents while still asking about
+    # the place the caller named. Equality as well as `parents` -- a file sitting directly in the
+    # root is inside it.
+    try:
+        _named_dir = Path(os.path.abspath(target)).parent.resolve()
+        _root_dir = Path(_root).resolve()
+        _named_inside = _named_dir == _root_dir or _root_dir in _named_dir.parents
+    except (OSError, RuntimeError, ValueError):
+        _named_inside = False
     if _asked.exists() and _named_inside and not ws.inside(_asked, _root):
         print(f"chamnan-peek: {mdblock.as_quoted(target, 100)} is inside this repository but "
               f"points outside it — this command reads a file into the transcript, and a link the "

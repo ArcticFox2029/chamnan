@@ -1164,7 +1164,19 @@ def main(argv):
         print(f"\n  These commands are not on your PATH, so `chamnan-map` from a shell will say")
         print(f"  `command not found`. Inside Claude Code they work regardless. To use them from a")
         print(f"  terminal, add this line to your shell profile:")
-        print(f"    export PATH=\"{_bindir}:$PATH\"")
+        # 🐛 [2026-09-09] One line, `export PATH="…:$PATH"`, printed to every operating system.
+        # On Windows it is wrong three times over -- `export` is not a command there, `$PATH` is
+        # not the variable, and `:` is not the separator -- so the single instruction chamnan gives
+        # a Windows user in their first ten minutes does nothing when they paste it, and the
+        # message that sends them to a shell profile does not say which one. The suite asserted
+        # the bash text was present, on Windows too, so the platform where the advice was useless
+        # was the platform confirming it. Same shape as the defect this release is named for.
+        if os.name == "nt":
+            print(f"    $env:Path = \"{_bindir};$env:Path\"          # this PowerShell session")
+            print(f"  To keep it, add the same line to the file $PROFILE names, or set it under")
+            print(f"  System Properties -> Environment Variables.")
+        else:
+            print(f"    export PATH=\"{_bindir}:$PATH\"")
 
     if total == 0:
         # 🐛 [2026-09-08] `pct = have / total * 100 if total else 0` makes a repository with nothing
