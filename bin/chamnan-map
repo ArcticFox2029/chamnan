@@ -100,10 +100,18 @@ if command -v chamnan-map >/dev/null 2>&1; then
     # The path comes from the command that wrote it rather than from a table here: `--write` prints
     # `chamnan-context -> <path>`, so there is one source for "which file did this touch" instead
     # of a second list that can disagree with the adapters.
+    # 🐛 [2026-09-09] `tr -d '\r'` on both readings, and it is not cosmetic: without it this loop
+    # had never refreshed a single agent file on Windows. Python writes `\r\n` there, `read -r`
+    # keeps the CR, and `chamnan-context --write "generic<CR>"` is an invalid choice that argparse
+    # refuses -- so every name in the loop was rejected and nothing was written or staged. The
+    # `chamnan-map` line above survived because it parses no output. Silent in both directions: the
+    # hook reported nothing, the commit simply did not carry the refreshed file, and the README goes
+    # on calling this hook the thing that keeps those files current. Found by chamnan's own Windows
+    # CI, whose commit stat showed MAP.md refreshed and AGENTS.md untouched.
     if command -v chamnan-context >/dev/null 2>&1; then
-      chamnan-context --written-agents 2>/dev/null | while read -r a; do
+      chamnan-context --written-agents 2>/dev/null | tr -d '\r' | while read -r a; do
         [ -n "$a" ] || continue
-        written=$(chamnan-context --write "$a" 2>/dev/null | sed -n 's/^chamnan-context -> //p' | head -1)
+        written=$(chamnan-context --write "$a" 2>/dev/null | tr -d '\r' | sed -n 's/^chamnan-context -> //p' | head -1)
         [ -n "$written" ] && git add -- "$written" >/dev/null 2>&1 || true
       done
     fi

@@ -22476,6 +22476,29 @@ check("...while the agent file the hook refreshed IS in the commit",
 check("...and nothing chamnan wrote is left dirty behind it",
       _hk_run("git", "status", "--short", "AGENTS.md").stdout.strip() == "")
 
+# ------------------- every reading of chamnan's own output inside the hook strips CR, 2026-09-09
+# 🐛 The hook runs under git's bundled shell on Windows, where Python's `print` ends every line
+# with `\r\n` -- and `read -r` keeps that CR. `chamnan-context --write "generic<CR>"` is not a
+# valid choice, argparse refuses it, and the loop wrote and staged nothing. Silent in both
+# directions, for as long as the loop has existed, on the one platform whose shell nobody reads.
+#
+# Derived from the hook text rather than pinned to the one line that was wrong: the population is
+# "places this script reads output produced by a Python program", and the next one added would have
+# the same defect for the same reason. `command -v` and a bare invocation are excluded -- they
+# consume nothing.
+_hk_body = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+_hk_between = _hk_body.split('HOOK_BODY = """', 1)[1].split('"""', 1)[0]
+# A single `|`, never `||`: the first pipes chamnan's output into something that reads it, the
+# second is `or else` and consumes nothing. Matching both put `chamnan-map … || true` in the
+# population and reported a defect where there is nothing to strip.
+_hk_reads = [ln.strip() for ln in _hk_between.splitlines()
+             if re.search(r"chamnan-\w+[^|]*\|(?!\|)", ln) and not ln.strip().startswith("#")]
+check("THE HOOK HAS LINES THAT READ CHAMNAN'S OWN OUTPUT, SO THIS CHECK HAS A POPULATION",
+      len(_hk_reads) >= 1, saw=f"lines found: {_hk_reads}")
+_hk_unstripped = [ln for ln in _hk_reads if "tr -d '\\r'" not in ln and 'tr -d "\\r"' not in ln]
+check("...and every one of them strips the CR that Windows puts on every line",
+      not _hk_unstripped, saw="\n".join(_hk_unstripped))
+
 # 🐛 `--written-agents` asked `_looks_generated`, which answers for the SHARED writer — a
 # `## chamnan` heading. Four adapters have an `install()` of their own and none writes that shape,
 # so fifteen names were never reported and the hook's refresh loop refreshed none of them,
