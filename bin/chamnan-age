@@ -103,6 +103,13 @@ def main(argv):
     # question: a Compose file may be for local development and a Helm override is invisible to a
     # static scan, so what this can honestly say is that two things in this repository disagree.
     drift = aging.deploy_drift(root)
+    # 🐛 [2026-09-08] A failing `deploy.scan()` returned the same empty list as a repository with no
+    # manifests, so a broken scanner read here as "nothing disagrees" (R9 agent 1). The comparison
+    # not happening is a different fact from it happening and finding nothing, and this is where a
+    # reader learns which one they got.
+    if aging.DRIFT_ERROR:
+        print(f"chamnan: the deployment manifests could not be scanned, so nothing was compared "
+              f"against them — {mdblock.as_quoted(aging.DRIFT_ERROR[0], 120)}\n")
     if drift:
         one = len(drift) == 1
         print(f"{len(drift)} declared version{'' if one else 's'} disagree"
@@ -127,8 +134,23 @@ def main(argv):
         # environments legitimately differ, which is why environments.md exists) and this module
         # has no way to read which environment a sentence is about. So the sentence says what was
         # actually checked (R11 agent 3).
-        print("chamnan: every version named in stored knowledge is still declared by some "
-              "environment")
+        # 🐛 [2026-09-08] An entry the library could not open was dropped from the loop with no
+        # trace, so this sentence — a completeness claim — was printed over a check that had
+        # skipped files. One `chmod 000` was the whole difference between a correct finding and a
+        # clean pass (R9 agent 1). Named, not counted: "3 could not be read" sends somebody looking
+        # at the wrong three as easily as the right ones.
+        if aging.UNREADABLE:
+            _n = len(aging.UNREADABLE)
+            print(f"chamnan: {_n} stored entr{'y' if _n == 1 else 'ies'} could not be read, so "
+                  f"{'it was' if _n == 1 else 'they were'} not checked")
+            for _u in aging.UNREADABLE[:8]:
+                print(f"  memory/{mdblock.as_quoted(_u, 90)}")
+            if _n > 8:
+                print(f"  +{_n - 8} more")
+            print("  Everything else that was readable is still declared by some environment.")
+        else:
+            print("chamnan: every version named in stored knowledge is still declared by some "
+                  "environment")
         print("  This does not read which environment an entry is ABOUT: a note about one that "
               "moved on\n  is cleared by another that still runs the old version.")
         return 0

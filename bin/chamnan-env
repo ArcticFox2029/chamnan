@@ -2,6 +2,7 @@
 """chamnan-env — the constraints nobody writes down and everybody re-learns.
 
   chamnan-env                              list declared environments and their constraints
+  chamnan-env --list  (or -l)              the same list, when a flag reads better in a script
   chamnan-env show <name>                  one environment in full
   chamnan-env set <name> [options]         declare or update one environment
   chamnan-env check                        which entries nobody has confirmed lately

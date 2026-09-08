@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """chamnan-timeline — one line of work followed across the sessions it actually took.
 
-  chamnan-timeline                          list declared threads (same as `list`)
+  chamnan-timeline                          list declared threads (same as `list`, `--list`, `-l`)
   chamnan-timeline show <id>                one thread, every entry in order
   chamnan-timeline new <title>              DECLARE a thread — nothing else creates one
   chamnan-timeline add <id> <note>          append an entry to a declared thread
