@@ -769,13 +769,20 @@ how you remove it.
 ## Language
 
 chamnan writes the comments and procedures it generates in English by default. Those strings are
-re-read on every session, and English carries the same meaning in fewer tokens — roughly half again
-as many for Thai as for English, across three matched sentence pairs.
+re-read on every session, and English carries the same meaning in fewer tokens — **1.63x as many
+for Thai as for English on average, over a range of 1.50x to 1.85x**, across three matched sentence
+pairs.
 
-**That comparison used a local model's tokenizer, not Claude's, and no script or corpus for it is
-committed here.** It is a direction, not a measurement: a repository that publishes a token
-calibration harness in `lib/tokens.py` should not print two decimal places for a ratio nobody can
-reproduce from this tree. The direction is not in doubt; the digits were.
+Those pairs, and the script that measures them, are in `bench/script_ratio.py`. Run it and you get
+the number above; if it ever disagrees with this paragraph, one of the two is wrong and you can see
+which. This replaces an earlier version of this section that quoted 1.53x from a measurement whose
+sentences were never committed — the digits were not reproducible from this tree, so the section
+declined to print any. Now they are.
+
+**What it measures:** `lib/tokens.py`'s estimator, which is what chamnan budgets with — not a
+vendor tokeniser and not a bill. That makes it the right number for a claim about chamnan's own
+budgeting and the wrong one for a claim about what an API will charge. The range matters more than
+the mean here: three pairs is a small sample and one of them sits well above the other two.
 
 It is a default, not a rule. A team whose reviewers do not read English is better served by
 comments they will actually read, and the plugin does not argue:
@@ -2309,7 +2316,7 @@ python3 plant_secrets.py
 529 source file(s), 1,373,242 tokens of code
 Quick Index    53,652 tokens  (3.9% of the source)
 Full Detail   132,999 tokens  (grep this, never read it whole)
-described    [###################.] 517/529 files (98%)
+described    [###################.] 514/529 files (97%)
 
 Over the 3,000-token session budget, so session start will roll this up by
 directory: ~2,970 tokens injected per session instead of 53,652

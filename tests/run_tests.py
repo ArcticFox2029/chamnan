@@ -20215,8 +20215,11 @@ for _cp in (ROOT / "lib" / "memory.py", ROOT / "hooks" / "chamnan_session_start.
 _hook_src = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
 _sk_start = _hook_src.find('(wsdir / "skills").glob("*.md")')
 _collision_callers["skills"] = [_hook_src[_sk_start:_sk_start + 3000]] if _sk_start >= 0 else []
-check("the skills listing was located in the hook, so the check below has a subject",
-      bool(_collision_callers["skills"]))
+_se_start = _hook_src.find('"Where the last session stopped"')
+_collision_callers["sessions"] = (
+    [_hook_src[max(0, _se_start - 3000):_se_start]] if _se_start >= 0 else [])
+check("both hand-named listings were located in the hook, so the check below has subjects",
+      bool(_collision_callers["skills"]) and bool(_collision_callers["sessions"]))
 
 # 🐛 [2026-09-08] `case_collisions` guards the stores whose filenames a PERSON types. It was wired
 # into rules and into decisions/lessons, and not into the skills listing -- the fourth member of
@@ -20231,7 +20234,19 @@ check("the skills listing was located in the hook, so the check below has a subj
 # clash their own guards handle and `case_collisions` could never fire on. Wiring it in would have
 # read as coverage while covering nothing -- which is why this check names the four by the property
 # that matters (a hand-typed filename) rather than by the glob they share.
-_typed_name_stores = ("rules_text", "titles", "skills")
+# 🐛 [2026-09-08] This tuple was written a few hours before the rest of this comment and it named
+# THREE. `sessions` was missing, and it is the member the code's own docstring in `lib/sessions.py`
+# calls "the worst of the four" -- injected on every session with no user action, where the other
+# three need a command before anyone sees the damage. A check written to stop a rule being applied
+# to some members of a set, with the set itself enumerated incompletely by hand.
+#
+# The membership rule, so a fifth is recognised rather than forgotten: a store belongs here when a
+# PERSON types the filename. `skills/` and `sessions/` qualify because a skill file instructs an
+# agent to write the path directly (`skills/resume/SKILL.md` spells out
+# `.chamnan/sessions/YYYY-MM-DD-short-slug.md`). `candidates` and `timeline` do NOT, and are
+# deliberately absent: their commands derive the name through a `slug()` that reduces to lowercase
+# ASCII, so two names can only collide by being identical, which their own guards already handle.
+_typed_name_stores = ("rules_text", "titles", "skills", "sessions")
 _scs = [n for n in _typed_name_stores
         if any("case_collisions" in _seg for _seg in _collision_callers.get(n, []))]
 check(f"EVERY STORE WITH HAND-TYPED FILENAMES CHECKS FOR A COLLAPSING NAME PAIR: {_scs}",
@@ -21388,6 +21403,110 @@ _uc_after = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-impact")
 check("...and so does a change COMMITTED since the index was built, which `status` alone misses",
       "current with the code" not in _uc_after)
 _rmtree(_uc.parent, ignore_errors=True)
+
+# ------------------------------------------------- a list of secrets, redacted past its first item
+# 🐛 [2026-09-08] Every assignment rule answers "name, separator, ONE value" and stops, which is what
+# an assignment is. A list is the other shape a config file uses for the same job: rotated keys, a
+# token pool, two passwords during a migration. Measured on a three-element JSON array of generic
+# secrets -- the first redacted, the other two printed beside it with a `<REDACTED>` at the front
+# saying the line had been handled. A YAML block sequence was missed outright (R3 agent 2).
+_LIST_SECRETS = ("hunter2isnotgood", "correcthorsebattery", "tr0ub4dor3horse")
+for _lbl, _src in (
+        ("json array", '{"api_keys": ["hunter2isnotgood", "correcthorsebattery", "tr0ub4dor3horse"]}'),
+        ("json, nested object", '{"db": {"passwords": ["hunter2isnotgood", "correcthorsebattery"]}}'),
+        ("yaml flow sequence", 'passwords: ["hunter2isnotgood", "correcthorsebattery"]'),
+        ("yaml block sequence", 'passwords:\n  - "hunter2isnotgood"\n  - "correcthorsebattery"\n'),
+        ("yaml block, unquoted", 'passwords:\n  - hunter2isnotgood\n  - correcthorsebattery\n'),
+        ("toml array", 'api_keys = ["hunter2isnotgood", "correcthorsebattery"]'),
+        ("python list", 'API_KEYS = ["hunter2isnotgood", "correcthorsebattery"]'),
+        # The unquoted inline branch had NO case here at first, and a NameError sat in it while
+        # every other shape passed. A path with no test is a path that compiles.
+        ("inline, unquoted elements", 'api_keys = [hunter2isnotgood, correcthorsebattery]'),
+        ("inline, mixed quoting", 'api_keys = ["hunter2isnotgood", correcthorsebattery]')):
+    _out = _rd.scrub(_src)
+    _left = [w for w in _LIST_SECRETS if w in _out]
+    check(f"EVERY ELEMENT OF A SECRET-NAMED LIST GOES, NOT ONLY THE FIRST: {_lbl}", not _left)
+    if _left:
+        print(f"      still in the clear after the first element: {_left}")
+# A number in such a list is a port, a retry count or a length. Redacting it costs a reader
+# information and hides nothing, so it is the one element type kept.
+check("...while a number among them is kept, because a port is not a credential",
+      "8080" in _rd.scrub('api_keys = [hunter2isnotgood, 8080, correcthorsebattery]'))
+# Precision: the key must still be secret-NAMED. This widens what counts as the VALUE, not what
+# counts as a secret.
+for _src in ('hosts: ["db1.internal", "db2.internal"]', "ports:\n  - 8080\n  - 8443\n",
+             "key_rotation_days: 30", "password: ask the platform team for it",
+             'keywords = ["search", "index", "rank"]', "retries:\n  - 3\n  - 5\n"):
+    check(f"...and an ordinary list is returned byte-identical: {_src.splitlines()[0][:40]!r}",
+          _rd.scrub(_src) == _src)
+
+# ------------------------------------ a documented ratio whose inputs were never written down
+# 🐛 [2026-09-08] The README and `lib/workspace.py` both quoted "1.53x for Thai versus English
+# across three matched sentence pairs" and neither the sentences nor the script existed anywhere in
+# the tree. The README was honest about it -- it said the digits were not reproducible and declined
+# to print more -- but the number stayed in `workspace.py`'s comment as a bare figure, and a claim
+# nobody can re-run is one nobody can correct. Reported three separate times before this.
+#
+# `bench/script_ratio.py` now carries the sentences and prints the number. This asserts the promise
+# the README makes about it: run the script, and the paragraph agrees with the output. A doc that
+# quotes a script it does not match is worse than one that quotes nothing.
+_ratio_out = subprocess.run([sys.executable, str(ROOT / "bench" / "script_ratio.py")],
+                            capture_output=True, text=True,
+                            encoding="utf-8", errors="replace").stdout
+_ratio_m = re.search(r"mean ([\d.]+)x\s+range ([\d.]+)x-([\d.]+)x", _ratio_out)
+check(f"the script-ratio fixture runs and reports a mean with its range: {_ratio_out.strip()[-60:]!r}",
+      bool(_ratio_m))
+if _ratio_m:
+    _mean, _lo, _hi = (float(g) for g in _ratio_m.groups())
+    _rr = (ROOT / "README.md").read_text(encoding="utf-8")
+    _wsrc = (ROOT / "lib" / "workspace.py").read_text(encoding="utf-8")
+    check(f"THE README QUOTES THE NUMBER THE SCRIPT ACTUALLY PRINTS ({_mean:.2f}x)",
+          f"{_mean:.2f}x" in _rr)
+    check(f"...and its range, not just the mean ({_lo:.2f}x to {_hi:.2f}x)",
+          f"{_lo:.2f}x" in _rr and f"{_hi:.2f}x" in _rr)
+    check(f"...and workspace.py's comment agrees with both rather than carrying an older figure",
+          f"{_mean:.2f}x" in _wsrc)
+    check("...and the superseded 1.53x survives only where the README explains the correction",
+          _rr.count("1.53x") == 1 and "1.53" not in _wsrc)
+    # The spread is the point of publishing a range: a mean from three pairs where one sits well
+    # above the others is a number that would move on a fourth.
+    check(f"the fixture's own spread is reported honestly rather than averaged away: "
+          f"{_hi - _lo:.2f} wide", _hi > _lo)
+
+# ---------------------------------- the benchmark stated a rule about itself and enforced nothing
+# 🐛 [2026-09-08] `bench/questions.json` says in its own note that every question "must have a
+# checkable ground truth", and not one of the ten carried one. `run_bench.py` read `id`, `dimension`
+# and `q`, scored nothing, and every figure it has produced answers "what did this cost" while
+# looking like it answers "did this work". The 20 recorded cells are all cost.
+#
+# The corpus is not in this repository, so the values cannot be written here. What is enforced is
+# the silence: a question with no ground truth is reported UNSCORED and named, rather than passing
+# as though cost were the measurement. This checks the enforcement, not the values.
+_bq = json.loads((ROOT / "bench" / "questions.json").read_text(encoding="utf-8"))
+_bench_src = (ROOT / "bench" / "run_bench.py").read_text(encoding="utf-8")
+check("the benchmark's own note still tells a writer a question needs ground truth",
+      "checkable ground truth" in _bq.get("note", ""))
+check("...AND THE RUNNER ENFORCES IT RATHER THAN ONLY STATING IT",
+      "UNSCORED" in _bench_src and "def score(" in _bench_src)
+check("...and an unscored cell is counted and named, not silently skipped",
+      "_report_correctness" in _bench_src and "Do not publish one as evidence" in _bench_src)
+# Behavioural: the scorer must separate right from wrong, and must return None -- not True -- for a
+# question with nothing to check. None reported as a pass is the whole defect in miniature.
+_bench_mod = importlib.util.module_from_spec(
+    importlib.util.spec_from_file_location("_bench", ROOT / "bench" / "run_bench.py"))
+_bench_mod.__spec__.loader.exec_module(_bench_mod)
+check("the scorer says True when the answer contains what it must",
+      _bench_mod.score({"expect": {"kind": "contains", "value": ["pricing"]}},
+                       "services/pricing/rate.py") is True)
+check("...False when it does not",
+      _bench_mod.score({"expect": {"kind": "contains", "value": ["absent"]}}, "nothing") is False)
+check("...and NONE, not True, when the question carries no ground truth",
+      _bench_mod.score({}, "any answer at all") is None)
+# The four whose truth is mechanically derivable carry the command that derives it, so whoever holds
+# the corpus fills them in rather than inventing them.
+_derivable = [q["id"] for q in _bq["questions"] if q.get("expect_from", {}).get("derive")]
+check(f"the mechanically-derivable questions record how to derive their truth: {_derivable}",
+      len(_derivable) >= 4)
 
 # ------------------------------------------- four shares of one budget, added up at last
 # 🐛 [2026-09-08] Four optional sections draw from `index_token_budget`, each declaring its own

@@ -36,7 +36,8 @@ DEFAULT_CONFIG = {
     # not touch anything already written, and it never affects the language of replies to the user.
     #
     # "en" is the default because these strings are re-read on every session, and English tokenizes
-    # to roughly two-thirds of the equivalent Thai (measured 1.53x on one tokenizer — see README),
+    # to roughly two-thirds of the equivalent Thai (1.63x mean, 1.50-1.85x range, measured by
+    # `bench/script_ratio.py` with this project's own estimator — the sentences are in that file),
     # so the difference is paid repeatedly rather than once. That is a default, not a rule: a team
     # whose reviewers read Thai, or whose compliance process requires it, is better served by
     # comments they will actually read. Set it to whatever that team needs.
