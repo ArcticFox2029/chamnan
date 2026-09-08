@@ -10,6 +10,21 @@ Copilot CLI.
 
 Coverage lost quietly is bad; somebody's instructions deleted is worse.
 
+**The trade-off above is against `copilot-instructions.md`. There is a third source, and it is
+`generic.py`'s.** GitHub's own documentation names three: the repo-wide file, path-specific
+`.instructions.md` files, and "AGENTS.md files anywhere in the repository" -- and says "all sets of
+relevant instructions are provided to Copilot", combined rather than chosen between (fetched
+2026-09-08, docs.github.com/en/copilot/concepts/response-customization). So a repository that has
+run both `--write generic` and `--write copilot` sends the identical block to this one vendor twice
+every session and pays for it twice.
+
+That is warned about where somebody can act on it -- `chamnan-context --write` says so at the
+moment it creates the second file, and `ALSO_READS_AGENTS_MD` in `__init__.py` is the list it
+checks. It is written here as well because a future round reading this file alone would otherwise
+have to re-derive it from GitHub's docs, which is how the same fact gets discovered three times.
+Neither file is removed: `.instructions.md` still reaches surfaces a bare `AGENTS.md` does not,
+which is the reason this adapter exists and is still true (R8 agent 1).
+
 `applyTo` is the frontmatter key these files take, and `**` is its always-on form.
 
 **Copilot's support is per-surface, not one switch**, which is why no ceiling is declared: the

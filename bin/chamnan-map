@@ -168,7 +168,11 @@ def preview(root, explain=False):
 _hooks_dir = ws.git_hooks_dir
 
 
-_UNREACHABLE_TAIL = re.compile(r"^\s*exit\s+\d*\s*$")
+_UNREACHABLE_TAIL = re.compile(r"^\s*(?:exit\s+\d*|exec\s+\S.*)\s*$")
+# `exec` replaces the process image, so nothing in the file after it runs -- on any path that
+# reaches it. A hook whose branches all end in one is unreachable at the bottom even though its
+# last LINE is a `fi`.
+_EXECS = re.compile(r"^[ \t]*exec[ \t]+\S", re.M)
 
 
 def _ends_unreachable(script):
@@ -177,6 +181,12 @@ def _ends_unreachable(script):
     Read from the end backwards over blanks and comments only. An `exit 0` inside an `if` or a
     function is not the end of the script, and treating it as one would refuse a hook that is
     perfectly fine to append to.
+
+    🐛 [2026-09-08] `exit` only, so `pre-commit install`'s own hook -- an if/elif/else whose every
+    branch ends in `exec "$INSTALL_PYTHON" -mpre_commit …` or `exit 1`, with a `fi` as the last
+    line -- was appended to, reported as installed, and never ran once. Reproduced: `.chamnan/`
+    did not exist after a commit that added a file (R9 agent 2). Two shapes were missing, a
+    trailing `exec` and unreachability reached by BRANCHING rather than by one flat tail.
     """
     for line in reversed(script.splitlines()):
         stripped = line.strip()
@@ -184,6 +194,18 @@ def _ends_unreachable(script):
             continue
         return bool(_UNREACHABLE_TAIL.match(line))
     return False
+
+
+def _exec_before_the_end(script):
+    """True when an `exec` runs somewhere that can stop this script before its end.
+
+    Deliberately blunt: ANY `exec <command>` line, at any indent. A hook with an `exec` in one
+    branch and a reachable tail in another is refused too, and that is the conservative direction
+    -- the alternative is what was measured, an install that prints success and never runs. The
+    refusal tells the reader the one line to add themselves, which is what this file already does
+    for a hook ending in `exit`.
+    """
+    return bool(_EXECS.search(script))
 
 
 def _show(path, root):
@@ -223,6 +245,25 @@ def _is_bare(root):
     return out.returncode == 0 and out.stdout.strip() == "true"
 
 
+def _is_generated_hooks_dir(root, hooks):
+    """True when git is pointed at a hooks directory the project generates and ignores.
+
+    Asked of git rather than matched against a list of tool names: husky is the case that was
+    measured, and `check-ignore` answers for lefthook, a homegrown script, or whatever comes next,
+    without this file having to know any of them. A directory that does not exist yet cannot be
+    reported ignored, which is the right answer -- chamnan creating it is not the failure this
+    guards against.
+    """
+    if not hooks.is_dir() or not ws.git_owns(root):
+        return False
+    try:
+        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(hooks)],
+                           capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
+
+
 def install_git_hook(root):
     """Opt-in only, and never destructive to a hook the user already has."""
     hooks = _hooks_dir(root)
@@ -254,6 +295,30 @@ def install_git_hook(root):
               "pre-commit hook here could never run. Install it in a working clone instead.",
               file=sys.stderr)
         return 1
+    # 🐛 [2026-09-08] husky v9 points `core.hooksPath` at `.husky/_`, a directory it GENERATES and
+    # gitignores wholesale. `git_hooks_dir` resolves that correctly -- it is the file git really
+    # loads -- and writing there is still wrong: the result is untracked, so it does not survive a
+    # teammate's clone, and husky's own `prepare` script overwrites the directory on the next
+    # `npm install`. Reproduced end to end: `git ls-files .husky/_/pre-commit` came back empty and
+    # the appended block never ran (R9 agent 2). husky's own tracker carries the same complaint
+    # from a real project, for the same reason.
+    #
+    # The honest options are refuse, or point at the human-editable file one level up. This does
+    # both: it refuses, and it names the file.
+    if _is_generated_hooks_dir(root, hooks):
+        _human = hooks.parent / "pre-commit" if hooks.name == "_" else None
+        print(f"chamnan: {_show(hooks, root)} is generated and gitignored — a hook written there "
+              f"is untracked and is overwritten the next time the project reinstalls its hooks.",
+              file=sys.stderr)
+        if _human is not None:
+            print(f"  Add this line to {_show(_human, root)} instead, which is the file "
+                  f"people edit:", file=sys.stderr)
+        else:
+            print("  Add this line to the hook file your project actually keeps in git:",
+                  file=sys.stderr)
+        print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
+              file=sys.stderr)
+        return 1
     hooks.mkdir(parents=True, exist_ok=True)
     target = hooks / "pre-commit"
     body = HOOK_BODY.format(marker=HOOK_MARKER)
@@ -267,6 +332,14 @@ def install_git_hook(root):
         # and it never ran once, which is the stale index the README warns is worse than none.
         # Refused rather than worked around: prepending would change when the user's own hook
         # runs, and editing their script is not this tool's call to make.
+        if not _ends_unreachable(existing) and _exec_before_the_end(existing):
+            print(f"chamnan: {_show(target, root)} runs `exec`, which replaces the process — "
+                  f"anything appended after it never runs.", file=sys.stderr)
+            print("  That is the shape `pre-commit install` writes. Add this line yourself, "
+                  "above the exec:", file=sys.stderr)
+            print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
+                  file=sys.stderr)
+            return 1
         if _ends_unreachable(existing):
             print(f"chamnan: {_show(target, root)} ends in an unconditional `exit`, so "
                   f"anything appended after it would never run.", file=sys.stderr)
@@ -289,12 +362,35 @@ def install_git_hook(root):
         # hooks directory (a raw FileNotFoundError traceback out of the chmod below, because the
         # file the write never created is not there) and on a read-only existing hook file (exit 0,
         # "appended", no change on disk) -- R7 agent 1, findings 4 and 5.
+        # 🐛 [2026-09-08] The append ended with chamnan's own always-succeeding shell, and a
+        # POSIX hook's exit status is whatever its LAST command returned. So a hook that enforced
+        # anything by its final command's status — lefthook's installed hook, which ends in a plain
+        # `call_lefthook run "pre-commit"`, or any hand-written `! git diff --cached | grep -q TODO`
+        # — kept PRINTING its failure and stopped BLOCKING the commit. Reproduced on both: lefthook
+        # printed `fail` and `git commit` returned 0 and the commit landed (R9 agent 2).
+        #
+        # `_ends_unreachable` above refuses the opposite case, chamnan's block becoming dead code.
+        # This is the same class from the other side and the more dangerous half: nothing on disk
+        # says the gate stopped gating, and the person who installed a linter months ago has no
+        # reason to re-test it because a plugin refreshed an index.
+        #
+        # `( exit $status )` rather than a bare `exit`: it restores the status without ending the
+        # script, so anything the user appends AFTER chamnan still runs. Writing a real `exit` here
+        # would make their next hook dead code — which is the exact thing this file refuses to do
+        # to them twenty lines above.
+        _keep = ("# chamnan: remember the status your hook above produced, so appending to it "
+                 "cannot\n# change whether it blocks a commit.\n_chamnan_prev_status=$?\n\n")
+        _restore = ("\n# chamnan: hand your hook's own status back to git. A subshell rather than "
+                    "`exit`, so\n# anything appended after this still runs.\n"
+                    "( exit $_chamnan_prev_status )\n")
         try:
-            ws.write_or_raise(target, existing.rstrip() + "\n\n" + body)
+            ws.write_or_raise(target, existing.rstrip() + "\n\n" + _keep + body + _restore)
         except OSError as err:
             print(f"chamnan: {err}", file=sys.stderr)
             return 1
         print(f"chamnan: appended to your existing {_show(target, root)}")
+        print("  Your hook's own exit status is preserved, so whatever it blocked before, "
+              "it still blocks.")
     else:
         try:
             ws.write_or_raise(target, "#!/bin/sh\n\n" + body)
@@ -335,12 +431,57 @@ def install_git_hook(root):
             print("  On a tree this size you may prefer to run `chamnan-map` by hand instead.")
     except Exception:
         pass          # a nicety; never the reason an install fails
-    print(f"  Remove it by deleting the block marked '{HOOK_MARKER}'.")
+    print("  Remove it with `chamnan-map --uninstall-git-hook`.")
     return 0
 
 
-KNOWN_FLAGS = ("--install-git-hook", "--explain", "--preview", "--measure",
-               "--undocumented", "--verify", "-h", "--help")
+def uninstall_git_hook(root):
+    """Take chamnan's block back out of the hook, and nothing else.
+
+    🐛 [2026-09-08] There was no way to do this but by hand, while every tool this one appends
+    beside -- husky, lefthook, pre-commit -- ships a dedicated uninstall command. The install
+    message named the marker and left the editing to the reader, which is a fair instruction and a
+    bad answer for the one thing a person wants at the moment they have decided they do not want
+    this plugin in their commits (R9 agent 2).
+
+    Exact by construction: chamnan only ever APPENDS, so its block runs from its marker (or from
+    the status-preserving preamble written just above it) to the end of the file. Nothing before
+    that is read, matched or rewritten -- somebody else's hook is not this command's to edit.
+    """
+    hooks = _hooks_dir(root)
+    target = (hooks / "pre-commit") if hooks is not None else None
+    if target is None or not target.is_file():
+        print("chamnan: no pre-commit hook here to take anything out of", file=sys.stderr)
+        return 1
+    text = target.read_text(encoding="utf-8-sig", errors="replace")
+    if HOOK_MARKER not in text:
+        print(f"chamnan: {_show(target, root)} has no chamnan block in it — nothing removed",
+              file=sys.stderr)
+        return 1
+    cut = text.index(HOOK_MARKER)
+    head = text[:cut]
+    # The preamble is chamnan's too, and leaving `_chamnan_prev_status=$?` behind would leave a
+    # variable set from whatever ran last and nothing reading it.
+    marker_line = head.rfind("# chamnan: remember the status")
+    if marker_line != -1:
+        head = head[:marker_line]
+    rest = head.rstrip()
+    if not rest or rest == "#!/bin/sh":
+        target.unlink()
+        print(f"chamnan: removed {_show(target, root)} — it held nothing but chamnan's block")
+        return 0
+    try:
+        ws.write_or_raise(target, rest + "\n")
+    except OSError as err:
+        print(f"chamnan: {err}", file=sys.stderr)
+        return 1
+    print(f"chamnan: removed chamnan's block from {_show(target, root)}; the rest of your hook "
+          f"is untouched")
+    return 0
+
+
+KNOWN_FLAGS = ("--install-git-hook", "--uninstall-git-hook", "--explain", "--preview",
+               "--measure", "--undocumented", "--verify", "-h", "--help")
 
 
 def _paths_being_dropped(map_path, files, root):
@@ -483,18 +624,25 @@ def main(argv):
         # Derived from KNOWN_FLAGS rather than typed out again, so a flag added later cannot be
         # missing from this list without also being missing from the parser that accepts it.
         print("\nOptions")
-        for _flag, _what in (
+        # 🐛 [2026-09-08] The table below and the "also accepted, undocumented" line under it were
+        # two hand-kept lists of the same flags, and they had already drifted: `--undocumented` and
+        # `--verify` were printed in the table AND then named as undocumented, three lines apart,
+        # in the one output a stranger reads to find out what this command does. Derived from the
+        # table now, so the second line cannot describe a flag the first one just documented --
+        # the population, not the member, which is the failure this repository records most.
+        _rows = (
                 ("--preview", "print the index that WOULD be built, and write nothing"),
                 ("--explain", "where the session-start block's tokens go, section by section"),
                 ("--measure", "what this index costs against the session budget"),
                 ("--undocumented", "every file with no opening comment, one path per line"),
                 ("--verify", "check the index's claims against the tree; exit 1 if any is false"),
                 ("--install-git-hook", "rebuild the map on every commit (opt-in, never destructive)"),
-                ("-h, --help", "this text")):
+                ("--uninstall-git-hook", "take that block back out, leaving the rest of the hook"),
+                ("-h, --help", "this text"))
+        for _flag, _what in _rows:
             print(f"  {_flag:<20} {_what}")
-        _undocumented = [f for f in KNOWN_FLAGS
-                         if f not in ("-h", "--help")
-                         and f not in ("--preview", "--explain", "--measure", "--install-git-hook")]
+        _documented = {f.strip() for row in _rows for f in row[0].split(",")}
+        _undocumented = [f for f in KNOWN_FLAGS if f not in _documented]
         if _undocumented:
             print(f"  (also accepted, undocumented: {', '.join(_undocumented)})")
         print("\n  chamnan-map <dir> [<dir> ...]   index only those directories")
@@ -507,6 +655,8 @@ def main(argv):
     root = ws.find_root()
     if "--install-git-hook" in argv:
         return install_git_hook(root)
+    if "--uninstall-git-hook" in argv:
+        return uninstall_git_hook(root)
     if "--undocumented" in argv:
         return list_undocumented(root)
     if "--verify" in argv:

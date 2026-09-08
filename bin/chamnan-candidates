@@ -5,7 +5,7 @@
 `.chamnan/candidates/` (see lib/candidates.py) the moment it crosses the detection threshold. This
 is the other half: looking at what accumulated, and deciding what to do with each one.
 
-  chamnan-candidates                       list what is waiting (same as `list`)
+  chamnan-candidates                       list what is waiting (same as `list`, `--list`, `-l`)
   chamnan-candidates confirm <id>          mark reviewed and worth keeping (Provenance -> ai-confirmed)
   chamnan-candidates reject <id>           delete it — not a routine worth keeping
   chamnan-candidates edit <id>             print the file's path, to open and adjust by hand

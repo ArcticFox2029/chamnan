@@ -8,7 +8,7 @@ each time costing the tokens to think them up again and arriving slightly differ
 than the cost: a regression check that is rewritten each run is not a regression check.
 
   chamnan-promote <file> <name> [--desc "..."]   install a script as a permanent tool
-  chamnan-promote --list                          show what this repo already has
+  chamnan-promote --list  (or -l)                 show what this repo already has
 """
 import shutil
 import stat
