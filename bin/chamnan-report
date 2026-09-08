@@ -26,6 +26,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import aging  # noqa: E402
+import blocklog  # noqa: E402
+import fit  # noqa: E402
 import environments  # noqa: E402
 import ledger  # noqa: E402
 # 🐛 `print = redact.emit` scrubs CREDENTIALS and says nothing about control characters, and
@@ -558,6 +560,46 @@ def command_summaries():
     return out
 
 
+def print_block_trend(root):
+    """What the injected block has cost lately, and whether it is up against its ceiling.
+
+    🐛 [2026-09-08] `blocklog.record()` has written one line per session start since Stage 10, and
+    `blocklog.trend()`'s own docstring says "For `chamnan-report`, and for a person asking 'did
+    something change?'" -- a function that names its consumer, and that consumer never called it.
+    Forty-two real records sat unread in this repository, and what they said mattered: the block
+    had been sitting at 8,947 bytes against a 9,000-byte ceiling for six sessions running, which
+    means sections were being dropped to fit, every session, with nothing anywhere saying so
+    (R7 agent 5, selected over its sibling proposal after the measurement).
+
+    The ceiling is not chamnan's own preference. Claude Code truncates a SessionStart hook's stdout
+    at around ten thousand bytes -- still open, filed today as anthropics/claude-code#91614 -- so a
+    block that grows past it does not get shortened, it gets CUT, mid-sentence, and everything
+    after is gone. Which is why "how close am I" is a question worth answering out loud.
+    """
+    records = blocklog.trend(root, last=10)
+    if not records:
+        return
+    sizes = [r.get("bytes", 0) for r in records if isinstance(r.get("bytes"), int)]
+    if not sizes:
+        return
+    now, ceiling = sizes[-1], fit.CEILING
+    print("\nWhat each session was handed")
+    share = now * 100 // max(ceiling, 1)
+    print(f"  last block          {now:,} bytes of {ceiling:,}  ({share}% of the ceiling)")
+    if len(sizes) > 1:
+        low, high = min(sizes), max(sizes)
+        moved = sizes[-1] - sizes[0]
+        way = "grown" if moved > 0 else "shrunk" if moved < 0 else "not moved"
+        print(f"  over {len(sizes)} sessions    {low:,}-{high:,} bytes, {way}"
+              + (f" by {abs(moved):,}" if moved else ""))
+    # Said only when it is true, and said with the number rather than as advice: a warning that
+    # fires on every ordinary run is one people stop reading, and this one is meant to be rare.
+    if share >= 90:
+        print(f"  ⚠ within {ceiling - now:,} bytes of the ceiling. Sections are being dropped to")
+        print("    fit — `chamnan-map --explain` names which, and `.chamnan/config.json` turns off")
+        print("    the ones this repository does not need.")
+
+
 def print_usage(root):
     """Counts, never a savings figure — a tokens-saved number would be invented, and this project
     already retired an "Engineer Scoreboard" for measuring what is easy instead of what matters.
@@ -741,6 +783,7 @@ def main(argv):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
     print_inventory(root)
+    print_block_trend(root)
     print_usage(root)
     project_dir = encoded_dir(root)
     entries = []
