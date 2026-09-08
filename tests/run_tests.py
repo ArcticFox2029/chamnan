@@ -21699,6 +21699,108 @@ if _dc_map.is_file():
     print(f"      DETAIL  real index {len(_dc_src):,} chars, "
           f"{abs(len(_dc_after) - len(_dc_src)):,} characters changed by the column rule")
 
+# ---------------------------------- the vocabulary this rule shares with its siblings, 2026-09-08
+# 🐛 The scanning rules gained `passphrase`, `cred`, `storepass` and `keypass` and the identifier
+# rules gained Aadhaar and the Thai national ID, and the COLUMN rule beside them was extended with
+# none of it -- so `username,passphrase` printed the password under it in full while
+# `username,password` did not. Twelve reproduced, one per row below (R6). The same disease this
+# file is full of fixes for: a set extended in some of its members.
+#
+# The compound rows underneath are the half no literal list can finish. `db_password` was one of
+# five R5 found by hand and there was never a reason to think those five were the last.
+for _hw in ("passphrase", "cred", "creds", "keypass", "storepass",
+            "ccnum", "credit", "debit", "thai_id", "thai-id", "aadhar", "uidai", "idcard",
+            "db_password", "user_password", "api_secret", "client_secret", "auth_token",
+            "dbPassword", "clientSecret", "api-key", "session_key"):
+    check(f"A CREDENTIAL COLUMN HEADED `{_hw}` REDACTS THE VALUE UNDER IT",
+          "Hunter2Password!" not in _rd.scrub(f"username,{_hw}\nadmin,Hunter2Password!\n"))
+
+# ...and the other direction, which is the one that decides whether the compound branch may exist.
+# The word must be the LAST component of the name: `db_password` ends in `password` and is a
+# credential column, `password_policy` ends in `policy` and is a configuration column. That single
+# positional rule is what makes the branch safe with no exemption list behind it.
+for _hw in ("password_policy", "token_ttl", "key_rotation_days", "secret_manager_url",
+            "secret_name", "api_key_path", "auth_uri", "token_type", "key_length",
+            "password_strength", "secret_rotation_days", "card_type", "id_format",
+            "monkey", "turkey", "credit_score", "tokenizer_config"):
+    check(f"...and a column headed `{_hw}` keeps its values, because it names a mechanism",
+          "ordinary-value" in _rd.scrub(f"name,{_hw}\nalice,ordinary-value\n"))
+
+# 🐛 A header row must look like COLUMN NAMES. Without that test the compound branch above turns
+# any line of code containing commas into a header: `def log_decision(command, choice,
+# session_key, **kwargs):` is four comma-separated fields, one of them `session_key`, and the
+# `logger.info(...)` call under it -- four fields wide -- lost its middle argument to a
+# `<REDACTED>`. Found in this repository's own scratch files, and `api_key` as a function
+# parameter is in every project that calls an API.
+for _hr_label, _hr_text in (
+        ("a function signature and the line under it",
+         'def log_decision(command, choice, session_key, **kwargs):\n'
+         '    logger.info("approval %s", choice, command[:60], session_key)\n'),
+        ("a call with a keyword argument",
+         'return _remember(disk, head, key, counts)\n'
+         'return _remember(disk, head, key, counts)\n'),
+        ("a dict literal naming an identifier scheme",
+         '"IBAN, France": "FR14",\n"Aadhaar, spaced": "2234",\n')):
+    check(f"A LINE OF CODE WITH COMMAS IS NOT A HEADER ROW: {_hr_label}",
+          _rd.PLACEHOLDER not in _rd.scrub(_hr_text))
+# ...and that guard must not cost the tables it was never aimed at. A header cell an EARLIER rule
+# already replaced still counts as a column name -- it was one -- or the table stops being a table
+# at that cell and every value below it prints in the clear. Measured on a real file here.
+check("...and a header row whose own cell was already redacted still heads a table",
+      "Hunter2Password!" not in
+      _rd.scrub(f"user\tpassword\t{_rd.PLACEHOLDER}\nadmin\tHunter2Password!\tsk-x\n"))
+
+# 🐛 The XML rule required the credential word to be the FIRST thing in the tag name, so
+# `<password>` was read and `<dbPassword>` was not -- and Maven, Spring and .NET write the second.
+# The word list was never the defect; the position was.
+for _xt in ("password", "dbPassword", "userPassword", "clientSecret", "db_password",
+            "api_key", "ns:dbPassword", "jdbcPassword"):
+    check(f"A CREDENTIAL IN <{_xt}> ELEMENT TEXT IS REDACTED",
+          "Hunter2Password!" not in _rd.scrub(f"<{_xt}>Hunter2Password!</{_xt}>"))
+for _xt in ("AutoTokenizer", "tokenizerConfig", "authenticationScheme", "author",
+            "keyboard", "monkeyPatch", "cardinality", "description"):
+    check(f"...and <{_xt}> keeps its element text, because no component of it names a secret",
+          "ordinary element text" in _rd.scrub(f"<{_xt}>ordinary element text</{_xt}>"))
+
+# 🐛 Every branch of `SECRET_WORDS` needs a separator or a capital to find the second component,
+# and one whole family of spellings has neither. `APIKEY=` and `DBPASSWORD=` are how environment
+# variables are written in real `.env` files, and `key`/`token`'s mandatory-separator rule --
+# correct, and keeping 70 of 129 ordinary Python lines intact -- refuses every one of them.
+for _cw in ("APIKEY", "DBPASSWORD", "SECRETKEY", "AUTHTOKEN", "ACCESSTOKEN",
+            "SESSIONTOKEN", "REFRESHTOKEN", "apikey", "dbpassword"):
+    check(f"`{_cw}=` IS A CREDENTIAL EVEN WITH NO SEPARATOR IN THE NAME",
+          "Tr0ub4dor3Horse9Battery" not in _rd.scrub(f"{_cw}=Tr0ub4dor3Horse9Battery"))
+# ...and the compound list is a list of WHOLE names, not of substrings. The boundary being tested
+# is the LETTER one: `apikeyword` and `dbpasswordless` continue the word and are ordinary
+# identifiers. `apikeys_docs` was in this list on the first pass and does NOT belong — it is
+# redacted, and so are `password_docs` and `secret_docs`, which shipped that way long before this
+# branch existed, because `docs` is not in `NAMING_SUFFIXES`. A decoy that asserts a behaviour the
+# module never had is a broken test, not a found bug, and the fix is to delete the decoy rather
+# than to widen an exemption list to satisfy it.
+for _cw in ("apikeyword", "dbpasswordless", "apikeywords"):
+    check(f"...and `{_cw}` is an ordinary identifier, not a credential",
+          _rd.PLACEHOLDER not in _rd.scrub(f'{_cw} = "not a secret at all"'))
+
+# The population assertion for all of the above: chamnan's own source is the corpus, and no file in
+# it may lose a line to these rules. An enumerated list of decoys proves nothing about the files
+# nobody thought to enumerate -- and this rule's one real false positive today was in `lib/rollup.py`,
+# which no decoy list contained.
+_pop_files = [f for f in sorted(ROOT.rglob("*.py"))
+              if "__pycache__" not in f.parts and ".git" not in f.parts]
+check("there are source files to check this against at all", len(_pop_files) > 50)
+_pop_damaged = []
+for _pf in _pop_files:
+    _pt = _pf.read_text(encoding="utf-8", errors="replace")
+    # The suite's own file and the recall corpus hold deliberate secrets; everything else is code.
+    if _pf.name in ("run_tests.py", "redactor_recall.py") or "redact" in _pf.name:
+        continue
+    if _rd._redact_delimited_columns(_pt) != _pt:
+        _pop_damaged.append(_pf.name)
+check(f"...and the column rule changes no line of chamnan's own source "
+      f"(damaged: {_pop_damaged[:5]})", _pop_damaged == [])
+print(f"      DETAIL  column rule run over {len(_pop_files)} of chamnan's own source files, "
+      f"{len(_pop_damaged)} changed")
+
 # ------------------------------------------- the false NEGATIVES, which nothing here measured
 # 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
 # against random input before its rule shipped. A reader of the release notes asked the obvious
