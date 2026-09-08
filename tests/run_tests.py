@@ -22443,6 +22443,80 @@ check("...with the source, so the claim can be checked rather than believed",
 check("...and it says the adapter is still correct, not that it should be deleted",
       "Kept rather than removed" in _aq)
 
+
+# ------------- the hook staged work its user deliberately held back, 2026-09-08 (R9 agent 2)
+# 🐛 [CRITICAL] `HOOK_BODY` ended in a bare `git add -u`, which stages EVERY modification to EVERY
+# tracked file in the tree. A developer stages one file, leaves an edit to another deliberately
+# unstaged, commits "add newfeature.txt only" — and the commit carries the unstaged edit too, with
+# nothing said. A tool installed into somebody else's repository putting work into their commit
+# that they held back is the worst thing this project can do.
+# Read as CODE, not as text: the comment recording this defect quotes `git add -u` verbatim, so a
+# plain substring check over the whole file fails on the very explanation of the fix. The first
+# version of this check did exactly that.
+_hk_code = [ln for ln in (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8").splitlines()
+            if not ln.lstrip().startswith("#")]
+_hk_adds = [ln for ln in _hk_code if "git add" in ln]
+check("the hook sweep found the `git add` lines at all", _hk_adds)
+check(f"THE HOOK NEVER STAGES WITHOUT NAMING WHAT IT STAGES ({len(_hk_adds)} add line(s))",
+      not any("git add -u" in ln for ln in _hk_adds))
+check("...and every `git add` in it carries a pathspec",
+      all("--" in ln or ".chamnan/MAP.md" in ln for ln in _hk_adds))
+_hk = Path(tempfile.mkdtemp(prefix="chamnan_hookstage_"))
+for _cmd in (["git", "init", "-q"], ["git", "config", "user.email", "t@t"],
+             ["git", "config", "user.name", "t"]):
+    subprocess.run(_cmd, cwd=_hk, check=True)
+(_hk / "shared.txt").write_text("line1\nline2\nline3\n", encoding="utf-8")
+(_hk / "app.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
+_hk_env = dict(os.environ, PATH=f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
+
+
+def _hk_run(*args, **kw):
+    return subprocess.run(list(args), cwd=_hk, capture_output=True, text=True,
+                          encoding="utf-8", env=_hk_env, **kw)
+
+
+_hk_run("git", "add", "-A")
+_hk_run("git", "commit", "-qm", "init")
+_hk_run(sys.executable, str(ROOT / "bin" / "chamnan-map"))
+_hk_run(sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook")
+_hk_run(sys.executable, str(ROOT / "bin" / "chamnan-context"), "--write", "generic")
+check("the hook fixture really has an agent file to refresh", (_hk / "AGENTS.md").is_file())
+_hk_run("git", "add", "-A")
+_hk_run("git", "commit", "-qm", "setup")
+# The developer's own WIP, deliberately not staged.
+(_hk / "shared.txt").write_text("line1\nline2-WIP-DO-NOT-COMMIT\nline3\n", encoding="utf-8")
+(_hk / "second.py").write_text("# Second.\ny = 2\n", encoding="utf-8")
+_hk_run("git", "add", "second.py")
+_hk_before = (_hk / "AGENTS.md").read_text(encoding="utf-8")
+_hk_run("git", "commit", "-qm", "add second.py only")
+_hk_shown = _hk_run("git", "show", "HEAD", "--", "shared.txt").stdout
+check("A COMMIT DOES NOT CARRY WORK THE DEVELOPER LEFT UNSTAGED",
+      "line2-WIP-DO-NOT-COMMIT" not in _hk_shown)
+check("...and that edit is still sitting there unstaged, where they left it",
+      "shared.txt" in _hk_run("git", "diff", "--name-only").stdout)
+# ...and the half the hook exists for still happens: the agent's file is refreshed AND staged.
+check("...while the agent file the hook refreshed IS in the commit",
+      "AGENTS.md" in _hk_run("git", "show", "--stat", "HEAD").stdout)
+check("...and nothing chamnan wrote is left dirty behind it",
+      _hk_run("git", "status", "--short", "AGENTS.md").stdout.strip() == "")
+
+# 🐛 `--written-agents` asked `_looks_generated`, which answers for the SHARED writer — a
+# `## chamnan` heading. Four adapters have an `install()` of their own and none writes that shape,
+# so fifteen names were never reported and the hook's refresh loop refreshed none of them,
+# including the root `AGENTS.md` that thirteen aliases point at. Measured: 15 unrecognised.
+for _wa_name in ("generic", "hermes", "zed", "gemini"):
+    _wa_adapter = adapters_mod.for_agent(_wa_name)
+    check(f"`{_wa_name}` answers for its OWN output rather than leaving it to the shared guess",
+          hasattr(_wa_adapter, "wrote_this"))
+_wa_out = _hk_run(sys.executable, str(ROOT / "bin" / "chamnan-context"), "--written-agents").stdout
+_wa_names = [n for n in _wa_out.split("\n") if n.strip()]
+check(f"THE REFRESH LOOP SEES THE FILE CHAMNAN WROTE (got: {_wa_names})", _wa_names != [])
+# ...and once per FILE, not once per name: fourteen names share `AGENTS.md`, and writing it
+# fourteen times per commit at a measured 0.77s each would add ten seconds to every commit.
+_wa_targets = [adapters_mod.for_agent(n).TARGET for n in _wa_names]
+check(f"...once per FILE, not once per agent name ({_wa_targets})",
+      len(set(_wa_targets)) == len(_wa_targets))
+
 # ------------------------------------------- the false NEGATIVES, which nothing here measured
 # 🐛 [2026-09-08] Every measurement this layer had was a false-POSITIVE one: each checksum run
 # against random input before its rule shipped. A reader of the release notes asked the obvious

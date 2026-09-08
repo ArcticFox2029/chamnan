@@ -166,6 +166,31 @@ def names():
 ALSO_READS_AGENTS_MD = frozenset({"roo", "continue", "windsurf", "copilot"})
 
 
+def wrote_this(name, text):
+    """Whether `text` is what THIS adapter writes -- asked of the adapter, not guessed centrally.
+
+    🐛 [2026-09-08] `--written-agents` asked `_looks_generated` for every adapter, and that
+    function answers for the SHARED writer: a `## chamnan` heading, or a frontmatter block opening
+    with one. Four adapters have an `install()` of their own and none of them writes that shape --
+    `generic` and its fourteen aliases write a marker region into `AGENTS.md`, `hermes` and `zed`
+    open with markers of their own, and `gemini` merges JSON. So fifteen of the names this command
+    can be given were never reported as written, and the pre-commit hook's refresh loop -- the
+    feature the README calls the thing that keeps the other agents' files fresh -- silently
+    refreshed none of them, including the root `AGENTS.md` that every alias points at.
+
+    Reproduced by writing each adapter's file into a fixture and asking: 15 of them unrecognised.
+
+    The answer is to ask the module that knows. Each of the four defines `wrote_this`; everything
+    else falls back to the shared predicate, which is correct for it by construction because the
+    shared WRITER is what produced it.
+    """
+    adapter = for_agent(name)
+    if adapter is None:
+        return False
+    own = getattr(adapter, "wrote_this", None)
+    return bool(own(text)) if own else _looks_generated(text)
+
+
 def wrote_the_generic_file(root):
     """True when the root `AGENTS.md` is here AND is chamnan's own output.
 
@@ -181,12 +206,12 @@ def wrote_the_generic_file(root):
     except OSError:
         return False
     # 🐛 The first version of this asked `_looks_generated`, which is the shared writer's question
-    # and the wrong one HERE: `generic` has an `install()` of its own and writes a MARKER REGION
-    # into a file the user may also own, so its output starts with `<!-- chamnan:start -->` and
-    # never with the `## chamnan` heading the shared writer looks for. It returned False on a file
-    # chamnan had just written, and the warning below never fired. Ask `generic`'s own marker,
-    # which is the definition that actually applies to this file.
-    return generic.START in text and generic.END in text
+    # and the wrong one HERE: `generic` writes a MARKER REGION into a file the user may also own,
+    # so its output never carries the `## chamnan` heading that predicate looks for. It returned
+    # False on a file chamnan had just written and the warning never fired. Fixed then by reading
+    # `generic`'s marker inline -- which was the same mistake one level down, a second place that
+    # knows what generic's output looks like. `wrote_this` is the one place now.
+    return wrote_this(generic.NAME, text)
 
 
 def safe_target(root, rel):

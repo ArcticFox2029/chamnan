@@ -51,6 +51,11 @@ def render(body):
     return f"{MARKER}\n{body.rstrip()}\n"
 
 
+def wrote_this(text):
+    """Whether `text` opens with this adapter's own marker. See `wrote_this` in `__init__.py`."""
+    return text.lstrip().startswith(MARKER)
+
+
 def install(root, body, command=""):
     """Write `.hermes.md`, unless somebody else's is already there.
 
