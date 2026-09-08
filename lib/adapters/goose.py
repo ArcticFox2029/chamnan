@@ -14,9 +14,25 @@ Goose also has a `SessionStart`-shaped hook in its extension system. It is not u
 same reason Continue's is not: a hook config written from a schema nobody verified fails silently,
 and the documented file mechanism does not.
 
-**No extension, which is the trap.** `.goosehints` has no suffix, so an editor that decides syntax
-by extension shows it as plain text and a `.gitignore` rule written as `*.goosehints` never
-matches it. `ignore_line()` returns the path with a leading slash, which does.
+**No extension, which is a small trap.** `.goosehints` has no suffix, so an editor that decides
+syntax by extension shows it as plain text.
+
+🐛 [2026-09-08] This docstring used to add that a `.gitignore` rule written as `*.goosehints`
+"never matches it". That is FALSE and it shipped: git's `*` matches an empty string, so
+`*.goosehints` ignores `.goosehints` perfectly well. Measured, four rules against a repository
+holding a root and a nested copy:
+
+    *.goosehints     ignores  .goosehints  and  sub/
+    .goosehints      ignores  .goosehints  and  sub/
+    /.goosehints     ignores  .goosehints
+    **/.goosehints   ignores  .goosehints  and  sub/
+
+The leading slash `ignore_line()` returns is still the right answer, for the reason the false claim
+was hiding: it is the only one of the four that ignores THIS file and nothing else. The other three
+also swallow a `.goosehints` a developer wrote deliberately in a subdirectory -- which Goose reads,
+walking up from the working directory -- and `*.goosehints` additionally takes any `team.goosehints`
+or `staging.goosehints` beside it. Anchoring is about not ignoring somebody else's file, not about
+matching this one.
 """
 
 NAME = "goose"

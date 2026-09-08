@@ -232,7 +232,13 @@ def upsert(root, name, entry_text):
         text = existing if (existing or "").strip() else HEADER + "\n"
         found = list(_ENV.finditer(mdblock.masked(text)))
         for i, m in enumerate(found):
-            if m.group(1).strip().lower() != name.strip().lower():
+            # Canonical, not `.lower()`: `chamnan-env set préprod` typed with a precomposed
+            # é and again with a decomposed one declared TWO environments, both named
+            # `préprod`, contradicting each other on platform and versions -- reproduced
+            # 2026-09-08. An environment is a fact about a deployment target; two of them
+            # is worse than none, because `chamnan-env show` answers with whichever it
+            # reaches first.
+            if mdblock.canonical_title(m.group(1)) != mdblock.canonical_title(name):
                 continue
             end = found[i + 1].start() if i + 1 < len(found) else len(text)
             replaced[0] = True

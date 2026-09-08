@@ -126,7 +126,15 @@ PATTERNS = [
     # as a hit is not.
     AUTH_SCHEME_SECRET,
     # A JWT is three base64 segments; the header almost always starts eyJ.
-    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"),
+    # 🐛 [2026-09-08] The third segment required eight characters, and RFC 7519 allows it to be
+    # EMPTY: `alg:none` is a legal, unsigned JWT and the exact shape of the classic forgery, so the
+    # one token most worth flagging in a repository was the one token this pattern could not see.
+    # The whole thing leaked -- header, and a claims payload that is base64, not encryption. The
+    # floor stays on the first two segments, which is what stops `a.b.c` prose from matching; the
+    # signature may now be empty, and a trailing dot is required so a two-segment string still is
+    # not a token. (R3 agent 2.)
+    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+               r"(?![A-Za-z0-9_-])"),
     # Private key and certificate blocks.
     # "BLOCK" is not decoration: a PGP secret key is delimited "PRIVATE KEY BLOCK-----", so a
     # pattern anchored on "PRIVATE KEY-----" matched every other format and missed that one.
@@ -286,8 +294,31 @@ ASSIGNED_SECRET = re.compile(
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
 # single unbroken run of characters so a prose comment ("password: ask the platform team") is not
 # eaten, and to six characters so token_ttl=3600 is not either.
+# The quoted rule's closing quote is its backstop: if the "type, then the real `=`" step guesses
+# wrong, the quote it then needs is not there and the regex backtracks to not using the step. The
+# BARE rule has no such anchor -- `\S{6,}` matches anything -- so a wrong guess simply succeeds.
+#
+# 🐛 [2026-09-08] That is not theoretical. A value containing its own `=` -- base64 padding, which
+# every 16-byte key ends in, or a `KEY=VALUE;KEY=VALUE` connection string -- let the step consume
+# the SECRET as if it were a type name and stop at the `=` inside it. Measured on an Azure Storage
+# connection string: 23 of the 24 characters of the AccountKey came back in the clear with a
+# `<REDACTED>` sitting immediately after them, which is worse than a plain miss because the marker
+# tells a reader the line was handled. Requiring whitespace on one side of that `=` separates a
+# real type (`apiKey: string = ...`, `val k: String = ...`) from a value that merely contains one,
+# because no config format writes `KEY=VALUE` with a space around the `=` inside the value.
+_BETWEEN_NAME_AND_VALUE_SPACED = (
+    r"(?:"
+    r"[A-Za-z_][\w.]*(?:\[[^\]\n]*\]|<[^>\n]*>)?[ \t]+=[ \t]*"   # a type, space, then `=`
+    r"|[A-Za-z_][\w.]*(?:\[[^\]\n]*\]|<[^>\n]*>)?[ \t]*=[ \t]+"  # ...or `=`, then space
+    r"|&[\w.-]+[ \t]+"                                                # a YAML anchor
+    r")?")
+# 🐛 [2026-09-08] And the other half of the same set: `_TYPE_BEFORE_ASSIGN` -- Go's
+# `var apiPassword string = ...`, which has no separator for the rules to find -- was wired into the
+# QUOTED rule and nowhere else, so the identical line with the quotes left off passed through whole.
+# The disease this repository keeps producing, in the one module where it leaks credentials.
 ASSIGNED_SECRET_BARE = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE + r")"
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE_SPACED
+    + r"|" + _TYPE_BEFORE_ASSIGN + r"))"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
     # a now-broken line -- a leak and a corruption from one missing character.

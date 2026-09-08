@@ -168,7 +168,7 @@ def case_collisions(paths):
     """
     groups = {}
     for p in paths:
-        groups.setdefault(unicodedata.normalize("NFC", p.stem).casefold(), []).append(p)
+        groups.setdefault(mdblock.filesystem_key(p.stem), []).append(p)
     return [sorted(g) for g in groups.values() if len(g) > 1]
 
 
@@ -480,7 +480,7 @@ def slug(title):
     # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:50].rstrip("-")
                                  or mdblock.fallback_name(title, "entry"))
 

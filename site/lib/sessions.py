@@ -468,7 +468,7 @@ def slug(title):
     # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
     # "both slug() functions in this codebase" — there are five, and three never called it
     # (R2 agent 1 found one; the set walk found the other two).
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", title.strip().lower()).strip("-")
+    s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:40].rstrip("-")
                                  or mdblock.fallback_name(title, "session"))
 
