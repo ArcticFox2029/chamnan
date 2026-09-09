@@ -24961,6 +24961,76 @@ finally:
     shutil.rmtree(_d, ignore_errors=True)
 
 
+# ------------------------------------------- a committed file can hold any byte
+# 🐛 [2026-09-09] Seven of twenty-one strict `read_text` calls let `UnicodeDecodeError` escape.
+# Every one of them reads a file that arrives with a CLONE — `.chamnan/.version`, `tools/index.json`,
+# an adapter's target — so any byte that reaches a commit reaches the read. Measured: `b"1.24.0
+# \xff\xfe\n"` in `.version` killed `chamnan_session_start.py` outright, exit 1, zero bytes of
+# output, on every session until somebody found the file. That hook is deliberately the one without
+# a `_never_fail_the_session` wrapper, on the reasoning that it "has something partial worth
+# emitting" — and it had nothing to emit, because it died on its first read.
+#
+# `lib/rollup.py` catches it by name, so this was worked out once and reached one site. The suite
+# already had the right machinery too: an AST sweep over every `json.loads` asserting a
+# `RecursionError` guard, written after a fix "reached 13 call sites of 28". It walked the wrong
+# call and looked for the wrong exception. This is that sweep, re-aimed (R4 agent 4).
+def _strict_reads_unguarded():
+    """Every `read_text` with no `errors=`, whose enclosing `except` cannot catch a decode error."""
+    _out = []
+    for _p in sorted(list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").glob("*.py"))
+                     + [_q for _q in (ROOT / "bin").iterdir()
+                        if _q.is_file() and not _q.suffix]):
+        try:
+            _tree = ast.parse(_p.read_text(encoding="utf-8"))
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        for _node in ast.walk(_tree):
+            if not (isinstance(_node, ast.Call) and isinstance(_node.func, ast.Attribute)
+                    and _node.func.attr == "read_text"):
+                continue
+            if any(_k.arg == "errors" for _k in _node.keywords):
+                continue          # `errors=` means it cannot raise
+            _guards = []
+            for _t in ast.walk(_tree):
+                if isinstance(_t, ast.Try) and _t.lineno <= _node.lineno <= _t.end_lineno:
+                    for _h in _t.handlers:
+                        if _h.type is None:
+                            _guards.append("*")
+                        elif isinstance(_h.type, ast.Tuple):
+                            _guards += [ast.unparse(_e) for _e in _h.type.elts]
+                        else:
+                            _guards.append(ast.unparse(_h.type))
+            # `UnicodeDecodeError` is a `ValueError`; either name catches it, and so does a bare
+            # `except` or `Exception`.
+            if not any(_g in ("UnicodeDecodeError", "ValueError", "Exception", "BaseException", "*")
+                       for _g in _guards):
+                _out.append(f"{_p.relative_to(ROOT)}:{_node.lineno}")
+    return _out
+
+_unguarded = _strict_reads_unguarded()
+check("NO STRICT read_text LETS A DECODE ERROR OUT — a committed file can hold any byte",
+      not _unguarded, saw=", ".join(_unguarded[:6]) or None)
+
+# And the failure the population check exists for, driven end to end: the hook that has no
+# never-fail wrapper must still produce a block when a committed file is not valid UTF-8.
+_d = Path(tempfile.mkdtemp(prefix="chamnan-badbyte-"))
+try:
+    (_d / ".chamnan" / "logs").mkdir(parents=True)
+    (_d / ".git").mkdir()
+    (_d / ".chamnan" / ".version").write_bytes(b"1.24.0 \xff\xfe\n")
+    (_d / ".chamnan" / "MAP.md").write_text("# map\n\n## Quick Index\n\n- **`a.py`** (1L)\n",
+                                            encoding="utf-8")
+    _r = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                        input=json.dumps({"cwd": str(_d), "hook_event_name": "SessionStart",
+                                          "source": "startup"}),
+                        capture_output=True, text=True, encoding="utf-8", timeout=60)
+    check("...and a corrupt .version costs the session nothing",
+          _r.returncode == 0 and len(_r.stdout) > 200 and "Traceback" not in _r.stderr,
+          saw=f"exit={_r.returncode} stdout={len(_r.stdout)}B")
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
 # reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all

@@ -159,7 +159,7 @@ def _nudge_path(wsdir, session_id):
 def _nudge_read(wsdir, session_id):
     try:
         d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError, RecursionError):
+    except (UnicodeDecodeError, OSError, json.JSONDecodeError, RecursionError):
         return {"calls": 0, "nudged": False}
     # Valid JSON of the wrong shape is not a missing file: a list here raised AttributeError on
     # every subsequent tool call in the session.

@@ -93,7 +93,7 @@ def load(root):
         return []
     try:
         loaded = json.loads(path(root).read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError, RecursionError):
+    except (UnicodeDecodeError, OSError, json.JSONDecodeError, RecursionError):
         return []
     # The `[]` above is honest for a file that is absent or empty. It is a LIE for a file that has
     # content this parser cannot read, and `refuses_to_be_overwritten` below is what stops that lie
@@ -131,7 +131,7 @@ def refuses_to_be_overwritten(root):
     p = path(root)
     try:
         raw = p.read_text(encoding="utf-8-sig")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return ""
     if not raw.strip():
         return ""

@@ -407,7 +407,7 @@ def read_target(target):
     if target.dir_fd is None:
         try:
             return target.path.read_text(encoding="utf-8-sig")
-        except FileNotFoundError:
+        except (FileNotFoundError, UnicodeDecodeError):
             return None
     try:
         fd = os.open(target.leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=target.dir_fd)

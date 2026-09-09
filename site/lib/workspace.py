@@ -887,7 +887,7 @@ def _newer_version_has_been_here(root):
     """
     try:
         seen = (workspace(root) / VERSION_FILE).read_text(encoding="utf-8-sig").strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return False
     if not seen:
         return False
@@ -1238,7 +1238,7 @@ def reconcile_version(root, running):
     path = workspace(root) / VERSION_FILE
     try:
         seen = path.read_text(encoding="utf-8-sig").strip()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         seen = ""
     # 🐛 `seen` is the raw contents of a COMMITTED file, and the caller interpolates it into a bold
     # ⚠ banner in chamnan's own voice, outside the fence, on every session. `.strip()` does not

@@ -861,7 +861,7 @@ def _read_pointer_log(root):
             fired += 1
             for path in rec.get("named") or []:
                 named.setdefault(path, set()).add(rec.get("session"))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return 0, {}
     return fired, named
 
