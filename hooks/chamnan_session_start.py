@@ -1074,9 +1074,30 @@ def main():
                   f"Anything written to `{display(wsdir, root)}` since then is not in them._"]
         try:
             _mp = wsdir / "MAP.md"
-            if _mp.is_file() and index_is_behind(root, _mp)[0]:
-                _lines.append("_⚠ The architecture index has fallen behind the tree since then — "
-                              "rebuild it with `chamnan-map` before trusting what it says._")
+            if _mp.is_file():
+                if index_is_behind(root, _mp)[0]:
+                    _lines.append("_⚠ The architecture index has fallen behind the tree since then "
+                                  "— rebuild it with `chamnan-map` before trusting what it says._")
+                # 🐛 [2026-09-09] This path checked only the mtime comparison, and the startup path
+                # calls `dead_entries` beside the same comparison for a reason its own comment
+                # states: deleting or moving a file moves no mtime forward, so the one case where
+                # the index describes a tree that no longer exists is exactly the case the age
+                # check cannot see. Reproduced there at 7 of 7 entries dead, 0 seconds behind.
+                #
+                # Resume is not the rare path — a session that compacted and reopened always
+                # resumes rather than restarts — so the check the codebase built specifically for
+                # deletions was missing from the branch most sessions take. One of a pair guarded
+                # and the identical one beside it left, which is this repository's oldest defect
+                # (R5 agent 5).
+                _dead, _named, _dead_ex = dead_entries(root, _mp.read_text(
+                    encoding="utf-8", errors="replace"))
+                if _dead:
+                    _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in _dead_ex)
+                    _more = "…" if _dead > len(_dead_ex) else ""
+                    _lines.append(redact.scrub(
+                        f"_⚠ **{_dead} of {_named} file(s) that index names no longer exist** — "
+                        f"{_shown}{_more}. It is describing a tree that has moved on; rebuild it "
+                        f"with `chamnan-map`._"))
         except Exception:
             pass
         # 🐛 [2026-09-09] This branch returned without telling blocklog it had run, so every figure
@@ -1135,6 +1156,9 @@ def main():
     # a short block that says it is short beats a complete-looking absence.
     try:
         index_slot = index_render = None
+        # Warnings about the index FILE rather than about the index section. Collected here and
+        # placed before the first heading, so they survive the section being dropped.
+        _stale_lines = []
 
         # Said before anything else, and never suppressed by a config flag: if the code running this
         # session is older than a version that has already set this workspace up, everything below is
@@ -1380,7 +1404,8 @@ def main():
                     # 🐛 And it used to say the hook keeps the index "current on every commit",
                     # offered in answer to a staleness the hook does not fix. It rebuilds only when
                     # a file is added, deleted or renamed (`--diff-filter=ACDR`), deliberately —
-                    # the rebuild is a full rescan measured at 107s on 1,032 files and running it
+                    # the rebuild is a full rescan — 107s on tinygrad's 1,032 files, 2.6s on this
+                    # repository's 337, so the cost follows the tree and not the count — and running it
                     # in the foreground of every commit would be worse. But measured on this
                     # repository, 297 of 355 non-merge commits (83.7%) touch only existing files,
                     # so the hook fires on about one commit in six. A reader who installs it
@@ -1399,7 +1424,18 @@ def main():
                     # Scrubbed like every sibling section. It was the one warning built from
                     # repository-controlled strings that skipped the redactor entirely, so a
                     # credential in a FILENAME reached the block intact.
-                    out.append(redact.scrub(
+                    # 🐛 [2026-09-09] Appended after the index section, which makes it one of that
+                    # section's followers — `fit._followers` keeps bare lines with the heading they
+                    # sit under, and drops them with it. That is right for "Full detail lives in
+                    # MAP.md", which points at a heading, and wrong for this, which is about the
+                    # FILE. Measured: the last three recorded firings all delivered 8,920 of 9,000
+                    # bytes with the index dropped, so the warning that the index was 4.9 hours
+                    # behind reached nobody in any of them. The one moment a reader most needs to
+                    # know the map is stale is the moment there is no map in front of them.
+                    #
+                    # A lead line — before the first heading — belongs to no section, so `reorder`
+                    # keeps it at the front and nothing can drop it (R5 agent 5).
+                    _stale_lines.append(redact.scrub(
                         f"_⚠ Source has changed since this index was built ({ago(behind)}). "
                         f"{what}Rebuild it with {fix}._\n"))
 
@@ -1416,7 +1452,7 @@ def main():
                     _more = "…" if _dead > len(_dead_ex) else ""
                     # "N of M" rather than a bare count: 7 of 7 says the index is about a different
                     # tree, 7 of 264 says a directory was cleaned up. They call for different reactions.
-                    out.append(redact.scrub(
+                    _stale_lines.append(redact.scrub(
                         f"_⚠ **{_dead} of {_named} file(s) this index names no longer exist** — "
                         f"{_shown}{_more}. It is describing a tree that has moved on; rebuild it "
                         f"with `chamnan-map`._\n"))
@@ -1925,6 +1961,9 @@ def main():
         # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
         # index has finished being resized and before anything is dropped, so neither step depends on a
         # position the other changed.
+        # Before `reorder`, which forms `lead` from whatever sits ahead of the first heading.
+        for _line in reversed(_stale_lines):
+            out.insert(0, _line)
         out = fit.reorder(out)
 
         # Prepended rather than appended: it explains what the reader is about to be handed, and the

@@ -22,6 +22,7 @@ import re
 import subprocess
 import shutil
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -70,7 +71,7 @@ HOOK_BODY = """{marker}
 # proceeds and the index is simply not refreshed.
 # ACDR is Added, Copied, Deleted, Renamed -- deliberately not M. Editing a file leaves the index
 # behind, and that is the accepted half of the trade: measured on this repository, 297 of 355
-# non-merge commits (83.7%) touch only existing files, and the rebuild is a FULL rescan, 107s on
+# non-merge commits (83.7%) touch only existing files, and the rebuild is a FULL rescan — 107s on
 # 1,032 files, in the foreground of the commit. Running it on every M would put two minutes between
 # a person and their commit, most of the time. The staleness is covered instead by the session-start
 # warning, and `chamnan-map --install-git-hook` says all of this out loud at install time.
@@ -413,7 +414,8 @@ def install_git_hook(root):
     # 🐛 This said "on every commit that touches tracked files", which the hook has never done:
     # `--diff-filter=ACDR` leaves out Modified, and measured on this repository 297 of 355
     # non-merge commits (83.7%) touch only existing files. The filter is the right trade — the
-    # rebuild is a full rescan, 107s on 1,032 files, in the foreground of the commit — but a
+    # rebuild is a full rescan — 107s on tinygrad's 1,032 files, 2.6s on this repository's 337,
+    # so that figure is about a tree and not about chamnan — in the foreground of the commit, but a
     # promise the tool cannot keep is not part of that trade. Editing a file still makes the index
     # stale, and the session-start warning still says so; this line just no longer implies it will
     # not happen.
@@ -422,7 +424,9 @@ def install_git_hook(root):
     print("  and `chamnan-map` refreshes it.")
     # 🎯 Said at install time because it is the only moment the user is making this choice, and
     # because the rebuild is a FULL rescan with no incremental path — on tinygrad, 1,032 source
-    # files, it measured 107 seconds, and this hook runs it in the foreground, so every commit that
+    # files, it measured 107 seconds — chamnan's own 337-file repository measures 2.6, so the
+    # number belongs to that tree rather than to the tool — and this hook runs it in the
+    # foreground, so every commit that
     # adds, deletes or renames a file waits for it. Nobody discovers that until their first commit
     # hangs, by which point the cause is three steps away from the symptom.
     #
@@ -434,10 +438,20 @@ def install_git_hook(root):
         with _tree.session():
             n = sum(1 for _ in mapper.indexable(root))
         if n >= 300:
+            # 🐛 [2026-09-09] This said "a 1,032-file tree measured 107 seconds" with nothing to
+            # say whose tree that was. It is tinygrad's, and cost does not follow file count:
+            # chamnan's own repository at 337 files rebuilds in 2.6 seconds, forty times cheaper
+            # than the same comment's headline number would suggest. Quoting a stranger's duration
+            # to somebody deciding about their own repository is the shape of mistake this project
+            # keeps finding in its own output — a number without its denominator. Point at the
+            # measurement they can take in one command instead (R5 agent 5).
             print(f"  Note: rebuilding is a full rescan of all {n:,} source files, and this hook "
                   f"runs it in the FOREGROUND — every commit that adds, deletes or renames a file "
-                  f"waits for it. For scale: a 1,032-file tree measured 107 seconds.")
-            print("  On a tree this size you may prefer to run `chamnan-map` by hand instead.")
+                  f"waits for it.")
+            print("  How long that is depends on your tree, not just its file count: measured "
+                  "2.6s on 337 files here and 107s on a 1,032-file tree elsewhere.")
+            print("  `chamnan-map` prints its own elapsed time — run it once and you will know "
+                  "yours. On a slow tree you may prefer to run it by hand instead.")
     except Exception:
         pass          # a nicety; never the reason an install fails
     print("  Remove it with `chamnan-map --uninstall-git-hook`.")
@@ -609,6 +623,7 @@ def verify_map(root):
 
 
 def main(argv):
+    _started = time.perf_counter()
     # 🐛 There was no `--help`, and this command treats any non-flag argument as a directory to
     # scan — so `chamnan-map --help` fell through and REBUILT THE MAP. It writes MAP.md, so the
     # most cautious thing a new user can type performed a write. Found by an agent that typed it
@@ -956,7 +971,15 @@ def main(argv):
     # count that included them. It also disagreed with the header chamnan writes into MAP.md, which
     # has always used len(files), so the tool and its own artifact reported different sizes for the
     # same scan. Caught by reading both at once on a real repository: 187 printed, 189 in the file.
-    print(f"  {len(files)} source file(s), {src:,.0f} tokens of code")
+    # 🐛 [2026-09-09] Three places quote "107 seconds" as the cost of a rebuild, and it is
+    # tinygrad's number, not the reader's — measured on a 1,032-file tree and repeated as if it
+    # were a property of chamnan. This repository, at a comparable 337 files, rebuilds in about
+    # 2.6 seconds: forty times cheaper than the figure used to argue that rebuilding on every
+    # commit is out of the question. Nobody had to guess that, because the command that would
+    # answer it runs every time and had never said how long it took. Now it does, so the trade-off
+    # is argued from the reader's own tree (R5 agent 5).
+    print(f"  {len(files)} source file(s), {src:,.0f} tokens of code, "
+          f"{time.perf_counter() - _started:.1f}s")
     # A command that edits a file the user may be about to commit says so. `ensure()` keeps
     # .chamnan/.gitignore current on every run, which is right — a rule added to the plugin has to
     # reach workspaces that already exist — but doing it in silence left people finding a dirty

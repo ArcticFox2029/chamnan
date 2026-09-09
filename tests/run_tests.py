@@ -19097,7 +19097,8 @@ _rmtree(_hb, ignore_errors=True)
 # ------------------------------------------------ what the git hook promises versus what it does
 # 🐛 Two lines told the reader the hook keeps the index current "on every commit". It never has:
 # `--diff-filter=ACDR` leaves out Modified, deliberately, because the rebuild is a full rescan
-# measured at 107s on 1,032 files and running it in the foreground of every commit would be worse.
+# measured at 107s on tinygrad's 1,032 files (2.6s on this repository's 337 — the cost follows the
+# tree, not the file count) and running it in the foreground of every commit would be worse.
 # Measured on this repository, 297 of 355 non-merge commits (83.7%) touch only existing files, so
 # the hook fires on about one commit in six. The filter is the right trade; the promise was not
 # part of it. The worse half is that one of the two lines was the STALENESS WARNING's own remedy —
@@ -24597,6 +24598,38 @@ os.chdir(ROOT)
 check("the suite cleans up after itself", fixture.is_dir())
 _rmtree(fixture)
 _rmtree(nested.parent.parent, ignore_errors=True)
+
+# ------------------------------------------- the resume path checks for deletions too
+# 🐛 [2026-09-09] `dead_entries` was called on the startup path and not on the resume one, though
+# resume is the branch a compacted session always takes. Both call sites are derived here rather
+# than listed, so a third path added later is covered without anyone remembering (R5 agent 5).
+_hook_src = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_dead_calls = len(re.findall(r"\bdead_entries\(", _hook_src)) - 1      # minus the definition
+check("every staleness branch checks for deleted files, not just for age", _dead_calls >= 2,
+      saw=f"dead_entries() called at {_dead_calls} site(s)")
+
+# The two checks belong together wherever either appears: an index can be current by mtime and
+# entirely about a tree that no longer exists.
+_age_calls = len(re.findall(r"\bindex_is_behind\(", _hook_src)) - 1
+check("...and the age check never appears alone more often than the deletion check",
+      _dead_calls >= _age_calls - 1,
+      saw=f"index_is_behind() at {_age_calls} site(s), dead_entries() at {_dead_calls}")
+
+
+# 🐛 [2026-09-09] Two checks were appended to the END of this file, after the summary and after
+# `sys.exit`, and they never ran. The totals line was byte-identical before and after — a suite
+# that had silently stopped measuring two things and said so nowhere, which is the false-confidence
+# failure this file already calls worse than a red run. Appending is the obvious thing to do to a
+# 24,000-line file, so the file has to refuse it rather than rely on remembering (R5 agent 5).
+_tail_src = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8-sig")
+# Built at runtime, never spelled out: a check that quotes the literal it is looking for finds
+# itself, which is what the first version of this did — `a-check-that-reads-source-matches-itself`.
+_terminator = "sys." + "exit(1 if " + "FAILED else 0)"
+_after_exit = _tail_src.rsplit(_terminator, 1)
+check("nothing is written after the summary, where it would never run",
+      len(_after_exit) == 1 or not _after_exit[1].strip(),
+      saw=(_after_exit[1].strip()[:120] if len(_after_exit) > 1 else None))
+
 
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
