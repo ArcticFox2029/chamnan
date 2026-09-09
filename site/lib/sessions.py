@@ -389,9 +389,34 @@ def carry_forward(root):
         body = "\n\n".join(f"**{mdblock.one_line_capped(title)}**\n\n{text}"
                            for title, text in carried)
     if tokens.estimate(body) > MAX_CARRY_TOKENS:
-        body = body[:mdblock.cut_outside_a_fence(
-            body, tokens.cut_at(body, MAX_CARRY_TOKENS))].rsplit("\n", 1)[0] + \
-            f"\n\n_…truncated — read `{mdblock.as_quoted(group[0].name)}` for the rest._"
+        # 🐛 [2026-09-09] A flat prefix cut, and `CARRIED` puts Remaining before Blockers — so the
+        # part that always survived was the first one and the part always lost was the same one
+        # every time. Measured on this repository's only real record: 582 tokens against a 500
+        # budget, the cut landing inside Remaining's own bullet list, and Blockers dropped whole,
+        # including the line saying STATE.md was over ITS budget. Two purposes are declared in
+        # `CARRIED`; one of them could never reach a session on any record above the cap.
+        #
+        # A share each, the way `memory.rules_text` divides its budget between rules, so both
+        # arrive shortened rather than one arriving intact and the other not at all. Under the cap
+        # nothing changes — that is the common case and it must not pay for this (R5 agent1).
+        parts = re.split(r"(?m)^(?=\*\*)", body)
+        parts = [x for x in parts if x.strip()]
+        if len(parts) > 1:
+            share = max(60, MAX_CARRY_TOKENS // len(parts))
+            trimmed = []
+            for part in parts:
+                if tokens.estimate(part) <= share:
+                    trimmed.append(part.rstrip())
+                    continue
+                cut = mdblock.cut_outside_a_fence(part, tokens.cut_at(part, share))
+                trimmed.append(part[:cut].rstrip().rsplit("\n", 1)[0] + "\n\n_…cut here._")
+            body = "\n\n".join(trimmed) + \
+                f"\n\n_Every part above is shortened — read " \
+                f"`{mdblock.as_quoted(group[0].name)}` for any of them in full._"
+        else:
+            body = body[:mdblock.cut_outside_a_fence(
+                body, tokens.cut_at(body, MAX_CARRY_TOKENS))].rsplit("\n", 1)[0] + \
+                f"\n\n_…truncated — read `{mdblock.as_quoted(group[0].name)}` for the rest._"
     return f"{head}\n\n{body}"
 
 

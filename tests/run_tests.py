@@ -18,6 +18,7 @@ import datetime
 import importlib.util
 import contextlib
 import io
+import html
 import json
 import os
 import re
@@ -23055,6 +23056,48 @@ if _site_lib.is_dir():
     _closure_src = (ROOT / "site" / "build.py").read_text(encoding="utf-8")
     check("...and the bundle is derived from the import graph rather than listed by hand",
           "import_graph" in _closure_src and "closure" in _closure_src)
+
+# 🐛 [2026-09-09] `getBody` carried `<code>.chamnan/</code>` in ALL FIVE locales and was bound with
+# `data-i18n`, which assigns textContent — so every reader in every language saw the tags spelled
+# out on the page. Two bindings exist, one escapes and one does not, and which a key needs is
+# decided by the key's own text; nothing checked that they agreed. Derived from the file rather
+# than listed, so a string that grows a `<strong>` next year is covered without anyone remembering.
+_page = ROOT / "site" / "index.html"
+if _page.is_file():
+    _page_src = _page.read_text(encoding="utf-8")
+    _plain = set(re.findall(r'data-i18n="([A-Za-z0-9_]+)"', _page_src))
+    _rich = set(re.findall(r'data-i18n-html="([A-Za-z0-9_]+)"', _page_src))
+    _tag = re.compile(r"<(?:code|strong|em|a|br|b|span)\b")
+    _locales = re.findall(r"\n  ([a-z]{2}): \{", _page_src)
+    _mixed, _strings = [], 0
+    for _loc in _locales:
+        _i = _page_src.index(f"\n  {_loc}: {{")
+        _blk = _page_src[_i:_page_src.index("\n  },", _i)]
+        for _k, _v in re.findall(r'\n    ([A-Za-z0-9_]+): "((?:[^"\\]|\\.)*)"', _blk):
+            _strings += 1
+            if _tag.search(_v) and _k in _plain and _k not in _rich:
+                _mixed.append(f"{_loc}.{_k}")
+    check("no translated string carries markup into a binding that escapes it",
+          not _mixed, saw=", ".join(sorted(_mixed)[:6]) or None)
+    print(f"      DETAIL  {len(_locales)} locale(s), {_strings} translated string(s) checked "
+          f"against {len(_plain)} plain and {len(_rich)} html binding(s)")
+
+    # The markup fallback and the `en` entry are the same sentence written twice — the shape this
+    # repository keeps finding. One said the injected block "stays between 6.2 and 6.7 KB" while
+    # the other said "for every repository but the smallest", and the table under both showed a
+    # row at 2,449 B.
+    _drift = []
+    for _m in re.finditer(r'data-i18n-html="([A-Za-z0-9_]+)"[^>]*>(.*?)</p>', _page_src, re.S):
+        _k, _markup = _m.group(1), _m.group(2)
+        _e = re.search(r'\n  en: \{.*?\n    %s: "((?:[^"\\]|\\.)*)"' % re.escape(_k),
+                       _page_src, re.S)
+        if not _e:
+            continue
+        _norm = lambda t: " ".join(html.unescape(t).replace('\\"', '"').split())
+        if _norm(_markup) != _norm(_e.group(1)):
+            _drift.append(_k)
+    check("...and each rich fallback in the markup still says what its `en` string says",
+          not _drift, saw=", ".join(_drift) or None)
 
 # ------------------------------------------- a forged entry in a thread, not just a milestone
 # 🐛 [2026-09-07] `milestones.entries` got a split-heading detector today and `timeline.entries_of`

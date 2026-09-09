@@ -325,10 +325,24 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     # single failure this module was written to prevent. A budget that fails open is not a budget.
     over = len(body.encode()) - ceiling
     if over > 0:
+        # 🐛 [2026-09-09] This named `index_token_budget`, and that key cannot reach the section
+        # the reader would be trying to shrink. It is consumed in exactly one place --
+        # `tokens.section_budget` (`lib/tokens.py:232`), for the four OPTIONAL index subsections
+        # (routes, env, schema, deploy) -- never for the Quick Index the block actually carries.
+        # R1 measured it across 1,400 to 3,000 and the delivered index sat at 3,286 bytes at every
+        # value: more than a 2x range, zero bytes of movement. So the one message a user reads at
+        # the moment the block breaks sent them to a dial that is not connected to anything, and
+        # `chamnan-map`'s own over-budget notice sent them to the same one.
+        #
+        # What is left when the block is over the ceiling is by definition undroppable: the header,
+        # the untitled lines, and whatever `_fit_lines` reserved because it is pinned. Two things
+        # act on that -- `state_token_budget`, which caps STATE.md and the rules block, and the
+        # pins themselves.
         body += (f"\n_⚠ This block is {over:,} bytes over its {ceiling:,}-byte limit and could not "
-                 f"be reduced further — what follows may be cut by the host. Lower "
-                 f"`index_token_budget` in .chamnan/config.json, or raise `output_byte_ceiling` if "
-                 f"your host allows more._\n")
+                 f"be reduced further — what follows may be cut by the host. What is left is "
+                 f"undroppable: lower `state_token_budget` in .chamnan/config.json, unpin a 📌 "
+                 f"section in `.chamnan/STATE.md`, or raise `output_byte_ceiling` if your host "
+                 f"allows more._\n")
     return body, dropped
 
 
@@ -357,10 +371,72 @@ def _trim(part, room, sources):
     body = _fit_lines(lines[3:-2], budget)
     if not body:
         return ""
+    # 🐛 [2026-09-09] The 300-byte floor above was the only test of whether a fragment was worth
+    # keeping, and it counts bytes rather than content. Measured on this repository at the live
+    # 9,000-byte ceiling: the Architecture index arrived as 1,113 bytes containing the map title,
+    # a file count, "do not read this in full", a grep recipe, a "cut to fit" note and a staleness
+    # warning -- and zero directory lines. Every sentence delivered was chamnan telling the reader
+    # to go somewhere else, which is what `notice()` already does in a tenth of the bytes.
+    if _only_the_opening_block(lines[3:-2], body):
+        return ""
     return f"\n{lines[1]}\n{open_mark}\n" + "\n".join(body) + f"\n{close_mark}\n{note}\n"
 
 
+def _only_the_opening_block(full, kept):
+    """True when the fragment kept nothing past the body's own opening block.
+
+    A section whose first block introduces the ones beneath it loses all of what is introduced
+    before it loses any of the introduction, because `_fit_lines` fills in document order and the
+    introduction comes first. The Architecture index is the one that bites: its opening paragraph
+    is a how-to-read for a Quick Index that the cut then removes entirely.
+
+    The guard is deliberately narrow, and a threshold was tried here first and withdrawn. Scoring
+    the fragment by what share of it came from the opening block put the real section's 1,600-byte
+    cut at 50.3% -- the first room where actual directory lines arrive -- so any threshold near a
+    half decided that case by rounding. "Kept nothing at all past the introduction" needs no
+    tuning and is the state that was actually measured.
+
+    The one-block case is left alone on purpose: a plain list or a single paragraph has no
+    introduction to be reduced to, and refusing those would trade this bug for a worse one, a
+    section that is nothing but content dropped for having no headings.
+    """
+    blocks = _blocks(full)
+    if len(blocks) < 2:
+        return False
+    return _is_subsequence(kept, blocks[0])
+
+
+def _is_subsequence(small, big):
+    """Whether `small` appears inside `big` in order. Both may repeat blank and list lines, so
+    identity of the lines is not enough on its own and the walk has to be positional."""
+    it = iter(big)
+    return all(any(line == other for other in it) for line in small)
+
+
 PIN = "\U0001F4CC"
+
+
+def _blocks(lines):
+    """Split a section body into heading-delimited blocks, blind to nothing.
+
+    Pulled out of `_fit_lines` so the fill and `_only_the_opening_block` cannot disagree about
+    where block 0 ends -- two copies of this walk is exactly the shape of bug this repository
+    keeps finding: a rule applied to one member of a set and forgotten in the identical one
+    beside it.
+    """
+    in_fence = False
+    blocks, cur = [], []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+        elif line.startswith("#") and not in_fence and cur:
+            blocks.append(cur)
+            cur = []
+        cur.append(line)
+    if cur:
+        blocks.append(cur)
+    return blocks
 
 
 def _fit_lines(lines, budget):
@@ -383,18 +459,7 @@ def _fit_lines(lines, budget):
     # fence unclosed. The comment above says this function was written after exactly that shape of
     # bug; the fix tracked pin depth and never made the scan fence-aware, which is the whole reason
     # `lib/md.py` exists. `state.split_pinned` and this still disagreed about the same text.
-    in_fence = False
-    blocks, cur = [], []
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_fence = not in_fence
-        elif line.startswith("#") and not in_fence and cur:
-            blocks.append(cur)
-            cur = []
-        cur.append(line)
-    if cur:
-        blocks.append(cur)
+    blocks = _blocks(lines)
 
     # Reserve whole pinned blocks first, then fill the remainder LINE by line. Filling by block
     # would make a section with no headings at all -- a plain list, a paragraph -- one indivisible

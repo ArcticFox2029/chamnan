@@ -1934,7 +1934,8 @@ def main():
     if not ws.read_only():
         blocklog.record(root, body, ceiling=ceiling,
                         when=time.strftime("%Y-%m-%dT%H:%M:%S"),
-                        source=(payload.get("source") if isinstance(payload, dict) else None))
+                        source=(payload.get("source") if isinstance(payload, dict) else None),
+                        dropped=[t for t, _src in dropped])
     try:
         sys.stdout.write(body + "\n")
     except UnicodeEncodeError:

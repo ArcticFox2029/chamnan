@@ -201,6 +201,14 @@ def _split_unquoted(text):
     return parts
 
 
+# Programs whose first argument names the thing actually being run. A step is only repeatable when
+# that name is stable, so an inline or piped program signs as nothing at all.
+_INTERPRETERS = frozenset({
+    "python", "python2", "python3", "node", "ruby", "perl", "php", "deno", "bun",
+    "sh", "bash", "zsh", "osascript",
+})
+
+
 def signature(command):
     """A stable name for what a command DOES, or "" when it is not worth remembering.
 
@@ -225,6 +233,19 @@ def signature(command):
         # a program), and guessing wrong there suggests the wrong routine. The loop's real command
         # going undetected this one time is the smaller cost.
         return ""
+    # 🐛 [2026-09-09] An interpreter told to read its program from stdin or the command line is not
+    # a repeatable step, and treating it as one is what filled `.chamnan/candidates/` with eight
+    # permutations of the same three words. `python3 - <<HEREDOC` and `python3 tools/run_tests.py`
+    # both signed as `python3`, so three unrelated throwaway scripts read as one workflow and the
+    # detector proposed promoting the ordinary edit-commit loop, eight times, none reviewed.
+    #
+    # A script FILE is a stable name and stays: `python3 tools/x.py` is the same step tomorrow.
+    # `-` and `-c` are not names at all — the program is different every time and nothing here can
+    # tell one from the next (R5 agent3).
+    if prog in _INTERPRETERS:
+        rest = [a for a in parts[1:] if a not in ("-u", "-E", "-I", "-s", "-S", "-B")]
+        if not rest or rest[0] in ("-", "-c") or rest[0].startswith("<<"):
+            return ""
     if prog in _SUBCOMMAND_TOOLS:
         # Known limitation: a global flag that takes a VALUE before the subcommand
         # (`docker --context prod compose up`) yields `docker prod`, because telling

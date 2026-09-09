@@ -31,7 +31,7 @@ NAME_CHARS = 38     # a heading is an identifier here, not prose
 _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
-def shape(body, ceiling=None, when=None, source=None, resent=True):
+def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=()):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
@@ -60,10 +60,16 @@ def shape(body, ceiling=None, when=None, source=None, resent=True):
         # A firing that proved the previous block is still in the transcript and printed a pointer
         # instead. There is no block to measure; the record exists so the log counts the session.
         rec["resent"] = False
+    if dropped:
+        # What the assembler BUILT and then cut. Without it the log records only what arrived, and
+        # a section missing from every record is indistinguishable from a section this repository
+        # does not have -- see `check()`, where reading the global list of possible sections instead
+        # reported seven "never delivered" on a workspace that had none of them to deliver.
+        rec["drop"] = sorted({str(d)[:NAME_CHARS] for d in dropped})
     return rec
 
 
-def record(root, body, ceiling=None, when=None, source=None, resent=True):
+def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=()):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -149,9 +155,37 @@ def check(root, window=WINDOW):
         for r in prior:
             for name in (r.get("sec") or {}):
                 seen[name] = seen.get(name, 0) + 1
+        # Every section this workspace is known to produce: one it delivered at some point, or one
+        # it built and cut. A name in neither is a section this repository does not have.
+        known = set(seen) | {n for r in prior + [now] for n in (r.get("drop") or [])}
         floor = len(prior) * PRESENT_ENOUGH
         gone = sorted(n for n, c in seen.items()
                       if c >= floor and n not in (now.get("sec") or {}))
+        # 🐛 [2026-09-09] A section had to have ARRIVED before its absence could be reported:
+        # `c >= floor` is computed from a window that never saw it, so a section at 0 of 90 can
+        # never satisfy it and never will while it stays at zero. Three sections on this repository
+        # are in exactly that state — the tools index, recorded procedures, and decisions and
+        # lessons — dropped on every real firing this log has recorded, and the detector has never
+        # once said so, because from its point of view nothing changed. A regression detector that
+        # cannot see a BASELINE failure reports the health of what already works (R5 agent1).
+        #
+        # Said once and quietly: this is a standing condition, not news, and the report it feeds
+        # is read for what changed.
+        #
+        # 🐛 [2026-09-09] The known set was read from `fit.DROP_ORDER`, which is every section
+        # chamnan CAN emit anywhere -- not every section THIS repository has. A workspace with no
+        # skills, no recorded decisions and no session handoffs was told that seven sections had
+        # never arrived, when there was nothing to deliver and nothing wrong. The log has to carry
+        # the answer instead of the code guessing it, which is why `shape()` now records what was
+        # built and cut.
+        _never = sorted(n for n in known
+                        if n not in seen and n not in (now.get("sec") or {}))
+        if _never and len(prior) >= 5:
+            _shown = ", ".join(_never[:3]) + (f", and {len(_never) - 3} more"
+                                              if len(_never) > 3 else "")
+            out.append(f"{len(_never)} section(s) have not arrived once in the last "
+                       f"{len(prior) + 1} blocks — {_shown}. Not a regression: they have never "
+                       f"been delivered, so nothing here will report them as lost")
         if gone:
             out.append("section(s) the last block did not carry, having carried them in at least "
                        "half of the ten before it: " + ", ".join(gone))
