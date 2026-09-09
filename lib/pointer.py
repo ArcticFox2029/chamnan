@@ -378,5 +378,30 @@ def note(wsdir, session_id, rel_path, hits, ms):
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        _trim(p)
     except OSError:
         pass
+
+
+# 🐛 [2026-09-09] `workspace.SELF_PRUNING_LOGS` exempts this file from the 7-day sweep, and its own
+# comment states the contract: "A log that bounds itself by record must say so here, or the
+# directory sweep bounds it by date instead." This file was on that list and nothing bounded it —
+# `note()` was the only writer and it only appended. Every sibling on that list has a `KEEP`; this
+# one had the exemption without the obligation (R4 agent 4).
+#
+# By record rather than by date, which is what the exemption promises. One PreToolUse firing per
+# file pointer is a handful a session, so this holds months of them.
+KEEP = 2000
+
+
+def _trim(path):
+    """Hold the newest KEEP records. Cheap: nothing is read until the file is worth reading."""
+    try:
+        if path.stat().st_size < 200_000:
+            return
+        lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+        if len(lines) <= KEEP:
+            return
+        ws.atomic_write_text(path, "\n".join(lines[-KEEP:]) + "\n")
+    except (OSError, UnicodeDecodeError):
+        pass          # telemetry must never be the thing that breaks a session

@@ -2926,10 +2926,16 @@ mroot = mem / ".chamnan" / "memory"
     "# Editing src/ while the app runs\n\nA hot-reload artifact, not a bug. Restart clears it.\n",
     encoding="utf-8")
 
-check("categories are the three named ones",
-      memory_mod.CATEGORIES == ("decisions", "lessons", "rules"))
+# `incidents` joined on 2026-09-09: `pointer.py` scanned it and promised it "joins automatically
+# the day it exists", while `counts()` and the session block were built from a three-name tuple and
+# could not see it. The union is asserted against the pointer's own list further down rather than
+# spelled out twice.
+check("categories are the four the memory layer and the file pointer both know",
+      memory_mod.CATEGORIES == ("decisions", "incidents", "lessons", "rules"))
 check("entries are found per category", len(memory_mod.entries(mem, "rules")) == 1)
-check("counts cover every category", memory_mod.counts(mem) ==
+# A store with no entries is not reported: `incidents: 0` in every repository's block forever
+# would be the cost of making the store visible, and a count of zero was never worth a line.
+check("counts cover every category that has anything in it", memory_mod.counts(mem) ==
       {"decisions": 1, "lessons": 1, "rules": 1})
 
 rules = memory_mod.rules_text(mem)
@@ -25027,6 +25033,119 @@ try:
     check("...and a corrupt .version costs the session nothing",
           _r.returncode == 0 and len(_r.stdout) > 200 and "Traceback" not in _r.stderr,
           saw=f"exit={_r.returncode} stdout={len(_r.stdout)}B")
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
+# ------------------------------------------- the rules budget, and the two answers about it
+# 🐛 [2026-09-09] `max(300, cap//n)` decided WHETHER to trim as well as how much: with nine rules of
+# 203 characters against a 1,500 cap, no rule exceeded the 300 share, the per-rule path never ran,
+# and the whole-budget cut dropped two rules entirely — when 166 characters each would have carried
+# all nine. And the drop notice tested whether a rule's TITLE survived while `rules_pressure` tested
+# whether its BODY did, so the two disagreed by construction on that same fixture: checker two,
+# notice one (R4 agent 4).
+def _rules_fixture(n, size):
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-rulesbudget-"))
+    _r = _d / ".chamnan" / "memory" / "rules"
+    _r.mkdir(parents=True)
+    for _i in range(n):
+        (_r / f"rule-{_i}.md").write_text(f"# Rule {_i}\n\nzq{_i} " + "x" * max(size - 20, 10),
+                                          encoding="utf-8")
+    return _d
+
+_shapes = ((9, 203), (20, 203), (4, 500), (2, 1200), (3, 900))
+_disagree, _unnamed = [], []
+for _n, _size in _shapes:
+    _d = _rules_fixture(_n, _size)
+    try:
+        _txt = memory_mod.rules_text(_d)
+        _fitted, _title_only, _chars, _budget = memory_mod.rules_pressure(_d)
+        # The notice must account for exactly the rules the checker says did not arrive whole.
+        _m = re.search(r"Not shown above: (.+?)\.\_", _txt)
+        _named = len(re.findall(r"\*\*Rule \d+\*\*", _m.group(1))) if _m else 0
+        _more = re.search(r"and (\d+) more", _m.group(1)) if _m else None
+        if _more:
+            _named += int(_more.group(1))
+        if _named != len(_title_only):
+            _disagree.append(f"{_n}x{_size}: checker {len(_title_only)}, notice {_named}")
+        # Every rule is ACCOUNTED FOR — delivered with a body, named in the notice, or inside its
+        # "and N more" count. The notice caps the names it spells out at six on purpose, so
+        # demanding every title appear would be asserting something the design does not promise;
+        # what it does promise is that the arithmetic covers all of them.
+        if len(_fitted) + len(_title_only) != _n:
+            _unnamed.append(f"{_n}x{_size}: {len(_fitted)}+{len(_title_only)} of {_n}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+
+check("the drop notice and rules_pressure give the same answer about every rule",
+      not _disagree, saw="; ".join(_disagree) or None)
+check("...and every rule is accounted for, delivered or counted as missing",
+      not _unnamed, saw="; ".join(_unnamed[:5]) or None)
+
+# The share floor exists so a share does not become a stub; it must not also decide whether the
+# per-rule path runs. Nine small rules that together overflow must all still carry something.
+_d = _rules_fixture(9, 203)
+try:
+    _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+    check("...and nine small rules over the cap are not dropped wholesale",
+          len(_fitted) >= 6, saw=f"fitted {len(_fitted)}, title-only {len(_title_only)}")
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
+# ------------------------------------------- four that only a sweep would have found
+# 🐛 [2026-09-09] `CITATION.cff` said 1.15.0 while every other file said 1.24.0 — nine releases and
+# seven days behind, in the one file that exists to be cited. Nothing read it, so nothing noticed.
+# The number is not the fix; the check is (R4 agent 4).
+_cff = (ROOT / "CITATION.cff").read_text(encoding="utf-8")
+_cff_version = re.search(r'(?m)^version:\s*"?([\d.]+)"?', _cff)
+check("CITATION.cff names the version everything else names",
+      _cff_version and _cff_version.group(1) == ws.plugin_version(ROOT),
+      saw=f"CITATION says {_cff_version.group(1) if _cff_version else None}, "
+          f"plugin.json says {ws.plugin_version(ROOT)}")
+
+# 🐛 `memory/incidents` was listed by `pointer.py` and iterated in two loops, and was not a
+# CATEGORY — so an entry written there was scanned by the file pointer and invisible to `counts()`
+# and to the session block. Derived from both sources rather than from a list here.
+_ptr_src = (ROOT / "lib" / "pointer.py").read_text(encoding="utf-8")
+_ptr_memory_stores = set(re.findall(r'\("memory/(\w+)"', _ptr_src))
+check("every memory store the file pointer scans is one the memory layer knows about",
+      _ptr_memory_stores <= set(memory_mod.CATEGORIES),
+      saw=", ".join(sorted(_ptr_memory_stores - set(memory_mod.CATEGORIES))) or None)
+
+# 🐛 `pointer.jsonl` sat on `SELF_PRUNING_LOGS`, whose own comment states the contract: a log that
+# bounds itself by record must say so there, or the directory sweep bounds it by date instead. It
+# had the exemption and no bound — `note()` was the only writer and it only appended.
+_unbounded = []
+for _name in ws.SELF_PRUNING_LOGS:
+    _mod = {"commands.jsonl": "workflows", "pointer.jsonl": "pointer",
+            "scratch.jsonl": None, "edits.jsonl": "coedit",
+            "subagent_start.jsonl": None}.get(_name)
+    if not _mod:
+        continue
+    # The PROPERTY, and it has three spellings across three modules — `pointer._trim`,
+    # `coedit._trim`, `workflows.prune`. Looking for the constant `KEEP` reported `coedit` as
+    # unbounded (its cap is `MAX_LINES`); looking for `_trim` reported `workflows`. What they share
+    # is a function that drops old records, so that is what is asserted.
+    _src = (ROOT / "lib" / f"{_mod}.py")
+    if _src.is_file() and not re.search(r"(?m)^def (_trim|prune)\b",
+                                        _src.read_text(encoding="utf-8")):
+        _unbounded.append(f"{_name} ({_mod}.py)")
+check("...and every log exempted from the sweep as self-pruning actually bounds itself",
+      not _unbounded, saw=", ".join(_unbounded) or None)
+
+# 🐛 `_wikilink_slug` strips `.md` case-insensitively and `dangling_citations` compared stems
+# case-sensitively, so `[[Never-Write-To-Prod]]` was reported dangling where it resolves.
+_d = Path(tempfile.mkdtemp(prefix="chamnan-wikicase-"))
+try:
+    _r = _d / ".chamnan" / "memory" / "rules"
+    _r.mkdir(parents=True)
+    (_r / "never-write-to-prod.md").write_text("# Never write to prod\n\nbody\n", encoding="utf-8")
+    (_d / ".chamnan" / "STATE.md").write_text(
+        "cites memory `Never-Write-To-Prod` and memory `no-such-entry`\n", encoding="utf-8")
+    _dang = {slug for slug, _places in memory_mod.dangling_citations(_d)}
+    check("a citation that differs only in case is not called dangling",
+          _dang == {"no-such-entry"}, saw=", ".join(sorted(_dang)))
 finally:
     shutil.rmtree(_d, ignore_errors=True)
 

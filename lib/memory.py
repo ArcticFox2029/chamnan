@@ -31,7 +31,12 @@ import workspace as ws
 import mdblock
 import state
 
-CATEGORIES = ("decisions", "lessons", "rules")
+# 🐛 [2026-09-09] Three here, and FOUR in the two loops below and in `pointer.py`'s source list —
+# which carries the comment "not a store yet; joins automatically the day it exists". It does not
+# join automatically: `counts()` and the session block are built from this tuple, so an entry
+# written to `memory/incidents/` is scanned by the file pointer, invisible to everything else, and
+# nothing says so. One spelling, and `incidents` is in it (R4 agent 4).
+CATEGORIES = ("decisions", "incidents", "lessons", "rules")
 
 # Rules reach every session, so they are capped. Roughly a third of state_token_budget's
 # char-equivalent (see lib/state.py): a repository with more than this in standing constraints has
@@ -149,9 +154,15 @@ def dangling_citations(root):
     Measured across the four real workspaces on this machine: 3 matches, all 3 genuinely dangling,
     no false positives.
     """
+    # 🐛 [2026-09-09] `_wikilink_slug` strips `.md` case-INSENSITIVELY and validates with `re.I`,
+    # and this compared the result against entry stems case-SENSITIVELY. One function, two rules
+    # about case: `[[Never-Write-To-Prod]]` was reported dangling on a filesystem where it resolves
+    # to `never-write-to-prod.md` perfectly well. `mdblock.filesystem_key` is the fold a filesystem
+    # actually applies — NFC then casefold — and is what every other name comparison in this package
+    # goes through (R4 agent 4).
     known = set()
-    for category in ("decisions", "incidents", "lessons", "rules"):
-        known.update(e.stem for e in entries(root, category))
+    for category in CATEGORIES:
+        known.update(mdblock.filesystem_key(e.stem) for e in entries(root, category))
 
     from workspace import workspace
     wsdir = workspace(root)
@@ -197,7 +208,7 @@ def dangling_citations(root):
                     # link, not a memory citation, and it is not this function's business.
                     if slug is None or (f.parent / m.group(1).strip()).exists():
                         continue
-                if slug in known:
+                if mdblock.filesystem_key(slug) in known:
                     continue
                 where = (f"{f.relative_to(wsdir).as_posix()}",
                          text.count("\n", 0, m.start()) + 1)
@@ -230,7 +241,7 @@ def knowledge_for(root, target):
     workspace. It fills as records are written, which is the same way every other store here fills.
     """
     hits = []
-    for category in ("decisions", "incidents", "lessons", "rules"):
+    for category in CATEGORIES:
         for entry in entries(root, category):
             try:
                 text = entry.read_text(encoding="utf-8-sig", errors="replace")
@@ -366,6 +377,22 @@ def mtime_or_zero(path):
         return 0.0
 
 
+def arrived_whole(title, body, delivered):
+    """Did this rule reach the session with its body, rather than only its name?
+
+    The drop notice lists every title, so a title appearing in the text proves nothing. A
+    distinctive sentence of the body is what distinguishes "delivered" from "named" — and both the
+    notice and `rules_pressure` ask through here, so the two cannot answer differently.
+    """
+    probe = _flatten(body)[len(title):][:120].strip()
+    return bool(probe) and probe[:60] in delivered
+
+
+# Below this a share is not a rule, it is a stub: a heading and half a sentence. The same floor
+# `tokens.section_budget` uses, and for the same reason — one entry is a summary, zero rows is not.
+SHARE_FLOOR = 120
+
+
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
     out, titles = [], []   # titles: (title, filename)
@@ -436,8 +463,23 @@ def rules_text(root):
     # A per-rule share first, so every rule gets a turn before any rule gets a second helping. The
     # whole-budget cut below still runs afterwards and is still what guarantees the total — this
     # only changes WHICH characters survive to reach it.
+    # 🐛 [2026-09-09] `max(300, …)` decided WHETHER to trim as well as how much. With nine rules of
+    # 203 characters against a 1,500 cap the share came out 300, no rule exceeded it, the per-rule
+    # branch never ran, and the whole-budget cut below dropped two rules entirely — when 166
+    # characters each would have carried all nine. The comment above says "every rule gets a turn
+    # before any rule gets a second helping", and that was the one case where it did not.
+    #
+    # The floor still raises the share when there are few rules, which is what it is for. It no
+    # longer decides whether the branch engages: what decides that is whether everything fits.
+    # `SHARE_FLOOR` is the point below which a share stops being a rule and becomes a stub — the
+    # same 120 `tokens.section_budget` uses, for the same reason.
+    _total = sum(len(o) for o in out) + 2 * max(len(out) - 1, 0)
     share = max(300, cap // max(len(out), 1))
-    if len(out) > 1 and any(len(o) > share for o in out):
+    if _total > cap:
+        _fair = cap // max(len(out), 1)
+        if _fair >= SHARE_FLOOR:
+            share = _fair
+    if len(out) > 1 and (_total > cap or any(len(o) > share for o in out)):
         trimmed = []
         for body, (title, fname) in zip(out, titles):
             if len(body) <= share:
@@ -468,7 +510,16 @@ def rules_text(root):
     # which one is missing costs a line and buys everything.
     cut = state._safe_cut(joined, cap)
     kept = joined[:cut].rstrip()
-    missing = [(t, f) for t, f in titles if t not in kept]
+    # 🐛 [2026-09-09] `t not in kept` is a substring test on the TITLE, and the cut can land after
+    # a title and before its body — so a rule that arrived as a name only had its title inside
+    # `kept` and was not reported missing. `rules_pressure` asks the right question, whether a
+    # distinctive sentence of the BODY survived, and its docstring promises the two "cannot drift".
+    # They disagreed by construction: on nine small rules the checker said two arrived title-only
+    # and the notice the model reads named one.
+    #
+    # One predicate, used by both. `arrived_whole` is what "the rule reached the session" means
+    # here, and there is now exactly one spelling of it (R4 agent 4).
+    missing = [(t, f) for (t, f), body in zip(titles, out) if not arrived_whole(t, body, kept)]
     tail = f"\n\n_…more rules in `.chamnan/memory/rules/` — {len(out)} in total."
     if missing:
         # The filename beside the title, for the same reason as the trim tail above: a rule that
@@ -502,8 +553,7 @@ def rules_pressure(root):
     for title, body in titled:
         # A rule is "fitted" when a distinctive sentence of its body survived, not merely its name:
         # the drop notice lists every title, so a title in the text proves nothing on its own.
-        probe = _flatten(body)[len(title):][:120].strip()
-        (fitted if probe and probe[:60] in delivered else title_only).append(title)
+        (fitted if arrived_whole(title, body, delivered) else title_only).append(title)
     return fitted, title_only, sum(len(b) for _t, b in titled), rules_budget(root)
 
 
@@ -638,7 +688,16 @@ def render_titles(found):
 
 
 def counts(root):
-    return {c: len(entries(root, c)) for c in CATEGORIES}
+    """How many entries each store holds. A store with none is not reported.
+
+    🐛 [2026-09-09] `incidents` joined `CATEGORIES` so the file pointer would stop promising a store
+    the rest of the memory layer could not see — and reporting it unconditionally put
+    `incidents: 0` into every repository's block forever, for a store almost none of them use. The
+    pointer's own comment says what was meant: "not a store yet; joins automatically the day it
+    exists." Reporting what EXISTS is what makes that true, and it costs the caller nothing, because
+    a count of zero was never worth a line (R4 agent 4).
+    """
+    return {c: n for c in CATEGORIES if (n := len(entries(root, c)))}
 
 
 def slug(title):
