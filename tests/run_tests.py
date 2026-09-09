@@ -27151,6 +27151,90 @@ _t_wrong35 = [f"{_p!r} vs {_r!r}: {_why}" for _p, _r, _want, _why in _t_rules35
               if tree.gitignore_matches(_r, _p) is not _want]
 check("...and each rule that differs from fnmatch is the one git actually applies",
       not _t_wrong35, saw="\n".join(_t_wrong35) or None)
+# ---- 36_the_guard_knows_whether_this_tree_can_ship.py
+# ------------------------------------------- a wall of matches from a tree that cannot ship
+# 🐛 [2026-09-10] The publication guard asks "is something about to SHIP that names the owner's real
+# work", and it answered that question identically for a repository with a remote and one without.
+# Run from the local workspace it printed 56 matching lines and exited 1 — and that workspace has no
+# remote at all, so nothing in it ships. The matches were internal research notes and memory
+# entries, which is the case the owner's rule explicitly ALLOWS: reading the real repositories is
+# fine, writing what you saw into anything that ships is not.
+#
+# Measured the day this was added: 111 occurrences of six terms in the local tree, and the published
+# tree clean at 194 files. A session seeing the first number without the second would have rewritten
+# a hundred internal notes to fix nothing, destroying the specificity those notes exist for.
+_t_git36 = shutil.which("git")
+if not _t_git36:
+    skip("  · no git on this machine — the guard-scope check is skipped, not passed")
+else:
+    _t_guard = ROOT.parent.parent / ".chamnan" / "tools" / "publication-guard.py"
+    check("the publication guard is installed where the release gate looks for it",
+          _t_guard.is_file() or (_t_guard.parent / "publication_guard.py").is_file(),
+          saw=str(_t_guard))
+
+    _t_src36 = _t_guard.read_text(encoding="utf-8-sig", errors="replace") if _t_guard.is_file() else ""
+    check("...and it asks whether the tree it is scanning has anywhere to push to",
+          "def can_this_tree_ship" in _t_src36 and "git" in _t_src36 and "remote" in _t_src36)
+
+    # Behavioural, against two real repositories: one with a remote and one without, both holding
+    # the same offending line. The verdict must differ, and it must differ in the right direction.
+    _t_verdicts = {}
+    for _t_has_remote in (False, True):
+        _d = Path(tempfile.mkdtemp(prefix="chamnan-ship-"))
+        try:
+            subprocess.run([_t_git36, "init", "-q", str(_d)], check=True, capture_output=True)
+            if _t_has_remote:
+                subprocess.run([_t_git36, "-C", str(_d), "remote", "add", "origin",
+                                "https://example.invalid/x.git"], check=True, capture_output=True)
+            _r = subprocess.run([_t_git36, "-C", str(_d), "remote"], capture_output=True,
+                                text=True, encoding="utf-8", errors="replace")
+            _t_verdicts[_t_has_remote] = bool(_r.stdout.strip())
+        finally:
+            shutil.rmtree(_d, ignore_errors=True)
+    check("...and a repository with a remote is told apart from one without",
+          _t_verdicts.get(True) is True and _t_verdicts.get(False) is False,
+          saw=repr(_t_verdicts))
+
+# The denylist itself must not be able to shrink unnoticed — a reader of the published write-up
+# asked whether removing a term from the policy file gets the same rigour as removing it from the
+# live thing, and it did not: nothing recorded what the list had ever held.
+#
+# Asked BEHAVIOURALLY, by importing the guard and driving it with two lists. The first version of
+# this checked that a function NAME appeared in the source, and renaming the function away left the
+# call site behind — so the check passed over a guard that no longer had the function at all. A
+# check that can pass when the thing is gone is not a check.
+_t_spec36 = importlib.util.spec_from_file_location(
+    "_chamnan_guard", str(ROOT.parent.parent / ".chamnan" / "tools" / "publication-guard.py"))
+_t_guard_mod = importlib.util.module_from_spec(_t_spec36)
+try:
+    _t_spec36.loader.exec_module(_t_guard_mod)
+    _t_loaded = True
+except Exception as _e:
+    _t_loaded = False
+check("the publication guard imports as a module, so its behaviour can be asked directly",
+      _t_loaded, saw=None if _t_loaded else "it does not import")
+
+if _t_loaded and hasattr(_t_guard_mod, "check_the_list_has_not_shrunk"):
+    _t_home = Path(tempfile.mkdtemp(prefix="chamnan-hw-"))
+    _t_was = _t_guard_mod.HIGH_WATER
+    try:
+        _t_guard_mod.HIGH_WATER = _t_home / "seen.json"
+        # Seven terms, then five: the drop has to be reported, and the report has to name both.
+        _t_first = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e", "f", "g"])
+        _t_after = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e"])
+        check("a denylist that gets shorter is reported, naming what it used to hold",
+              _t_first is None and _t_after and "7" in _t_after and "5" in _t_after,
+              saw=f"first={_t_first!r} after={_t_after!r}")
+        # ...and growing it says nothing, or the warning becomes noise and stops being read.
+        _t_grown = _t_guard_mod.check_the_list_has_not_shrunk(["a"] * 12)
+        check("...and adding terms is silent, so the warning stays worth reading",
+              _t_grown is None, saw=repr(_t_grown))
+    finally:
+        _t_guard_mod.HIGH_WATER = _t_was
+        shutil.rmtree(_t_home, ignore_errors=True)
+else:
+    check("the guard has a high-water mark for its own denylist",
+          False, saw="check_the_list_has_not_shrunk is not defined in the guard")
 # ============================ end of the folded surgical pool
 
 
