@@ -66,18 +66,77 @@ def directory(root):
 # Left undone rather than shipped half-right, because breaking a deliberate, tested merge to close
 # a narrower collision is the wrong trade (R13 agent 3).
 def slug(sequence):
+    """A readable filename stem for a sequence, distinct for sequences that differ past the cut.
+
+    \U0001f41b [2026-09-10] Truncated at 60 characters with no collision check, so two genuinely
+    different ten-step sequences sharing a 60-character prefix resolved to ONE file and the second
+    `upsert` overwrote the first — no merge, no warning, and nothing of the first surviving
+    anywhere. Ten-command sequences are exactly what this detector is for, so the collision is not
+    a corner. Reproduced: two sequences differing only in their last step (`black` against `isort`)
+    left one entry on disk (R13 agent 3 recorded it as KNOWN NOT FIXED; R10 agent 3 finding 2
+    reproduced it and it was still open).
+
+    The suffix is DETERMINISTIC on the sequence rather than resolved against the directory, and
+    that is the difference from `mdblock.distinct_stem`, which the memory and session stores use.
+    Those create by TITLE and can ask the directory what a name already holds. Here the sequence IS
+    the key — `path_for` is a lookup, and `upsert` finds the existing entry by name — so the same
+    sequence has to produce the same name every time, from the sequence alone.
+    """
     joined = "-".join(sequence)
     s = mdblock.ascii_stem(joined)
-    return mdblock.filename_safe(s[:60].rstrip("-")
+    stem = mdblock.filename_safe(s[:60].rstrip("-")
                                  or mdblock.fallback_name(joined, "candidate"))
+    if len(s) > 60:
+        import hashlib
+        # Only when it was actually cut. A sequence that fits keeps the readable name it has always
+        # had, so nothing already on disk is renamed by this and a person can still guess a file.
+        stem = f"{stem}-{hashlib.sha1(joined.encode('utf-8')).hexdigest()[:6]}"
+    return stem
 
 
 def filename(sequence):
     return f"{slug(sequence)}.md"
 
 
+def _legacy_filename(sequence):
+    """The name this sequence had BEFORE the collision suffix existed.
+
+    A workspace written by an older chamnan holds files under the plain truncated name. Renaming
+    them would make every one of them unreachable at once and the detector would re-create
+    duplicates beside them, so `path_for` keeps using the old name where it finds one.
+    """
+    joined = "-".join(sequence)
+    s = mdblock.ascii_stem(joined)
+    return mdblock.filename_safe(s[:60].rstrip("-")
+                                 or mdblock.fallback_name(joined, "candidate")) + ".md"
+
+
 def path_for(root, sequence):
-    return directory(root) / filename(sequence)
+    """Where this sequence's file is, preferring one an older chamnan already wrote.
+
+    The legacy name is used only when a file is actually there AND records this same sequence — a
+    file at that name holding a DIFFERENT sequence is the collision itself, and the suffixed name
+    is what keeps the two apart.
+    """
+    d = directory(root)
+    legacy = d / _legacy_filename(sequence)
+    if legacy.is_file() and _records_this_sequence(legacy, sequence):
+        return legacy
+    return d / filename(sequence)
+
+
+def _records_this_sequence(path, sequence):
+    """True when the file at `path` is about this exact sequence."""
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return False
+    want = " ".join(sequence).strip().lower()
+    for line in text.splitlines():
+        low = line.strip().lower()
+        if low.startswith("**steps:**") or low.startswith("steps:"):
+            return want in low.replace("`", "").replace(",", " ").replace("  ", " ")
+    return False
 
 
 def _fields(text):

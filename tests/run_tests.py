@@ -25207,6 +25207,7 @@ finally:
 # `.chamnan/tools/smoke_the_folded_checks.py` runs just this section in about fifteen seconds.
 import mapper, unicode_marks, redact, catalogs, mdblock, memory, timeline, tokens  # noqa: E401,F401
 import tools_index, workflows, tree, aging, environments, fit, rollup, blocklog  # noqa: E401,F401
+import candidates  # noqa: F401 -- the pool's preamble binds it; this suite did not
 import peek as peek_mod, workspace as ws, assets as assets_mod  # noqa: F401
 import deploy as deploy_mod, impact as impact_mod, adapters as adapters_mod  # noqa: F401
 import milestones as milestones_mod, state as state_mod, sessions as sessions_mod  # noqa: F401
@@ -27235,6 +27236,97 @@ if _t_loaded and hasattr(_t_guard_mod, "check_the_list_has_not_shrunk"):
 else:
     check("the guard has a high-water mark for its own denylist",
           False, saw="check_the_list_has_not_shrunk is not defined in the guard")
+# ---- 37_two_different_sequences_get_two_candidate_files.py
+# ------------------------------------------- the second habit overwrote the first, silently
+# 🐛 [2026-09-10] `candidates.slug` truncated at 60 characters with no collision check, so two
+# genuinely different ten-step sequences sharing a 60-character prefix resolved to ONE file and the
+# second `upsert` overwrote the first — no merge, no warning, nothing of the first surviving.
+# Ten-command sequences are exactly what this detector is for, so the collision is not a corner.
+# The module's own comment recorded it as KNOWN, NOT FIXED with a repro; the repro was run rather
+# than taken on faith and it was still open (R13 agent 3, re-filed as R10 agent 3 finding 2).
+#
+# The suffix is DETERMINISTIC on the sequence, which is the difference from `mdblock.distinct_stem`
+# that the memory and session stores use. Those create by TITLE and can ask the directory what a
+# name already holds; here the sequence IS the key — `path_for` is a lookup and `upsert` finds an
+# existing entry by name — so the same sequence must produce the same name every time, from the
+# sequence alone.
+_t_r37 = __import__("random")
+_t_r37.seed(20260916)
+_t_PROV = "ai-inferred"
+
+
+def _t_ws37():
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-cand-"))
+    (_d / ".chamnan" / "candidates").mkdir(parents=True)
+    return _d
+
+
+def _t_long(tail):
+    """A ten-step sequence whose first sixty characters are identical whatever `tail` is."""
+    return ["python3", "sed", "python3", "git-add", "git-commit", "python3", "pytest", "ruff",
+            "mypy", tail]
+
+
+# Randomised over the tail, because the defect is about what survives the cut and a single pair
+# could differ by luck somewhere else.
+_t_lost37 = []
+for _t_case in range(30):
+    _a, _b = f"black{_t_case}", f"isort{_t_case}"
+    _d = _t_ws37()
+    try:
+        candidates.upsert(_d, _t_long(_a), 3, "2026-09-10", provenance=_t_PROV)
+        candidates.upsert(_d, _t_long(_b), 3, "2026-09-10", provenance=_t_PROV)
+        _files = sorted((_d / ".chamnan" / "candidates").glob("*.md"))
+        if len(_files) != 2:
+            _t_lost37.append(f"tails {_a}/{_b}: {len(_files)} file(s), expected 2")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("two sequences that differ only past the filename cut get two files",
+      not _t_lost37, saw="\n".join(_t_lost37[:4]) or None)
+
+# The SAME sequence must still resolve to the same file, or the detector writes a new one every
+# time it sees the habit again — which is the failure the whole store is built to avoid, and the
+# reason the suffix cannot be resolved against the directory the way the memory stores do it.
+_t_grew37 = []
+for _t_case in range(10):
+    _d = _t_ws37()
+    try:
+        _seq = _t_long(f"ruff{_t_case}")
+        for _round in range(4):
+            candidates.upsert(_d, _seq, 3 + _round, "2026-09-10", provenance=_t_PROV)
+        _n = len(list((_d / ".chamnan" / "candidates").glob("*.md")))
+        if _n != 1:
+            _t_grew37.append(f"{_n} files after seeing one sequence four times")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("...and the same sequence seen again resolves to the file it already wrote",
+      not _t_grew37, saw="\n".join(_t_grew37[:3]) or None)
+
+# A sequence that FITS keeps its readable name. The suffix is for what was actually cut, so a
+# person can still guess a filename and nothing already on disk is renamed by this change.
+# The EXACT name, not a pattern: a six-character hex suffix still matches `[a-z0-9-]+`, so the
+# first version of this passed against a mutation that suffixed every name including the short
+# ones. What is being asserted is that a name which fits is left completely alone.
+_t_ugly = [(_s, candidates.slug(_s)) for _s in (["git-add", "git-commit", "python3"],
+                                                ["make", "test"], ["npm-run-build"])
+           if candidates.slug(_s) != "-".join(_s)]
+check("...and a sequence short enough to fit keeps its plain name, with nothing appended",
+      not _t_ugly, saw="; ".join(f"{'-'.join(a)} -> {b}" for a, b in _t_ugly) or None)
+
+# A workspace written by an older chamnan holds files under the plain truncated name. Renaming them
+# would make every one unreachable at once and the detector would re-create duplicates beside them.
+_t_legacy = _t_ws37()
+try:
+    _seq = _t_long("black")
+    _old_name = candidates._legacy_filename(_seq)
+    _p = _t_legacy / ".chamnan" / "candidates" / _old_name
+    _p.write_text(f"# candidate\n\n**Steps:** {' '.join(_seq)}\n\n**Observed:** 3\n",
+                  encoding="utf-8")
+    _resolved = candidates.path_for(_t_legacy, _seq)
+    check("...and a file an older chamnan wrote under the plain name is still found",
+          _resolved.name == _old_name, saw=f"resolved to {_resolved.name}, legacy is {_old_name}")
+finally:
+    shutil.rmtree(_t_legacy, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 
