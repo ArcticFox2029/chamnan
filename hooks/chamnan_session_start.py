@@ -1310,13 +1310,15 @@ def main():
                     # Highest coverage; then the largest per_dir among those, which is the earliest
                     # step and the one that keeps the most file names. `-_step` sorts that way.
                     _named, _neg, index = min((n, s, t) for n, s, t in _steps if n == _reach)
-                index_slot = len(out)
                 # 🐛 The largest section injected every session, and the one that never went
                 # through the redactor. Every sibling section is scrubbed; this one was read
                 # straight off disk and handed over. MAP.md is a committed file that arrives
                 # with a clone, so a key written into it — by hand, or by a generated comment —
                 # reached the session intact.
-                out.append(section("Architecture index", redact.scrub(index), display(mp, root)))
+                _scrubbed = redact.scrub(index)
+                index_slot = len(out) if carries_an_index(_scrubbed) else None
+                if index_slot is not None:
+                    out.append(section("Architecture index", _scrubbed, display(mp, root)))
                 # 🐛 [2026-09-06] The second clause repeated what the index's own header had
                 # already said, in every firing, on every repository. `mapper` has two header
                 # variants and BOTH open with the same instruction in more detail -- `_HOW_TO_READ`
@@ -1878,10 +1880,47 @@ def main():
             # so its first step down is the ordinary roll-up — and re-rolling one that was already
             # folded at 8 returns the same text for one cached lookup.
             for per_dir in (8, 4, 2, 0):
+                if index_slot is None:
+                    break          # no index section was emitted; there is nothing to re-fold
                 if len(("## chamnan\n" + "".join(out)).encode()) <= ceiling:
                     break
                 folded = rollup.collapse(raw, map_rel, budget, groot, per_dir)
-                out[index_slot] = section("Architecture index", redact.scrub(folded), str(map_rel))
+                _folded = redact.scrub(folded)
+                if not carries_an_index(_folded):
+                    # Folding this far left no rows at all. Keeping the frame would spend the room
+                    # on an index that names nothing; the drop notice says the same in a line.
+                    out.pop(index_slot)
+                    index_slot = None      # the slot no longer exists; nothing may index it again
+                    break
+                out[index_slot] = section("Architecture index", _folded, str(map_rel))
+
+            # 🐛 [2026-09-09] Resolution was the only thing this ever spent, and resolution is not
+            # what sets the size. Measured on this repository at `index_token_budget` 3,000:
+            # per_dir=8 gives 6,078 bytes and per_dir=0 gives 6,095 — the ladder above moves the
+            # index by 17 bytes in 300, because `collapse` spends whatever budget it is given and
+            # per_dir only decides HOW. So a block over its ceiling stepped through four rungs that
+            # changed nothing and handed the section to `fit.shrink`, which dropped it whole.
+            #
+            # The budget is the lever, and at a smaller one the index is still an index: 700 tokens
+            # returns 1,564 bytes naming thirteen directories. Thirteen directory names in the block
+            # is worth more than none of them plus a line saying where the file is, which is what
+            # dropping it buys. Two thirds a step so a large index converges in a few rounds;
+            # `section_budget`'s own floor of 120 is where it stops, and below that
+            # `carries_an_index` refuses the frame anyway.
+            # 🐛 There is a cliff, not a slope: below roughly 400 tokens on this repository the
+            # roll-up stops shortening the Quick Index and removes it whole, so one step past the
+            # useful floor turns a 1,335-byte index naming directories into a frame naming none.
+            # Stepping into that and popping threw away the perfectly good rendering already in
+            # hand. Keep the smallest one that still carried rows and stop there; how it competes
+            # with the other sections from that point is `fit.shrink`'s decision, not this loop's.
+            step = budget
+            while (step > 120
+                   and len(("## chamnan\n" + "".join(out)).encode()) > ceiling):
+                step = step * 2 // 3
+                _folded = redact.scrub(rollup.collapse(raw, map_rel, step, groot, 0))
+                if not carries_an_index(_folded):
+                    break
+                out[index_slot] = section("Architecture index", _folded, str(map_rel))
 
         # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
         # index has finished being resized and before anything is dropped, so neither step depends on a
@@ -1941,6 +1980,32 @@ def main():
     except UnicodeEncodeError:
         sys.stdout.buffer.write(body.encode("utf-8", "replace") + b"\n")
     return 0
+
+
+# 🐛 [2026-09-09] The first version of this matched only the FOLDED row, `- **dir/**`, and the
+# full-detail heading. The Quick Index's ordinary, unfolded row is `- **`path`**` — bold with the
+# name in backticks, which is what `rollup.collapse` itself keys on — so every index that had not
+# been rolled up read as carrying nothing, and twenty checks failed at once because the section was
+# refused on repositories small enough never to fold. Any of the three shapes counts as a row.
+_INDEX_ROW = re.compile(r"(?m)^(?:- \*\*|## `)")
+
+
+def carries_an_index(text):
+    """Whether a rendered Architecture-index section actually names anything.
+
+    🐛 [2026-09-09] At a small `index_token_budget` the roll-up removes the Quick Index whole and
+    what is left is the map's title, a file count, a how-to-grep paragraph cut mid-sentence, and a
+    note saying the Quick Index was removed — 1,008 bytes on this repository whose own text
+    announces that it contains no index. `fit._trim` refuses a fragment like that, but only when it
+    had to trim; a section small enough to fit whole never reaches that check and was delivered.
+    The drop notice names the section and its file in about thirty bytes, which is the same
+    information and the same usefulness.
+
+    A row is a folded directory line or a path heading. Derived from the shape `rollup`
+    and `mapper` actually emit rather than from a byte count, because the whole point is that the
+    bytes were never the question.
+    """
+    return bool(_INDEX_ROW.search(text or ""))
 
 
 def explain(body, cfg, dropped=(), ceiling=fit.CEILING):
