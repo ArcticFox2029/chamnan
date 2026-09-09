@@ -31,8 +31,16 @@ NAME_CHARS = 38     # a heading is an identifier here, not prose
 _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
-def shape(body, ceiling=None, when=None):
-    """The record for one assembled block. Pure: no clock, no disk, no workspace."""
+def shape(body, ceiling=None, when=None, source=None, resent=True):
+    """The record for one assembled block. Pure: no clock, no disk, no workspace.
+
+    🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
+    this log answerable. SessionStart fires for five different reasons — startup, resume, compact,
+    clear, fork — the hook already reads which, and it was discarded before reaching here. So a
+    hundred and thirty-two records could be grouped by ceiling, by section set and by timestamp,
+    and not by the question anybody actually asks of them: does a session that follows a compaction
+    receive less than a fresh one. Costs one short string per record (R5 agent1).
+    """
     sections = {}
     marks = list(_SECTION.finditer(body))
     for i, m in enumerate(marks):
@@ -46,10 +54,16 @@ def shape(body, ceiling=None, when=None):
         rec["ceiling"] = ceiling
     if when:
         rec["t"] = when
+    if source:
+        rec["src"] = source
+    if not resent:
+        # A firing that proved the previous block is still in the transcript and printed a pointer
+        # instead. There is no block to measure; the record exists so the log counts the session.
+        rec["resent"] = False
     return rec
 
 
-def record(root, body, ceiling=None, when=None):
+def record(root, body, ceiling=None, when=None, source=None, resent=True):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -74,7 +88,7 @@ def record(root, body, ceiling=None, when=None):
                     # would hand every reader below an AttributeError instead of a number.
                     if isinstance(one, dict):
                         prior.append(one)
-            prior.append(shape(body, ceiling, when))
+            prior.append(shape(body, ceiling, when, source, resent))
             ws.atomic_write_text(
                 log, "\n".join(json.dumps(r, separators=(",", ":"), ensure_ascii=False)
                                 for r in prior[-KEEP:]) + "\n")
@@ -144,9 +158,17 @@ def check(root, window=WINDOW):
     return out
 
 
-def trend(root, last=10):
+def trend(root, last=10, resent_only=True):
     """The most recent records, oldest first. For `chamnan-report`, and for a person asking
-    "did something change?" — which is the only question this log exists to answer."""
+    "did something change?" — which is the only question this log exists to answer.
+
+    🐛 [2026-09-09] Records marked `resent: False` are left out by default. A firing that proved
+    the previous block was still in the transcript sends nothing, so its `bytes` is 0 — and averaged
+    into a size trend that reads as the block collapsing, which is one of the three defects
+    `check()` above exists to raise. Recording those firings without filtering them here would have
+    manufactured the alarm it was added to make possible. They are COUNTED, not measured:
+    `resent_only=False` returns them for anybody asking how much of a day takes the cheap path,
+    which is a question about sessions rather than about block shape (R5 agent1)."""
     try:
         log = ws.workspace(root) / LOG
         if not log.is_file():
@@ -157,8 +179,11 @@ def trend(root, last=10):
                 one = json.loads(line)
             except (json.JSONDecodeError, RecursionError):
                 continue
-            if isinstance(one, dict):
-                out.append(one)
+            if not isinstance(one, dict):
+                continue
+            if resent_only and one.get("resent") is False:
+                continue
+            out.append(one)
         return out[-last:]
     except OSError:
         return []

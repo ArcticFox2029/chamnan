@@ -1079,6 +1079,22 @@ def main():
                               "rebuild it with `chamnan-map` before trusting what it says._")
         except Exception:
             pass
+        # 🐛 [2026-09-09] This branch returned without telling blocklog it had run, so every figure
+        # derived from `block_shape.jsonl` — here and in `chamnan-report` — counted full
+        # reinjections only. How much of an ordinary day takes the cheap path was not a question
+        # the log could answer, which makes "the block is getting bigger" and every trend beside it
+        # a statement about a subset nobody had named. The skip is right; being silent about it is
+        # not (R5 agent1).
+        #
+        # `resent: False` rather than a shape: there is no block to measure, and recording a
+        # zero-byte one would put a fake trough in the very trend this exists to keep honest.
+        if not ws.read_only():
+            # No `ceiling`: it is computed further down, after this branch has already
+            # returned, and a firing that sends no block has no budget to have spent.
+            blocklog.record(root, "",
+                            when=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                            source=(payload.get("source") if isinstance(payload, dict) else None),
+                            resent=False)
         print("\n".join(_lines))
         return 0
 
@@ -1917,7 +1933,8 @@ def main():
     # that did not happen is a log of the wrong thing.
     if not ws.read_only():
         blocklog.record(root, body, ceiling=ceiling,
-                        when=time.strftime("%Y-%m-%dT%H:%M:%S"))
+                        when=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                        source=(payload.get("source") if isinstance(payload, dict) else None))
     try:
         sys.stdout.write(body + "\n")
     except UnicodeEncodeError:
