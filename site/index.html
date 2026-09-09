@@ -1431,6 +1431,15 @@ async function run(){
 
 window.addEventListener("pagehide", forgetTheSource);
 $("f").addEventListener("submit", e => { e.preventDefault(); run(); });
+
+// Start the 10 MB runtime download when someone shows they intend to measure, rather than when
+// they press the button. `boot()` caches its promise, so this only ever starts it once and `run()`
+// awaits whatever is already in flight — the wait then overlaps with reading the page instead of
+// following it. Not on page load: most visitors read and leave, and 10 MB for them is rude.
+for (const ev of ["focus", "pointerenter"])
+  $("repo").addEventListener(ev, () => { boot().catch(() => {}); }, {once: true});
+document.querySelectorAll("[data-r]").forEach(b =>
+  b.addEventListener("pointerenter", () => { boot().catch(() => {}); }, {once: true}));
 document.querySelectorAll(".samples button").forEach(b =>
   b.addEventListener("click", () => { $("repo").value = b.dataset.r; run(); }));
 </script>
