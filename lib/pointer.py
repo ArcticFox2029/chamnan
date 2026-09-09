@@ -194,6 +194,15 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
         if not d.is_dir():
             continue
         for f in sorted(d.glob("*.md")):
+            # 🐛 [2026-09-09] This module imports `workspace as ws` and never called `ws.inside`.
+            # A committed symlink at `memory/x.md` pointing outside the repository was opened here
+            # and its heading printed into the tool-call context — the same leak the workspace
+            # stores were guarded against on 2026-09-08, in the one reader that was not part of
+            # that sweep because it lives in a different module. What a pointer surfaces is a
+            # TITLE, which is exactly the first line of whatever it was aimed at. (R3 agent 2,
+            # reproduced end to end.)
+            if not ws.inside(f, wsdir):
+                continue
             try:
                 if f.stat().st_size > MAX_BYTES:
                     continue

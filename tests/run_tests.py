@@ -22788,6 +22788,65 @@ for _ad_rel in _mp_tracked:
                 _addr_hits.append(f"{_ad_rel}:{_ad_i}  {_ad_m.group(0)}")
 check("...and no published document prints an address for anyone to harvest",
       not _addr_hits, saw="\n".join(_addr_hits[:6]))
+
+# ------------------- every reader of the workspace asks whether the file is in it, 2026-09-09
+# 🐛 Five DIRECTORY stores were given a containment check on 2026-09-08. The three single-FILE
+# stores beside them were not, and neither was `pointer.related`, which lives in another module and
+# was therefore not part of that sweep. A workspace travels with a clone, so a committed symlink at
+# `milestones.md` or `skills/x.md` is chosen by whoever wrote the repository — and what came back
+# was a heading from outside it, printed into the session. Reproduced end to end for all four
+# (R3 agent 2).
+#
+# Derived over the modules rather than pinned to the four: the question is "does this module open a
+# file under the workspace", and the next store added has the same question to answer. A module
+# that reads the workspace and never mentions `inside` is the shape that keeps recurring.
+_STORE_READERS = ("memory", "milestones", "environments", "tools_index", "pointer",
+                  "sessions", "threads", "skills_index", "decisions")
+_sr_present = [m for m in _STORE_READERS if (ROOT / "lib" / f"{m}.py").is_file()]
+check("THE WORKSPACE-READER SWEEP HAS MODULES TO SWEEP", len(_sr_present) >= 5,
+      saw=f"found: {_sr_present}")
+_sr_unguarded = []
+for _sr in _sr_present:
+    _sr_src = (ROOT / "lib" / f"{_sr}.py").read_text(encoding="utf-8")
+    # Only modules that actually OPEN something: a module that merely computes a path has nothing
+    # to guard, and demanding the call there would be noise rather than a check.
+    if not re.search(r"\.read_text\(|json\.loads\(.*read_text", _sr_src):
+        continue
+    if "inside(" not in _sr_src:
+        _sr_unguarded.append(_sr)
+check("...and every module that opens a workspace file asks whether it is inside the workspace",
+      not _sr_unguarded, saw=f"no containment check in: {_sr_unguarded}")
+
+# The half that keeps this honest: the guard has to REFUSE, not merely be spelled. A link named
+# inside the workspace whose target is outside it comes back empty from each of the four.
+_esc_box = Path(tempfile.mkdtemp(prefix="chamnan_store_escape_"))
+try:
+    _esc_secret = _esc_box / "outside.txt"
+    _esc_secret.write_text("# HEADING FROM OUTSIDE THE WORKSPACE\nbody\n", encoding="utf-8")
+    _esc_repo = _esc_box / "repo"
+    _esc_ws = _esc_repo / ".chamnan"
+    for _sub in ("skills", "memory", "threads", "tools"):
+        (_esc_ws / _sub).mkdir(parents=True, exist_ok=True)
+    (_esc_repo / "src").mkdir()
+    (_esc_repo / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    if _CAN_SYMLINK:
+        os.symlink(_esc_secret, _esc_ws / "skills" / "app.md")
+        os.symlink(_esc_secret, _esc_ws / "milestones.md")
+        os.symlink(_esc_secret, _esc_ws / "environments.md")
+        _esc_json = _esc_box / "outside.json"
+        _esc_json.write_text('[{"name": "from-outside"}]', encoding="utf-8")
+        os.symlink(_esc_json, _esc_ws / "tools" / "index.json")
+        check("A LINK NAMED IN THE WORKSPACE POINTING OUT IS NOT READ BY THE POINTER",
+              pointer_mod.related(_esc_ws, "src/app.py") == [],
+              saw=repr(pointer_mod.related(_esc_ws, "src/app.py")))
+        check("...nor by the milestones store", milestones.entries(_esc_repo) == [])
+        check("...nor by the environments store", envs.entries(_esc_repo) == [])
+        check("...nor by the tools index", tools_index_mod.load(_esc_repo) == [],
+              saw=repr(tools_index_mod.load(_esc_repo)))
+    else:
+        skip("  [SKIP] 4 store-escape checks — this process cannot create symlinks here")
+finally:
+    _rmtree(_esc_box, ignore_errors=True)
 check("...and the pattern really does see the shape it is looking for",
       bool(_tokshapes[0][1].search('x = "xox' + 'b-1-A1b2C3d4E5f6G7h8I9j0K1l2"')))
 

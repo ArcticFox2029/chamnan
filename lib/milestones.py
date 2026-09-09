@@ -63,6 +63,15 @@ def entries(root):
     p = path(root)
     if not p.is_file():
         return []
+    # 🐛 [2026-09-09] Opened with no containment check at all, while five DIRECTORY stores got
+    # exactly this guard on 2026-09-08 and the three single-FILE stores beside them did not. A
+    # workspace travels with a clone, so `milestones.md` arriving as a symlink to `~/.ssh/id_rsa` is
+    # chosen by whoever wrote the repository, not by the person reading it — and its content lands
+    # in the injected block. The set was "stores this reads"; the fix reached the members that
+    # happened to be directories. (R3 agent 2, reproduced.)
+    import workspace as _ws
+    if not _ws.inside(p, root):
+        return []
     try:
         text = p.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:

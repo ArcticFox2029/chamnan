@@ -82,6 +82,15 @@ def load(root):
     five, because guarding five call sites is how this repository keeps arriving back at the same
     defect: the rule applied to some members of a set and not the others.
     """
+    # 🐛 [2026-09-09] Opened with no containment check at all, while five DIRECTORY stores got
+    # exactly this guard on 2026-09-08 and the three single-FILE stores beside them did not. A
+    # workspace travels with a clone, so `tools/index.json` arriving as a symlink to `~/.ssh/id_rsa` is
+    # chosen by whoever wrote the repository, not by the person reading it — and its content lands
+    # in the injected block. The set was "stores this reads"; the fix reached the members that
+    # happened to be directories. (R3 agent 2, reproduced.)
+    import workspace as _ws
+    if not _ws.inside(path(root), root):
+        return []
     try:
         loaded = json.loads(path(root).read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError, RecursionError):
