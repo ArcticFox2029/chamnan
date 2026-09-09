@@ -14149,10 +14149,14 @@ _rmtree(_confl, ignore_errors=True)
 
 # ------------------------------ the usage report could attach a repo to somebody else's numbers
 # 🐛 `encoded_dir`'s fuzzy fallback needed only ONE shared trailing word. A path with no transcript
-# directory of its own — `/Users/alice/Documents/rancher` — resolved to this machine's real
-# `-Users-alice-Documents-work-somerepo`, and every figure the command prints would then be
-# somebody else's usage presented as yours: call counts, context per turn, the before/after table
-# the README points at. Reproduced against the real directory set, not a fixture.
+# directory of its own — `/Users/alice/Documents/rancher` — resolved on that one word to a
+# different, unrelated checkout ending in the same name, and every figure the command prints would
+# then be somebody else's usage presented as yours: call counts, context per turn, the before/after
+# table the README points at. Reproduced against a real directory set, not a fixture.
+#
+# 🐛 [2026-09-09] This comment used to quote the author's own encoded path as the example. A
+# defect record is written to be read by strangers, and a real machine path in one publishes the
+# author's account name and the directory layout of work that is not this project's.
 #
 # A fuzzy match has to agree on the repository's WHOLE leaf name, never a fragment, with two
 # components as the floor so a single generic word can never carry a match alone.
@@ -22726,6 +22730,64 @@ for _tn, _tp in _tokshapes:
             _tokhits.append(f"{_tn} at line {_tl}")
 check("NO CREDENTIAL FIXTURE IN THIS FILE IS WRITTEN AS A LITERAL A SCANNER WOULD STOP",
       not _tokhits, saw="\n".join(_tokhits))
+
+# ------------------- no shipped file quotes the author's own machine, 2026-09-09
+# 🐛 Two defect records used the author's real encoded path as their example —
+# `-Users-<name>-Documents-<employer folder>-<repo>` — and both shipped. A defect record is written
+# to be read by strangers, so a real path in one publishes the author's account name and the
+# directory layout of work that has nothing to do with this project. Neither was a secret in the
+# scanner's sense, which is exactly why nothing stopped them.
+#
+# Every tracked file, not the two that were wrong: the next comment written while debugging on a
+# real machine has the same pull toward pasting what was on screen. Placeholder names are allowed
+# and are what a reader needs — the point is that the example be invented.
+_MACHINE_PATH = re.compile(r"/Users/(?!alice|bob|you|me|user|name|username|someone)[A-Za-z0-9_.-]+/"
+                           r"|-Users-(?!alice|bob|you|me|user|name|username|someone)[A-Za-z0-9_.-]+-")
+_mp_tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace").stdout.split()
+check("THE SWEEP FOR A REAL MACHINE PATH HAS FILES TO SWEEP", len(_mp_tracked) > 50,
+      saw=f"tracked files found: {len(_mp_tracked)}")
+_mp_hits = []
+for _mp_rel in _mp_tracked:
+    _mp_p = ROOT / _mp_rel
+    if not _mp_p.is_file() or _mp_p.suffix in (".png", ".jpg", ".woff2", ".ico"):
+        continue
+    try:
+        _mp_text = _mp_p.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for _mp_i, _mp_line in enumerate(_mp_text.split("\n"), 1):
+        if _MACHINE_PATH.search(_mp_line):
+            _mp_hits.append(f"{_mp_rel}:{_mp_i}  {_mp_line.strip()[:90]}")
+check("...and no file it ships quotes a real home directory rather than a placeholder",
+      not _mp_hits, saw="\n".join(_mp_hits[:6]))
+# Assembled at runtime. Written as one literal, this line is itself a real-looking home directory
+# in a tracked file, so the sweep above finds it and the check reports its own sanity assertion as
+# the defect. Same trap the redaction fixtures in this file are built to avoid.
+check("...and the pattern really does see one",
+      bool(_MACHINE_PATH.search("/" + "Users/" + "someuser/x")))
+
+# The same class one step over: an address published in a document is an address anyone can harvest,
+# and it does not have to be a secret to be worth not printing. Fixtures are exempt by shape --
+# example.com, .internal and the RFC-reserved names are what a test is supposed to use.
+_ADDR = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_ADDR_OK = ("example.com", "example.org", "example.net", ".internal", ".invalid", "@b.com",
+            "github.com", "gserviceaccount.com", "dotenv.org", "orbitalfreight")
+_addr_hits = []
+for _ad_rel in _mp_tracked:
+    if not _ad_rel.endswith(".md") or _ad_rel.startswith("docs/i18n/"):
+        continue
+    _ad_p = ROOT / _ad_rel
+    try:
+        _ad_lines = _ad_p.read_text(encoding="utf-8", errors="replace").split("\n")
+    except OSError:
+        continue
+    for _ad_i, _ad_l in enumerate(_ad_lines, 1):
+        for _ad_m in _ADDR.finditer(_ad_l):
+            if not any(_ok in _ad_m.group(0) for _ok in _ADDR_OK):
+                _addr_hits.append(f"{_ad_rel}:{_ad_i}  {_ad_m.group(0)}")
+check("...and no published document prints an address for anyone to harvest",
+      not _addr_hits, saw="\n".join(_addr_hits[:6]))
 check("...and the pattern really does see the shape it is looking for",
       bool(_tokshapes[0][1].search('x = "xox' + 'b-1-A1b2C3d4E5f6G7h8I9j0K1l2"')))
 

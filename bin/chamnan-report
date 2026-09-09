@@ -139,10 +139,10 @@ def encoded_dir(repo_root):
         if not cand.is_dir():
             continue
         # 🐛 Any shared trailing word was enough. `/Users/alice/Documents/rancher` — a path with no
-        # transcript directory of its own — resolved to this machine's real
-        # `-Users-alice-Documents-work-somerepo` on one word, and every figure the command
-        # prints would then be somebody else's usage presented as yours: call counts, context per
-        # turn, the before/after table the README points at.
+        # transcript directory of its own — resolved on that ONE word to a different, unrelated
+        # checkout that merely ended in the same name, and every figure the command prints would
+        # then be somebody else's usage presented as yours: call counts, context per turn, the
+        # before/after table the README points at.
         #
         # A fuzzy match has to agree on the repository's WHOLE leaf name, not a fragment of it. Two
         # components minimum, so a single generic word can never carry a match on its own.

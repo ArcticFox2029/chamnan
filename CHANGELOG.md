@@ -305,11 +305,11 @@ python3 tools/verify_release.py
 chamnan 1.24.0 — verifying this release's own claims
 
   running the regression suite — about fifteen minutes, no output until it ends
-  ✓ 4,408/4,408 checks passed in 14.7 minutes, 0 failing, 0 traceback(s)
+  ✓ 4,412/4,412 checks passed in 12.0 minutes, 0 failing, 0 traceback(s)
   ✓ 1,340 of 1,340 index claims true (100.0%)
   · 7 function bodies written in more than one file — advisory, not a gate
 
-VERIFIED — 4,408 of 4,408 checks pass and 1,340 of 1,340 index claims are true, on this
+VERIFIED — 4,412 of 4,412 checks pass and 1,340 of 1,340 index claims are true, on this
 machine, from this checkout.
 ```
 

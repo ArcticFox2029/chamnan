@@ -37,9 +37,11 @@ any space where someone is representing the project.
 
 ## Reporting
 
-Email the maintainer at a private security advisory, or open a private
-security advisory if the matter is sensitive. Reports are read by the maintainer only. You
-will get a reply; you will not get a lecture about whether you should have been bothered.
+**Open a [private security advisory](https://github.com/ArcticFox2029/chamnan/security/advisories/new)**
+— it is private to the maintainer, works for conduct as well as for vulnerabilities, and needs no
+address from either side. For anything that does not need to be private, open an issue. Reports are
+read by the maintainer only. You will get a reply; you will not get a lecture about whether you
+should have been bothered.
 
 If the maintainer is the problem, say so publicly in an issue. A project this size has no
 committee to escalate to, and pretending otherwise would be worse than admitting it.

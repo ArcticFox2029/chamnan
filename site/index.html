@@ -843,12 +843,15 @@ function applyLang(code){
 })();
 
 const PRE = [
-  // Measured 2026-09-07 through THIS page in a real browser, re-measured 2026-09-08 with
+  // Measured 2026-09-07 through THIS page in a real browser, re-measured on each release with
   // `site/remeasure.py`, which takes the same listing, the same filters and the same modules
-  // without one. Twelve of the thirteen came back identical; three rows moved and are the
-  // 2026-09-08 figures. Sorted by source size, because the bound is the finding rather than any
-  // single ratio. torvalds/linux comes through the GitHub fallback: jsDelivr refuses a repository
-  // that large.
+  // without one. Last re-measured 2026-09-09 for 1.24.0: thirteen of the fourteen came back
+  // identical to the byte, and rust-lang/mdBook moved from 1,190 KB to 1,191. Sorted by source
+  // size, because the bound is the finding rather than any single ratio. torvalds/linux comes
+  // through the GitHub fallback: jsDelivr refuses a repository that large.
+  //
+  // The count in this comment used to say "twelve of the thirteen" over a table of fourteen rows.
+  // Nothing re-counted it, which is the same defect the page exists to talk about.
   ["chalk/chalk","JavaScript",56,2449,24],
   ["fastapi/fastapi","Python",61,6454,10],
   ["facebook/react","JavaScript",257,6649,40],
@@ -857,7 +860,7 @@ const PRE = [
   ["gin-gonic/gin","Go",660,6636,102],
   ["sinatra/sinatra","Ruby",663,6570,103],
   ["yumiaura/myCat","Mixed",719,6409,115],
-  ["rust-lang/mdBook","Rust",1190,6470,188],
+  ["rust-lang/mdBook","Rust",1191,6470,188],
   ["rails/rails","Ruby",1550,6537,243],
   ["django/django","Python",2209,6245,362],
   ["torvalds/linux","C",3028,6603,470],
