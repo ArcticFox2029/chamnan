@@ -180,6 +180,12 @@ button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 form label{display:block;font-family:var(--mono);font-size:.78rem;letter-spacing:.08em;
   text-transform:uppercase;color:var(--faint);margin-bottom:.45rem}
 .field{display:flex;gap:.6rem;flex-wrap:wrap;align-items:stretch;width:100%}
+/* A flex item will not shrink below its own min-content width, and an `input` gets one from its
+   default `size` — about 20 characters, 312px here. On a 375px phone the field is 308px wide, so
+   the box hung 4px past the edge and the page scrolled sideways. `min-width:0` is what lets a
+   flex item actually give way; the basis keeps it on one line with the button while there is room
+   for both. Predates the width work — measured on the previously deployed page too. */
+.field input{flex:1 1 12rem;min-width:0}
 .samples{margin-top:.9rem;font-size:.85rem;color:var(--muted)}
 .samples button{background:none;color:var(--accent);border:1px solid var(--rule);
   padding:.2rem .55rem;font-size:.8rem;margin-right:.35rem;border-radius:4px}
@@ -196,7 +202,14 @@ form label{display:block;font-family:var(--mono);font-size:.78rem;letter-spacing
 .headline .big{font-family:var(--mono);font-size:clamp(2rem,7vw,3.2rem);font-weight:600;
   letter-spacing:-.03em;color:var(--accent);line-height:1;font-variant-numeric:tabular-nums}
 .headline .cap{color:var(--muted);font-size:.9rem;margin-top:.6rem}
-.cards{display:grid;gap:1.25rem;grid-template-columns:repeat(auto-fit,minmax(17rem,1fr))}
+/* 🐛 [2026-09-09] The minimum track was 17rem, chosen when this grid sat in a 38rem column
+   and could only ever make one. Widening the page let it make three of 289px, and the
+   simulation table in the middle card needs 304px — so the WITHOUT column was cut off at
+   the card edge and the figure a reader came for was the half that went missing. The track
+   is now wide enough for the widest thing a card holds: measured, that table plus the
+   card's own padding. */
+.cards{display:grid;gap:1.25rem;
+       grid-template-columns:repeat(auto-fit,minmax(min(17rem,100%),1fr))}
 .card{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1.25rem}
 .card h3{font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);
   margin-bottom:.9rem}
@@ -226,7 +239,9 @@ td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .limits h2{color:var(--ink);font-size:1rem;margin-bottom:.5rem}
 /* The ledger. Two columns rather than one list, because the question a reader arrives with is
    not "what are the features" but "which of them am I looking at a number for right now". */
-.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:.9rem 1.6rem;
+/* Same hard-floor trap as `.cards`: at 320px the box is 251px wide and a 15rem track is
+   240px, but with its gap the pair overran by 10px. `min(...,100%)` lets it collapse. */
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(15rem,100%),1fr));gap:.9rem 1.6rem;
         margin:.9rem 0 1rem}
 .ledger h3{font-size:.82rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
            font-weight:600;margin:0 0 .45rem}
@@ -250,8 +265,20 @@ section.get{background:var(--accent-soft);border-bottom:1px solid var(--rule)}
 .simtag{font-family:var(--mono);font-size:.68rem;letter-spacing:.1em;color:var(--warn);
   background:var(--warn-soft);display:inline-block;padding:.15rem .45rem;border-radius:3px;
   margin:0 0 .8rem}
-table.sim{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.5rem}
-table.sim th{font-size:.7rem;padding:.25rem .3rem}
+table/* The one table on this page that lives inside a card, so its width is whatever the grid gives
+   it. Sizing the grid track for it fixes today's number and leaves the same failure available to
+   the next change — a stale stylesheet, a browser zoom, a font that renders wider. In its own
+   scrolling box the WITHOUT column can be reached whatever happens, which is what the reader
+   needs; the track is still sized so that scrolling is not normally necessary. */
+.sim{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:.5rem}
+table/* 🐛 [2026-09-09] `th,td` sets `white-space:nowrap` for the whole page. That rule was written
+   for the fourteen-row table, which has its own scrolling box and where a wrapped repository name
+   would read badly — and this table, inside a card whose width is whatever the grid gives it,
+   inherited it and so could never be narrower than its longest label. It forced 304px into a
+   289px card, and the fix that widened the track pushed the third card onto a row of its own.
+   The numbers stay on one line, because a wrapped figure is unreadable; the words may wrap. */
+.sim th,.sim td:first-child{white-space:normal}
+.sim th{font-size:.7rem;padding:.25rem .3rem;vertical-align:bottom}
 table.sim td{padding:.35rem .3rem;border-bottom:1px dotted var(--rule);text-align:right}
 table.sim td:first-child{text-align:left;color:var(--muted)}
 table.sim td.good{color:var(--accent)} table.sim td.warn{color:var(--warn)}
@@ -516,6 +543,7 @@ const T = {
     becomes: "of indexable source in {repo} becomes {bytes} bytes injected once per session.",
     loadingPy: "Loading the Python runtime — about 10 MB, cached after this…",
     loadingCh: "Loading chamnan…",
+    stillGoing: "— {s}s so far, this is a one-time download",
     reading: "Reading the repository…",
     fetching: "Fetching source — {done} of {total}",
     running: "Running chamnan…",
@@ -609,6 +637,7 @@ const T = {
     becomes: "ของซอร์สที่ index ได้ใน {repo} กลายเป็น {bytes} ไบต์ ที่ใส่เข้าไปครั้งเดียวต่อ session",
     loadingPy: "กำลังโหลด Python runtime — ประมาณ 10 MB หลังจากนี้จะถูก cache…",
     loadingCh: "กำลังโหลด chamnan…",
+    stillGoing: "— ผ่านไป {s} วินาที โหลดครั้งเดียวจบ ครั้งต่อไปไม่ต้องโหลดใหม่",
     reading: "กำลังอ่าน repository…",
     fetching: "กำลังดึงซอร์ส — {done} จาก {total}",
     running: "กำลังรัน chamnan…",
@@ -702,6 +731,7 @@ const T = {
     becomes: "{repo} 中可索引源码 → 每会话注入 {bytes} 字节。",
     loadingPy: "正在加载 Python 运行时——约 10 MB，之后会被缓存…",
     loadingCh: "正在加载 chamnan…",
+    stillGoing: "— 已用 {s} 秒，只需下载这一次",
     reading: "正在读取仓库…",
     fetching: "正在抓取源码 — {done} / {total}",
     running: "正在运行 chamnan…",
@@ -795,6 +825,7 @@ const T = {
     becomes: "{repo} の索引可能なソースが、セッションあたり {bytes} バイトの注入になります。",
     loadingPy: "Python ランタイムを読み込み中——約 10 MB、以降はキャッシュされます…",
     loadingCh: "chamnan を読み込み中…",
+    stillGoing: "— {s} 秒経過。ダウンロードは初回のみです",
     reading: "リポジトリを読み取り中…",
     fetching: "ソースを取得中 — {total} 件中 {done} 件",
     running: "chamnan を実行中…",
@@ -888,6 +919,7 @@ const T = {
     becomes: "de código indexable en {repo} se convierte en {bytes} bytes inyectados una vez por sesión.",
     loadingPy: "Cargando el entorno de Python — unos 10 MB, después queda en caché…",
     loadingCh: "Cargando chamnan…",
+    stillGoing: "— {s}s hasta ahora, es una descarga de una sola vez",
     reading: "Leyendo el repositorio…",
     fetching: "Descargando código — {done} de {total}",
     running: "Ejecutando chamnan…",
@@ -983,8 +1015,29 @@ const statusEl = $("status"), out = $("out");
 let pyodide = null, EXT = null, booting = null, CHAMNAN_VERSION = null;
 
 function say(msg, pct){
+  stopTicking();
   statusEl.innerHTML = msg + (pct === undefined ? "" :
     `<span class="bar"><i style="width:${Math.round(pct*100)}%"></i></span>`);
+}
+
+// 🐛 [2026-09-09] The runtime download is about 10 MB and the page said so once, then went silent
+// for as long as it took. On a cold cache that is tens of seconds with a greyed-out button and no
+// other sign of life, which is indistinguishable from a hang — reported as "the page is broken,
+// I cannot measure anything", and it was not broken. A step that can take a minute has to keep
+// saying it is still going.
+let ticker = null;
+function stopTicking(){
+  if (ticker !== null){ clearInterval(ticker); ticker = null; }
+}
+function sayWhileWaiting(key){
+  const started = Date.now();
+  const paint = () => {
+    const secs = Math.round((Date.now() - started) / 1000);
+    statusEl.innerHTML = t(key) + (secs >= 3 ? " " + t("stillGoing", {s: secs}) : "");
+  };
+  say(t(key));
+  paint();
+  ticker = setInterval(paint, 1000);
 }
 
 function parseRepo(v){
@@ -1066,9 +1119,9 @@ function contentUrl(owner, repo, ref, via, path){
 function boot(){
   if (booting) return booting;
   booting = (async () => {
-    say(t("loadingPy"));
+    sayWhileWaiting("loadingPy");
     const py = await loadPyodide();
-    say(t("loadingCh"));
+    say(t("loadingCh"), 0);
     const manifest = await (await fetch("lib/manifest.json")).json();
     const files = manifest.modules || manifest;      // an older bundle was a bare array
     if (manifest.version){
@@ -1077,10 +1130,14 @@ function boot(){
       if (el) el.textContent = t("running", {v: manifest.version});
     }
     try { py.FS.mkdir("/lib"); } catch (e) { /* already there on a repeat run */ }
+    // Fifteen modules, and the count is the honest progress figure here: the page knows exactly
+    // how many there are, so this bar measures something rather than animating.
+    let loaded = 0;
     for (const f of files){
       const res = await fetch("lib/" + f);
       if (!res.ok) throw new Error(`could not load chamnan module ${f} (${res.status})`);
       py.FS.writeFile("/lib/" + f, await res.text());
+      say(t("loadingCh"), ++loaded / files.length);
     }
     py.runPython(`import sys; sys.path.insert(0, "/lib")`);
     const exts = py.runPython(`
@@ -1090,7 +1147,7 @@ json.dumps(sorted(mapper.EXT_LANG.keys()))
     pyodide = py;
     EXT = new Set(JSON.parse(exts));
     return py;
-  })().catch(err => { booting = null; throw err; });
+  })().catch(err => { stopTicking(); booting = null; throw err; });
   return booting;
 }
 
@@ -1321,17 +1378,19 @@ function render(r){
     <div class="card">
       <h3>${t("card2")}</h3>
       <p class="simtag">${t("simTag")}</p>
-      <table class="sim">
-        <thead><tr><th></th><th>${t("kWith")}</th><th>${t("kWithout")}</th></tr></thead>
-        <tbody>
-          <tr><td>${t("scenSame")}</td>
-              <td class="n good">${num(r.sim.same.w)}</td>
-              <td class="n warn">${num(r.sim.same.o)}</td></tr>
-          <tr><td>${t("scenRand")}</td>
-              <td class="n good">${num(r.sim.rand.w)}</td>
-              <td class="n warn">${num(r.sim.rand.o)}</td></tr>
-        </tbody>
-      </table>
+      <div class="scroll">
+        <table class="sim">
+          <thead><tr><th></th><th>${t("kWith")}</th><th>${t("kWithout")}</th></tr></thead>
+          <tbody>
+            <tr><td>${t("scenSame")}</td>
+                <td class="n good">${num(r.sim.same.w)}</td>
+                <td class="n warn">${num(r.sim.same.o)}</td></tr>
+            <tr><td>${t("scenRand")}</td>
+                <td class="n good">${num(r.sim.rand.w)}</td>
+                <td class="n warn">${num(r.sim.rand.o)}</td></tr>
+          </tbody>
+        </table>
+      </div>
       <div class="row"><span class="k">${t("kCross")} <em>(${t("scenRand")})</em></span><span class="v">${
         r.sim.rand.cross ? r.sim.rand.cross : t("simNever")}</span></div>
       <p class="note">${t("simHow")}</p>
