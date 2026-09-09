@@ -244,7 +244,21 @@ def safe_target(root, rel):
             raise ValueError(
                 f"{walked} is a symlink, and writing through it would leave the repository. "
                 f"chamnan refuses rather than following it. Remove or replace the link.")
-    if not str(walked.resolve()).startswith(str(base.resolve())):
+    # 🐛 [2026-09-09] Two gaps that compound. A bare string prefix says `/repo-secrets` starts with
+    # `/repo`, so a SIBLING directory whose name extends the root's basename passed as "inside" —
+    # reproduced: `safe_target(root, "../repo-secrets/hack.md")` returned a path resolving outside
+    # the repository, with no exception. And `..` reaches it untouched by the walk above, because a
+    # `..` component resolves to a real ancestor directory and an ancestor is never itself a
+    # symlink, so the per-component `is_symlink()` check never fires on it.
+    #
+    # `relative_to` answers containment by path component rather than by character, which is the
+    # question actually being asked; `..` is refused by name as well, so the refusal names the
+    # cause rather than the symptom (R2 agent 1).
+    if ".." in ws.Path(rel).parts:
+        raise ValueError(f"{rel} contains `..`, which leaves {root}; refusing to write there")
+    try:
+        walked.resolve().relative_to(base.resolve())
+    except ValueError:
         raise ValueError(f"{rel} resolves outside {root}; refusing to write there")
 
     # 🐛 The check above is about SYMLINKS, and a hardlink is not one — `is_symlink()` is False and

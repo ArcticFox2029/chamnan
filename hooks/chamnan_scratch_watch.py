@@ -512,6 +512,60 @@ def _record_edit(payload, root, wsdir):
     coedit.record(wsdir, rel)
 
 
+def _index_missed_this_file(payload, root, wsdir, session_id):
+    """Say once, to the session that did it, when a file it just created is not in the index.
+
+    🐛 [2026-09-09] Staleness was checked in exactly one place — `SessionStart` — so the session
+    that ADDS a file is never the one told about it. A long session that creates files partway
+    through works for hours against an index that does not name them and finds out at the next
+    start, which for a single long session may be never. The hook that could say so already fires
+    on every Write and Edit and was doing other work; this is the question it was not asking
+    (R5 agent 5).
+
+    Deliberately not a staleness walk. `index_is_behind` compares mtimes across the whole tree,
+    and doing that per tool call would be the wrong trade. The payload already names the file, so
+    the question is a membership test against a file that is on disk: a path the index does not
+    mention is one the index cannot describe, which is the half of staleness that makes the index
+    WRONG rather than merely behind. Editing a file it already names leaves it behind and is the
+    accepted half of that trade, exactly as the git hook's `--diff-filter=ACDR` decides.
+
+    Once per session, and only ever after a Write: the state file that debounces the scratch nudge
+    debounces this too, and a session told twice stops reading the line.
+    """
+    if (payload.get("tool_name") or "") != "Write":
+        return
+    file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
+    if not file_path:
+        return
+    state = _nudge_read(wsdir, session_id)
+    if state.get("map_missing_said"):
+        return
+    try:
+        mp = wsdir / "MAP.md"
+        if not mp.is_file():
+            return
+        rel = Path(file_path).resolve().relative_to(Path(root).resolve()).as_posix()
+    except (OSError, ValueError):
+        return
+    # chamnan's own workspace is not indexed, so its files are absent by design.
+    if rel.startswith(ws.WORKSPACE_DIRNAME + "/"):
+        return
+    try:
+        import mapper as _mapper
+        import mdblock          # deferred, like the other use in this file
+        if not _mapper.is_text_file(Path(file_path)):
+            return
+        if rel in mp.read_text(encoding="utf-8", errors="replace"):
+            return
+    except Exception:      # noqa: BLE001 — a hook that only writes fails silently
+        return
+    state["map_missing_said"] = True
+    _nudge_write(wsdir, session_id, state)
+    say(f"chamnan: `{mdblock.as_quoted(rel)}` is not in the architecture index — it was created "
+        f"after the index was built, so nothing that reads the index can find it. "
+        f"`chamnan-map` rebuilds it. Said once per session.")
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -540,6 +594,7 @@ def main():
         # needs a command somebody has to remember to run. An edit is a fact the hook already sees.
         # `lib/coedit.py` carries the measurement behind it.
         _record_edit(payload, root, wsdir)
+    _index_missed_this_file(payload, root, wsdir, payload.get("session_id"))
 
     if not ws.enabled("promote", root):
         return 0

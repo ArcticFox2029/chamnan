@@ -250,15 +250,18 @@ MODEL_WINDOWS = {
     #   glm         200,000 -> 1,000,000   200K was an exact match for GLM-4.6; the vendor has
     #                                      since shipped GLM-5.3 at 1M.
     #
-    # `mistral` and `codestral` are deliberately NOT touched: their docs render client-side and two
-    # rounds could not read a number out of the vendor's own page. An unverified guess in a table
-    # whose whole value is that it was verified would be worse than a stale entry that says so.
+    # `codestral` is below, and `mistral` moved out of this table on 2026-09-09 — see AMBIGUOUS.
+    #
+    # Two earlier rounds could not read a number out of Mistral's own page and said so rather than
+    # copy a listicle, which was the right call and is why the entry sat at a stale 128,000 with a
+    # comment explaining the refusal. What closes it is a different URL shape: the overview page is
+    # client-rendered, the per-model cards at `docs.mistral.ai/models/model-cards/<slug>` are not.
+    # Fetched 2026-09-09 from the vendor, not from this report: Mistral Medium 3.5's specifications
+    # table reads "256k" (R2 agent 1).
     "kimi": 1_000_000,
     "grok": 500_000,
     "deepseek": 1_000_000,
     "glm": 1_000_000,
-    "gemma": 128_000,
-    "mistral": 128_000,
     # 32K was this family's window at its May-2024 launch. The January-2025 refresh moved it to
     # 256K, and the entry was never updated -- it was still 32K when this table's own comment
     # claimed a 2026-09-03 snapshot, silently sending every codestral user to small-window instead
@@ -276,6 +279,21 @@ AMBIGUOUS = {
     # (Scout). A single flat entry picked one of those silently; this says which two exist.
     "llama": ("a Llama 3.x build served locally, 8K-128K depending on version",
               "Llama 4 (Scout/Maverick), 1M and up"),
+    # 🐛 [2026-09-09] Both of these were flat 128,000 entries, and both families had split since.
+    # A flat number in a table whose whole value is that it was verified is a claim; when the
+    # family covers two windows, the honest entry is the one that says which two.
+    #
+    # Gemma: checked 2026-09-06 at 128K and correct for Gemma 3, then Gemma 4 shipped. Fetched
+    # 2026-09-09 from `ai.google.dev/gemma/docs/core`: "Small models feature a 128K context window,
+    # while the medium models support 256K." Three days between a verified entry and a stale one is
+    # the argument for this table saying when it was checked (R2 agent 1).
+    "gemma": ("a small build, E2B or E4B, 128K",
+              "a medium build — 12B, 26B A4B, 31B — 256K"),
+    # Mistral: `docs.mistral.ai/models/model-cards/mistral-medium-3-5-26-04`, fetched 2026-09-09,
+    # gives 256k for the current flagship. Older locally-served builds are still 128K, and "mistral"
+    # alone does not say which, so it does not get a single number either.
+    "mistral": ("an older or locally-served build, around 128K",
+                "Mistral Medium 3.5 and current hosted builds, 256K"),
 }
 
 

@@ -66,6 +66,7 @@ def generated_count(files):
 
 HOOK_MARKER = ws.GIT_HOOK_MARKER  # defined in lib/workspace.py; see git_hook_state
 HOOK_BODY = """{marker}
+{stamp}
 # Keeps .chamnan/MAP.md in step with the code. A stale index is worse than none: it is confidently
 # wrong, and the next session believes it. Never fails a commit — if chamnan errors, the commit
 # proceeds and the index is simply not refreshed.
@@ -331,11 +332,28 @@ def install_git_hook(root):
         return 1
     hooks.mkdir(parents=True, exist_ok=True)
     target = hooks / "pre-commit"
-    body = HOOK_BODY.format(marker=HOOK_MARKER)
+    # The stamp is of the body WITHOUT it, so it identifies the template rather than itself.
+    _template = HOOK_BODY.format(marker=HOOK_MARKER, stamp="")
+    body = HOOK_BODY.format(marker=HOOK_MARKER,
+                            stamp=f"{ws.GIT_HOOK_STAMP} {ws.git_hook_stamp(_template)}")
     if target.exists():
         existing = target.read_text(encoding="utf-8-sig", errors="replace")
         if HOOK_MARKER in existing:
-            print(f"chamnan: already installed in {_show(target, root)}")
+            # 🐛 [2026-09-09] This printed "already installed" and returned, whatever version was
+            # installed. The hook is a generated artifact with no version, so a copy from months
+            # ago kept running and both this command and the session-start warning called it fine —
+            # measured here on a copy missing the entire adapter-refresh loop and two fixes to it.
+            # A generated thing that cannot say which template made it is the disease this hook
+            # exists to cure, in the cure (R5 agent 5).
+            if ws.git_hook_state(root, _template) != "stale":
+                print(f"chamnan: already installed in {_show(target, root)}")
+                return 0
+            start = existing.index(HOOK_MARKER)
+            end = existing.index("# <<< chamnan", start) + len("# <<< chamnan")
+            target.write_text(existing[:start] + body.strip() + existing[end:],
+                              encoding="utf-8")
+            print(f"chamnan: updated the installed hook in {_show(target, root)} — it was made "
+                  f"from an older template")
             return 0
         # A hook that ends in `exit 0` -- a common way to write one -- makes everything appended
         # after it dead shell code. The install said "the index now refreshes on every commit"

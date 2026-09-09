@@ -31,7 +31,8 @@ NAME_CHARS = 38     # a heading is an identifier here, not prose
 _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
-def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=()):
+def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
+          index_behind=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
@@ -60,6 +61,13 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=()):
         # A firing that proved the previous block is still in the transcript and printed a pointer
         # instead. There is no block to measure; the record exists so the log counts the session.
         rec["resent"] = False
+    if index_behind:
+        # 🐛 [2026-09-09] `index_is_behind` is computed on every single firing and thrown away, so
+        # "how often has my index actually been stale this month" had no log to answer it from and
+        # could only be re-derived by hand with a one-off script. One integer per record — seconds
+        # behind — makes it a query. Recorded only when it IS behind, so a healthy log stays the
+        # same size it is today (R5 agent 5).
+        rec["behind"] = int(index_behind)
     if dropped:
         # What the assembler BUILT and then cut. Without it the log records only what arrived, and
         # a section missing from every record is indistinguishable from a section this repository
@@ -69,7 +77,8 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=()):
     return rec
 
 
-def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=()):
+def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
+           index_behind=None):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -94,7 +103,8 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
                     # would hand every reader below an AttributeError instead of a number.
                     if isinstance(one, dict):
                         prior.append(one)
-            prior.append(shape(body, ceiling, when, source, resent))
+            prior.append(shape(body, ceiling, when, source, resent, dropped,
+                               index_behind))
             ws.atomic_write_text(
                 log, "\n".join(json.dumps(r, separators=(",", ":"), ensure_ascii=False)
                                 for r in prior[-KEEP:]) + "\n")

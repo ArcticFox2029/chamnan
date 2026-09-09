@@ -150,13 +150,44 @@ ORDER = ("claude", "cursor", "gemini", "kiro", "windsurf", "roo", "cline", "cont
 
 
 def _marker_present(base, marker):
+    """Is this agent's marker here, whatever case the repository wrote it in?
+
+    🐛 [2026-09-09] This asked `Path.exists()` for the exact string, and on a case-sensitive
+    filesystem `AGENTS.md` and `agents.md` are two different files. `lib/adapters/generic.py`
+    already carries a tested guard for precisely that — `_warn_about_a_differently_cased_sibling`,
+    added by an earlier round — and the function whose whole job is "read markers off disk and
+    report what is there" did not. Reproduced on a case-sensitive APFS volume: a repository whose
+    file is `agents.md` reported no agent at all, so `--detect` and `primary()` both answered as
+    though nothing was set up. One of a pair guarded and the identical one beside it left
+    (R1 agent 1).
+
+    The directory scan runs only when the exact name misses, so the ordinary case still costs one
+    stat, and a directory that cannot be listed falls back to the answer this always gave.
+    """
     if not base:
         return False
-    path = Path(base) / marker.rstrip("/")
+    name = marker.rstrip("/")
+    path = Path(base) / name
     try:
-        return path.is_dir() if marker.endswith("/") else path.exists()
+        if path.is_dir() if marker.endswith("/") else path.exists():
+            return True
     except OSError:
         return False
+    try:
+        import mdblock
+        # `mdblock.filesystem_key`, not `.lower()`: the fold a filesystem actually applies is NFC
+        # then casefold, and `.lower()` is neither. The suite refuses a bare `.lower()` name
+        # comparison by name, and it is right to — `memory.case_collisions` and `adapters.generic`
+        # once disagreed about the same pair for exactly this reason, five files apart.
+        parent = path.parent
+        want = mdblock.filesystem_key(name.rsplit("/", 1)[-1])
+        for entry in parent.iterdir():
+            if mdblock.filesystem_key(entry.name) != want:
+                continue
+            return entry.is_dir() if marker.endswith("/") else True
+    except (OSError, ImportError):
+        pass
+    return False
 
 
 def agents(root=None, env=None, home=None):

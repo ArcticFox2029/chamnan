@@ -82,7 +82,16 @@ def install(root, body, command=""):
                         f"{candidate} in this repository is a symlink. Zed reads the first of its "
                         f"nine candidate files and stops, so what it would read is not this "
                         f"repository's to say. Nothing written.")
-                if probe.exists():
+                # 🐛 [2026-09-09] `.exists()` is true for a DIRECTORY, and one of the nine names
+                # here is `.clinerules`, which Cline supports as either a file or a directory —
+                # and chamnan's own `cline.py` writes the directory form. Zed does not read that
+                # form: `crates/agent/src/agent.rs` filters its candidates with `entry.is_file()`
+                # and its own comment says directory-form `.clinerules` "is not currently
+                # supported". So on any repository where chamnan installed the Cline adapter, the
+                # Zed adapter refused to write `.rules` on the grounds that Zed was reading a file
+                # Zed skips — chamnan blocking itself over a file the vendor never opens
+                # (R1 agent 1).
+                if probe.is_file():
                     raise ValueError(
                         f"Zed is reading {candidate} in this repository. Writing .rules would take "
                         f"precedence and hide it, and writing anything lower in Zed's list would be "

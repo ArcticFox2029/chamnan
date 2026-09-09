@@ -5502,10 +5502,22 @@ for _p, _want, _why in [
 _mapsrc = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
 import workspace as _wsec  # noqa: E402
 
+# 🐛 [2026-09-09] These pinned the literal call text and a count of `{`, so adding a second
+# placeholder broke them even though the property they exist to protect held: both placeholders are
+# still filled from constants. A check that matches source text rather than the property fails on
+# the next honest edit and says nothing useful when it does. Assert the property: every placeholder
+# in the template is one this file fills, and every value it fills them with is a module constant or
+# derived from the template itself — never anything a repository controls.
+_hook_tmpl = _mapsrc[_mapsrc.index("HOOK_BODY = "):_mapsrc.index("def preview")]
+_placeholders = set(re.findall(r"\{(\w+)\}", _hook_tmpl))
 check("the installed git hook is a constant, not a built string",
-      'body = HOOK_BODY.format(marker=HOOK_MARKER)' in _mapsrc)
-check("...and the only placeholder in it is that marker",
-      _mapsrc[_mapsrc.index("HOOK_BODY = "):_mapsrc.index("def preview")].count("{") == 1)
+      _placeholders == {"marker", "stamp"}, saw=", ".join(sorted(_placeholders)))
+# The arguments, read off the call rather than assumed: `marker` from the module constant, `stamp`
+# from a hash of the template. Neither reaches repository content.
+_fmt = re.search(r"HOOK_BODY\.format\(\s*marker=HOOK_MARKER,\s*\n?\s*"
+                 r"stamp=f\"\{ws\.GIT_HOOK_STAMP\} \{ws\.git_hook_stamp\(_template\)\}\"\)", _mapsrc)
+check("...and both placeholders are filled from constants, not from repository content",
+      _fmt is not None)
 check("the hook body names no host, scheme or redirect",
       not re.search(r"https?://|curl|wget|nc |ssh ", ss_hookbody := _mapsrc[
           _mapsrc.index("HOOK_BODY = "):_mapsrc.index("def preview")]))
@@ -24629,6 +24641,219 @@ _after_exit = _tail_src.rsplit(_terminator, 1)
 check("nothing is written after the summary, where it would never run",
       len(_after_exit) == 1 or not _after_exit[1].strip(),
       saw=(_after_exit[1].strip()[:120] if len(_after_exit) > 1 else None))
+
+
+# ------------------------------------------- the generated hook can say which template made it
+# 🐛 [2026-09-09] The pre-commit hook is a generated artifact and nothing noticed it drifting from
+# the template that generates it — the disease it exists to cure for MAP.md, in the cure. Measured
+# on this repository: the installed copy predated the whole adapter-refresh loop, and both
+# `--install-git-hook` and the session-start warning called it fine (R5 agent 5).
+_hook_map_src = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+_hb = ast.literal_eval(re.search(r"HOOK_BODY = (\"\"\"(?:.|\n)*?\"\"\")", _hook_map_src).group(1))
+_tmpl = _hb.format(marker=ws.GIT_HOOK_MARKER, stamp="")
+check("the installed hook carries a stamp saying which template made it",
+      "{stamp}" in _hb and ws.GIT_HOOK_STAMP in _hb.format(
+          marker=ws.GIT_HOOK_MARKER, stamp=ws.GIT_HOOK_STAMP + " " + ws.git_hook_stamp(_tmpl)))
+
+_d = Path(tempfile.mkdtemp(prefix="chamnan-hookstamp-"))
+try:
+    # A real repository, because `git_hooks_dir` asks git rather than assuming `.git/hooks` — a
+    # worktree and a submodule both put it elsewhere, which is the whole reason it asks.
+    subprocess.run(["git", "init", "-q", str(_d)], check=True,
+                   capture_output=True, timeout=30, encoding="utf-8", text=True)
+    _pc = Path(ws.git_hooks_dir(_d)) / "pre-commit"
+    _stamped = _hb.format(marker=ws.GIT_HOOK_MARKER,
+                          stamp=f"{ws.GIT_HOOK_STAMP} {ws.git_hook_stamp(_tmpl)}")
+    _pc.write_text(_stamped, encoding="utf-8")
+    check("...and a hook made from the current template reads as installed",
+          ws.git_hook_state(_d, _tmpl) == "installed", saw=ws.git_hook_state(_d, _tmpl))
+    # An older copy, and the shape every hook installed before today has: no stamp at all.
+    _pc.write_text(_hb.format(marker=ws.GIT_HOOK_MARKER, stamp=""), encoding="utf-8")
+    check("...an unstamped one reads as stale, not as fine",
+          ws.git_hook_state(_d, _tmpl) == "stale", saw=ws.git_hook_state(_d, _tmpl))
+    _pc.write_text(_stamped.replace(ws.git_hook_stamp(_tmpl), "deadbeef"), encoding="utf-8")
+    check("...and one from a different template reads as stale",
+          ws.git_hook_state(_d, _tmpl) == "stale", saw=ws.git_hook_state(_d, _tmpl))
+    # A caller that cannot know the current body must not be told about drift it did not measure.
+    check("...while a caller with no template to compare still gets the old answer",
+          ws.git_hook_state(_d) == "installed", saw=ws.git_hook_state(_d))
+    _pc.write_text("#!/bin/sh\necho theirs\n", encoding="utf-8")
+    check("...and somebody else's hook is never called stale",
+          ws.git_hook_state(_d, _tmpl) == "theirs", saw=ws.git_hook_state(_d, _tmpl))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
+# ------------------------------------------- the session that adds the file is told about it
+# 🐛 [2026-09-09] Staleness was asked about in exactly one place, SessionStart, so the session that
+# CREATES a file is never the one told the index does not name it. A long session finds out at the
+# next start, which for one long session may be never. The PostToolUse hook already fires on every
+# Write and was not asking (R5 agent 5).
+_sw_src = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8")
+check("the hook that fires on every write asks whether the index names the file",
+      "_index_missed_this_file" in _sw_src and "MAP.md" in _sw_src)
+
+def _sw_run(**payload):
+    _p = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_scratch_watch.py")],
+                        input=json.dumps(payload), capture_output=True, text=True,
+                        encoding="utf-8", timeout=60)
+    return _p.stdout.strip()
+
+_d = Path(tempfile.mkdtemp(prefix="chamnan-mapmiss-"))
+try:
+    (_d / ".chamnan").mkdir(parents=True)
+    (_d / ".chamnan" / "MAP.md").write_text("# map\n\n## `kept.py`\n", encoding="utf-8")
+    (_d / "kept.py").write_text("x = 1\n", encoding="utf-8")
+    (_d / "fresh.py").write_text("y = 2\n", encoding="utf-8")
+    _said = _sw_run(cwd=str(_d), session_id="s1", tool_name="Write",
+                    tool_input={"file_path": str(_d / "fresh.py")})
+    check("...and says so for a file it does not name", "fresh.py" in _said, saw=_said[:120])
+    _again = _sw_run(cwd=str(_d), session_id="s1", tool_name="Write",
+                     tool_input={"file_path": str(_d / "fresh.py")})
+    check("...once per session, not once per write", not _again, saw=_again[:120])
+    _known = _sw_run(cwd=str(_d), session_id="s2", tool_name="Write",
+                     tool_input={"file_path": str(_d / "kept.py")})
+    check("...and stays quiet about a file the index already names", not _known, saw=_known[:120])
+    # Editing a file the index names leaves it BEHIND, which is the accepted half of the trade the
+    # git hook's --diff-filter=ACDR already makes. Only creation makes the index wrong.
+    _edited = _sw_run(cwd=str(_d), session_id="s3", tool_name="Edit",
+                      tool_input={"file_path": str(_d / "fresh.py")})
+    check("...and an edit is not a creation, so it says nothing", not _edited, saw=_edited[:120])
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
+# ------------------------------------------- three that only appear where two things disagree
+# 🐛 [2026-09-09] Each of these is one member of a pair fixed and the identical one beside it left
+# (R1 agents 1 and 3).
+_d = Path(tempfile.mkdtemp(prefix="chamnan-pairs-"))
+try:
+    # zed: `.clinerules` as a DIRECTORY is a form Zed's own loader skips (`entry.is_file()`), and
+    # chamnan's cline adapter writes exactly that form.
+    (_d / ".clinerules").mkdir()
+    from adapters import zed as _zed
+    try:
+        _zed.install(_d, "body")
+        _zed_wrote = (_d / ".rules").is_file()
+        _zed_err = ""
+    except ValueError as _e:
+        _zed_wrote, _zed_err = False, str(_e)
+    check("a directory-form .clinerules does not stop the zed adapter writing .rules",
+          _zed_wrote, saw=_zed_err[:120])
+    # ...and a real FILE in Zed's precedence list still does.
+    (_d / ".rules").unlink(missing_ok=True)
+    (_d / ".cursorrules").write_text("x", encoding="utf-8")
+    try:
+        _zed.install(_d, "body")
+        _blocked = False
+    except ValueError:
+        _blocked = True
+    check("...while a file it really does read still does", _blocked)
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+# host: on a case-sensitive filesystem `agents.md` and `AGENTS.md` are two files, and the writer
+# in `adapters/generic.py` has guarded that since an earlier round while the reader had not.
+_d = Path(tempfile.mkdtemp(prefix="chamnan-case-"))
+try:
+    (_d / "agents.md").write_text("x", encoding="utf-8")
+    check("a differently-cased marker is still found", host_mod._marker_present(_d, "AGENTS.md"))
+    check("...and an absent one is still absent",
+          not host_mod._marker_present(_d, "CLAUDE.md"))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+# workspace: a hook reacting to work inside a nested checkout must file it there, not in the
+# parent whose path the session's CLAUDE_PROJECT_DIR happens to hold.
+_d = Path(tempfile.mkdtemp(prefix="chamnan-nested-"))
+try:
+    _outer = _d.resolve()
+    (_outer / ws.WORKSPACE_DIRNAME).mkdir()
+    _inner = _outer / "nested"
+    (_inner / ws.WORKSPACE_DIRNAME).mkdir(parents=True)
+    _saved = os.environ.get("CLAUDE_PROJECT_DIR")
+    os.environ["CLAUDE_PROJECT_DIR"] = str(_outer)
+    try:
+        check("a hook whose payload names a nested workspace writes to that one",
+              ws.hook_root({"cwd": str(_inner)}) == _inner,
+              saw=str(ws.hook_root({"cwd": str(_inner)})))
+        check("...and the outer one is still the answer when nothing nested is named",
+              ws.hook_root({"cwd": str(_outer)}) == _outer
+              and ws.hook_root() == _outer
+              and ws.hook_root({"cwd": "/"}) == _outer)
+    finally:
+        if _saved is None:
+            os.environ.pop("CLAUDE_PROJECT_DIR", None)
+        else:
+            os.environ["CLAUDE_PROJECT_DIR"] = _saved
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
+# ------------------------------------------- a sibling directory is not inside the repository
+# 🐛 [2026-09-09] The containment check was a bare string prefix, so `/repo-secrets` "started with"
+# `/repo` and a sibling directory passed as inside; `..` reached it untouched because a `..`
+# component resolves to a real ancestor and an ancestor is never a symlink (R2 agent 1).
+_d = Path(tempfile.mkdtemp(prefix="chamnan-escape-"))
+try:
+    (_d / "repo").mkdir()
+    (_d / "repo-secrets").mkdir()
+    for _rel in ("../repo-secrets/hack.md", "../outside.md", "a/../../b.md"):
+        try:
+            adapters_mod.safe_target(str(_d / "repo"), _rel)
+            _ok = False
+        except ValueError:
+            _ok = True
+        check(f"safe_target refuses {_rel}", _ok)
+    _inside = adapters_mod.safe_target(str(_d / "repo"), "docs/ok.md")
+    check("...and still writes an ordinary path inside the repository",
+          str(_inside).endswith("repo/docs/ok.md"), saw=str(_inside))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+# 🐛 [2026-09-09] A family whose name covers two context windows must not carry one flat number:
+# `gemma` and `mistral` were both 128,000 after both families had split (R2 agent 1).
+check("no model family appears in both the flat table and the ambiguous one",
+      not (set(profiles_mod.MODEL_WINDOWS) & set(profiles_mod.AMBIGUOUS)),
+      saw=", ".join(sorted(set(profiles_mod.MODEL_WINDOWS) & set(profiles_mod.AMBIGUOUS))) or None)
+check("...and every ambiguous entry names both deployments",
+      all(isinstance(v, tuple) and len(v) == 2 and all(v) for v in profiles_mod.AMBIGUOUS.values()))
+
+
+# ------------------------------------------- a prefix glued onto the word is still the word
+# 🐛 [2026-09-09] `PGPASSWORD` — the variable libpq's own manual documents, and a fixture in every
+# other docker-compose file — leaked in full, because the left boundary refused any name that
+# concatenates a prefix straight onto the credential word. The module had patched seven of those by
+# name and called itself "a SHORT EXPLICIT LIST" (R1 agent 2).
+#
+# Derived from the word list rather than from a list of examples: every unambiguous credential word
+# is tried under three real prefixes, so a word added later is covered without anyone remembering.
+_SECRET_VALUE = "hunter2seventeen"
+_leaked = []
+for _word in ("password", "passwd", "passphrase", "secret", "credential"):
+    for _prefix in ("PG", "REDIS", "SMTP"):
+        _line = f"{_prefix}{_word.upper()}={_SECRET_VALUE}"
+        if _SECRET_VALUE in redact.scrub(_line):
+            _leaked.append(_line)
+check("a prefix glued onto a credential word does not defeat the redactor",
+      not _leaked, saw=", ".join(_leaked[:4]) or None)
+
+# The right boundary is what keeps ordinary identifiers alive, and it has to bind to every branch —
+# splitting the alternation once left it on one half and ate `credentialing_deadline`.
+_eaten = [t for t in ("passwordless = True", "credentialing_deadline = 2026-12-01",
+                      "secretariat_id = 42", "retokenized_batch = []")
+          if redact.scrub(t) != t]
+check("...and an ordinary identifier that merely starts with one is still untouched",
+      not _eaten, saw=", ".join(_eaten) or None)
+
+# A compound ending in `key` or `token` is NOT reached by the rule above: the same right boundary
+# that protects `secretariat` stops `secret` matching inside `SECRETKEY`. Removing those from the
+# explicit list leaked in the sitting that wrote this.
+_compound = [n for n in ("APIKEY", "SECRETKEY", "AUTHTOKEN", "ACCESSTOKEN", "SESSIONTOKEN",
+                         "REFRESHTOKEN")
+             if _SECRET_VALUE in redact.scrub(f"{n}={_SECRET_VALUE}")]
+check("...and the compounds ending in key or token are still named explicitly",
+      not _compound, saw=", ".join(_compound) or None)
 
 
 total = PASSED + len(FAILED)

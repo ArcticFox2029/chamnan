@@ -1159,6 +1159,10 @@ def main():
         # Warnings about the index FILE rather than about the index section. Collected here and
         # placed before the first heading, so they survive the section being dropped.
         _stale_lines = []
+        # Seconds the index was behind when this block was built, or None when it was current.
+        # `index_is_behind` runs on every firing and its answer was discarded; carrying it into the
+        # log is what makes "how often is my index stale" a query rather than a one-off script.
+        _behind_seconds = None
 
         # Said before anything else, and never suppressed by a config flag: if the code running this
         # session is older than a version that has already set this workspace up, everything below is
@@ -1390,6 +1394,7 @@ def main():
                 with _tree.session():
                     behind, edited = index_is_behind(root, mp)
                     n, examples = unindexed(root, text) if behind else (0, [])
+                _behind_seconds = behind
                 if behind:
                     # A count of what is missing, not an age. See unindexed() for why.
                     # Filenames are chosen by whoever wrote the clone, and this line prints them
@@ -2013,7 +2018,8 @@ def main():
         blocklog.record(root, body, ceiling=ceiling,
                         when=time.strftime("%Y-%m-%dT%H:%M:%S"),
                         source=(payload.get("source") if isinstance(payload, dict) else None),
-                        dropped=[t for t, _src in dropped])
+                        dropped=[t for t, _src in dropped],
+                        index_behind=_behind_seconds)
     try:
         sys.stdout.write(body + "\n")
     except UnicodeEncodeError:

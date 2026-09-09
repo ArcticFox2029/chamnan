@@ -717,6 +717,7 @@ def hook_root(payload=None):
     behaviour. Each is accepted only if it actually contains a workspace or a .git.
     """
     import os
+    resolved = []
     candidates = [os.environ.get("CLAUDE_PROJECT_DIR")]
     if isinstance(payload, dict):
         candidates.append(payload.get("cwd"))
@@ -750,8 +751,32 @@ def hook_root(payload=None):
         except OSError:
             pass
         if (p / WORKSPACE_DIRNAME).is_dir() or (p / ".git").exists():
-            return p
-    return find_root()
+            resolved.append(p)
+    # 🐛 [2026-09-09] The first candidate won, and the first candidate is `CLAUDE_PROJECT_DIR` —
+    # which is the OUTER repository for the whole session. So a hook reacting to work done inside a
+    # nested checkout filed everything under the parent: no `commands.jsonl`, no memory stamp, no
+    # resume pointer and no `STATE.md` for the nested repository, for as long as the session was
+    # opened from the parent, which is how this project's own dogfood shape is normally used. The
+    # read side already knows about this — `chamnan_subagent_start.py` names nested checkouts and
+    # says to use that one if the work is in there — and the write side did not (R1 agent 3).
+    #
+    # A nested workspace wins over the one enclosing it, because filing one project's session data
+    # into another project's workspace mixes two repositories with nothing saying so. Order is
+    # otherwise unchanged: the environment variable the host promises still beats the payload's cwd
+    # whenever neither contains the other.
+    for cand in resolved:
+        if any(other != cand and _is_inside(cand, other) for other in resolved):
+            return cand
+    return resolved[0] if resolved else find_root()
+
+
+def _is_inside(inner, outer):
+    """Is `inner` a directory beneath `outer`? Both are already resolved."""
+    try:
+        inner.relative_to(outer)
+        return inner != outer
+    except ValueError:
+        return False
 
 
 # Every JSON store this package keeps is a handful of keys or a short list. A ceiling here is not a
@@ -2119,12 +2144,36 @@ def git_hooks_dir(root):
     return None
 
 
-def git_hook_state(root):
-    """"installed", "absent", "theirs", or None when the question does not apply here.
+# 🐛 [2026-09-09] The hook is a GENERATED artifact and nothing ever noticed it drifting from the
+# template that generates it — the identical disease it was written to cure for `MAP.md`. Verified
+# on this repository: the installed copy was from 2026-09-07 and was missing the whole
+# `chamnan-context --write` refresh loop and both bug fixes made to it since, so it rebuilt the map
+# and refreshed no adapter file at all. `--install-git-hook` printed "already installed" and
+# changed nothing, and the session-start warning stayed silent, because both asked only whether the
+# marker was there. A repository that installed it once runs that version forever (R5 agent 5).
+#
+# The stamp is eight hex of a hash of the body, written into the marker line at install and
+# compared on every ask. Short on purpose: this answers "is it the same text", and a full digest in
+# a shell comment is noise nobody reads.
+GIT_HOOK_STAMP = "# stamp:"
+
+
+def git_hook_stamp(body):
+    """The eight-character mark that says which template an installed hook was made from."""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:8]
+
+
+def git_hook_state(root, current_body=None):
+    """"installed", "stale", "absent", "theirs", or None when the question does not apply here.
 
     "theirs" means a pre-commit hook exists and is not chamnan's -- which is not a problem and must
     not be reported as one. The distinction matters because the advice differs: an absent hook can
     be offered, and somebody else's cannot be touched.
+
+    "stale" is chamnan's own hook, made from an older template. It is only ever returned when the
+    caller passes the template it is comparing against; a caller that cannot know the current body
+    gets "installed" exactly as before, because reporting drift it did not measure would be worse
+    than saying nothing.
     """
     hooks = git_hooks_dir(root)
     if hooks is None:
@@ -2133,10 +2182,19 @@ def git_hook_state(root):
     if not target.is_file():
         return "absent"
     try:
-        return ("installed" if GIT_HOOK_MARKER in
-                target.read_text(encoding="utf-8-sig", errors="replace") else "theirs")
+        existing = target.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
+    if GIT_HOOK_MARKER not in existing:
+        return "theirs"
+    if current_body is None:
+        return "installed"
+    want = git_hook_stamp(current_body)
+    # An installed hook with no stamp at all predates this check. It is reported as stale rather
+    # than as current: it cannot be the present template, because the present template stamps
+    # itself, and telling somebody their months-old copy is fine is the failure being fixed.
+    found = re.search(re.escape(GIT_HOOK_STAMP) + r"\s*([0-9a-f]{8})", existing)
+    return "installed" if found and found.group(1) == want else "stale"
 
 
 # ---------------------------------------------------------------- the command line, asked once

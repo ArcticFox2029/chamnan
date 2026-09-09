@@ -286,8 +286,25 @@ SECRET_WORDS = (
     # preceded by a letter and the lookbehind refuses it. Named in full instead. Measured missed:
     # `keytool -storepass hunter2 -keypass hunter2` passed through whole — a real shape in any
     # repository that signs an Android build or a JAR.
-    r"(?<![A-Za-z])(?:password|passwd|pwd|passphrase|secret|credential|cred|storepass|keypass)"
-    r"s?(?![A-Za-z])"
+    # 🐛 [2026-09-09] The left boundary `(?<![A-Za-z])` refused every SCREAMING_CASE name that
+    # concatenates a prefix straight onto the word — `PGPASSWORD`, which is the variable libpq's
+    # own manual documents and which appears in every other docker-compose file, leaked in full.
+    # So did `REDISPASSWORD` and `SMTPPASSWORD`. The module had already patched seven instances of
+    # this shape by name (`dbpassword`, `apikey`, …) with a comment calling itself "a SHORT
+    # EXPLICIT LIST" — an enumeration of a set that has no end, which is this repository's most
+    # recorded defect, sitting in the file whose job is not to miss things (R1 agent 2).
+    #
+    # The boundary is dropped only for the words that are never an innocent substring. `password`,
+    # `passwd`, `passphrase`, `secret` and `credential` do not appear inside ordinary identifiers
+    # the way `key` and `token` do — that is exactly why they were already exempt from the
+    # separator rule two lines down. The RIGHT boundary stays, so `passwordless` and
+    # `secretariat_id` are still untouched, and `pwd`/`cred`/`storepass`/`keypass` keep the left
+    # boundary because they are short enough to land inside real words.
+    # Both halves carry the same right boundary. Splitting the alternation and leaving the shared
+    # `s?(?![A-Za-z])` on one line bound it to the SECOND half only, so `credentialing_deadline`
+    # was eaten — precision 100% to 98.2% on the recall corpus, which is what caught it.
+    r"(?:(?:password|passwd|passphrase|secret|credential)s?(?![A-Za-z])"
+    r"|(?<![A-Za-z])(?:pwd|cred|storepass|keypass)s?(?![A-Za-z]))"
     # `token` needs a component beside it, for the same reason `key` does: a bare `token` in source
     # is far more often a lexer token than a credential, and `tokens = tokenizer.encode(prompt)` is
     # the identifier family this module's own docstring says was already fixed once. The credential
@@ -329,7 +346,13 @@ SECRET_WORDS = (
     # through whole (R6). A SHORT EXPLICIT LIST rather than dropping the separator requirement,
     # because dropping it is what the measurement above says not to do; these are the spellings
     # observed in tooling, and an eighth belongs here rather than in a looser rule.
-    r"|(?<![A-Za-z])(?:apikey|secretkey|dbpassword|authtoken|accesstoken"
+    # `dbpassword` came off this list on 2026-09-09: the boundary change above covers every
+    # prefix, not seven of them. The rest stay, and `secretkey` is the reason to be careful about
+    # which — the right boundary that protects `secretariat` also stops `secret` matching inside
+    # `SECRETKEY`, so a compound ending in `key` or `token` is not reached by the general rule and
+    # still needs naming. Removing it leaked, in the same sitting, and the check below is what
+    # said so.
+    r"|(?<![A-Za-z])(?:apikey|secretkey|authtoken|accesstoken"
     r"|sessiontoken|refreshtoken)s?(?![A-Za-z])"
 )
 
