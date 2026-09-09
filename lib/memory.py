@@ -392,6 +392,10 @@ def arrived_whole(title, body, delivered):
 # `tokens.section_budget` uses, and for the same reason — one entry is a summary, zero rows is not.
 SHARE_FLOOR = 120
 
+# What a pinned rule's share is multiplied by. Two rather than more: the point is to reach the
+# sentence a pinned rule exists for, not to let it take the section over.
+PIN_SHARE = 2
+
 
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
@@ -499,9 +503,24 @@ def rules_text(root):
         _fair = cap // max(len(out), 1)
         if _fair >= SHARE_FLOOR:
             share = _fair
-    if len(out) > 1 and (_total > cap or any(len(o) > share for o in out)):
+    # \U0001f41b [2026-09-10] The share was ONE number for every rule, and pin status never entered
+    # it. So a pin bought delivery ORDER and nothing else: `the-set-not-the-member.md` — this
+    # repository's most-violated rule, pinned for exactly that reason — was trimmed to the same 150
+    # characters as everything else, which stopped one line short of its own evidence ("18 distinct
+    # recorded instances"). A pin means "this must not be cut"; giving it the same slice as the rest
+    # honours the ordering and not the intent (R9 agent 6, finding 1).
+    #
+    # Weighted rather than exempted. An exempt rule would take whatever it liked and starve the
+    # other nine, and this store's whole problem is that it is 21x over its budget — there is no
+    # slack to hand out. Double share for a pin, one for everything else, so the cost is spread
+    # across the rules nobody marked instead of falling on one of them.
+    _weights = [PIN_SHARE if state.pinned(b) else 1 for b in out]
+    _unit = cap // max(sum(_weights), 1)
+    _shares = [max(_unit * w, SHARE_FLOOR) for w in _weights] if _unit >= SHARE_FLOOR // 2 \
+        else [share] * len(out)
+    if len(out) > 1 and (_total > cap or any(len(o) > s for o, s in zip(out, _shares))):
         trimmed = []
-        for body, (title, fname) in zip(out, titles):
+        for body, (title, fname), share in zip(out, titles, _shares):
             if len(body) <= share:
                 trimmed.append(body)
             else:

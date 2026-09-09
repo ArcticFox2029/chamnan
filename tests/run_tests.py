@@ -27383,6 +27383,98 @@ check("the hook consults the index before telling anyone to write another script
       "likely_already_done" in _t_watch38, saw=None)
 check("...and it degrades to the old message rather than failing the tool call",
       "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
+# ---- 39_a_pin_buys_share_not_only_order.py
+# ------------------------------------------- a pin that reached the title and stopped there
+# 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
+# that is where it stopped: the per-rule SHARE was one number computed over all ten rules, and pin
+# status never entered it. So `the-set-not-the-member.md` — this repository's most-violated rule,
+# pinned for exactly that reason — was trimmed to the same 150 characters as everything else, one
+# line short of its own evidence. A pin means "this must not be cut"; an equal slice honours the
+# ordering and not the intent (R9 agent 6, finding 1).
+#
+# Weighted rather than exempted, and the difference matters: an exempt rule would take whatever it
+# liked and starve the other nine, and this store is 21x over its budget — there is no slack to hand
+# out. Double share for a pin, one for the rest, so the cost is spread across the rules nobody
+# marked rather than falling on one of them.
+_t_r39 = __import__("random")
+_t_r39.seed(20260917)
+_t_PIN39 = "\U0001F4CC"
+
+
+def _t_store39(n, pin_at=0, body=900):
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-pinshare-"))
+    _s = _d / ".chamnan" / "memory" / "rules"
+    _s.mkdir(parents=True)
+    for _i in range(n):
+        _mark = f" {_t_PIN39}" if _i == pin_at else ""
+        # A distinctive sentence near the END of the body, so reaching it means the share really
+        # grew rather than the rule happening to be short.
+        _f = _s / f"rule-{_i}.md"
+        _f.write_text(f"# Rule {_i}{_mark}\n\n" + ("filler " * (body // 7))
+                      + f"\n\nEVIDENCE-{_i}: the number this rule exists to carry.\n",
+                      encoding="utf-8")
+        os.utime(_f, (1_600_000_000 + _i, 1_600_000_000 + _i))
+    return _d
+
+
+# The pinned rule must get MORE than an unpinned one, across store sizes where the budget bites.
+_t_equal39 = []
+for _t_n in (4, 6, 8, 10, 14):
+    _d = _t_store39(_t_n)
+    try:
+        _text = memory_mod.rules_text(_d)
+        _got = {}
+        for _i in range(_t_n):
+            _at = _text.find(f"Rule {_i}")
+            if _at < 0:
+                continue
+            _end = _text.find("\n\n**", _at + 8)
+            _got[_i] = len(_text[_at:_end if _end > 0 else len(_text)])
+        if 0 in _got and len(_got) > 1:
+            _others = [v for k, v in _got.items() if k != 0]
+            if _others and _got[0] <= max(_others):
+                _t_equal39.append(f"{_t_n} rules: pinned got {_got[0]}, largest other {max(_others)}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("a pinned rule is given a larger share than an unpinned one, not merely a better place",
+      not _t_equal39, saw="\n".join(_t_equal39) or None)
+
+# It must not become an exemption. The other rules still have to arrive — starving nine to feed one
+# is a worse store than the one this replaced.
+_t_starved39 = []
+for _t_n in (6, 10, 14):
+    _d = _t_store39(_t_n)
+    try:
+        _fitted, _title_only = memory_mod.rules_pressure(_d)[:2]
+        _n = lambda v: v if isinstance(v, int) else len(v)
+        if _n(_fitted) < 1:
+            _t_starved39.append(f"{_t_n} rules: only {_n(_fitted)} arrived with a body")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("...and the rules nobody pinned still arrive, so it is a weight and not an exemption",
+      not _t_starved39, saw="\n".join(_t_starved39) or None)
+
+# A store with NO pin behaves exactly as before — the weighting is additive, and a repository that
+# marks nothing should see no change at all.
+#
+# Measured on the TRIMMED bodies only, found by the pointer sentence each one ends with. An earlier
+# version measured the span from one rule's title to the next bold heading, which runs into whatever
+# follows the last rule and reported a spread that was in the measurement rather than in the code.
+_t_changed39 = []
+for _t_n in (5, 9):
+    _d = _t_store39(_t_n, pin_at=None)
+    try:
+        _text = memory_mod.rules_text(_d)
+        _cut = [len(_seg) for _seg in _text.split("\n\n_…the rest is in")[:-1]]
+        # Each element is everything up to a pointer; the differences between consecutive ones are
+        # the per-rule shares. Compare the shares, not the running totals.
+        _spans = [b - a for a, b in zip(_cut, _cut[1:])] if len(_cut) > 2 else []
+        if _spans and max(_spans) - min(_spans) > 120:
+            _t_changed39.append(f"{_t_n} rules unpinned: shares span {min(_spans)}..{max(_spans)}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("...and a store that pins nothing is shared out evenly, exactly as before",
+      not _t_changed39, saw="\n".join(_t_changed39) or None)
 # ============================ end of the folded surgical pool
 
 
