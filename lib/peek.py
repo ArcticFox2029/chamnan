@@ -530,7 +530,16 @@ def peek_sqlite(path, find=None):
 # ------------------------------------------------------------------ pdf
 def peek_pdf(path, find=None):
     import zlib
-    raw = path.read_bytes()
+    # 🐛 [2026-09-09] The one structured handler in this file with no ceiling. Every sibling has
+    # one — `peek_zip`/`peek_tar` through `_zread`, `peek_source` through `tree.read_capped` — and
+    # the note on `tree.MAX_FILE_BYTES` says the constant was collected into "the two places that
+    # most needed it" and names `peek_source`, not this. So a cloned repository holding a large
+    # `.pdf` had it read whole into memory (R1 agent 2).
+    # `tree.read_capped` decodes, and a PDF is bytes; the ceiling is the shared constant either
+    # way. Bounded on the way IN, for the reason `read_capped`'s own docstring gives: reading whole
+    # and slicing afterwards has already spent the memory the limit exists to refuse.
+    with path.open("rb") as _fh:
+        raw = _fh.read(tree.MAX_FILE_BYTES)
     out = []
     pages = len(re.findall(rb"/Type\s*/Page[^s]", raw))
     out.append(f"{pages or '?'} page(s)")
@@ -541,12 +550,40 @@ def peek_pdf(path, find=None):
     # Text lives in FlateDecode streams; zlib is in the standard library, so a rough extraction is
     # available without a PDF library. Rough is the right word — enough to answer "what is this
     # document about", not enough to reproduce it.
+    # 🐛 [2026-09-09] This paired the delimiters with `stream\r?\n(.*?)endstream`, which is
+    # quadratic when the opens have no matching close: every `stream\n` makes the lazy `.` scan
+    # forward to end-of-file before failing, so doubling the input roughly quadruples the work.
+    # Nothing stops a file named `.pdf` in a cloned repository from being shaped that way. Measured
+    # on a 1.2 MB fixture of 25,000 unclosed opens: over two minutes, killed rather than finished.
+    #
+    # The first repair was worse than the defect — `(?:(?!endstream).){0,4000000}` runs a negative
+    # lookahead per character from every start position, and the same fixture still did not finish.
+    # Recorded because it is the obvious fix and the next person will reach for it too.
+    #
+    # Pairing delimiters is not a job for a regex. `bytes.find` is a C-level substring search, so
+    # locating each open and its close is linear in the file and stops at the 40 streams this loop
+    # already wanted. The 40-stream limit was always there and never helped, because the cost was
+    # in FINDING a match rather than in handling one (R1 agent 2).
     text = []
-    for m in re.finditer(rb"stream\r?\n(.*?)endstream", raw, re.S):
-        if len(text) > 40:
+    _at = 0
+    while len(text) <= 40:
+        _open = raw.find(b"stream", _at)
+        if _open < 0:
             break
+        _body_at = _open + len(b"stream")
+        if raw[_body_at:_body_at + 2] == b"\r\n":
+            _body_at += 2
+        elif raw[_body_at:_body_at + 1] == b"\n":
+            _body_at += 1
+        else:
+            _at = _open + 1          # `endstream` itself, or a word that merely ends in `stream`
+            continue
+        _close = raw.find(b"endstream", _body_at)
+        if _close < 0:
+            break                    # nothing after this can be a complete stream
+        _at = _close + len(b"endstream")
         try:
-            body = zlib.decompress(m.group(1))
+            body = zlib.decompress(raw[_body_at:_close])
         except zlib.error:
             continue
         text += [t.decode("utf-8", "replace") for t in re.findall(rb"\((.{1,200}?)\)\s*Tj", body)]
@@ -767,6 +804,25 @@ def _env_names(path):
 
 
 def peek(path, find=None, budget=DEFAULT_BUDGET):
+    """A preview of one file, scrubbed. Every way out of here goes through the redactor.
+
+    🐛 [2026-09-09] The docstring said "one choke point" and three return paths went around it. The
+    one that carried real content was the binary sniff: handed a file with a text extension whose
+    bytes are not text, it returns `peek_binary`'s output — which includes readable strings pulled
+    straight out of those bytes. Reproduced: a `.csv` holding an AWS access key ID between null
+    bytes printed the key in full. It was masked because both real callers scrub again on their own,
+    so the module's own guarantee was untrue while the product happened to be safe — and a second
+    caller written without that habit would have shipped the leak (R1 agent 2).
+    """
+    return _scrub_everything_out(_peek(path, find, budget))
+
+
+def _scrub_everything_out(text):
+    """The single exit. `_peek` returns; nothing in this module returns to a caller but this."""
+    return redact.scrub(text)
+
+
+def _peek(path, find=None, budget=DEFAULT_BUDGET):
     path = Path(path)
     if not path.is_file():
         return f"chamnan-peek: not a file: {path}"
@@ -838,9 +894,13 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     cut = mdblock.cut_outside_a_fence(out, tokens.cut_at(out, budget))
     if cut < len(out):
         out = out[:cut] + f"\n\n_[truncated at {budget} tokens — narrow it with --find]_"
-    # One choke point, matching how the map is scrubbed. peek reads .env, .ini, .yaml and source
-    # on demand, and printed AWS, Stripe, Slack and GitHub credentials verbatim into the session
-    # until this line existed.
+    # Scrubbed here as well as at the exit, and that is not redundant: `_cost_note` is computed
+    # FROM `out`, so it has to see the scrubbed text or it reports a length that counts bytes the
+    # reader never receives. The exit wrapper is what makes the guarantee true for every path;
+    # this is what makes the note true for this one.
+    #
+    # peek reads .env, .ini, .yaml and source on demand, and printed AWS, Stripe, Slack and GitHub
+    # credentials verbatim into the session until this line existed.
     out = redact.scrub(out)
     return out + "\n\n" + _cost_note(path, ext, size, out)
 

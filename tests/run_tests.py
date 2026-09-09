@@ -24856,6 +24856,111 @@ check("...and the compounds ending in key or token are still named explicitly",
       not _compound, saw=", ".join(_compound) or None)
 
 
+# ------------------------------------------- `pass` is a password too, and a Python keyword
+# 🐛 [2026-09-09] `pass` was absent from both credential lists in every form. `ansible_ssh_pass`
+# and `ansible_become_pass` are Ansible's own documented inventory variable names, sitting in
+# playbooks in the open, and all four spellings leaked in full — through the assignment rule and
+# through the CSV header rule alike (R1 agent 2).
+_V = "hunter2superSecretValue"
+_pass_leaks = [f"{_n}{_sep}{_V}"
+               for _n in ("ansible_ssh_pass", "ansible_become_pass", "db_pass", "mysql_pass")
+               for _sep in (": ", " = ", "=")
+               if _V in redact.scrub(f"{_n}{_sep}{_V}")]
+check("a name ending in _pass is a credential", not _pass_leaks,
+      saw=", ".join(_pass_leaks[:3]) or None)
+check("...in a table column too",
+      _V not in redact.scrub(f"host,user,ssh_pass\nweb1,root,{_V}"))
+# It is a Python keyword before it is anything else, and it appears on its own line in most files
+# in this repository. The leading component is what separates the credential from the statement.
+_pass_eaten = [t for t in ("pass", "    pass", "class X:\n    pass", "passing = True",
+                           "compass_bearing = 90", "bypass_cache = False")
+               if redact.scrub(t) != t]
+check("...while the bare keyword is never touched", not _pass_eaten,
+      saw=", ".join(repr(t) for t in _pass_eaten) or None)
+
+
+# ------------------------------------------- a .pdf in a clone is not necessarily a PDF
+# 🐛 [2026-09-09] `peek_pdf` read the whole file with no ceiling — the one structured handler here
+# without one — and paired its delimiters with `stream\r?\n(.*?)endstream`, which is quadratic when
+# the opens have no matching close. A 1.2 MB fixture of unclosed opens ran over two minutes. The
+# first repair, a negative lookahead per character, was slower still (R1 agent 2).
+_d = Path(tempfile.mkdtemp(prefix="chamnan-pdf-"))
+try:
+    import peek as _peek
+    import time as _t_pdf
+    import zlib
+    _h = _d / "hostile.pdf"
+    _h.write_bytes((b"stream\n" + b"A" * 40) * 25000)
+    _t0 = _t_pdf.time()
+    _peek.peek_pdf(_h)
+    _took = _t_pdf.time() - _t0
+    # Two seconds is far above what it costs (measured at 0.003s) and far below the failure.
+    check("a pdf-shaped file with no closing delimiter does not hang the preview", _took < 2.0,
+          saw=f"{_took:.2f}s")
+
+    _h2 = _d / "many.pdf"
+    _h2.write_bytes(b"stream\nAAAA\nendstream\n" * 25000)
+    _t0 = _t_pdf.time()
+    _peek.peek_pdf(_h2)
+    check("...nor one with tens of thousands of complete streams", _t_pdf.time() - _t0 < 2.0)
+
+    _body = zlib.compress(b"BT (hello from a real pdf) Tj ET")
+    _r = _d / "real.pdf"
+    _r.write_bytes(b"%PDF-1.4\n/Type /Page\n/Title (A Report)\nstream\n" + _body
+                   + b"\nendstream\n")
+    _got = "\n".join(_peek.peek_pdf(_r))
+    check("...and an ordinary pdf still gives up its title and its text",
+          "A Report" in _got and "hello from a real pdf" in _got, saw=_got[:100])
+
+    # Every other structured handler in this module is bounded; this one was not.
+    _peek_src = (ROOT / "lib" / "peek.py").read_text(encoding="utf-8")
+    _pdf_fn = _peek_src[_peek_src.index("def peek_pdf"):_peek_src.index("def ", _peek_src.index("def peek_pdf") + 10)]
+    check("...and the read is bounded by the shared ceiling, like its siblings",
+          "read_bytes()" not in _pdf_fn and "MAX_FILE_BYTES" in _pdf_fn)
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
+# ------------------------------------------- peek has one exit, and it is scrubbed
+# 🐛 [2026-09-09] `peek()`'s docstring said "one choke point" and three return paths went around
+# it. The binary sniff was the one carrying content: a `.csv` whose bytes are not text returns
+# `peek_binary`'s readable strings, and an AWS access key ID between null bytes printed in full.
+# It was masked because both real callers scrub again themselves — the module's guarantee was
+# untrue while the product happened to be safe, and the next caller written without that habit
+# would have shipped it (R1 agent 2).
+_d = Path(tempfile.mkdtemp(prefix="chamnan-peekexit-"))
+try:
+    import peek as _peek
+    _KEY = "AKIA" + "IOSFODNN7EXAMPLE"
+    _shapes = {
+        "export.csv": b"\x00\x01\x02\x03" * 50 + _KEY.encode() + b"\x00" * 100,   # binary sniff
+        "notes.txt":  b"\x00\x00" + _KEY.encode() + b"\x00\x00" * 40,             # binary sniff
+        "real.csv":   b"name,key\nalice," + _KEY.encode() + b"\n",                 # ordinary path
+        ".env":       f"AWS_ACCESS_KEY_ID={_KEY}\n".encode(),                    # env branch
+    }
+    _through = []
+    for _name, _data in _shapes.items():
+        _f = _d / _name
+        _f.write_bytes(_data)
+        if _KEY in _peek.peek(_f):
+            _through.append(_name)
+    check("every return path out of peek is scrubbed, not just the long one",
+          not _through, saw=", ".join(_through) or None)
+
+    # Derived, so a path added later is covered: the public entry point must not itself contain a
+    # return of assembled text — it delegates, and the wrapper is the only exit.
+    _peek_src = (ROOT / "lib" / "peek.py").read_text(encoding="utf-8")
+    _entry = _peek_src[_peek_src.index("def peek(path"):_peek_src.index("def _scrub_everything_out")]
+    # Counted at statement position, not by substring: the docstring above it explains the defect
+    # and uses the word, and a check that reads its own explanation is the trap this repository
+    # has recorded twice.
+    _returns = [_l for _l in _entry.splitlines() if _l.lstrip().startswith("return ")]
+    check("...because the entry point delegates rather than returning text of its own",
+          len(_returns) == 1 and "_peek(" in _returns[0], saw=" | ".join(_returns))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+
 total = PASSED + len(FAILED)
 # 🐛 [2026-09-08] This said only what RAN, and on Windows that is a smaller suite: the same commit
 # reports 3,846 checks on ubuntu-latest, 3,844 on macOS and 3,783 on windows -- 63 fewer -- and all

@@ -310,6 +310,17 @@ SECRET_WORDS = (
     # the identifier family this module's own docstring says was already fixed once. The credential
     # spellings — access_token, auth_token, api_token, refresh_token — all carry one.
     r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]tokens?(?![A-Za-z])"
+    # 🐛 [2026-09-09] `pass` was absent from this list in every form, and `ansible_ssh_pass` /
+    # `ansible_become_pass` are Ansible's own documented inventory variables rather than a guess —
+    # they sit in inventory files and playbooks in the open. `db_pass` and `mysql_pass` are the
+    # everyday short spelling in shell scripts and `.cnf` files. All four leaked in full.
+    #
+    # Under the separator rule, not bare, and for a sharper reason than `key` and `token` have:
+    # `pass` is a Python KEYWORD that appears on its own line in most files in this repository.
+    # A leading component is what separates a credential from the statement — `ansible_ssh_pass`
+    # from `    pass` — and it costs nothing on the secret side, because every real spelling of
+    # this one carries a prefix (R1 agent 2).
+    r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]pass(?:words?)?(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
     r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Secret|Token|Credential)s?)(?![A-Za-z])"
@@ -1790,7 +1801,20 @@ _COLUMN_DELIMS = (",", ";", "\t", "|")
 # and the suite asserts every one of them is actually matched — so the next gap is a failing check
 # rather than a silent miss.
 _HEADER_BARE = (
+    # 🐛 [2026-09-09] `pass` was missing here as well as from `SECRET_WORDS`, so a CSV or table
+    # with an `ssh_pass` column printed its values into the transcript — the same gap in the
+    # header list as in the assignment list, found in the same round. Written with the separator,
+    # matching how the assignment rule treats it and for the same reason: a bare `pass` column is
+    # more often a test result than a credential (R1 agent 2).
+    #
+    # The known cost, chosen rather than overlooked: a column genuinely called `first_pass` has its
+    # values hidden. This list already redacts a whole column called `key` on the same reasoning,
+    # and `[A-Za-z0-9]+[_ -]pass` is strictly narrower than that — the header path deliberately
+    # judges the COLUMN NAME and not the values under it, because the name is the only thing that
+    # says what they are. A hidden test result costs a reader one glance at the file; a printed
+    # `ansible_ssh_pass` column cannot be taken back.
     r"password|passwd|pwd|passphrase|secret|token|api[_ -]?key|apikey|key|auth"
+    r"|[A-Za-z0-9]+[_ -]pass"
     # Spanish, Portuguese, French, German, Italian, Dutch, Polish, Turkish, Vietnamese, Indonesian
     r"|contrase[ñn]a|clave|senha|palavra[_ -]?passe|mot[_ -]?de[_ -]?passe|motdepasse"
     r"|kennwort|passwort|geheimnis|parola|segreto|wachtwoord|geheim"
