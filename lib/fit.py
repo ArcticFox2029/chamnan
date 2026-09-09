@@ -39,8 +39,28 @@ CEILING = 9000
 # already gone. Ranked by what the loss actually costs: how big the section is, and whether the
 # reader can get it back from a file the block still names.
 DROP_ORDER = [
-    "This repo's own tools — prefer these over writing a new script",
+    # \U0001f41b [2026-09-10] Tools sat at position 0 — dropped FIRST, delivered on 18% of real
+    # firings — and it is the section that exists to stop somebody rewriting a script that already
+    # exists. On the night this moved, three near-identical scratch scripts were written that were
+    # already registered tools; chamnan's own repeat detector fired on each and the section that
+    # would have named them was cut every time. One of the three, `archive_report.py`, writes the
+    # marker without which an archived report becomes uncitable, and four reports went in without it.
+    #
+    # The evidence genuinely split, which is why this was not decided on that story alone. R7 agent 3
+    # measured, over 2,226 recorded commands, that when this section DID arrive it corresponded to no
+    # shift in which tool a session reached for — a real measurement against moving it. What changed
+    # is its premise: it was taken when the index held 15 of 58 tools, so even a delivered section
+    # listed mostly the wrong things. All 58 are registered now.
+    #
+    # Put independently to two other models with both sides stated; both answered move it, both
+    # because the old measurement's premise is obsolete. Three of three with this session's own read.
+    #
+    # ONE swap rather than a re-rank, so the effect is measurable against the delivery figures
+    # already on file. Milestones takes position 0: two dated one-line entries, and nothing in the
+    # archive measures a session acting on one. The same judgement `rules_char_budget` reached an
+    # hour earlier, where milestones also lost.
     "Recent milestones",
+    "This repo's own tools — prefer these over writing a new script",
     "Recorded procedures",
     "Recorded decisions and lessons",
     "Where the last session stopped",

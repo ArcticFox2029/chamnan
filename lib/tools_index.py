@@ -274,6 +274,56 @@ def match_call(root, command):
     return None
 
 
+# Only words that carry no subject. An earlier version also dropped `runs`, `lines`, `file`,
+# `check` and `test` as "generic", and those are exactly the words a tool in THIS workspace is
+# about — it stopped matching `duplicate_runs.py` against a description of finding duplicated runs
+# of lines. A stopword list tuned for English prose is the wrong list for a directory of small
+# tools; what is generic here is grammar, not vocabulary.
+_STOPWORDS = frozenset("""
+    the a an and or of to in for on with is are was were be been it its this that these those
+    from by at as not no if then than so such into over under out up down
+    python3 python sys os json pathlib import def return true false none null
+""".split())
+
+
+def _meaningful(text):
+    """The words in `text` that could identify what a script is FOR."""
+    import re as _re
+    words = _re.findall(r"[a-z][a-z0-9_-]{2,}", (text or "").lower())
+    return {w for w in words if w not in _STOPWORDS}
+
+
+def likely_already_done(root, text, floor=3):
+    """A registered tool that looks like it already does what `text` describes, or None.
+
+    \U0001f41b [2026-09-10] The repeat detector fires on the third near-identical scratch script
+    and says "save yours and promote it". It never asked the question that would have helped:
+    *does one of these already exist?* On the night this was written it fired three times and the
+    answer was yes all three times — one of them `archive_report.py`, whose job the operator was
+    doing by hand, badly enough to leave four reports uncitable.
+
+    `match_call` above answers a different question — which registered tool a command INVOKES — by
+    literal path substring. That cannot see a script somebody is about to write instead.
+
+    Conservative on purpose, and in the same direction `match_call`'s own docstring argues for: a
+    false negative costs one missed nudge, a false positive sends somebody to read the wrong tool
+    and teaches them to ignore the line. So it needs `floor` distinctive words in common, it takes
+    the single best match rather than a list, and the caller phrases it as a question.
+    """
+    want = _meaningful(text)
+    if len(want) < floor:
+        return None
+    best, best_score = None, 0
+    for e in load(root):
+        have = _meaningful(f"{e.get('name', '')} {e.get('desc', '')}")
+        score = len(want & have)
+        if score > best_score:
+            best, best_score = e, score
+    if best is None or best_score < floor:
+        return None
+    return best.get("name"), best.get("desc", "")
+
+
 def record_call(root, name, interrupted=False, stderr_nonempty=False):
     """Increment `runs`, and `interrupted`/`stderr_seen` when the call showed that signal, for the
     entry named `name`. Returns (entry, just_flagged) -- `just_flagged` is True exactly once, on

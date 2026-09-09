@@ -741,10 +741,30 @@ def main():
     # noise the user learns to scroll past. Outside the lock: `say()` only writes to stdout.
     if len(matches) + 1 == REPEAT_AT:
         first = matches[0].get("at", "")[:10]
-        say(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "
-              f"If it is worth keeping, save it and run: "
-              f"chamnan-promote <file> <name> --desc \"what it checks\" — "
-              f"then it is one command next time instead of writing it again.")
+        # \U0001f41b [2026-09-10] This said "save yours and promote it" and never asked the question
+        # that would have helped: does one of these already exist? It fired three times in one night
+        # and the answer was yes all three times — one of them `archive_report.py`, whose job was
+        # being done by hand badly enough to leave four archived reports uncitable. The tools index
+        # was right there and nothing consulted it.
+        _already = None
+        try:
+            import tools_index as _ti
+            _already = _ti.likely_already_done(root, _head)
+        except Exception:                              # noqa: BLE001 -- never fail a tool call
+            _already = None
+        if _already:
+            _name, _desc = _already
+            # Phrased as a question, not an assertion. The match is a word overlap and it can be
+            # wrong; sending somebody to read the wrong tool is how this line gets ignored.
+            say(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "
+                f"`{_name}` may already do it — {_desc} "
+                f"Run `.chamnan/tools/{_name}` and see, before writing this one.")
+        else:
+            say(f"chamnan: that is the {REPEAT_AT}rd near-identical scratch script since {first}. "
+                f"Nothing registered in `.chamnan/tools/index.json` looks like it. "
+                f"If it is worth keeping, save it and run: "
+                f"chamnan-promote <file> <name> --desc \"what it checks\" — "
+                f"then it is one command next time instead of writing it again.")
     return 0
 
 

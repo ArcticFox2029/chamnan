@@ -27327,6 +27327,62 @@ try:
           _resolved.name == _old_name, saw=f"resolved to {_resolved.name}, legacy is {_old_name}")
 finally:
     shutil.rmtree(_t_legacy, ignore_errors=True)
+# ---- 38_the_repeat_detector_names_the_tool_that_exists.py
+# ------------------------------------------- "save yours" when one was already there
+# 🐛 [2026-09-10] The repeat detector fires on the third near-identical scratch script and said
+# "save yours and promote it". It never asked the question that would have helped: does one of these
+# already exist? It fired three times in one night and the answer was yes all three times — one of
+# them `archive_report.py`, whose job was being done by hand badly enough to leave four archived
+# reports uncitable. The tools index was right there and nothing consulted it.
+#
+# `match_call` answers a different question — which registered tool a command INVOKES — by literal
+# path substring, so it cannot see a script somebody is about to write instead (R7 agent 2,
+# findings 1 and 2, reached from the other end).
+_t_root38 = ROOT.parent.parent
+
+# It has to FIND the obvious ones. These are real registered tools and real descriptions of what
+# they do, phrased the way somebody would describe the script they were about to write.
+_t_should_find = [
+    ("move a finished research report into old and record the filing marker", "archive_report"),
+    ("find duplicated runs of lines in a file to catch a folded check pasted twice", "duplicate_runs"),
+]
+_t_missed38 = []
+for _t_text, _t_want in _t_should_find:
+    _t_got = tools_index.likely_already_done(_t_root38, _t_text)
+    if not _t_got or _t_want not in _t_got[0]:
+        _t_missed38.append(f"{_t_text[:46]}… -> {_t_got[0] if _t_got else None}, wanted {_t_want}")
+check("the repeat detector can name a registered tool that already does the job",
+      not _t_missed38, saw="\n".join(_t_missed38) or None)
+
+# Naming the WRONG tool is worse than naming none — it sends somebody to read something unrelated
+# and teaches them to ignore the line. `match_call`'s own docstring argues for that direction and
+# this follows it: unrelated work must return nothing at all.
+_t_false38 = []
+for _t_text in ("compute the fibonacci sequence and draw a mandelbrot set in colour",
+                "reverse a linked list and balance a red black tree",
+                "render a christmas tree in ascii art with blinking lights",
+                "solve a sudoku grid by constraint propagation"):
+    _t_got = tools_index.likely_already_done(_t_root38, _t_text)
+    if _t_got:
+        _t_false38.append(f"{_t_text[:44]}… -> {_t_got[0]}")
+check("...and unrelated work is not matched to a tool at all",
+      not _t_false38, saw="\n".join(_t_false38) or None)
+
+# Too little to go on is not a match. A one-word script description cannot identify anything, and
+# guessing from it is how the false positives above would start.
+_t_thin = [_t for _t in ("", "x", "run it", "check", "python3 -c")
+           if tools_index.likely_already_done(_t_root38, _t)]
+check("...and a description too thin to identify anything returns nothing",
+      not _t_thin, saw=", ".join(repr(t) for t in _t_thin) or None)
+
+# The hook has to actually consult it, and has to survive it failing — a nudge that crashes a
+# PostToolUse hook costs the session every later tool call.
+_t_watch38 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8-sig",
+                                                                    errors="replace")
+check("the hook consults the index before telling anyone to write another script",
+      "likely_already_done" in _t_watch38, saw=None)
+check("...and it degrades to the old message rather than failing the tool call",
+      "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
 # ============================ end of the folded surgical pool
 
 
