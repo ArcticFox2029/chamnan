@@ -139,7 +139,15 @@
 body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
      font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased}
 .wrap{max-width:60rem;margin:0 auto;padding:0 1.5rem}
-.measure{max-width:38rem}
+/* 38rem is a reading measure, and it used to cap the CONTAINER -- so it applied to the hero, the
+   input row, the three result cards and a fourteen-row table as well as to the prose. On a desktop
+   window the whole page then sat in a 608px column with the h1 broken over four lines and only two
+   of the three cards fitting a row: a phone layout stretched down the middle of a wide screen.
+   The cap belongs on the running text, not on everything the section holds. */
+.measure{max-width:60rem}
+.measure > p, .measure .lede, .measure .steps, .measure .prose, .measure .kept,
+.measure .ledgerWhy, .measure .note, footer .measure p{max-width:38rem}
+.measure h1{max-width:44rem}
 h1,h2,h3{font-family:var(--mono);font-weight:600;line-height:1.25;text-wrap:balance;margin:0}
 a{color:var(--accent)}
 code,.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -214,11 +222,26 @@ td.n{font-family:var(--mono);font-variant-numeric:tabular-nums}
 .prose li{margin:.4rem 0}
 .prose strong{color:var(--ink);font-weight:600}
 .limits{background:var(--warn-soft);border:1px solid var(--rule);border-left:3px solid var(--warn);
-  border-radius:0 6px 6px 0;padding:1.1rem 1.3rem}
+  border-radius:0 6px 6px 0;padding:1.1rem 1.3rem;max-width:52rem}
 .limits h2{color:var(--ink);font-size:1rem;margin-bottom:.5rem}
+/* The ledger. Two columns rather than one list, because the question a reader arrives with is
+   not "what are the features" but "which of them am I looking at a number for right now". */
+.ledger{display:grid;grid-template-columns:repeat(auto-fit,minmax(15rem,1fr));gap:.9rem 1.6rem;
+        margin:.9rem 0 1rem}
+.ledger h3{font-size:.82rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+           font-weight:600;margin:0 0 .45rem}
+.ledger ul{list-style:none;margin:0;padding:0}
+.ledger li{display:flex;gap:.5rem;align-items:baseline;margin:.25rem 0;font-size:.92rem;
+           color:var(--muted)}
+.ledger li b{font-weight:400;color:var(--ink)}
+.ledger .mark{flex:none;width:1rem;font-variant-numeric:tabular-nums}
+.ledger .yes .mark{color:var(--accent)}
+.ledger .yes b{color:var(--ink)}
+.ledger .no b{color:var(--muted)}
+.ledgerWhy{color:var(--muted);font-size:.9rem;margin:0 0 .9rem}
 .kept{margin:0 0 .8rem;color:var(--ink);font-size:.92rem}
 .cmd{background:var(--sunk);border:1px solid var(--rule);border-radius:6px;padding:.9rem 1.1rem;
-  overflow-x:auto;font-size:.85rem;line-height:1.55;margin:1.2rem 0}
+  overflow-x:auto;font-size:.85rem;line-height:1.55;margin:1.2rem 0;max-width:46rem}
 .cmd code{font-family:var(--mono);color:var(--ink);white-space:pre}
 section.get{background:var(--accent-soft);border-bottom:1px solid var(--rule)}
 .big-link{font-family:var(--mono);font-size:.92rem;font-weight:500;display:inline-block;
@@ -303,8 +326,8 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
     <h2 data-i18n="h2pre">Measured here already</h2>
     <p class="lede" data-i18n-html="ledePre">Fourteen repositories across eight languages, every one measured through
       this page in a real browser. The pattern is the point, not any single ratio: <strong>the source
-      grows nearly seventy-fold down this table and the injected block stays between 6.2 and
-      6.7 KB.</strong> That is a bound, not compression.</p>
+      grows nearly seventy-fold down this table and the injected block holds between 6.2 and
+      6.7 KB for every repository but the smallest.</strong> That is a bound, not compression.</p>
     <div class="scroll">
       <table>
         <thead><tr><th data-i18n="thRepo">repository</th><th data-i18n="thLang">language</th><th data-i18n="thSrc">source</th><th data-i18n="thInj">injected</th><th data-i18n="thRatio">ratio</th></tr></thead>
@@ -322,7 +345,7 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
 <section class="get">
   <div class="wrap measure prose">
     <h2 data-i18n="getTitle">Liked the numbers? Install it</h2>
-    <p data-i18n="getBody">Two commands, then one slash command in a repository you work in.</p>
+    <p data-i18n-html="getBody">Two commands, then one slash command inside a repository you actually work in. It is a Claude Code plugin, Python standard library only, and everything it writes stays in <code>.chamnan/</code> inside your repository.</p>
     <pre class="cmd"><code>claude plugin marketplace add ArcticFox2029/chamnan
 claude plugin install chamnan@chamnan</code></pre>
     <p class="note">…then <code>/chamnan:bootstrap</code> once, inside the repository.</p>
@@ -347,6 +370,28 @@ python3 /path/to/chamnan/bin/chamnan-map</code></pre>
     <div class="limits">
       <h2 data-i18n="h2limits">What this page cannot show you</h2>
       <p class="kept" data-i18n="nothingKept">Nothing is stored.</p>
+      <div class="ledger">
+        <div>
+          <h3 data-i18n="ledgerNow">Measured on this page</h3>
+          <ul>
+          <li class="yes"><span class="mark">&#10003;</span><b data-i18n="capMap">Repository map</b></li>
+          <li class="yes"><span class="mark">&#10003;</span><b data-i18n="capCtx">SessionStart context size</b></li>
+          <li class="yes"><span class="mark">&#10003;</span><b data-i18n="capRedact">Redaction</b></li>
+          </ul>
+        </div>
+        <div>
+          <h3 data-i18n="ledgerLater">Only after it is installed and used</h3>
+          <ul>
+          <li class="no"><span class="mark">&#9675;</span><b data-i18n="capContinuity">Work that survives a compaction</b></li>
+          <li class="no"><span class="mark">&#9675;</span><b data-i18n="capSessions">Session handoffs</b></li>
+          <li class="no"><span class="mark">&#9675;</span><b data-i18n="capRules">Rules</b></li>
+          <li class="no"><span class="mark">&#9675;</span><b data-i18n="capSkills">Skills</b></li>
+          <li class="no"><span class="mark">&#9675;</span><b data-i18n="capTools">Reusable tools</b></li>
+          <li class="no"><span class="mark">&#9675;</span><b data-i18n="capDecisions">Decisions and lessons</b></li>
+          </ul>
+        </div>
+      </div>
+      <p class="ledgerWhy" data-i18n="ledgerWhy">Nothing in the second list is missing or broken. Those six accumulate from real work in a repository, and a one-shot measurement from a browser cannot produce them.</p>
       <div class="prose">
         <ul>
           <li data-i18n-html="lim1Full"><strong>Skills, session handoffs and recorded decisions need installing and using.</strong>
@@ -436,6 +481,18 @@ const T = {
     ledePre: "Fourteen repositories across eight languages, every one measured through this page in a real browser. The pattern is the point, not any single ratio: <strong>the source grows nearly seventy-fold down this table and the injected block holds between 6.2 and 6.7 KB for every repository but the smallest.</strong> That is a bound, not compression.",
     thRepo: "repository", thLang: "language", thSrc: "source", thInj: "injected", thRatio: "ratio",
     notePre: "Source is the bytes of indexable files fetched. Injected is what the SessionStart hook writes into the agent's context, after the index is rolled up to its token budget — not the on-disk MAP.md, which is larger and is meant to be grepped, never read whole.",
+    ledgerNow: "Measured on this page",
+    ledgerLater: "Only after it is installed and used",
+    capMap: "Repository map",
+    capCtx: "SessionStart context size",
+    capRedact: "Redaction",
+    capContinuity: "Work that survives a compaction",
+    capSessions: "Session handoffs",
+    capRules: "Rules",
+    capSkills: "Skills",
+    capTools: "Reusable tools",
+    capDecisions: "Decisions and lessons",
+    ledgerWhy: "Nothing in the second list is missing or broken. Those six accumulate from real work in a repository, and a one-shot measurement from a browser cannot produce them.",
     h2limits: "What this page cannot show you",
     lim1s: "Skills, session handoffs and recorded decisions need installing and using.",
     lim1: "Their value comes from a week of real work accumulating in a repository. A one-shot measurement cannot produce that, and this page does not pretend to.",
@@ -517,6 +574,18 @@ const T = {
     ledePre: "14 repository จาก 8 ภาษา ทุกอันวัดผ่านหน้านี้ในเบราว์เซอร์จริง สิ่งสำคัญคือรูปแบบ ไม่ใช่ตัวเลขอันใดอันหนึ่ง: <strong>ซอร์สโตขึ้นเกือบเจ็ดสิบเท่าเมื่อไล่ลงมาตามตาราง แต่ block ที่ใส่เข้าไปอยู่ระหว่าง 6.2 ถึง 6.7 KB ตลอด ยกเว้น repository ที่เล็กที่สุด</strong> นั่นคือการมีขอบเขต ไม่ใช่การบีบอัด",
     thRepo: "repository", thLang: "ภาษา", thSrc: "ซอร์ส", thInj: "ที่ใส่เข้าไป", thRatio: "อัตราส่วน",
     notePre: "ซอร์สคือจำนวนไบต์ของไฟล์ที่ index ได้ ส่วน \"ที่ใส่เข้าไป\" คือสิ่งที่ SessionStart hook เขียนลง context ของ agent หลังจากย่อ index ให้พอดี token budget แล้ว — ไม่ใช่ MAP.md บนดิสก์ ซึ่งใหญ่กว่าและมีไว้ให้ grep ไม่ใช่ให้อ่านทั้งไฟล์",
+    ledgerNow: "หน้านี้วัดให้ดูได้เลย",
+    ledgerLater: "ต้องติดตั้งและใช้งานจริงก่อนจึงจะมี",
+    capMap: "แผนที่โครงสร้างของ repo",
+    capCtx: "ขนาดบริบทตอนเปิดเซสชัน",
+    capRedact: "การกลบข้อมูลอ่อนไหว",
+    capContinuity: "งานที่รอดจากการบีบอัดบริบท",
+    capSessions: "การส่งต่อระหว่างเซสชัน",
+    capRules: "กฎของโปรเจกต์",
+    capSkills: "ทักษะที่บันทึกไว้",
+    capTools: "เครื่องมือที่ใช้ซ้ำได้",
+    capDecisions: "การตัดสินใจและบทเรียน",
+    ledgerWhy: "รายการชุดที่สองไม่ได้หายหรือเสีย หกอย่างนั้นค่อยๆ สะสมจากการทำงานจริงใน repo การวัดครั้งเดียวจากเบราว์เซอร์สร้างมันขึ้นมาไม่ได้",
     h2limits: "สิ่งที่หน้านี้แสดงให้ดูไม่ได้",
     lim1s: "Skills, session handoff และ decision ที่บันทึกไว้ ต้องติดตั้งและใช้งานจริง",
     lim1: "คุณค่าของมันมาจากงานจริงที่สะสมใน repository เป็นสัปดาห์ การวัดครั้งเดียวสร้างสิ่งนั้นไม่ได้ และหน้านี้ไม่แกล้งทำเป็นว่าได้",
@@ -598,6 +667,18 @@ const T = {
     ledePre: "8 种语言的 14 个仓库，每一个都通过本页在真实浏览器中测量。重点是规律，而不是某个比值：<strong>沿着表格往下，源码增长了近七十倍，除最小的仓库外，注入的 block 始终在 6.2 到 6.7 KB 之间。</strong>这是上界，不是压缩。",
     thRepo: "仓库", thLang: "语言", thSrc: "源码", thInj: "注入", thRatio: "比值",
     notePre: "源码是所抓取的可索引文件的字节数。注入指的是 SessionStart hook 在把索引压缩到 token 预算之后，写入 agent context 的内容——不是磁盘上的 MAP.md，那个更大，是用来 grep 的，不是通读的。",
+    ledgerNow: "本页现在就能测量",
+    ledgerLater: "安装并实际使用后才会出现",
+    capMap: "仓库结构索引",
+    capCtx: "会话开始时的上下文体积",
+    capRedact: "敏感信息遮蔽",
+    capContinuity: "跨上下文压缩留存的工作",
+    capSessions: "会话交接",
+    capRules: "项目规则",
+    capSkills: "已记录的技能",
+    capTools: "可复用工具",
+    capDecisions: "决策与经验",
+    ledgerWhy: "第二组并非缺失或出错。那六项来自真实工作的日积月累，浏览器里的一次性测量无法生成。",
     h2limits: "这个页面无法向你展示的",
     lim1s: "Skills、会话交接和已记录的决策，需要安装并实际使用。",
     lim1: "它们的价值来自一周真实工作在仓库中的积累。一次性测量做不到这一点，本页也不假装做得到。",
@@ -679,6 +760,18 @@ const T = {
     ledePre: "8 言語 14 リポジトリを、すべてこのページ経由で実際のブラウザ上で計測しました。重要なのは個々の比率ではなく傾向です：<strong>表を下に辿るとソースは約 70 倍に増えるのに、最小のリポジトリを除き、注入される block は 6.2〜6.7 KB のままです。</strong>これは圧縮ではなく上限です。",
     thRepo: "リポジトリ", thLang: "言語", thSrc: "ソース", thInj: "注入", thRatio: "比",
     notePre: "ソースは取得した索引可能ファイルのバイト数です。注入とは、索引を token 予算まで畳んだ後に SessionStart hook が agent の context に書き込む内容であり、ディスク上の MAP.md ではありません。あちらはもっと大きく、grep するためのもので、通読するものではありません。",
+    ledgerNow: "このページで測れるもの",
+    ledgerLater: "導入して使い込んで初めて現れるもの",
+    capMap: "リポジトリ構造の索引",
+    capCtx: "セッション開始時のコンテキスト量",
+    capRedact: "秘匿情報のマスキング",
+    capContinuity: "コンテキスト圧縮を越えて残る作業",
+    capSessions: "セッション間の引き継ぎ",
+    capRules: "プロジェクトのルール",
+    capSkills: "記録された手順",
+    capTools: "再利用できるツール",
+    capDecisions: "判断と学び",
+    ledgerWhy: "二つ目のリストが欠けているわけでも壊れているわけでもありません。この六つは実際の作業の積み重ねから生まれるもので、ブラウザでの一度の計測では作れません。",
     h2limits: "このページでは示せないこと",
     lim1s: "Skills、セッション引き継ぎ、記録された決定は、インストールして使う必要があります。",
     lim1: "その価値は、一週間の実作業がリポジトリに積み重なることから生まれます。一度きりの計測では作り出せませんし、このページもできるふりはしません。",
@@ -760,6 +853,18 @@ const T = {
     ledePre: "Catorce repositorios en ocho lenguajes, todos medidos a través de esta página en un navegador real. Lo importante es el patrón, no una proporción concreta: <strong>el código fuente crece casi setenta veces al bajar por la tabla y el bloque inyectado se mantiene entre 6,2 y 6,7 KB en todos los repositorios salvo el más pequeño.</strong> Eso es una cota, no compresión.",
     thRepo: "repositorio", thLang: "lenguaje", thSrc: "fuente", thInj: "inyectado", thRatio: "proporción",
     notePre: "«Fuente» son los bytes de los archivos indexables descargados. «Inyectado» es lo que el hook de SessionStart escribe en el contexto del agente, después de plegar el índice a su presupuesto de tokens; no es el MAP.md en disco, que es mayor y está pensado para hacerle grep, nunca para leerlo entero.",
+    ledgerNow: "Lo que esta página sí mide",
+    ledgerLater: "Solo aparece tras instalarlo y usarlo",
+    capMap: "Índice del repositorio",
+    capCtx: "Tamaño del contexto al iniciar sesión",
+    capRedact: "Ocultación de datos sensibles",
+    capContinuity: "Trabajo que sobrevive a una compactación",
+    capSessions: "Relevo entre sesiones",
+    capRules: "Reglas del proyecto",
+    capSkills: "Procedimientos registrados",
+    capTools: "Herramientas reutilizables",
+    capDecisions: "Decisiones y lecciones",
+    ledgerWhy: "Nada de la segunda lista falta ni está roto: esas seis se acumulan con trabajo real en un repositorio y una medición única desde el navegador no puede producirlas.",
     h2limits: "Lo que esta página no puede enseñarte",
     lim1s: "Los skills, los traspasos de sesión y las decisiones registradas hay que instalarlos y usarlos.",
     lim1: "Su valor viene de una semana de trabajo real acumulándose en un repositorio. Una medición puntual no puede producir eso, y esta página no finge lo contrario.",

@@ -73,7 +73,8 @@ the identifiers this repository's sessions actually searched for are answerable 
 > Paste any public GitHub repository. It runs chamnan's real modules in your browser through
 > Pyodide and reports what would be injected per session, what the redactor would hide, and a
 > 50-turn simulation over that repository's own files. Nothing is uploaded, there is no server, and
-> the source it downloads is deleted the moment the numbers exist. Five languages.
+> the source it downloads is deleted the moment the numbers exist. The page itself reads in five
+> languages: English, Thai, Chinese, Japanese and Spanish.
 >
 > Measured through it already: 24:1 on chalk, 63:1 on requests, 470:1 on the Linux kernel — and the
 > point is not any single ratio but that the injected block stays near 6.5 KB across all of them.
