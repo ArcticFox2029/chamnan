@@ -28,6 +28,7 @@ import re
 import subprocess
 
 import mdblock
+import state
 import redact
 import workspace as ws  # noqa: E402
 
@@ -422,12 +423,15 @@ def open_titles(root, count=INJECT_OPEN):
         # session actually reads. Only the entry titles carry it, and this section prints the
         # THREAD title, so without this the warning existed and nobody ever saw it.
         suspect = any("\u26a0" in note for _d, note, _f in found)
-        rows.append((last, path, len(found), suspect))
+        rows.append((last, path, len(found), suspect, state.pinned(text)))
     if not rows:
         return ""
-    rows.sort(key=lambda r: r[0], reverse=True)
+    # A pinned thread outranks last-activity date, on the same reasoning as the three stores
+    # beside it: a long-running thread nobody has touched this week is precisely the one an owner
+    # pins, and it was the first thing the recency sort dropped.
+    rows.sort(key=lambda r: (r[4], r[0]), reverse=True)
     lines = []
-    for last, path, n, suspect in rows[:count]:
+    for last, path, n, suspect, _pin in rows[:count]:
         when = f", last {last}" if last else ""
         if suspect:
             when += (" ⚠ an entry in this thread has no blank line above its heading, which is not "

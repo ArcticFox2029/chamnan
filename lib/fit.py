@@ -188,7 +188,7 @@ def _oversize_note():
             "the host's limit. Shorten a 📌 heading, or raise `output_byte_ceiling`._\n")
 
 
-def shrink(header, parts, ceiling=CEILING, sources=None):
+def shrink(header, parts, ceiling=CEILING, sources=None, absent=()):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
     `sources` maps a section title to the file it was read from; the hook already records exactly
@@ -196,18 +196,29 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
 
     `dropped` is a list of (title, source) for what was removed, so the caller can say so out loud
     instead of leaving the reader to trust a block that is quietly missing its middle.
+
+    `absent` is the other half of that promise, and it was missing. A section the CALLER decided
+    not to build never reaches this function, so it can be neither dropped nor reported here -- and
+    the caller's own comment, "the drop notice says the same in a line", was false for exactly that
+    path. Measured on this repository's `logs/block_shape.jsonl`: of 61 real startup firings in one
+    day, 26 delivered the Architecture index, 1 named it in the notice, and 34 showed it in NEITHER
+    -- the largest section in the block, gone with no trace anywhere, at 8,632-8,938 bytes against a
+    9,000 ceiling, so nothing here had any reason to drop it (R7 agent 7, new finding 1). Titles
+    passed in here are reported exactly as a drop is, and are counted in the size, because the
+    notice line they add is bytes the block has to pay for like any other.
     """
+    absent = [(t, (sources or {}).get(t, "")) if isinstance(t, str) else tuple(t) for t in absent]
     _oversize.clear()      # per call, not per process
     order = list(parts)          # the untouched originals, to trim from after the drops
     parts = list(parts)
     dropped = []
     if ceiling <= 0:
-        return header + "".join(parts), dropped
+        return header + "".join(parts), absent + dropped
 
     # The notice is part of what gets emitted, so it has to be inside the measurement. Sizing the
     # body without it is how a block lands three lines over the limit and is truncated anyway.
     def size():
-        return len((header + "".join(parts) + notice(dropped, ceiling) + _oversize_note()).encode())
+        return len((header + "".join(parts) + notice(absent + dropped, ceiling) + _oversize_note()).encode())
 
     droppable = sorted(
         ((_rank(p), i) for i, p in enumerate(parts) if _rank(p) is not None),
@@ -236,7 +247,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     # bytes. So if there is real room left, the best thing that was dropped comes back trimmed.
     # Half a session handoff beats none of one, and the room was going to be wasted either way.
     if dropped:
-        used = len((header + "".join(parts) + notice(dropped, ceiling) + _oversize_note()).encode())
+        used = len((header + "".join(parts) + notice(absent + dropped, ceiling) + _oversize_note()).encode())
         room = ceiling - used
         # Reversed: droppable is ordered cheapest-first for dropping, so the most valuable thing
         # that was dropped is at the END of it. Walking it forwards brings back the least valuable
@@ -302,7 +313,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                 # take is real — measured on this repository, 5,308 of 9,000 bytes sat unused with
                 # five sections still dropped. Recompute and keep going; the loop is already
                 # ordered most-valuable-first, so it fills with the best of what is left.
-                used = len((header + "".join(parts) + notice(dropped, ceiling) + _oversize_note()).encode())
+                used = len((header + "".join(parts) + notice(absent + dropped, ceiling) + _oversize_note()).encode())
                 room = ceiling - used
                 if room <= 0:
                     break
@@ -315,7 +326,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
     if dropped and any("pinned sections alone are" in part for part in parts):
         cause = ("Pinned sections in `.chamnan/STATE.md` are taking the budget — unpin one to get "
                  "these back.")
-    body = header + "".join(parts) + notice(dropped, ceiling, cause)
+    body = header + "".join(parts) + notice(absent + dropped, ceiling, cause)
     if _oversize:
         body += _oversize_note()
     # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
@@ -343,7 +354,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None):
                  f"undroppable: lower `state_token_budget` in .chamnan/config.json, unpin a 📌 "
                  f"section in `.chamnan/STATE.md`, or raise `output_byte_ceiling` if your host "
                  f"allows more._\n")
-    return body, dropped
+    return body, absent + dropped
 
 
 def _trim(part, room, sources):
@@ -403,7 +414,47 @@ def _only_the_opening_block(full, kept):
     blocks = _blocks(full)
     if len(blocks) < 2:
         return False
-    return _is_subsequence(kept, blocks[0])
+    if _is_subsequence(kept, blocks[0]):
+        return True
+    # 🐛 [2026-09-09] The subsequence test above is exact, and it is exactly one shape. A cut
+    # landing a few lines PAST block 0 -- far enough to carry the second block's heading and the
+    # italic line under it, not far enough to carry one of its rows -- is not a subsequence of block
+    # 0, so it was accepted and shipped. Reproduced by setting `CHAMNAN_CONTEXT_PROFILE` to a name
+    # that does not exist: the warning that says so is ~190 bytes, the budgets it resolves to are
+    # identical to the default, and that alone moved the delivered Architecture index from 1,378
+    # bytes / 7 directory rows to 1,136 bytes / ZERO rows -- under a heading reading "## Quick
+    # Index" and a line describing rows that were not there (R7 agent 7, new finding 2). A typo in
+    # a config key the reader is invited to set cost them the section the warning was about.
+    #
+    # So the question is asked about content rather than about position: when the body has rows at
+    # all, a fragment carrying none of them is framing, and `notice()` already says "this section
+    # was cut" in a tenth of the bytes. A body that is genuinely prose has no rows to lose and
+    # falls through to the subsequence test unchanged, which is what keeps the withdrawn threshold
+    # from coming back in another form: the 1,600-byte cut this guard must NOT refuse is the first
+    # room where real directory rows arrive, and it keeps them.
+    return bool(_rows(full)) and not _rows(kept)
+
+
+_ROW = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+
+
+def _rows(lines):
+    """The list items in `lines` -- what these sections are actually made of.
+
+    Every section the block injects is a list under a heading: files, rules, tools, milestones,
+    threads. The heading and the sentence under it describe the list; the list is the content. A
+    fenced example is not counted, on the same reasoning as `_blocks`: a `- ` inside ``` is
+    somebody's sample output, not a row of ours.
+    """
+    out, in_fence = [], False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_fence = not in_fence
+            continue
+        if not in_fence and _ROW.match(line):
+            out.append(line)
+    return out
 
 
 def _is_subsequence(small, big):

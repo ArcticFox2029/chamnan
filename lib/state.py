@@ -82,6 +82,30 @@ def _heading_text(raw):
     return re.sub(r"[ \t]+#+[ \t]*$", "", raw).rstrip()
 
 
+# How far into an entry a pin has to appear to count. A pin is a heading decoration -- it belongs on
+# the title line or in the opening sentence -- and the stores that are not markdown-sectioned have
+# no heading structure to hang it off, so they look at the head of the text instead of parsing it.
+PIN_HEAD_CHARS = 400
+
+
+def pinned(text):
+    """True when the owner pinned this entry.
+
+    One predicate for every store that CUTS. `_sections` above answers the same question for
+    STATE.md, where a heading is the unit and `.endswith` is exact; everywhere else the unit is a
+    whole file or a whole entry, and the question is whether the pin is at the top of it.
+
+    This exists because the pin reached the stores one at a time. `state.py` has honoured 📌 since
+    it was written and `fit._fit_lines` reserves pinned blocks before it fills anything else; the
+    rules store got it on 2026-09-09; `memory.titles`, `milestones.recent_titles` and
+    `timeline.open_titles` -- three listings that cut by recency exactly as the rules store did --
+    did not, so an owner who pinned a decision, a milestone or a thread saw the mark ignored with
+    nothing to say it had been. The convention now lives in one place so the fifth store to be
+    written gets it by calling this rather than by remembering.
+    """
+    return PIN_MARK in (text or "")[:PIN_HEAD_CHARS]
+
+
 def _sections(text):
     """Every heading in `text`: its level, whether it is pinned, and the span from the heading line
     through the next heading of the SAME OR HIGHER level (i.e. its full section, subsections

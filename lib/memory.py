@@ -428,7 +428,7 @@ def rules_text(root):
             _read.append((path, path.read_text(encoding="utf-8-sig", errors="replace").strip()))
         except (OSError, UnicodeDecodeError):
             continue
-    _read.sort(key=lambda pb: (state.PIN_MARK not in pb[1][:400],
+    _read.sort(key=lambda pb: (not state.pinned(pb[1]),
                                -mtime_or_zero(pb[0]), pb[0].name))
     rule_paths = [path for path, _b in _read]
     collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
@@ -511,8 +511,16 @@ def rules_text(root):
                 # wanting the body of a title-only rule had one instruction: open the directory and
                 # find it, against ten abstract titles whose filenames need not resemble them.
                 # `path.name` was in scope the whole time; it just was not carried through (R5 agent2).
+                # \U0001f41b [2026-09-09] The title was repeated inside this sentence, and the
+                # rule's own heading is the line directly above it -- so every trimmed rule paid
+                # for its title twice, in the section measured as spending 73% of its bytes on
+                # navigation text and 20% of the WHOLE block on that alone (R7 agent 3, findings 7
+                # and 9). The filename is the part the reader does not already have; the title is
+                # the part they are looking at. Nothing is lost by cutting the half that is on
+                # screen, and the sentence is unambiguous because it sits inside the rule it
+                # belongs to.
                 trimmed.append(_cut_clean(body, share) +
-                               f"\n\n_…the rest of **{mdblock.one_line(title)}** is in "
+                               f"\n\n_…the rest is in "
                                f"`.chamnan/memory/rules/{mdblock.as_quoted(fname)}`._")
         joined = "\n\n".join(trimmed)
         if len(joined) <= cap:
@@ -638,12 +646,20 @@ def titles(root):
         # wrote.
         collided = {q for g in case_collisions(paths) for q in g}
         for path in paths:
-            title = title_of(path)
+            # Read once and hand the text to `title_of`, which otherwise opens the file again --
+            # the same second read `rules_text` was measured doing, and the pin below needs the
+            # body anyway. A file that cannot be read yields "", which `title_of` turns into the
+            # de-slugged filename exactly as its own OSError branch does.
+            try:
+                body = path.read_text(encoding="utf-8-sig", errors="replace")
+            except (OSError, UnicodeDecodeError):
+                body = ""
+            title = title_of(path, body)
             if path in collided:
                 title = ("⚠ " + title + " — this filename collides with another in the same store, "
                          "differing only by case or Unicode form; one of the two files may hold the "
                          "other's body. Read them before trusting either.")
-            found.append((category, title, path.name, _written_at(path)))
+            found.append((category, title, path.name, _written_at(path), state.pinned(body)))
     # 🐛 [2026-09-08] The cap below chose which entries a session sees BY FILENAME ALPHABET, so a
     # lesson written today lost its slot to one written months ago whose title happens to start with
     # an earlier letter. Reproduced on this repository's own store: two entries committed that day
@@ -660,8 +676,15 @@ def titles(root):
     # the checkout time -- and that case falls back exactly to the previous behaviour, because the
     # filename is the tie-break. Where it is meaningful is a workspace somebody is actually writing
     # in, which is the only place the bug was ever felt.
-    found.sort(key=lambda row: (-row[3], row[0], row[2]))
-    return [(cat, title, name) for cat, title, name, _ in found]
+    #
+    # 🐛 [2026-09-09] And the pin is the same shape one more time. `rules_text` above honours
+    # 📌 and `state._sections` has honoured it since it was written, so an owner who marked a
+    # DECISION the same way watched it get cut by mtime with nothing to say the mark was ignored.
+    # Three listings cut by recency and only one read the mark; the predicate is `state.pinned` now,
+    # shared by all of them (R8 agent 1, finding 2 -- importance as a stored field that outranks
+    # recency; chamnan already had the field, in one store out of four).
+    found.sort(key=lambda row: (not row[4], -row[3], row[0], row[2]))
+    return [(cat, title, name) for cat, title, name, _w, _p in found]
 
 
 def _written_at(path):

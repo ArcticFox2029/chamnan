@@ -1181,6 +1181,12 @@ def main():
     # that starts with nothing, and the class of the exception does not change that. Whatever was
     # built before the failure is still emitted, with a line saying the rest could not be read —
     # a short block that says it is short beats a complete-looking absence.
+    # Sections this function decided not to build, or removed itself. `fit.shrink` can only report
+    # what IT dropped, so anything removed before it runs left no trace at all -- see its `absent`
+    # argument for the measurement. Declared OUTSIDE the try, because the handler below falls
+    # through to `fit.shrink` and a name bound inside a block that raised early would turn a
+    # readable "this block stopped early" into a NameError that costs the session its whole context.
+    _never_built = []
     try:
         index_slot = index_render = None
         # Warnings about the index FILE rather than about the index section. Collected here and
@@ -1374,6 +1380,16 @@ def main():
                 index_slot = len(out) if carries_an_index(_scrubbed) else None
                 if index_slot is not None:
                     out.append(section("Architecture index", _scrubbed, display(mp, root)))
+                else:
+                    # \U0001f41b [2026-09-09] This branch was `else: nothing`. The section was never
+                    # appended, so `fit.shrink` never saw it, so the drop notice could not name it
+                    # -- and every later resize loop and the drop-and-restore pass can only act on
+                    # a section that is in `out`. On 34 of 61 real startup firings in one day the
+                    # index was in neither the block nor the notice, with 62-368 bytes of the
+                    # ceiling still unused (R7 agent 7, new finding 1). The README says nothing is
+                    # silently dropped; for the largest section in the block, on the majority of
+                    # firings, it was not true.
+                    _never_built.append(("Architecture index", display(mp, root)))
                 # 🐛 [2026-09-06] The second clause repeated what the index's own header had
                 # already said, in every firing, on every repository. `mapper` has two header
                 # variants and BOTH open with the same instruction in more detail -- `_HOW_TO_READ`
@@ -1970,7 +1986,11 @@ def main():
                 _folded = redact.scrub(folded)
                 if not carries_an_index(_folded):
                     # Folding this far left no rows at all. Keeping the frame would spend the room
-                    # on an index that names nothing; the drop notice says the same in a line.
+                    # on an index that names nothing; the drop notice says the same in a line --
+                    # which it now does. It did not: `fit.shrink` reports what IT removed, and this
+                    # pop happens before shrink runs, so the section left the block with the comment
+                    # above describing a notice line nobody was writing.
+                    _never_built.append(("Architecture index", str(map_rel)))
                     out.pop(index_slot)
                     index_slot = None      # the slot no longer exists; nothing may index it again
                     break
@@ -2022,7 +2042,7 @@ def main():
     except Exception as _exc:
         out.append("\n_chamnan: this block stopped early — " + type(_exc).__name__
                    + ". What is above is complete; what is missing could not be read._\n")
-    body, dropped = fit.shrink(header, out, ceiling, sources)
+    body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
     # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page

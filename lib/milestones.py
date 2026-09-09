@@ -29,6 +29,7 @@ session.
 """
 import re
 import mdblock
+import state
 import workspace as ws  # noqa: E402
 
 FILENAME = "milestones.md"
@@ -129,7 +130,13 @@ def recent_titles(root, count=INJECT_RECENT):
     # backfilled `2026-01-05` entry appended today rendered above `2026-08-20`, under a hook comment
     # that says "newest first", and pushed the genuinely second-newest out of the list entirely.
     # An undated entry sorts last rather than being dropped: it still happened.
-    ordered = sorted(found, key=lambda e: (e[0] or "", ), reverse=True)
+    #
+    # A pinned milestone outranks every date. Same marker and same meaning as `state`, `memory` and
+    # `timeline`: the owner saying this one must not be cut. `count` is 2 here, so an unpinned
+    # milestone from last year is invisible by construction and a pin is the only way to keep one
+    # -- which is exactly when somebody reaches for it.
+    ordered = sorted(found, key=lambda e: (state.pinned(f"{e[1]}\n{e[2]}"), e[0] or ""),
+                     reverse=True)
     # `count=2` bounds how MANY milestones are shown and says nothing about how long each is: one
     # ordinary "what happened and why" title, written the way `/chamnan:milestone` invites, measured
     # 165 tokens on its own.
