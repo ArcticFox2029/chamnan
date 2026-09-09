@@ -335,6 +335,7 @@ def cut_outside_a_fence(text, cut):
     if cut >= len(text):
         return len(text)
     at, safe = 0, 0
+    boundaries = []                      # every safe stopping point, newest last
     for line, in_fence in fenced_lines(text):
         nxt = at + len(line) + 1
         if nxt > cut:
@@ -342,7 +343,50 @@ def cut_outside_a_fence(text, cut):
         at = nxt
         if not in_fence:
             safe = at
-    return safe if safe else cut
+            boundaries.append((safe, line))
+    # 🐛 [2026-09-09] A fence is not the only structure a line boundary can cut in half. Found on a
+    # real session handoff: a markdown table delivered as its header row and its `|---|---|` rule
+    # with ZERO data rows under it — a table that promises columns and fills none, which is worse
+    # than either delivering it or never starting it. Backing up past a table that lost all its
+    # data costs the header nobody could use anyway (R7 agent 1).
+    while boundaries and _starts_an_empty_table(boundaries):
+        boundaries.pop()
+        safe = boundaries[-1][0] if boundaries else 0
+        # Backing out of a table that begins the document leaves nothing, and nothing is the honest
+        # answer: a budget that reaches only a header has no room for the table, and half a header
+        # promising columns is what this whole guard exists to prevent. Callers already handle an
+        # empty body — `fit._trim` returns "" and says the section was dropped.
+        if not boundaries:
+            return 0
+    if safe:
+        return safe
+    # No complete line fits at all — the pre-existing fallback, which hands back the raw cut. That
+    # is right for prose (half a sentence still reads) and wrong for a table, where half a header
+    # row is a promise of columns with not even a header to show for it.
+    return 0 if _starts_an_empty_table([(cut, text[:cut])]) else cut
+
+
+def _starts_an_empty_table(boundaries):
+    """Do the lines kept end in a table with no data row under it?
+
+    A markdown table is a header, a `|---|` alignment rule, then rows. Two ways to keep a table
+    that says nothing: the header and the rule with no rows after, or the header alone with the cut
+    landing before even the rule. Both are the same defect and both back up.
+
+    A DATA row is a pipe line that is neither the first of the run nor made only of dashes, colons
+    and pipes. If the trailing run of pipe lines has none, the table is a promise with nothing
+    under it.
+    """
+    run = []
+    for _at, line in reversed(boundaries):
+        if line.lstrip().startswith("|"):
+            run.append(line)
+        else:
+            break
+    if not run:
+        return False
+    run.reverse()
+    return not any(set(l.strip()) - set("|-: ") for l in run[1:])
 
 
 def close_dangling_fence(text):

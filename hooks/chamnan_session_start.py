@@ -667,11 +667,38 @@ def rebuild_hook_installed(root):
     So: recommend installing it only to someone who has not, and say nothing about it to someone
     who has.
     """
+    # 🐛 [2026-09-09] This asked only whether the marker was present, and stayed that way through
+    # the change that gave the hook a version. `--install-git-hook` learned to tell a current copy
+    # from a stale one that morning; this function — which the report naming the defect named by
+    # name — did not, so a session with a hook from months ago was told it was covered and the
+    # offer to reinstall was suppressed. Half a fix is the shape this project keeps producing: the
+    # member the report pointed at was changed, and the one beside it was not (R7 agent 5).
+    #
+    # `git_hook_state` needs the current template to answer "stale", and reads it the way
+    # `chamnan-report` reads MAX_TOOLS — out of the source, never a retyped copy. Without it the
+    # answer degrades to the old one rather than to a wrong one.
     try:
-        hook = Path(root) / ".git" / "hooks" / "pre-commit"
-        return HOOK_MARKER in hook.read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:
+        return ws.git_hook_state(Path(root), _current_hook_template()) == "installed"
+    except (OSError, UnicodeDecodeError):
         return False
+
+
+def _current_hook_template():
+    """`chamnan-map`'s `HOOK_BODY`, with its marker filled in and its stamp left empty.
+
+    Read from the source rather than duplicated, because a second copy of the template is exactly
+    how the installed hook and the thing that judges it drift apart — which is the defect this is
+    part of fixing. Returns None when it cannot be read, and `git_hook_state` then gives the answer
+    it gave before any of this existed.
+    """
+    try:
+        import ast as _ast
+        src = (Path(__file__).resolve().parent.parent / "bin" / "chamnan-map").read_text(
+            encoding="utf-8", errors="replace")
+        body = _ast.literal_eval(re.search(r"HOOK_BODY = (\"\"\"(?:.|\n)*?\"\"\")", src).group(1))
+        return body.format(marker=ws.GIT_HOOK_MARKER, stamp="")
+    except Exception:      # noqa: BLE001 — a missing template must not take the session down
+        return None
 
 
 # Compiled once, and run per LINE of the Quick Index. Worth measuring rather than assuming: over
@@ -1416,9 +1443,23 @@ def main():
                     # so the hook fires on about one commit in six. A reader who installs it
                     # because this line told them to sees the same warning next session and learns
                     # to ignore the line — which is the one thing a staleness warning cannot afford.
-                    fix = ("`chamnan-map`" if rebuild_hook_installed(root) else
-                           "`chamnan-map`, or `chamnan-map --install-git-hook` to rebuild it "
-                           "whenever a commit adds, deletes or renames a file")
+                    # 🐛 [2026-09-09] The comment three lines above says a repeated warning
+                    # "trains the reader to skip the line", and the offer below it repeated on
+                    # every qualifying session forever — the only gate was `if behind:`. The guard
+                    # for exactly this exists in `workspace.notice_due`, capped at three showings,
+                    # written for a token-cost tip with the same reasoning in its own docstring;
+                    # it was never imported here. A repository that does not install the hook and
+                    # does not rebuild by hand sees this on close to every session, and this
+                    # repository's index goes stale within about five hours under active work.
+                    #
+                    # The staleness warning itself is NOT capped — that one is about the state of
+                    # the tree right now and is true every time it fires. What is capped is the
+                    # OFFER, which teaches a thing once (R7 agent 5).
+                    _offer = (not rebuild_hook_installed(root)
+                              and ws.notice_due(root, "install-git-hook"))
+                    fix = ("`chamnan-map`, or `chamnan-map --install-git-hook` to rebuild it "
+                           "whenever a commit adds, deletes or renames a file"
+                           if _offer else "`chamnan-map`")
                     # A count and up to three names, so the reader can judge whether it matters
                     # rather than guessing from a duration. Capped because on a two-week gap this
                     # would name most of the tree, which is noise wearing the costume of a signal.

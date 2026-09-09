@@ -402,6 +402,16 @@ def carry_forward(root):
         parts = re.split(r"(?m)^(?=\*\*)", body)
         parts = [x for x in parts if x.strip()]
         if len(parts) > 1:
+            # EQUAL, not proportional, and that is the design rather than an accident of the
+            # arithmetic. Measured on the one real record: `Remaining` keeps 25.4% of itself and
+            # `Blockers` 35.1%, because the smaller part gets the same raw budget as the larger and
+            # therefore keeps more of what it had. That is the outcome wanted — "a summary that
+            # drops the blocker is worse than one that drops the prose" — and a proportional split
+            # would reverse it, giving the verbose part more room precisely because it is verbose.
+            #
+            # Written down because it was produced as a side effect and named nowhere, which is how
+            # a good property gets "fixed" by somebody tidying an asymmetry they think is a bug
+            # (R7 agent 1).
             share = max(60, MAX_CARRY_TOKENS // len(parts))
             trimmed = []
             for part in parts:

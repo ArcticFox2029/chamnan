@@ -67,6 +67,11 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
         # could only be re-derived by hand with a one-off script. One integer per record — seconds
         # behind — makes it a query. Recorded only when it IS behind, so a healthy log stays the
         # same size it is today (R5 agent 5).
+        # The key is `behind`, not `index_behind` — the keyword argument and the record field have
+        # different names, which is a trap for whoever greps the log first. And a record with NO
+        # `behind` key means the index was current at that firing, not that staleness went
+        # unmeasured: "how often was my index stale" is (records with the key) / (all records that
+        # carry `sec`), never (records with the key) / (records that have it plus unknowns).
         rec["behind"] = int(index_behind)
     if dropped:
         # What the assembler BUILT and then cut. Without it the log records only what arrived, and

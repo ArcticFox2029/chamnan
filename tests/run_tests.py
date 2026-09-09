@@ -5953,16 +5953,51 @@ for _d in (_ga, _ga2, _ga3):
 sys.path.insert(0, str(ROOT / "hooks"))
 import chamnan_session_start as _ss2  # noqa: E402
 
+# 🐛 [2026-09-09] This built `.git/hooks` by hand, and `workspace.git_hooks_dir` asks GIT where the
+# hooks live rather than assuming — a worktree and a submodule both put them elsewhere. So the
+# resolver returned None for this fixture and every answer below was False for that reason rather
+# than for the reason the check names. Three checks that could not fail, passing since they were
+# written. Found when a fourth was added that expected True and got the same None.
 _gh = Path(tempfile.mkdtemp()) / "repo"
-(_gh / ".git" / "hooks").mkdir(parents=True)
+_gh.mkdir(parents=True)
+subprocess.run(["git", "init", "-q", str(_gh)], check=True, capture_output=True,
+               text=True, encoding="utf-8", timeout=30)
+_ghooks = Path(ws.git_hooks_dir(_gh))
+check("the fixture is a real repository, so these answers mean something",
+      _ghooks.is_dir())
 check("a repo with no pre-commit hook at all needs the offer",
       _ss2.rebuild_hook_installed(_gh) is False)
-(_gh / ".git" / "hooks" / "pre-commit").write_text("#!/bin/sh\nmake lint\n", encoding="utf-8")
+(_ghooks / "pre-commit").write_text("#!/bin/sh\nmake lint\n", encoding="utf-8")
 check("somebody else's pre-commit hook is not chamnan's",
       _ss2.rebuild_hook_installed(_gh) is False)
-(_gh / ".git" / "hooks" / "pre-commit").write_text(
+# 🐛 [2026-09-09] This expected True, and the answer changed deliberately when the hook gained a
+# version stamp. A hook carrying the marker and NO stamp is one of two things and they are
+# indistinguishable from the file: somebody's hand-rolled hook that embeds chamnan's block and
+# works, or a chamnan hook installed months ago that is missing everything added since.
+#
+# The trade, stated rather than assumed. Calling it installed means an outdated copy is called
+# healthy forever, which is the defect this stamp exists to end — measured on this repository,
+# where the installed hook predated the entire adapter-refresh loop and both the command and the
+# session-start warning said it was fine. Calling it stale means someone with a working hand-rolled
+# hook is offered a reinstall they do not need, and that cost is now BOUNDED: the offer goes
+# through `notice_due` and stops after three showings. Unbounded wrong-silence against bounded
+# wrong-noise is not a close call.
+#
+# Reinstalling also costs them nothing — `--install-git-hook` rewrites only the marked block and
+# leaves the rest of their script alone.
+(_ghooks / "pre-commit").write_text(
     "#!/bin/sh\nmake lint\n" + _ss2.HOOK_MARKER + "\nchamnan-map\n", encoding="utf-8")
-check("chamnan's marker inside a larger hook counts as installed",
+check("an unstamped hook is not assumed current, whoever wrote it",
+      _ss2.rebuild_hook_installed(_gh) is False)
+# ...and one built from the CURRENT template is, which is what makes the line above a distinction
+# rather than a refusal to answer.
+_tmpl2 = _ss2._current_hook_template()
+(_ghooks / "pre-commit").write_text(
+    "#!/bin/sh\nmake lint\n" + _tmpl2.replace(
+        ws.GIT_HOOK_MARKER,
+        f"{ws.GIT_HOOK_MARKER}\n{ws.GIT_HOOK_STAMP} {ws.git_hook_stamp(_tmpl2)}", 1),
+    encoding="utf-8")
+check("...while a current one inside a larger hook still counts as installed",
       _ss2.rebuild_hook_installed(_gh) is True)
 check("a directory that is not a git repo answers no rather than raising",
       _ss2.rebuild_hook_installed(Path(tempfile.mkdtemp())) is False)

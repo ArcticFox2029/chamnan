@@ -406,14 +406,34 @@ def rules_text(root):
     # Newest first, filename as the tie-break, the same ordering the skills list and
     # `memory.titles()` were given the day before for the identical reason. After a clone every
     # mtime is the checkout time, and then this falls back to exactly the previous behaviour.
-    rule_paths = sorted(entries(root, "rules"),
-                        key=lambda p: (-mtime_or_zero(p), p.name))
-    collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
-    for path in rule_paths:
+    # 🐛 [2026-09-09] Newest-first is a fair tie-break and a poor importance signal, and the
+    # evidence is specific rather than theoretical: `the-set-not-the-member.md` records this
+    # repository's most-repeated defect, and it was violated again about twenty hours after being
+    # written — by a commit whose own body says "the third time the same sweep has been done and
+    # the second time it left members out". At that moment the rule was in the store and arriving
+    # as a TITLE ONLY, and it still was when the round measured it. The rule most worth reading was
+    # the one nobody could read (R7 agent 6).
+    #
+    # A pin is the owner saying this must not be cut — `state.py` has meant exactly that by 📌
+    # since it was written, and `fit._fit_lines` reserves pinned blocks before it fills anything
+    # else. Same marker, same meaning, one more store. Everything unpinned keeps the mtime order it
+    # had, so a repository that pins nothing is unchanged.
+    # ONE read per file. The first version of this sorted by a `_pinned(path)` helper that opened
+    # each file again — a second read per rule, in the loop whose own comment three lines down
+    # records the last time this went wrong (1,500 reads for 500 files). The suite pins the count,
+    # and caught it. Read once, then order what was read.
+    _read = []
+    for path in entries(root, "rules"):
         try:
-            body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
-        except OSError:
+            _read.append((path, path.read_text(encoding="utf-8-sig", errors="replace").strip()))
+        except (OSError, UnicodeDecodeError):
             continue
+    _read.sort(key=lambda pb: (state.PIN_MARK not in pb[1][:400],
+                               -mtime_or_zero(pb[0]), pb[0].name))
+    rule_paths = [path for path, _b in _read]
+    collision_of = {p: g for g in case_collisions(rule_paths) for p in g}
+    for path, body in _read:
+        body = body.strip()
         # 🐛 [2026-09-06] `title_of(path)` was called with no body, at five sites in this loop, so
         # every rule file was read a further FOUR times to recover a heading the caller already had
         # in `body`. Measured by instrumenting the real hook sequence: 1,500 `read_text` calls for
@@ -529,6 +549,19 @@ def rules_text(root):
         if len(missing) > 6:
             tail += f", and {len(missing) - 6} more"
         tail += "."
+        # 🐛 [2026-09-09] `rules_pressure()` computes exactly the number the owner needs — how many
+        # rules arrive with a body and how many as a name — and nothing calls it except
+        # `chamnan-report`, which is a command a person runs on purpose. `hooks.json` registers
+        # five hook points and that report is not one of them, so the figure reached nobody who had
+        # not gone looking for it. Two rounds found this and neither closed it (R7 agent 6).
+        #
+        # Said HERE, in a line that already exists, and only when most of the store is not arriving.
+        # A new section would cost bytes in a block that is already at its ceiling, and a figure
+        # printed every session is a figure people stop reading — the same reasoning as the
+        # `notice_due` cap on the hook offer.
+        if len(missing) * 2 > len(out):
+            tail += (f" That is {len(missing)} of {len(out)}: the store has outgrown its budget, "
+                     f"and `chamnan-report` says by how much.")
     return kept + tail + "_"
 
 
