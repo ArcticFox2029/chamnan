@@ -280,6 +280,20 @@ _UPPER_BOUND = {
 # silently killed every session in that repository, and the file arrives with a clone.
 
 
+def upper_bound(key):
+    """The largest value `key` may take, or None when it is unbounded.
+
+    Public because the bound is not only a config concern. `CHAMNAN_OUTPUT_CEILING` sets the same
+    number through a different door and reached `fit.shrink` unbounded -- the config path clamped
+    it to 9,500 and the environment path checked only that it was positive, so `export
+    CHAMNAN_OUTPUT_CEILING=50000` produced a block past the size the host carries whole. The reason
+    for the bound has nothing to do with where the number came from: the host's own cut is around
+    10,000 bytes and is positional, so an over-large ceiling does not deliver more, it delivers a
+    block that stops mid-sentence (R9 agent 3, finding 3).
+    """
+    return _UPPER_BOUND.get(key)
+
+
 def _in_range(key, value):
     """False for a value whose TYPE is right and whose meaning is not."""
     if key in _NON_NEGATIVE and isinstance(value, int) and not isinstance(value, bool):

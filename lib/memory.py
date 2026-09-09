@@ -768,4 +768,26 @@ def slug(title):
 
 
 def filename(title):
+    """The name a NEW entry would take, ignoring what is already in the store.
+
+    Kept, because callers that only want to know what a title is called still use it. A writer
+    must use `distinct_filename` instead — see below.
+    """
     return f"{slug(title)}.md"
+
+
+def distinct_filename(root, category, title):
+    """`filename(title)`, disambiguated against what the store already holds.
+
+    \U0001f41b [2026-09-09] `slug()` cuts at 50 characters and nothing looked at whether that name
+    was taken. Two decisions, lessons or rules whose titles agree for 50 characters and diverge
+    afterwards landed on ONE file, and the second overwrote the first — silently, in the store
+    whose entire job is remembering. Measured on this repository: **20 of 22 memory titles already
+    exceed 50 characters**, so there are no collisions today by luck rather than by guard
+    (R10 agent 3, finding 3).
+
+    `timeline` had this guard and was one store of four. The shared helper is
+    `mdblock.distinct_stem`; an entry that already exists under the plain name keeps it, so nothing
+    in an existing workspace is renamed.
+    """
+    return f"{mdblock.distinct_stem(directory(root, category), slug(title), title, title_of)}.md"

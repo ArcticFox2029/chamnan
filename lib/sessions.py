@@ -519,4 +519,21 @@ def slug(title):
 
 
 def filename(date, title):
+    """The name a NEW record would take, ignoring what the directory already holds. A writer must
+    use `distinct_filename` — see below."""
     return f"{date}-{slug(title)}.md"
+
+
+def distinct_filename(root, date, title):
+    """`filename(date, title)`, disambiguated against the records already written.
+
+    \U0001f41b [2026-09-09] `slug()` cuts at 40 characters here — the shortest of the four stores —
+    and the date prefix narrows the collision to one day without closing it. Two records written on
+    the same day whose titles agree for 40 characters landed on one file and the second overwrote
+    the first, which is a whole session's handoff gone (R10 agent 3, finding 4).
+
+    The date is part of the base rather than of the suffix, so the disambiguating hash still sorts
+    inside its own day and a directory listing stays chronological.
+    """
+    base = f"{date}-{slug(title)}"
+    return f"{mdblock.distinct_stem(directory(root), base, title, title_of)}.md"

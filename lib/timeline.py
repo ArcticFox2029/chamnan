@@ -76,13 +76,9 @@ def slug(title):
 
 def _distinct_slug(directory_, title):
     """`slug(title)`, or that plus a short hash when the name is taken by a DIFFERENT title."""
-    base = slug(title)
-    path = directory_ / f"{base}.md"
-    want = mdblock.canonical_title(title)
-    if not path.is_file() or mdblock.canonical_title(title_of(path)) == want:
-        return base
-    import hashlib
-    return f"{base}-{hashlib.sha1(want.encode('utf-8')).hexdigest()[:6]}"
+    # The body moved to `mdblock.distinct_stem` so the three stores that needed the identical
+    # guard could stop not having it. This function stays as the name the module already uses.
+    return mdblock.distinct_stem(directory_, slug(title), title, title_of)
 
 
 def threads(root):

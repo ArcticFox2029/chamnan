@@ -518,6 +518,49 @@ def canonical_title(source):
     return " ".join(unicodedata.normalize("NFC", source).split()).casefold()
 
 
+def distinct_stem(directory_, base, title, title_reader, suffix=".md"):
+    """`base`, or `base` plus a short hash when that name is already taken by a DIFFERENT title.
+
+    `fallback_name` above handles the case where the ASCII reduction empties a title. This handles
+    the one that follows it: two titles that are identical up to the truncation point and differ
+    after it. `slug()` cuts at 40, 50 or 60 characters depending on the store, and on this
+    repository **20 of 22 memory titles already exceed 50** -- so the store has no collisions today
+    by luck rather than by guard (R10 agent 3, findings 2-5).
+
+    Lifted out of `timeline._distinct_slug`, which is the one of four stores that had it. The other
+    three -- decisions/lessons/rules, session records, and workflow candidates -- did not, and the
+    consequence is the second entry silently overwriting the first.
+
+    Two properties matter more than the disambiguation itself, and both come from where the check
+    is made rather than from what it computes:
+
+    - **A pure function cannot know whether a name collides; only the directory can.** An earlier
+      version of this appended a hash whenever slugging *changed* the title, and slugging changes
+      every title with an internal hyphen -- `bge-m3 migration` became `bge-m3-migration-12a9e3`,
+      and the obvious guess at the name matched nothing. Asking the directory keeps every name that
+      does not actually collide readable and guessable.
+    - **An existing file keeps its name.** The first branch returns `base` unchanged when the file
+      is absent OR already holds this same title, so rewriting a record still overwrites itself and
+      a workspace written by an older chamnan is not renamed underneath its owner.
+
+    `title_reader` is the store's own `title_of`, passed in rather than imported, because each
+    store reads a title differently and this must not become a fifth opinion about that.
+    """
+    path = directory_ / f"{base}{suffix}"
+    want = canonical_title(title)
+    if not path.is_file():
+        return base
+    try:
+        if canonical_title(title_reader(path)) == want:
+            return base
+    except OSError:
+        # Unreadable is not "the same title". Disambiguating is the safe direction: a new file
+        # beside an unreadable one loses nothing, while reusing the name could overwrite it.
+        pass
+    import hashlib
+    return f"{base}-{hashlib.sha1(want.encode('utf-8')).hexdigest()[:6]}"
+
+
 def fallback_name(source, kind):
     """A distinct, stable stem for a title the ASCII reduction emptied.
 

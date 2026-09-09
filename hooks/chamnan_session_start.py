@@ -963,7 +963,13 @@ def _ceiling_from_env(cfg):
     if raw:
         try:
             asked = int(str(raw).strip())
-            if asked > 0:
+            # The same bound the config path applies, from the same place. `asked > 0` was the whole
+            # test here, so the value `.chamnan/config.json` clamps to 9,500 could be set past it
+            # through the environment instead and reach `fit.shrink` unchanged. Out of range falls
+            # back rather than clamping, exactly as an out-of-range config value does -- one rule,
+            # two doors.
+            _cap = ws.upper_bound("output_byte_ceiling")
+            if asked > 0 and (_cap is None or asked <= _cap):
                 return asked
         except (TypeError, ValueError):
             pass

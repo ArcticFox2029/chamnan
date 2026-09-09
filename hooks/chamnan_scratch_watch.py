@@ -464,6 +464,31 @@ def _resume_nudge(payload, wsdir, root):
         return False
 
     entry = _nudge_read(wsdir, session_id)
+
+    # \U0001f41b [2026-09-09] One state file per session was the right answer to the lost-update
+    # bug this store used to have, and it rests on an assumption that subagents break: that a
+    # session id names ONE writer. It does not. Every subagent inherits its parent's `session_id`,
+    # so a round that dispatches seven of them has eight processes incrementing one counter.
+    #
+    # Measured on this repository's own store: this session's file reached **27,151 calls** while
+    # every other session in the directory topped out at about 80, and the escalating nudges at 150
+    # and 400 had therefore all fired -- telling an interactive session it was tens of thousands of
+    # calls deep, on traffic it did not generate, about work a subagent cannot do anything with.
+    # A subagent cannot run `/chamnan:resume`; the nudge is for the person at the terminal.
+    #
+    # The owner is learned rather than guessed. The first writer to touch a session's file records
+    # its transcript, and a later writer carrying a DIFFERENT transcript under the same session id
+    # is a subagent and is not counted. Nothing here assumes how a transcript is named, and a host
+    # that supplies no `transcript_path` falls through to exactly the previous behaviour -- the
+    # failure mode of guessing wrong is a nudge that never fires, which is the whole feature.
+    transcript = str(payload.get("transcript_path") or "")
+    if transcript:
+        owner = entry.get("owner")
+        if not owner:
+            entry["owner"] = owner = transcript
+        if transcript != owner:
+            return False
+
     entry["calls"] = entry.get("calls", 0) + 1
     _nudge_write(wsdir, session_id, entry)
 

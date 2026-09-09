@@ -39,7 +39,22 @@ Python repositories hit most.
 import re
 
 # Same shape environments.py parses declarations with: a name, then a dotted or plain number.
-_CLAIM = re.compile(r"([A-Za-z][\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
+# \U0001f41b [2026-09-09] The name had to START with a letter, so any component whose name opens
+# with a digit lost its first character: `2dspeak-venv-python 3.12.10` was declared as
+# `dspeak-venv-python`, and a memory entry claiming the real name then matched no declared name at
+# all, so `chamnan-age` reported an all-clear it had not earned. Found by writing this repository's
+# own `environments.md` for the first time and reading back what the parser had made of it — the
+# store had never been populated, so the parser had never met a real name.
+#
+# A name may now begin with a digit but must still CONTAIN a letter, which is what keeps "16" in
+# "postgres 16, redis 7.2" from reading as a name of its own.
+#
+# A tighter right boundary was tried and withdrawn. `(?![\w.-])` after the number fixes
+# `node 20 and 3dsmax 2024` (which still mis-parses as `and 3`), and breaks `redis 7.2-alpine` and
+# `python 3.11rc1` — two shapes people really write — into nothing at all. Generous and noisy beats
+# strict and silent here, because `check()` filters against the declared names afterwards and a
+# claim that parses to nothing is never filtered, never reported, and never noticed.
+_CLAIM = re.compile(r"((?=[\w.+-]*[A-Za-z])\w[\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
 
 # 🐛 [2026-09-06] The word immediately before the number is not always the software's name.
 # "postgres version 16" read as `("version", "16")`, and both sides of this feature were wrong in

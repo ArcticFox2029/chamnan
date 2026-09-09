@@ -98,8 +98,22 @@ def the_publication_guard():
     absent — a machine that is not the owner's has nothing to check against. It is reported as
     skipped, never as passed.
     """
-    tool = ROOT.parent.parent / ".chamnan" / "tools" / "publication_guard.py"
-    if not tool.is_file():
+    # \U0001f41b [2026-09-09] Named with an underscore, while the registered tool is hyphenated like
+    # every other one in that directory. It passed for as long as it did only because the file
+    # existed under BOTH spellings -- and the moment the byte-identical duplicate was cleaned up,
+    # the one check that stops the owner's real work reaching a shipped repository began reporting
+    # "not installed on this machine" and skipping. Silently, and on the release gate.
+    #
+    # Both spellings are accepted rather than one corrected, because an installed workspace written
+    # by an older chamnan carries the underscore name and a gate that skips on THAT machine has the
+    # same hole. The set is "however this tool has ever been named", not "what it is called today".
+    tool = None
+    for _name in ("publication-guard.py", "publication_guard.py"):
+        _try = ROOT.parent.parent / ".chamnan" / "tools" / _name
+        if _try.is_file():
+            tool = _try
+            break
+    if tool is None:
         return None, "publication guard not installed on this machine"
     r = _run([sys.executable, str(tool)])
     if r.returncode == 2:

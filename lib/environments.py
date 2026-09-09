@@ -49,7 +49,11 @@ _BULLET = re.compile(r"^\s*[-*]\s+(.+?)\s*$", re.M)
 # A declared version: a name followed by a dotted or plain number. "postgres 16", "python 3.11",
 # "Kubernetes 1.28". Anything that does not match this shape is simply not a version claim, and
 # is left alone rather than guessed at.
-_VERSION = re.compile(r"([A-Za-z][\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
+# The version-pair pattern lives in `aging._CLAIM` and is reached through `aging.version_pairs`,
+# which `entries()` below calls. A byte-identical copy sat here, unused, for as long as both
+# existed -- the two were unified for the FUNCTION and the constant was left behind, which is the
+# defect this repository records as its most common. A dead duplicate does not stay identical: the
+# leading-digit fix on 2026-09-09 would have landed on one of them.
 # The filler word between a name and its number ("postgres version 16") is stripped by
 # `aging.version_pairs`, which BOTH sides of this feature go through -- see the note there for what
 # each of them got wrong on its own.
@@ -141,7 +145,7 @@ def entries(root):
             "platform": fields.get("platform", ""),
             "versions": versions,
             # The `Versions:` line exactly as written. `versions` above is lossy -- it keeps only
-            # what _VERSION could parse -- and `chamnan-env set` has to be able to carry the line
+            # what `aging.version_pairs` could parse -- and `chamnan-env set` has to carry the line
             # forward unchanged when the caller did not retype it.
             "versions_raw": fields.get("versions", ""),
             "constraints": constraints,
