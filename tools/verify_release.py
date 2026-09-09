@@ -36,6 +36,44 @@ def declared_version():
         return "?"
 
 
+def _remember_and_compare(total, failing, took):
+    """Record this run's size and say how it moved since the last one.
+
+    The owner's ask, 2026-09-09: "when the big suite runs, show the check number too, so I can see
+    whether it actually moves after a stretch of fixes." A totals line on its own answers "did it
+    pass"; it does not answer "did the work of the last two hours reach the suite at all", and that
+    is the question a person watching a long session actually has.
+
+    One line per run in a JSONL beside the other logs. Failure to write it never affects the
+    verdict — a gate that cannot record its own history still verifies the release.
+    """
+    import json
+    log = ROOT.parent.parent / ".chamnan" / "logs" / "gate_runs.jsonl"
+    prior = None
+    try:
+        if log.is_file():
+            for line in log.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    prior = json.loads(line)
+    except (OSError, ValueError):
+        prior = None
+    try:
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "checks": total,
+                                 "failing": failing, "seconds": round(took)}) + "\n")
+    except OSError:
+        pass
+    if not prior or "checks" not in prior:
+        return f"{total:,} checks — first run recorded; the next one will say how it moved"
+    was = prior["checks"]
+    if total == was:
+        return (f"{total:,} checks — unchanged since the last run. Fixes since then added no new "
+                f"coverage to this suite")
+    return (f"{total:,} checks — was {was:,}, {'+' if total > was else ''}{total - was} "
+            f"since the last run")
+
+
 def the_suite():
     """The regression suite, and the totals line that is the only proof it finished.
 
@@ -49,15 +87,29 @@ def the_suite():
     took = time.time() - started
     totals = re.search(r"^(\d+)/(\d+) checks passed", r.stdout, re.M)
     fails = re.findall(r"^  FAIL  (.+)$", r.stdout, re.M)
-    tracebacks = r.stdout.count("Traceback (most recent call last)")
+    # \U0001f41b [2026-09-09] Counted in `stdout` only, and a Python traceback goes to `stderr`. So
+    # a run that died mid-suite reported "0 traceback(s)" beside "did not reach its own totals
+    # line", and the one piece of evidence saying WHY was captured, held in `r.stderr`, and never
+    # looked at. This module's own docstring calls the absence of failures no proof; the same
+    # applies to the absence of a traceback nobody read.
+    _out = (r.stdout or "") + "\n" + (r.stderr or "")
+    tracebacks = _out.count("Traceback (most recent call last)")
     if not totals:
         print(f"  ✗ the suite did not reach its own totals line after {took / 60:.1f} minutes")
         if tracebacks:
             print(f"    it stopped on {tracebacks} traceback(s); the last lines were:")
-            for line in r.stdout.rstrip().split("\n")[-6:]:
+            for line in _out.rstrip().split("\n")[-8:]:
                 print(f"      {line}")
+        else:
+            # No traceback anywhere is its own finding: the suite ENDED without printing totals and
+            # without saying why, which is a killed process or an early exit, not a failing check.
+            print(f"    no traceback on either stream — the run ended early rather than failing. "
+                  f"{len(r.stdout or '')} byte(s) on stdout, {len(r.stderr or '')} on stderr")
         return None
     passed, total = totals.group(1), totals.group(2)
+    _moved = _remember_and_compare(int(total), len(fails), took)
+    if _moved:
+        print(f"    {_moved}")
     print(f"  {'✓' if not fails else '✗'} {passed}/{total} checks passed "
           f"in {took / 60:.1f} minutes, {len(fails)} failing, {tracebacks} traceback(s)")
     for f in fails[:10]:

@@ -236,18 +236,154 @@ def by_suffix(root, *suffixes):
     return [p for p in files(root) if p.suffix.lower() in wanted]
 
 
+# \U0001f41b [2026-09-09] `fnmatch.fnmatch` normalises case with `os.path.normcase`, which folds on
+# Windows and does not on macOS or Linux. git decides the same question with `core.ignorecase`, and
+# the two disagree on this machine's own defaults: `core.ignorecase` is TRUE here (the filesystem is
+# case-insensitive) while `os.name` is posix, so `fnmatch` is case-SENSITIVE and every gitignore and
+# gitattributes pattern chamnan evaluated diverged from what git itself would answer. On Windows it
+# diverges the other way — `fnmatch` folds even where `core.ignorecase` is false.
+#
+# Three call sites had the identical gap: `mapper._is_generated`, `catalogs`' gitignore reader and
+# `matching` below (R10 agent 1, findings 1 and 2). One matcher now, asking git rather than the
+# platform, and `fnmatchcase` underneath so the fold is never applied behind our back.
+_IGNORECASE = {}
+
+
+def git_folds_case(root):
+    """git's own `core.ignorecase` for the repository at `root`. Cached; False when git cannot say.
+
+    The git call itself lives in `workspace.git_folds_case`, deferred-imported here. This module is
+    stdlib-only on purpose and every `git -C` caller has to pass through the ownership guards that
+    live beside git in `workspace` — asking a parent repository how IT folds case is the same class
+    of error those guards exist to stop.
+
+    False on any doubt, deliberately: case-sensitive matching is git's documented default, so an
+    unreadable config degrades to the standard behaviour rather than to a guess.
+    """
+    key = str(root)
+    if key in _IGNORECASE:
+        return _IGNORECASE[key]
+    try:
+        import workspace as _ws
+        verdict = _ws.git_folds_case(root)
+    except ImportError:
+        # ImportError alone, and NARROW on purpose. A bare `except Exception` here swallowed a
+        # NameError from a missing import inside `workspace.git_folds_case` and answered False —
+        # the safe-looking default, silently wrong, on every repository, with nothing to say so.
+        #
+        # Every way GIT can fail is already handled in the callee through `git_cannot_answer()`,
+        # which is the one definition and is the only place that knows `NotImplementedError` is how
+        # an environment with no process layer at all fails. Repeating a subset of that tuple here
+        # would be a second, narrower opinion about the same question — exactly what that helper
+        # exists to prevent. What is left for this handler is the one failure the callee cannot
+        # report: a workspace imported without its siblings.
+        verdict = False
+    _IGNORECASE[key] = verdict
+    return verdict
+
+
+# git's gitignore glob is NOT `fnmatch`, and the two differ in exactly the ways that matter:
+#
+#   * `*` does not cross a `/`. `config/*.env` matches `config/local.env` and NOT
+#     `config/nested/local.env` — `fnmatch` matched both, so chamnan skipped a file git would
+#     happily commit, silently leaving it out of the index.
+#   * `**` does cross.
+#   * a pattern ending in `/` names a DIRECTORY, and everything inside it is ignored.
+#     `secrets/` was rstripped to `secrets` and then matched nothing under it, so chamnan indexed
+#     and warned about files git had been told to ignore.
+#   * a pattern containing a `/` anywhere is anchored to the directory holding the `.gitignore`;
+#     one without is matched against any path component at any depth.
+#
+# Verified against real `git check-ignore` in both directions rather than against a reading of the
+# documentation (R3 agent 2 finding 8, re-filed as R10 agent 2 finding 8). This is the no-git
+# fallback only — where git is present chamnan asks it — but that path is the one a repository
+# without git, or a plain directory, actually takes.
+_GITIGNORE_CACHE = {}
+
+
+def gitignore_matches(rel, pattern, fold=False):
+    """`rel` (posix, relative to the directory holding the `.gitignore`) against one pattern."""
+    import re as _re
+    key = (pattern, fold)
+    rx = _GITIGNORE_CACHE.get(key)
+    if rx is None:
+        pat = pattern
+        dir_only = pat.endswith("/")
+        pat = pat.rstrip("/")
+        # A LEADING slash means "anchored to this directory" and is not part of the path to match:
+        # `/root_only.txt` ignores it at the top and not in `sub/`. Left in, the regex looked for a
+        # path beginning with a slash and matched nothing at all.
+        anchored = "/" in pat
+        pat = pat[1:] if pat.startswith("/") else pat
+        out, i = [], 0
+        while i < len(pat):
+            c = pat[i]
+            if c == "*":
+                if pat[i:i + 2] == "**":
+                    # `a/**/b` matches `a/b` as well as `a/x/y/b` — `**` between slashes may stand
+                    # for NO directory at all, which a bare `.*` cannot express because the slashes
+                    # around it are still required. Consume the trailing slash with it.
+                    if pat[i:i + 3] == "**/":
+                        out.append("(?:.*/)?")
+                        i += 3
+                        continue
+                    out.append(".*")
+                    i += 2
+                    continue
+                out.append("[^/]*")
+            elif c == "?":
+                out.append("[^/]")
+            elif c == "[":
+                j = pat.index("]", i) + 1 if "]" in pat[i:] else i + 1
+                out.append(pat[i:j])
+                i = j
+                continue
+            else:
+                out.append(_re.escape(c))
+            i += 1
+        body = "".join(out)
+        # Anchored to the .gitignore's own directory when the pattern has a slash; otherwise it
+        # matches a component at any depth, which is git's rule and the reason `*.log` works
+        # everywhere without being written `**/*.log`.
+        head = "" if anchored else "(?:.*/)?"
+        tail = "(?:/.*)?$" if dir_only else "(?:/.*)?$"
+        rx = _re.compile("^" + head + body + tail, _re.I if fold else 0)
+        _GITIGNORE_CACHE[key] = rx
+    return bool(rx.match(rel))
+
+
+def glob_matches(name, pattern, fold=False):
+    """`name` against a glob `pattern`, folding case only when the caller says git would.
+
+    `fnmatchcase` rather than `fnmatch`: the latter decides for itself from `os.name`, which is the
+    defect this exists to close.
+
+    `fold` may be a callable, and callers should pass one. Asking git for `core.ignorecase` costs a
+    subprocess, measured at ~50 ms on the first call for a root — and it is only ever needed in the
+    narrow case where the two answers DIFFER: a case-sensitive match already succeeding needs no
+    opinion about folding, and a name that does not match either way needs none either. So the
+    question is asked last, and on this repository's own patterns it is almost never asked at all.
+    """
+    import fnmatch
+    if fnmatch.fnmatchcase(name, pattern):
+        return True
+    if not fnmatch.fnmatchcase(name.lower(), pattern.lower()):
+        return False
+    return bool(fold() if callable(fold) else fold)
+
+
 def matching(root, pattern):
     """Files matching a glob pattern. Replaces `rglob(pattern)`.
 
     A pattern with no separator is matched against the filename at any depth, which is what rglob
     did; one containing a separator is matched against the whole path relative to root.
     """
-    import fnmatch
     base = Path(root)
+    fold = lambda: git_folds_case(root)               # noqa: E731 -- asked only if it matters
     out = []
     for rel in _entries(root)[0]:
         target = str(rel) if "/" in pattern else rel.name
-        if fnmatch.fnmatch(target, pattern):
+        if glob_matches(target, pattern, fold):
             out.append(base / rel)
     return out
 

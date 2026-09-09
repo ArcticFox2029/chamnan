@@ -54,3 +54,23 @@ f434be58b7d890f7  site/lib/workspace.py
 f8f109c3edda1bc8  CHANGELOG.md
 ff71df7beb2a48b3  lib/mapper.py
 ff71df7beb2a48b3  site/lib/mapper.py
+
+# Added 2026-09-10, every line read before it was added and none a real credential.
+# These arrived with the day's own work: comments that quote an example credential in order to
+# explain the rule that handles it, and the redactor's own long-standing false positives on
+# `index_token_budget` and `input_tokens`, which are budgets and counts rather than secrets and
+# are named in the header above as the second kind this file keeps visible.
+5fe75cfe6222b6df  SECURITY.md  shapes. A comment that reads *"the console password is Tr0ub4dor-2026"* is a sentence, and it
+bfd8114575f4cf0b  bench/run_bench.py  "input_tokens": u.get("input_tokens", 0),
+f24174518f7f6246  bench/run_bench.py  "output_tokens": u.get("output_tokens", 0),
+cdf4f8a84728b219  bin/chamnan-map  print(f"  Quick Index  {index_tokens:>8,.0f} tokens  ({share})")
+b41b2fabb8c0c553  bin/chamnan-map  print(f"  Full Detail  {detail_tokens:>8,.0f} tokens  (grep this, never read it whole)")
+5e573e79f31192f4  bin/chamnan-map  print(f"  directory: ~{rolled:,.0f} tokens injected per session instead of {index_tokens:,.0f}."
+9c95de21ec4accd1  hooks/chamnan_scratch_watch.py  # `sk-ant-api03-PLANTED...` reaches the filter as `api03` and a bare suffix, with the `sk-ant-`
+b3f196bc449afa98  hooks/chamnan_session_start.py  # on: `-----BEGIN OPENSSH PRIVATE KEY-----` came out of the cleanup as
+98198061e83a1a34  hooks/chamnan_session_start.py  # attacker-controlled in a repository somebody else wrote. `AKIAIOSFODNN7EXAMPLE.md`
+74f3ae6237cf7a68  lib/workspace.py  "index_token_budget": 100_000,
+147d7c181bbaf9e2  lib/workspace.py  "state_token_budget": 100_000,
+71d2f33cbc47d0bc  lib/workspace.py  A key with the wrong type is dropped rather than trusted. `{"index_token_budget": "three
+d4924db06f917287  lib/workspace.py  # CONTENT. `{"index_token_budget": true}` and `{"index_token_budget": 5000}` are both 28
+fdcf150896dbd943  lib/workspace.py  # Type as well as key. `{"index_token_budget": "three thousand"}` parses, survives the key

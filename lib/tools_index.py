@@ -219,6 +219,27 @@ def register(root, entry):
 
 def _register_locked(root, entry):
     entries = load(root)
+    # \U0001f41b [2026-09-09] This appended unconditionally, with no look at whether an entry
+    # already carried this name — so `chamnan-promote` run a second time on the same tool wrote a
+    # SECOND entry with the same name. `record_call` resolves with `next(...)` and always finds the
+    # FIRST, so every later run credited the stale, superseded description while the entry holding
+    # the description the person had just typed sat at 0 runs forever. Measured on a fixture: two
+    # entries, the old one at 3 runs, the new one at 0. No error at any point.
+    #
+    # Reachable through the plugin's own advice — `chamnan-candidates` tells a user to run exactly
+    # that command for a tool already sitting in `.chamnan/tools/` (R10 agent 3, finding 1).
+    #
+    # The counters are the tool's history and belong to the NAME, not to the registration, so they
+    # carry across; everything a person can retype is replaced. `entry` wins only where it says
+    # something, so a bare re-register does not blank a description that was already there.
+    _existing = next((e for e in entries if e.get("name") == entry["name"]), None)
+    if _existing is not None:
+        for _field in ("desc", "added", "origin"):
+            _value = entry.get(_field)
+            if _value:
+                _existing[_field] = redact.scrub(_value) if _field == "desc" else _value
+        _save(root, entries)
+        return entries
     entries.append({
         "name": entry["name"],
         # The description is free text a person typed at `chamnan-promote --desc`, and it

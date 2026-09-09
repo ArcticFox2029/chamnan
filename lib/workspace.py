@@ -2456,6 +2456,43 @@ def git_toplevel(root):
 _GIT_SPEAKS = {}
 
 
+def git_folds_case(root):
+    """git's own `core.ignorecase` for `root`. False when git cannot answer.
+
+    \U0001f41b [2026-09-09] `fnmatch.fnmatch` normalises case with `os.path.normcase`, which folds
+    on Windows and does not on macOS or Linux. git decides the same question with `core.ignorecase`,
+    and the two disagree on this machine's own defaults: `core.ignorecase` is TRUE here because the
+    filesystem is case-insensitive, while `os.name` is posix so `fnmatch` is case-SENSITIVE. Every
+    gitignore and gitattributes pattern chamnan evaluated therefore diverged from what git itself
+    answers — measured against real `git check-ignore`, which called `Dockerfile` and `notes.MD`
+    ignored where chamnan called both visible. On Windows it diverges the other way (R10 agent 1,
+    findings 1 and 2).
+
+    It lives here rather than in `tree`, where it is used, for two reasons that are the same reason:
+    this is where git lives, and `git_can_speak_for` below is the guard every path-scoped read has
+    to pass. Asking a PARENT repository how it folds case, in a workspace deliberately placed in a
+    subproject, is exactly the error that guard exists to stop.
+
+    False on any doubt: case-sensitive matching is git's documented default, so an unreadable or
+    absent config degrades to the standard behaviour rather than to a guess.
+    """
+    if not git_can_speak_for(root):
+        return False
+    import subprocess          # deferred, as everywhere else in this module -- see the note at the
+                               # import block: the hooks that run on every tool call pay for imports
+                               # they mostly do not reach.
+    try:
+        r = subprocess.run(["git", "-C", str(root), "config", "--get", "core.ignorecase"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=5)
+    except git_cannot_answer():
+        # The one definition of "git could not answer", shared by every caller here. Spelling it
+        # out as `(OSError, subprocess.SubprocessError)` is how the set of things that count as a
+        # git failure comes to differ between two callers — the suite refuses it for that reason.
+        return False
+    return r.stdout.strip().lower() == "true"
+
+
 def git_can_speak_for(root):
     """True when git recognises `root` as part of a repository — the weaker question `git_owns` is
     not, and the right one for every READ that is path-scoped to `root`.

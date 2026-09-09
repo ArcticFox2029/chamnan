@@ -10076,8 +10076,12 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # `--absolute-git-dir` (git 2.13) to `--git-dir` for an older git. Both serve purposes the
 # paragraph already lists, so the prose is unchanged and only the site count moves — which is the
 # distinction the comment above draws between sites and purposes, met for the first time.
+# Raised 2026-09-09: `git_folds_case` is one new site AND one new purpose — asking git how it folds
+# case, because `fnmatch` decides that from `os.name` and the two disagree on this machine's own
+# defaults. The README's list went from ten paths to eleven in the same commit, which is the event
+# this check exists to force.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      3 <= _gitcalls <= 19)
+      3 <= _gitcalls <= 21)
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -25183,6 +25187,1971 @@ try:
           _dang == {"no-such-entry"}, saw=", ".join(sorted(_dang)))
 finally:
     shutil.rmtree(_d, ignore_errors=True)
+
+
+# ============================ folded in from the surgical pool
+# The owner's rule, 2026-09-09: a surgical suite written during a fix is a DRAFT until it is here.
+# `.chamnan/tools/checks/` is a workspace — it does not ship with the plugin, it is not in CI, and
+# it does not run on anybody else's machine, so a check written for a fix lived exactly one place:
+# the machine that wrote it. v1.24.0 shipped at 4,408/4,408 while that pool grew outside the gate.
+#
+# Seven of the pool's files are NOT here: they were already in this suite before the pool existed,
+# and pasting them again is what "NO 12-LINE RUN OF THIS SUITE EXISTS TWICE" is for — it caught
+# exactly that, twice, on the day this was written. `.chamnan/tools/duplicate_runs.py` asks the
+# same question in a second, before a gate run does it in fifteen minutes.
+#
+# Names bound under the spellings the pool expects: this suite has `import blocklog as _blocklog`,
+# and a folded block saying `blocklog.shape` raised NameError fourteen minutes into a gate run.
+# Twice, invisibly, because the gate counted tracebacks on stdout and a traceback goes to stderr.
+# Re-importing a module already in `sys.modules` is a dict lookup, so this costs nothing.
+# `.chamnan/tools/smoke_the_folded_checks.py` runs just this section in about fifteen seconds.
+import mapper, unicode_marks, redact, catalogs, mdblock, memory, timeline, tokens  # noqa: E401,F401
+import tools_index, workflows, tree, aging, environments, fit, rollup, blocklog  # noqa: E401,F401
+import peek as peek_mod, workspace as ws, assets as assets_mod  # noqa: F401
+import deploy as deploy_mod, impact as impact_mod, adapters as adapters_mod  # noqa: F401
+import milestones as milestones_mod, state as state_mod, sessions as sessions_mod  # noqa: F401
+import host as host_mod, ledger as _ledinv, memory as memory_mod  # noqa: F401
+
+# ---- 09_hook_state_agrees.py
+# 🐛 [2026-09-09] The hook got a version stamp, `--install-git-hook` learned to tell a current copy
+# from a stale one, and `rebuild_hook_installed` — the function the report named — was left asking
+# only whether the marker was present. A session with a months-old hook was told it was covered.
+# Half a fix: the member the report pointed at, and not the one beside it (R7 agent 5).
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("_ss_hook", ROOT / "hooks" / "chamnan_session_start.py")
+_ss = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_ss)
+
+_tmpl = _ss._current_hook_template()
+check("the hook template is readable from its source, not retyped",
+      _tmpl is not None and ws.GIT_HOOK_MARKER in _tmpl)
+
+_d = Path(tempfile.mkdtemp(prefix="chamnan-hookagree-"))
+try:
+    subprocess.run(["git", "init", "-q", str(_d)], check=True, capture_output=True,
+                   text=True, encoding="utf-8", timeout=30)
+    _pc = Path(ws.git_hooks_dir(_d)) / "pre-commit"
+
+    # Randomised over the shapes a real repository presents, rather than one fixture: absent,
+    # somebody else's, an unstamped copy (every hook installed before today), a copy from a
+    # different template, and the current one.
+    _cases = {
+        "absent":      None,
+        "theirs":      "#!/bin/sh\necho theirs\n",
+        "unstamped":   _tmpl,
+        "other build": _tmpl.replace("{stamp}", "") + "\n# stamp: deadbeef\n",
+        "current":     _tmpl.replace(ws.GIT_HOOK_MARKER,
+                                     f"{ws.GIT_HOOK_MARKER}\n{ws.GIT_HOOK_STAMP} "
+                                     f"{ws.git_hook_stamp(_tmpl)}", 1),
+    }
+    _wrong = []
+    for _name, _body in _cases.items():
+        if _body is None:
+            _pc.unlink(missing_ok=True)
+        else:
+            _pc.write_text(_body, encoding="utf-8")
+        _want = _name == "current"
+        if _ss.rebuild_hook_installed(_d) is not _want:
+            _wrong.append(f"{_name}: said {_ss.rebuild_hook_installed(_d)}, wanted {_want}")
+    check("only a hook built from the CURRENT template counts as installed",
+          not _wrong, saw="; ".join(_wrong) or None)
+
+    # The two answers must agree — that they did not is the whole defect.
+    _pc.write_text(_tmpl, encoding="utf-8")
+    check("...and rebuild_hook_installed agrees with git_hook_state on the same file",
+          _ss.rebuild_hook_installed(_d) is (ws.git_hook_state(_d, _tmpl) == "installed"))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+# ---- 10_offer_fatigue.py
+# 🐛 [2026-09-09] The hook-install OFFER fired on every qualifying session forever, three lines
+# below a comment saying a repeated warning "trains the reader to skip the line". The guard for
+# exactly that — `workspace.notice_due`, capped at three showings — was two files away and never
+# imported here (R7 agent 5).
+_d = Path(tempfile.mkdtemp(prefix="chamnan-fatigue-"))
+try:
+    (_d / ".chamnan" / "logs").mkdir(parents=True)
+    # Fifty asks, which is the shape a repository under active work actually presents: the index
+    # goes stale within hours, so the offer is reached again and again.
+    _shown = sum(1 for _ in range(50) if ws.notice_due(_d, "install-git-hook"))
+    check("a one-off offer stops after its few showings, however often it is reached",
+          _shown == ws.NOTICE_TIMES, saw=f"shown {_shown} of 50 asks, cap {ws.NOTICE_TIMES}")
+
+    # Independent keys must not share a budget — one notice going quiet cannot silence another.
+    _other = sum(1 for _ in range(50) if ws.notice_due(_d, "some-other-advice"))
+    check("...and each piece of advice has its own count", _other == ws.NOTICE_TIMES,
+          saw=f"{_other}")
+
+    # It is scoped to the workspace, so a second repository still gets taught.
+    _e = Path(tempfile.mkdtemp(prefix="chamnan-fatigue2-"))
+    try:
+        (_e / ".chamnan" / "logs").mkdir(parents=True)
+        check("...and a different workspace is taught from scratch",
+              ws.notice_due(_e, "install-git-hook") is True)
+    finally:
+        shutil.rmtree(_e, ignore_errors=True)
+
+    # The STALENESS warning is not the offer and must never be capped: it describes the tree right
+    # now and is true every time it fires.
+    _hook_src = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+    _warn = _hook_src[_hook_src.index("Source has changed since this index was built") - 2000:
+                      _hook_src.index("Source has changed since this index was built")]
+    check("...while the staleness warning itself carries no such cap",
+          "notice_due" not in _warn.split("_offer =")[-1])
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+# ---- 11_cut_never_strands_a_table.py
+# 🐛 [2026-09-09] `cut_outside_a_fence` guards against cutting inside a ``` block and nothing else.
+# Found on a real session handoff: a markdown table delivered as its header row and its `|---|`
+# rule with ZERO data rows — columns promised and none filled, worse than delivering the table or
+# never starting it. Five call sites share this helper, so the guard belongs here (R7 agent 1).
+def _strands_a_table(kept):
+    lines = [l for l in kept.splitlines() if l.strip()]
+    run = []
+    for l in reversed(lines):
+        if l.lstrip().startswith("|"):
+            run.append(l)
+        else:
+            break
+    run.reverse()
+    return bool(run) and not any(set(l.strip()) - set("|-: ") for l in run[1:])
+
+# Every cut point of several real shapes, not one fixture: a table at the end, one in the middle,
+# one with a single row, and one whose cells contain the pipe-like characters the rule is made of.
+_DOCS = {
+    "table last":  "Prose first.\n| what | when |\n|---|---|\n| a row | today |\n| more | later |\n",
+    "table mid":   "| h1 | h2 |\n|---|---|\n| x | y |\n\nProse after the table runs on.\n",
+    "one row":     "Intro line.\n| only | one |\n|---|---|\n| single | row |\n",
+    "dashy cells": "Intro.\n| a | b |\n|:--|--:|\n| -- | :-: |\n| real | data |\n",
+    "no table":    "Just prose, several lines.\nSecond line here.\nThird line here.\n",
+    "fenced":      "text\n```\ncode | with | pipes\n```\nafter\n",
+}
+_stranded, _grew = [], []
+for _name, _doc in _DOCS.items():
+    for _cut in range(1, len(_doc) + 1):
+        _at = mdblock.cut_outside_a_fence(_doc, _cut)
+        if _at > _cut and _cut < len(_doc):
+            _grew.append(f"{_name}@{_cut}")          # a cut may only move BACK, never forward
+        if _strands_a_table(_doc[:_at]):
+            _stranded.append(f"{_name}@{_cut}")
+check("no cut point leaves a table with a header and no rows",
+      not _stranded, saw=", ".join(_stranded[:6]) or None)
+check("...and a cut only ever moves backwards", not _grew, saw=", ".join(_grew[:4]) or None)
+
+# The guard it already had must survive the new one.
+_fenced = "text\n```\ncode line\n```\nafter\n"
+check("...and the fence guard still holds", mdblock.cut_outside_a_fence(_fenced, 12) <= 5)
+check("...and a cut at or past the end still returns the whole text",
+      mdblock.cut_outside_a_fence(_fenced, len(_fenced)) == len(_fenced))
+# ---- 12_carry_share_is_equal.py
+# 🐛 [2026-09-09] `carry_forward` splits its budget EQUALLY between the parts of a handoff, so the
+# smaller part keeps a larger share of itself — which is the outcome wanted, because a summary that
+# drops the blocker is worse than one that drops the prose. It was produced as a side effect and
+# named nowhere, so this pins it: a future edit that "fixes" the asymmetry toward proportional
+# fails here rather than silently undoing it (R7 agent 1).
+import importlib.util as _ilu
+_spec = _ilu.spec_from_file_location("_sess", ROOT / "lib" / "sessions.py")
+_sess = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_sess)
+
+_d = Path(tempfile.mkdtemp(prefix="chamnan-carry-"))
+try:
+    _sd = _d / ".chamnan" / "sessions"
+    _sd.mkdir(parents=True)
+    # A long part and a short one, over the budget, across several size ratios — the shape a real
+    # handoff takes, rather than one fixture.
+    _worse = []
+    for _big, _small in ((120, 30), (90, 45), (200, 12), (60, 55)):
+        for _f in _sd.glob("*.md"):
+            _f.unlink()
+        # Line-broken, because a handoff is bullets. A section written as ONE unbroken line loses
+        # everything — `cut_outside_a_fence` finds no line boundary to back up to — and that is a
+        # separate, pre-existing defect measured the same day and recorded rather than fixed here.
+        (_sd / "2026-09-09-x.md").write_text(
+            "# A session\n\n## Remaining\n\n"
+            + "".join(f"- remaining item {_i}\n" for _i in range(_big))
+            + "\n## Blockers\n\n"
+            + "".join(f"- blocking item {_i}\n" for _i in range(_small)),
+            encoding="utf-8")
+        _out = _sess.carry_forward(_d) or ""
+        if not _out:
+            _worse.append(f"{_big}/{_small}: carry_forward returned nothing — bad fixture")
+            continue
+        _kept_big = _out.count("remaining item")
+        _kept_small = _out.count("blocking item")
+        if not _kept_small:
+            _worse.append(f"{_big}/{_small}: blockers dropped whole")
+            continue
+        if (_kept_small / _small) < (_kept_big / _big) - 0.01:
+            _worse.append(f"{_big}/{_small}: small kept {_kept_small/_small:.0%}, "
+                          f"big kept {_kept_big/_big:.0%}")
+
+    check("the smaller part of a handoff keeps at least as much of itself as the larger",
+          not _worse, saw="; ".join(_worse) or None)
+
+    # The property this whole path exists for, asserted over every ratio rather than on whatever
+    # `_out` happened to hold when the loop ended — which is what the first version did, and it
+    # was still checking for the phrase the ORIGINAL fixture used.
+    check("...and neither part is ever dropped whole",
+          not [w for w in _worse if "dropped whole" in w],
+          saw="; ".join(w for w in _worse if "dropped whole" in w) or None)
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+# ---- 13_rules_pressure_surfaces.py
+# 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
+# name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
+# and not one of the five hook points in `hooks.json`. Two rounds found this and neither closed it.
+# The figure now reaches the block through the notice that already exists, and only when most of
+# the store is not arriving (R7 agent 6).
+def _fixture(n, body=240):
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-pressure-"))
+    _r = _d / ".chamnan" / "memory" / "rules"
+    _r.mkdir(parents=True)
+    for _i in range(n):
+        (_r / f"rule-{_i}.md").write_text(f"# Rule {_i}\n\nzq{_i} " + "x" * body, encoding="utf-8")
+    return _d
+
+_wrong = []
+for _n in (1, 2, 3, 5, 8, 9, 12, 16, 20, 30):
+    _d = _fixture(_n)
+    try:
+        _txt = memory_mod.rules_text(_d)
+        _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+        _said = "outgrown its budget" in _txt
+        _should = len(_title_only) * 2 > _n
+        if _said is not _should:
+            _wrong.append(f"{_n} rules, {len(_title_only)} title-only: said {_said}, "
+                          f"wanted {_should}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("the block says the rule store has outgrown its budget exactly when it has",
+      not _wrong, saw="; ".join(_wrong[:4]) or None)
+
+# Quiet on a healthy store: a figure printed every session is a figure people stop reading, which
+# is the same reasoning as the `notice_due` cap on the hook-install offer.
+_d = _fixture(3)
+try:
+    check("...and says nothing at all when every rule arrives whole",
+          "outgrown" not in memory_mod.rules_text(_d))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+# It must not become a new SECTION — the block is at its ceiling, and this rides in a line that
+# already existed.
+_before = _fixture(20)
+try:
+    _txt = memory_mod.rules_text(_before)
+    check("...and it rides in the existing notice rather than adding a line",
+          _txt.count("_…more rules in") == 1 and "\n\n_" not in _txt.split("more rules in")[1])
+finally:
+    shutil.rmtree(_before, ignore_errors=True)
+# ---- 14_pinned_rule_survives.py
+# 🐛 [2026-09-09] Rules were ordered newest-first, which is a fair tie-break and a poor importance
+# signal. Measured, not argued: `the-set-not-the-member.md` records this repository's most-repeated
+# defect and was violated again about twenty hours after being written — and at that moment it was
+# arriving as a TITLE ONLY. The rule most worth reading was the one nobody could read. A pin has
+# meant "this must not be cut" since `state.py` was written; same marker, one more store
+# (R7 agent 6).
+import time as _t_pin
+
+def _store(n, pin_index=None, body=260):
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-pinrule-"))
+    _r = _d / ".chamnan" / "memory" / "rules"
+    _r.mkdir(parents=True)
+    for _i in range(n):
+        _mark = " \U0001F4CC" if _i == pin_index else ""
+        _f = _r / f"rule-{_i}.md"
+        _f.write_text(f"# Rule {_i}{_mark}\n\nzq{_i} " + "x" * body, encoding="utf-8")
+        # Oldest first, so an unpinned rule 0 would be last under mtime order — the pin has to
+        # beat recency, not agree with it by luck.
+        os.utime(_f, (1_600_000_000 + _i, 1_600_000_000 + _i))
+    return _d
+
+# Across store sizes where the budget genuinely cannot carry everything.
+_lost = []
+for _n in (6, 9, 12, 20, 30):
+    _d = _store(_n, pin_index=0)
+    try:
+        _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+        if "Rule 0" in _title_only:
+            _lost.append(f"{_n} rules: the pinned one arrived as a title")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("a pinned rule arrives with its body however many rules crowd it",
+      not _lost, saw="; ".join(_lost) or None)
+
+# Without the pin the same rule is the oldest and does NOT survive — which is what makes the check
+# above mean something rather than passing by accident.
+_d = _store(20, pin_index=None)
+try:
+    _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+    check("...and the same rule unpinned is not privileged", "Rule 0" in _title_only,
+          saw=f"fitted {len(_fitted)}, title-only {len(_title_only)}")
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+# A store that pins nothing keeps exactly the order it had.
+_d = _store(9, pin_index=None)
+try:
+    check("...and a store with no pins is ordered as before",
+          "Rule 8" in memory_mod.rules_text(_d))      # newest still leads
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+# ---- 15_a_pin_is_read_by_every_store.py
+# ------------------------------------------- the pin reached the stores one at a time
+# 🐛 [2026-09-09] 📌 has meant "the owner says this must not be cut" since `state.py` was written,
+# and `fit._fit_lines` reserves pinned blocks before it fills anything else. It reached the RULES
+# store on 2026-09-09. The three listings beside it that cut by recency in exactly the same way --
+# decisions/lessons (`memory.titles`), milestones (`recent_titles`), threads (`open_titles`) --
+# did not read the mark at all, so an owner who pinned a decision watched it drop out by mtime with
+# nothing to say the mark had been ignored. One member of a set fixed, the identical ones beside it
+# left, which `the-set-not-the-member.md` names as this repository's most-repeated defect.
+#
+# R8 agent 1 finding 2 argued for an `importance:` field that outranks recency. chamnan already had
+# the field. It had it in one store out of four.
+import random as _t_rnd
+
+_t_PIN = "\U0001F4CC"
+_t_rnd.seed(20260909)
+
+
+def _t_ws(kind, n, pin_at):
+    """A workspace whose entry `pin_at` is BOTH pinned and the oldest, so recency alone would cut it
+    -- a pin that only agrees with the existing order proves nothing."""
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-pinset-"))
+    _w = _d / ".chamnan"
+    if kind in ("decisions", "lessons"):
+        _s = _w / "memory" / kind
+        _s.mkdir(parents=True)
+        for _i in range(n):
+            _f = _s / f"entry-{_i}.md"
+            _mark = f" {_t_PIN}" if _i == pin_at else ""
+            _f.write_text(f"# Entry {_i}{_mark}\n\nbody {_i}\n", encoding="utf-8")
+            os.utime(_f, (1_600_000_000 + _i, 1_600_000_000 + _i))
+    elif kind == "rules":
+        _s = _w / "memory" / "rules"
+        _s.mkdir(parents=True)
+        for _i in range(n):
+            _f = _s / f"rule-{_i}.md"
+            _mark = f" {_t_PIN}" if _i == pin_at else ""
+            # Padded: the rules store cuts on a BYTE budget rather than a count, so tiny rules
+            # never reach it and both checks below would pass on a store that cut nothing.
+            _f.write_text(f"# Rule {_i}{_mark}\n\nbody {_i} " + "x" * 400 + "\n",
+                          encoding="utf-8")
+            os.utime(_f, (1_600_000_000 + _i, 1_600_000_000 + _i))
+    elif kind == "milestones":
+        _w.mkdir(parents=True)
+        _out = []
+        for _i in range(n):
+            _mark = f" {_t_PIN}" if _i == pin_at else ""
+            # Oldest date on the pinned one, and the file is append-only, so both the date order
+            # and the write order put it last.
+            _out.append(f"## 2026-01-{_i + 1:02d} — Milestone {_i}{_mark}\n\nwhy {_i}\n")
+        (_w / "milestones.md").write_text("\n".join(_out), encoding="utf-8")
+    elif kind == "threads":
+        _s = _w / "threads"
+        _s.mkdir(parents=True)
+        for _i in range(n):
+            _mark = f" {_t_PIN}" if _i == pin_at else ""
+            (_s / f"thread-{_i}.md").write_text(
+                f"# Thread {_i}{_mark}\n\n**Status:** open\n\n"
+                f"## 2026-01-{_i + 1:02d} — did something {_i}\n\nnote\n", encoding="utf-8")
+    return _d
+
+
+def _t_shown(kind, root):
+    """What a session would actually be handed for that store."""
+    if kind in ("decisions", "lessons"):
+        return memory_mod.render_titles(memory_mod.titles(root))
+    if kind == "rules":
+        return memory_mod.rules_text(root)
+    if kind == "milestones":
+        return milestones_mod.recent_titles(root)
+    return timeline_pin_open(root)
+
+
+def timeline_pin_open(root):
+    return timeline.open_titles(root)
+
+
+_t_NAME = {"decisions": "Entry", "lessons": "Entry", "rules": "Rule",
+           "milestones": "Milestone", "threads": "Thread"}
+
+# 50 randomised cases across all five stores. `n` is always larger than what the store injects, so
+# every case is one where something genuinely has to be cut.
+_t_missed = []
+for _t_case in range(50):
+    _kind = _t_rnd.choice(("decisions", "lessons", "rules", "milestones", "threads"))
+    _n = _t_rnd.randint(6, 22)
+    _root = _t_ws(_kind, _n, pin_at=0)
+    try:
+        _text = _t_shown(_kind, _root)
+        _want = f"{_t_NAME[_kind]} 0"
+        if _want not in _text:
+            _t_missed.append(f"{_kind} with {_n} entries: pinned {_want!r} was cut")
+    finally:
+        shutil.rmtree(_root, ignore_errors=True)
+
+check("a pinned entry survives the cut in every store that cuts, not just rules",
+      not _t_missed, saw="\n".join(sorted(set(_t_missed))[:5]) or None)
+
+# The same fixture with NOTHING pinned must still cut, or the check above would pass on a listing
+# that simply stopped cutting -- which is the failure mode that makes a test look green while the
+# budget quietly stops being a budget.
+_t_nocut = []
+for _kind in ("decisions", "lessons", "rules", "milestones", "threads"):
+    _root = _t_ws(_kind, 22, pin_at=None)
+    try:
+        _text = _t_shown(_kind, _root)
+        if all(f"{_t_NAME[_kind]} {_i}" in _text for _i in range(22)):
+            _t_nocut.append(_kind)
+    finally:
+        shutil.rmtree(_root, ignore_errors=True)
+check("...and with nothing pinned the same stores still cut, so the first check is not vacuous",
+      not _t_nocut, saw=", ".join(_t_nocut) or None)
+
+# Structural, so the FIFTH store gets the convention by calling it rather than by remembering it.
+# Built at runtime from `state.PIN_MARK` itself: writing the marker literally in this file would
+# make the check match its own source.
+_t_needle = "PIN_" + "MARK"
+_t_own = []
+for _t_f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
+    if _t_f.name == "state.py":
+        continue
+    if _t_needle in _t_f.read_text(encoding="utf-8-sig", errors="replace"):
+        _t_own.append(_t_f.name)
+check("the pin has one spelling: no store reads the marker itself, they all ask state.pinned",
+      not _t_own, saw=", ".join(_t_own) or None)
+# ---- 16_a_cut_section_never_ships_framing_only.py
+# ------------------------------------------- a section cut to its own signposts is worse than absent
+# 🐛 [2026-09-09] `_only_the_opening_block` refused a fragment only when it was a subsequence of the
+# body's FIRST block. A cut landing a few lines past that -- carrying the second block's heading and
+# the italic line under it, none of its rows -- is not that subsequence, so it shipped: "## Quick
+# Index", a sentence describing rows, and no rows. Reproduced through the real hook by setting
+# `CHAMNAN_CONTEXT_PROFILE` to a name that does not exist, which resolves to the DEFAULT budgets and
+# adds a ~190-byte warning; that alone moved the delivered Architecture index from 7 rows to 0
+# (R7 agent 7, new finding 2). A typo in a config key cost the reader the section the warning was
+# about.
+_t_BODY = [
+    "# Architecture map",
+    "",
+    "Generated by chamnan. 440 source file(s).",
+    "",
+    "**Read the Quick Index in full. Do NOT read the Full Detail section end to end** -- grep it",
+    "for the one heading you need. That habit is the entire point of this file.",
+    "",
+    "## Quick Index",
+    "_440 files. Rolled up by directory to stay inside the session budget._",
+    "",
+] + [f"- **dir-{_i}/** ({_i * 7})" for _i in range(14)]
+
+_t_PART = "\n### Architecture index\n[repo:aa11bb]\n" + "\n".join(_t_BODY) + "\n[/repo:aa11bb]\n"
+_t_SRC = {"Architecture index": ".chamnan/MAP.md"}
+
+
+def _t_rows(text):
+    return len(re.findall(r"(?m)^- ", text))
+
+
+# ~50 rooms, swept across the whole range where the cut is interesting: below the 300-byte floor,
+# through the window that used to ship framing only, and up past the point where every row fits.
+_t_framing_only = []
+_t_with_rows = 0
+for _t_room in range(200, 1700, 30):
+    _t_out = fit._trim(_t_PART, _t_room, _t_SRC)
+    if not _t_out:
+        continue
+    if _t_rows(_t_out) == 0:
+        _t_framing_only.append(f"room {_t_room}: {len(_t_out.encode())} bytes, 0 rows")
+    else:
+        _t_with_rows += 1
+
+check("a cut section either carries a row of its list or is dropped, at every room",
+      not _t_framing_only, saw="\n".join(_t_framing_only[:5]) or None)
+
+# The guard must not have become "refuse everything" -- a threshold was tried here once and
+# withdrawn for deciding the real 1,600-byte cut by rounding. Rooms that CAN hold rows must keep
+# holding them.
+check("...and the rooms that can hold rows still get them, so the guard did not become a refusal",
+      _t_with_rows >= 10, saw=f"only {_t_with_rows} room(s) returned rows")
+
+# A body that is genuinely prose has no rows to lose, and refusing those would trade this bug for a
+# worse one: a section that is nothing but content, dropped for having no list in it.
+_t_PROSE = ("\n### A rule\n[repo:aa11bb]\n"
+            + "\n".join(["# Never deploy on a Friday", "",
+                         "The reason is that nobody is around to roll it back, and the person who "
+                         "wrote the change is the person who has to.", "",
+                         "## What to do instead", "",
+                         "Hold it until Monday morning and deploy it first, while the day is long "
+                         "enough to notice what it broke."])
+            + "\n[/repo:aa11bb]\n")
+_t_prose_kept = sum(1 for _r in range(400, 1000, 30) if fit._trim(_t_PROSE, _r, {}))
+check("...and a prose section with no list at all is still deliverable",
+      _t_prose_kept >= 5, saw=f"kept at only {_t_prose_kept} room(s)")
+
+# The end-to-end path (`CHAMNAN_CONTEXT_PROFILE=garbage-name` through the real hook) is where this
+# was found and where it was confirmed fixed: 1,109 bytes / 0 rows before, 1,089 bytes / 4 rows
+# after, on this repository at the live ceiling. It is NOT run here -- the hook reads a 9.5 MB map
+# and takes minutes, and a batch check that costs minutes stops being run. The invariant above is
+# the same one, asked of `_trim` directly at fifty rooms instead of at the one the profile warning
+# happened to produce.
+# ---- 17_a_section_never_built_is_still_reported.py
+# ------------------------------------------- gone from the block AND gone from the notice
+# 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
+# never reaches it, so two paths in the hook took the Architecture index out of the block with no
+# trace anywhere: the first `carries_an_index` check failing (the section is never appended), and
+# the fold ladder popping it (whose own comment claimed "the drop notice says the same in a line",
+# which was false). Measured on 61 real startup firings in one day: 26 delivered the index, 1 named
+# it in the notice, 34 showed it in NEITHER — the largest section in the block, at 8,632–8,938 bytes
+# against a 9,000 ceiling, so nothing had any reason to drop it (R7 agent 7, new finding 1).
+_t_rnd2 = __import__("random")
+_t_rnd2.seed(20260910)
+
+_t_SRC2 = {"Architecture index": ".chamnan/MAP.md", "Work in flight": ".chamnan/STATE.md"}
+
+
+def _t_section(title, rows):
+    return ("\n### " + title + "\n[repo:cc22dd]\n"
+            + "\n".join(f"- **item-{_i}** something worth saying about it" for _i in range(rows))
+            + "\n[/repo:cc22dd]\n")
+
+
+# Across ceilings that comfortably fit everything and ceilings that do not, an absent title must be
+# named every time — the failure was specifically a run with room to spare.
+_t_unnamed = []
+for _t_case in range(50):
+    _rows = _t_rnd2.randint(2, 30)
+    _parts = [_t_section("Work in flight", _rows), _t_section("Rules this repository works under", _rows)]
+    _ceiling = _t_rnd2.choice((900, 1500, 3000, 9000, 60000))
+    _body, _dropped = fit.shrink("## chamnan\n", _parts, _ceiling, _t_SRC2,
+                                 absent=[("Architecture index", ".chamnan/MAP.md")])
+    if "Architecture index" not in _body:
+        _t_unnamed.append(f"ceiling {_ceiling}, {_rows} rows: absent section not named in the block")
+    if not any(t == "Architecture index" for t, _s in _dropped):
+        _t_unnamed.append(f"ceiling {_ceiling}, {_rows} rows: absent section not in the returned list")
+
+check("a section the caller never built is named in the notice, at every ceiling",
+      not _t_unnamed, saw="\n".join(sorted(set(_t_unnamed))[:5]) or None)
+
+# The line it adds is bytes, and a notice that is not paid for is how a block lands over the host's
+# cap after being measured as under it.
+_t_over = []
+for _ceiling in (1200, 2000, 4000, 9000):
+    _parts = [_t_section("Work in flight", 40), _t_section("Rules this repository works under", 40)]
+    _body, _d = fit.shrink("## chamnan\n", _parts, _ceiling, _t_SRC2, absent=["Architecture index"])
+    if len(_body.encode()) > _ceiling:
+        _t_over.append(f"ceiling {_ceiling}: body {len(_body.encode())}")
+check("...and the extra notice line is inside the measurement, not added after it",
+      not _t_over, saw=", ".join(_t_over) or None)
+
+# Passing nothing must leave the old behaviour exactly as it was — this argument is additive.
+_t_changed = []
+for _ceiling in (900, 1500, 3000, 9000):
+    _p1 = [_t_section("Work in flight", 20), _t_section("Rules this repository works under", 20)]
+    _p2 = [_t_section("Work in flight", 20), _t_section("Rules this repository works under", 20)]
+    if fit.shrink("## chamnan\n", _p1, _ceiling, _t_SRC2)[0] != \
+       fit.shrink("## chamnan\n", _p2, _ceiling, _t_SRC2, absent=[])[0]:
+        _t_changed.append(str(_ceiling))
+check("...and a caller that passes nothing gets exactly what it got before",
+      not _t_changed, saw=", ".join(_t_changed) or None)
+
+# Both hook paths that remove the index before shrink runs must record it. Read from source rather
+# than reproduced, because reproducing them needs a real 9 MB map and minutes of runtime.
+_t_hook = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8-sig",
+                                                                 errors="replace")
+_t_marker = "_never" + "_built"
+_t_sites = _t_hook.count(_t_marker + ".append(")
+check("both hook paths that remove the index before shrink runs record it",
+      _t_sites == 2, saw=f"{_t_sites} recording site(s), expected 2")
+check("...and the hook hands that list to shrink",
+      "absent=" + _t_marker in _t_hook)
+# ---- 18_a_pointer_does_not_repeat_the_title_above_it.py
+# ------------------------------------------- the reader is looking at the title; give them the path
+# 🐛 [2026-09-09] Each trimmed rule ended with "_…the rest of **<full title>** is in `<path>`._" and
+# that title is the bold line directly above it, so every trimmed rule paid for its own name twice.
+# The Rules section was measured spending 73% of its bytes on navigation text, and 20% of the WHOLE
+# 9,000-byte block on that one section's navigation alone (R7 agent 3, findings 7 and 9).
+#
+# Measured on this repository's real store after the cut: the section fell 2,372 -> 2,305 bytes AND
+# the number of rules arriving with a body rose from 3 to 5 of 10 — the freed bytes go back into
+# rule text, because the cut that follows is a fixed budget rather than a fixed list.
+_t_rnd3 = __import__("random")
+_t_rnd3.seed(20260911)
+
+_t_WORDS = ("never", "always", "deploy", "database", "review", "before", "release", "branch",
+            "secret", "workspace", "session", "budget", "rule", "commit", "index")
+
+
+def _t_rules_ws(n, title_words):
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-ptr-"))
+    _s = _d / ".chamnan" / "memory" / "rules"
+    _s.mkdir(parents=True)
+    _titles = []
+    for _i in range(n):
+        _t = " ".join(_t_rnd3.choice(_t_WORDS) for _ in range(title_words)) + f" {_i}"
+        _titles.append(_t)
+        (_s / f"rule-{_i}.md").write_text(
+            f"# {_t}\n\nThe body of this rule, which is long enough that the share cannot hold it. "
+            + "detail " * 90 + "\n", encoding="utf-8")
+    return _d, _titles
+
+
+# 50 stores, over the range of title lengths where the duplication actually costs something.
+_t_dupes = []
+for _t_case in range(50):
+    _n = _t_rnd3.randint(4, 12)
+    _root, _titles = _t_rules_ws(_n, _t_rnd3.randint(3, 14))
+    try:
+        _text = memory_mod.rules_text(_root)
+        for _line in _text.splitlines():
+            if "the rest" not in _line or "`" not in _line:
+                continue
+            _repeated = [_t for _t in _titles if _t in _line]
+            if _repeated:
+                _t_dupes.append(f"{_n} rules: pointer repeats {_repeated[0]!r}")
+    finally:
+        shutil.rmtree(_root, ignore_errors=True)
+
+check("a rule's pointer sentence does not repeat the title printed directly above it",
+      not _t_dupes, saw="\n".join(sorted(set(_t_dupes))[:4]) or None)
+
+# The pointer still has to name the FILE, which is the half the reader does not have. Dropping the
+# duplication must not become dropping the pointer.
+_t_pathless = []
+for _t_case in range(12):
+    _n = _t_rnd3.randint(4, 12)
+    _root, _titles = _t_rules_ws(_n, 6)
+    try:
+        _text = memory_mod.rules_text(_root)
+        for _line in _text.splitlines():
+            if "the rest" in _line and ".chamnan/memory/rules/" not in _line:
+                _t_pathless.append(_line[:80])
+    finally:
+        shutil.rmtree(_root, ignore_errors=True)
+check("...and it still names the file, which is the half the reader does not already have",
+      not _t_pathless, saw="\n".join(_t_pathless[:3]) or None)
+
+# The point of the cut is that the bytes go back into rule bodies. On a store where the budget
+# genuinely binds, a longer title must not cost a rule its body.
+_t_root_short, _ = _t_rules_ws(8, 3)
+_t_root_long, _ = _t_rules_ws(8, 14)
+try:
+    _t_fit_short = memory_mod.rules_pressure(_t_root_short)[0]
+    _t_fit_long = memory_mod.rules_pressure(_t_root_long)[0]
+    _t_n = lambda _v: _v if isinstance(_v, int) else len(_v)
+    check("...so a store with long titles delivers as many bodies as one with short titles",
+          _t_n(_t_fit_long) >= _t_n(_t_fit_short) - 1,
+          saw=f"short titles: {_t_n(_t_fit_short)} fitted, long titles: {_t_n(_t_fit_long)}")
+finally:
+    shutil.rmtree(_t_root_short, ignore_errors=True)
+    shutil.rmtree(_t_root_long, ignore_errors=True)
+# ---- 19_a_subagent_does_not_inflate_the_session.py
+# ------------------------------------------- eight processes, one session id, one counter
+# 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
+# subagents break: that a session id names ONE writer. Every subagent inherits its parent's
+# session_id. Measured on this repository's real store — this session's file reached 27,151 calls
+# while every other session topped out near 80, and the escalating nudges at 150 and 400 had all
+# fired on traffic the session did not generate, asking for something a subagent cannot do
+# (R9 agent 1, finding 1; its 38.8%-lost-increments reproduction is the same defect seen as a race).
+import random as _t_r19
+_t_r19.seed(20260912)
+
+_watch = importlib.util.spec_from_file_location(
+    "_chamnan_watch", str(ROOT / "hooks" / "chamnan_scratch_watch.py"))
+_wmod = importlib.util.module_from_spec(_watch)
+sys.path.insert(0, str(ROOT / "hooks"))
+_watch.loader.exec_module(_wmod)
+
+
+def _t_ws19():
+    """A workspace `_resume_nudge` will actually act in: the `ledger` part enabled, and no session
+    record for today -- with a record present the function returns before the marks are read, and
+    every check below would pass on a function that had stopped counting."""
+    d = Path(tempfile.mkdtemp(prefix="chamnan-nudge-"))
+    (d / ".chamnan" / _wmod.NUDGE_DIR).mkdir(parents=True)
+    (d / ".chamnan" / "sessions").mkdir(parents=True, exist_ok=True)
+    (d / ".chamnan" / "config.json").write_text('{"parts": {"ledger": true}}', encoding="utf-8")
+    return d
+
+
+def _t_calls(wsdir, sid):
+    return _wmod._nudge_read(wsdir / ".chamnan", sid).get("calls", 0)
+
+
+def _t_fire(wsdir, sid, transcript, n):
+    """n PostToolUse payloads from one writer, through the REAL `_resume_nudge`.
+
+    Reimplementing the counting logic here would produce three checks that cannot fail: the
+    mutation would land in the hook and this file would keep agreeing with itself. So the actual
+    function runs, with its `say()` silenced -- it writes a hook protocol object to stdout and
+    exactly one may be emitted per event.
+    """
+    payload = {"session_id": sid, "transcript_path": transcript,
+               "tool_name": "Bash", "tool_input": {"command": "true"}}
+    _said = _wmod.say
+    _wmod.say = lambda *_a, **_k: None
+    try:
+        for _ in range(n):
+            _wmod._resume_nudge(payload, wsdir / ".chamnan", wsdir)
+    finally:
+        _wmod.say = _said
+
+
+# 50 randomised rounds: one parent and a handful of subagents, all under ONE session id.
+_t_inflated = []
+for _t_case in range(50):
+    _sid = f"sess-{_t_case}"
+    _ws19 = _t_ws19()
+    try:
+        _parent_calls = _t_r19.randint(5, 40)
+        _t_fire(_ws19, _sid, "/t/parent.jsonl", _parent_calls)
+        for _a in range(_t_r19.randint(1, 7)):
+            _t_fire(_ws19, _sid, f"/t/agent-{_a}.jsonl", _t_r19.randint(50, 400))
+        _seen = _t_calls(_ws19, _sid)
+        if _seen != _parent_calls:
+            _t_inflated.append(f"parent made {_parent_calls} calls, counter says {_seen}")
+    finally:
+        shutil.rmtree(_ws19, ignore_errors=True)
+
+check("a subagent sharing its parent's session id does not increment the parent's counter",
+      not _t_inflated, saw="\n".join(_t_inflated[:4]) or None)
+
+# It must still COUNT. A guard that rejects everything would pass the check above and silently
+# retire the one mechanism that gets a session recorded.
+_t_dead = []
+for _t_case in range(12):
+    _sid = f"solo-{_t_case}"
+    _ws19 = _t_ws19()
+    try:
+        _n = _t_r19.randint(3, 60)
+        _t_fire(_ws19, _sid, "/t/parent.jsonl", _n)
+        if _t_calls(_ws19, _sid) != _n:
+            _t_dead.append(f"{_n} calls from one writer counted as {_t_calls(_ws19, _sid)}")
+    finally:
+        shutil.rmtree(_ws19, ignore_errors=True)
+check("...and a session with no subagents counts every one of its own calls",
+      not _t_dead, saw="\n".join(_t_dead[:3]) or None)
+
+# A host that supplies no transcript_path must behave exactly as before rather than stop counting.
+_t_ws19 = _t_ws19()
+try:
+    _t_fire(_t_ws19, "nopath", "", 25)
+    check("...and a host that sends no transcript path still counts, as it always did",
+          _t_calls(_t_ws19, "nopath") == 25, saw=f"counted {_t_calls(_t_ws19, 'nopath')} of 25")
+finally:
+    shutil.rmtree(_t_ws19, ignore_errors=True)
+
+# The guard has to live in the hook, not only in this check's copy of the logic.
+_t_src19 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8-sig",
+                                                                  errors="replace")
+check("the hook itself learns the owning transcript rather than trusting the session id alone",
+      'entry.get("owner")' in _t_src19 and 'transcript_path' in _t_src19)
+# ---- 20_one_bound_whichever_door_the_number_came_through.py
+# ------------------------------------------- the same number, clamped on one path and not the other
+# 🐛 [2026-09-09] `.chamnan/config.json`'s `output_byte_ceiling` is range-checked against a shared
+# table; `CHAMNAN_OUTPUT_CEILING` sets the identical value through a different function that tested
+# only `asked > 0`. So the number a hostile clone could not push past 9,500 could be set to 50,000
+# from a shell export and reached `fit.shrink` unchanged — and the host's own cut is around 10,000
+# and positional, so the block does not get bigger, it stops mid-sentence (R9 agent 3, finding 3).
+_env_mod = importlib.util.spec_from_file_location(
+    "_chamnan_start", str(ROOT / "hooks" / "chamnan_session_start.py"))
+_start = importlib.util.module_from_spec(_env_mod)
+_env_mod.loader.exec_module(_start)
+
+_t_CAP = ws.upper_bound("output_byte_ceiling")
+check("the ceiling has a declared upper bound at all", isinstance(_t_CAP, int) and _t_CAP > 0,
+      saw=repr(_t_CAP))
+
+# Swept rather than sampled: every value from well under the bound to well over it, through the
+# environment door, must land where the config door would put it.
+_t_cfg = {"output_byte_ceiling": 9000}
+_t_past = []
+_t_kept = 0
+_t_saved = os.environ.get("CHAMNAN_OUTPUT_CEILING")
+try:
+    for _t_v in range(1000, _t_CAP * 3, 250):
+        os.environ["CHAMNAN_OUTPUT_CEILING"] = str(_t_v)
+        _t_got = _start._ceiling_from_env(_t_cfg)
+        if _t_got > _t_CAP:
+            _t_past.append(f"asked {_t_v} -> got {_t_got}")
+        elif _t_got == _t_v:
+            _t_kept += 1
+    # Junk and negatives fall back rather than raising: this runs at session start and an exception
+    # costs the session its whole block over a typo in a shell export.
+    for _t_bad in ("-3", "0", "abc", "", "9e9", "  "):
+        os.environ["CHAMNAN_OUTPUT_CEILING"] = _t_bad
+        if _start._ceiling_from_env(_t_cfg) != 9000:
+            _t_past.append(f"junk {_t_bad!r} -> {_start._ceiling_from_env(_t_cfg)}")
+finally:
+    if _t_saved is None:
+        os.environ.pop("CHAMNAN_OUTPUT_CEILING", None)
+    else:
+        os.environ["CHAMNAN_OUTPUT_CEILING"] = _t_saved
+
+check("no value set through the environment can exceed the bound the config path enforces",
+      not _t_past, saw="\n".join(_t_past[:5]) or None)
+check("...and a value inside the bound is still honoured, so the dial still turns",
+      _t_kept >= 20, saw=f"only {_t_kept} in-range value(s) came back unchanged")
+
+# One table, reachable by name, so the next door onto the same number asks rather than re-decides.
+_t_priv = "_UPPER" + "_BOUND"
+_t_reaching = []
+for _t_f in sorted((ROOT / "hooks").glob("*.py")) + sorted((ROOT / "bin").glob("chamnan-*")):
+    if _t_priv in _t_f.read_text(encoding="utf-8-sig", errors="replace"):
+        _t_reaching.append(_t_f.name)
+check("...and nothing outside workspace.py reaches into the private table to find it",
+      not _t_reaching, saw=", ".join(_t_reaching) or None)
+# ---- 21_a_name_may_open_with_a_digit_and_a_tool_has_one_name.py
+# ------------------------------------------- two defects found by USING a store nobody had filled
+# 🐛 [2026-09-09] `.chamnan/environments.md` — the store whose module docstring calls it "the
+# constraints nobody writes down and everybody re-learns" — did not exist on this repository, so the
+# parser behind it had never met a real name (R9 agent 2, finding 9). Writing it surfaced two things
+# at once.
+#
+# First: the version-pair name had to START with a letter, so `2dspeak-venv-python 3.12.10` was
+# recorded as `dspeak-venv-python`. A memory entry claiming the real name then matched no declared
+# name, so the aging check filtered it out and reported an all-clear it had not earned.
+_t_pairs = dict(aging.version_pairs(
+    "python 3.9.6, homebrew-python 3.14.7, 2dspeak-venv-python 3.12.10, git 2.55.0"))
+check("a component whose name opens with a digit keeps its first character",
+      _t_pairs.get("2dspeak-venv-python") == "3.12.10", saw=repr(_t_pairs))
+
+# ...and the reason the old pattern was written that way still has to hold: a bare number in a list
+# of versions is not a name.
+_t_noise = dict(aging.version_pairs("postgres 16, redis 7.2, python 3.11"))
+check("...and a bare number in the same line is still not read as a name",
+      _t_noise == {"postgres": "16", "redis": "7.2", "python": "3.11"}, saw=repr(_t_noise))
+
+# A tighter right boundary was tried here and withdrawn: it fixes one noise case and turns two
+# shapes people really write into nothing at all, which is worse, because a claim that parses to
+# nothing is never filtered, never reported and never noticed.
+_t_suffixed = dict(aging.version_pairs("redis 7.2-alpine and python 3.11rc1"))
+check("...and a version carrying a suffix still parses rather than vanishing",
+      _t_suffixed.get("redis") == "7.2" and _t_suffixed.get("python") == "3.11",
+      saw=repr(_t_suffixed))
+
+# Second: two tools existed under two spellings of the same name, byte-identical, with only the
+# hyphenated half registered — so the section whose whole job is "prefer these over writing a new
+# script" could never point at the other (R9 agent 2, finding 8). Derived from the directory rather
+# than from the two names that were found, so the third pair is caught by the same check.
+_t_tools = ROOT.parent.parent / ".chamnan" / "tools"
+_t_by_key, _t_twins = {}, []
+if _t_tools.is_dir():
+    for _t_f in sorted(_t_tools.iterdir()):
+        if not _t_f.is_file():
+            continue
+        _t_key = _t_f.name.replace("_", "-").lower()
+        if _t_key in _t_by_key:
+            try:
+                same = _t_f.read_bytes() == _t_by_key[_t_key].read_bytes()
+            except OSError:
+                same = False
+            if same:
+                _t_twins.append(f"{_t_by_key[_t_key].name} == {_t_f.name}")
+        else:
+            _t_by_key[_t_key] = _t_f
+check("no tool exists twice under two spellings of one name",
+      not _t_twins, saw="\n".join(_t_twins) or None)
+
+# A surviving tool must not name its vanished twin in its own usage text — both did.
+_t_wrong_name = []
+for _t_f in sorted(_t_tools.glob("*")) if _t_tools.is_dir() else []:
+    if not _t_f.is_file() or _t_f.suffix not in (".py", ".sh"):
+        continue
+    _t_body = _t_f.read_text(encoding="utf-8-sig", errors="replace")
+    _t_twin = _t_f.name.replace("-", "_") if "-" in _t_f.name else _t_f.name.replace("_", "-")
+    if _t_twin != _t_f.name and _t_twin in _t_body:
+        _t_wrong_name.append(f"{_t_f.name} tells the reader to run {_t_twin}")
+check("...and no tool tells the reader to run a filename that does not exist",
+      not _t_wrong_name, saw="\n".join(_t_wrong_name[:4]) or None)
+# ---- 22_a_second_entry_does_not_overwrite_the_first.py
+# ------------------------------------------- one of four stores had the guard
+# 🐛 [2026-09-09] Every store here builds a filename by truncating an ASCII reduction of the title —
+# at 40 characters for session records, 50 for decisions/lessons/rules, 60 for candidates, 50 for
+# threads — and only `timeline` asked whether that name was already taken by a DIFFERENT title. In
+# the other three, two titles agreeing up to the cut landed on one file and the second overwrote
+# the first, silently, in the stores whose whole job is remembering. On this repository **20 of 22
+# memory titles already exceed 50 characters**, so today's zero collisions are luck, not a guard
+# (R10 agent 3, findings 2-5; finding 5 is the count, 1 of 4).
+import random as _t_r22
+_t_r22.seed(20260913)
+
+_t_LONG = ("the pin reached the stores one at a time and the identical ones beside it were left "
+           "alone until somebody measured it")
+
+
+def _t_pair(n):
+    """Two titles identical for the first `n` characters and different afterwards — the exact shape
+    every one of these truncations turns into one filename."""
+    head = _t_LONG[:n]
+    return head + " alpha branch of the story", head + " beta branch of the story"
+
+
+# --- memory: decisions, lessons and rules
+_t_lost = []
+for _t_case in range(50):
+    _n = _t_r22.randint(52, 100)
+    _a, _b = _t_pair(_n)
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-"))
+    try:
+        for _cat in ("decisions", "lessons", "rules"):
+            (_d / ".chamnan" / "memory" / _cat).mkdir(parents=True, exist_ok=True)
+        _cat = _t_r22.choice(("decisions", "lessons", "rules"))
+        _store = _d / ".chamnan" / "memory" / _cat
+        _fa = memory_mod.distinct_filename(_d, _cat, _a)
+        (_store / _fa).write_text(f"# {_a}\n\nfirst body\n", encoding="utf-8")
+        _fb = memory_mod.distinct_filename(_d, _cat, _b)
+        if _fa == _fb:
+            _t_lost.append(f"{_cat}: titles differing after {_n} chars share {_fa}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("two memory entries whose titles differ only past the cut get two files",
+      not _t_lost, saw="\n".join(_t_lost[:4]) or None)
+
+# --- session records: the same shape, narrowed by the date prefix and not closed by it
+_t_sess = []
+for _t_case in range(20):
+    _n = _t_r22.randint(42, 90)
+    _a, _b = _t_pair(_n)
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-s-"))
+    try:
+        (_d / ".chamnan" / "sessions").mkdir(parents=True)
+        _fa = sessions_mod.distinct_filename(_d, "2026-09-09", _a)
+        (_d / ".chamnan" / "sessions" / _fa).write_text(f"# {_a}\n\nfirst\n", encoding="utf-8")
+        _fb = sessions_mod.distinct_filename(_d, "2026-09-09", _b)
+        if _fa == _fb:
+            _t_sess.append(f"same day, differ after {_n}: both {_fa}")
+        if not _fb.startswith("2026-09-09-"):
+            _t_sess.append(f"lost its date prefix: {_fb}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("...and two session records written the same day do too, keeping their date prefix",
+      not _t_sess, saw="\n".join(_t_sess[:4]) or None)
+
+# Rewriting the SAME title must still overwrite itself. A guard that gives every write a fresh name
+# turns one record into a pile of near-duplicates, which is a worse failure than the one it fixes.
+_t_grew = []
+for _t_case in range(20):
+    _title = _t_pair(_t_r22.randint(52, 100))[0]
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-r-"))
+    try:
+        _store = _d / ".chamnan" / "memory" / "decisions"
+        _store.mkdir(parents=True)
+        for _round in range(3):
+            _f = memory_mod.distinct_filename(_d, "decisions", _title)
+            (_store / _f).write_text(f"# {_title}\n\nbody {_round}\n", encoding="utf-8")
+        if len(list(_store.glob("*.md"))) != 1:
+            _t_grew.append(f"{len(list(_store.glob('*.md')))} files for one title")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("...and writing the same entry three times still leaves one file",
+      not _t_grew, saw="\n".join(_t_grew[:3]) or None)
+
+# The property the guard exists to PROTECT, which the two checks above do not test: a name that does
+# not collide stays readable. An earlier version of this in `timeline` appended a hash whenever
+# slugging changed the title — and slugging changes every title with an internal hyphen — so
+# `bge-m3 migration` became `bge-m3-migration-12a9e3` and the obvious guess at the name matched
+# nothing. A guard that hashes everything passes both checks above and destroys the thing they are
+# guarding, which is exactly what a mutation of this file demonstrated.
+_t_hashed = []
+for _t_case in range(20):
+    _title = _t_pair(_t_r22.randint(52, 100))[0]
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-p-"))
+    try:
+        (_d / ".chamnan" / "memory" / "decisions").mkdir(parents=True)
+        (_d / ".chamnan" / "sessions").mkdir(parents=True)
+        _plain = memory_mod.filename(_title)
+        _got = memory_mod.distinct_filename(_d, "decisions", _title)
+        if _got != _plain:
+            _t_hashed.append(f"empty store gave {_got} instead of {_plain}")
+        _sp = sessions_mod.filename("2026-09-09", _title)
+        _sg = sessions_mod.distinct_filename(_d, "2026-09-09", _title)
+        if _sg != _sp:
+            _t_hashed.append(f"empty store gave {_sg} instead of {_sp}")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+check("...and a title that collides with nothing keeps its plain readable name",
+      not _t_hashed, saw="\n".join(_t_hashed[:4]) or None)
+
+# The guard lives in one place now. A store that spells its own is the defect coming back.
+_t_own = []
+for _t_f in sorted((ROOT / "lib").glob("*.py")):
+    _t_body = _t_f.read_text(encoding="utf-8-sig", errors="replace")
+    if "hashlib.sha1(want" in _t_body and _t_f.name != "mdblock.py":
+        _t_own.append(_t_f.name)
+check("the disambiguation is written once, not once per store",
+      not _t_own, saw=", ".join(_t_own) or None)
+# ---- 23_named_as_a_credential_and_never_enforced.py
+# ------------------------------------------- the module named them and redacted none of them
+# 🐛 [2026-09-09] `_CREDENTIAL_PREFIX` lists twenty-two vendor prefixes, and six of them were
+# enforced nowhere: a Google OAuth token, a DigitalOcean personal token, a Shopify private-app
+# token, a Docker Hub personal token, a PostHog project key and a SendGrid key all left in full,
+# bare and assigned alike (R10 agent 2, finding 2).
+#
+# The first measurement of this said eleven leaked INCLUDING `AKIA`, and that was wrong: the fixture
+# used a 32-character body where a real AWS access key id is 4 + 16. At its documented shape `AKIA`
+# was caught all along. Bodies here are computed from each vendor's real length and alphabet for
+# exactly that reason — a hand-typed credential fixture has been invalid three times in this
+# repository and each time it looked like a leak.
+import hashlib as _t_h23
+
+_t_UP = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+_t_LO = "abcdefghijklmnopqrstuvwxyz0123456789"
+_t_MIX = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+
+def _t_body(seed, n, alpha):
+    h = _t_h23.sha256(seed.encode()).hexdigest()
+    out = []
+    while len(out) < n:
+        h = _t_h23.sha256(h.encode()).hexdigest()
+        out += [alpha[int(c, 16) % len(alpha)] for c in h]
+    return "".join(out[:n])
+
+
+# vendor, prefix, body length, alphabet — every one a documented real shape.
+_t_VENDORS = [
+    ("AWS access key id",           "AKIA",      16, _t_UP),
+    ("AWS temporary access key",    "ASIA",      16, _t_UP),
+    ("Google OAuth access token",   "ya29.",     68, _t_MIX),
+    ("DigitalOcean personal token", "dop_v1_",   64, _t_LO),
+    ("Shopify private app token",   "shpat_",    32, _t_LO),
+    ("Docker Hub personal token",   "dckr_pat_", 36, _t_MIX),
+    ("PostHog project key",         "phc_",      43, _t_MIX),
+    ("GitHub personal token",       "ghp_",      36, _t_MIX),
+    ("OpenAI-style secret key",     "sk-",       36, _t_MIX),
+]
+
+_t_leaked = []
+for _name, _pre, _n, _alpha in _t_VENDORS:
+    _v = _pre + _t_body(_pre, _n, _alpha)
+    # Bare, assigned, exported, and inside prose — a credential does not only appear one way.
+    for _ctx in (_v, f'token = "{_v}"', f"export API_KEY={_v}", f"the key is {_v} and it works"):
+        if _v in redact.scrub(_ctx):
+            _t_leaked.append(f"{_name} ({_pre}) survives {_ctx[:28]!r}")
+# SendGrid is three dot-separated parts, not prefix-plus-body.
+_t_sg = "SG." + _t_body("sga", 22, _t_MIX) + "." + _t_body("sgb", 43, _t_MIX)
+for _ctx in (_t_sg, f'key = "{_t_sg}"'):
+    if _t_sg in redact.scrub(_ctx):
+        _t_leaked.append(f"SendGrid key survives {_ctx[:28]!r}")
+
+check("every vendor prefix this module names is actually redacted at its real shape",
+      not _t_leaked, saw="\n".join(sorted(set(_t_leaked))[:6]) or None)
+
+# Precision is the half that is hard to get back. `pk-`, `rk_` and `ak_` are deliberately NOT
+# enforced: with the usual 16-character body, ordinary identifiers match.
+_t_eaten = [_t for _t in ("ak_configuration_manager = load()",
+                          "rk_buffer_size = 4096",
+                          "pk-format-version: 3",
+                          "shipping_address = form.cleaned_data",
+                          "phcode_lookup_table = {}",
+                          "SG. Chapter 4 covers the rest",
+                          "ya29 was the old release name")
+            if redact.scrub(_t) != _t]
+check("...and an ordinary identifier that merely starts like one is untouched",
+      not _t_eaten, saw="\n".join(_t_eaten) or None)
+
+# Asked of this repository's own text rather than of a fixture: the rules must not start eating
+# the source they ship inside.
+_t_files = [_f for _d in ("lib", "hooks") for _f in (ROOT / _d).glob("*.py") if _f.is_file()]
+_t_harmed = []
+for _f in _t_files:
+    _t_text = _f.read_text(encoding="utf-8-sig", errors="replace")
+    for _i, _line in enumerate(_t_text.splitlines(), 1):
+        if any(_p in _line for _p in ("ya29.", "dop_v1_", "shpat_", "dckr_pat_", "phc_", "SG.")):
+            if redact.scrub(_line) != _line and "re.compile" not in _line:
+                _t_harmed.append(f"{_f.name}:{_i}")
+check("...and the new rules do not redact this package's own source",
+      not _t_harmed, saw=", ".join(_t_harmed[:6]) or None)
+
+# The set, derived: every prefix the module names must either be enforced or be recorded as a
+# deliberate exemption-only entry. A prefix added to the constant next year is covered by this.
+_t_src23 = (ROOT / "lib" / "redact.py").read_text(encoding="utf-8-sig", errors="replace")
+_t_named = set(re.findall(r"(?:sk-|pk-|rk_|ak_|phc_|ghp_|github_pat_|AKIA|ASIA|AIza|ya29\\.|"
+                          r"glpat-|dop_v1_|shpat_|SG\\.|npm_|dckr_pat_)", _t_src23))
+check("the exemption constant and the enforcement list are both still present and distinct",
+      "_CREDENTIAL_PREFIX" in _t_src23 and len(_t_named) >= 10, saw=f"{len(_t_named)} prefixes named")
+# ---- 24_ignore_matching_agrees_with_real_git.py
+# ------------------------------------------- fnmatch asks the platform, git asks its own config
+# 🐛 [2026-09-09] `fnmatch.fnmatch` normalises case with `os.path.normcase`, which folds on Windows
+# and does not on macOS or Linux. git decides the same question with `core.ignorecase`. The two
+# disagree on THIS machine's own defaults — `core.ignorecase` is true here because the filesystem is
+# case-insensitive, while `os.name` is posix so `fnmatch` is case-sensitive — and every gitignore
+# and gitattributes pattern chamnan evaluated diverged from what git itself answers. On Windows it
+# diverges the other way. Three call sites had the identical gap: `mapper._is_generated`, `catalogs`'
+# gitignore reader and `tree.matching` (R10 agent 1, findings 1 and 2).
+#
+# Measured before the fix, `core.ignorecase=true`: chamnan said not-ignored for both `Dockerfile`
+# and `notes.MD`; real `git check-ignore` said ignored for both.
+#
+# Asked against REAL git rather than against a model of it — a check that reimplements the rule it
+# is testing agrees with itself.
+#
+# Two paths, and they are reached differently. `catalogs._ignored_by_files` is the FALLBACK, used
+# only where there is no git to ask `check-ignore` — so in production the fold there is always
+# False, which is git's own default and correct. It is still worth pinning: the fallback's job is to
+# answer as git would, and this is the only way to know whether it does. `mapper._is_generated` is
+# the reachable one — gitattributes are read where a repository exists, so the fold really applies.
+_t_git = shutil.which("git")
+if not _t_git:
+    skip("  · no git on this machine — ignore-matching check skipped, not passed")
+else:
+    def _t_repo(ignorecase, names, gitignore):
+        _d = Path(tempfile.mkdtemp(prefix="chamnan-fold-"))
+        subprocess.run([_t_git, "init", "-q", str(_d)], check=True, capture_output=True)
+        subprocess.run([_t_git, "-C", str(_d), "config", "core.ignorecase", ignorecase],
+                       check=True, capture_output=True)
+        for _n in names:
+            (_d / _n).parent.mkdir(parents=True, exist_ok=True)
+            (_d / _n).write_text("x\n", encoding="utf-8")
+        (_d / ".gitignore").write_text(gitignore, encoding="utf-8")
+        return _d
+
+    def _t_git_says(_d, name):
+        return subprocess.run([_t_git, "-C", str(_d), "check-ignore", "-q", name],
+                              capture_output=True).returncode == 0
+
+    # Both settings, and case variants in both directions — the platform folds one way, git the
+    # other, so a check that only tries one direction passes on half the defect.
+    _t_NAMES = ["Dockerfile", "dockerfile", "notes.MD", "notes.md", "Makefile", "READY.Md"]
+    _t_IGNORE = "dockerfile\n*.md\nmakefile\n"
+    _t_disagreed = []
+    for _t_case in ("true", "false"):
+        _d = _t_repo(_t_case, _t_NAMES, _t_IGNORE)
+        try:
+            tree._IGNORECASE.clear()
+            for _n in _t_NAMES:
+                _ours = catalogs._ignored_by_files(_d, _d / _n)
+                _theirs = _t_git_says(_d, _n)
+                if _ours != _theirs:
+                    _t_disagreed.append(f"core.ignorecase={_t_case} {_n}: chamnan={_ours} git={_theirs}")
+        finally:
+            tree._IGNORECASE.clear()
+            shutil.rmtree(_d, ignore_errors=True)
+
+    check("what chamnan considers ignored is what real git considers ignored, either config",
+          not _t_disagreed, saw="\n".join(_t_disagreed[:6]) or None)
+
+    # The fold must actually be read from git rather than hardcoded — a matcher that always folds
+    # agrees with git only in the `true` case, and the loop above would still pass 6 of 12.
+    _d = _t_repo("false", ["Dockerfile"], "dockerfile\n")
+    try:
+        tree._IGNORECASE.clear()
+        check("...and a case-sensitive repository is matched case-sensitively",
+              tree.git_folds_case(_d) is False
+              and catalogs._ignored_by_files(_d, _d / "Dockerfile") is False)
+    finally:
+        tree._IGNORECASE.clear()
+        shutil.rmtree(_d, ignore_errors=True)
+
+# The reachable site: gitattributes matching, where a repository really is present.
+_t_gen_bad = []
+for _t_fold, _t_want in ((True, True), (False, False)):
+    # `Dockerfile` against the pattern `dockerfile` — matches only when folding.
+    if mapper._is_generated("Dockerfile", ["dockerfile"], _t_fold) is not _t_want:
+        _t_gen_bad.append(f"fold={_t_fold} gave {not _t_want}")
+    # And a pattern that matches regardless must keep matching either way.
+    if not mapper._is_generated("build/out.js", ["build/*.js"], _t_fold):
+        _t_gen_bad.append(f"fold={_t_fold} lost an exact match")
+check("...and the gitattributes matcher folds only when told to, in both directions",
+      not _t_gen_bad, saw="; ".join(_t_gen_bad) or None)
+
+# The platform-deciding call must be gone from every site, not from the one that was reported.
+# Derived from source: `fnmatch.fnmatch(` folds by os.name; `fnmatchcase` does not.
+_t_needle = "fnmatch." + "fnmatch("
+_t_left = []
+for _t_f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
+    _t_body24 = _t_f.read_text(encoding="utf-8-sig", errors="replace")
+    if _t_needle in _t_body24:
+        _t_left.append(_t_f.name)
+check("no module still asks the platform whether to fold case",
+      not _t_left, saw=", ".join(_t_left) or None)
+# ---- 25_the_block_log_answers_what_it_records.py
+# ------------------------------------------- five fixes to blocklog, and no test behind any of them
+# 🐛 [2026-09-09] `check_coverage_audit.py` was written to answer the owner's "go back and find what
+# we never wrote a test for", and `lib/blocklog.py` came top of the list: five defect markers added
+# since v1.24.0 and zero checks written anywhere near it. A fix with nothing behind it is a claim.
+# These are the five, each asserted at the shape the fix changed.
+_t_r25 = __import__("random")
+_t_r25.seed(20260914)
+
+
+def _t_block(n_sections=3, pad=200):
+    """A block shaped like a real one: a heading per section, fenced repository text inside."""
+    out = ["## chamnan"]
+    for _i in range(n_sections):
+        out.append(f"\n### Section {_i}\n[repo:aa00bb]\n" + ("x" * pad) + "\n[/repo:aa00bb]\n")
+    return "\n".join(out)
+
+
+# --- 1. `source` is recorded. It is the one dimension that makes the rest of the log answerable:
+# SessionStart fires for five different reasons and the hook was throwing that away before it got
+# here, so no record could be grouped by what kind of firing it was.
+_t_no_source = []
+for _src in ("startup", "resume", "compact", "clear", "fork"):
+    _rec = blocklog.shape(_t_block(), ceiling=9000, source=_src)
+    if _rec.get("src") != _src:
+        _t_no_source.append(f"{_src} recorded as {_rec.get('src')!r}")
+check("every kind of SessionStart firing is recorded as the kind it was",
+      not _t_no_source, saw="; ".join(_t_no_source) or None)
+
+# --- 2. Staleness is recorded as a number, and ONLY when the index really is behind, so a healthy
+# log stays quiet rather than carrying a zero on every line.
+_t_behind = []
+_rec_ok = blocklog.shape(_t_block(), ceiling=9000, source="startup", index_behind=0)
+if "behind" in _rec_ok:
+    _t_behind.append("a fresh index still wrote a `behind` field")
+for _secs in (1, 281, 22740):
+    _rec = blocklog.shape(_t_block(), ceiling=9000, source="startup", index_behind=_secs)
+    if _rec.get("behind") != _secs:
+        _t_behind.append(f"{_secs}s behind recorded as {_rec.get('behind')!r}")
+check("...and how far behind the index was is a number in the record, written only when it is",
+      not _t_behind, saw="; ".join(_t_behind) or None)
+
+# --- 3. What was DROPPED is carried, so a section that left the block is answerable from the log
+# rather than only from the block a person happened to be looking at.
+_t_drop = blocklog.shape(_t_block(), ceiling=9000, source="startup",
+                         dropped=("Architecture index", "This repo's own tools"))
+check("...and the sections that were dropped are named in the record",
+      set(_t_drop.get("drop", [])) == {"Architecture index", "This repo's own tools"},
+      saw=repr(_t_drop.get("drop")))
+
+# --- 4. A `resent: False` firing sends NOTHING, so its byte count is 0. Averaging those into a size
+# trend reads as the block collapsing — one of the three defects `check()` exists to raise.
+_t_dir = Path(tempfile.mkdtemp(prefix="chamnan-blog-"))
+try:
+    (_t_dir / ".chamnan" / "logs").mkdir(parents=True)
+    for _i in range(8):
+        blocklog.record(_t_dir, _t_block(pad=1500), ceiling=9000, source="startup")
+    for _i in range(4):
+        blocklog.record(_t_dir, "", ceiling=9000, source="resume", resent=False)
+    _full = blocklog.trend(_t_dir, last=20)
+    _all = blocklog.trend(_t_dir, last=20, resent_only=False)
+    _sizes = [r.get("bytes", 0) for r in _full]
+    check("a firing that resent nothing is kept out of the size trend it would flatten",
+          _sizes and min(_sizes) > 0 and len(_all) > len(_full),
+          saw=f"trend sizes {_sizes}, {len(_full)} of {len(_all)} record(s) counted")
+
+    # --- 5. "Never arrived" is derived from what the log has SEEN, not from every section chamnan
+    # can emit. A workspace with no skills and no decisions was told seven sections had never
+    # arrived, when there was nothing to deliver and nothing wrong.
+    _t_said = blocklog.check(_t_dir)
+    _t_phantom = [s for s in _t_said
+                  if "never" in s.lower()
+                  and any(k in s for k in ("skills", "decisions", "procedures", "tools"))]
+    check("...and a store this repository has never had is not reported as having stopped arriving",
+          not _t_phantom, saw="\n".join(_t_phantom[:3]) or None)
+finally:
+    shutil.rmtree(_t_dir, ignore_errors=True)
+# ---- 26_three_more_fixes_that_had_no_test.py
+# ------------------------------------------- the rest of the audit's list
+# 🐛 [2026-09-09] `check_coverage_audit.py` named four files fixed since v1.24.0 with no check
+# written anywhere near them. `blocklog` is covered in the file beside this one; these are the other
+# three. A fix with nothing behind it is a claim, not a guarantee.
+
+# --- 1. `adapters.safe_target`: a SIBLING directory whose name merely EXTENDS the root's basename
+# passed as "inside", because containment was a bare string prefix — `/repo-secrets` starts with
+# `/repo`. Reproduced at the time: `safe_target(root, "../repo-secrets/hack.md")` returned a path
+# resolving outside the repository, with no exception raised.
+_t_root26 = Path(tempfile.mkdtemp(prefix="chamnan-adapt-")) / "repo"
+_t_root26.mkdir(parents=True)
+(_t_root26.parent / "repo-secrets").mkdir(exist_ok=True)
+try:
+    _t_escaped = []
+    for _t_bad in ("../repo-secrets/hack.md",
+                   "../repo-secrets/nested/deeper.md",
+                   "..",
+                   "../../etc/passwd",
+                   "sub/../../repo-secrets/x.md"):
+        try:
+            _t_got = adapters_mod.safe_target(_t_root26, _t_bad)
+        except Exception:
+            continue                      # refused, which is the point
+        try:
+            Path(_t_got).resolve().relative_to(_t_root26.resolve())
+        except ValueError:
+            _t_escaped.append(f"{_t_bad!r} -> {_t_got}")
+    check("no relative target escapes the repository, including a sibling that extends its name",
+          not _t_escaped, saw="\n".join(_t_escaped) or None)
+
+    # It must still ACCEPT the ordinary case, or the guard has simply turned the feature off.
+    _t_refused = []
+    for _t_ok in ("CLAUDE.md", "docs/notes.md", "a/b/c.md"):
+        try:
+            adapters_mod.safe_target(_t_root26, _t_ok)
+        except Exception as _e:
+            _t_refused.append(f"{_t_ok!r}: {type(_e).__name__}")
+    check("...and an ordinary path inside the repository is still accepted",
+          not _t_refused, saw="; ".join(_t_refused) or None)
+finally:
+    shutil.rmtree(_t_root26.parent, ignore_errors=True)
+
+# --- 2. `tools/verify_release.py` looked for the publication guard under a name that stopped
+# existing. It passed only while the tool sat there under two spellings; removing the byte-identical
+# duplicate turned the one check that stops the owner's real work reaching a published repository
+# into a silent skip, and "not installed on this machine" is the ordinary line on anyone else's
+# machine. Both spellings are accepted now, because an older workspace carries the other one.
+_t_vr = (ROOT / "tools" / "verify_release.py").read_text(encoding="utf-8-sig", errors="replace")
+_t_names = re.findall(r'"(publication[-_]guard\.py)"', _t_vr)
+check("the release gate looks for the publication guard under every name it has ever had",
+      set(_t_names) >= {"publication-guard.py", "publication_guard.py"},
+      saw=f"looks for {sorted(set(_t_names))}")
+
+# And the guard has to be REACHABLE from the gate, not merely named — the defect was that it was
+# named correctly for a file that was no longer there.
+_t_tools = ROOT.parent.parent / ".chamnan" / "tools"
+_t_found = [n for n in ("publication-guard.py", "publication_guard.py")
+            if (_t_tools / n).is_file()]
+check("...and at least one of those names is a file the gate can actually run",
+      bool(_t_found) or not _t_tools.is_dir(),
+      saw=f"present: {_t_found}")
+
+# --- 3. `chamnan-impact` printed its all-clear unconditionally, one line under a warning that the
+# index was behind the code. "Nothing imports it" read from a stale index is not a stale answer, it
+# is a wrong one — the reader changes the thing freely on the strength of it.
+#
+# Asked of the SYNTAX rather than of the text: the first version of this check string-matched the
+# phrase and fired on a comment that quotes it, which is a check that reads its own source. The
+# invariant is structural — the branch that prints the all-clear must sit in an `if/elif` whose
+# earlier arm tests staleness.
+_t_imp_src = (ROOT / "bin" / "chamnan-impact").read_text(encoding="utf-8-sig", errors="replace")
+_t_tree26 = ast.parse(_t_imp_src)
+_t_free = "change it " + "freely"
+
+
+def _t_prints_allclear(node):
+    """True when this statement subtree prints the all-clear line."""
+    for _n in ast.walk(node):
+        if isinstance(_n, ast.Constant) and isinstance(_n.value, str) and _t_free in _n.value:
+            return True
+    return False
+
+
+# The all-clear sits in the `elif` arm of a chain whose FIRST arm tests staleness, and a nested
+# `elif` node cannot see the chain it belongs to. So the question is asked as ordering inside the
+# enclosing function: the staleness test must be evaluated before the all-clear can be printed.
+_t_conditions = []          # (lineno, source) of every `if` TEST, conditions only, never comments
+for _n in ast.walk(_t_tree26):
+    if isinstance(_n, ast.If):
+        _t_conditions.append((_n.test.lineno, ast.get_source_segment(_t_imp_src, _n.test) or ""))
+
+_t_allclear_lines = [_n.lineno for _n in ast.walk(_t_tree26)
+                     if isinstance(_n, ast.Constant) and isinstance(_n.value, str)
+                     and _t_free in _n.value]
+_t_stale_lines = [ln for ln, src in _t_conditions
+                  if "moved since" in src or "stale" in src.lower()]
+
+_t_ungated26 = []
+_t_seen = len(_t_allclear_lines)
+for _ln in _t_allclear_lines:
+    if not any(_s < _ln for _s in _t_stale_lines):
+        _t_ungated26.append(f"the all-clear at line {_ln} is reachable with no staleness test above it")
+check("the all-clear is only reachable through a branch that has tested the index's staleness",
+      _t_seen >= 1 and not _t_ungated26,
+      saw="\n".join(_t_ungated26[:3]) or (f"found {_t_seen} all-clear print(s)" if _t_seen == 0 else None))
+# ---- 27_a_label_after_the_value_still_counts.py
+# ------------------------------------------- the ordinary shape of a chat transcript
+# 🐛 [2026-09-09] `_label_window` walks only BACKWARD from the matched line, so the personal-data
+# gate saw a label that came before a number and never one that came after it. "my number is
+# <id>" followed by "that is my credit card number" is the ordinary shape of a chat transcript or a
+# support ticket, and it left the value in full. R1 found this, closed four of its five findings and
+# left this one open saying it should lead the next round; R10 agent 2 reproduced it against HEAD
+# and it was still open two rounds later.
+#
+# Every fixture is computed from the module's own checksum functions and asserted VALID before it is
+# used. A hand-typed national ID has been invalid three times in this repository and each time it
+# read as a leak.
+# Computed from the scheme, not brute-forced: the 13th digit is
+# (11 - (sum of the first 12 weighted 13..2) % 11) % 10.
+def _t_thai27(first12):
+    _tot = sum(int(_c) * (13 - _i) for _i, _c in enumerate(first12))
+    return first12 + str((11 - _tot % 11) % 10)
+
+
+_t_ids27 = [_t_thai27(f"{_t_b:012d}") for _t_b in (110170123456, 310990876543, 500112233445)]
+check("the Thai-ID fixtures are valid before anything is asserted about them",
+      len(_t_ids27) >= 3 and all(redact._thai_national_id(i) for i in _t_ids27),
+      saw=f"computed {len(_t_ids27)}")
+
+# A Luhn-valid card, computed rather than typed.
+def _t_luhn27(prefix):
+    for _d in range(10):
+        _cand = prefix + str(_d)
+        _tot, _alt = 0, False
+        for _ch in reversed(_cand):
+            _v = int(_ch)
+            if _alt:
+                _v *= 2
+                if _v > 9:
+                    _v -= 9
+            _tot += _v
+            _alt = not _alt
+        if _tot % 10 == 0:
+            return _cand
+    return None
+
+
+_t_card27 = _t_luhn27("411111111111111")
+check("...and the card fixture passes Luhn before anything is asserted about it",
+      _t_card27 is not None and len(_t_card27) == 16, saw=repr(_t_card27))
+
+# Each value paired with ITS OWN kind of label. A Thai ID beside the words "credit card number" is
+# not a labelled Thai ID, and pairing them was a fault in the first version of this check rather
+# than a defect in the module.
+_t_PAIRS = [(_v, "that is the national ID card number I gave you", 
+             "what is your national ID card number?") for _v in _t_ids27[:3]]
+if _t_card27:
+    _t_PAIRS.append((_t_card27, "that is my credit card number, please charge it",
+                     "credit card number:"))
+
+# The value FIRST and the label after it, at one and two lines of distance — the direction that was
+# never looked at.
+_t_after = []
+for _t_val, _t_trailing, _t_leading in _t_PAIRS:
+    for _t_gap in ("\n", "\n\n"):
+        if _t_val in redact.scrub(f"User: my number is {_t_val}{_t_gap}{_t_trailing}"):
+            _t_after.append(f"{_t_val[:4]}...: label {_t_gap.count(chr(10))} line(s) after")
+check("a label that comes AFTER the value still redacts it",
+      not _t_after, saw="\n".join(sorted(set(_t_after))[:5]) or None)
+
+# The direction that already worked must keep working — a symmetric window that broke the backward
+# half would pass the check above and lose what it had.
+_t_before = []
+for _t_val, _t_trailing, _t_leading in _t_PAIRS:
+    if _t_val in redact.scrub(f"{_t_leading}\n{_t_val}"):
+        _t_before.append(f"{_t_val[:4]}...: {_t_leading[:34]}")
+check("...and a label that comes before it still does, which is what already worked",
+      not _t_before, saw="\n".join(_t_before[:4]) or None)
+
+# Precision: a valid-looking number with NO label anywhere near it is not personal data, and this
+# module's whole trade is that it does not redact on shape alone.
+_t_eaten27 = []
+for _t_val in _t_ids27[:3]:
+    for _t_noise in ("build 12345 finished in 4 seconds",
+                     "the order total came to 1,299 baht",
+                     "see line 4021 of the changelog"):
+        _t_text = f"reference {_t_val}\n{_t_noise}"
+        if _t_val not in redact.scrub(_t_text):
+            _t_eaten27.append(f"{_t_val[:4]}… redacted beside {_t_noise[:34]!r}")
+check("...and a number with no label near it is left alone",
+      not _t_eaten27, saw="\n".join(_t_eaten27[:4]) or None)
+# ---- 28_registering_a_tool_twice_keeps_one_entry.py
+# ------------------------------------------- the newer description, frozen at zero runs forever
+# 🐛 [2026-09-09] `_register_locked` appends unconditionally, with no check for an entry already
+# carrying that name. So `chamnan-promote` run a second time on the same tool — which the plugin's
+# own `chamnan-candidates` explicitly tells a user to do — writes a SECOND entry with the same name.
+# `record_call` then does `next(e for e in entries if e["name"] == name)` and always finds the
+# FIRST, so every future run credits the stale, superseded description while the entry holding the
+# description the person just wrote stays at 0 runs forever. No error at any point.
+#
+# Measured on a fixture before the fix: two entries, the old one at 3 runs, the new one at 0
+# (R10 agent 3, finding 1).
+_t_r28 = __import__("random")
+_t_r28.seed(20260915)
+
+
+def _t_ws28():
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-ti-"))
+    (_d / ".chamnan" / "tools").mkdir(parents=True)
+    (_d / ".chamnan" / "tools" / "mytool.py").write_text("print(1)\n", encoding="utf-8")
+    return _d
+
+
+# Randomised over how many times it is re-registered and how many runs land between registrations,
+# because the defect is about accumulation and a single re-run is the easiest case to pass by luck.
+_t_dupes28, _t_lost_runs = [], []
+for _t_case in range(50):
+    _d = _t_ws28()
+    try:
+        _expected = 0
+        for _round in range(_t_r28.randint(2, 5)):
+            tools_index.register(_d, {"name": "mytool.py", "desc": f"description {_round}"})
+            for _ in range(_t_r28.randint(0, 4)):
+                tools_index.record_call(_d, "mytool.py")
+                _expected += 1
+        _rows = [e for e in tools_index.load(_d) if e.get("name") == "mytool.py"]
+        if len(_rows) != 1:
+            _t_dupes28.append(f"{len(_rows)} entries after re-registering")
+        elif _rows[0].get("runs") != _expected:
+            _t_lost_runs.append(f"{_rows[0].get('runs')} runs recorded, {_expected} happened")
+    finally:
+        shutil.rmtree(_d, ignore_errors=True)
+
+check("registering a tool that is already registered leaves one entry, not two",
+      not _t_dupes28, saw="\n".join(sorted(set(_t_dupes28))[:4]) or None)
+check("...and the run count it accumulated survives being re-registered",
+      not _t_lost_runs, saw="\n".join(sorted(set(_t_lost_runs))[:4]) or None)
+
+# The point of re-registering is to change the description. The newest one must be the one kept,
+# or the fix has traded a duplicate for a value that can never be updated.
+_d = _t_ws28()
+try:
+    tools_index.register(_d, {"name": "mytool.py", "desc": "the first description"})
+    tools_index.record_call(_d, "mytool.py")
+    tools_index.register(_d, {"name": "mytool.py", "desc": "the description I just typed"})
+    _rows = [e for e in tools_index.load(_d) if e.get("name") == "mytool.py"]
+    check("...and the description kept is the one most recently written",
+          len(_rows) == 1 and _rows[0].get("desc") == "the description I just typed",
+          saw=repr([r.get("desc") for r in _rows]))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+
+# Two DIFFERENT tools must still be two entries — a de-duplication that keys on the wrong thing
+# would collapse the index instead of tidying it.
+_d = _t_ws28()
+try:
+    for _n in ("alpha.py", "beta.py", "gamma.sh"):
+        tools_index.register(_d, {"name": _n, "desc": f"tool {_n}"})
+    _names = sorted(e.get("name") for e in tools_index.load(_d))
+    check("...and two tools with different names are still two entries",
+          _names == ["alpha.py", "beta.py", "gamma.sh"], saw=repr(_names))
+finally:
+    shutil.rmtree(_d, ignore_errors=True)
+# ---- 29_the_gate_reads_both_streams.py
+# ------------------------------------------- "0 tracebacks" over a run that crashed
+# 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
+# Python traceback goes to `stderr`. A real run ended without its totals line and the gate printed
+# "0 traceback(s)" beside it — the one piece of evidence saying WHY had been captured, was sitting
+# in `r.stderr`, and was never read. This module's own docstring says the absence of failures is not
+# proof the suite finished; the same is true of the absence of a traceback nobody looked at.
+_t_gate = (ROOT / "tools" / "verify_release.py").read_text(encoding="utf-8-sig", errors="replace")
+
+# Built at runtime so this check does not match its own source.
+_t_needle29 = "r." + "stdout.count("
+check("the gate no longer counts tracebacks on one stream only",
+      _t_needle29 not in _t_gate, saw="still counts stdout alone" if _t_needle29 in _t_gate else None)
+check("...and it reads stderr when deciding what happened",
+      "r.stderr" in _t_gate)
+
+# End to end, against a stand-in suite that crashes the way a real one does: everything on stderr,
+# nothing on stdout, no totals line. The gate must find the traceback rather than report none.
+_t_fake = Path(tempfile.mkdtemp(prefix="chamnan-gate-"))
+try:
+    _t_script = _t_fake / "boom.py"
+    _t_script.write_text("raise RuntimeError('deliberate')\n", encoding="utf-8")
+    # `encoding=` named explicitly: this suite has its own rule that every subprocess capturing
+    # text says how to decode it, and a folded check breaking it fails the gate exactly as any
+    # other source file would. Which is the point of folding them in.
+    _t_run = subprocess.run([sys.executable, str(_t_script)], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace")
+    _t_on_stdout = _t_run.stdout.count("Traceback (most recent call last)")
+    _t_on_stderr = _t_run.stderr.count("Traceback (most recent call last)")
+    check("a crash really does put its traceback on stderr and not stdout, which is why this matters",
+          _t_on_stderr == 1 and _t_on_stdout == 0,
+          saw=f"stdout {_t_on_stdout}, stderr {_t_on_stderr}")
+
+    # The gate's own counting expression, applied to that real crash: it must see the traceback.
+    _t_combined = (_t_run.stdout or "") + "\n" + (_t_run.stderr or "")
+    check("...and the gate's own rule finds it on the combined streams",
+          _t_combined.count("Traceback (most recent call last)") == 1)
+finally:
+    shutil.rmtree(_t_fake, ignore_errors=True)
+
+# A run that ends with no totals AND no traceback is a different thing — killed, or exited early —
+# and the gate has to say which rather than fall silent.
+check("...and a run that ends with neither totals nor a traceback is reported as ending early",
+      "ended early rather than failing" in _t_gate)
+# ---- 30_a_reassuring_tail_does_not_exempt_a_credential.py
+# ------------------------------------------- "password" in the key, and a noun after it
+# 🐛 [2026-09-09] A key ending in one of ~50 ordinary nouns — `type`, `id`, `name`, `field`, `path`
+# — is exempted as "describing HOW a credential is handled, not holding one", and the only way back
+# out is `_value_overrides_the_name`, which requires the value to have no `/`, no leading `.`, fewer
+# than two hyphens and fewer than two dots. Every one of those is something a real password or a
+# UUID-shaped key has, so the escape hatch does not fire for exactly the values that matter.
+#
+# Reproduced against HEAD, all five leaking in full (R3 finding 4, re-filed unchanged as R10 agent 2
+# finding 5):
+#     db_password_type = "Tr0ub4dor&3RealPassword!Zz9"
+#     api_key_type     = "550e8400-e29b-41d4-a716-446655440000"
+#     secret_field     = "hunter2-with-many-dashes-here-ok"
+#     password_id      = "P@ssw0rd/with/slashes"
+#
+# Value SHAPE is the right instrument here and only here: the key already says "password". A shape
+# rule on its own was measured and rejected earlier the same day — git commit SHAs and AWS key ids
+# are identical on entropy, length and charset — but as a tie-breaker UNDER a credential-worded key
+# it decides the one thing left to decide.
+#
+# One case from the report is NOT included, and the reason is worth keeping. `auth_token_name =
+# "abc.def.ghi.jkl.mno"` was listed as a leak; it is not one. That value matches `_QUALIFIED_TYPE`,
+# the deliberate exemption for `System.Security.Cryptography.RSA` and `P256.Signing.PrivateKey` —
+# added because redacting those SHIPPED in 1.23.1 and destroyed the one piece of information every
+# TypeScript, Swift and Kotlin declaration carried. A dotted run of identifier components is a
+# qualified type name and a credential is not written that way. Keeping it is the right trade, and
+# a check asserting otherwise would force a regression back in.
+_t_LEAKY = [
+    # A password reaching for the rest of the keyboard: `&`, `!`, `@`, `%`. No filename, URL, slug
+    # or identifier contains those, which is the whole basis for overriding the exemption.
+    ('db_password_type', 'Tr0ub4dor&3RealPassword!Zz9'),
+    ('api_secret_id', 'P@ssw0rd%With$ymbols42'),
+    ('client_secret_name', 'aG93IG1hbnkgcGVvcGxlIHJlYWQgdGhpcw=='),
+]
+# THREE cases from the report are deliberately not here, and each is a decision rather than an
+# oversight. Asserting any of them would force back the regression that shipped in 1.23.1.
+#
+#   secret_field = "hunter2-with-many-dashes-here-ok"
+#       Character for character the same shape as `secret_name = "my-secret-name"`, which the suite
+#       requires be kept. There is no rule that separates them.
+#
+#   password_id = "P@ssw0rd/with/slashes"
+#       Contains `/`, which is what `password_file = "/etc/secrets/db.pass"` and
+#       `api_key_path = "/etc/keys/prod.pem"` are made of. (The `@` in it IS caught, above, in a
+#       value without a slash.)
+#
+#   api_key_type = "550e8400-e29b-41d4-a716-446655440000"
+#       A UUID, which `request_id` holds legitimately and which the suite requires be kept there.
+#
+# The rule redacts on ONE signal — a character no name can contain — because every other signal
+# available here is shared with a value that must survive
+_t_out30 = []
+for _k, _v in _t_LEAKY:
+    for _line in (f'{_k} = "{_v}"', f'{_k}: {_v}', f'"{_k}": "{_v}"'):
+        if _v in redact.scrub(_line):
+            _t_out30.append(f"{_k} = {_v[:28]}…")
+check("a key that says password, secret, key or token does not get a pass for its last word",
+      not _t_out30, saw="\n".join(sorted(set(_t_out30))[:6]) or None)
+
+# The exemption exists for a real reason and must survive: these keys DESCRIBE a mechanism, and the
+# value is a label. Redacting them costs the index real information for nothing.
+_t_eaten30 = []
+for _k, _v in [('password_type', 'bcrypt'),
+               ('password_hash_type', 'argon2id'),
+               ('token_name', 'access_token'),
+               ('secret_field_name', 'client_secret'),
+               ('key_id', 'primary'),
+               ('auth_type', 'oauth2')]:
+    _line = f'{_k} = "{_v}"'
+    if redact.scrub(_line) != _line:
+        _t_eaten30.append(f"{_k} = {_v}")
+check("...and a key whose value is a plain label naming the mechanism is still left alone",
+      not _t_eaten30, saw="\n".join(_t_eaten30) or None)
+
+# And nothing about ordinary, credential-free keys may change — this is the population the whole
+# naming-suffix exemption exists to protect.
+_t_ordinary = []
+for _line in ('user_id = "12345"', 'field_name = "email_address"', 'path_type = "absolute"',
+              'content_type = "application/json"', 'file_path = "/etc/hosts"',
+              'display_name = "Wasupon"', 'request_id = "550e8400-e29b-41d4-a716-446655440000"'):
+    if redact.scrub(_line) != _line:
+        _t_ordinary.append(_line)
+check("...and a key with no credential word in it is untouched, whatever its value looks like",
+      not _t_ordinary, saw="\n".join(_t_ordinary) or None)
+# ---- 31_the_generic_separator_has_one_name.py
+# ------------------------------------------- derive the population, assert it was found
+# A reader of the published write-up proposed this, and it is the half of his critique that the
+# codebase could not answer: "the invariant you're describing needs to run over the rule definitions
+# themselves — an AST check that walks every rule and fails if any defines its own separator regex
+# instead of importing the shared one. That's the only way rule #8 gets caught before it ships."
+#
+# He was right, and `redact.py` had already learned it once in the other half of the module: `_SEP`
+# is the shared personal-data delimiter, and the comment beside it says it was "the FOURTH rule in
+# this file found spelling its own" before being consolidated. The credential key/value separator
+# never got the same treatment — the literal `[:=]` was typed independently in six `re.compile()`
+# calls with no shared name at all (R10 agent 2, finding 3, which specified this gate exactly).
+#
+# The invariant, stated so it does not over-reach: every occurrence of the GENERIC separator routes
+# through one name. A rule using a LANGUAGE-BOUND separator is not this gate's business — Ruby's
+# `=>` and a YAML block scalar's bare `:` never contain the literal `[:=]`, so `ROCKET_SECRET` and
+# `YAML_BLOCK_SECRET` pass with no special-casing.
+_t_src31 = (ROOT / "lib" / "redact.py").read_text(encoding="utf-8-sig", errors="replace")
+_t_tree31 = ast.parse(_t_src31)
+# Built at runtime: writing the forbidden literal in this file would make the check match itself.
+_t_generic = "[" + ":=" + "]"
+
+
+def _t_literal_of(node):
+    """The source string a `re.compile` argument resolves to, through `+` of string literals."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _t_literal_of(node.left) + _t_literal_of(node.right)
+    if isinstance(node, ast.JoinedStr):
+        return "".join(_t_literal_of(v) for v in node.values if isinstance(v, ast.Constant))
+    return ""
+
+
+# Which module-level name each compile is assigned to, so a failure can be reported by name.
+_t_owner31 = {}
+for _n in ast.walk(_t_tree31):
+    if isinstance(_n, ast.Assign) and _n.targets and hasattr(_n.targets[0], "id"):
+        for _sub in ast.walk(_n.value):
+            _t_owner31[id(_sub)] = _n.targets[0].id
+
+_t_offenders = []
+_t_sites = 0
+for _n in ast.walk(_t_tree31):
+    if not isinstance(_n, ast.Call):
+        continue
+    if getattr(_n.func, "attr", "") != "compile":
+        continue
+    if not _n.args:
+        continue
+    _t_body31 = _t_literal_of(_n.args[0])
+    if _t_generic not in _t_body31:
+        continue
+    _t_sites += 1
+    _t_name31 = _t_owner31.get(id(_n), "<unassigned>")
+    # The shared constant is allowed to contain it once — it IS the definition.
+    if _t_name31.endswith("_KV_SEP") or _t_name31 == "_KV_SEP":
+        continue
+    _t_offenders.append(f"line {_n.lineno}: {_t_name31}")
+
+check("no rule spells the generic key/value separator itself; they all route through one name",
+      not _t_offenders,
+      saw="\n".join(_t_offenders[:8]) or None)
+
+# The gate has to have FOUND something, or it is passing on a walk that matched nothing — which is
+# how a structural check quietly stops being a check at all.
+check("...and the walk really does reach this module's compiled rules",
+      sum(1 for _n in ast.walk(_t_tree31)
+          if isinstance(_n, ast.Call) and getattr(_n.func, "attr", "") == "compile") >= 30,
+      saw=f"{_t_sites} site(s) carrying the generic separator")
+
+# And the two language-bound rules the reader's own critique named as legitimately different must
+# still be reachable and must still work — a gate that forced them onto the shared separator would
+# break Ruby and YAML to satisfy a rule about neither.
+_t_lang = []
+for _t_line, _t_val in (('password => "s3cr3t-rocket-value-9x"', "s3cr3t-rocket-value-9x"),
+                        ('  api_secret:\n    "yaml-block-secret-value-42"', "yaml-block-secret-value-42")):
+    if _t_val in redact.scrub(_t_line):
+        _t_lang.append(_t_line.replace("\n", " / ")[:60])
+check("...and the rules with a language-bound separator still redact, untouched by this",
+      not _t_lang, saw="\n".join(_t_lang) or None)
+# ---- 32_the_stdlib_fallback_is_the_real_stdlib.py
+# ------------------------------------------- a hand-written list of what Python ships with
+# 🐛 [2026-09-09] `impact_mod._STDLIB` prefers `sys.stdlib_module_names` and falls back to a list typed
+# by hand for Python 3.8 and 3.9 — which is this project's documented, CI-tested floor and the
+# interpreter `/usr/bin/python3` is on this machine, so the fallback is the LIVE path here, not a
+# rarity. It was missing 78 public stdlib names, and not obscure ones: `multiprocessing`,
+# `concurrent`, `tomllib`, `zoneinfo`, `curses`, `tkinter`, `pdb`, `doctest`, plus every
+# Windows-only module — `winreg`, `msvcrt`, `winsound`, `nturl2path`, `_winapi`.
+#
+# What that costs: `impact` decides whether an import is a dependency edge worth drawing, and a
+# stdlib name it does not recognise becomes a false edge. The module already fixed this exact class
+# of bug once; the fallback never got the same treatment (R10 agent 1, finding 3).
+_t_MUST_KNOW = (
+    # ordinary modules any repository imports
+    "multiprocessing", "concurrent", "contextvars", "dataclasses", "pathlib", "typing",
+    "tomllib", "zoneinfo", "graphlib", "statistics", "secrets", "dis", "pdb", "doctest",
+    "optparse", "fractions", "marshal", "mmap", "atexit", "copyreg", "bz2", "lzma",
+    # platform-specific ones, which is where a hand-written list always drifts first
+    "winreg", "msvcrt", "winsound", "nturl2path", "fcntl", "grp", "pwd", "termios", "tty",
+    "curses", "syslog", "posix", "nt", "readline",
+)
+_t_unknown = [n for n in _t_MUST_KNOW if n not in impact_mod._STDLIB]
+check("every stdlib module this project can meet is recognised as stdlib",
+      not _t_unknown, saw=", ".join(_t_unknown) or None)
+
+# The list must not have become "everything is stdlib", which would silence the edges it exists to
+# draw. A third-party name has to still read as third-party.
+_t_wrong = [n for n in ("requests", "numpy", "django", "flask", "pytest", "yaml", "boto3",
+                        "chamnan", "mapper", "redact")
+            if n in impact_mod._STDLIB]
+check("...and a third-party or local module is still not stdlib",
+      not _t_wrong, saw=", ".join(_t_wrong) or None)
+
+# Where the interpreter can answer for itself, the two must agree — the fallback exists only for
+# interpreters that cannot, and a fallback that disagrees with the real thing is worse than none.
+if hasattr(sys, "stdlib_module_names"):
+    _t_public = {n for n in sys.stdlib_module_names if not n.startswith("_")}
+    _t_gap = sorted(_t_public - set(impact_mod._STDLIB))
+    check("...and on an interpreter that knows its own stdlib, nothing public is missing",
+          not _t_gap, saw=f"{len(_t_gap)} missing: " + ", ".join(_t_gap[:12]) if _t_gap else None)
+else:
+    skip("  · this interpreter has no sys.stdlib_module_names — the fallback IS the live path, "
+         "which is the case the finding is about; the two checks above still ran")
+# ---- 33_a_default_credential_is_still_a_credential.py
+# ------------------------------------------- the commonest real password looks like a label
+# 🐛 [2026-09-09] `_value_is_the_key_itself` judges an assignment a harmless label when the key has
+# one more word than the value it echoes — right for `s_secrets: "Secrets"`, and wrong for
+# `db_password = "password"`, which is the same shape and is the single commonest real weak
+# credential there is. Reproduced against HEAD: `db_password = "password"`,
+# `admin_password = "admin"` and `mysql_root_password = "root"` all left in full (R3 agent 2
+# finding 5, re-filed unchanged as R10 agent 2 finding 6).
+#
+# A bounded list rather than a shape, for the reason this module keeps re-learning: `changeme` was
+# already caught and `Secrets` must not be, and no rule about LENGTH or ENTROPY separates them.
+# What separates them is that somebody published a list of the passwords people actually leave in
+# place.
+_t_DEFAULTS = [
+    ('db_password', 'password'), ('admin_password', 'admin'),
+    ('mysql_root_password', 'root'), ('db_password', 'changeme'),
+    ('user_password', '123456'), ('api_password', 'letmein'),
+    ('service_password', 'guest'), ('ftp_password', 'test'),
+    ('DB_PASSWORD', 'Password'), ('db_password', 'PASSWORD'),
+]
+# The value's POSITION, not a substring of the line: `"root" in scrub("mysql_root_password = ...")`
+# is true because the KEY contains it, and the first version of this check reported three false
+# failures that way. What is asked is whether the placeholder replaced the value.
+_t_left = []
+for _k, _v in _t_DEFAULTS:
+    # Quoted forms only for the short values. `ASSIGNED_SECRET_BARE` deliberately does not match an
+    # unquoted four-character value after a colon — `mode: test`, `env: test`, `level: guest` are
+    # ordinary configuration, and redacting them is the noise that gets a redactor switched off.
+    # A credential written down lives in a quoted assignment or in JSON, and both are covered.
+    _t_forms = ([f'{_k} = "{_v}"', f'"{_k}": "{_v}"'] if len(_v) < 8
+                else [f'{_k} = "{_v}"', f'{_k}: {_v}', f'"{_k}": "{_v}"'])
+    for _line in _t_forms:
+        _t_got = redact.scrub(_line)
+        if redact.PLACEHOLDER not in _t_got:
+            _t_left.append(f"{_line}")
+check("a well-known default password is redacted even though the key echoes it",
+      not _t_left, saw="\n".join(sorted(set(_t_left))[:6]) or None)
+
+# The exemption this heuristic exists for has to survive, or the fix is worse than the defect: a
+# key whose value is its own name is a label, and redacting those is the noise that gets a redactor
+# switched off.
+_t_eaten33 = []
+for _line in ('s_secrets: "Secrets"', 'api_key_name = "api_key"',
+              'secret_label = "secret"', 'password_field = "password_field"',
+              'token_type = "token"', 'credential_key = "credential"'):
+    if redact.scrub(_line) != _line:
+        _t_eaten33.append(_line)
+check("...and a value that is just the key's own name is still left alone",
+      not _t_eaten33, saw="\n".join(_t_eaten33) or None)
+
+# And the list must not have swallowed ordinary prose that happens to contain one of those words.
+_t_prose = []
+for _line in ('the admin panel is at /admin', 'run as root to install',
+              'a test password is generated for each run',
+              'guest access is disabled in production'):
+    if redact.scrub(_line) != _line:
+        _t_prose.append(_line)
+check("...and prose containing one of those words is untouched",
+      not _t_prose, saw="\n".join(_t_prose) or None)
+# ---- 34_one_lookalike_letter_does_not_defeat_every_rule.py
+# ------------------------------------------- one Cyrillic letter turns every rule off at once
+# 🐛 [2026-09-09] `SECRET_WORDS` is a plain ASCII alternation, so ONE non-Latin look-alike in a key
+# defeats every rule anchored on it simultaneously — assignment, bare, call, YAML, rocket, flag and
+# list together. Reproduced: Cyrillic U+0430 for the `a` in `password` leaves the value in full,
+# while the identical ASCII line is redacted (R3 agent 2 finding 6, R10 agent 2 finding 7).
+#
+# **The fold exists and is NOT wired into `scrub`, and that is a decision with a number behind it.**
+# As a pre-pass it means redacting a folded copy and carrying the placeholders back, and a
+# placeholder is not the length of what it replaced — so the spans have to be recovered by a
+# sequence match. Measured: scrubbing this package's own source went from under four seconds to
+# OVER TWO MINUTES, and `scrub` runs on every file of every map build and at every session start.
+# A disguised credential word is a rare accident, usually a paste out of a rendered document; a
+# session start that takes minutes is a broken product. The pre-pass is refused on that trade.
+#
+# What it needs is rule-level integration — match each rule against the folded view with `finditer`
+# and cut the spans out of the ORIGINAL, which needs no stitching because the offsets already agree.
+# That is a change at every rule's call site and is filed rather than rushed.
+#
+# So this file checks what IS true today: the fold is correct and cheap, and the property that makes
+# the rule-level integration possible holds. It does not assert that `scrub` catches a disguised
+# key, because it does not, and a check that fails on purpose is not a check.
+_t_PAIRS34 = [
+    ("раssword", "password"),   # Cyrillic er + a
+    ("passwоrd", "password"),        # Cyrillic o
+    ("sеcret", "secret"),            # Cyrillic e
+    ("seсret", "secret"),            # Cyrillic es
+    ("api_кey", "api_key"),          # Cyrillic ka
+    ("ѕecret", "secret"),            # Cyrillic dze
+    ("passwοrd", "password"),        # Greek omicron
+    ("αuth_token", "auth_token"),    # Greek alpha
+]
+_t_wrong34 = [f"{_dis!r} -> {redact.fold_confusables(_dis)!r}, wanted {_want!r}"
+              for _dis, _want in _t_PAIRS34 if redact.fold_confusables(_dis) != _want]
+check("the confusable fold maps every look-alike used to disguise a credential word",
+      not _t_wrong34, saw="\n".join(_t_wrong34[:5]) or None)
+
+# One codepoint to one codepoint. This is the property the rule-level integration depends on: a
+# span found in the folded view names the same span in the original, so nothing has to be stitched.
+_t_shifted = [_d for _d, _w in _t_PAIRS34 if len(redact.fold_confusables(_d)) != len(_d)]
+check("...and it preserves length, which is what lets a span mean the same thing in both",
+      not _t_shifted, saw=", ".join(_t_shifted) or None)
+
+# What "precision" means for a fold is NOT that it leaves other scripts unchanged — it cannot, since
+# it maps the very letters Cyrillic and Greek share the look of, so `ключ` and `Ελληνικά` do change.
+# The fold's output is only ever MATCHED against, never emitted, so changing them costs nothing. The
+# property that matters is that folding ordinary text does not make it look like a credential word.
+_t_matched34 = []
+for _t in ("ราคาสินค้า 1250", "日本語のテキスト", "переменная значение", "ключ значение",
+           "Ελληνικά κείμενα", "москва санкт-петербург", "αριθμός τηλεφώνου"):
+    if redact._SECRET_WORD_ANYWHERE.search(redact.fold_confusables(_t)):
+        _t_matched34.append(f"{_t!r} folds to something matching a credential word")
+check("...and folding ordinary non-Latin text does not make it look like a credential word",
+      not _t_matched34, saw="\n".join(_t_matched34) or None)
+
+# And the ASCII path — the one that works today — must keep working.
+_t_ascii34 = [_k for _k in ("password", "secret", "api_key", "auth_token")
+              if "S3cr3tRealValue123" in redact.scrub(_k + ' = "S3cr3tRealValue123"')]
+check("...and the ordinary ASCII spelling still redacts",
+      not _t_ascii34, saw=", ".join(_t_ascii34) or None)
+# ---- 35_the_no_git_fallback_answers_as_git_would.py
+# ------------------------------------------- fnmatch is not git's gitignore glob
+# 🐛 [2026-09-10] `_ignored_by_files` is the fallback used where there is no git to ask, and it
+# matched with `fnmatch`, which differs from git's gitignore glob in exactly the ways that matter.
+# Both directions reproduced against real `git check-ignore`:
+#
+#   `config/*.env`  swallowed `config/nested/local.env` — git's `*` does not cross a `/`, so git
+#                   would commit that file and chamnan silently left it out of the index.
+#   `secrets/`      matched nothing inside `secrets/` — a trailing slash names a directory and
+#                   everything in it, and the old code rstripped the slash away.
+#
+# Three more surfaced while fixing it, each found by asking git rather than by reading the docs:
+# a LEADING slash is an anchor and not part of the path; `a/**/b` matches `a/b` with no directory
+# between; and a negation cannot re-include a file whose parent directory is excluded, so
+# `!build/keep.txt` under `build/` stays ignored (R3 agent 2 finding 8, R10 agent 2 finding 8).
+_t_git35 = shutil.which("git")
+if not _t_git35:
+    skip("  · no git on this machine — the gitignore-agreement check is skipped, not passed")
+else:
+    # Real git is the oracle. A check that reimplements the rule it is testing agrees with itself.
+    _t_SHAPES = [
+        ("config/*.env\nsecrets/\n",
+         ["config/local.env", "config/nested/local.env", "secrets/other.env",
+          "secrets/deep/x.env", "other.env"]),
+        ("*.log\nbuild/\n!build/keep.txt\n",
+         ["a.log", "deep/b.log", "build/out.js", "build/keep.txt", "src/main.py"]),
+        ("/root_only.txt\ndocs/**/draft.md\n",
+         ["root_only.txt", "sub/root_only.txt", "docs/a/b/draft.md", "docs/draft.md"]),
+        ("node_modules/\n*.tmp\n!keep.tmp\n",
+         ["node_modules/x/y.js", "a.tmp", "keep.tmp", "src/keep.tmp"]),
+        ("**/generated/\ndist/*.js\n",
+         ["a/generated/x.py", "generated/y.py", "dist/a.js", "dist/sub/b.js"]),
+    ]
+    _t_dis35, _t_total35 = [], 0
+    for _gi, _paths in _t_SHAPES:
+        _d = Path(tempfile.mkdtemp(prefix="chamnan-gi-"))
+        try:
+            subprocess.run([_t_git35, "init", "-q", str(_d)], check=True, capture_output=True)
+            (_d / ".gitignore").write_text(_gi, encoding="utf-8")
+            for _rel in _paths:
+                _f = _d / _rel
+                _f.parent.mkdir(parents=True, exist_ok=True)
+                _f.write_text("x\n", encoding="utf-8")
+            tree._GITIGNORE_CACHE.clear()
+            for _rel in _paths:
+                _t_total35 += 1
+                _theirs = subprocess.run([_t_git35, "-C", str(_d), "check-ignore", "-q", _rel],
+                                         capture_output=True).returncode == 0
+                _ours = catalogs._ignored_by_files(_d, _d / _rel)
+                if _ours != _theirs:
+                    _t_dis35.append(f"{_rel}: git={_theirs} chamnan={_ours}  ({_gi.split()!r})")
+        finally:
+            tree._GITIGNORE_CACHE.clear()
+            shutil.rmtree(_d, ignore_errors=True)
+
+    check("the no-git gitignore fallback answers what real git answers",
+          not _t_dis35, saw="\n".join(_t_dis35[:6]) or None)
+    check("...and the comparison really ran against a meaningful number of paths",
+          _t_total35 >= 20, saw=f"{_t_total35} path(s) compared")
+
+# The four rules that differ from `fnmatch`, asked of the matcher directly so a failure says WHICH.
+_t_rules35 = [
+    ("config/*.env", "config/nested/local.env", False, "`*` does not cross a slash"),
+    ("config/*.env", "config/local.env", True, "...but it does match within one directory"),
+    ("secrets/", "secrets/deep/x.env", True, "a trailing slash takes everything inside"),
+    ("/root_only.txt", "root_only.txt", True, "a leading slash anchors without being matched"),
+    ("/root_only.txt", "sub/root_only.txt", False, "...and anchors it away from subdirectories"),
+    ("docs/**/draft.md", "docs/draft.md", True, "`**/` may stand for no directory at all"),
+    ("docs/**/draft.md", "docs/a/b/draft.md", True, "...or for several"),
+    ("*.log", "deep/nested/a.log", True, "a pattern with no slash matches at any depth"),
+]
+_t_wrong35 = [f"{_p!r} vs {_r!r}: {_why}" for _p, _r, _want, _why in _t_rules35
+              if tree.gitignore_matches(_r, _p) is not _want]
+check("...and each rule that differs from fnmatch is the one git actually applies",
+      not _t_wrong35, saw="\n".join(_t_wrong35) or None)
+# ============================ end of the folded surgical pool
 
 
 total = PASSED + len(FAILED)

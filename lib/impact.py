@@ -40,22 +40,57 @@ import mdblock
 # fallback: not the whole standard library, only the names that actually collide with what people
 # call their own modules. A missing name costs one wrong edge, which is the behaviour being fixed
 # rather than a new failure.
-_STDLIB = getattr(sys, "stdlib_module_names", None) or frozenset({
-    "abc", "argparse", "array", "ast", "asyncio", "base64", "binascii", "bisect", "builtins",
-    "calendar", "cmd", "code", "codecs", "collections", "colorsys", "config", "configparser",
-    "contextlib", "copy", "csv", "ctypes", "dataclasses", "datetime", "decimal", "difflib",
-    "email", "enum", "errno", "filecmp", "fileinput", "fnmatch", "functools", "gc", "getopt",
-    "getpass", "gettext", "glob", "gzip", "hashlib", "heapq", "hmac", "html", "http", "imp",
-    "importlib", "inspect", "io", "ipaddress", "itertools", "json", "keyword", "linecache",
-    "locale", "logging", "mailbox", "math", "mimetypes", "numbers", "operator", "os", "parser", "pathlib", "pickle", "pkgutil", "platform", "plistlib", "pprint", "profile",
-    "queue", "quopri", "random", "re", "reprlib", "resource", "runpy", "sched", "secrets",
-    "select", "selectors", "shelve", "shlex", "shutil", "signal", "site", "smtplib", "socket",
-    "socketserver", "sqlite3", "ssl", "stat", "statistics", "string", "struct", "subprocess",
-    "symtable", "sys", "sysconfig", "tarfile", "tempfile", "termios", "textwrap", "threading",
-    "time", "timeit", "token", "tokenize", "trace", "traceback", "tracemalloc", "types", "typing",
-    "unicodedata", "unittest", "urllib", "uuid", "warnings", "wave", "weakref", "webbrowser",
-    "xml", "zipfile", "zlib",
-})
+# \U0001f41b [2026-09-09] The fallback below was typed by hand and was missing 78 public stdlib
+# names — `multiprocessing`, `concurrent`, `tomllib`, `zoneinfo`, `curses`, `tkinter`, `pdb`,
+# `doctest`, and every Windows-only module: `winreg`, `msvcrt`, `winsound`, `nturl2path`.
+# `sys.stdlib_module_names` arrived in 3.10, so on this project's documented and CI-tested
+# floor — 3.8 and 3.9, and the `/usr/bin/python3` this repository is developed against — the
+# fallback is the LIVE path, not a rarity. A stdlib name it does not recognise becomes a false
+# dependency edge in the map, which is the exact class of bug this module already fixed once
+# (R10 agent 1, finding 3).
+#
+# Generated from a real interpreter rather than remembered: `sorted(sys.stdlib_module_names)`
+# on Python 3.14, keeping the public names plus the three underscore ones that are genuinely
+# imported in source. Regenerate it the same way when the floor moves.
+# \U0001f41b [2026-09-09] The fallback below was typed by hand and was missing 78 public stdlib
+# names — `multiprocessing`, `concurrent`, `tomllib`, `zoneinfo`, `curses`, `tkinter`, `pdb`,
+# `doctest`, and every Windows-only module: `winreg`, `msvcrt`, `winsound`, `nturl2path`.
+# `sys.stdlib_module_names` arrived in 3.10, so on this project's documented and CI-tested
+# floor — 3.8 and 3.9, and the `/usr/bin/python3` this repository is developed against — the
+# fallback is the LIVE path, not a rarity. A stdlib name it does not recognise becomes a false
+# dependency edge in the map, which is the exact class of bug this module already fixed once
+# (R10 agent 1, finding 3).
+#
+# Generated from a real interpreter rather than remembered: `sorted(sys.stdlib_module_names)`
+# on Python 3.14, keeping the public names plus the three underscore ones that are genuinely
+# imported in source. Regenerate it the same way when the floor moves.
+#
+# Whitespace-separated rather than a quoted comma list, and that is not cosmetic: written as
+# `"a", "b", "c"` this became a hundred lines of comma-delimited quoted values, which is
+# exactly the shape `_redact_delimited_columns` is looking for — chamnan's own redactor ate
+# `"turtledemo"` out of this file and the suite's "the column rule changes no line of
+# chamnan's own source" check caught it.
+_STDLIB = getattr(sys, "stdlib_module_names", None) or frozenset("""
+    __future__ _thread _winapi abc annotationlib antigravity argparse array ast asyncio
+    atexit base64 bdb binascii bisect builtins bz2 cProfile calendar cmath cmd code codecs
+    codeop collections colorsys compileall compression concurrent configparser contextlib
+    contextvars copy copyreg csv ctypes curses dataclasses datetime dbm decimal difflib dis
+    doctest email encodings ensurepip enum errno faulthandler fcntl filecmp fileinput
+    fnmatch fractions ftplib functools gc genericpath getopt getpass gettext glob graphlib
+    grp gzip hashlib heapq hmac html http idlelib imaplib importlib inspect io ipaddress
+    itertools json keyword linecache locale logging lzma mailbox marshal math mimetypes mmap
+    modulefinder msvcrt multiprocessing netrc nt ntpath nturl2path numbers opcode operator
+    optparse os pathlib pdb pickle pickletools pkgutil platform plistlib poplib posix
+    posixpath pprint profile pstats pty pwd py_compile pyclbr pydoc pydoc_data pyexpat queue
+    quopri random re readline reprlib resource rlcompleter runpy sched secrets select
+    selectors shelve shlex shutil signal site smtplib socket socketserver sqlite3
+    sre_compile sre_constants sre_parse ssl stat statistics string stringprep struct
+    subprocess symtable sys sysconfig syslog tabnanny tarfile tempfile termios textwrap this
+    threading time timeit tkinter token tokenize tomllib trace traceback tracemalloc tty
+    turtle turtledemo types typing unicodedata unittest urllib uuid venv warnings wave
+    weakref webbrowser winreg winsound wsgiref xml xmlrpc zipapp zipfile zipimport zlib
+    zoneinfo
+""".split())
 
 IMPORT_PATTERNS = {
     # The third pattern is `from . import types`, where the dots and the name are NOT contiguous, so

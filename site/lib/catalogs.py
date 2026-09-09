@@ -611,7 +611,13 @@ def _is_ignored(root, path):
 
 
 def _ignored_by_files(root, path):
+    # Asked once per call rather than once per pattern: `tree.git_folds_case` caches per root, but
+    # the lookup still costs a dict hit inside the pattern loop below.
+    # The QUESTION, not the answer: `glob_matches` only asks it when a case-sensitive match has
+    # already failed and a folded one would succeed, which is the only case where it matters.
+    _fold = lambda: tree.git_folds_case(root)          # noqa: E731
     verdict = False
+    _parent_dir_excluded = False
     chain = []
     d = path.parent
     while True:
@@ -636,9 +642,22 @@ def _ignored_by_files(root, path):
                 continue
             negated = line.startswith("!")
             pat = line[1:] if negated else line
-            pat = pat.rstrip("/")
-            if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(path.name, pat):
+            # `tree.gitignore_matches`, not `glob_matches`: git's gitignore glob does not let `*`
+            # cross a `/` and does treat a trailing `/` as "this directory and everything in it".
+            # Matching with `fnmatch` disagreed with real `git check-ignore` in BOTH directions —
+            # `config/*.env` swallowed `config/nested/local.env`, and `secrets/` matched nothing
+            # inside `secrets/`. The trailing slash is handled by the matcher now rather than
+            # rstripped away here, which is what made the second half impossible to get right.
+            if tree.gitignore_matches(rel, pat, _fold() if callable(_fold) else _fold):
+                # git cannot re-include a file whose PARENT DIRECTORY is excluded — its own
+                # documentation says so, and `!build/keep.txt` under `build/` really does stay
+                # ignored. Verified against `git check-ignore` rather than assumed: this was the
+                # one of three disagreements that reads as a bug in git until you look it up.
+                if negated and _parent_dir_excluded:
+                    continue
                 verdict = not negated
+                if not negated and pat.endswith("/"):
+                    _parent_dir_excluded = True
     return verdict
 
 

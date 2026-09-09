@@ -258,15 +258,20 @@ def _scoped(holder, pat):
     return [f"{holder}/{lead}", f"{holder}/**/{lead}"]
 
 
-def _is_generated(rel, pats):
+def _is_generated(rel, pats, fold=False):
     """`rel` against gitattributes-style patterns. `**/` means any depth, and a pattern with no
-    slash in it applies at every level -- which is git's own rule, not fnmatch's."""
+    slash in it applies at every level -- which is git's own rule, not fnmatch's.
+
+    `fold` is git's `core.ignorecase`, passed in by the caller that knows the root. It was
+    `fnmatch.fnmatch` here, which decides case-folding from `os.name` instead -- see
+    `tree.glob_matches` for the measurement.
+    """
+    m = tree.glob_matches
     for pat in pats:
         bare = pat[3:] if pat.startswith("**/") else pat
-        if fnmatch.fnmatch(rel, pat) or fnmatch.fnmatch(rel, bare) \
-                or fnmatch.fnmatch("/" + rel, pat):
+        if m(rel, pat, fold) or m(rel, bare, fold) or m("/" + rel, pat, fold):
             return True
-        if "/" not in bare and fnmatch.fnmatch(rel.rsplit("/", 1)[-1], bare):
+        if "/" not in bare and m(rel.rsplit("/", 1)[-1], bare, fold):
             return True
     return False
 
@@ -1743,7 +1748,8 @@ def indexable(root, nested=None, with_text=False, sniff=True):
         # since nothing errors. Found 2026-08-19 by running the tool inside /private/tmp.
         rel_parts = path.relative_to(root).parts
         _gen = _generated_globs(root)
-        if _gen and _is_generated("/".join(rel_parts), _gen):
+        if _gen and _is_generated("/".join(rel_parts), _gen,
+                                  lambda: tree.git_folds_case(root)):
             SKIPPED_GENERATED.add("/".join(rel_parts))
             continue
         tracked = _tracked_ambiguous(root)

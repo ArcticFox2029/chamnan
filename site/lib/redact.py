@@ -59,6 +59,16 @@ _PLAIN_WORD = re.compile(
     "^[A-Za-z][a-z]{1,17}(?:-[A-Za-z][a-z]{1,17}){0,3}[.,;:!?)\\]\u2026\"'`]*$")
 
 
+def _is_a_default_credential(value):
+    """True when the value is one of the passwords people actually leave in place.
+
+    Read beside `_is_a_plain_word`, which it overrides: `root`, `test`, `guest` and `admin` are one
+    ordinary word each, so the prose guard exempted them and `mysql_root_password = "root"` was
+    left in full. The guard is right about prose and wrong about exactly this list.
+    """
+    return (value or "").strip().strip("\"'").strip(",;:)]}\"' ").lower() in _DEFAULT_CREDENTIALS
+
+
 def _is_a_plain_word(value):
     """True when the captured value reads as prose rather than as a credential.
 
@@ -186,6 +196,29 @@ PATTERNS = [
     # leaked in full with the word "token" on the same line (R2 agent 2).
     re.compile(r"(?<![A-Za-z0-9_-])xox[baprse]-[A-Za-z0-9-]{10,}"),
     re.compile(r"(?<![A-Za-z0-9_-])xoxe\.xox[bp]-[A-Za-z0-9.-]{10,}"),
+    # \U0001f41b [2026-09-09] Six vendor prefixes that this module NAMES in `_CREDENTIAL_PREFIX` and
+    # never enforced anywhere. Measured with each vendor's documented body length and charset,
+    # computed rather than typed: a Google OAuth token, a DigitalOcean personal token, a Shopify
+    # private-app token, a Docker Hub personal token, a PostHog project key and a SendGrid key all
+    # left in full, bare and assigned to a variable alike (R10 agent 2, finding 2).
+    #
+    # `_CREDENTIAL_PREFIX` is not a missing enforcement list, which is the tempting reading. It is
+    # the EXEMPTION test in `_is_a_template_under_a_weak_name`, where being generous is the safe
+    # direction — one more prefix there means one fewer exemption. Enforcement is the opposite
+    # trade, so the two lists legitimately differ and only the unambiguous prefixes come across.
+    #
+    # `pk-`, `rk_` and `ak_` are deliberately NOT here. With a 16-character body of the usual
+    # alphabet, `ak_configuration_manager` matches, and this module's precision is the half that is
+    # hard to get back once spent. They stay in the exemption list, where over-inclusion costs
+    # nothing.
+    #
+    # Dots are in the body for the two that need them — `ya29.` and `SG.` — and nowhere else.
+    re.compile(r"(?<![A-Za-z0-9_.-])ya29\.[A-Za-z0-9_.\-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])shp(?:at|ca|pa|ss)_[A-Za-z0-9]{24,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])dckr_pat_[A-Za-z0-9_-]{24,}"),
+    re.compile(r"(?<![A-Za-z0-9_-])phc_[A-Za-z0-9]{32,}"),
+    re.compile(r"(?<![A-Za-z0-9_.-])SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"),
     # 🐛 `AKIA` alone. AWS issues access key IDs under four prefixes and the commonest one in CI is
     # `ASIA` — the temporary credential every assumed role hands out — which sailed straight through
     # (R5 agent 2, against gitleaks' and detect-secrets' own fixtures).
@@ -423,6 +456,23 @@ CREDENTIALED_URL = re.compile(
 # Stepped over rather than matched: an annotation is only an annotation when a real `=` follows it,
 # and a YAML anchor only when whitespace and a value follow. `api_key = os.environ["X"]` has
 # neither, so the optional group does not fire and the existing rules decide as before.
+# \U0001f41b [2026-09-09] The generic key/value separator was typed independently in SIX
+# `re.compile()` calls with no shared name — while the OTHER half of this module had already
+# learned the same lesson: `_SEP` is the shared personal-data delimiter, and the comment beside
+# it records that it was "the FOURTH rule in this file found spelling its own" before being
+# consolidated. The credential separator never got that treatment.
+#
+# A reader of the published write-up proposed the gate that catches this, and was right about
+# where it has to live: over the rule DEFINITIONS, not over their outputs — "the only way rule
+# #8 gets caught before it ships". `checks/31_the_generic_separator_has_one_name.py` walks every
+# `re.compile` in this file and fails on any that spells the separator itself (R10 agent 2,
+# finding 3, which specified the assertion exactly).
+#
+# Deliberately NOT applied to the language-bound separators. Ruby's `=>` and a YAML block
+# scalar's bare `:` are different separators, not variants of this one, and forcing them
+# through a shared name would break both to satisfy a rule about neither.
+_KV_SEP = r"[:=]"
+
 _BETWEEN_NAME_AND_VALUE = (
     r"(?:"
     r"[A-Za-z_][\w.]*(?:\[[^\]\n]*\]|<[^>\n]*>)?[ \t]*=[ \t]*"   # a type, then the real `=`
@@ -438,7 +488,7 @@ _BETWEEN_NAME_AND_VALUE = (
 _TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*"
 
 ASSIGNED_SECRET = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE
     + r"|" + _TYPE_BEFORE_ASSIGN + r"))(['\"])([^'\"]{6,})\2", re.I)
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
@@ -467,7 +517,7 @@ _BETWEEN_NAME_AND_VALUE_SPACED = (
 # QUOTED rule and nowhere else, so the identical line with the quotes left off passed through whole.
 # The disease this repository keeps producing, in the one module where it leaks credentials.
 ASSIGNED_SECRET_BARE = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*[:=]\s*" + _BETWEEN_NAME_AND_VALUE_SPACED
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE_SPACED
     + r"|" + _TYPE_BEFORE_ASSIGN + r"))"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
@@ -551,7 +601,7 @@ FLAG_SECRET = re.compile(
 PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)$", re.M)
 
 ASSIGNED_SECRET_CALL = re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*[:=]\s*)"
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*" + _KV_SEP + r"\s*)"
     r"(?!<REDACTED>)([A-Za-z_][\w.]*\s*\(.*)$", re.I | re.M)
 
 # Never opened by the scanner at all, whatever else matches. .gitignore is not relied on: it is
@@ -822,7 +872,12 @@ def _looks_like_a_credential_name(key, value=None):
     # printed in full (R12 agent 2). The exemption is still needed — `secret_name` and
     # `api_key_path` genuinely name things, and redacting those is the noise that gets a redactor
     # switched off — so the name still decides unless the VALUE settles it.
-    return _value_overrides_the_name(value)
+    #
+    # The KEY goes through too. `_names_a_mechanism` was given it and this, its twin, was not — so
+    # the key-aware branch was dead at one of the two sites that reach it, and four of the five
+    # reproduced leaks survived a fix that looked complete. Both callers of
+    # `_value_overrides_the_name` now hand it the same two things.
+    return _value_overrides_the_name(value, key)
 
 
 # A value that no name should be trusted against: nothing whose tail says "this holds a path" or
@@ -835,9 +890,140 @@ def _looks_like_a_credential_name(key, value=None):
 _LONG_MIXED_VALUE = re.compile(r"^[A-Za-z0-9+/=_\-.]{16,}$")
 
 
-def _value_overrides_the_name(value):
-    """Whether the VALUE is credential-shaped enough to ignore a reassuring key name."""
+# A value that names a mechanism rather than holding one: a lowercase identifier, short, with no
+# case mixing and no punctuation beyond `_`. `bcrypt`, `argon2id`, `oauth2`, `access_token`,
+# `email_address`, `absolute` all match; every credential shape below does not.
+# The key's own word, built from the SAME `SECRET_WORDS` every assignment rule uses, so a word
+# added there is covered here without anyone remembering. This asks "does the name say
+# credential", which is a different question from `_looks_like_a_credential_name` ("does the
+# name's tail say it is something else") — using that one here was a mistake caught by this
+# check failing on four of five cases while the fifth passed.
+_KEY_SAYS_CREDENTIAL = re.compile(r"(?:" + SECRET_WORDS + r")", re.I)
+
+# A character no filename, URL, slug or identifier is built from. Paths and URLs use letters,
+# digits and `. _ - / : ~`; everything else on the keyboard is a password reaching for it.
+# A key whose tail says it holds a PATTERN, not a value. `SECRET_RE = r"[a-z]+"` is a regex and
+# its brackets and `+` are exactly the characters the rule below treats as proof of a password,
+# so this has to be asked first. The words are the pattern-ish half of `_NOT_A_CREDENTIAL_NAME`;
+# the label-ish half (`id`, `name`, `type`, `field`) is what the rule is FOR and stays out.
+# The words that end a key holding a credential, and the ordinary nouns that may follow one. Both
+# are spelled out rather than borrowed from `SECRET_WORDS`, whose alternation carries boundaries and
+# compounds for a different job — `key` and `token` do not fullmatch it standing alone, which is
+# exactly what this needs to ask.
+_CREDENTIAL_END_WORDS = frozenset("""
+    password passwd pwd passphrase secret key apikey token credential auth cred
+    storepass keypass privatekey secretkey accesskey
+""".split())
+
+# `id` is here and is NOT in `NAMING_SUFFIXES`: `api_secret_id` is the shape the whole rule exists
+# for, and it was falling through because of that one omission.
+_NOUNS_AFTER_A_CREDENTIAL = frozenset("""
+    id ids name names type types field fields label labels kind value
+""".split())
+
+
+def _key_ends_in_a_credential_word(key):
+    """True when the key's LAST meaningful component says credential.
+
+    \U0001f41b [2026-09-10] Asking whether a credential word appears ANYWHERE in the key was too
+    loose by a wide margin, and chamnan's own tree is the proof: `index_token_budget` and
+    `state_token_budget` are budgets whose middle word is `token`, `input_tokens` is a count, and
+    `{index_tokens:>8,.0f} tokens` is a print. All were redacted, and the suite's own "the redactor
+    finds nothing NEW in the tree chamnan ships" caught every one.
+
+    A credential lives at the END of its key — `db_password`, `api_key`, `client_secret` — or one
+    step in with an ordinary noun after it, which is the shape this rule is for: `db_password_type`,
+    `api_secret_id`, `oauth_client_secret_name`. A word buried mid-compound with something else
+    after it is describing that something else.
+
+    Plurals come out: nobody stores a secret under `tokens` or `keys`, those are counts.
+    """
+    parts = [p for p in re.split(r"[^A-Za-z0-9]+", _bare_key(key).lower()) if p]
+    if not parts:
+        return False
+    last = parts[-1]
+    if len(parts) > 1 and (last in _NOUNS_AFTER_A_CREDENTIAL or last in NAMING_SUFFIXES):
+        last = parts[-2]
+    return last in _CREDENTIAL_END_WORDS
+
+
+# A value that is CODE, not a literal. `u.get("input_tokens", 0)` and `f"{n:>8,.0f} tokens"`
+# are expressions, and their brackets and braces are exactly the characters the rule below
+# reads as proof of a password. A credential written down is a literal.
+_VALUE_IS_AN_EXPRESSION = re.compile(r"[(){}]")
+
+_KEY_HOLDS_A_PATTERN = re.compile(r"(?:^|[_\-])(?:re|regex|rx|pattern|patterns|format|"
+                                  r"template|glob|mask|expr|expression)$", re.I)
+
+_NOT_IN_ANY_NAME = re.compile(r"[^A-Za-z0-9._/:~-]")
+
+_A_PLAIN_LABEL = re.compile(r"^[a-z][a-z0-9_]{0,30}$")
+
+
+def _value_overrides_the_name(value, key=""):
+    """Whether the VALUE is credential-shaped enough to ignore a reassuring key name.
+
+    \U0001f41b [2026-09-09] The four tests below — no `/`, no leading `.`, fewer than two hyphens,
+    fewer than two dots — are all things a REAL password or a UUID-shaped key has, so the one escape
+    hatch out of the naming-suffix exemption never fired for the values that matter. Reproduced
+    against HEAD, every one leaking in full:
+
+        db_password_type = "Tr0ub4dor&3RealPassword!Zz9"    a password with punctuation
+        api_key_type     = "550e8400-e29b-41d4-a716-4466…"  four hyphens
+        auth_token_name  = "abc.def.ghi.jkl.mno"            four dots
+        password_id      = "P@ssw0rd/with/slashes"          a slash
+
+    First filed as R3 finding 4 and re-filed unchanged as R10 agent 2 finding 5.
+
+    So when the KEY itself carries an unambiguous credential word, the question is inverted: the
+    value has to look like a LABEL to earn the exemption, rather than look like a credential to lose
+    it. `password_type = "bcrypt"` is still a type name and still exempt; `password_type` holding
+    punctuation and mixed case is not.
+
+    This is the one place value SHAPE belongs, and it is worth saying why, because shape as a
+    standalone rule was measured and rejected the same day: git commit SHAs and AWS access key ids
+    are indistinguishable on entropy, length and character set, so shape alone both misses real keys
+    and eats ordinary identifiers. Under a key that already says `password`, there is nothing left
+    for it to confuse — it is a tie-breaker, not a detector. A reader of the published write-up
+    proposed exactly that framing ("header text becomes a confidence booster on top of that, not the
+    sole gate"); this is the inverse arrangement and the same idea.
+    """
     v = (value or "").strip().strip("\"'").strip(",;)]}\"' ")
+    # \U0001f41b [2026-09-10] The character test below reads DELIMITERS as evidence. The bare rule
+    # captures a quoted value with its quotes attached, and in markdown prose a trailing backtick
+    # comes with them — so `` `api_key_env = "MY_SECRET1"` `` in this project's own README and
+    # CHANGELOG was redacted, and that line is the documentation OF the exemption it broke. Caught
+    # by the suite's "the redactor finds nothing NEW in the tree chamnan ships".
+    _bare_value = v.strip("`\"' ")
+    if (_key_ends_in_a_credential_word(key) and len(_bare_value) >= 8
+            and not _VALUE_IS_AN_EXPRESSION.search(_bare_value)):
+        # The key says credential, so the value only has to show ONE thing a name cannot be.
+        #
+        # The first version of this asked the opposite — "is it a plain label?" — and redacted
+        # everything else. It cost 23 checks in the gate, and the right ones: `password_file`
+        # holding `/etc/secrets/db.pass`, `auth_url` and `auth_uri` holding Google's public OAuth
+        # endpoints, `api_key_path` holding a `.pem` path, `secret_name` holding `my-secret-name`.
+        # Those are the GCP service-account shape whose destruction SHIPPED in 1.23.1, and every
+        # one of them is a name, a path or a URL under a key that says credential — so "the key
+        # says credential" cannot be enough on its own.
+        #
+        # What separates a real password from all of them is a character none of them contains. A
+        # filename, a URL, a slug and an identifier are built from letters, digits, `.`, `_`, `-`,
+        # `/`, `:` and `~`. A password reaches for the rest of the keyboard.
+        #
+        # Two of the five values in the report are NOT defects by this reasoning and are not
+        # treated as any: `hunter2-with-many-dashes-here-ok` is the same shape as `my-secret-name`,
+        # and `P@ssw0rd/with/slashes` is the same shape as a path. Redacting either means
+        # redacting the documented exemption beside it, and this module's precision is the half
+        # that is hard to get back.
+        if _NOT_IN_ANY_NAME.search(_bare_value):
+            return True
+        # Otherwise fall through. The tests below already decide every case this one does not:
+        # `AKIAIOSFODNN7EXAMPLE1234` and `tr0ub4dor3horsebattery` are long, mixed, letters AND
+        # digits, with no separator doing the work; `the-name-of-my-secret` has four hyphens and
+        # `/etc/keys/prod.pem` has a slash. Replacing them with this clause instead of adding to it
+        # cost seven checks in the gate — the two the exemption is FOR kept working and the three it
+        # must override stopped. Additive is the safe shape for a rule with this much history.
     if not _LONG_MIXED_VALUE.match(v) or "/" in v or v.startswith("."):
         return False
     # A path, a hyphenated phrase and a dotted module name are all long and mixed; a credential is
@@ -884,7 +1070,7 @@ def _names_a_mechanism(key, value=None):
     tail = _bare_key(key).rsplit("_", 1)[-1].rsplit("-", 1)[-1]
     if tail not in NAMING_SUFFIXES:
         return False
-    return not _value_overrides_the_name(value)
+    return not _value_overrides_the_name(value, key)
 
 
 # 🐛 [2026-09-04, R14 agent 2 finding 02, verified before acting] A value that continued past a
@@ -944,6 +1130,23 @@ def _full_key_at(match):
     return text[j:i] + (match.group(1) or "")
 
 
+# The values people actually leave in place. Short and closed on purpose: every entry is a real
+# default shipped by a real product or a top-of-the-list password, and nothing here is a word
+# a form label or a translation table would hold. `secrets`, `credential` and `token` are
+# deliberately absent — those ARE label words, and `s_secrets: "Secrets"` is the case the
+# exemption around this exists for.
+# Trimmed the day it was written, because the first version cost a precision check: `manager` is in
+# every "AWS Secrets Manager" and "password manager", and the suite caught it. Anything that is an
+# ordinary English word in ordinary prose comes out — `master`, `user`, `login`, `public`,
+# `private`, `demo`, `default`, `welcome`, `monkey`, `dragon`, `sa` — even though some really are
+# shipped defaults. What is left is the set whose members are almost never anything BUT a password
+# sitting in a config file, and `test`/`guest`/`root` survive only because the assignment rules
+# require a quoted value for anything this short.
+_DEFAULT_CREDENTIALS = frozenset("""
+    password passwd admin administrator root toor guest test changeme change_me
+    letmein qwerty abc123 iloveyou postgres mysql oracle sysadmin
+""".split())
+
 def _value_is_the_key_itself(key_part, value):
     """Whether the value is just the key's own name — a label, never a credential.
 
@@ -963,6 +1166,18 @@ def _value_is_the_key_itself(key_part, value):
     # still did nothing. Its own test caught it.
     word = value.strip().strip("\"'").strip(",;:)]}\"' ").lower()
     if not word or not word.isalpha():
+        return False
+    # \U0001f41b [2026-09-09] `db_password = "password"` has a key with another component, so the
+    # rule below reads it as a label — and it is the single commonest real weak credential there is.
+    # `admin_password = "admin"` and `mysql_root_password = "root"` are the same shape. The previous
+    # fix closed `password = "password"` (key is ONLY the secret word) and left every key that
+    # carries a prefix, which is how these are actually written (R3 agent 2 finding 5, re-filed as
+    # R10 agent 2 finding 6).
+    #
+    # A closed list rather than a shape, because no rule about length, entropy or character class
+    # separates `password` from `Secrets` — the exemption's own example. What separates them is that
+    # these are the values people actually leave in place, and somebody has written that list down.
+    if word in _DEFAULT_CREDENTIALS:
         return False
     parts = re.sub(r"[^a-z]+", " ", key_part.lower()).split()
     if word not in parts:
@@ -1043,7 +1258,7 @@ _MAX_WINDOW = 200_000
 # matching too much only makes a window larger — slower, never wrong — and matching too little
 # leaks. It is deliberately more permissive than any rule it protects: every separator any of them
 # accepts, plus `=>`, and `\s*` throughout.
-_OPENS_A_QUOTED_VALUE = re.compile(r"""[\w-]*\s*['"]?\s*(?:=>|[:=])\s*(['"])""")
+_OPENS_A_QUOTED_VALUE = re.compile(r"""[\w-]*\s*['"]?\s*(?:=>|""" + _KV_SEP + r""")\s*(['"])""")
 
 
 def _windows_around_secret_words(text):
@@ -1158,7 +1373,7 @@ def _is_a_template_under_a_weak_name(key_part, value):
 # Deliberately narrow in the other direction too: the name still has to read as a credential, so
 # `password_file = "path/to` is left exactly as `_looks_like_a_credential_name` already leaves it.
 _RESUMES_AFTER_A_VALUE = re.compile(
-    r"""^[ \t]*(?:[\w.-]+|['"][\w.\- ]+['"])[ \t]*(?:=>|[:=])""")
+    r"""^[ \t]*(?:[\w.-]+|['"][\w.\- ]+['"])[ \t]*(?:=>|""" + _KV_SEP + r""")""")
 
 
 def _close_unterminated_quoted_secrets(text):
@@ -1202,6 +1417,51 @@ def _is_only_a_template(value):
     if not stripped:
         return False
     return bool(re.fullmatch(r"\$?\{\{?[^{}]*\}\}?", stripped))
+
+
+# \U0001f41b [2026-09-09] `SECRET_WORDS` is a plain ASCII alternation, so ONE non-Latin look-alike
+# in a key turned every rule anchored on it off at once — assignment, bare, call, YAML, rocket,
+# flag and list together. Reproduced: Cyrillic U+0430 for the `a` in `password` and the value left
+# in full, while the identical ASCII line was redacted (R3 agent 2 finding 6, re-filed as R10
+# agent 2 finding 7). It is not only a hostile-repository move — it is what a paste out of a
+# rendered document or a translated wiki page produces by accident, silently, in both directions.
+#
+# Folded before matching, and ONLY for the letters that actually appear in the credential
+# vocabulary. A general confusable table is a large dependency and a much larger blast radius; this
+# is the closed set of Cyrillic and Greek characters that look like the sixteen Latin letters
+# `SECRET_WORDS` is built from. Anything else non-Latin passes through untouched, which is what
+# keeps ordinary Thai, Russian and Greek text out of the redactor's way.
+_CONFUSABLE_FOLD = str.maketrans({
+    "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p", "\u0441": "c", "\u0455": "s",
+    "\u0456": "i", "\u0458": "j", "\u04bb": "h", "\u0501": "d", "\u051b": "q", "\u0445": "x",
+    "\u0443": "y", "\u043a": "k", "\u043c": "m", "\u0442": "t", "\u0432": "b", "\u043d": "h",
+    "\u0410": "A", "\u0415": "E", "\u041e": "O", "\u0420": "P", "\u0421": "C", "\u0425": "X",
+    "\u041a": "K", "\u041c": "M", "\u0422": "T", "\u0412": "B", "\u041d": "H", "\u0406": "I",
+    "\u03bf": "o", "\u03b1": "a", "\u03b5": "e", "\u03c1": "p", "\u03c5": "u", "\u03ba": "k",
+    "\u039f": "O", "\u0391": "A", "\u0395": "E", "\u03a1": "P", "\u03a4": "T", "\u03a5": "Y",
+})
+
+
+def fold_confusables(text):
+    """`text` with the look-alike letters used to disguise credential words mapped to Latin.
+
+    One codepoint to one codepoint, so offsets are preserved: a span found in the folded copy names
+    the same span in the original.
+
+    **Not wired into `scrub` yet, and the reason is measured.** Doing it as a PRE-PASS means
+    redacting the folded copy and carrying the placeholders back, and a placeholder is not the
+    length of what it replaced — so the spans have to be recovered by a sequence match. That took
+    scrubbing this package's own 60 source files from milliseconds to over two minutes, and `scrub`
+    runs on every file of every map build and at every session start. A disguised credential word
+    is a rare accident; a session start that takes minutes is a broken product, so the pre-pass is
+    refused.
+
+    What it needs instead is rule-level integration: match each credential rule against the folded
+    view with `finditer` and cut the spans out of the ORIGINAL, which needs no stitching and no
+    diff because the offsets already agree. That is a change to every rule's call site rather than
+    one pre-pass, and it is filed rather than rushed (R10 agent 2 finding 7).
+    """
+    return text.translate(_CONFUSABLE_FOLD)
 
 
 def scrub(text, windowed=True):
@@ -1291,7 +1551,7 @@ def scrub(text, windowed=True):
         # CLI-flag rule beside this one.
         if m.group(2).startswith("-") else m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
-        or PLACEHOLDER in m.group(2) or _is_a_plain_word(m.group(2))
+        or PLACEHOLDER in m.group(2) or (_is_a_plain_word(m.group(2)) and not _is_a_default_credential(m.group(2)))
         else f"{m.group(1)}{PLACEHOLDER}", chunk)
     _flag = lambda chunk: FLAG_SECRET.sub(
         lambda m: m.group(0) if PLACEHOLDER in m.group(2)
@@ -1944,7 +2204,7 @@ def _is_a_header_row(fields):
 # array of generic secrets: one redacted, two in the clear, with a `<REDACTED>` at the front of them
 # saying the line had been handled. A YAML block sequence was missed outright (R3 agent 2).
 _LIST_OPEN = re.compile(
-    r"(?<![\w-])(['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)\1(\s*[:=]\s*)\[([^\[\]]*)\]", re.I)
+    r"(?<![\w-])(['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)\1(\s*" + _KV_SEP + r"\s*)\[([^\[\]]*)\]", re.I)
 # A YAML block sequence: the key alone on its line, then indented `- item` lines under it.
 _BLOCK_KEY = re.compile(
     r"^(\s*['\"]?)((?:" + SECRET_WORDS + r")[\w-]*)(['\"]?\s*:\s*)$", re.I)
@@ -2060,12 +2320,25 @@ def _label_window(folded_lines, n):
     original -- which is the property `_DIGIT_FOLD` exists to preserve and that a joined string
     would otherwise break.
     """
-    parts, seen, i = [folded_lines[n]], 0, n - 1
-    while i >= 0 and seen < _LABEL_LOOKBACK:
-        if folded_lines[i].strip():
-            parts.append(folded_lines[i])
-            seen += 1
-        i -= 1
+    # \U0001f41b [2026-09-09] This walked BACKWARD only, so a label was seen when it came before the
+    # number and never when it came after. "my number is <id>" followed by "that is my credit card
+    # number" is the ordinary shape of a chat transcript or a support ticket — a person states the
+    # value and the assistant names it back — and the value left in full. R1 found it, closed four
+    # of its five findings and left this one open as the thing that should lead the next round; two
+    # rounds later R10 agent 2 reproduced it unchanged against HEAD.
+    #
+    # Symmetric now, the same `_LABEL_LOOKBACK` of real content in each direction. The value is
+    # still matched against line `n` ALONE — only the KEYWORD half reads this window — so the spans
+    # found still mean the same offsets in the original, which is the property `_DIGIT_FOLD` exists
+    # to preserve and that a joined string would otherwise break.
+    parts = [folded_lines[n]]
+    for _step in (-1, 1):
+        seen, i = 0, n + _step
+        while 0 <= i < len(folded_lines) and seen < _LABEL_LOOKBACK:
+            if folded_lines[i].strip():
+                parts.append(folded_lines[i])
+                seen += 1
+            i += _step
     return "\n".join(parts)
 
 
