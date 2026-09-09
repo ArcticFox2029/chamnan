@@ -250,7 +250,21 @@ def peek_csv(path, find=None):
         out += [f"  line {n}: " + " | ".join(mdblock.whole_graphemes(c[:28]) for c in r[:8])
                 for n, r in hits]
     else:
+        # 🐛 [2026-09-09] The sample rows were printed with no header line above them, and the
+        # column names appeared far higher in a different shape — `columns: \`name\`, \`email\``,
+        # comma-separated and backticked, against pipe-separated data. So the two never formed a
+        # TABLE, `redact._redact_delimited_columns` had no header row to mark columns from, and the
+        # choke point at the end of `peek()` scrubbed a document in which nothing looked like a
+        # credential. A CSV whose header says `password` printed the password.
+        #
+        # Reproduced end to end: `name,email,password` returned `Tr0ub4dor-2026` in full, while
+        # `redact.scrub()` on the same file's TEXT redacted it correctly — the rule was there and
+        # the shape it needed was not. Repeating the header in the sample's own delimiter costs one
+        # line, tells the reader which column is which, and hands the redactor the table it already
+        # knows how to read. Raised by a reader on the published write-up as a header-vocabulary
+        # gap; the vocabulary was the smaller half.
         out.append("\nfirst rows:")
+        out.append("  " + " | ".join(mdblock.whole_graphemes(str(c)[:28]) for c in header[:8]))
         out += ["  " + " | ".join(mdblock.whole_graphemes(c[:28]) for c in r[:8]) for r in rows]
     return out
 

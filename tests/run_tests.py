@@ -10483,13 +10483,13 @@ subprocess.run(["git", "-C", str(_envrepo), "init", "-q"], capture_output=True)
 (_envrepo / ".chamnan").mkdir()
 _envbin = [sys.executable, str(ROOT / "bin" / "chamnan-env")]
 subprocess.run(_envbin + ["set", "production", "--platform", "AWS eu-west-1",
-                          "--versions", "terraform v1.9.2", "--constraint", "never touch drk8s"],
+                          "--versions", "terraform v1.9.2", "--constraint", "never touch example-cluster"],
                cwd=_envrepo, capture_output=True, text=True, encoding="utf-8", errors="replace")
 subprocess.run(_envbin + ["set", "production", "--checked", "2026-09-01"],
                cwd=_envrepo, capture_output=True, text=True, encoding="utf-8", errors="replace")
 _envtext = (_envrepo / ".chamnan" / "environments.md").read_text(encoding="utf-8")
 check("RE-CONFIRMING AN ENVIRONMENT DOES NOT ERASE THE FIELDS YOU DID NOT RETYPE",
-      "AW" + "S eu-west-1" in _envtext and "never touch drk8s" in _envtext
+      "AW" + "S eu-west-1" in _envtext and "never touch example-cluster" in _envtext
       and "terraform" in _envtext and "1.9.2" in _envtext and "2026-09-01" in _envtext)
 subprocess.run(_envbin + ["set", "production", "--platform", ""], cwd=_envrepo,
                capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -22788,6 +22788,59 @@ for _ad_rel in _mp_tracked:
                 _addr_hits.append(f"{_ad_rel}:{_ad_i}  {_ad_m.group(0)}")
 check("...and no published document prints an address for anyone to harvest",
       not _addr_hits, saw="\n".join(_addr_hits[:6]))
+
+# ------------------- this project's own redactor, aimed at this project, 2026-09-09
+# 🐛 Three hand-written checks were added today for the three shapes somebody happened to think of
+# — a home directory, an address, a credential fixture. `lib/redact.py` already knows seventy-one,
+# and in the whole life of this repository it had never once been pointed at the tree that ships.
+# It was tested against fixtures only. The tool built to stop data leaving a repository was not
+# used on the repository it lives in, which is the same blind spot every other finding this
+# release records: the rule applied everywhere except at home.
+#
+# The owner's framing is the reason this exists rather than a fourth hand-written pattern: what
+# leaked was a folder name nobody minds. What matters is that the same class of mistake, next
+# time, lands on something that does — and a check that only knows the shapes already found cannot
+# catch the one nobody has thought of yet.
+#
+# Files that DEMONSTRATE credentials are exempt by path, and the exemption is narrow on purpose:
+# the redactor's own source, its recall harness, the benchmark's pinned cases, the translated
+# strings, and this suite. Everything else must come back unchanged.
+_RED_DEMOS = ("lib/redact.py", "site/lib/redact.py", "tools/redactor_recall.py",
+              "bench/pinned.py", "docs/i18n/i18n_strings.py", "tests/run_tests.py")
+_red_tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace").stdout.split()
+check("THE REDACTOR SWEEP HAS FILES TO SWEEP", len(_red_tracked) > 50,
+      saw=f"tracked: {len(_red_tracked)}")
+_red_hits = []
+for _rrel in _red_tracked:
+    if _rrel in _RED_DEMOS or _rrel.startswith("docs/i18n/"):
+        continue
+    _rp = ROOT / _rrel
+    if not _rp.is_file() or _rp.suffix in (".png", ".jpg", ".woff2", ".ico"):
+        continue
+    try:
+        _rtext = _rp.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for _rn, _rline in enumerate(_rtext.split("\n"), 1):
+        if not _rline.strip():
+            continue
+        if _rd.scrub(_rline) != _rline:
+            _red_hits.append(f"{_rrel}:{_rn}  {_rline.strip()}")
+# Not "changes nothing" -- it changes thirty-seven lines today, every one of them read and
+# accepted, and half of them are the redactor being wrong rather than the tree being dirty. The
+# claim that is both true and useful is NOTHING NEW: the accepted set is committed, and it may only
+# shrink by hand. A line that is edited leaves the baseline and fails here, which is deliberate --
+# an accepted line changing is exactly when somebody should look again.
+_red_base_path = ROOT / "tests" / "redactor_selfscan_baseline.txt"
+check("THE REDACTOR SELF-SCAN HAS A COMMITTED BASELINE TO COMPARE AGAINST",
+      _red_base_path.is_file(), saw=str(_red_base_path))
+_red_base = {ln.split()[0] for ln in _red_base_path.read_text(encoding="utf-8").split("\n")
+             if ln.strip() and not ln.startswith("#")} if _red_base_path.is_file() else set()
+_red_new = [h for h in _red_hits
+            if hashlib.sha256(h.split("  ", 1)[1].encode()).hexdigest()[:16] not in _red_base]
+check("...and chamnan's own redactor finds nothing NEW in the tree chamnan ships",
+      not _red_new, saw="\n".join(_red_new[:8]))
 
 # ------------------- every reader of the workspace asks whether the file is in it, 2026-09-09
 # 🐛 Five DIRECTORY stores were given a containment check on 2026-09-08. The three single-FILE

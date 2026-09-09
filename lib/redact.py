@@ -16,6 +16,7 @@ recoverable; an unusable map means the tool gets uninstalled and nothing is prot
 """
 import os
 import re
+import unicodedata
 from pathlib import Path
 
 PLACEHOLDER = "<REDACTED>"
@@ -1753,8 +1754,27 @@ _COLUMN_DELIMS = (",", ";", "\t", "|")
 # `,aadhar` / `,uidai` all printed the value under them in full. Twelve of twelve reproduced
 # through the real `scrub()` (R6). The same disease this file is full of fixes for: a vocabulary
 # extended in the scanning rules and forgotten in the sibling rule beside them.
+# 🐛 [2026-09-09] Every word here was English, and nothing said so. A CSV exported from a Spanish,
+# Thai, German or Japanese system has a header this cannot read, so the column is not marked and
+# `chamnan-peek` prints the values into the transcript — reproduced end to end with
+# `nombre,correo,contraseña`, which returned the password in full. The list was not wrong; its
+# SCOPE was undeclared, which is how it stayed English-only through eleven releases while the tool
+# was described as reading twenty-one languages of source.
+#
+# Raised by a reader on the published write-up, who predicted this exact class before it was
+# measured: header name variants would escape the same way the digit-fold table escaped IBAN.
+# 11 of 19 variants escaped when tested. `_HEADER_LANGS` below states which languages are claimed,
+# and the suite asserts every one of them is actually matched — so the next gap is a failing check
+# rather than a silent miss.
 _HEADER_BARE = (
     r"password|passwd|pwd|passphrase|secret|token|api[_ -]?key|apikey|key|auth"
+    # Spanish, Portuguese, French, German, Italian, Dutch, Polish, Turkish, Vietnamese, Indonesian
+    r"|contrase[ñn]a|clave|senha|palavra[_ -]?passe|mot[_ -]?de[_ -]?passe|motdepasse"
+    r"|kennwort|passwort|geheimnis|parola|segreto|wachtwoord|geheim"
+    r"|has[lł]o|[şs]ifre|parola[_ -]?chiave|m[aậ]t[_ -]?kh[aẩ]u|matkhau|kata[_ -]?sandi"
+    # Thai, Chinese, Japanese, Korean, Russian
+    r"|รหัสผ่าน|รหัส|密码|密碼|口令|秘密|パスワード|暗証番号|비밀번호|암호"
+    r"|пароль|секрет|ключ"
     r"|credential|credentials|cred|creds|storepass|keypass"
     r"|private[_ -]?key|access[_ -]?key|secret[_ -]?key"
     r"|card|card[_ -]?number|pan|iban|cpf|aadhaar|aadhar|uidai|uid"
@@ -1784,6 +1804,28 @@ _HEADER_TAIL = r"password|passwd|pwd|passphrase|secret|credential|cred|storepass
 # `press the key`, and the line under it lost its middle field to a `<REDACTED>`. Caught by the
 # check below that asserts this rule changes nothing in the real 298 KB index; a header in a real
 # export is an identifier, so requiring identifier shape costs the rule nothing.
+# The languages this header vocabulary CLAIMS to cover. Stated here so the suite can assert the
+# claim rather than the claim living only in a comment: a language in this map with a spelling the
+# pattern misses is a failing check, and adding a language means adding its spellings.
+_HEADER_LANGS = {
+    "English": ("password", "passwd", "pwd", "secret", "token", "api_key"),
+    "Spanish": ("contraseña", "clave"),
+    "Portuguese": ("senha",),
+    "French": ("mot_de_passe", "motdepasse"),
+    "German": ("kennwort", "passwort"),
+    "Italian": ("parola", "segreto"),
+    "Dutch": ("wachtwoord", "geheim"),
+    "Polish": ("hasło", "haslo"),
+    "Turkish": ("şifre", "sifre"),
+    "Vietnamese": ("mật_khẩu", "matkhau"),
+    "Indonesian": ("kata_sandi",),
+    "Thai": ("รหัสผ่าน", "รหัส"),
+    "Chinese": ("密码", "密碼", "口令"),
+    "Japanese": ("パスワード", "暗証番号"),
+    "Korean": ("비밀번호", "암호"),
+    "Russian": ("пароль", "секрет", "ключ"),
+}
+
 _HEADER_WORD = re.compile(
     r"""^\s*["']?\s*(?:"""
     + _HEADER_BARE
@@ -1815,6 +1857,27 @@ def _split_row(line, delim):
 _HEADER_ROW_FIELD = re.compile(r"^[\w][\w .-]*$")
 
 
+def _is_a_header_field(f):
+    r"""True when this cell reads as a column NAME rather than a line of code or a value.
+
+    🐛 [2026-09-09] `_HEADER_ROW_FIELD` alone was the test, and `\w` does not match a COMBINING
+    MARK. Python's `\w` is Unicode-aware, so `名前` and `имя` pass — but Thai writes its vowels and
+    tones as separate combining characters, so `ชื่อ` is letter + mark + mark + letter and failed.
+    One field failing rejects the whole row, so a Thai-headed CSV was not a table, no column was
+    marked, and `chamnan-peek` printed the password column in the clear. Reproduced with
+    `ชื่อ,อีเมล,รหัสผ่าน`.
+
+    Asking the character's CATEGORY covers every script at once, which a range list never finishes:
+    Devanagari, Arabic, Hebrew and Korean all write marks the same way. Mn is a nonspacing mark, Mc
+    a spacing combining one — a vowel sign in Thai and in Devanagari respectively.
+    """
+    if not f:
+        return False
+    if not (f[0].isalnum() or f[0] == "_" or unicodedata.category(f[0]) in ("Mn", "Mc")):
+        return False
+    return all(c.isalnum() or c in "_ .-" or unicodedata.category(c) in ("Mn", "Mc") for c in f)
+
+
 def _is_a_header_row(fields):
     """True when EVERY field looks like a column name rather than a line of code.
 
@@ -1824,7 +1887,7 @@ def _is_a_header_row(fields):
     table at that point and every value under it is printed in the clear. Measured on a real file
     in this repository, where exactly that happened.
     """
-    return all(f == "" or f == PLACEHOLDER or _HEADER_ROW_FIELD.match(f) for f in fields)
+    return all(f == "" or f == PLACEHOLDER or _is_a_header_field(f) for f in fields)
 
 
 # 🐛 [2026-09-08] Every assignment rule above answers "name, separator, ONE value" and stops,

@@ -1,0 +1,56 @@
+# Lines in the shipped tree that chamnan's own redactor would alter, and why each is accepted.
+#
+# Written 2026-09-09, the first time the redactor was pointed at the tree it ships in. It knows
+# seventy-one credential shapes and had only ever been tested against fixtures. Every line here was
+# read before it was added; none is a real credential.
+#
+# Two kinds, and the second is a defect this file exists to keep visible rather than hide:
+#
+#   Documented examples — AWS's own published AKIAIOSFODNN7EXAMPLE, a test card number, an xkcd
+#   password. Quoting these is what the documentation is for.
+#
+#   The redactor's own false positives — `"input_tokens": u.get("input_tokens", 0)` is destroyed
+#   because the word `token` sits beside a value, and so are `index_token_budget`, `ENV_FILE_KEY`
+#   and `_AUTHORED_SFC_EXTS`. Any user whose code contains `input_tokens` has that line mangled in
+#   their index. That is a real bug with a real cost, recorded here until it is fixed.
+#
+# One sha256 prefix of the stripped line, and the file it is in. A line that changes leaves the
+# baseline and the gate fails, which is the point: the accepted set may only shrink by hand.
+#
+01e9c2a6e8ab2783  bin/chamnan-map
+02f26a4581fc8488  CHANGELOG.md
+16bb3dee29e1b021  CHANGELOG.md
+17b87bc10c6140f0  bin/chamnan-map
+1e466d183534e33b  CHANGELOG.md
+2985c4071d404d37  lib/workspace.py
+2985c4071d404d37  site/lib/workspace.py
+3ad07b9ce63ce6d8  CHANGELOG.md
+3fec37fd60277269  hooks/chamnan_session_start.py
+4830bc98e24cb347  lib/workspace.py
+4830bc98e24cb347  site/lib/workspace.py
+4d474d76e44037dc  lib/catalogs.py
+4d474d76e44037dc  site/lib/catalogs.py
+75cbb20b30df647d  lib/profiles.py
+82813f511245f469  hooks/chamnan_scratch_watch.py
+8721b2476a8be9d9  lib/workspace.py
+8721b2476a8be9d9  site/lib/workspace.py
+8c40c762aa131662  bench/run_bench.py
+8ef34f57873b9334  lib/workspace.py
+8ef34f57873b9334  site/lib/workspace.py
+abb7f55cbcd3270b  README.md
+befad677f66d0342  hooks/chamnan_session_start.py
+bfddf4bc8ff2073a  README.md
+c2b18a2095a60aa5  bin/chamnan-map
+c4cbe79fba42d48f  lib/environments.py
+c4cbe79fba42d48f  lib/timeline.py
+c6662ccc1a4ceabc  bench/run_bench.py
+cb8de3d3bb99f3b1  hooks/chamnan_scratch_watch.py
+cf1d31c4b4ae3c3f  CHANGELOG.md
+d1236fcb063caf6e  SECURITY.md
+d4465519e33e7fcc  lib/deploy.py
+d4465519e33e7fcc  site/lib/deploy.py
+f434be58b7d890f7  lib/workspace.py
+f434be58b7d890f7  site/lib/workspace.py
+f8f109c3edda1bc8  CHANGELOG.md
+ff71df7beb2a48b3  lib/mapper.py
+ff71df7beb2a48b3  site/lib/mapper.py

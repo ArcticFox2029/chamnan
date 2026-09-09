@@ -86,6 +86,27 @@ def the_index_claims():
     return (checked, true, rate)
 
 
+def the_publication_guard():
+    """Nothing about to ship may name the owner's real work.
+
+    Separate from the suite on purpose. The suite's checks look for SHAPES — a home directory, a
+    credential format, an address — and the thing that actually shipped was none of those: a real
+    operational constraint written as ordinary prose in a test fixture, in a tree four gates had
+    already called clean. A list of terms is the only thing that catches what no pattern predicts.
+
+    The list lives outside every repository, so this is skipped rather than failed where it is
+    absent — a machine that is not the owner's has nothing to check against. It is reported as
+    skipped, never as passed.
+    """
+    tool = ROOT.parent.parent / ".chamnan" / "tools" / "publication_guard.py"
+    if not tool.is_file():
+        return None, "publication guard not installed on this machine"
+    r = _run([sys.executable, str(tool)])
+    if r.returncode == 2:
+        return None, r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "no term list"
+    return r.returncode == 0, (r.stdout or r.stderr).strip().splitlines()[-1]
+
+
 def the_duplicates():
     """The defect this repository produces more than any other, asked of the whole tree."""
     tool = ROOT.parents[1] / ".chamnan" / "tools" / "the_same_thing_twice.py"
@@ -101,11 +122,22 @@ def main():
     print(f"chamnan {declared_version()} — verifying this release's own claims\n")
     suite = the_suite()
     index = the_index_claims()
+    guard, guard_says = the_publication_guard()
+    if guard is None:
+        print(f"  · {guard_says} — SKIPPED, not passed")
+    elif guard:
+        print(f"  ✓ {guard_says}")
+    else:
+        print(f"  ✗ {guard_says}")
     the_duplicates()
     print()
     if suite is None or index is None:
         print("NOT VERIFIED — a check did not produce a result. Nothing above should be quoted.")
         return 2
+    if guard is False:
+        print("NOT VERIFIED — something about to ship names the owner's real work. "
+              "Substitute an invented equivalent; do not quote what you saw.")
+        return 1
     passed, total, fails, tracebacks = suite
     if fails or tracebacks:
         print(f"NOT VERIFIED — {fails} failing check(s), {tracebacks} traceback(s).")
