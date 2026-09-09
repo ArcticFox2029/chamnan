@@ -15,6 +15,7 @@ Three details decide whether the figures are right, each learned the hard way (2
   3. CONTEXT PER CALL IS THE METRIC, NOT COST. Cost moves when the user changes model, which has
      nothing to do with this tool. Tokens carried per turn is what a workspace can actually change.
 """
+import ast
 import json
 import os
 import re
@@ -43,6 +44,27 @@ import candidates  # noqa: E402
 import rulecheck  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
+
+
+def _hook_list_cap():
+    """The cap the SessionStart hook puts on the skills and tools lists, read from the hook itself.
+
+    Not a 12 typed here. Two copies of a limit drift, and this file exists to report what a session
+    actually receives — a report whose number disagrees with the hook is worse than no report. Read
+    with `ast` rather than imported: the hook runs as a script with its own side effects.
+    """
+    try:
+        src = (HERE.parent / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+        for node in ast.walk(ast.parse(src)):
+            if (isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "MAX_TOOLS"
+                    and isinstance(node.value, ast.Constant)):
+                return int(node.value.value)
+    except Exception:
+        pass
+    return 0          # unknown cap: report nothing rather than a number that might be wrong
+
+
+_HOOK_LIST_CAP = _hook_list_cap()
 import workflows  # noqa: E402
 import workspace as ws  # noqa: E402
 import redact  # noqa: E402
@@ -486,6 +508,32 @@ def print_inventory(root):
             f"({_st_sent * 100 // _st_disk}%). The rest is named at the end of that section and "
             f"nothing fetches it. What belongs there is what is OPEN — settled decisions, "
             f"boundaries and how-to belong in `memory/` and `skills/`, read when they apply.")
+    # 🐛 [2026-09-09] The drop-tracker below answers "did a whole section stop arriving", and it
+    # works. Nothing answered the other half: a section that still arrives with its heading intact
+    # while most of its CONTENTS are cut. Skills and the tools index are both capped at twelve
+    # names, and a workspace can go from 12-of-14 to 12-of-30 without the header ever moving —
+    # the report built to say whether this workspace is healthy would call that unchanged.
+    # `rules_pressure` above was the only per-item completeness check in the whole report, and it
+    # is specific to rules (R5 agent2).
+    _trunc = []
+    try:
+        _sk_n = len(list((ws.workspace(root) / "skills").glob("*.md")))
+        if _sk_n > _HOOK_LIST_CAP:
+            _trunc.append(f"{_sk_n - _HOOK_LIST_CAP} of {_sk_n} skill(s)")
+    except OSError:
+        pass
+    try:
+        _tl_n = len(tools_index.load(root))
+        if _tl_n > _HOOK_LIST_CAP:
+            _trunc.append(f"{_tl_n - _HOOK_LIST_CAP} of {_tl_n} registered tool(s)")
+    except Exception:
+        pass
+    if _trunc:
+        _short.append(
+            " and ".join(_trunc) + f" are never named in a session: both lists stop at "
+            f"{_HOOK_LIST_CAP}. The section still arrives with its heading, so nothing else here "
+            f"reports it. A skill or tool the session cannot see is one it will write again.")
+
     try:
         _sess_n = len(list((ws.workspace(root) / "sessions").glob("*.md")))
     except OSError:

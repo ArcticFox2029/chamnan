@@ -172,9 +172,20 @@ def main(argv):
     if resolved is None and not history and not knowledge:
         print(f"chamnan: nothing recorded for {mdblock.as_quoted(target, 100)}")
         if map_path.is_file():
-            print(f"  no incoming references in the index ({_index_age(map_path, root)}), no thread "
+            _age = _index_age(map_path, root)
+            print(f"  no incoming references in the index ({_age}), no thread "
                   f"entry names it, and nothing in memory/ declares it on a `Files:` line")
-            if on_disk:
+            # 🐛 [2026-09-09] The all-clear printed unconditionally, one line under a warning that
+            # the index is behind the code. Reproduced live: the staleness note named five files
+            # added since the index was built, and the next line still said "change it freely".
+            # The warning is exactly the case where "nothing imports it" is not a stale answer but
+            # a WRONG one — the same reasoning `_index_age`'s own docstring gives for existing —
+            # and the verdict was not gated on it. A reader who trusts the second line has been
+            # told the opposite of what the first line means (R5 agent3).
+            if on_disk and "the code has moved since" in _age.lower():
+                print(f"  the index is behind the code, so this is not an all-clear: a file added "
+                      f"since it was built could import this one. Run `chamnan-map`, then ask again")
+            elif on_disk:
                 print(f"  a file nothing imports and nothing has happened to is the cheap case — "
                       f"change it freely")
             else:

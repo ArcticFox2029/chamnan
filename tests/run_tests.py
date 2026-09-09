@@ -3524,11 +3524,34 @@ check("A FILE WITH DEPENDENTS BUT NO TESTS IS CALLED UNGUARDED", "unguarded" in 
 # which is the case a one-character typo lands in, and it is not an all-clear.
 (im_root / "src").mkdir(parents=True, exist_ok=True)
 (im_root / "src" / "nothing.py").write_text("# Nothing depends on this.\n", encoding="utf-8")
+# The index has to be NEWER than the file for "nothing imports it" to be an answer rather than a
+# guess — writing the file after the index is exactly the case the verdict is now gated on, and
+# this fixture was silently in it. Touched forward rather than rebuilt: the map here is a fixture
+# written by hand, and `chamnan-map` would replace it with a real scan of a directory that has none
+# of the recorded relationships this block is testing.
+os.utime(im_root / ".chamnan" / "MAP.md", (time.time() + 5, time.time() + 5))
 out = run_impact(im_root, "src/nothing.py")
 check("a file with nothing recorded says so plainly",
       out.returncode == 0 and "nothing recorded" in out.stdout)
 check("and says that is the cheap case rather than sounding like a failure",
-      "change it freely" in out.stdout)
+      "change it freely" in out.stdout, saw=out.stdout[:300])
+
+# 🐛 [2026-09-09] The all-clear printed one line under a warning that the index was behind the
+# code, with nothing gating one on the other. Reproduced live: the staleness note named five files
+# added since the index was built and the next line still said "change it freely". "Nothing imports
+# it" read off a stale index is not a stale answer, it is a wrong one, and the reader changes the
+# file on the strength of it (R5 agent3).
+(im_root / "src" / "newcomer.py").write_text("import nothing\n", encoding="utf-8")
+# The INDEX moves back, not the file forward. `index_is_behind` clamps a source file's mtime to the
+# present — `min(stat().st_mtime, time.time())`, so a future-dated file cannot make the index look
+# stale — and that clamp is deliberate. Ageing the map is the only way to state "the code has moved
+# since" in a fixture, and it is also what really happens: the index stands still while files change.
+os.utime(im_root / ".chamnan" / "MAP.md", (time.time() - 600, time.time() - 600))
+out = run_impact(im_root, "src/nothing.py")
+check("...but NOT when the index is behind the code, because then it is not an answer",
+      "change it freely" not in out.stdout and "not an all-clear" in out.stdout,
+      saw=out.stdout[:300])
+check("...and it says what to run to get a real answer", "chamnan-map" in out.stdout)
 
 timeline.create(im_root, "Auth migration", "2026-08-01")
 timeline.append(im_root, "auth-migration", "2026-08-01", "rolled back — sessions did not survive",
@@ -22805,8 +22828,14 @@ check("...and no published document prints an address for anyone to harvest",
 # Files that DEMONSTRATE credentials are exempt by path, and the exemption is narrow on purpose:
 # the redactor's own source, its recall harness, the benchmark's pinned cases, the translated
 # strings, and this suite. Everything else must come back unchanged.
+# 🐛 [2026-09-09] The baseline file was not exempt from the sweep it defines, and its own header
+# explains the two accepted classes by QUOTING them — AWS's published example key, and the
+# `input_tokens` line the redactor mangles. So the document that records what is accepted became
+# two new unaccepted findings the moment it was written, and the gate failed on its own paperwork.
+# Same trap as a check that matches its own source, which this file already records twice.
 _RED_DEMOS = ("lib/redact.py", "site/lib/redact.py", "tools/redactor_recall.py",
-              "bench/pinned.py", "docs/i18n/i18n_strings.py", "tests/run_tests.py")
+              "bench/pinned.py", "docs/i18n/i18n_strings.py", "tests/run_tests.py",
+              "tests/redactor_selfscan_baseline.txt")
 _red_tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True,
                               text=True, encoding="utf-8", errors="replace").stdout.split()
 check("THE REDACTOR SWEEP HAS FILES TO SWEEP", len(_red_tracked) > 50,

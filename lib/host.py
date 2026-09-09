@@ -216,6 +216,15 @@ def primary(root=None, env=None, home=None):
 #
 # Derived from `_AGENTS` rather than listing `CLAUDE.md`, because the same blind spot exists for
 # every other vendor's file and a hardcoded name would cover one of twenty-four.
+# Directories that hold payload or somebody else's code rather than this repository's own source.
+# A context file inside one of these is not loaded for a session working on this repository, and
+# counting it would inflate the very figure this exists to state honestly.
+_NOT_SOURCE = frozenset({
+    ".git", ".chamnan", "node_modules", "vendor", "venv", ".venv", "dist", "build",
+    "target", "__pycache__", ".tox", "site-packages", "third_party", "fixtures",
+})
+
+
 def context_files(root):
     """Every agent context FILE present in `root`, as [(path, bytes)], largest first.
 
@@ -234,5 +243,28 @@ def context_files(root):
                 if f.is_file():
                     out.append((marker, f.stat().st_size))
             except OSError:
+                continue
+    # 🐛 [2026-09-09] Only `root / marker` was checked, so a context file one directory down was
+    # invisible. Claude Code loads a nested `CLAUDE.md` the moment a session opens any file under
+    # its directory, and the repository this was written in has one: the report showed 17,116 bytes
+    # of un-budgeted context beside the block while the real floor for a session working in the
+    # application directory is 28,168. The caller's own comment calls this class of gap "a blind
+    # spot shaped like its own subject" — and had it one directory down (R5 agent3).
+    #
+    # Bounded on purpose. Two levels, and only into directories that hold source rather than
+    # payload: a full walk of a large repository to add a line to a report is a cost the report
+    # does not justify, and the deep case is a monorepo package, not a build directory.
+    for marker in sorted(seen):
+        if "/" in marker:
+            continue          # already a path; walking it again would double-count
+        for f in sorted(root.glob(f"*/{marker}")) + sorted(root.glob(f"*/*/{marker}")):
+            try:
+                if not f.is_file():
+                    continue
+                rel = f.relative_to(root).as_posix()
+                if any(part in _NOT_SOURCE for part in f.relative_to(root).parts[:-1]):
+                    continue
+                out.append((rel, f.stat().st_size))
+            except (OSError, ValueError):
                 continue
     return sorted(out, key=lambda r: -r[1])

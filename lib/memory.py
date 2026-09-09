@@ -368,7 +368,7 @@ def mtime_or_zero(path):
 
 def rules_text(root):
     """Every rule, concatenated, capped. This is what goes in front of the agent each session."""
-    out, titles = [], []
+    out, titles = [], []   # titles: (title, filename)
     # 🐛 [2026-09-09] `entries()` returns filename order, and the budget carries about four rules
     # out of nine here — so which rules got a BODY was decided by their first letter. A rule written
     # tonight, in response to something said four times, sat under `s` and arrived as a title while
@@ -404,14 +404,14 @@ def rules_text(root):
                        f"differing only by case. Filesystems disagree on whether these are one file "
                        f"or two, so it is NOT in force until the files are merged or renamed apart; "
                        f"do not act on either side.")
-            titles.append(title)
+            titles.append((title, path.name))
         elif body and unresolved_conflict(body):
             # Named, not silently dropped: a rule that vanishes is indistinguishable from one that
             # was never written, and the point is to get this file resolved.
             out.append(f"**{mdblock.one_line(title)}** — ⚠ this rule is mid-merge and both sides are still "
                        f"in `{mdblock.as_quoted(path.name)}`. It is NOT in force until someone "
                        f"resolves it; do not act on either side.")
-            titles.append(title)
+            titles.append((title, path.name))
         elif body:
             # Closed per RULE, not only once around the finished section. A fence left open
             # in one rule's own file otherwise runs to the end of the whole section, and
@@ -420,7 +420,7 @@ def rules_text(root):
             # rules after the broken one swallowed exactly as before. Balancing here also
             # means both cuts below operate on text whose fences already match.
             out.append(mdblock.close_dangling_fence(_flatten(body)))
-            titles.append(title)
+            titles.append((title, path.name))
     if not out:
         return ""
     joined = "\n\n".join(out)
@@ -439,12 +439,19 @@ def rules_text(root):
     share = max(300, cap // max(len(out), 1))
     if len(out) > 1 and any(len(o) > share for o in out):
         trimmed = []
-        for body, title in zip(out, titles):
+        for body, (title, fname) in zip(out, titles):
             if len(body) <= share:
                 trimmed.append(body)
             else:
+                # 🐛 [2026-09-09] This named the DIRECTORY. Every other injected store gives an
+                # exact filename per line -- skills, tools, decisions and lessons all do -- and
+                # rules were the one that did not, in any of their three render paths. A session
+                # wanting the body of a title-only rule had one instruction: open the directory and
+                # find it, against ten abstract titles whose filenames need not resemble them.
+                # `path.name` was in scope the whole time; it just was not carried through (R5 agent2).
                 trimmed.append(_cut_clean(body, share) +
-                               f"\n\n_…the rest of **{mdblock.one_line(title)}** is in `.chamnan/memory/rules/`._")
+                               f"\n\n_…the rest of **{mdblock.one_line(title)}** is in "
+                               f"`.chamnan/memory/rules/{mdblock.as_quoted(fname)}`._")
         joined = "\n\n".join(trimmed)
         if len(joined) <= cap:
             return joined
@@ -461,10 +468,13 @@ def rules_text(root):
     # which one is missing costs a line and buys everything.
     cut = state._safe_cut(joined, cap)
     kept = joined[:cut].rstrip()
-    missing = [t for t in titles if t not in kept]
+    missing = [(t, f) for t, f in titles if t not in kept]
     tail = f"\n\n_…more rules in `.chamnan/memory/rules/` — {len(out)} in total."
     if missing:
-        tail += " Not shown above: " + ", ".join(f"**{t}**" for t in missing[:6])
+        # The filename beside the title, for the same reason as the trim tail above: a rule that
+        # did not arrive is exactly the one somebody has to go and open.
+        tail += " Not shown above: " + ", ".join(
+            f"**{t}** (`{mdblock.as_quoted(f)}`)" for t, f in missing[:6])
         if len(missing) > 6:
             tail += f", and {len(missing) - 6} more"
         tail += "."

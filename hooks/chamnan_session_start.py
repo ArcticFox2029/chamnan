@@ -1681,7 +1681,13 @@ def main():
                     lines.append(f"- `{mdblock.as_quoted(s.name)}` — "
                                  f"{describe(s) or 'no description — add one'}")
                 if len(skills) > MAX_TOOLS:
-                    lines.append(f"- _…and {len(skills)-MAX_TOOLS} more_")
+                    # 🐛 [2026-09-09] "…and 15 more" with no path, while the tools tail six lines
+                    # up names its directory. A session told that fifteen procedures exist and not
+                    # where to look has been given a reason to worry and no way to act, which is
+                    # worse than not being told: the whole point of listing skills is that one can
+                    # be loaded on demand. Measured on this workspace at 15 of 27 unnamed (R5 agent2).
+                    lines.append(f"- _…and {len(skills)-MAX_TOOLS} more in "
+                                 f"`{display(wsdir/'skills', root)}/` — its README indexes them_")
                 # 🐛 [2026-09-08] Skill filenames are typed by a person, not derived through any
                 # `slug()`, so the normalisation fix that closed this for threads and candidates does
                 # not reach here. Reproduced: writing `café-deploy.md` precomposed and then

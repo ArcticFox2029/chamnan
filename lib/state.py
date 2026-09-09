@@ -355,7 +355,10 @@ def _age_out_locked(text, wsdir, sections, now, cutoff, days, save=True):
         # file makes every section look like, and is why a lost ages file injects everything.
         # Pinned sections never reach here at all; _age_units does not emit them.
         if first_seen <= cutoff:
-            drop.append((sec["start"], sec["end"], now - first_seen))
+            # The heading comes off the chunk this loop already sliced. Carried here so the marker
+            # can say WHICH section was held back -- see the note where the marker is built.
+            head = chunk.lstrip().split("\n", 1)[0].lstrip("# ").strip()
+            drop.append((sec["start"], sec["end"], now - first_seen, head))
 
     # `save` is False when the lock could not be taken. The ages this run computed are still used
     # to decide what to hold back — that decision is read-only and correct — they are just not
@@ -367,13 +370,25 @@ def _age_out_locked(text, wsdir, sections, now, cutoff, days, save=True):
         return text, ""
 
     parts, cursor = [], 0
-    for a, b, _ in drop:
+    for a, b, _, _ in drop:
         parts.append(text[cursor:a])
         cursor = b
     parts.append(text[cursor:])
     kept = "".join(parts)
 
-    oldest = max(d for _, _, d in drop) // 86400
-    marker = (f"_{len(drop)} section(s) unchanged for {days}+ days (oldest {oldest}) held back — "
-              f"read the file, or mark a heading {PIN_MARK} to keep it._")
+    oldest = max(d for _, _, d, _ in drop) // 86400
+    # 🐛 [2026-09-09] The marker gave a COUNT and an age and nothing else, while this module's own
+    # docstring says what is held back "is named in one line that points at the file, so it is one
+    # read away rather than gone". It pointed at STATE.md as a whole, which is the file the aging
+    # exists to avoid re-reading. A reader given "1 section held back" has no basis for deciding
+    # whether it matters right now, so the marker was either ignored or paid for with a full read —
+    # both of which defeat it. The heading is the one fact that makes the pointer usable, and it
+    # was in the slice the loop above already took (R5 agent2).
+    names = [mdblock.one_line(h) for _, _, _, h in drop if h]
+    shown = ", ".join(f"**{n}**" for n in names[:3])
+    if len(names) > 3:
+        shown += f", and {len(names) - 3} more"
+    marker = (f"_{len(drop)} section(s) unchanged for {days}+ days (oldest {oldest}) held back"
+              + (f" — {shown}" if shown else "")
+              + f". Read them in the file, or mark a heading {PIN_MARK} to keep it._")
     return kept, marker
