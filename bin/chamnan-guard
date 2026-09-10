@@ -47,7 +47,15 @@ MAX_DIFF_BYTES = 4_000_000
 
 
 def _staged_diff(root):
-    """The staged diff, or None when git cannot answer. Never raises."""
+    """The staged diff, or None when git cannot answer. Never raises.
+
+    `git_can_speak_for` first, and it is not a formality: `git -C <root>` answers about whatever
+    repository is ABOVE `root` when `root` itself is not in one. Without it, running this in a
+    directory that merely sits inside somebody's checkout would scan THAT repository's staged
+    changes and report findings against files this command was never pointed at.
+    """
+    if not ws.git_can_speak_for(root):
+        return None
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
@@ -130,9 +138,16 @@ def main(argv):
         return 0
 
     _n = sum(len(v) for v in found.values())
+    # This sentence deliberately does not end on a colon. A secret-ish word followed by one reads to
+    # chamnan's own redactor as a key introducing a value, so the line was rewritten by it and this
+    # file became a NEW hit in the self-scan over the tree chamnan ships — a check that exists to
+    # notice precisely that. A false positive on its own source is worth rewording rather than a
+    # line added to the accepted baseline.
+    #
+    # The shape is described here and not quoted, for the reason this repository already records:
+    # a comment that spells out the pattern it removed is matched by the sweep looking for it.
     print(f"chamnan-guard: {_n} staged line{'s' if _n != 1 else ''} in {len(found)} file"
-          f"{'s' if len(found) != 1 else ''} look{'' if _n != 1 else 's'} like a credential:",
-          file=sys.stderr)
+          f"{'s' if len(found) != 1 else ''} look like a leaked secret", file=sys.stderr)
     for _p in sorted(found)[:6]:
         _lines = found[_p]
         _shown = ", ".join(str(n) for n in _lines[:6]) + (" …" if len(_lines) > 6 else "")

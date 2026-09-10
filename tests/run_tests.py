@@ -1661,6 +1661,13 @@ report_log.write_text(
         {"at": "2026-08-20T10:00:00+07:00", "kind": "command", "sig": "chamnan-map"},
         {"at": "2026-08-25T10:00:00+07:00", "kind": "command", "sig": "chamnan-candidates"},
     ]) + "\n", encoding="utf-8")
+# 🐛 [2026-09-10] These fixtures registered a tool and never created its FILE, which is a state
+# `chamnan-promote` cannot produce — it copies the file, then registers. `chamnan-report` now filters
+# entries whose file is gone (it printed a hand-deleted tool as a real one at 0 runs, which reads as
+# one worth demoting), so a registration with no file is correctly invisible and these checks went
+# red. The fixture was modelling a broken registry and asserting on it as if it were a healthy one.
+(ws.workspace(report_root) / "tools").mkdir(parents=True, exist_ok=True)
+(ws.workspace(report_root) / "tools" / "deploy-check.sh").write_text("#!/bin/sh\n", encoding="utf-8")
 tools_index.register(report_root, {"name": "deploy-check.sh", "desc": "x",
                                     "added": "2026-08-27T10:00:00+07:00", "origin": "y"})
 tools_index.record_call(report_root, "deploy-check.sh")
@@ -8896,6 +8903,10 @@ _de_silent = {
     # create-a-workspace sentence of it would have added an error to a command that had none. A
     # derived sweep is only as right as its exemption list, and an exemption needs a reason.
     "chamnan-peek": "reads one file and needs no workspace at all",
+    # Reads a git diff and nothing else, and runs from a pre-commit hook — where a command that
+    # cannot answer must add NO line to somebody's commit output, let alone advice about a workspace
+    # it does not need. Same reasoning as `chamnan-peek` above, reached from the other direction.
+    "chamnan-guard": "reads a staged diff and needs no workspace at all",
 }
 _de_missing = []
 for _cmd in sorted(p for p in (ROOT / "bin").iterdir()
@@ -20834,6 +20845,7 @@ if _CAN_DENY_WRITE:
         "chamnan-impact": None,
         "chamnan-peek": None,
         "chamnan-report": None,
+        "chamnan-guard": None,
     }
     _nw_commands = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*") if p.suffix != ".cmd")
     check("the write-honesty sweep knows about every command that ships",
@@ -24323,6 +24335,9 @@ try:
     subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], capture_output=True,
                    cwd=str(_r17_ti))
     for _name in ("noisy.sh", "quiet.sh", "stopped.sh", "toofew.sh"):
+        # The file too, not just the registration — see the note at the `deploy-check.sh` fixture.
+        (ws.workspace(_r17_ti) / "tools").mkdir(parents=True, exist_ok=True)
+        (ws.workspace(_r17_ti) / "tools" / _name).write_text("#!/bin/sh\n", encoding="utf-8")
         tools_index.register(_r17_ti, {"name": _name, "desc": "x"})
     for _ in range(4):
         tools_index.record_call(_r17_ti, "noisy.sh", stderr_nonempty=True)
@@ -29893,7 +29908,7 @@ check(f"the frontmatter sweep found adapters to check: {_t_fm67}", _t_fm67 >= 5,
 check("...and a setext heading in the block reaches every one of their files intact",
       not _t_kept67, saw=", ".join(_t_kept67) or None)
 _sys67.path.remove(str(ROOT / "lib"))
-# ---- 67_the_check_runner_cannot_be_outlived_by_its_own_child.py
+# ---- 68_the_check_runner_cannot_be_outlived_by_its_own_child.py
 # ------------------------- six hours of a frozen machine, and a ^C that did nothing about it
 # 🐛 [2026-09-10] `suite_slice` ran its generated child with no `timeout` and no `stdin`, and one
 # such child sat for 5 hours 59 minutes at 1.3% CPU. The machine stayed down until it was killed by
@@ -29959,6 +29974,582 @@ else:
     check("...and a run that times out says which script to re-run to find the hang",
           "TimeoutExpired" in _t_src67 and "did not finish within" in _t_src67,
           saw="the runner does not handle its own timeout, so a hang arrives as a traceback")
+# ---- 69_one_answer_to_whether_a_registered_tool_is_really_there.py
+# ------------------ three readers, three copies of one predicate, and a report that saw only one gap
+# 🐛 [2026-09-10] `tools/index.json` is read by three things that answer a person, and each carried
+# its own copy of "does this entry name a file that is really there": the SessionStart hook's
+# `_real_tool`, `chamnan-promote --list`, and nothing at all in `chamnan-report`. The round that
+# found this reported the MISSING one — `chamnan-report` printed a hand-deleted tool as an ordinary
+# row at `0 runs`, indistinguishable from a real tool nobody uses and therefore worth demoting, and
+# two of its other counters had the same gap. What it did not report is that the check it was
+# missing already existed twice (R1 agent 5, finding 5).
+#
+# They agreed, which is the only reason nothing had gone wrong yet. This repository's most recorded
+# defect is what happens next: one copy is fixed and the identical ones beside it are not.
+#
+# `tools_index.real_name` is the single answer now. It returns the VALIDATED name rather than a
+# bool, because the hook writes it back over the raw field before printing it into a session.
+import ast as _ast69
+
+_t_ti69 = ROOT / "lib" / "tools_index.py"
+check("the shared predicate exists at all",
+      "def real_name" in _t_ti69.read_text(encoding="utf-8"),
+      saw="tools_index.real_name is gone, so every caller below is answering on its own again")
+
+# --- 1. Every reader of the index consults it. Derived from who CALLS the index, not from a list:
+# a fourth reader written next year is in this population the day it is written.
+_T_READS69 = {"load", "usage", "signals"}
+_t_readers69, _t_unfiltered69 = [], []
+for _t_folder69 in ("lib", "hooks", "bin"):
+    _t_dir69 = ROOT / _t_folder69
+    if not _t_dir69.is_dir():
+        continue
+    for _t_p69 in sorted(_t_dir69.rglob("*")):
+        if (_t_p69.is_dir() or "__pycache__" in str(_t_p69)
+                or _t_p69.suffix not in ("", ".py") or _t_p69.name == "tools_index.py"):
+            continue
+        try:
+            _t_src69 = _t_p69.read_text(encoding="utf-8")
+            _t_tree69 = _ast69.parse(_t_src69)
+        except (SyntaxError, ValueError, UnicodeDecodeError, OSError):
+            continue
+        _t_calls69 = {_t_n69.func.attr for _t_n69 in _ast69.walk(_t_tree69)
+                      if isinstance(_t_n69, _ast69.Call)
+                      and isinstance(_t_n69.func, _ast69.Attribute)
+                      and getattr(_t_n69.func.value, "id", "") == "tools_index"
+                      and _t_n69.func.attr in _T_READS69}
+        # The hook opens `index.json` by path rather than through the module, and it is the reader
+        # whose output goes straight into a session — so it has to be in this population too.
+        _t_by_path69 = 'wsdir / "tools" / "index.json"' in _t_src69 or \
+                       '"tools" / "index.json"' in _t_src69
+        if not (_t_calls69 or _t_by_path69):
+            continue
+        _t_readers69.append(_t_p69.name)
+        if "real_name" not in _t_src69 and "missing_files" not in _t_src69:
+            _t_unfiltered69.append(_t_p69.name)
+
+check(f"the sweep found the readers it polices: {sorted(_t_readers69)}",
+      len(_t_readers69) >= 3,
+      saw="%d reader(s) — a sweep that found none is not a pass" % len(_t_readers69))
+check("EVERY READER OF THE TOOL INDEX ASKS THE SHARED PREDICATE WHETHER THE FILE IS REALLY THERE",
+      not _t_unfiltered69,
+      saw="%s read the index and never ask — an entry whose file was deleted by hand is then "
+          "printed as a real tool at 0 runs, which reads as one worth demoting"
+          % (", ".join(_t_unfiltered69),))
+
+# --- 2. ...and nobody has quietly written a fourth copy. The shape is the existence test applied to
+# a path under `tools/`; `real_name` is where it is allowed to live.
+_t_copies69 = []
+for _t_folder69 in ("lib", "hooks", "bin"):
+    _t_dir69 = ROOT / _t_folder69
+    if not _t_dir69.is_dir():
+        continue
+    for _t_p69 in sorted(_t_dir69.rglob("*")):
+        if (_t_p69.is_dir() or "__pycache__" in str(_t_p69)
+                or _t_p69.suffix not in ("", ".py") or _t_p69.name == "tools_index.py"):
+            continue
+        try:
+            _t_lines69 = _t_p69.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for _t_i69, _t_l69 in enumerate(_t_lines69):
+            if "is_file() and ws.inside" not in _t_l69:
+                continue
+            # Only when it is about a TOOL. `memory.py` asks the identical question about its own
+            # source files and is a different subject, not a fourth copy of this one.
+            _t_near69 = "\n".join(_t_lines69[max(0, _t_i69 - 4):_t_i69 + 1])
+            if '"tools"' in _t_near69 or "/ name" in _t_near69:
+                _t_copies69.append(f"{_t_p69.name}:{_t_i69 + 1}")
+check("...and no caller has written its own copy of that test again",
+      not _t_copies69,
+      saw="%s — three copies is where this started; `tools_index.real_name` is the one place"
+          % (", ".join(_t_copies69),))
+
+# --- 3. The predicate actually works, in both directions. A filter that rejects everything passes
+# every check above while emptying the tool list a session is handed.
+import shutil as _sh69
+import sys as _sys69
+import tempfile as _tmp69
+from pathlib import Path as _Path69
+
+_sys69.path.insert(0, str(ROOT / "lib"))
+import tools_index as _ti69                                       # noqa: E402
+import workspace as _ws69                                         # noqa: E402
+
+_t_root69 = _Path69(_tmp69.mkdtemp(prefix="chamnan-tools69-"))
+try:
+    (_t_root69 / ".git").mkdir(parents=True)
+    _ws69.ensure(_t_root69)
+    _t_tools69 = _ws69.workspace(_t_root69) / "tools"
+    _t_tools69.mkdir(parents=True, exist_ok=True)
+    (_t_tools69 / "real.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    _ti69.register(_t_root69, {"name": "real.py", "desc": "on disk"})
+    _ti69.register(_t_root69, {"name": "ghost.py", "desc": "deleted by hand"})
+
+    check("a registered tool whose file is there is reported as real",
+          _ti69.real_name(_t_root69, "real.py") == "real.py",
+          saw=repr(_ti69.real_name(_t_root69, "real.py")))
+    check("...and one whose file is gone is not",
+          _ti69.real_name(_t_root69, "ghost.py") is None)
+    check("...and `missing_files` names exactly the second one",
+          _ti69.missing_files(_t_root69) == {"ghost.py"},
+          saw=repr(_ti69.missing_files(_t_root69)))
+    # A path-shaped name is refused before the filesystem is asked, which is the half a write-time
+    # guard cannot cover: a name stays in the index after the file it pointed at is swapped.
+    check("...and a name that is not a filename is refused whatever is on disk",
+          _ti69.real_name(_t_root69, "../outside.py") is None
+          and _ti69.real_name(_t_root69, "") is None
+          and _ti69.real_name(_t_root69, None) is None)
+finally:
+    _sh69.rmtree(_t_root69, ignore_errors=True)
+    _sys69.path.remove(str(ROOT / "lib"))
+# ---- 70_the_redactor_finally_guards_the_direction_a_secret_leaves.py
+# ------------------- the redactor guarded everything reaching the model and nothing reaching a commit
+# 🐛 [2026-09-10] `lib/redact.py` exists to keep a secret out of what reaches the MODEL — the
+# SessionStart block, `MAP.md`, the file each of two dozen agents reads. It had never been pointed
+# at the direction a secret actually leaves a machine, which is `git commit`, and which is the
+# direction this repository's own standing rule names first: "never let `data/`, API keys or
+# machine-specific paths reach a commit". `chamnan-map --install-git-hook` already installed a
+# pre-commit hook and it only rebuilt the index (R1 agent 5, finding 1).
+#
+# `chamnan-guard` is that scan. Three properties are load-bearing and each is asserted below,
+# because getting any of them wrong turns a guard into something people switch off:
+#
+#   * it WARNS, it does not block — the redactor's published recall is 98.2% on a synthetic corpus
+#     and it verifies nothing against a live service, so a false positive that stops every commit
+#     is worse than the leak it guards;
+#   * it never prints what it found — echoing the line would copy the secret into a terminal, a CI
+#     log and an agent's transcript, which is three more places it now exists;
+#   * it reads ADDED lines only — a removed line is a secret leaving, a context line is already
+#     committed, and flagging either trains people to ignore the real one.
+import importlib.machinery as _ilm70
+import importlib.util as _ilu70
+import os as _os70
+import shutil as _sh70
+import subprocess as _sp70
+import sys as _sys70
+import tempfile as _tmp70
+from pathlib import Path as _Path70
+
+_sys70.path.insert(0, str(ROOT / "lib"))
+import redact as _rd70  # noqa: E402
+_t_cmd70 = ROOT / "bin" / "chamnan-guard"
+check("the command exists", _t_cmd70.is_file(),
+      saw="bin/chamnan-guard is gone — the redactor guards the model again and nothing else")
+
+if not _t_cmd70.is_file():
+    skip("  · nothing to exercise")
+else:
+    # Every sibling convention, asked of the file rather than assumed. A new command that misses one
+    # of these is the shape this package produces most often.
+    _t_src70 = _t_cmd70.read_text(encoding="utf-8")
+    check("...and it follows the conventions every other command follows",
+          "print = redact.emit" in _t_src70 and "ws.wants_help" in _t_src70
+          and "ws.wants_version" in _t_src70 and "ws.unknown_flags" in _t_src70,
+          saw="missing: " + ", ".join(
+              n for n, present in (("redact.emit", "print = redact.emit" in _t_src70),
+                                   ("--help", "ws.wants_help" in _t_src70),
+                                   ("--version", "ws.wants_version" in _t_src70),
+                                   ("unknown flags", "ws.unknown_flags" in _t_src70))
+              if not present))
+    check("...and has the Windows shim its siblings have",
+          (ROOT / "bin" / "chamnan-guard.cmd").is_file(),
+          saw="no .cmd — cmd.exe cannot run an extensionless script, so it does not exist on Windows")
+
+    _t_spec70 = _ilu70.spec_from_loader(
+        "chamnan_guard_70", _ilm70.SourceFileLoader("chamnan_guard_70", str(_t_cmd70)))
+    _t_g70 = _ilu70.module_from_spec(_t_spec70)
+    _t_spec70.loader.exec_module(_t_g70)
+
+    # --- added lines only, and the line number is the one a person opens the file to.
+    # BUILT from the scheme, never written out. A credential-shaped LITERAL committed
+    # in this tree is a new hit for chamnan's own redactor self-scan — a check that
+    # exists precisely to notice one — and it duly failed the gate the first time this
+    # fixture was written that way. Same rule this repository already records for a
+    # removed phrase: compute the shape, never quote it.
+    import string as _str70
+    _t_alpha70 = _str70.ascii_letters + _str70.digits + "+/"
+    _t_secret70 = "".join(_t_alpha70[(_i70 * 17 + 5) % len(_t_alpha70)]
+                          for _i70 in range(40))
+    _t_line70 = 'AWS_SECRET_ACCESS_KEY = "%s"' % _t_secret70
+    check("the fixture is a shape the redactor actually rejects",
+          _rd70.scrub(_t_line70) != _t_line70,
+          saw="a fixture the redactor accepts tests nothing, and would pass this whole "
+              "file while `chamnan-guard` found nothing at all")
+    _t_diff70 = (
+        "diff --git a/cfg.py b/cfg.py\n"
+        "--- a/cfg.py\n"
+        "+++ b/cfg.py\n"
+        "@@ -4,0 +5,1 @@\n"
+        "+" + _t_line70 + "\n"
+        "@@ -20,1 +21,0 @@\n"
+        "-" + _t_line70 + "\n")
+    _t_found70 = _t_g70.scan(_t_diff70)
+    check("A CREDENTIAL ON A STAGED LINE IS FOUND, AND NAMED BY FILE AND LINE",
+          _t_found70 == {"cfg.py": [5]}, saw=repr(_t_found70))
+    check("...and the identical line being REMOVED is not flagged",
+          all(5 in v and len(v) == 1 for v in _t_found70.values()),
+          saw="a removed secret is one leaving the tree; flagging it is noise")
+
+    # --- ordinary code stays silent. A guard that fires on normal work is one people turn off, and
+    # that is the failure this design is shaped around.
+    _t_ordinary70 = (
+        "diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1,0 +2,4 @@\n"
+        "+def add(a, b):\n+    return a + b\n+\n+MAX_RETRIES = 5\n")
+    check("...and ordinary code is not flagged",
+          _t_g70.scan(_t_ordinary70) == {}, saw=repr(_t_g70.scan(_t_ordinary70)))
+
+    # --- end to end, through git, because the properties that matter are about the COMMIT.
+    _t_repo70 = _Path70(_tmp70.mkdtemp(prefix="chamnan-guard70-"))
+    try:
+        _sp70.run(["git", "init", "-q", str(_t_repo70)], capture_output=True)
+        for _k70, _v70 in (("user.email", "t@t"), ("user.name", "t")):
+            _sp70.run(["git", "-C", str(_t_repo70), "config", _k70, _v70], capture_output=True)
+        (_t_repo70 / "cfg.py").write_text(_t_line70 + "\n", encoding="utf-8")
+        _sp70.run(["git", "-C", str(_t_repo70), "add", "-A"], capture_output=True)
+
+        _t_run70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70),
+                             capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+        _t_said70 = _t_run70.stdout + _t_run70.stderr
+        check("...IT WARNS AND DOES NOT FAIL THE COMMIT",
+              _t_run70.returncode == 0,
+              saw="exit %d — a guard that blocks on a 98.2%% recall gets switched off, and then "
+                  "nothing is watching at all" % _t_run70.returncode)
+        check("...and names the file it found it in", "cfg.py" in _t_said70,
+              saw=repr(_t_said70[:160]))
+        # Two layers, and only the second of them can fail this check — which is worth writing down
+        # rather than leaving for the next person to discover by mutation, as happened here.
+        #
+        # The outer layer is `print = redact.emit`: mutating the command to echo every matched line
+        # verbatim STILL produced `AWS_SECRET_ACCESS_KEY = "<REDACTED>"`, because the emitter every
+        # `bin/` command shadows print with scrubs on the way out. So this assertion is end to end
+        # and cannot fail while that convention holds — real cover, not a real discriminator.
+        check("...AND NEVER PRINTS THE SECRET ITSELF",
+              _t_secret70 not in _t_said70,
+              saw="the matched value reached stderr THROUGH `redact.emit`, which means the emitter "
+                  "itself stopped scrubbing — a far larger failure than this command")
+        # The inner layer is the one that discriminates: a finding is a path and line NUMBERS, and
+        # the line text is never carried out of `scan()` at all. A report that cannot hold the value
+        # cannot leak it, whatever the printing layer does.
+        _t_shape70 = _t_g70.scan(_t_diff70)
+        check("...because a finding is line NUMBERS, and never carries the text",
+              all(isinstance(_t_k70, str) and isinstance(_t_v70, list)
+                  and all(isinstance(_t_x70, int) for _t_x70 in _t_v70)
+                  for _t_k70, _t_v70 in _t_shape70.items()),
+              saw="scan() returned %r — a finding that carries the matched text is one interpolation "
+                  "away from copying the secret into a terminal, a CI log and a transcript"
+                  % (_t_shape70,))
+
+        _t_strict70 = _sp70.run([_sys70.executable, str(_t_cmd70), "--strict"], cwd=str(_t_repo70),
+                                capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+        check("...while `--strict` is the opt-in that does fail", _t_strict70.returncode == 1,
+              saw="exit %d" % _t_strict70.returncode)
+
+        # A repository with nothing staged, and a directory that is not a repository at all: both
+        # run from a commit hook, and a command that cannot answer must not add a line to somebody
+        # else's commit output.
+        _sp70.run(["git", "-C", str(_t_repo70), "commit", "-qm", "i"], capture_output=True)
+        _t_clean70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70),
+                               capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+        _t_nogit70 = _Path70(_tmp70.mkdtemp(prefix="chamnan-nogit70-"))
+        _t_out70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_nogit70),
+                             capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+        check("...and says nothing when there is nothing staged, or no repository at all",
+              _t_clean70.returncode == 0 and not (_t_clean70.stdout + _t_clean70.stderr).strip()
+              and _t_out70.returncode == 0 and not (_t_out70.stdout + _t_out70.stderr).strip(),
+              saw="staged=%r nogit=%r" % ((_t_clean70.stdout + _t_clean70.stderr)[:60],
+                                          (_t_out70.stdout + _t_out70.stderr)[:60]))
+        _sh70.rmtree(_t_nogit70, ignore_errors=True)
+    finally:
+        _sh70.rmtree(_t_repo70, ignore_errors=True)
+
+    # --- and the installed hook actually runs it, or none of the above reaches anybody.
+    _t_map70 = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+    _t_body70 = _t_map70[_t_map70.index("HOOK_BODY"):]
+    _t_body70 = _t_body70[:_t_body70.index('# <<< chamnan')]
+    # The CALL, not the mention. The comment above it in the hook body names the command too, and a
+    # substring test passes on that comment while the invocation is gone — this suite's own recorded
+    # trap, and it survived the first mutation of this check for exactly that reason.
+    _t_calls70 = [ln for ln in _t_body70.splitlines()
+                  if "chamnan-guard" in ln and not ln.lstrip().startswith("#")]
+    check("...and the pre-commit hook chamnan installs actually calls it",
+          any(ln.strip().startswith("chamnan-guard") or "command -v chamnan-guard" in ln
+              for ln in _t_calls70),
+          saw="%d non-comment line(s) name it: %r — the command exists and nothing runs it, which "
+              "is the state the finding described" % (len(_t_calls70), _t_calls70[:3]))
+    check("...outside the ACDR branch, because a credential arrives by EDITING a file",
+          _t_calls70 and _t_body70.index(_t_calls70[-1])
+          > _t_body70.index("--diff-filter=ACDR"),
+          saw="nested inside the added/deleted/renamed branch — that branch exists because only "
+              "those can stale the INDEX, and it deliberately skips the modified files a secret "
+              "arrives in")
+# ---- 71_a_check_trailer_that_names_a_directory_never_ran.py
+# ---------------- trailers written, never evaluated, and six of eight could not have passed anyway
+# 🐛 [2026-09-10] `rulecheck` has a deterministic grammar for "does this document still describe the
+# repository" — ``**Check:** present `PATTERN` in `GLOB` `` — and it was wired to `memory/rules/`
+# and nowhere else. `skills/` carries the same trailers, is the store most likely to name a real
+# path, and is read at the START of the matching task, which is the worst moment to be handed a
+# command that no longer exists. `agents/librarian.md` names this exact job and it was only ever
+# done by a haiku agent on a seven-day schedule, using judgement and a model turn (R1 agent 5,
+# finding 2).
+#
+# Then the first evaluation found something worse than "unwired": six of the eight trailers named a
+# DIRECTORY where the grammar wants a file glob — ``present `archive_report.py` in `.chamnan/tools```
+# matches no file at all. They had been written, and had never once run, so nothing said so.
+#
+# Two properties. The second is the one that would have caught it.
+import sys as _sys71
+
+_sys71.path.insert(0, str(ROOT / "lib"))
+import memory as _mem71                                            # noqa: E402
+import rulecheck as _rc71                                          # noqa: E402
+
+_t_repo71 = ROOT.parent.parent
+
+# --- 1. Every reader that evaluates trailers reads every store that HAS them. Derived from the
+# stores on disk rather than from a list here: a third store growing a trailer joins this population
+# the day it does.
+_t_stores71 = {}
+for _t_name71, _t_dir71 in (("rules", ".chamnan/memory/rules"),
+                            ("skills", ".chamnan/skills"),
+                            ("decisions", ".chamnan/memory/decisions"),
+                            ("lessons", ".chamnan/memory/lessons")):
+    _t_d71 = _t_repo71 / _t_dir71
+    if not _t_d71.is_dir():
+        continue
+    _t_n71 = sum(1 for _f in _t_d71.glob("*.md")
+                 if "**Check:**" in _f.read_text(encoding="utf-8", errors="replace"))
+    if _t_n71:
+        _t_stores71[_t_name71] = _t_n71
+
+_t_hook71 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_t_rep71 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+_t_unread71 = []
+for _t_store71 in sorted(_t_stores71):
+    _t_fn71 = "%s_with_titles" % _t_store71
+    for _t_label71, _t_src71 in (("the session block", _t_hook71), ("chamnan-report", _t_rep71)):
+        if _t_fn71 not in _t_src71:
+            _t_unread71.append(f"{_t_store71} ({_t_label71})")
+
+check(f"the sweep found the stores that carry trailers: {_t_stores71}",
+      bool(_t_stores71),
+      saw="no store on disk carries a `**Check:**` trailer — this check is measuring nothing")
+check("EVERY STORE THAT CARRIES CHECK TRAILERS IS READ BY EVERY READER THAT EVALUATES THEM",
+      not _t_unread71,
+      saw="%s — a trailer in a store nobody feeds to `rulecheck` is a claim that has never once "
+          "been tested, and nothing says so" % (", ".join(_t_unread71),))
+
+# --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
+# file, so the check reports `unverifiable` forever — indistinguishable, to anyone skimming, from a
+# check that simply has nothing to look at yet. Six of eight were in that state and had been since
+# they were written.
+_t_dead71 = []
+for _t_title71, _t_text71 in (_mem71.rules_with_titles(_t_repo71)
+                              + _mem71.skills_with_titles(_t_repo71)):
+    for _t_mode71, _t_pat71, _t_glob71, _t_every71 in _rc71.parse(_t_text71):
+        _t_target71 = _t_repo71 / _t_glob71
+        if _t_target71.is_dir():
+            _t_dead71.append(f"{_t_title71[:40]}: `{_t_glob71}` is a directory")
+
+check("...and no trailer names a DIRECTORY where the grammar wants a file glob",
+      not _t_dead71,
+      saw="%s — matches no file, so it reports `unverifiable` for ever and reads as 'nothing to "
+          "check yet' rather than as a broken claim" % ("; ".join(_t_dead71[:5]),))
+
+# --- 3. The trailers that exist actually pass right now. A grammar wired to a store whose every
+# claim is broken is worse than not wiring it: the line it prints becomes noise people skip.
+_t_results71 = _rc71.run(_t_repo71, _mem71.skills_with_titles(_t_repo71))
+_t_bad71 = [(t, s, d) for t, s, d in _t_results71 if s not in ("holds",)]
+check(f"...and this repository's own skill trailers hold: {len(_t_results71)} evaluated",
+      _t_results71 and not _t_bad71,
+      saw="%d evaluated, %s" % (len(_t_results71),
+                                "; ".join(f"{t[:30]} {s}: {d[:60]}" for t, s, d in _t_bad71[:4])
+                                or "none ran at all"))
+_sys71.path.remove(str(ROOT / "lib"))
+# ---- 72_the_calibration_measures_the_artefacts_its_own_table_quotes.py
+# ------------- a published table of numbers, and the script built to reproduce it measured none of it
+# 🐛 [2026-09-10] `lib/tokens.py`'s docstring is the published justification for its per-script
+# characters-per-token divisors, and it quotes a six-row table measured "on the content chamnan
+# actually budgets" — MAP.md's Quick Index and its Full Detail section, a real STATE.md, this
+# repository's own Python, JSON, URLs. `bench/calibrate_tokens.py` is the one script built to make
+# that measurement re-runnable, and its `SAMPLES` held seven LANGUAGE rows and not one of those six.
+#
+# So the table was produced by something that left no trace in the repository, and the next person
+# to retune those divisors — which the docstring says has already happened once — had no way to
+# check they had not regressed the exact artefact the module says matters most (R1 agent 5,
+# finding 6). Checked before believing it: no other file in `state/research/` carries that table.
+#
+# The rows are read from disk at RUN time rather than pasted in, and that is the property worth
+# holding: a pasted sample is one repository's content frozen into a package that ships to other
+# people's, and it stops being the thing it claims to measure the moment MAP.md changes.
+import importlib.machinery as _ilm72
+import importlib.util as _ilu72
+import sys as _sys72
+
+_t_bench72 = ROOT / "bench" / "calibrate_tokens.py"
+if not _t_bench72.is_file():
+    skip("  · no bench/calibrate_tokens.py here — skipped, not passed")
+else:
+    _sys72.path.insert(0, str(ROOT / "lib"))
+    _t_spec72 = _ilu72.spec_from_loader(
+        "calibrate_72", _ilm72.SourceFileLoader("calibrate_72", str(_t_bench72)))
+    _t_c72 = _ilu72.module_from_spec(_t_spec72)
+    _t_spec72.loader.exec_module(_t_c72)
+
+    check("the calibration declares real-artefact rows, not only language rows",
+          bool(getattr(_t_c72, "ARTEFACTS", None)),
+          saw="SAMPLES holds language rows alone, so the table `tokens.py` publishes has nothing "
+              "that reproduces it")
+
+    # Derived from the docstring that PUBLISHES the numbers, not from a list here: a row added to
+    # that table tomorrow joins this population without anybody editing this check.
+    _t_tokens72 = (ROOT / "lib" / "tokens.py").read_text(encoding="utf-8")
+    _t_quotes72 = {"MAP.md": "MAP.md" in _t_tokens72,
+                   "STATE.md": "STATE.md" in _t_tokens72,
+                   "JSON": "JSON" in _t_tokens72,
+                   "URLs": "URL" in _t_tokens72}
+    _t_covers72 = {"MAP.md": any("map" in k for k in _t_c72.ARTEFACTS),
+                   "STATE.md": any("state" in k for k in _t_c72.ARTEFACTS),
+                   "JSON": any("json" in k for k in _t_c72.ARTEFACTS),
+                   "URLs": "urls_synthetic" in _t_c72.artefact_samples(ROOT.parent.parent)}
+    _t_gap72 = [k for k, quoted in _t_quotes72.items() if quoted and not _t_covers72[k]]
+    check("EVERY ARTEFACT THE PUBLISHED TABLE NAMES IS ONE THE CALIBRATION CAN MEASURE",
+          not _t_gap72,
+          saw="%s quoted in tokens.py's own justification and absent from the script built to "
+              "reproduce it" % (", ".join(_t_gap72),))
+
+    # ...and the rows resolve against a real repository rather than merely being declared.
+    _t_live72 = _t_c72.artefact_samples(ROOT.parent.parent)
+    check(f"...and they resolve here: {sorted(_t_live72)}",
+          len(_t_live72) >= 4,
+          saw="%d row(s) resolved — a declaration that reads nothing measures nothing"
+              % len(_t_live72))
+    check("...with the two halves of MAP.md kept apart, which is how the table quotes them",
+          "## Full Detail" not in _t_live72.get("map_quick_index", "")
+          and _t_live72.get("map_full_detail", "x")[:14] == "## Full Detail",
+          saw="quick index leaked into full detail, so both rows measure the same thing")
+
+    # A missing artefact must be SKIPPED, never substituted. A row measured against a stand-in
+    # prints a number under a name that says "your MAP.md", which is worse than an absent row.
+    import tempfile as _tmp72
+    from pathlib import Path as _Path72
+    _t_empty72 = _Path72(_tmp72.mkdtemp(prefix="chamnan-cal72-"))
+    _t_none72 = _t_c72.artefact_samples(_t_empty72)
+    check("...and a repository with none of them measures none of them, rather than a stand-in",
+          set(_t_none72) == {"urls_synthetic"},
+          saw="%r — the synthetic URL row is the one with no artefact to read and says so; "
+              "anything else here is a number under a name that is not true" % (sorted(_t_none72),))
+    import shutil as _sh72
+    _sh72.rmtree(_t_empty72, ignore_errors=True)
+    _sys72.path.remove(str(ROOT / "lib"))
+# ---- 73_the_wrapper_that_keeps_a_hook_from_killing_a_session_has_one_body.py
+# ------------------------- the four lines whose whole job is safety, written out six times over
+# 🐛 [2026-09-10] `_never_fail_the_session` — `try: return main() / except Exception: return 0` —
+# was written out in SIX hooks, byte for byte, and the sixth was added that same week by copying the
+# fifth. Every copy was correct, so nothing had gone wrong yet, and this package's most recorded
+# defect is what happens next: somebody finds a problem in one and fixes the copy in front of them.
+#
+# It is the sharpest instance in the duplicate-body sweep for a reason the sweep itself gave: this
+# is the wrapper whose entire job is that a hook must never take a session down. The copy that ends
+# up subtly different from the other five is, by construction, the one that does.
+#
+# `workspace.never_fail` is the one body now. Two properties: nobody has grown a seventh copy, and
+# the thing it guarantees still holds when the workspace is unreadable — which is the state it was
+# measured in when four of five hooks died.
+import ast as _ast73
+import json as _js73
+import os as _os73
+import shutil as _sh73
+import subprocess as _sp73
+import sys as _sys73
+import tempfile as _tmp73
+from pathlib import Path as _Path73
+
+_sys73.path.insert(0, str(ROOT / "lib"))
+import workspace as _ws73                                          # noqa: E402
+
+check("the shared wrapper exists", callable(getattr(_ws73, "never_fail", None)),
+      saw="workspace.never_fail is gone, so six hooks are answering this on their own again")
+
+# --- 1. No hook has its own copy. Derived from the directory, so hook number seven is in this
+# population the day it is written rather than the day somebody remembers it.
+_t_own73 = []
+for _t_p73 in sorted((ROOT / "hooks").glob("chamnan_*.py")):
+    try:
+        _t_tree73 = _ast73.parse(_t_p73.read_text(encoding="utf-8"))
+    except (SyntaxError, ValueError, UnicodeDecodeError):
+        continue
+    for _t_fn73 in _t_tree73.body:
+        if not isinstance(_t_fn73, _ast73.FunctionDef):
+            continue
+        _t_stmts73 = [s for s in _t_fn73.body
+                      if not (isinstance(s, _ast73.Expr) and isinstance(s.value, _ast73.Constant))]
+        # The shape, not the name: renaming a copy must not make it invisible to this check.
+        if (len(_t_stmts73) == 1 and isinstance(_t_stmts73[0], _ast73.Try)
+                and any(isinstance(h.type, _ast73.Name) and h.type.id == "Exception"
+                        for h in _t_stmts73[0].handlers)
+                and _t_fn73.name != "main"):
+            _t_body73 = _t_stmts73[0].body
+            if (len(_t_body73) == 1 and isinstance(_t_body73[0], _ast73.Return)
+                    and isinstance(_t_body73[0].value, _ast73.Call)):
+                _t_own73.append(f"{_t_p73.name}:{_t_fn73.name}")
+
+check("NO HOOK CARRIES ITS OWN COPY OF THE NEVER-FAIL WRAPPER",
+      not _t_own73,
+      saw="%s — every copy is correct until one of them is not, and this is the wrapper whose job "
+          "is that a hook cannot take a session down" % (", ".join(_t_own73),))
+
+# --- 2. ...and every hook that should be wrapped IS. `chamnan_session_start` is the one exception
+# and it is named here, so the exemption is a decision on the record rather than an omission.
+_T_UNWRAPPED73 = {"chamnan_session_start.py"}
+_t_missing73 = []
+for _t_p73 in sorted((ROOT / "hooks").glob("chamnan_*.py")):
+    if _t_p73.name in _T_UNWRAPPED73:
+        continue
+    _t_src73 = _t_p73.read_text(encoding="utf-8")
+    if "never_fail" not in _t_src73:
+        _t_missing73.append(_t_p73.name)
+check("...and every hook but the one documented exception uses it",
+      not _t_missing73,
+      saw="%s exits with whatever it raised, and a hook's stderr never reaches the transcript — the "
+          "session simply starts without it and nothing says why" % (", ".join(_t_missing73),))
+
+# --- 3. The guarantee itself, asked of the function rather than by running six hooks against an
+# unreadable workspace. That end-to-end sweep already exists in `tests/run_tests.py` — every hook,
+# every documented field, every JSON type, derived from `hooks/` — and repeating it here cost 61
+# seconds in a pool that runs on every commit. What is not covered there is the wrapper's own
+# contract, which is three sentences and instant.
+_t_calls73 = []
+
+
+def _t_raises73():
+    _t_calls73.append("ran")
+    raise RuntimeError("a workspace that cannot be read")
+
+
+check("...AND THE WRAPPER RETURNS 0 WHEN THE HOOK RAISES, RATHER THAN THE EXCEPTION ESCAPING",
+      _ws73.never_fail(_t_raises73) == 0 and _t_calls73 == ["ran"],
+      saw="a hook's stderr never reaches the transcript, so an escaping exception means the "
+          "session starts without that hook and nothing says why")
+check("...and passes a successful hook's own exit code through unchanged",
+      _ws73.never_fail(lambda: 0) == 0 and _ws73.never_fail(lambda: 2) == 2,
+      saw="a hook that deliberately returns non-zero is not the case this swallows")
+
+
+def _t_interrupt73():
+    raise KeyboardInterrupt
+
+
+_t_killable73 = False
+try:
+    _ws73.never_fail(_t_interrupt73)
+except KeyboardInterrupt:
+    _t_killable73 = True
+check("...and does NOT swallow an interrupt, which would make a hook unkillable",
+      _t_killable73,
+      saw="`except BaseException` would catch Ctrl-C and SystemExit too — somebody or something "
+          "deliberately stopping the process is not the failure this is for")
+_sys73.path.remove(str(ROOT / "lib"))
 # ============================ end of the folded surgical pool
 
 

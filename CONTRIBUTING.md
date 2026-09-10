@@ -38,7 +38,7 @@ claude --plugin-dir /path/to/chamnan
 | | |
 |---|---|
 | `lib/` | The implementation. `mapper.py` builds the index; `schema.py`, `catalogs.py`, `deploy.py`, `assets.py` each contribute one section of it; `redact.py` strips credentials; `peek.py` reads the shape of a single file; `tokens.py` estimates cost; `rollup.py` folds an oversized index; `workspace.py` owns `.chamnan/` and the config defaults. |
-| `bin/` | The 10 commands: `chamnan-age`, `chamnan-candidates`, `chamnan-context`, `chamnan-env`, `chamnan-impact`, `chamnan-map`, `chamnan-peek`, `chamnan-promote`, `chamnan-report`, `chamnan-timeline`. A `.cmd` shim sits beside each one for Windows. |
+| `bin/` | The 11 commands: `chamnan-age`, `chamnan-candidates`, `chamnan-context`, `chamnan-env`, `chamnan-guard`, `chamnan-impact`, `chamnan-map`, `chamnan-peek`, `chamnan-promote`, `chamnan-report`, `chamnan-timeline`. A `.cmd` shim sits beside each one for Windows. |
 | `hooks/` | Six scripts behind five hook events, wired in `hooks/hooks.json`. `chamnan_session_start.py` is the one that injects the index. |
 | `skills/` | The `/chamnan:*` slash commands, one `SKILL.md` each. |
 | `agents/` | Agent definitions. Their `tools:` frontmatter is a real permission boundary, not a suggestion. |
