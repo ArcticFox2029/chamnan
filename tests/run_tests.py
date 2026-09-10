@@ -11446,7 +11446,7 @@ check("the two refusal lists agree on every shape either one knows",
       all(redact.is_blocked(Path(n)) for n in
           ("backup.pem.txt", "server.key.old", "deploy.key.bak", "prod.pem.bak")))
 
-# 100% precision on a 43-string decoy corpus is "no known false positive". Measured on 257 real
+# 100% precision on a 48-string decoy corpus is "no known false positive". Measured on 257 real
 # files it damaged 144 lines, 70 of them from `key` alone — the commonest parameter name in Python.
 for _code in ('for f in sorted(d.glob("*"), key=lambda p: p.stat().st_mtime):',
               'if st.button("save", key="save_sn_key"):',
@@ -27887,7 +27887,10 @@ if _t_rr44.is_file():
                                   capture_output=True, text=True, encoding="utf-8",
                                   errors="replace", env=_t_env44, timeout=300).stdout
 
-    # "recall  98.2%  (54/55 ...)" and "0/43 ordinary strings damaged"
+    # The tool prints a recall line as "recall <pct>% (<hit>/<all> ...)" and a decoy line as
+    # "<damaged>/<decoys> ordinary strings damaged". Written as shapes rather than as an example,
+    # because this file is folded into the suite it scans and an example carrying digits is a
+    # stale published number by its own definition — which is exactly how it failed once.
     _t_rec44 = _re44.search(r"recall\s+([\d.]+)%\s+\((\d+)/(\d+)", _t_out44)
     _t_dec44 = _re44.search(r"(\d+)/(\d+)\s+ordinary strings damaged", _t_out44)
     check("the recall tool still prints a recall figure this check can read",
@@ -28418,6 +28421,61 @@ check("NO ALIAS IS DOCUMENTED AS WRITING A FILE IT DOES NOT WRITE",
 # the table documents adapters, and an alias is a NAME for one, listed with the other names. Eleven
 # of the twelve aliases here have no row at all, correctly. The assertion above only judges a row
 # that exists, which is the whole failure: a row that outlives the module it described.
+# ---- 53_a_screaming_case_credential_name_is_still_a_credential_name.py
+# ------------------- the shape an env file actually uses, and the one the boundary rule refused
+# 🐛 [2026-09-10] `SECRET_WORDS` requires a separator or a case change before `key` and `token`,
+# deliberately and with a measurement behind it: `key=lambda p: ...` and `tokens = tokenizer.encode(...)`
+# accounted for 70 of 129 destroyed lines when they were bare. But SCREAMING_CASE has neither a
+# separator nor a case change, and it is how every one of these is actually written in a `.env`, a
+# `docker-compose.yml` or a CI workflow. `APITOKEN`, `ACCESSKEY`, `PRIVATEKEY`, `SECRETTOKEN` and
+# `CIRCLETOKEN` passed through byte for byte, beside the name that says exactly what they are
+# (R1 agent 2, finding 1 — half of which had already been fixed for `password`/`secret` on
+# 2026-09-09, and half of which had not).
+#
+# Both directions, and the negative side is the load-bearing one: `KEY` is a suffix of ordinary
+# English words in a way `TOKEN` is not, so the branch that accepts `ACCESSKEY` must still refuse
+# `MONKEY_PATCH`. That refusal is an enumeration, and the difference from the one this finding
+# condemns is the point — credential prefixes are an open set that grows with every vendor, English
+# words ending in "key" are a closed one.
+import redact as _t_rd53
+
+_t_must53 = [
+    "PGPASSWORD=hunter2superSecretValue",
+    "APITOKEN=hunter2superSecretValue",
+    "ACCESSKEY=hunter2superSecretValue",
+    "PRIVATEKEY=hunter2superSecretValue",
+    "SECRETTOKEN=hunter2superSecretValue",
+    "CIRCLETOKEN=hunter2superSecretValue",
+    "AWS_SECRET_ACCESS_KEY=abc123def456ghi789",
+]
+_t_leaked53 = [s for s in _t_must53 if _t_rd53.scrub(s) == s]
+check("A SCREAMING_CASE CREDENTIAL NAME WITH NO SEPARATOR IS STILL A CREDENTIAL NAME",
+      not _t_leaked53, saw="\n".join(_t_leaked53) or None)
+
+# Ordinary all-caps identifiers that END in a credential word without being one. Destroying these is
+# the same damage the `key=lambda` fix exists to prevent, one spelling over.
+_t_survive53 = [
+    "MONKEY_PATCH=1 enables the shim",
+    "DONKEY=grey",
+    "TURKEY_CODE=TR",
+    "WHISKEY=neat",
+    "HOCKEY_SEASON=winter",
+    "JOCKEY=silks",
+    "LACKEY=none",
+    "KEYBOARD_LAYOUT=us",
+    "key=lambda p: p.stat().st_mtime",
+    "tokens = tokenizer.encode(prompt)",
+]
+_t_eaten53 = [s for s in _t_survive53 if _t_rd53.scrub(s) != s]
+check("...and an ordinary all-caps name that merely ENDS in one is left alone",
+      not _t_eaten53,
+      saw="\n".join("%s -> %s" % (s, _t_rd53.scrub(s)) for s in _t_eaten53) or None)
+
+# The exclusion must be a lookahead on the whole word, not a substring test: `MONKEYKEY` is not an
+# English word and must still be caught, or the exclusion has become a way to smuggle a name past.
+_t_smuggle53 = "MONKEYKEY=hunter2superSecretValue"
+check("...and the exclusion cannot be used to smuggle a real credential name past",
+      _t_rd53.scrub(_t_smuggle53) != _t_smuggle53, saw=_t_rd53.scrub(_t_smuggle53))
 # ============================ end of the folded surgical pool
 
 

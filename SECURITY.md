@@ -37,9 +37,9 @@ along with the link chamnan breaks.
 ## The redactor, and the ceiling it does not reach
 
 Everything chamnan is about to write or inject passes a credential filter first. Measured against a
-labelled corpus of 55 secret and personal-data shapes and 43 ordinary strings that must survive:
+labelled corpus of 60 secret and personal-data shapes and 48 ordinary strings that must survive:
 
-**98.2% recall (54 of 55) · 100% precision.**
+**98.3% recall (59 of 60) · 100% precision.**
 
 That is not 100% recall, and the missed shape is named in the README rather than hidden. Two limits
 follow from it, and both are worth knowing before you point this at a private repository:

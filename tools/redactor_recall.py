@@ -44,6 +44,14 @@ _TID_DASHED = f"{_TID[0]}-{_TID[1:5]}-{_TID[5:10]}-{_TID[10:12]}-{_TID[12]}"
 
 # (label, text, the substring that must disappear)
 POSITIVES = [
+    # SCREAMING_CASE compounds with no separator and no case change — how an env file and a CI
+    # config actually spell these, and the shape that defeated the left word boundary until
+    # 2026-09-10. `PGPASSWORD` is libpq's own documented variable, not a contrived name.
+    ("screaming pg password", "PGPASSWORD=hunter2superSecretValue",   "hunter2superSecretValue"),
+    ("screaming api token",   "APITOKEN=hunter2superSecretValue",     "hunter2superSecretValue"),
+    ("screaming access key",  "ACCESSKEY=hunter2superSecretValue",    "hunter2superSecretValue"),
+    ("screaming private key", "PRIVATEKEY=hunter2superSecretValue",   "hunter2superSecretValue"),
+    ("screaming circle token", "CIRCLETOKEN=hunter2superSecretValue", "hunter2superSecretValue"),
     ("openai key",            f"OPENAI_KEY = 'sk-{_F}{_F}{_F}'",            f"sk-{_F}"),
     ("anthropic key",         f"key: sk-ant-{_F}{_F}{_F}",                  f"sk-ant-{_F}"),
     ("github pat",            f"token ghp_{_F}{_F}",                        f"ghp_{_F}"),
@@ -149,6 +157,14 @@ PERSONAL = [
 ]
 
 NEGATIVES = [
+    # English words ending in "key", in the SCREAMING_CASE the branch above accepts. These are the
+    # price of that branch and the reason it carries an exclusion: `MONKEY_PATCH=1` being destroyed
+    # is the same damage the `key=lambda` fix existed to stop, one spelling over.
+    ("screaming monkey",  "MONKEY_PATCH=1 enables the shim"),
+    ("screaming donkey",  "DONKEY=grey is the fixture's colour"),
+    ("screaming turkey",  "TURKEY_CODE=TR in the country table"),
+    ("screaming whiskey", "WHISKEY=neat, said the parser test"),
+    ("screaming keyboard", "KEYBOARD_LAYOUT=us for the CI container"),
     # Ordinary identifiers that contain a secret word as a SUBSTRING. Every one of these was being
     # destroyed: `token`, `secret` and `credential` were bare substrings while `key` and `auth`
     # beside them were carefully bounded — the same bug, left in the words nobody re-read.

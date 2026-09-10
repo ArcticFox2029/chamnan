@@ -357,6 +357,30 @@ SECRET_WORDS = (
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
     r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Secret|Token|Credential)s?)(?![A-Za-z])"
+    # 🐛 [2026-09-10] ...and the same words in SCREAMING_CASE, which is how an env file and a CI
+    # config actually spell them, and where there is neither a separator nor a case change to
+    # anchor on. `APITOKEN`, `ACCESSKEY`, `PRIVATEKEY`, `SECRETTOKEN` and `CIRCLETOKEN` all passed
+    # through byte for byte, next to the name that says exactly what they are. The `password` and
+    # `secret` half of this shape was fixed on 2026-09-09 by dropping the left boundary for the
+    # words that are never an innocent substring; `key` and `token` could not follow, because they
+    # are (R1 agent 2, finding 1).
+    #
+    # `TOKEN` takes an uppercase run in front of it outright: no ordinary all-caps identifier ends
+    # in it. `KEY` cannot, and the reason is the whole difficulty — `MONKEY`, `DONKEY`, `TURKEY`,
+    # `HOCKEY`, `JOCKEY`, `WHISKEY`, `LACKEY`, `MICKEY` and `MALARKEY` all end in KEY, and
+    # `MONKEY_PATCH=1` being destroyed is the same damage this module spent 70 of 129 ruined lines
+    # learning not to do. So KEY excludes them by name.
+    #
+    # That IS an enumeration, and the difference from the one this finding condemns is the point:
+    # the credential prefixes are an open set that grows with every vendor, while English words
+    # ending in "key" are a closed one that has not grown since the dictionary was written.
+    r"|(?-i:(?<=[A-Z])(?:TOKEN)S?)(?![A-Za-z])"
+    # The exclusion fires only when the word ENDS at the English one. Written as
+    # `(?!(?:MON|...)KEY)` it also refused `MONKEYKEY`, which is not a word in any dictionary and is
+    # exactly the shape someone would reach for to get a name past a filter. `S?(?![A-Z0-9])` is
+    # what makes it "this word IS monkey" rather than "this word starts with monkey".
+    r"|(?-i:(?<![A-Za-z])(?!(?:MON|DON|TUR|HOC|JOC|WHIS|LAC|MIC|MALAR)KEYS?(?![A-Z0-9]))"
+    r"[A-Z0-9]+KEYS?)(?![A-Za-z])"
     # `key` as a whole COMPONENT of the name, not the four compound spellings that were listed by
     # hand. ssh_key, signing_key, encryption_key, master_key and db_key all passed through
     # untouched, and "key" on its own is the commoner spelling. BOTH boundaries are load-bearing:
