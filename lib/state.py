@@ -120,7 +120,7 @@ def _sections(text):
             if len(nxt.group(1)) <= level:
                 end = nxt.start()
                 break
-        out.append({"start": m.start(), "end": end, "pinned": pinned})
+        out.append({"start": m.start(), "end": end, "pinned": pinned, "level": level})
     return out
 
 
@@ -199,14 +199,68 @@ def render(text, budget, path_for_marker):
     pinned_cost = tokens.estimate(pinned_text)
     remaining = max(0, budget - pinned_cost)
 
-    cut = tokens.cut_at(unpinned_text, remaining)
-    # Backed up to a line boundary outside any fence. cut_at counts characters, so the cut landed
-    # wherever the budget ran out -- mid-word, and worse, inside a ``` block, which left the fence
-    # open. Everything after it in the injected block then rendered as code, including the drop
-    # marker and any section that followed.
-    cut = _safe_cut(unpinned_text, cut)
-    head = unpinned_text[:cut]
-    dropped_chars = len(unpinned_text) - cut
+    # 🐛 [2026-09-10] This took `unpinned_text[:cut]` — the START of the file — so the budget kept
+    # whatever was written FIRST and dropped whatever was written LAST. New work is appended at the
+    # end of this file, so the section the budget cut first was the one holding what is currently
+    # open, while three 📌-pinned handoffs from a fortnight earlier survived every budget down to
+    # 150 tokens. Measured on the real file: at 600 tokens the only section dropped was
+    # `→ 1.25: the research queue`, which is where "Open, end of 2026-09-10" lives.
+    #
+    # The owner's framing, and it is the right one: a stage grows as real work accumulates, and
+    # there is no reason to carry all of it every time — carry the LATEST, and name the rest so a
+    # session can go and get one when a command actually calls for it.
+    #
+    # Selection by recency; presentation in file order. The two are separate on purpose: choosing
+    # newest-first is what makes the survivor the useful one, and emitting them in the order the
+    # file writes them is what keeps the block readable — a block whose sections arrive in reverse
+    # reads as though something is wrong with it.
+    # 🐛 [2026-09-10] "the outermost sections" was `_sections` minus anything contained in another,
+    # and on this file that is ONE unit: `# Work in flight` is a level-1 title wrapping every `##`
+    # item under it, so the selection had exactly one thing to choose from and did nothing at all.
+    # The suite caught it, on a fixture with the same shape.
+    #
+    # The unit is the shallowest level that has more than one section — a document TITLE is not a
+    # stage entry, and a file with one heading has nothing to choose between either way.
+    _units = [s for s in _sections(unpinned_text) if not s["pinned"]]
+    _by_level = {}
+    for _s in _units:
+        _by_level.setdefault(_s["level"], []).append(_s)
+    _tops = []
+    for _lvl in sorted(_by_level):
+        if len(_by_level[_lvl]) > 1:
+            _tops = _by_level[_lvl]
+            break
+    if _tops:
+        _keep, _spent = [], 0
+        for _s in reversed(_tops):                 # newest last in the file, so newest first here
+            _chunk = unpinned_text[_s["start"]:_s["end"]]
+            _cost = tokens.estimate(_chunk)
+            if _spent + _cost > remaining and _keep:
+                break                              # room is gone; the rest is named in the marker
+            _keep.append(_s)
+            _spent += _cost
+        _keep.sort(key=lambda s: s["start"])
+        _kept_at = {s["start"] for s in _keep}
+        _lost_heads = [_heading_text(md.headings(_HEADING, unpinned_text[s["start"]:s["end"]])[0]
+                                     .group(2)).strip()
+                       for s in _tops if s["start"] not in _kept_at]
+        # Anything before the first heading belongs to no section and is kept whole: it is the
+        # file's own opening line, and `fit.reorder` already relies on a lead line staying put.
+        _lead = unpinned_text[:_tops[0]["start"]]
+        head = _lead + "".join(unpinned_text[s["start"]:s["end"]] for s in _keep)
+        head = _safe_cut_text(head, remaining)
+        dropped_chars = len(unpinned_text) - len(head)
+    else:
+        cut = tokens.cut_at(unpinned_text, remaining)
+        # Backed up to a line boundary outside any fence. cut_at counts characters, so the cut
+        # landed wherever the budget ran out -- mid-word, and worse, inside a ``` block, which left
+        # the fence open. Everything after it in the injected block then rendered as code,
+        # including the drop marker and any section that followed.
+        cut = _safe_cut(unpinned_text, cut)
+        head = unpinned_text[:cut]
+        dropped_chars = len(unpinned_text) - cut
+        _lost_heads = [_heading_text(m.group(2)).strip()
+                       for m in md.headings(_HEADING, unpinned_text) if m.start() >= cut]
 
     parts = [p for p in (pinned_text.strip(), head.strip()) if p]
     injected = "\n\n".join(parts).strip()
@@ -223,8 +277,7 @@ def render(text, budget, path_for_marker):
         #
         # Titles only, and at most four. The point is to make the reader decide whether to open the
         # file, not to smuggle the section back in past its own budget.
-        _lost = [h for h in (_heading_text(m.group(2)).strip()
-                             for m in md.headings(_HEADING, unpinned_text) if m.start() >= cut) if h]
+        _lost = [h for h in _lost_heads if h]
         _shown = _lost[:4]
         if _shown:
             _names = ", ".join(f"**{h}**" for h in _shown)
@@ -248,6 +301,19 @@ def render(text, budget, path_for_marker):
         marker = f"{marker}\n{over}" if marker else over
 
     return injected, marker
+
+
+def _safe_cut_text(text, budget):
+    """`text` trimmed to `budget` tokens on a fence-safe line boundary, or unchanged when it fits.
+
+    The section-selection path above assembles whole sections and can still land over budget when a
+    single section is larger than the room — the same case `_safe_cut` exists for, applied to an
+    assembled body rather than to the file.
+    """
+    import tokens                       # local, like `render`'s own import — see the note there
+    if tokens.estimate(text) <= budget:
+        return text
+    return text[:_safe_cut(text, tokens.cut_at(text, budget))]
 
 
 def _age_units(text):

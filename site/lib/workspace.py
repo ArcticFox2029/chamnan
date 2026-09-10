@@ -453,7 +453,22 @@ SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.
                     # whether it ran on the model its own file declares. A cost history is worth
                     # having only if it is long enough to compare against, which an age sweep would
                     # make it not.
-                    "agent_results.jsonl")
+                    "agent_results.jsonl",
+                    # 🐛 [2026-09-10] `state-ages.json` records WHEN each STATE.md section last
+                    # changed, which is the whole input to `state.age_out`. It lived in `logs/`
+                    # and was not exempt, so the 7-day file sweep deleted it — while
+                    # `state_stale_days` is 14. The ages file was therefore erased before anything
+                    # could ever become old enough to hold back, and the ageing pass could not fire
+                    # on any setting. A record of when things happened, deleted on a schedule, is
+                    # the one kind of file an age sweep must never touch.
+                    "state-ages.json",
+                    # 🐛 [2026-09-10] Found by the same check, one line later: `nudge_state.json`
+                    # counts how many times a one-off piece of advice has been shown, capped at
+                    # three. Swept every 7 days, the counter resets and the advice comes back —
+                    # forever, every week — which is precisely what `notice_due`'s own docstring
+                    # says it exists to prevent: "advice that repeats forever is worse than advice
+                    # shown once." A count of showings is a record of when something happened.
+                    "nudge_state.json")
 
 
 def expiring_logs(root=None, within_days=1.0):

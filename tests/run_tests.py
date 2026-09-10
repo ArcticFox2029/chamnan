@@ -27962,7 +27962,12 @@ from pathlib import Path as _Path45
 # Written here rather than in `workspace.py` on purpose: this is a claim about which logs are
 # genuinely throwaway, and it belongs beside the check that enforces it rather than beside the
 # tuple it is checking. Anything not in either place fails, which is the point.
-_DISPOSABLE45 = frozenset()
+_DISPOSABLE45 = frozenset({
+    # Written by SessionEnd, shown once at the next start, and deleted by the code that shows it.
+    # Age-based deletion is the CORRECT outcome for this one: a digest that survives becomes the
+    # standing nag its own comment says it must not be.
+    "repeat_digest.json",
+})
 
 _t_files45 = []
 for _t_d45 in ("lib", "hooks", "bin", "tools"):
@@ -27985,10 +27990,20 @@ for _t_p45 in _t_files45:
             # exemption for it would be asserting a rule that does not exist — the shape this check
             # was written to stop, one level up. A bare filename is `logs/` by the convention every
             # existing exempt name follows.
-            _t_where45 = _t_n45.value.rsplit("/", 1)[0] if "/" in _t_n45.value else "logs"
-            if _t_where45 not in ("logs", "./logs"):
+            _t_where45 = _t_n45.value.rsplit("/", 1)[0] if "/" in _t_n45.value else ""
+            # A bare `*.jsonl` name is a log by the convention every exempt name follows. A bare
+            # `*.json` name is NOT — `config.json`, `index.json` and `composer.json` are all
+            # ordinary data this package writes elsewhere, and demanding a retention exemption for
+            # them asserts a rule that does not exist. `.json` therefore has to say `logs/` out loud.
+            if _t_where45 in ("", "./"):
+                if not _t_n45.value.endswith(".jsonl"):
+                    continue
+            elif _t_where45 not in ("logs", "./logs"):
                 continue
-            for _t_m45 in _re45.finditer(r"([A-Za-z0-9_.-]+\.jsonl)", _t_n45.value):
+            # `.json` as well as `.jsonl`: `state-ages.json` is a keyed record rather than an append
+            # log, and it needed the same exemption for the same reason — a file that records
+            # WHEN something happened, deleted on a schedule, answers "never".
+            for _t_m45 in _re45.finditer(r"([A-Za-z0-9_.-]+\.jsonl?)", _t_n45.value):
                 _t_named45.setdefault(_t_m45.group(1), set()).add(_t_p45.name)
 
 check("the sweep for jsonl names found some, so this is not passing on an empty set",
@@ -28118,9 +28133,17 @@ check("THE STATE CUT MARKER NAMES THE SECTIONS THAT DID NOT ARRIVE, NOT ONLY HOW
       saw=_t_mark47 or "(no marker at all)")
 check("...and it still says how much was cut, which is what makes the names worth acting on",
       "more" in _t_mark47, saw=_t_mark47 or None)
-check("...and it does not name a section that DID arrive, which would send the reader to re-read "
-      "what they already have",
-      "thing 1" not in _t_mark47, saw=_t_mark47 or None)
+# 🐛 [2026-09-10] This named `thing 1` as the section that must not appear, which was true only
+# while the cut kept the FIRST sections and dropped the tail. Selection is by recency now — the
+# newest survives — so the kept one is the last, and a fixture pinned to a position rather than to
+# the property tested the old behaviour. Asked of whatever actually arrived.
+_t_kept47 = [l.strip() for l in _t_body47.splitlines() if l.startswith("## ")]
+check("the fixture delivered something, so the assertion below is not vacuous", _t_kept47,
+      saw="no section arrived at all")
+check("...and the marker does not name a section that DID arrive, which would send the reader to "
+      "re-read what they already have",
+      not any(k.lstrip("# ").strip() in _t_mark47 for k in _t_kept47),
+      saw="kept %r, marker %r" % (_t_kept47, _t_mark47[:110]))
 
 # The ellipsis is a claim about what is missing, and it has to be true in both directions.
 _t_all47 = _st47.render(_t_text47, 12, ".chamnan/STATE.md")[1]
@@ -28952,6 +28975,72 @@ else:
     check("...and an untouched tree produces no staleness warning at all",
           "no longer exist" not in _t_quiet59 and "not in the index" not in _t_quiet59,
           saw=" | ".join(l for l in _t_quiet59.splitlines() if "⚠" in l)[:160])
+# ---- 60_the_ages_file_outlives_the_window_it_measures.py
+# ------------- a record of when things happened, deleted on a schedule shorter than the question
+# 🐛 [2026-09-10] `state.age_out` holds back STATE.md sections whose TEXT has not changed in
+# `state_stale_days` days, and it reads their first-seen dates from `logs/state-ages.json`. That
+# file was not on the retention exempt list, so the 7-day file sweep deleted it — while the default
+# window was 14 days. **The ages file was erased before anything could ever become old enough to be
+# held back**, so the ageing pass could not fire on any setting, for any repository.
+#
+# Nothing here deletes STATE.md, and that is the property the owner asked for by name: `age_out`
+# returns text and a marker, and touches no file but the ages record. Removing a finished item is a
+# deliberate act by whoever decides the work is done, not something a retention window does.
+#
+# The check is the general rule rather than one filename: any file this package writes that RECORDS
+# WHEN SOMETHING HAPPENED must outlive the window it is measuring, or it answers "never".
+import json as _js60
+import os as _os60
+import shutil as _sh60
+import tempfile as _tmp60
+import time as _t60
+from pathlib import Path as _Path60
+
+import state as _st60
+import workspace as _ws60
+
+check("the ages file is exempt from the file-age sweep",
+      "state-ages.json" in _ws60.SELF_PRUNING_LOGS,
+      saw=", ".join(_ws60.SELF_PRUNING_LOGS))
+
+# ...and the sweep really spares it, rather than the tuple merely naming it.
+_t_r60 = _Path60(_tmp60.mkdtemp(prefix="ages60-"))
+(_t_r60 / ".chamnan" / "logs").mkdir(parents=True)
+_t_old60 = _t60.time() - 400 * 86400
+for _n60 in ("state-ages.json", "ordinary-scratch.json"):
+    _f60 = _t_r60 / ".chamnan" / "logs" / _n60
+    _f60.write_text("{}", encoding="utf-8")
+    _os60.utime(_f60, (_t_old60, _t_old60))
+(_t_r60 / ".chamnan" / "logs" / "written-today.md").write_text("x\n", encoding="utf-8")
+_ws60.prune_logs(_t_r60)
+check("A 400-DAY-OLD AGES FILE SURVIVES THE SWEEP, OR THE AGEING PASS CAN NEVER FIRE",
+      (_t_r60 / ".chamnan" / "logs" / "state-ages.json").exists(),
+      saw="the ages file was deleted by prune_logs")
+check("...while an ordinary aged scratch file is still taken, so the sweep has not stopped working",
+      not (_t_r60 / ".chamnan" / "logs" / "ordinary-scratch.json").exists())
+_sh60.rmtree(_t_r60, ignore_errors=True)
+
+# The window must be shorter than the retention that guards its evidence — otherwise the evidence is
+# gone before the question can be answered. Derived from the two settings rather than hard-coded.
+_t_def60 = _ws60.DEFAULT_CONFIG
+check("the ageing window is not longer than the log retention that used to delete its evidence",
+      _t_def60.get("state_stale_days", 0) >= _t_def60.get("log_retention_days", 0)
+      or "state-ages.json" in _ws60.SELF_PRUNING_LOGS,
+      saw="stale=%s retention=%s and the ages file is not exempt"
+          % (_t_def60.get("state_stale_days"), _t_def60.get("log_retention_days")))
+
+# age_out must HOLD BACK and never rewrite the file. The owner's instruction in as many words:
+# do not delete the stage, only stop loading all of it for free.
+_t_w60 = _Path60(_tmp60.mkdtemp(prefix="ages60b-"))
+(_t_w60 / ".chamnan").mkdir()
+_t_state60 = ("# Work in flight\n\n## → old thing\nbody one\n\n## → new thing 📌\nbody two\n")
+_t_before60 = _t_state60
+_t_kept60, _t_marker60 = _st60.age_out(_t_state60, _t_w60 / ".chamnan", 1)
+check("age_out returns text and a marker and rewrites nothing it was handed",
+      _t_state60 == _t_before60, saw="the input string was mutated")
+check("...and a 📌-pinned section is never a candidate for being held back, at any age",
+      "new thing" in _t_kept60, saw=_t_kept60[:120])
+_sh60.rmtree(_t_w60, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 
