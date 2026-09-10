@@ -9,6 +9,7 @@ rebuilding their own — and a machine move carries it along with the clone.
 import re
 import hashlib
 import json
+import secrets
 import time
 import contextlib
 import pathlib
@@ -2330,6 +2331,30 @@ def wants_version(argv):
     typing it and getting "unknown flag" is worse than useless.
     """
     return any(a in VERSION_FLAGS for a in (argv or []))
+
+
+def nonce_for(session_id):
+    """A fence marker constant for one session and unguessable from inside the repository.
+
+    🐛 `secrets.token_hex` used to be called at import, which made the marker per INVOCATION rather
+    than per session — the thing its own comment said it was. The hook re-runs on every resume and
+    every compaction, so one session was measured emitting 39 blocks carrying 42 different markers,
+    and the whole ~8.5 KB block therefore differed from the one before it. That is exactly the
+    prefix invalidation the fence is the one permitted exception to, caused by the fence.
+
+    Deriving it from the session id keeps the security property. What the marker has to resist is a
+    file in the repository closing the fence early, and a file is written before the session exists,
+    so its author cannot know the id. A plain digest rather than a keyed one on purpose: the
+    unpredictability lives in the session id, not in a secret this would have to store somewhere.
+
+    🐛 [2026-09-10] Written out in both hooks that emit a fenced block, and only one of them carried
+    the paragraphs above — so the copy a reader was most likely to meet second was the one with no
+    reason attached. Two identical derivations of a security-relevant value is two chances for them
+    to stop being identical (R1, the duplicate-body sweep).
+    """
+    if not session_id:
+        return secrets.token_hex(3)          # no id in the payload: fall back to a random marker
+    return hashlib.blake2s(str(session_id).encode("utf-8"), digest_size=3).hexdigest()
 
 
 def never_fail(main):

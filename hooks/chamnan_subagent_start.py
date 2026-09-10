@@ -30,10 +30,8 @@ Two things are deliberately not here:
 Unlike SessionStart, a plain `print()` is NOT context here -- SubagentStart requires the explicit
 `hookSpecificOutput.additionalContext` form. Available from Claude Code 2.0.43.
 """
-import hashlib
 import json
 import re
-import secrets
 from datetime import datetime, timezone
 import sys
 from pathlib import Path
@@ -73,13 +71,7 @@ MAX_BYTES = 1_400
 # marker fixed at build time could be written INTO a repository file, closing the fence early so
 # whatever follows reads as chamnan speaking. Derived from the session id, which no file's author
 # can know in advance. See hooks/chamnan_session_start.py's _nonce_for for the full reasoning.
-def _nonce_for(session_id):
-    if not session_id:
-        return secrets.token_hex(3)
-    return hashlib.blake2s(str(session_id).encode("utf-8"), digest_size=3).hexdigest()
-
-
-NONCE = _nonce_for(None)
+NONCE = ws.nonce_for(None)
 OPEN_MARK = f"[repo:{NONCE}]"
 CLOSE_MARK = f"[/repo:{NONCE}]"
 # Any `[repo:xxxxxx]` or `[/repo:xxxxxx]`, whatever the six hex digits are. Matched on SHAPE rather
@@ -253,7 +245,7 @@ def main():
     # would be a second copy of something already in its context. Measured over 22 historical fork
     # dispatches in this repository: none of them ever opened MAP.md, and none of them needed to.
     global NONCE, OPEN_MARK, CLOSE_MARK
-    NONCE = _nonce_for(payload.get("session_id"))
+    NONCE = ws.nonce_for(payload.get("session_id"))
     OPEN_MARK = f"[repo:{NONCE}]"
     CLOSE_MARK = f"[/repo:{NONCE}]"
     _agent_type = payload.get("agent_type")
