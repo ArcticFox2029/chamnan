@@ -12573,6 +12573,76 @@ if _denials:
 check("NO DOCUMENT CLAIMS CHAMNAN NEVER INVOKES GIT WHILE SIX MODULES DO",
       _denials == [] and len(_git_callers) >= 5)
 
+# A published document that prints a command has to name a file the reader will actually have.
+#
+# 🐛 [2026-09-11] 1.25's notes said `python3 Work-Mode/chamnan/tools/verify_release.py` --
+# the path this checkout has inside the monorepo it is developed in, which no clone of this
+# repository has. That command is the one thing the release exists to hand people: re-run the checks
+# yourself. It had never been run from a clone, so it had never failed for anyone who could fix it.
+#
+# The identical defect sat four lines above it and again in the 1.24 section, both naming
+# `research_citations.py`, a tool that has never shipped here at all -- three instances of one
+# mistake across two files, which is this repository's own commonest shape. So this is derived from
+# the documents rather than written as a list of the three that were wrong.
+#
+# Scoped to CODE BLOCKS, fenced or indented, because that is what a reader copies. A path named
+# inside a sentence carries the sentence's context -- the README discusses `plant_secrets.py`, which
+# belongs to the corpus repository and is correct there -- and reading those as instructions is how
+# a check like this earns a false positive and gets deleted. `cd` is followed for the same reason:
+# a block that walks into another repository first is not making a claim about this one.
+_DOC_FILES = ["README.md", "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md", "llms.txt"] + sorted(
+    q.relative_to(ROOT).as_posix() for q in (ROOT / "docs").rglob("*.md"))
+# The leading character class must admit `.` and `/`. It did not, and the very first mutation run
+# proved why that matters: re-planting `python3 .chamnan/tools/research_citations.py` into the notes
+# left this check GREEN, because the finder could not see a path beginning with a dot -- and a
+# dotted path is precisely the shape of the two references that were wrong. A finder that cannot see
+# the defect it was written for is worse than no check, because it reports the absence as safety.
+_PY_CMD = re.compile(r"python3?\s+(?:-m\s+\S+\s+)?([A-Za-z0-9_./][A-Za-z0-9_./-]*\.py)")
+_CD_CMD = re.compile(r"^\s*cd\s+([A-Za-z0-9_./-]+)")
+_GITIGNORED_DIRS = tuple(
+    _g.strip().lstrip("/") for _g in
+    (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    if _g.strip().endswith("/") and not _g.strip().startswith(("#", "!")))
+_unrunnable, _commands_seen = [], 0
+for _doc in _DOC_FILES:
+    _dp = ROOT / _doc
+    if not _dp.is_file():
+        continue
+    _fenced, _cwd, _elsewhere = False, "", False
+    for _n, _ln in enumerate(_dp.read_text(encoding="utf-8").splitlines(), 1):
+        if _ln.startswith("```"):
+            _fenced = not _fenced
+            _cwd, _elsewhere = "", False
+            continue
+        _indented = (_ln.startswith("    ") and _ln.strip()
+                     and not _ln.lstrip().startswith(("-", "*", "|")))
+        if not (_fenced or _indented):
+            _cwd, _elsewhere = "", False       # prose ends the block, and the shell it implied
+            continue
+        _cd = _CD_CMD.match(_ln)
+        if _cd:
+            _elsewhere = not (ROOT / _cd.group(1)).is_dir()
+            _cwd = "" if _elsewhere else _cd.group(1)
+            continue
+        if _elsewhere:
+            continue
+        for _cmd in (_x.group(1) for _x in _PY_CMD.finditer(_ln)):
+            _commands_seen += 1
+            # Present on disk is not the same as SHIPPED: `.gitignore` names directories that exist
+            # in this checkout and in no clone, so a command reaching into one reads as runnable
+            # here and is not runnable for the reader. Taken from `.gitignore` rather than listed,
+            # because the point of the check is that nobody has to maintain a list.
+            _ignored = any(_cmd.startswith(_g) for _g in _GITIGNORED_DIRS)
+            if _ignored or not (ROOT / _cwd / _cmd).is_file():
+                _unrunnable.append(f"{_doc}:{_n} {_cmd}")
+if _unrunnable:
+    print("      commands naming a file no reader has: " + "; ".join(_unrunnable[:6]))
+check("EVERY COMMAND A PUBLISHED DOCUMENT PRINTS NAMES A FILE THAT SHIPS", _unrunnable == [])
+# Without this the check above passes on a finder that has stopped finding anything, which is the
+# same "no failures were printed" that is not the same as "it passed".
+check("...and the finder still finds commands to check, so a green above means something",
+      _commands_seen >= 8)
+
 # 🐛 `librarian` shipped in the plugin for several releases and was named in no documentation at
 # all, so nobody who had it installed could know it existed.
 _undocumented_agents = sorted(q.stem for q in (ROOT / "agents").glob("*.md")

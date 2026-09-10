@@ -155,19 +155,16 @@ judgement, and it stays with the person reading it.
 **`INDEX_CITED_IN_CODE.md` is attached as a file**, so any claim above can be followed to a diff
 without cloning anything.
 
-This release carries **197 research findings**; the index now holds **686** in total. Read the file
-for which finding became which line — it is generated from the source and from git, never written
-by hand:
-
-```bash
-python3 .chamnan/tools/research_citations.py --write
-```
+This release carries **188 research findings**; the index now holds **686** in total. Read the
+attached file for which finding became which line. Every row is derived from the shipped source and
+from `git blame`, never written by hand, which is why it can be checked: each row names a file, a
+line and the commit that fixed it, and a row nobody can follow to a diff is not in it.
 
 ### Re-run it yourself
 
-**check 4845 / 4845**, and 1,465 of 1,465 index claims true, on the code this tag carries.
+**check 4856 / 4856**, and 1,468 of 1,468 index claims true, on the code this tag carries.
 
-    python3 Work-Mode/chamnan/tools/verify_release.py
+    python3 tools/verify_release.py
 
 It runs the suite and the index claim check on your machine and prints what happened. It refuses to
 report a result when the suite's totals line is missing, because a run that dies mid-way prints no
@@ -492,11 +489,8 @@ cloning anything and without trusting this page.
 It links every defect recorded in chamnan's own source to the commit that fixed it, and — where the
 research report that found it survives — to that report. Its own counts move every time a round is
 archived, which is why they are not quoted here: read the file rather than this page for them. Every claim in the notes above can be
-followed to a diff. It is generated rather than written, from the source and from git:
-
-```bash
-python3 .chamnan/tools/research_citations.py --write
-```
+followed to a diff. It is generated rather than written, from the shipped source and from
+`git blame` — each row names a file, a line and the commit that fixed it.
 
 The index is deliberately narrower than the research archive it is built from: the archive holds
 every round including the ones that measured a dead end, and the index holds only what reached the
