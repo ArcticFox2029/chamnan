@@ -82,7 +82,17 @@ def directory(root, category=None):
 
 def entries(root, category):
     """Every entry in a category, sorted by filename for a stable order in diffs and injections."""
-    d = directory(root, category)
+    return markdown_entries(directory(root, category), root)
+
+
+def markdown_entries(d, root):
+    """Every `.md` in `d` that is really inside `root`, sorted.
+
+    Split out of `entries()` on 2026-09-10 so `skills/` could be read with the SAME symlink refusal
+    rather than a second copy of it. `skills/` does not live under `memory/`, and a sibling loop
+    written beside this one is how the guard below ends up applied to one store and not the other —
+    which is the defect this repository records more than any other.
+    """
     if not d.is_dir():
         return []
     # A symlink out of the repository is refused: the workspace travels with a clone, so the
@@ -615,6 +625,35 @@ def rules_pressure(root):
         # the drop notice lists every title, so a title in the text proves nothing on its own.
         (fitted if arrived_whole(title, body, delivered) else title_only).append(title)
     return fitted, title_only, sum(len(b) for _t, b in titled), rules_budget(root)
+
+
+def skills_with_titles(root):
+    """[(title, raw text)] for every recorded skill, in the shape `rulecheck.run` takes.
+
+    \U0001f41b [2026-09-10] `rulecheck` has a proven, deterministic grammar for "does this document
+    still describe the repository" — ``**Check:** present `PATTERN` in `GLOB` `` — and it was wired
+    to `memory/rules/` and nowhere else. `agents/librarian.md` names this exact job for `skills/`
+    ("does every command, path and flag it names still exist?") and it was only ever done by a haiku
+    agent on a seven-day schedule, using judgement and a model turn.
+
+    `skills/` is the store most likely to name a real path, and it is read at the START of the
+    matching task, which is the worst moment to be handed a command that no longer exists.
+
+    Measured before building, because the round before this one found a proposal with no population
+    at all: 4 of 27 skills carry `**Check:**` trailers today, 8 checks between them. Small, real,
+    and it grows the moment somebody writes one — which nothing rewarded before now (R1 agent 5,
+    finding 2).
+    """
+    from workspace import workspace
+    out = []
+    for path in markdown_entries(workspace(root) / "skills", root):
+        try:
+            body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
+        except OSError:
+            continue
+        if body:
+            out.append((title_of(path, body), body))
+    return out
 
 
 def rules_with_titles(root):

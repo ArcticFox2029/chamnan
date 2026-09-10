@@ -1640,8 +1640,19 @@ def main():
                 # Read the rules ONCE: `run()` and `contradictions()` both want them, and this is
                 # the session's critical path.
                 _titled = memory.rules_with_titles(root)
+                # 🐛 [2026-09-10] `rulecheck` has a deterministic grammar for "does this document
+                # still describe the repository", and it was wired to `memory/rules/` and NOWHERE
+                # ELSE. `skills/` carries the same trailers, is the store most likely to name a real
+                # path, and is read at the START of the matching task — the worst moment to be handed
+                # a command that no longer exists. Its four trailers had never been evaluated once,
+                # and six of the eight named a DIRECTORY where the grammar wants a file glob, so they
+                # would have reported `unverifiable` the first time anything looked (R1 agent 5).
+                #
+                # `contradictions()` stays rules-only: two skills describing different procedures is
+                # what a skill store IS, and a rule contradicting a rule is a defect.
+                _checkable = _titled + memory.skills_with_titles(root)
                 broken = redact.scrub(
-                    rulecheck.line(rulecheck.run(root, _titled),
+                    rulecheck.line(rulecheck.run(root, _checkable),
                                    rulecheck.contradictions(_titled)))
                 if broken:
                     out.append(broken)

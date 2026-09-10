@@ -604,7 +604,11 @@ def print_inventory(root):
         print("\nWhat this workspace is not delivering\n  " + "\n  ".join(_short))
 
     try:
-        _rc_titled = memory.rules_with_titles(root)
+        # Skills too, and for the same reason the session hook now reads them: a `**Check:**`
+        # trailer is the same claim wherever it is written, and wiring the checker to one store was
+        # how four skills' worth of trailers sat unevaluated. Both callers changed together — one
+        # of the two would have been this repository's own commonest defect (R1 agent 5).
+        _rc_titled = memory.rules_with_titles(root) + memory.skills_with_titles(root)
         _rc_results = rulecheck.run(root, _rc_titled) if _rc_titled else []
     except Exception:
         _rc_results = []
