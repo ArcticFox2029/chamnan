@@ -28,6 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
+import adapters  # noqa: E402
 import assets as assets_mod  # noqa: E402
 import mapper  # noqa: E402
 import mdblock  # noqa: E402
@@ -1168,6 +1169,29 @@ def main(argv):
                  f"{'are' if len(_fired) > 1 else 'is'} read from them") if _fired else ""
         print(f"  {_other} other file(s) here are not code: configuration, documentation, "
               f"manifests{_from}.")
+
+    # 🐛 [2026-09-10] Every file chamnan writes into a repository is refreshed by the pre-commit
+    # hook this command installs, and until now none of them said which chamnan wrote it — so a
+    # file from 1.12 was indistinguishable from one from 1.24 and nothing, here or anywhere, could
+    # say that the refresh had stopped happening. Reported HERE as well as in the session block
+    # because this is what actually runs on a commit; the block reaches a person opening a session,
+    # and this reaches the person whose hook has quietly not fired for nineteen days (R8).
+    try:
+        _drift = adapters.artefact_drift(root)
+    except Exception:                       # noqa: BLE001 — a report must not fail the command
+        _drift = []
+    if _drift:
+        print(f"\n  {len(_drift)} agent context file(s) were not written by this chamnan:")
+        for _rel, _state, _ver in _drift[:6]:
+            _says = {"ahead": f"written by chamnan {_ver}, which is NEWER than this one — "
+                              f"rewriting it would lose what that build put there",
+                     "behind": f"written by chamnan {_ver}",
+                     "unknown": "carries no version, so its age is not knowable from here"}[_state]
+            print(f"    {_rel} — {_says}")
+        _dmore = len(_drift) - 6
+        if _dmore > 0:
+            print(f"    +{_dmore} more")
+        print("  `chamnan-context --write <agent>` refreshes one and stamps it.")
 
     # 🐛 [2026-09-10] A file `ast` refused outright fell back to `leading_comment()`, and one with
     # no leading `#` header then came back identical to an ordinary undocumented file — so it was

@@ -34,9 +34,11 @@ pull-request author the one thing it exists to withhold.
 """
 import contextlib
 import errno
+import json
 import os
 import re
 import stat
+import time
 
 import workspace as ws
 
@@ -518,6 +520,140 @@ def read_target(target):
         return fh.read()
 
 
+# Where the write ledger lives, and why it is out of band as well as in band.
+#
+# The version stamped INSIDE a file is the better record — it travels with the file, survives a
+# workspace being deleted, and a person reading the file can see it. But it is only available where
+# chamnan owns the whole document: `gemini` merges JSON into somebody's settings file, `generic`
+# writes a marked REGION inside a file the user also owns, and neither can carry an HTML comment.
+# Stamping only where it is easy would version ten artefacts and leave four — which is this
+# package's most recorded defect, and the reason R8 says the requirement is a property of the WRITE
+# rather than a list of adapters.
+#
+# So every write is recorded here as well, at the one function all seven write sites go through. An
+# adapter added next year is covered because it has to write bytes somehow, not because somebody
+# remembered to add it.
+WRITE_LEDGER = "state/written_artefacts.json"
+
+
+def _running_version():
+    """This package's own version, or "" if the manifest cannot be read. Never raises."""
+    try:
+        return ws.plugin_version(ws.Path(__file__).resolve().parents[2])
+    except Exception:      # noqa: BLE001 — a version nobody can read must not stop a write
+        return ""
+
+
+def record_written(path, version=None):
+    """Note that chamnan wrote `path`, and with which version. Best-effort; never raises.
+
+    Keyed by the path RELATIVE to the repository root, so the ledger survives the repository being
+    moved or cloned to a different absolute location — which is the ordinary case for the file this
+    is about, since a `.cursor/rules/chamnan.mdc` is committed and the next person to read it is on
+    another machine.
+
+    Under `ws.rewrite_shared`, which holds the lock across read-decide-write: two `--write` calls in
+    one pre-commit refresh loop are the expected case, not the exotic one.
+    """
+    try:
+        path = ws.Path(path).resolve()
+        root = ws.find_root(path.parent)
+        wsdir = ws.workspace(root)
+        if not wsdir.is_dir():
+            return False          # no workspace to record into; a --write can still be legitimate
+        try:
+            # `.as_posix()`, not `str()`: this key is compared against an adapter's `TARGET`, which
+            # is written with forward slashes, and a Windows `WindowsPath` renders backslashes. The
+            # ledger would key `.cursor\\rules\\chamnan.mdc` and every reader would look up
+            # `.cursor/rules/chamnan.mdc` and find nothing — a drift report that is silent on
+            # Windows, which is the platform this record is most needed on.
+            rel = path.relative_to(root).as_posix()
+        except ValueError:
+            return False          # outside the root: `safe_target` refuses these anyway
+        row = {"version": _running_version() if version is None else version,
+               "at": int(time.time())}
+
+        def _put(current):
+            try:
+                data = json.loads(current) if current else {}
+            except (ValueError, RecursionError):
+                data = {}
+            if not isinstance(data, dict):
+                data = {}
+            data[rel] = row
+            return json.dumps(data, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+        return bool(ws.rewrite_shared(wsdir / WRITE_LEDGER, _put, strict=False))
+    except Exception:      # noqa: BLE001 — a ledger is a convenience; the write already happened
+        return False
+
+
+def written_artefacts(root):
+    """The ledger as `{relative path: {"version", "at"}}`. Empty when there is nothing to read."""
+    try:
+        data = json.loads((ws.workspace(root) / WRITE_LEDGER).read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError, RecursionError):
+        return {}
+
+
+def artefact_drift(root, running=None):
+    """Every file chamnan wrote into `root` that was NOT written by the chamnan running now.
+
+    Returns a list of `(relative path, state, version)`, sorted, where state is one of:
+
+      "unknown"  no version anywhere — every artefact written before 2026-09-10. It cannot be
+                 assumed current, because that assumption is the defect this exists for, and it
+                 cannot be assumed broken either: a repository set up last week has a perfectly
+                 good file. The honest answer is "unknown, and one `--write` makes it known".
+      "behind"   written by an older chamnan. How much older is answerable — the versions are
+                 ordered — and that distance is what decides whether it matters. A file from
+                 1.23.1 and a file from 1.2.0 are not the same problem.
+      "ahead"    written by a NEWER chamnan than the one running. A workspace shared between two
+                 machines, or a clone that ran a newer build once. Rewriting it DOWN is data loss,
+                 so this is reported and never quietly fixed.
+
+    **The population is derived, not listed.** It is every adapter's own `TARGET`, asked of the
+    registry, filtered to the files that exist and that the adapter itself says chamnan wrote. An
+    adapter added next year is in it because it declares a target, not because somebody remembered
+    to come back here — which is the difference between this and the fourteen-file enumeration R8
+    warned was already the same defect one level up.
+
+    Two sources for the version, in this order: the stamp inside the file, which travels with it,
+    and then the workspace ledger, which is the only source for the four adapters whose format
+    cannot carry a comment. Neither alone covers the set.
+    """
+    running = _running_version() if running is None else running
+    ledger = written_artefacts(root)
+    seen, out = set(), []
+    for name in sorted(ADAPTERS):
+        adapter = for_agent(name)
+        rel = getattr(adapter, "TARGET", None)
+        if not rel or rel in seen:
+            continue
+        seen.add(rel)
+        try:
+            path = safe_target(root, rel)
+            if path is None or path.is_symlink() or not path.is_file():
+                continue
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
+        except (OSError, ValueError):
+            continue
+        if not wrote_this(name, text):
+            continue        # somebody's own file that happens to sit at that path
+        stamped = marker_version(text)
+        version = stamped or (ledger.get(rel) or {}).get("version", "")
+        if not version:
+            out.append((rel, "unknown", ""))
+        elif not running or version == running:
+            continue
+        elif ws._as_tuple(version) < ws._as_tuple(running):
+            out.append((rel, "behind", version))
+        else:
+            out.append((rel, "ahead", version))
+    return sorted(out)
+
+
 def write_target(target, text):
     """Replace the target atomically, through the held handle. Returns True on success.
 
@@ -539,7 +675,10 @@ def write_target(target, text):
         # on POSIX and was swallowed into a silent no-op on Windows. Caught by mutating `_ANCHORED`
         # to False, which is the only way to reach this branch on the machine the tests run on.
         target.path.parent.mkdir(parents=True, exist_ok=True)
-        return ws.atomic_write_text(target.path, text)
+        if not ws.atomic_write_text(target.path, text):
+            return False
+        record_written(target.path)
+        return True
     tmp = f"{target.leaf}.{os.getpid()}.tmp"
     try:
         if os.access(target.leaf, os.W_OK, dir_fd=target.dir_fd, follow_symlinks=False):
@@ -554,6 +693,11 @@ def write_target(target, text):
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
         os.replace(tmp, target.leaf, src_dir_fd=target.dir_fd, dst_dir_fd=target.dir_fd)
+        # Recorded AFTER the replace, on both branches of this function. Before it, a write that
+        # failed would still be in the ledger — and a ledger that claims a file chamnan never wrote
+        # is worse than none, because the drift report would then read as clean for a file that is
+        # not there at all.
+        record_written(target.path)
         return True
     except Exception:
         try:
@@ -581,6 +725,57 @@ def _exists_at(target):
 # (R3 agent 4). It now says what actually happens, and names the one move that does work.
 MARKER = ("<!-- chamnan:generated — this line is how chamnan knows it wrote this file. "
           "Delete the whole file to start over; `chamnan-context --write` then recreates it. -->")
+
+# The same line with the version that wrote it, and the reason it is not simply appended to MARKER:
+# `_looks_generated` recognises chamnan's own output by `text.rstrip().endswith(MARKER)`, an EXACT
+# match. Change the constant and every file already on disk — everything 1.24.0 and earlier ever
+# wrote — stops being recognised, and the next `--write` either refuses to replace it or appends a
+# second block beside it. That is worse than the drift being fixed.
+#
+# So the FINDER is widened first and the writer follows, which is the order R8's finding sets out.
+# `MARKER` stays exactly what it has always been; the version goes inside the same comment, before
+# the closing `-->`, and both shapes are matched by the prefix below.
+_MARKER_OPENS = "<!-- chamnan:generated"
+_MARKER_VERSION = re.compile(
+    r"<!-- chamnan:generated\b(?:(?!-->).)*?\bWritten by chamnan ([0-9][^\s]*)\.\s*-->\s*\Z",
+    re.S)
+
+
+def marker(version=""):
+    """`MARKER`, carrying the version that is writing the file. Unversioned when it is unknown.
+
+    🐛 [2026-09-10] Nothing chamnan wrote into a repository said which chamnan wrote it, so a file
+    from 1.12 was structurally identical to one from 1.24 and no tool, no session and no reader
+    could tell them apart. The instance that found it was an installed git hook nineteen days and
+    about nine releases behind the workspace's own `.version` beside it, reported by nothing in all
+    that time — and the absence of a staleness report was being read as "nothing is stale" (R8).
+    """
+    if not version:
+        return MARKER
+    return MARKER[:-len("-->")].rstrip() + f" Written by chamnan {version}. -->"
+
+
+def marker_version(text):
+    """The version stamped on the LAST line of `text`, "" for an unversioned marker, None for none.
+
+    Three answers rather than two, because they want different handling and the difference is the
+    whole finding: no stamp at all is every artefact written before today and cannot be assumed
+    current OR broken; an older stamp is behind by a distance that is answerable; a NEWER stamp than
+    the running chamnan is a workspace shared with a machine ahead of this one, where rewriting the
+    file DOWN is data loss.
+
+    The last line, not anywhere: `MARKER` is a public string printed in every file chamnan writes,
+    so a document that merely quotes it must not be read as generated. That is a defect this
+    package has already shipped once.
+    """
+    tail = text.rstrip()
+    if not tail.endswith("-->"):
+        return None
+    line = tail.splitlines()[-1] if tail.splitlines() else ""
+    if not line.lstrip().startswith(_MARKER_OPENS):
+        return None
+    found = _MARKER_VERSION.search(line)
+    return found.group(1) if found else ""
 
 
 # A matched fence pair, whatever the six hex digits are. `section()` in the session-start hook
@@ -639,7 +834,13 @@ def _looks_generated(text):
     #
     # Where it sits is the evidence, not that it appears: `install()` writes it as the LAST line.
     # A marker anywhere else is somebody quoting it.
-    if text.rstrip().endswith(MARKER):
+    # 🐛 [2026-09-10] `endswith(MARKER)` was an exact match on a constant, so the day the marker
+    # gained a version every file already on disk would have stopped being recognised — and the next
+    # `--write` would have appended a second block beside the first rather than replacing it, once,
+    # in every repository that had ever run chamnan. `marker_version` matches both shapes on the
+    # same evidence (the LAST line, opening with chamnan's own comment), and it is widened HERE,
+    # before any writer emits the new one. That order is the fix; the version is the easy part (R8).
+    if marker_version(text) is not None:
         return True
     body = text.lstrip("\ufeff").lstrip()
     if body.startswith("---"):
@@ -710,8 +911,18 @@ def fixed_overhead(agent):
     # The marker is written by the SHARED writer only. An adapter with its own install() wraps the
     # block its own way and does not get one, so counting it there would shrink the block for bytes
     # that never arrive.
-    marker = 0 if hasattr(adapter, "install") else len(f"\n\n{MARKER}\n".encode())
-    return len(empty.encode()) + marker
+    # 🐛 [2026-09-10] This measured `MARKER`, and on the same day `install()` started writing
+    # `marker(version)` — the same line with " Written by chamnan 1.24.0." before the closing
+    # `-->`, about 27 bytes longer. So the ceiling arithmetic went back to under-counting by
+    # exactly the amount that had just been added, and every adapter with a declared CEILING wrote
+    # over it again. Caught by the suite check that exists for the FIRST time this happened, which
+    # is the check doing its job.
+    #
+    # Measured from the thing that is written rather than from the constant it is derived from:
+    # `marker()` is the one function that knows what the last line of a generated file looks like.
+    written = 0 if hasattr(adapter, "install") else len(
+        f"\n\n{marker(_running_version())}\n".encode())
+    return len(empty.encode()) + written
 
 
 def install(root, agent, body, command=""):
@@ -772,7 +983,8 @@ def install(root, agent, body, command=""):
     # same inode, same bytes, a stale file the user now believes is current. That is the untruth
     # this release has already fixed twice elsewhere, in the writer nobody had checked
     # (R3 agent 4). The result travels back to the caller now, and a failure is said out loud.
-        if not write_target(target, adapter.render(body).rstrip("\n") + f"\n\n{MARKER}\n"):
+        if not write_target(target, adapter.render(body).rstrip("\n")
+                            + f"\n\n{marker(_running_version())}\n"):
             raise OSError(f"{target.path} could not be written — it may be read-only, or on a "
                           f"filesystem that refused the replace.")
     return target.path

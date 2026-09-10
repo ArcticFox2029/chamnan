@@ -32,6 +32,7 @@ import milestones  # noqa: E402
 import profiles  # noqa: E402
 import mdblock  # noqa: E402
 import redact  # noqa: E402
+import adapters  # noqa: E402
 import blocklog  # noqa: E402
 
 # 🐛 Every `bin/` command shadows `print` with `redact.emit`; no hook did, and the hooks emit more
@@ -1562,6 +1563,50 @@ def main():
                         f"_⚠ **{_dead} of {_named} file(s) this index names no longer exist** — "
                         f"{_shown}{_more}.{_arrived} It is describing a tree that has moved on; "
                         f"rebuild it with `chamnan-map`._\n"))
+
+
+        # Outside `if cfg.get("map", True)` on purpose. That block is about the ARCHITECTURE INDEX, and a
+        # user who turned it off has said nothing about whether the files chamnan writes into their
+        # repository are current — nesting this inside it would have made the report vanish for exactly the
+        # person who reads chamnan's output through an agent file rather than through this block.
+        # 🐛 [2026-09-10] MAP.md's staleness reached this block and NOTHING ELSE chamnan
+        # writes into a repository did. The instance that found it was an installed git
+        # hook nineteen days and about nine releases behind the workspace's own `.version`
+        # sitting beside it, reported by nothing in all that time — and the absence of a
+        # staleness report was being read as "nothing is stale", which is the same shape as
+        # absence-of-FAIL being read as success, one level up (R8).
+        #
+        # A lead line rather than a section of its own, for the reason the map warning above
+        # is one: the block is saturated on every firing here, so a new section is a section
+        # dropped, and this is exactly the kind of warning that would be dropped in the
+        # sessions that most need it.
+        #
+        # The population comes from the adapters' own `TARGET` declarations, so an adapter
+        # added later is covered by existing; and "ahead" is reported separately because a
+        # file written by a NEWER chamnan must not be quietly rewritten DOWN.
+        try:
+            _drift = adapters.artefact_drift(root)
+        except Exception:      # noqa: BLE001 — a report must not stop a session starting
+            _drift = []
+        if _drift:
+            _ahead = [r for r, s, _v in _drift if s == "ahead"]
+            _behind = [(r, v) for r, s, v in _drift if s == "behind"]
+            _unknown = [r for r, s, _v in _drift if s == "unknown"]
+            _bits = []
+            if _ahead:
+                _bits.append(f"{len(_ahead)} written by a NEWER chamnan than the one "
+                             f"running (`{mdblock.as_quoted(_ahead[0])}`) — rewriting "
+                             f"those DOWN would lose what the newer one put there")
+            if _behind:
+                _bits.append(f"{len(_behind)} written by chamnan "
+                             f"{', '.join(sorted({v for _r, v in _behind}))}")
+            if _unknown:
+                _bits.append(f"{len(_unknown)} carrying no version at all, so how old "
+                             f"they are is not knowable from here")
+            _stale_lines.append(redact.scrub(
+                f"_⚠ **{len(_drift)} agent context file(s) were not written by this "
+                f"chamnan** — {'; '.join(_bits)}. Refresh with `chamnan-context --write "
+                f"<agent>`, which also stamps them._\n"))
 
         if cfg.get("environments", True):
             # Constraints, never versions. A constraint rules out a whole design before it is written

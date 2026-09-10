@@ -14853,15 +14853,23 @@ check("claude has no adapter, deliberately", adapters_mod.for_agent("claude") is
 check("...and installing for it is a None rather than a traceback",
       adapters_mod.install(Path(tempfile.mkdtemp()), "claude", "x") is None)
 
-# Cursor's frontmatter ends at the first line that is exactly `---`, and this block carries
-# repository-authored prose where a horizontal rule is ordinary markdown. Left alone it ends the
-# frontmatter early and every line after it reads as body starting mid-sentence.
+# 🐛 [2026-09-10] Cursor's frontmatter ends at the first line that is exactly `---`, and this used
+# to assert that a `---` in the BODY had been rewritten to `***` so it could not close it early. It
+# could never close it early: `render()` emits `---`, the keys and a closing `---` before the body
+# is reached, which is the fact the line below measures. What the rewrite actually did was demote a
+# setext `<h2>` in somebody's prose to a paragraph plus a rule. Two more copies of this pair sat in
+# this file for kiro and windsurf and the fix was applied to one of them first, which is the defect
+# this repository records more than any other — the set-wide check further down exists so a fourth
+# copy cannot be written (R4 agent 1, finding 10).
 _cur = adapters_mod.for_agent("cursor")
 _rendered = _cur.render("## chamnan\n\nbefore\n\n---\n\nafter\n")
 _dashes = [i for i, l in enumerate(_rendered.splitlines()) if l.strip() == "---"]
-check("the frontmatter opens and closes exactly once", _dashes == [0, 3])
-check("...and a horizontal rule in the body cannot close it early",
-      "***" in _rendered and "after" in _rendered)
+check("the frontmatter opens at the first line and closes at the fourth", _dashes[:2] == [0, 3],
+      saw=str(_dashes[:4]))
+check("...and a horizontal rule in the body arrives as the writer typed it",
+      "\n---\n" in _rendered.split("---\n", 2)[-1] and "after" in _rendered
+      and "***" not in _rendered,
+      saw=repr(_rendered[-120:]))
 check("alwaysApply is set, which is what makes it orientation rather than a glob rule",
       "alwaysApply: true" in _rendered)
 
@@ -15184,10 +15192,11 @@ _rmtree(_ceilroot, ignore_errors=True)
 _win = adapters_mod.for_agent("windsurf")
 _wr = _win.render("## chamnan\n\nbefore\n\n---\n\nafter\n")
 check("windsurf renders trigger: always_on", "trigger: always_on" in _wr)
-check("...its frontmatter opens and closes exactly once",
-      [i for i, l in enumerate(_wr.splitlines()) if l.strip() == "---"] == [0, 2])
-check("...and a horizontal rule in the body cannot close it early",
-      "***" in _wr and "after" in _wr)
+check("...its frontmatter opens at the first line and closes at the third",
+      [i for i, l in enumerate(_wr.splitlines()) if l.strip() == "---"][:2] == [0, 2])
+check("...and a horizontal rule in the body arrives as the writer typed it",
+      "\n---\n" in _wr.split("---\n", 2)[-1] and "after" in _wr and "***" not in _wr,
+      saw=repr(_wr[-120:]))
 
 
 # ---------------------------------------------------------------- continue, copilot, zed
@@ -19215,8 +19224,18 @@ try:
         adapters_mod.install(_sw_root, _sw_n, _sw_body)
         check(f"{_sw_n}: ...while its own pre-marker output is still replaced",
               "shared-writer sweep" in _sw_t.read_text(encoding="utf-8"))
+        # 🐛 [2026-09-10] `MARKER in text` was an exact substring of a constant, and the marker
+        # gained a version the same day — " Written by chamnan 1.24.0." sits before the closing
+        # `-->`, so the constant is no longer a substring of what is written. Asked through
+        # `marker_version`, which is the same question the FINDER asks and therefore cannot drift
+        # away from it: `None` means no marker, `""` an unversioned one, a string the version (R8).
+        _sw_text = _sw_t.read_text(encoding="utf-8")
         check(f"{_sw_n}: ...and what it writes now carries the marker",
-              adapters_mod.MARKER in _sw_t.read_text(encoding="utf-8"))
+              adapters_mod.marker_version(_sw_text) is not None,
+              saw=repr(_sw_text[-160:]))
+        check(f"{_sw_n}: ...stamped with the version that wrote it",
+              adapters_mod.marker_version(_sw_text) == adapters_mod._running_version(),
+              saw=repr(adapters_mod.marker_version(_sw_text)))
     check("...and the hand-written content is still there afterwards, byte for byte",
           set(_sw_kept) == set(_sw_names))
     check("...while its own previous output is still replaced on the next run",
@@ -29274,6 +29293,672 @@ for _t_folder61 in ("lib", "hooks", "bin"):
             _t_unparseable61.append(str(_t_p61.relative_to(ROOT)))
 check("...and every file it yields is genuinely parseable Python",
       not _t_unparseable61, saw="\n".join(_t_unparseable61[:5]) or None)
+# ---- 62_every_vendor_that_reads_agents_md_too_is_warned_about.py
+# ------------- four names in a set, eight vendors qualifying, and the evidence already written down
+# 🐛 [2026-09-10] `ALSO_READS_AGENTS_MD` warns when a repository has run both `--write generic` and
+# `--write <vendor>` for a vendor that reads the root `AGENTS.md` AS WELL AS its own file — the same
+# block delivered twice every session, paid for twice, in a tool whose argument is context economy.
+# It was a literal set of four, and eight qualified. The evidence for the missing four was sitting
+# in their own adapter docstrings in plain words (R4 agent 1, finding 6).
+#
+# It is derived from a per-adapter declaration now. This check asserts BOTH directions, and the
+# second is the one that catches the next instance: an adapter whose own docstring says its vendor
+# also reads the root file, while carrying no declaration, is the exact shape that was found.
+import re as _re62
+
+import adapters as _t_ad62
+
+check("the derived set is not empty, so this is not passing on a vacuous condition",
+      len(_t_ad62.ALSO_READS_AGENTS_MD) >= 4,
+      saw=", ".join(sorted(_t_ad62.ALSO_READS_AGENTS_MD)) or "empty")
+
+# It must be DERIVED. A literal that happens to be right today drifts the moment an adapter is added.
+_t_src62 = (ROOT / "lib" / "adapters" / "__init__.py").read_text(encoding="utf-8")
+_t_decl62 = _re62.search(r"^ALSO_READS_AGENTS_MD = (.*)$", _t_src62, _re62.M)
+check("the set is derived from the adapters rather than written out as names",
+      bool(_t_decl62) and "frozenset(" in _t_decl62.group(1) and "getattr" in _t_src62[
+          _t_decl62.start():_t_decl62.start() + 300],
+      saw=_t_decl62.group(0)[:120] if _t_decl62 else "no assignment found")
+
+# Every module that declares it appears in the set, and nothing else does.
+_t_declared62 = {n for n, m in _t_ad62.ADAPTERS.items()
+                 if getattr(m, "ALSO_READS_AGENTS_MD", False)}
+check("EVERY ADAPTER THAT DECLARES IT IS IN THE SET, AND NOTHING ELSE IS",
+      _t_declared62 == set(_t_ad62.ALSO_READS_AGENTS_MD),
+      saw="declared=%s set=%s" % (sorted(_t_declared62), sorted(_t_ad62.ALSO_READS_AGENTS_MD)))
+
+# The direction that found this: a docstring claiming the vendor also reads the root file, with no
+# declaration to match. Read from the module's own docstring, which is where the evidence lived.
+_t_says62 = _re62.compile(
+    r"also\s+(?:reads|honours|honors)[^.]*AGENTS\.md"
+    r"|reads\s+a?\s*root\s*`?AGENTS\.md`?[^.]*as well"
+    r"|AGENTS\.md[^.]*as well as its own", _re62.I | _re62.S)
+_t_missing62 = []
+for _t_n62, _t_m62 in sorted(_t_ad62.ADAPTERS.items()):
+    _t_doc62 = (_t_m62.__doc__ or "")
+    if _t_says62.search(_t_doc62) and not getattr(_t_m62, "ALSO_READS_AGENTS_MD", False):
+        _t_missing62.append("%s: its docstring says the vendor also reads the root AGENTS.md, and "
+                            "it carries no declaration" % (_t_n62,))
+check("...and no adapter's own docstring says it qualifies while its declaration is missing",
+      not _t_missing62, saw="\n".join(_t_missing62) or None)
+
+# The warning has to actually consult the set, or deriving it correctly changes nothing. Asked in
+# two steps because the decision moved out of the command on 2026-09-10: `chamnan-context` calls
+# `duplicating_agents_md`, and that is what reads the set. Checking only the command's source for
+# the constant reported a failure for a refactor that kept every property — a check pinned to WHERE
+# a decision is made rather than to the decision.
+_t_ctx62 = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
+check("...and `chamnan-context` still asks something that consults it before it warns",
+      "duplicating_agents_md" in _t_ctx62 or "ALSO_READS_AGENTS_MD" in _t_ctx62,
+      saw="the writer no longer reads the set, so the warning cannot fire at all")
+check("...and the decider it asks reads the set itself",
+      "ALSO_READS_AGENTS_MD" in (_t_ad62.duplicating_agents_md.__doc__ or "")
+      or "ALSO_READS_AGENTS_MD" in _t_src62,
+      saw="nothing between the command and the set names it")
+
+# 🐛 [2026-09-10] ...and it asked the question in ONE direction. The condition was "is the agent
+# being written now one that also reads AGENTS.md, and is the root file already here" — so
+# `--write generic` then `--write roo` warned, and `--write roo` then `--write generic` created the
+# identical duplicate in silence. That is half of real orderings, and the more likely half:
+# `AGENTS.md` is what people add LAST, once they notice it covers thirteen more tools. The
+# warning's own comment says it is printed at the only moment the person paying has both the
+# information and the choice, and in half of those orderings the moment passed (R4 agent 1,
+# finding 7).
+#
+# Exercised through `adapters.duplicating_agents_md` rather than by running the command twice:
+# the ordering is the property, and it is decided there.
+import tempfile as _tmp62b
+from pathlib import Path as _Path62b
+
+_t_ad62.__dict__.setdefault("_probe", None)
+_t_root62b = _Path62b(_tmp62b.mkdtemp(prefix="chamnan-dupe62-"))
+(_t_root62b / ".git").mkdir(parents=True)
+
+_t_generic62 = _t_ad62.for_agent("generic")
+_t_other62 = sorted(_t_ad62.ALSO_READS_AGENTS_MD)[0] if _t_ad62.ALSO_READS_AGENTS_MD else None
+
+if _t_other62 is None:
+    skip("  · no adapter declares that it also reads AGENTS.md — skipped, not passed")
+else:
+    _t_body62 = "## chamnan\n\nnothing in particular\n"
+    _t_adapter62 = _t_ad62.for_agent(_t_other62)
+
+    # Nothing written yet: neither direction may warn, or the check below proves only that the
+    # function says yes to everything.
+    check("with nothing written, neither direction reports a duplicate",
+          not _t_ad62.duplicating_agents_md(_t_root62b, "generic")
+          and not _t_ad62.duplicating_agents_md(_t_root62b, _t_other62),
+          saw="generic=%r other=%r" % (_t_ad62.duplicating_agents_md(_t_root62b, "generic"),
+                                       _t_ad62.duplicating_agents_md(_t_root62b, _t_other62)))
+
+    _t_ad62.install(_t_root62b, _t_other62, _t_body62)
+    check("WRITING THE ROOT FILE SECOND REPORTS THE DUPLICATE, NOT ONLY WRITING IT FIRST",
+          _t_ad62.duplicating_agents_md(_t_root62b, "generic") == [_t_other62],
+          saw="asked while `%s`'s own file is on disk, got %r"
+              % (_t_other62, _t_ad62.duplicating_agents_md(_t_root62b, "generic")))
+
+    _t_ad62.install(_t_root62b, "generic", _t_body62)
+    check("...and the original direction still does",
+          _t_ad62.duplicating_agents_md(_t_root62b, _t_other62) == [_t_generic62.NAME],
+          saw=repr(_t_ad62.duplicating_agents_md(_t_root62b, _t_other62)))
+
+    # An agent with no stake in the root file must stay silent in both directions, or the warning
+    # becomes noise on every write and gets ignored.
+    _t_quiet62 = sorted(set(_t_ad62.ADAPTERS) - set(_t_ad62.ALSO_READS_AGENTS_MD)
+                        - {_t_generic62.NAME})
+    if _t_quiet62:
+        check("...and an agent that does not read the root file is not warned about either way",
+              not _t_ad62.duplicating_agents_md(_t_root62b, _t_quiet62[0]),
+              saw="%s: %r" % (_t_quiet62[0],
+                              _t_ad62.duplicating_agents_md(_t_root62b, _t_quiet62[0])))
+
+    import shutil as _sh62b
+    _sh62b.rmtree(_t_root62b, ignore_errors=True)
+# ---- 63_every_write_of_a_shared_file_is_the_atomic_one.py
+# --------------------- the tmp-then-rename rule, asserted over the population instead of per writer
+# 🐛 [2026-09-10] `Path.write_text` truncates the destination on open and then writes into it, so a
+# reader arriving mid-write sees a short file and a process killed mid-write leaves one. This
+# repository answered that with `workspace.atomic_write_text` and then hardened its writers ONE AT A
+# TIME — `state.py`, `coedit.py`, `rollup.py`, `pointer.py`, `chamnan-map`'s two install branches —
+# which is exactly the shape that leaves the last few behind. Three were still bare on the day this
+# check was written, and none of them was new:
+#
+#   workspace.reconcile_version   `.version`, written by EVERY session that starts here, and its
+#                                 own unreadable-file branch prints a ⚠ banner in chamnan's voice —
+#                                 so the failure mode of the unsafe write is a warning about the
+#                                 corruption the write itself caused
+#   chamnan_session_end           the repeat digest, whose single reader `json.load`s it at the next
+#                                 session start; a torn file loses the whole digest in silence
+#   chamnan-map, the UPGRADE      the third write in a function whose other two carry a long comment
+#     branch of --install-git-hook  explaining why a hook install must not use `write_text`
+#
+# So this stops asserting per writer. Anything that writes a file goes through `atomic_write_text`
+# or `write_or_raise`, and the next hand-rolled write is caught the day it is written rather than
+# the next time somebody happens to grep.
+#
+# Read with `ast` rather than by text on purpose: a comment RECORDING this rule names the forbidden
+# call, and a text scan would match the comment that documents the fix — the trap this suite has
+# already been caught by once.
+import ast as _ast63
+
+_T_UNSAFE63 = ("write_text", "write_bytes")
+_T_SAFE63 = ("atomic_write_text", "write_or_raise")
+
+_t_bad63, _t_safe_seen63, _t_files63 = [], 0, 0
+for _t_folder63 in ("lib", "hooks", "bin"):
+    _t_dir63 = ROOT / _t_folder63
+    if not _t_dir63.is_dir():
+        continue
+    for _t_p63 in sorted(_t_dir63.rglob("*")):
+        # The same universe every other set-wide check in this suite means by "every source":
+        # recursive, extensionless commands included, nothing selected by a list of what to skip.
+        if _t_p63.is_dir() or "__pycache__" in str(_t_p63) or _t_p63.suffix not in ("", ".py"):
+            continue
+        try:
+            _t_tree63 = _ast63.parse(_t_p63.read_text(encoding="utf-8"))
+        except (SyntaxError, ValueError, UnicodeDecodeError, OSError):
+            continue
+        _t_files63 += 1
+        for _t_n63 in _ast63.walk(_t_tree63):
+            if not isinstance(_t_n63, _ast63.Call):
+                continue
+            _t_name63 = (_t_n63.func.attr if isinstance(_t_n63.func, _ast63.Attribute)
+                         else getattr(_t_n63.func, "id", ""))
+            if _t_name63 in _T_UNSAFE63:
+                _t_bad63.append("%s:%d %s()" % (_t_p63.relative_to(ROOT), _t_n63.lineno, _t_name63))
+            elif _t_name63 in _T_SAFE63:
+                _t_safe_seen63 += 1
+
+check("EVERY WRITE IN SHIPPED CODE GOES THROUGH THE ATOMIC WRITER, NOT ONE BY ONE",
+      not _t_bad63,
+      saw="%d hand-rolled write(s): %s — each truncates on open, so a reader arriving mid-write "
+          "gets a short file and a crash leaves one behind"
+          % (len(_t_bad63), "; ".join(_t_bad63[:6])))
+
+# A sweep that parsed nothing reports zero violations and looks identical to a clean one. Both
+# halves are asserted so a walker that stops finding files fails loud instead of passing quietly.
+check("...and the sweep actually read the source, rather than reporting a silent zero",
+      _t_files63 >= 40 and _t_safe_seen63 >= 15,
+      saw="parsed %d file(s), saw %d call(s) to the atomic writers"
+          % (_t_files63, _t_safe_seen63))
+# ---- 64_a_written_file_fits_the_ceiling_it_declares.py
+# ------------------- a CEILING is a promise about the FILE, and the file is four things, not three
+# 🐛 [2026-09-10] `fixed_overhead()` exists because a block sized exactly to a declared CEILING was
+# then wrapped by `render()` and marked by `install()`, and written OVER the ceiling every time the
+# ceiling bound. It subtracts the wrapper and the marker. It cannot see the third thing the file
+# gains: `--write` appends a 218-223 byte SNAPSHOT NOTE after the ceiling has already been applied.
+# So every `--write` landed over, at every profile — measured 12,097 against 12,000 by default and
+# over in 4 of 4 forced-ceiling probes. The fix landed on two of the three and was forgotten on the
+# third, which shipped in the same release (R4 agent 1, finding 1).
+#
+# Worse than the overshoot: Windsurf and Antigravity truncate silently at the limit, so what got cut
+# was the note itself — the one line telling the reader the file is a snapshot and how to refresh
+# it. And the warning told them to lower `index_token_budget` or pass a smaller `--window`, which no
+# value could satisfy, because the note was appended after all of them.
+#
+# Measured rather than read, and forced small so the ceiling actually BINDS: on an ordinary
+# repository no declared ceiling is anywhere near the block, so a probe at the real ceiling passes
+# whether or not the arithmetic is right.
+import importlib.machinery as _ilm64
+import importlib.util as _ilu64
+
+# `ROOT.parent.parent`, the spelling every other check in this pool uses to reach the workspace:
+# ROOT is the PACKAGE (`Work-Mode/chamnan`) and the workspace is `.chamnan/` at the repository root.
+_t_probe64 = ROOT.parent.parent / ".chamnan" / "tools" / "ceiling-probe.py"
+
+if not _t_probe64.is_file():
+    skip("  · ceiling-probe.py is not in this workspace — skipped, not passed")
+else:
+    _t_spec64 = _ilu64.spec_from_loader(
+        "ceiling_probe_64", _ilm64.SourceFileLoader("ceiling_probe_64", str(_t_probe64)))
+    _t_mod64 = _ilu64.module_from_spec(_t_spec64)
+    _t_spec64.loader.exec_module(_t_mod64)
+
+    # One adapter, two ceilings that bind. Every adapter would be the honest sweep and costs a
+    # package copy each; this check is in the pool that runs on every commit.
+    _t_over64, _t_seen64 = [], []
+    for _t_forced64 in (3000, 2500):
+        _t_got64 = _t_mod64._probe("windsurf", _t_forced64)
+        if _t_got64 is None:
+            continue
+        _t_seen64.append(_t_got64)
+        if _t_got64["over"]:
+            _t_over64.append("ceiling %d -> %d bytes, over by %d"
+                             % (_t_forced64, _t_got64["size"], _t_got64["over"]))
+
+    check("the ceiling probe actually ran and produced sizes", len(_t_seen64) == 2,
+          saw="%d probe(s) came back — a sweep that measured nothing is not a pass" % len(_t_seen64))
+    check("A WRITTEN FILE FITS THE CEILING ITS ADAPTER DECLARES, SNAPSHOT LINE INCLUDED",
+          not _t_over64,
+          saw="; ".join(_t_over64) + " — the block is sized to the ceiling and the note is appended "
+              "afterwards, so the file is over by the length of the note")
+
+    # ...and the note is what is subtracted, not some other constant that happens to be near it.
+    _t_ctx64 = (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8")
+    _t_where64 = _t_ctx64.find("fixed_overhead(args.write)")
+    check("...and the write path budgets the snapshot line where it budgets the wrapper",
+          _t_where64 > 0 and "_snapshot_note" in _t_ctx64[max(0, _t_where64 - 400):_t_where64 + 400],
+          saw="the ceiling is set without the note being measured anywhere near it")
+
+    # The second half of the finding, and the one that costs more: advice that cannot be followed.
+    # When the file is over because of PINNED content, lowering the index budget changes nothing,
+    # and a reader who tries it and sees no change stops reading the warning at all.
+    _t_floor64 = _t_mod64._probe("windsurf", 2000)
+    if _t_floor64 and _t_floor64["over"]:
+        # Asserted as "it does not hand out the advice that cannot work", not as a phrase to match:
+        # the sentence is allowed to be reworded, the remedy it names is not.
+        check("...and when no setting can clear the overshoot, it stops advising one",
+              "lower index_token_budget" not in _t_floor64["said"]
+              and "with the whole index dropped" in _t_floor64["said"],
+              saw="said: %s" % (_t_floor64["said"][:220] or "(nothing)"))
+    else:
+        skip("  · nothing was over at the floor ceiling — the advice branch was not reached")
+# ---- 65_the_fence_rewrite_touches_only_the_fence.py
+# ------------------------------- a global string replace, run twice, over somebody else's document
+# 🐛 [2026-09-10] `_stabilise_fence` re-derives the block's fence marker from the block's content so
+# a file that nothing changed does not change — which is right, and how it did it was not. It masked
+# the nonce with `body.replace(nonce, "000000")` and unmasked with `masked.replace("000000", digest)`
+# — both over the WHOLE document, neither scoped to a fence.
+#
+# So two things leaked, in every output path and every vendor's file:
+#
+#   * any `000000` already in the repository's own prose — a zero-padded id, a hex colour, a
+#     timestamp, `0.000000` in a measurement — came out of the second replace rewritten to the
+#     fence digest, silently, in content the user wrote;
+#   * a nonce that happened to appear in the body was masked there too, so the digest was taken
+#     over content the masking had already corrupted.
+#
+# (R4 agent 1, finding 2.) The fix substitutes through `_FENCE` itself, which is the only thing that
+# knows where a fence is.
+#
+# Checked by RUNNING it on a body that contains both traps rather than by reading the source: the
+# defect is what the function does to text, and a source scan for `.replace(` would pass the moment
+# somebody spelled it differently.
+import importlib.machinery as _ilm65
+import importlib.util as _ilu65
+import re as _re65
+
+_t_ctx65 = ROOT / "bin" / "chamnan-context"
+_t_spec65 = _ilu65.spec_from_loader(
+    "chamnan_context_65", _ilm65.SourceFileLoader("chamnan_context_65", str(_t_ctx65)))
+_t_mod65 = _ilu65.module_from_spec(_t_spec65)
+try:
+    _t_spec65.loader.exec_module(_t_mod65)
+    _t_ok65 = True
+except SystemExit:
+    _t_ok65 = True
+except Exception as _t_e65:                  # pragma: no cover - that is the failure
+    _t_ok65 = False
+    print("      could not import chamnan-context: %r" % (_t_e65,))
+
+if not _t_ok65 or not hasattr(_t_mod65, "_stabilise_fence"):
+    check("chamnan-context exposes the fence stabiliser this check is about", False,
+          saw="import failed, or `_stabilise_fence` is gone — this check measured nothing")
+else:
+    _t_nonce65 = "abc123"
+    _t_body65 = (
+        "[repo:%s]\n"
+        "a zero-padded id 000000 in ordinary prose,\n"
+        "a colour #000000, and 0.000000 in a measurement,\n"
+        "and the fence nonce %s spelled out in a sentence\n"
+        "[/repo:%s]\n" % (_t_nonce65, _t_nonce65, _t_nonce65))
+    _t_out65 = _t_mod65._stabilise_fence(_t_body65)
+
+    _t_kept65 = [what for what, text in (
+        ("a zero-padded id in prose", "id 000000 in ordinary prose"),
+        ("a hex colour", "#000000"),
+        ("a decimal measurement", "0.000000"),
+        ("the nonce spelled in prose", "nonce %s spelled out" % _t_nonce65),
+    ) if text not in _t_out65]
+    check("THE FENCE REWRITE CHANGES NOTHING OUTSIDE A FENCE MARKER",
+          not _t_kept65,
+          saw="rewrote %s — this is the repository's own content, in every vendor's file"
+              % ("; ".join(_t_kept65),))
+
+    # ...and it still does its job: one marker, on both ends, and the same one every run.
+    _t_marks65 = _re65.findall(r"\[/?repo:([0-9a-f]{6})\]", _t_out65)
+    check("...and both ends of the fence carry one freshly derived marker",
+          len(_t_marks65) == 2 and len(set(_t_marks65)) == 1
+          and _t_marks65[0] != _t_nonce65,
+          saw="markers: %r" % (_t_marks65,))
+    check("...and the same body gives the same marker, which is the whole point of it",
+          _t_mod65._stabilise_fence(_t_body65) == _t_out65)
+    # A body with no fence at all comes back untouched, rather than being digested for nothing.
+    check("...and a body with no fence is returned unchanged",
+          _t_mod65._stabilise_fence("plain text with 000000 in it\n")
+          == "plain text with 000000 in it\n")
+# ---- 66_every_artefact_says_which_chamnan_wrote_it.py
+# ------------ nothing chamnan wrote into a repository said which chamnan wrote it, and nothing said so
+# 🐛 [2026-09-10] A file written by chamnan 1.12 was structurally identical to one written by 1.24 —
+# no tool, no session and no person reading it could tell them apart, and the staleness machinery
+# watched `MAP.md` and nothing else. The instance that surfaced it was an installed git hook
+# NINETEEN DAYS and about nine releases behind the workspace's own `.version` sitting beside it,
+# reported by nothing in all that time.
+#
+# The owner's sharper point is the part this check is really for: it was found because somebody
+# happened to look. A defect class whose only discovery path is suspicion is worse than a loud one,
+# because the absence of reports reads as health — the same shape as absence-of-FAIL being read as
+# success, one level up (R8).
+#
+# Four properties, and the FIRST is the dangerous one.
+import json as _js66
+import shutil as _sh66
+import sys as _sys66
+import tempfile as _tmp66
+from pathlib import Path as _Path66
+
+_sys66.path.insert(0, str(ROOT / "lib"))
+import adapters as _ad66                                        # noqa: E402
+import workspace as _ws66                                       # noqa: E402
+
+# --- 1. The FINDER accepts both shapes. A version in the marker with a finder that matched only the
+# new one would double every `AGENTS.md` in the world exactly once — every file already on disk
+# stops being recognised, so the next `--write` appends a second block instead of replacing the
+# first. That is worse than the drift it fixes, and it is why the finder was widened first.
+_t_body66 = "## chamnan\n\n_Blocks fenced with [repo:aaa111] x [/repo:aaa111]_\n"
+# The marker has to be the ONLY evidence, or these measure the structural fallback instead. A body
+# opening `## chamnan` with a matched fence pair is recognised on its own — it was written that way
+# for files that predate the marker — so a fixture built from it passes with the marker branch
+# removed entirely. Caught by mutation, after the first version of this check passed against the
+# very defect it was written for.
+_t_plain66 = "Notes about how this team works.\n\nNothing chamnan-shaped in here.\n"
+check("the fixture's marker is the only evidence in it",
+      not _ad66._looks_generated(_t_plain66),
+      saw="the body alone is already recognised, so the two checks below measure something else")
+check("THE GENERATED-FILE FINDER STILL RECOGNISES AN UNVERSIONED MARKER",
+      _ad66._looks_generated(_t_plain66 + "\n" + _ad66.MARKER),
+      saw="every file chamnan has ever written carries this shape; unrecognised means the next "
+          "--write appends a second block beside the first instead of replacing it")
+check("...and recognises a versioned one",
+      _ad66._looks_generated(_t_plain66 + "\n" + _ad66.marker("1.25.0")))
+check("...and still refuses a document that merely QUOTES the marker",
+      not _ad66._looks_generated("# Notes\n\nchamnan writes " + _ad66.MARKER + "\n\nand more.\n"),
+      saw="a public string anybody can paste is being read as chamnan's own output")
+check("...and `MARKER` itself is unchanged, which is what makes the above true",
+      _ad66.MARKER.endswith("-->") and "Written by chamnan" not in _ad66.MARKER,
+      saw="the constant gained a version, so `endswith(MARKER)` no longer matches an old file")
+
+# --- 2. Recording is a property of the WRITE, over the population of adapters rather than a list.
+# Ten of the fourteen targets can carry a comment; `gemini` merges JSON, `generic` writes a region
+# inside somebody else's file. Stamping only where it is easy is the enumeration this repository
+# pays for most often, so the ledger is written at the one function every write site goes through.
+_t_root66 = _Path66(_tmp66.mkdtemp(prefix="chamnan-artefact66-"))
+try:
+    (_t_root66 / ".git").mkdir(parents=True)
+    _ws66.ensure(_t_root66)
+    _t_wrote66, _t_refused66 = [], []
+    for _t_name66 in sorted(_ad66.ADAPTERS):
+        try:
+            _t_out66 = _ad66.install(_t_root66, _t_name66, _t_body66)
+        except ValueError:
+            _t_refused66.append(_t_name66)      # an adapter that declines is not a failure here
+            continue
+        if _t_out66:
+            _t_wrote66.append(str(_Path66(_t_out66).relative_to(_t_root66)))
+
+    _t_ledger66 = _ad66.written_artefacts(_t_root66)
+    _t_unrecorded66 = sorted(set(_t_wrote66) - set(_t_ledger66))
+    check(f"the sweep actually installed something to check: {len(_t_wrote66)} file(s)",
+          len(_t_wrote66) >= 8,
+          saw="wrote %d, refused %s — a sweep that wrote nothing is not a pass"
+              % (len(_t_wrote66), _t_refused66))
+    check("EVERY FILE AN ADAPTER WRITES IS RECORDED, INCLUDING THE ONES THAT CANNOT CARRY A STAMP",
+          not _t_unrecorded66,
+          saw="%s wrote a file and nothing recorded it — these are exactly the adapters whose "
+              "format has no room for a comment, which is why the record is kept at the write "
+              "rather than in the text" % (", ".join(_t_unrecorded66),))
+    check("...and every recorded version is the one running, not a guess",
+          all(v.get("version") == _ad66._running_version() for v in _t_ledger66.values()),
+          saw=", ".join(sorted({str(v.get("version")) for v in _t_ledger66.values()})))
+
+    # --- 3. All four answers, because three of them want different handling and conflating them is
+    # the finding: unknown cannot be assumed current OR broken; behind is a distance; AHEAD must
+    # never be quietly rewritten DOWN, because that is data loss.
+    check("a repository written by the running chamnan reports no drift",
+          _ad66.artefact_drift(_t_root66, _ad66._running_version()) == [],
+          saw=repr(_ad66.artefact_drift(_t_root66, _ad66._running_version()))[:200])
+
+    _t_states66 = {s for _r, s, _v in _ad66.artefact_drift(_t_root66, "99.0.0")}
+    check("...an older stamp reads as behind", _t_states66 == {"behind"}, saw=repr(_t_states66))
+    _t_states66 = {s for _r, s, _v in _ad66.artefact_drift(_t_root66, "0.0.1")}
+    check("...AND A NEWER ONE READS AS AHEAD, RATHER THAN AS SOMETHING TO REWRITE DOWN",
+          _t_states66 == {"ahead"}, saw=repr(_t_states66))
+
+    # The in-band half, which the ledger cannot substitute for: a stamp inside the file travels with
+    # it, and the ledger does not — a `.cursor/rules/chamnan.mdc` is committed and the next person to
+    # read it is on another machine with no `.chamnan/state/` of ours. Asserted separately because
+    # the two halves cover different adapters and a check that only looked at the ledger passed with
+    # the writer stamping nothing at all.
+    _t_stamped66 = {r: _ad66.marker_version((_t_root66 / r).read_text(encoding="utf-8-sig",
+                                                                     errors="replace"))
+                    for r in sorted(_t_ledger66)}
+    _t_marked66 = [r for r, v in _t_stamped66.items() if v]
+    check("...and the files whose format CAN carry a stamp actually carry one",
+          len(_t_marked66) >= 8
+          and all(v == _ad66._running_version() for v in _t_stamped66.values() if v),
+          saw="%d of %d stamped in band; versions seen: %s"
+              % (len(_t_marked66), len(_t_stamped66),
+                 sorted({v for v in _t_stamped66.values() if v}) or "none"))
+
+    # Strip both sources from one file: what every artefact in the world looked like before today.
+    #
+    # Guarded on the ledger being non-empty, and as a BRANCH rather than a `skip()`: `skip` prints
+    # and returns, so the lines after it still ran and a mutation that emptied the ledger produced a
+    # FileNotFoundError inside a check — which this suite reports as "a check did not produce a
+    # result", costing the whole run and making nothing above it quotable. That is a worse outcome
+    # than the FAIL it was meant to be.
+    if not _t_ledger66:
+        skip("  · nothing was recorded, so the unknown-version case could not be reached")
+    else:
+        _t_one66 = sorted(_t_ledger66)[0]
+        _t_p66 = _t_root66 / _t_one66
+        _t_p66.write_text(_t_p66.read_text(encoding="utf-8-sig", errors="replace").replace(
+            " Written by chamnan %s." % _ad66._running_version(), ""), encoding="utf-8")
+        _t_led66 = dict(_t_ledger66); _t_led66.pop(_t_one66, None)
+        (_ws66.workspace(_t_root66) / _ad66.WRITE_LEDGER).write_text(
+            _js66.dumps(_t_led66), encoding="utf-8")
+        check("...and a file with no version anywhere is reported as UNKNOWN, not assumed current",
+              any(r == _t_one66 and s == "unknown"
+                  for r, s, _v in _ad66.artefact_drift(_t_root66, _ad66._running_version())),
+              saw="%s: %r" % (_t_one66,
+                              _ad66.artefact_drift(_t_root66, _ad66._running_version())))
+finally:
+    _sh66.rmtree(_t_root66, ignore_errors=True)
+
+# --- 4. It reports WITHOUT BEING ASKED, which is the requirement the other three serve. Both
+# surfaces, because they reach different people: the session block reaches somebody opening a
+# session, and `chamnan-map` is what the installed pre-commit hook actually runs.
+_t_hook66 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_t_map66 = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")
+check("the session block reports drift without being asked",
+      "artefact_drift" in _t_hook66,
+      saw="nothing in the session-start hook asks, so this is discoverable only by suspicion — "
+          "which is the state that produced the finding")
+check("...and so does the command the pre-commit hook runs on every commit",
+      "artefact_drift" in _t_map66)
+# ...and the population is derived from the adapters' own declarations rather than written out, so
+# an adapter added next year is covered by existing.
+_t_src66 = (ROOT / "lib" / "adapters" / "__init__.py").read_text(encoding="utf-8")
+_t_fn66 = _t_src66[_t_src66.index("def artefact_drift"):]
+_t_fn66 = _t_fn66[:_t_fn66.index("\ndef ", 10)]
+check("...and the set it walks comes from the registry, not from a list somebody maintains",
+      "for name in sorted(ADAPTERS)" in _t_fn66 and '"TARGET"' in _t_fn66,
+      saw="artefact_drift names its own population, so a fifteenth adapter is born undetectable — "
+          "which is the defect one level up that this whole finding is about")
+_sys66.path.remove(str(ROOT / "lib"))
+# ---- 67_the_ceiling_counts_the_line_that_is_actually_written.py
+# ------------------- the arithmetic was derived from a constant, and the constant stopped being it
+# 🐛 [2026-09-10] `fixed_overhead()` exists because a block sized exactly to a declared CEILING was
+# then wrapped and marked and written OVER it. It counted `MARKER`. On the same day `install()`
+# started writing `marker(version)` — the same comment with " Written by chamnan 1.24.0." before the
+# closing `-->`, about 27 bytes longer — and the arithmetic went straight back to under-counting by
+# exactly what had just been added. Every adapter with a declared ceiling wrote over it again.
+#
+# Caught by the suite check written the FIRST time this happened, which is that check doing its job
+# and the reason it is worth restating here: an overhead calculation that reads a CONSTANT is right
+# only while nothing between the constant and the write changes. This one asks the writer.
+import shutil as _sh67
+import sys as _sys67
+import tempfile as _tmp67
+from pathlib import Path as _Path67
+
+_sys67.path.insert(0, str(ROOT / "lib"))
+import adapters as _ad67                                        # noqa: E402
+
+_t_over67, _t_under67, _t_seen67 = [], [], 0
+for _t_n67 in sorted(_ad67.names()):
+    _t_a67 = _ad67.for_agent(_t_n67)
+    _t_c67 = getattr(_t_a67, "CEILING", None)
+    if not _t_c67:
+        continue
+    _t_d67 = _Path67(_tmp67.mkdtemp(prefix="chamnan-ceil67-"))
+    try:
+        (_t_d67 / ".chamnan").mkdir()
+        _t_oh67 = _ad67.fixed_overhead(_t_n67)
+        _t_out67 = _ad67.install(_t_d67, _t_n67, "x" * (_t_c67 - _t_oh67))
+        if not _t_out67:
+            continue
+        _t_seen67 += 1
+        _t_size67 = _Path67(_t_out67).stat().st_size
+        if _t_size67 > _t_c67:
+            _t_over67.append("%s: %d > %d, over by %d" % (_t_n67, _t_size67, _t_c67,
+                                                          _t_size67 - _t_c67))
+        # The other direction, and it is not decoration: an overhead that OVER-counts silently
+        # shrinks everybody's index, which no ceiling check would ever notice.
+        if _t_size67 < _t_c67 - _t_oh67:
+            _t_under67.append("%s: %d, which gives up more than the wrapper (%d)"
+                              % (_t_n67, _t_size67, _t_oh67))
+    finally:
+        _sh67.rmtree(_t_d67, ignore_errors=True)
+
+check(f"the ceiling sweep installed something to measure: {_t_seen67} adapter(s)", _t_seen67 >= 4,
+      saw="a sweep that wrote nothing is not a pass")
+check("A BLOCK SIZED TO ITS CEILING STILL FITS ONCE THE MARKER IS WRITTEN",
+      not _t_over67, saw="; ".join(_t_over67) or None)
+check("...and the room given up is only what the file actually gains",
+      not _t_under67, saw="; ".join(_t_under67) or None)
+
+# Asked of the writer rather than of the constant, which is the property that keeps the two in step.
+_t_src67 = (ROOT / "lib" / "adapters" / "__init__.py").read_text(encoding="utf-8")
+_t_fn67 = _t_src67[_t_src67.index("def fixed_overhead"):]
+_t_fn67 = _t_fn67[:_t_fn67.index("\ndef ", 10)]
+check("...and the overhead is measured from `marker()`, not from the bare constant",
+      "marker(" in _t_fn67,
+      saw="fixed_overhead reads a constant, so the next thing added to the written line is "
+          "under-counted again, exactly as it was today")
+
+# ---- and the assertion that hid the fence guard for four rounds, asserted over the SET this time.
+# 🐛 [2026-09-10] Three copies of "a horizontal rule in the body cannot close it early" sat in the
+# suite — cursor, kiro, windsurf — each asserting that a body `---` had been rewritten to `***`.
+# That reads as "the frontmatter is protected" and measures "the body was edited". The frontmatter
+# is closed by `render()` before the body is reached, so nothing in the body can reach it; the
+# rewrite's only real effect was demoting a setext `<h2>` in somebody's prose. The fix was applied
+# to ONE of the three first and the gate found the other two — the shape this repository records
+# more often than any other. This is so a fourth cannot be written.
+import re as _re67
+
+_t_suite67 = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+# Built at runtime rather than written out: a check that quotes the forbidden literal matches the
+# comment that records its removal, which this suite has been caught by before.
+_t_forbidden67 = "*" * 3
+# The POSITIVE form only. The corrected assertions say `"***" not in _rendered` — they assert the
+# absence, which is the thing being kept — and the first version of this check flagged those too,
+# reporting the fix as the defect. A check that cannot tell a claim from its negation is worse than
+# none: it argues for undoing the change it was written to protect.
+_t_positive67 = '"%s" in _' % _t_forbidden67
+_t_negated67 = '"%s" not in _' % _t_forbidden67
+_t_claims67 = [ln.strip()[:90] for ln in _t_suite67.splitlines()
+               if _t_positive67 in ln and _t_negated67 not in ln]
+check("NO ADAPTER ASSERTION STILL EXPECTS THE BODY'S OWN HORIZONTAL RULE TO BE REWRITTEN",
+      not _t_claims67,
+      saw="%d line(s) still assert it: %s" % (len(_t_claims67), " | ".join(_t_claims67[:3])))
+
+# ...and the positive property, over every adapter that renders frontmatter at all.
+_t_kept67, _t_fm67 = [], 0
+for _t_n67 in sorted(_ad67.ADAPTERS):
+    _t_r67 = getattr(_ad67.for_agent(_t_n67), "render", None)
+    if _t_r67 is None:
+        continue
+    try:
+        _t_o67 = _t_r67("A heading\n---\n\nbody\n")
+    except Exception:                                   # a renderer that raises is its own failure
+        continue
+    if not _t_o67.startswith("---\n"):
+        continue
+    _t_fm67 += 1
+    if "A heading\n---" not in _t_o67:
+        _t_kept67.append(_t_n67)
+check(f"the frontmatter sweep found adapters to check: {_t_fm67}", _t_fm67 >= 5,
+      saw="a sweep that matched nothing is not a pass")
+check("...and a setext heading in the block reaches every one of their files intact",
+      not _t_kept67, saw=", ".join(_t_kept67) or None)
+_sys67.path.remove(str(ROOT / "lib"))
+# ---- 67_the_check_runner_cannot_be_outlived_by_its_own_child.py
+# ------------------------- six hours of a frozen machine, and a ^C that did nothing about it
+# 🐛 [2026-09-10] `suite_slice` ran its generated child with no `timeout` and no `stdin`, and one
+# such child sat for 5 hours 59 minutes at 1.3% CPU. The machine stayed down until it was killed by
+# hand — which ended a live Claude Code session with SIGTERM, because the hung child belonged to it.
+# The person's evidence was a frozen terminal and a `^C` that changed nothing.
+#
+# `checks/42` already asserts that every subprocess the PACKAGE starts is bounded. This workspace's
+# own `.chamnan/tools/` was never in that set: 64 `subprocess` calls across the pool, 47 with no
+# `timeout` at all. That is the shape this repository records more than any other — a rule applied
+# to the members somebody listed, and the identical ones beside them left out.
+#
+# The answer is not 47 edits. Those are throwaway `git init` calls in disposable fixtures, bounding
+# each is churn, and the next check somebody writes would miss it anyway. What protects the machine
+# is that the RUNNER cannot be outlived by its own child, and that is ONE place — so that is what
+# this asserts, on the runner rather than on its callers.
+import ast as _ast67
+
+_t_slice67 = ROOT.parent.parent / ".chamnan" / "tools" / "suite_slice.py"
+if not _t_slice67.is_file():
+    skip("  · suite_slice.py is not in this workspace — skipped, not passed")
+else:
+    _t_src67 = _t_slice67.read_text(encoding="utf-8")
+    _t_tree67 = _ast67.parse(_t_src67)
+
+    # Every `subprocess.*` call in the runner, not the one somebody remembers. Two launch sites
+    # exist today (a pool batch and a single slice) and the first version of this fix changed one.
+    _t_naked67 = []
+    _t_seen67 = 0
+    for _t_n67 in _ast67.walk(_t_tree67):
+        if not isinstance(_t_n67, _ast67.Call) or not isinstance(_t_n67.func, _ast67.Attribute):
+            continue
+        if getattr(_t_n67.func.value, "id", "") != "subprocess":
+            continue
+        if _t_n67.func.attr not in ("run", "check_output", "call", "check_call", "Popen"):
+            continue
+        _t_seen67 += 1
+        _t_kw67 = {_t_k.arg for _t_k in _t_n67.keywords}
+        _t_missing67 = sorted({"timeout", "stdin"} - _t_kw67)
+        if _t_missing67:
+            _t_naked67.append("line %d: no %s" % (_t_n67.lineno, " and no ".join(_t_missing67)))
+
+    check("the sweep found the runner's own subprocess calls", _t_seen67 >= 1,
+          saw="%d call(s) — a walk that matched nothing is not a pass" % _t_seen67)
+    check("THE CHECK RUNNER CANNOT BE OUTLIVED BY ITS OWN CHILD",
+          not _t_naked67,
+          saw="; ".join(_t_naked67) + " — a child with no bound freezes the machine until somebody "
+              "kills it by hand, and a child that inherits stdin waits for a person who is not "
+              "typing")
+
+    # Both halves, because neither substitutes for the other and fixing one reads as fixing both:
+    # closing stdin does nothing for a child stuck on a lock, and a timeout does not stop the
+    # twenty minutes of frozen terminal before it fires.
+    check("...and the bound is a number somebody would actually wait through",
+          any(isinstance(_t_a67, _ast67.Assign)
+              and any(getattr(_t_t67, "id", "") == "RUN_TIMEOUT" for _t_t67 in _t_a67.targets)
+              and isinstance(_t_a67.value, _ast67.Constant)
+              and 30 <= _t_a67.value.value <= 900
+              for _t_a67 in _ast67.walk(_t_tree67)),
+          saw="RUN_TIMEOUT is missing, not a literal, or outside 30-900s")
+
+    # And it has to REPORT rather than raise: a traceback out of the runner reads as "the tool is
+    # broken" when the true answer is "a check hung, and here is which run it was".
+    check("...and a run that times out says which script to re-run to find the hang",
+          "TimeoutExpired" in _t_src67 and "did not finish within" in _t_src67,
+          saw="the runner does not handle its own timeout, so a hang arrives as a traceback")
 # ============================ end of the folded surgical pool
 
 

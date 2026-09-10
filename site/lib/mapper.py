@@ -112,6 +112,10 @@ MAX_FILE_LINES = 200_000
 SKIPPED_TOO_LARGE = []
 SKIPPED_TOO_MANY_LINES = []
 SKIPPED_BINARY = []
+# Files with a source extension that `ast` refused outright — a SyntaxError, a null byte, a
+# recursion limit. Distinct from PARSE_WARNINGS, which is warnings raised during a parse that
+# SUCCEEDED. Same lifetime as every list here: accumulates within a run, reset between runs.
+SKIPPED_UNPARSEABLE = []
 # 🐛 Eight names in SKIP_DIRS are ORDINARY SOURCE DIRECTORY NAMES as well as build-output names,
 # and the list could not tell the two apart. Measured: coveragepy's index contained 130 files and
 # not one of them was from `coverage/` -- the shipped library, 54 files, 29% of the repository and
@@ -1023,9 +1027,14 @@ def _parse_py(source, path):
     try:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            result = (ast.parse(source, filename=str(path)), list(caught))
-    except (SyntaxError, ValueError, RecursionError, MemoryError):
-        result = (None, [])
+            result = (ast.parse(source, filename=str(path)), list(caught), "")
+    except (SyntaxError, ValueError, RecursionError, MemoryError) as err:
+        # \U0001f41b [2026-09-10] This returned `(None, [])` and the reason went nowhere, so a file
+        # that could not be parsed AT ALL was indistinguishable downstream from one that parsed
+        # fine and had nothing to say. Carried out as a third element; `extract_python` records it
+        # once per file, which is the one place that knows a file is being scanned rather than
+        # re-checked (R2 agent 4, finding 4).
+        result = (None, [], f"{type(err).__name__}: {err}".split("\n")[0][:160])
     _PARSE_MEMO = (source, result)
     return result
 
@@ -1039,10 +1048,21 @@ def extract_python(source, path, lang='py'):
     sequence in a 3,000-line file had gone unnoticed here because py_compile stays silent about it,
     and it becomes a hard SyntaxError in a future Python.
     """
-    tree, caught = _parse_py(source, path)
+    tree, caught, unreadable = _parse_py(source, path)
     if caught:
         PARSE_WARNINGS.append((str(path), len(caught), str(caught[0].message)))
     if tree is None:
+        # \U0001f41b [2026-09-10] The file below falls back to `leading_comment()`, and a file that
+        # failed to parse AND has no leading `#` header comes out `('', [], [], [])` — byte for
+        # byte what an ordinary undocumented file returns. So in chamnan's own coverage figure a
+        # file it could not read at all was counted as a file whose author simply had not described
+        # it: false confidence rather than degraded confidence, which this module's own comment
+        # calls the worse kind. `PARSE_WARNINGS` does not cover it — that list is warnings raised
+        # DURING a successful parse, and this is the branch where there was none.
+        #
+        # Found by matching semgrep#11443, where a parse failure reported as "100% of lines parsed,
+        # zero findings" (R2 agent 4, finding 4). Same mechanism, one layer down.
+        SKIPPED_UNPARSEABLE.append((str(path), unreadable))
         # SyntaxError is the expected one. ValueError is a file with a .py extension whose contents
         # are not text at all — a null byte makes ast.parse raise it, and catching only SyntaxError
         # meant one vendored binary blob aborted the scan of an entire repository with a traceback.
@@ -1403,7 +1423,7 @@ def _is_empty_module(source, lang):
     "is there anything that is not blank or a comment", which is all a regex can honestly claim."""
     if lang == "py":
         # Reuses the tree `extract_python` just built for this same string; see `_parse_py`.
-        tree, _ = _parse_py(source, "<empty-check>")
+        tree, _, _ = _parse_py(source, "<empty-check>")
         return False if tree is None else not tree.body
     # The comment markers come from LINE_COMMENT, not from one list for every language. A fixed
     # list said `#` is a comment everywhere -- so `#![no_std]` and `#![allow(unused_imports)]`, a
@@ -1912,6 +1932,7 @@ def reset_skips():
     SKIPPED_TOO_LARGE.clear()
     SKIPPED_TOO_MANY_LINES.clear()
     SKIPPED_BINARY.clear()
+    SKIPPED_UNPARSEABLE.clear()
     SKIPPED_BUILD_DIR.clear()
     SKIPPED_GENERATED.clear()
     SKIPPED_UNKNOWN_EXT.clear()
