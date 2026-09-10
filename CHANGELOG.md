@@ -127,6 +127,34 @@ minutes** at 1.3% CPU holding a machine down, with a frozen terminal and a `^C` 
 the only symptom. Both fixed at the runner: a child cannot outlive the command that started it, and
 a child that reads stdin inherits a terminal nobody is typing at.
 
+### A fast path that only ever ran on a young repository
+
+Reading `HEAD` off the filesystem instead of spawning `git rev-parse` shipped in 1.24. It read a
+loose ref — `.git/refs/heads/<branch>` — and handed every other shape back to the subprocess.
+
+`git gc` moves branch tips out of that file and into `.git/packed-refs`, and that is what happens to
+every repository that lives long enough. On a packed repository the fast path therefore did nothing
+at all — and the roll-up that calls it runs several times per session start, so it was four calls
+and four subprocesses on exactly the mature repositories the optimisation was written for. It had
+been verified against a freshly `git init`ed fixture: the one shape that never has packed refs.
+
+Packed refs are read now, consulted only when the loose file is absent, which is git's own
+precedence. The value is a cache key, so every uncertainty still returns nothing and asks git —
+a stale ranking served as current is worse than a slow answer.
+
+The test beside it was reading one repository shape and stopping. It builds six — loose, packed,
+detached, worktree, unborn and not-a-repository — and now asserts across all of them that no shape
+answers from disk with something git would contradict.
+
+### A command in the release notes that nobody could run
+
+1.24's notes invited the reader to regenerate the citation index with a tool that has never shipped
+in this repository. Pasting the line produced `No such file or directory`.
+
+Every `python3 …` command printed in a code block anywhere in this repository's documentation is
+now held against what actually ships — paths under `.gitignore` included, because a path that
+exists in a development checkout and in no clone reads as runnable and is not.
+
 ### Reports that named the wrong thing
 
 - `chamnan-report` printed a hand-deleted tool as a real one at 0 runs — indistinguishable from one
@@ -162,7 +190,7 @@ line and the commit that fixed it, and a row nobody can follow to a diff is not 
 
 ### Re-run it yourself
 
-**check 4856 / 4856**, and 1,468 of 1,468 index claims true, on the code this tag carries.
+**check 4858 / 4858**, and 1,464 of 1,464 index claims true, on the code this tag carries.
 
     python3 tools/verify_release.py
 
