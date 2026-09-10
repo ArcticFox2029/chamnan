@@ -522,6 +522,33 @@ def print_inventory(root):
             + ". A rule about a KIND of work belongs in `.chamnan/skills/`, read when that work "
               "starts; one that applies with no task in progress stays here, and "
               "`rules_char_budget` is what gives it room.")
+        # 🐛 [2026-09-10] The line above states the overflow and stops there, which leaves the only
+        # question it raises — "so should I raise the budget?" — answerable solely by guessing. A
+        # round proposed answering it with a SUGGESTED number, and its own argument against that is
+        # right: "what would make today's rules fit" optimises for the wrong quantity and says
+        # nothing about whether more rules SHOULD arrive in full. A large rule may deserve to stay a
+        # title (R3 agent 5, idea 7).
+        #
+        # So this prints the CONSTRAINT rather than a recommendation. The judgement stays with the
+        # person; what they were missing is that on this repository the judgement is mostly already
+        # made for them — fitting even a third of the rules costs more than half of everything
+        # chamnan is allowed to say, and fitting all of them costs three times the whole block.
+        # That is a fact about the ceiling, not an opinion about the rules.
+        try:
+            _rb_sizes = sorted(len(_b) for _n, _b in memory.rules_with_titles(root))
+            _rb_run, _rb_steps = 0, []
+            for _rb_i, _rb_s in enumerate(_rb_sizes, 1):
+                _rb_run += _rb_s
+                if _rb_i in (max(1, len(_rb_sizes) // 3), max(2, len(_rb_sizes) * 2 // 3),
+                             len(_rb_sizes)):
+                    _rb_steps.append(f"{_rb_i} of {len(_rb_sizes)} would need {_rb_run:,}c")
+            _short.append(
+                "What raising it would cost: " + "; ".join(_rb_steps)
+                + f". The whole session block is capped at {fit.CEILING:,} bytes — rules, the "
+                  f"architecture index, work in flight and everything else together — so a budget "
+                  f"much past half of that cannot be spent whatever it is set to.")
+        except Exception:      # noqa: BLE001 — a report line must not take the command down
+            pass
     try:
         _st_file = ws.workspace(root) / "STATE.md"
         _st_raw = _st_file.read_text(encoding="utf-8-sig", errors="replace") if _st_file.is_file() else ""
