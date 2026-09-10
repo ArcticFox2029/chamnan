@@ -27475,6 +27475,64 @@ for _t_n in (5, 9):
         shutil.rmtree(_d, ignore_errors=True)
 check("...and a store that pins nothing is shared out evenly, exactly as before",
       not _t_changed39, saw="\n".join(_t_changed39) or None)
+# ---- 40_every_numeric_config_key_is_range_checked.py
+# ------------------------------------------- a bound that is declared and never consulted
+# 🐛 [2026-09-10] `_in_range` applies `_UPPER_BOUND` only to keys listed in `_NON_NEGATIVE`, and
+# `rules_char_budget` was in the bounds table and not in that tuple — so its declared ceiling of
+# 20,000 never ran and `_in_range("rules_char_budget", 500000)` answered True. The number was
+# written down, it looked enforced, and nothing consulted it. Same shape as the environment ceiling
+# fixed the day before, reached through a different door (R10 agent 5, finding 5).
+#
+# `state_stale_days` was worse and the report did not name it: in NEITHER table, so no bound and no
+# type check at all. That is the half a check has to cover, because the next key added will be
+# forgotten the same way.
+_t_BOUNDED = set(ws._UPPER_BOUND)
+_t_CHECKED = set(ws._NON_NEGATIVE)
+
+check("every key with a declared upper bound is one the range check actually looks at",
+      not (_t_BOUNDED - _t_CHECKED),
+      saw=", ".join(sorted(_t_BOUNDED - _t_CHECKED)) or None)
+
+# Derived from a REAL config rather than from a list here: whatever numeric keys a workspace
+# actually carries must all be covered, so a key added to the shipped default next year is caught
+# without anyone remembering to extend this.
+_t_cfg40 = ROOT.parent.parent / ".chamnan" / "config.json"
+if _t_cfg40.is_file():
+    _t_live = json.loads(_t_cfg40.read_text(encoding="utf-8"))
+    _t_nums = {k for k, v in _t_live.items() if isinstance(v, int) and not isinstance(v, bool)}
+    check("...and every numeric key a real config carries is bounded and checked",
+          _t_nums <= (_t_BOUNDED & _t_CHECKED),
+          saw=", ".join(sorted(_t_nums - (_t_BOUNDED & _t_CHECKED))) or None)
+else:
+    skip("  · no config.json to derive numeric keys from — the population check is skipped")
+
+# Behaviourally, in both directions, for every bounded key: an absurd value is refused and an
+# ordinary one is not. A range check that refuses everything passes the first check above.
+_t_wrong40 = []
+for _t_key, _t_cap in sorted(ws._UPPER_BOUND.items()):
+    if ws._in_range(_t_key, _t_cap * 100):
+        _t_wrong40.append(f"{_t_key}: {_t_cap * 100} accepted, bound is {_t_cap}")
+    if not ws._in_range(_t_key, max(1, _t_cap // 2)):
+        _t_wrong40.append(f"{_t_key}: {_t_cap // 2} refused, well inside the bound of {_t_cap}")
+    if ws._in_range(_t_key, -1):
+        _t_wrong40.append(f"{_t_key}: -1 accepted")
+check("...and each one refuses an absurd value while accepting an ordinary one",
+      not _t_wrong40, saw="\n".join(_t_wrong40[:6]) or None)
+
+# The bounds are generous on purpose — the point is not to second-guess somebody who wants a bigger
+# index, it is that a number from an untrusted clone cannot push the block past what the host
+# carries. A bound tightened to something ordinary would break real configs.
+#
+# Split by UNIT, because the first version of this compared day-counts against a byte threshold and
+# called a ten-year retention bound stingy. `3_650` days and `9_000` bytes are not the same kind of
+# number and no single floor covers both.
+_t_mean40 = []
+for _t_key, _t_cap in sorted(ws._UPPER_BOUND.items()):
+    _t_floor = 365 if _t_key.endswith(("_days",)) else 9_000
+    if _t_cap < _t_floor:
+        _t_mean40.append(f"{_t_key}={_t_cap}, under the {_t_floor} floor for its unit")
+check("...and the bounds stay generous rather than becoming a second opinion about sensible values",
+      not _t_mean40, saw="; ".join(_t_mean40) or None)
 # ============================ end of the folded surgical pool
 
 

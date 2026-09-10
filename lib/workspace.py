@@ -249,8 +249,18 @@ def workspace(root=None):
 # then `time.time() - (-1) * 86400` puts the cutoff a day in the FUTURE, so every file is "older"
 # than it. Reproduced: a log and a session record written one second earlier, both deleted. Session
 # records are committed work, not cache. One mistyped minus sign.
+# \U0001f41b [2026-09-10] `_in_range` applies the bounds below only to keys in THIS tuple, and
+# `rules_char_budget` was in `_UPPER_BOUND` and not here — so its declared ceiling of 20,000 never
+# ran and `_in_range("rules_char_budget", 500000)` answered True. A bound that is declared and never
+# consulted is the same shape as the environment ceiling fixed the day before: the number is written
+# down, it looks enforced, and nothing checks it (R10 agent 5, finding 5).
+#
+# `state_stale_days` was worse and the report did not name it: in NEITHER tuple, so no bound and no
+# type check at all. Every numeric key a real config carries is in both now, and a check asserts the
+# two sets agree rather than trusting this comment to stay true.
 _NON_NEGATIVE = ("log_retention_days", "session_retention_days", "index_token_budget",
-                 "state_token_budget", "output_byte_ceiling")
+                 "state_token_budget", "output_byte_ceiling", "rules_char_budget",
+                 "state_stale_days")
 
 
 # 🐛 `_in_range` enforced only `>= 0`, so a config that ships WITH a repository could set
@@ -271,6 +281,9 @@ _UPPER_BOUND = {
     "state_token_budget": 100_000,
     "log_retention_days": 3_650,
     "session_retention_days": 3_650,
+    # Ten years, the same as the retention days beside it: a staleness threshold longer than that is
+    # a number somebody typed wrong, not a policy.
+    "state_stale_days": 3_650,
 }
 
 
