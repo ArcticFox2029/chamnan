@@ -28476,6 +28476,57 @@ check("...and an ordinary all-caps name that merely ENDS in one is left alone",
 _t_smuggle53 = "MONKEYKEY=hunter2superSecretValue"
 check("...and the exclusion cannot be used to smuggle a real credential name past",
       _t_rd53.scrub(_t_smuggle53) != _t_smuggle53, saw=_t_rd53.scrub(_t_smuggle53))
+# ---- 54_the_skills_index_names_every_skill_that_exists.py
+import re as _re54
+
+# ----------------------------- the index that is supposed to survive the cut, two entries out of date
+# 🐛 [2026-09-10] `.chamnan/skills/README.md` is the one lookup index for the workspace's own
+# procedural skills, and it is maintained by hand. It was missing two of twenty-six files — one of
+# them `working_the_terminal_workspace.md`, which `STATE.md` had been repointed at the SAME DAY,
+# after a rule moved into it. So the block told a session to read a skill, and the index that
+# session would consult to find skills did not list it (R16 agent 2, finding F6).
+#
+# This matters more than an ordinary stale document because of what the index is FOR. The skills
+# section of the session block is cut on 41 of 233 firings and never built on 149 more, so the
+# README is what a session falls back to — and a fallback with holes in it is worse than none,
+# because it answers confidently.
+#
+# Both directions: a file with no entry is unfindable, and an entry naming a file that no longer
+# exists sends a reader to nothing. The second is the dangling-pointer shape this workspace has now
+# recorded three times in three different stores.
+_t_sk54 = ROOT.parent.parent / ".chamnan" / "skills"
+_t_readme54 = _t_sk54 / "README.md"
+
+if not _t_readme54.is_file():
+    skip("  · no .chamnan/skills/README.md here — the index check is skipped, not passed")
+else:
+    _t_text54 = _t_readme54.read_text(encoding="utf-8", errors="replace")
+    _t_files54 = sorted(p.name for p in _t_sk54.glob("*.md") if p.name.upper() != "README.MD")
+
+    check("there are skill files to index, so this is not passing on an empty directory",
+          len(_t_files54) >= 3, saw="%d file(s)" % (len(_t_files54),))
+
+    _t_unlisted54 = [f for f in _t_files54 if f not in _t_text54]
+    check("THE SKILLS INDEX NAMES EVERY SKILL FILE THAT EXISTS",
+          not _t_unlisted54, saw="\n".join(_t_unlisted54) or None)
+
+    # An entry pointing at a file that is gone. `(name.md)` is the link form the index uses.
+    _t_named54 = sorted(set(_re54.findall(r"\(([A-Za-z0-9_.-]+\.md)\)", _t_text54)))
+    _t_dangling54 = [n for n in _t_named54 if n.upper() != "README.MD"
+                     and not (_t_sk54 / n).is_file()]
+    check("...and every entry in it points at a file that is still there",
+          not _t_dangling54, saw=", ".join(_t_dangling54) or None)
+
+    # A skill the block's own STATE.md points at must be findable through the index too, or the
+    # two disagree about what exists — which is exactly how this was found.
+    _t_state54 = ROOT.parent.parent / ".chamnan" / "STATE.md"
+    if _t_state54.is_file():
+        _t_st54 = _t_state54.read_text(encoding="utf-8", errors="replace")
+        _t_pointed54 = sorted({m for m in _re54.findall(
+            r"\.chamnan/skills/([A-Za-z0-9_.-]+\.md)", _t_st54)})
+        _t_orphan54 = [n for n in _t_pointed54 if n not in _t_text54]
+        check("...and every skill STATE.md points a session at is listed in that index",
+              not _t_orphan54, saw=", ".join(_t_orphan54) or None)
 # ============================ end of the folded surgical pool
 
 
