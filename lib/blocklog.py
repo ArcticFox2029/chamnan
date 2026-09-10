@@ -40,7 +40,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     clear, fork — the hook already reads which, and it was discarded before reaching here. So a
     hundred and thirty-two records could be grouped by ceiling, by section set and by timestamp,
     and not by the question anybody actually asks of them: does a session that follows a compaction
-    receive less than a fresh one. Costs one short string per record (R5 agent1).
+    receive less than a fresh one. Costs one short string per record (R5 agent1, 2026-09-09).
     """
     sections = {}
     marks = list(_SECTION.finditer(body))
@@ -182,7 +182,7 @@ def check(root, window=WINDOW):
         # are in exactly that state — the tools index, recorded procedures, and decisions and
         # lessons — dropped on every real firing this log has recorded, and the detector has never
         # once said so, because from its point of view nothing changed. A regression detector that
-        # cannot see a BASELINE failure reports the health of what already works (R5 agent1).
+        # cannot see a BASELINE failure reports the health of what already works (R5 agent1, 2026-09-09).
         #
         # Said once and quietly: this is a standing condition, not news, and the report it feeds
         # is read for what changed.
@@ -217,7 +217,7 @@ def trend(root, last=10, resent_only=True):
     `check()` above exists to raise. Recording those firings without filtering them here would have
     manufactured the alarm it was added to make possible. They are COUNTED, not measured:
     `resent_only=False` returns them for anybody asking how much of a day takes the cheap path,
-    which is a question about sessions rather than about block shape (R5 agent1)."""
+    which is a question about sessions rather than about block shape (R5 agent1, 2026-09-09)."""
     try:
         log = ws.workspace(root) / LOG
         if not log.is_file():

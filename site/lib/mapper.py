@@ -212,7 +212,7 @@ def _generated_globs(root):
 # every team does not have. Reproduced with a location-only A/B: the same declaration, same syntax,
 # same file, moved from the root `.gitattributes` into `packages/sub/.gitattributes`, stopped being
 # honoured -- the generated file was indexed as ordinary source, counted against the `described`
-# percentage, and offered to the commenter agent (R6 acc3, unusual repositories).
+# percentage, and offered to the commenter agent (R6 acc3, 2026-09-06, unusual repositories).
 MAX_GITATTRIBUTES = 200          # a bound, not a policy: see the walk below
 
 
@@ -1850,7 +1850,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # the bytes actually read, so a file that GREW between the two passed a check on a size
             # it no longer had. Reproduced deterministically by growing the file inside a patched
             # `stat()`: a 6 MB file was yielded whole against a 2 MB ceiling and `SKIPPED_TOO_LARGE`
-            # stayed empty, so nothing even recorded that a limit had been crossed (R6 acc3). It
+            # stayed empty, so nothing even recorded that a limit had been crossed (R6 acc3, 2026-09-06). It
             # needs no exotic setup -- a code generator mid-write, a build regenerating a `.py`, or
             # a checkout still being written while the pre-commit hook fires. Re-checked on the
             # bytes in hand, which is the only measurement that describes what is about to be

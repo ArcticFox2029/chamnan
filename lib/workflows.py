@@ -241,7 +241,7 @@ def signature(command):
     #
     # A script FILE is a stable name and stays: `python3 tools/x.py` is the same step tomorrow.
     # `-` and `-c` are not names at all — the program is different every time and nothing here can
-    # tell one from the next (R5 agent3).
+    # tell one from the next (R5 agent3, 2026-09-09).
     if prog in _INTERPRETERS:
         rest = [a for a in parts[1:] if a not in ("-u", "-E", "-I", "-s", "-S", "-B")]
         if not rest or rest[0] in ("-", "-c") or rest[0].startswith("<<"):

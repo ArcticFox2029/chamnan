@@ -571,7 +571,7 @@ def fallback_name(source, kind):
     that is not an edge case, it is the normal case: two Thai-titled session records written on one
     day both became `<date>-session.md` and the second overwrote the first, and every Thai memory
     entry ever written collapsed onto one `entry.md`, because memory filenames carry no date to
-    separate them (R6 acc3, hostile filesystem -- reported there as dead code; it is not).
+    separate them (R6 acc3, 2026-09-06, hostile filesystem -- reported there as dead code; it is not).
 
     ASCII-only is kept deliberately, for the reason `sessions.slug` states: these names are read in
     a directory listing and in a git diff. So the fallback stays ASCII and becomes DISTINCT instead

@@ -407,7 +407,7 @@ def _age_out_locked(text, wsdir, sections, now, cutoff, days, save=True):
     # exists to avoid re-reading. A reader given "1 section held back" has no basis for deciding
     # whether it matters right now, so the marker was either ignored or paid for with a full read —
     # both of which defeat it. The heading is the one fact that makes the pointer usable, and it
-    # was in the slice the loop above already took (R5 agent2).
+    # was in the slice the loop above already took (R5 agent2, 2026-09-09).
     names = [mdblock.one_line(h) for _, _, _, h in drop if h]
     shown = ", ".join(f"**{n}**" for n in names[:3])
     if len(names) > 3:

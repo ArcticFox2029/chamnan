@@ -49,7 +49,7 @@ index is worth sending, never where anything goes.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
-| *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — two dozen adapters, each writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
+| *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — 22 named adapters plus a generic fallback, each writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
 | *"does it work on Windows"* | Yes, and on macOS and Linux — those three run in CI on every commit, WSL as Linux. [Per-OS instructions](#running-it-on-each-operating-system) |
 | *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
 | *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
@@ -354,7 +354,7 @@ Stated plainly, because installing this on the wrong repo makes your bill worse,
 | | |
 |---|---|
 | **macOS** | **Supported and tested.** Developed and exercised on macOS (arm64) with Python 3.12; the test suite and the polyglot run below were both done there. |
-| **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else, since no arm64 macOS build of 3.8 exists. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
+| **Linux** | **Tested in CI on every commit**, at Python 3.8 and 3.13 — the declared floor runs there and nowhere else. Not for want of a build — darwin-arm64 publishes 3.8.10, same as Windows — but because a floor only needs proving once, and Linux is where it is proven. That is a cost argument, not an availability one. The corpus figures below were taken on macOS. Same launch path as macOS — POSIX shebang, executable bit, standard library only — and nothing in the code is platform-specific. If you hit a problem there, it is a bug worth reporting rather than an expected gap. |
 | **Windows** | **Tested in CI on every commit**, at Python 3.8 and 3.13, on `windows-latest`. The `bin/` commands are extensionless POSIX scripts that `cmd.exe` cannot resolve through `PATHEXT`, so a generated `.cmd` shim sits beside each one (and beside each hook script) and hands it to the Python launcher; CI runs the shims themselves through `cmd.exe`, not just the underlying scripts. The optional Git hook is still a `/bin/sh` script and needs a shell that can run one — Git for Windows ships `sh.exe`, so it works there. Under WSL it is the Linux row above. |
 
 ### Running it on each operating system
@@ -1467,7 +1467,7 @@ corpus of 55 secret shapes and 43 ordinary strings that must survive:
 Read those honestly, and mind which is which — the third row is what a user experiences, the fourth
 is a property of one function measured on input it is never given.
 
-**100% on a 22-string decoy corpus is "no known false positive", not "no false positives"** — so
+**100% on a 43-string decoy corpus is "no known false positive", not "no false positives"** — so
 here is the measurement on a real 257-file application, taken twice, because the two numbers answer
 different questions and the difference is the point.
 

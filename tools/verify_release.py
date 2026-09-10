@@ -23,8 +23,16 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 def _run(argv, **kw):
+    # An hour, and it is a bound rather than an expectation: the regression suite runs through here
+    # and takes about seventeen minutes, so anything shorter would make the gate the thing that
+    # fails. Unbounded was the previous state, and a gate that waits forever on a hung suite reports
+    # nothing at all — which is worse than reporting a timeout, because a person walks away from it.
+    # Written at the call rather than through `kw.setdefault`, so it is visible both to a reader
+    # and to the check that asserts every subprocess here is bounded — that check reads the AST, and
+    # a bound smuggled in through `**kw` is a bound it cannot see. A guarantee the guard cannot
+    # verify is the shape this repository keeps finding.
     return subprocess.run(argv, capture_output=True, text=True, encoding="utf-8",
-                          errors="replace", cwd=str(ROOT), **kw)
+                          errors="replace", cwd=str(ROOT), timeout=kw.pop("timeout", 3600), **kw)
 
 
 def declared_version():

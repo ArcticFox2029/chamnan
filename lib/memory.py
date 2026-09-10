@@ -274,7 +274,7 @@ def case_collisions(paths):
     into ONE file on this machine's APFS exactly as the case pair does -- verified by writing both
     names and getting a single `listdir` entry holding the second write -- and hashed to two
     different keys here, so the guard built for precisely this failure returned nothing. NFC first,
-    then casefold, catches both classes in one pass (R6 acc3, hostile filesystem).
+    then casefold, catches both classes in one pass (R6 acc3, 2026-09-06, hostile filesystem).
 
     Pure Thai text is NOT the exposure and a future round should not go looking there: Thai
     combining vowel and tone marks have no precomposed form, so NFC and NFD coincide for it. The
@@ -529,7 +529,7 @@ def rules_text(root):
                 # rules were the one that did not, in any of their three render paths. A session
                 # wanting the body of a title-only rule had one instruction: open the directory and
                 # find it, against ten abstract titles whose filenames need not resemble them.
-                # `path.name` was in scope the whole time; it just was not carried through (R5 agent2).
+                # `path.name` was in scope the whole time; it just was not carried through (R5 agent2, 2026-09-09).
                 # \U0001f41b [2026-09-09] The title was repeated inside this sentence, and the
                 # rule's own heading is the line directly above it -- so every trimmed rule paid
                 # for its title twice, in the section measured as spending 73% of its bytes on

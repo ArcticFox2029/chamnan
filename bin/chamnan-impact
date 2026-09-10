@@ -181,7 +181,7 @@ def main(argv):
             # The warning is exactly the case where "nothing imports it" is not a stale answer but
             # a WRONG one — the same reasoning `_index_age`'s own docstring gives for existing —
             # and the verdict was not gated on it. A reader who trusts the second line has been
-            # told the opposite of what the first line means (R5 agent3).
+            # told the opposite of what the first line means (R5 agent3, 2026-09-09).
             if on_disk and "the code has moved since" in _age.lower():
                 print(f"  the index is behind the code, so this is not an all-clear: a file added "
                       f"since it was built could import this one. Run `chamnan-map`, then ask again")

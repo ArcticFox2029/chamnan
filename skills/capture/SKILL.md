@@ -7,6 +7,32 @@ disable-model-invocation: true
 
 Write a file into `.chamnan/skills/<short-name>.md`.
 
+## First: is this already covered somewhere?
+
+**Before writing anything, check what the workspace already has.** A skill you write can collide
+with one that arrived from a plugin the person installed, and the collision is invisible to them:
+nothing errors, both files look authoritative, and the only symptom is the assistant answering
+inconsistently on exactly the kind of work the skill covers. Someone who is not an engineer has no
+way to connect that to a file.
+
+```bash
+python3 -c "import sys; sys.path.insert(0, '<plugin>/lib'); import skill_overlap; \
+            [print(o['kind'], o['name']) for o in skill_overlap.overlaps('.')]"
+```
+
+`skill_overlap.overlaps()` reports only what is true by construction — the same name in two active
+stores with different contents, one name served by two plugins, or a workspace file that repeats a
+shipped skill's text verbatim. It does **not** score similarity: that was prototyped over the 26
+real skills here and measured unusable in both directions (over 100 of 325 pairs scored above an
+0.35 title threshold on shared boilerplate alone, while no pair scored above 0.30 on body content —
+so it would cry wolf constantly *and* stay silent on a real duplicate written in other words).
+
+**What to do with a result: record it, do not refuse.** If the check names something, say so in one
+line and extend the existing skill rather than writing a second one beside it. Nothing here blocks
+the capture — a refusal the person cannot understand or override is worse than the overlap, and the
+host ignores `disable-model-invocation` anyway (claude-code#22345), so a hard gate could not be
+enforced where it would matter.
+
 ## When this is worth doing
 
 - A task took several steps that were not obvious, and will come up again

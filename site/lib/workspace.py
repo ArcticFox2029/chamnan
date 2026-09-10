@@ -2382,7 +2382,7 @@ def _config_problem(path):
 # does not fail. It WALKS UP and answers about the nearest real repository above it.
 #
 # Twelve call sites shelled out to `git -C root ...` on that assumption and every one of them was
-# reporting somebody else's repository (R6 acc3, first ten minutes). Reproduced: in a directory
+# reporting somebody else's repository (R6 acc3, 2026-09-06, first ten minutes). Reproduced: in a directory
 # holding one file and an empty `.git/`, nested inside a real repository, the session-start block
 # said "10 uncommitted file(s)" and named a branch — the ANCESTOR's status; `chamnan-map` stamped
 # `Built from <sha>` into MAP.md with the ancestor's HEAD; and `--install-git-hook` resolved

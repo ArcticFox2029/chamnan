@@ -115,7 +115,7 @@ def refuses_to_be_overwritten(root):
 
     An unresolved `<<<<<<< HEAD` is the ordinary way to arrive there: `index.json` is committed, two
     branches registering different tools conflict in it, and a merge left half-finished is a file
-    with content that is not JSON. Reported independently by two rounds (R9 acc3, R10 agent 2) and
+    with content that is not JSON. Reported independently by two rounds (R9 acc3, 2026-09-07, R10 agent 2) and
     unfixed both times.
 
     The guard already existed one file away. `lib/state.py` refuses to render a mid-merge STATE.md
@@ -204,7 +204,7 @@ def register(root, entry):
             # stops a reader seeing a torn file and says nothing about which of two writers' snapshot
             # wins. So the one writer that was hardened LAST reintroduced the race the other two were
             # hardened against, and `record_call` fires from a PostToolUse hook on every Bash call —
-            # which is exactly the window a promotion runs in (R5 acc3).
+            # which is exactly the window a promotion runs in (R5 acc3, 2026-09-07).
             #
             # `remove()` already answers this correctly by raising, and `TimeoutError` is an
             # `OSError`, so `chamnan-promote`'s existing handler catches it, deletes the executable

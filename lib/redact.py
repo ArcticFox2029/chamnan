@@ -761,7 +761,7 @@ def _is_never_opened_name(name):
 # beside it survived. The asymmetry is in SECRET_WORDS: `token` fires only as a compound suffix
 # (`[A-Za-z0-9]+[_-]tokens?`), so a leading `token_` never matches, while `auth` has no such
 # left-side requirement and matches anywhere. One word bounded, its neighbour not — the same defect
-# this repository keeps finding, inside a single tuple (R5 acc3).
+# this repository keeps finding, inside a single tuple (R5 acc3, 2026-09-07).
 #
 # Added the whole class rather than `uri` alone: every one of these names a LOCATION or a PARTY, and
 # none of them has ever been the name of a credential. `issuer` and `audience` are the JWT claim
@@ -1061,7 +1061,7 @@ def _names_a_mechanism(key, value=None):
     `api_key_path`, `password_file` and `auth_url` were all destroyed in a `.json` file and all
     correctly kept in the identical assignment outside one. A GCP service-account key — the most
     common real "secret in a repo" shape after `.env` — lost two fixed, publicly documented Google
-    endpoints that way (R5 acc3 found the `auth_uri` case; the class is wider than the case).
+    endpoints that way (R5 acc3, 2026-09-07 found the `auth_uri` case; the class is wider than the case).
 
     `_looks_like_a_credential_name` twenty lines up already normalises with a regex that strips the
     quote correctly. Two helpers, one file, the same job, different normalisation — so they share

@@ -188,7 +188,7 @@ def fits(text, budget):
 # `MAX_PER_GROUP = 14` and `as_quoted(n, 80)` -- and never got the fix. Measured on eight kinds of
 # twenty objects with 73-character names, the length a GitOps monorepo reaches once environment and
 # region suffixes are on it: 4,059 tokens for the deployment section alone, against a default
-# `index_token_budget` of 3,000, while the count cap reported nothing wrong (R10 acc3).
+# `index_token_budget` of 3,000, while the count cap reported nothing wrong (R10 acc3, 2026-09-06).
 #
 # The rule is here, in the module both of them already import, rather than exported from one
 # renderer to the other -- a section renderer added next year needs the budget available where it

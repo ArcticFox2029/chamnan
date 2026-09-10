@@ -42,6 +42,7 @@ import ledger  # noqa: E402
 import mdblock  # noqa: E402
 import candidates  # noqa: E402
 import rulecheck  # noqa: E402
+import skill_overlap  # noqa: E402
 import memory  # noqa: E402
 import tools_index  # noqa: E402
 
@@ -514,7 +515,7 @@ def print_inventory(root):
     # names, and a workspace can go from 12-of-14 to 12-of-30 without the header ever moving —
     # the report built to say whether this workspace is healthy would call that unchanged.
     # `rules_pressure` above was the only per-item completeness check in the whole report, and it
-    # is specific to rules (R5 agent2).
+    # is specific to rules (R5 agent2, 2026-09-09).
     _trunc = []
     try:
         _sk_n = len(list((ws.workspace(root) / "skills").glob("*.md")))
@@ -528,6 +529,32 @@ def print_inventory(root):
             _trunc.append(f"{_tl_n - _HOOK_LIST_CAP} of {_tl_n} registered tool(s)")
     except Exception:
         pass
+    # Two skills answering to one name, or one skill that exists twice with different contents.
+    # A person who is not an engineer has no way to see this: nothing errors, both files look
+    # authoritative, and the only symptom is the assistant behaving inconsistently on the kind of
+    # work the skill covers. So the report says it in plain words rather than leaving it on disk.
+    try:
+        _ov = skill_overlap.overlaps(root)
+    except Exception:
+        _ov = []
+    if _ov:
+        _kinds = defaultdict(list)
+        for _o in _ov:
+            _kinds[_o["kind"]].append(_o["name"])
+        _said = []
+        if _kinds["divergent"]:
+            _said.append(f"{len(_kinds['divergent'])} skill(s) exist in two places with DIFFERENT "
+                         f"contents ({', '.join(sorted(_kinds['divergent'])[:4])}) — which copy "
+                         f"gets read depends on which one the host resolves first")
+        if _kinds["shadowed"]:
+            _said.append(f"{len(_kinds['shadowed'])} skill name(s) are provided by more than one "
+                         f"plugin ({', '.join(sorted(_kinds['shadowed'])[:4])})")
+        if _kinds["restates"]:
+            _said.append(f"{len(_kinds['restates'])} workspace skill(s) repeat a plugin skill's own "
+                         f"text ({', '.join(sorted(_kinds['restates'])[:4])})")
+        for _s in _said:
+            _short.append("skills disagree with each other — " + _s)
+
     if _trunc:
         _short.append(
             " and ".join(_trunc) + f" are never named in a session: both lists stop at "
@@ -920,7 +947,7 @@ def main(argv):
     # this is the command that PRUNES, so a misspelt flag did not merely do the wrong thing, it
     # deleted session records past the retention window while appearing to answer a question about
     # itself. The paragraph above records the same shape for `--help` and this half was left
-    # (R6 acc3). `chamnan-map` has refused unknown flags all along.
+    # (R6 acc3, 2026-09-07). `chamnan-map` has refused unknown flags all along.
     _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
     if _bad:
         print(f"chamnan: unknown option {_bad[0]!r} — this command takes no options",

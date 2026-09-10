@@ -104,7 +104,7 @@ def _read_bounded(path, ceiling):
 # these skills was keeping it. A SKILL.md with no `disable-model-invocation` takes the platform's
 # documented default of `false`, which means Claude Code may load and run the skill on its own from
 # a description match -- so chamnan printed a guarantee in every session that its own frontmatter
-# contradicted (R1 acc3, platform drift). All five record-writing skills now set it to true; the
+# contradicted (R1 acc3, 2026-09-06, platform drift). All five record-writing skills now set it to true; the
 # index-building ones (bootstrap, remap) deliberately do not, because a regenerable index is not a
 # record and CLAUDE.md asks for it to be rebuilt without being told. `SELF_INVOKED_SKILLS` is the
 # set-wide form: a new write skill added without the field fails the suite rather than quietly
@@ -1138,7 +1138,7 @@ def main():
         # reinjections only. How much of an ordinary day takes the cheap path was not a question
         # the log could answer, which makes "the block is getting bigger" and every trend beside it
         # a statement about a subset nobody had named. The skip is right; being silent about it is
-        # not (R5 agent1).
+        # not (R5 agent1, 2026-09-09).
         #
         # `resent: False` rather than a shape: there is no block to measure, and recording a
         # zero-byte one would put a fake trough in the very trend this exists to keep honest.
@@ -1293,7 +1293,7 @@ def main():
                 # fact. MAP.md is the same shape of file and the same failure: two branches editing
                 # UNRELATED source files still collide in its alphabetical Quick Index, so this is
                 # the store most likely to conflict, not the least — and half a merge leaves
-                # `<<<<<<< HEAD` in the largest section a session reads (R9 acc3).
+                # `<<<<<<< HEAD` in the largest section a session reads (R9 acc3, 2026-09-07).
                 #
                 # Said instead of the content, exactly as STATE.md says it: printing both sides
                 # under a warning invites the reader to pick one, which is the failure.
@@ -1570,7 +1570,13 @@ def main():
                 out.append(section(
                     "Recorded decisions and lessons — read the one that matches before assuming",
                     listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
-                              "do not read them all._", ".chamnan/memory/decisions|lessons/"))
+                              "do not read them all._", ".chamnan/memory/"))
+                # 🐛 [2026-09-10] The source above read `.chamnan/memory/decisions|lessons/`, which
+                # is not a path -- it is two paths with a pipe between them, and the "left out" line
+                # prints it verbatim. A session that copied it got nothing, and `memory/lessons/`
+                # was consequently named nowhere a session could act on. Found by the recall test in
+                # `.chamnan/tests/test_block_recall.py`, whose whole premise is that a pointer to
+                # somewhere that does not exist is amnesia wearing the costume of an index (R14).
 
         if cfg.get("milestones", True):
             # Titles only, newest first. "The last big thing here was the auth migration" orients a
@@ -1807,7 +1813,7 @@ def main():
                     # up names its directory. A session told that fifteen procedures exist and not
                     # where to look has been given a reason to worry and no way to act, which is
                     # worse than not being told: the whole point of listing skills is that one can
-                    # be loaded on demand. Measured on this workspace at 15 of 27 unnamed (R5 agent2).
+                    # be loaded on demand. Measured on this workspace at 15 of 27 unnamed (R5 agent2, 2026-09-09).
                     lines.append(f"- _…and {len(skills)-MAX_TOOLS} more in "
                                  f"`{display(wsdir/'skills', root)}/` — its README indexes them_")
                 # 🐛 [2026-09-08] Skill filenames are typed by a person, not derived through any

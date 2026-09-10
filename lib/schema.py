@@ -407,7 +407,7 @@ def render(tables):
     # bounded the count and nothing bounded what a row costs, so the product ran away: 40 tables
     # with an ordinary 140-character summary rendered 3,866 tokens against a 3,000-token index
     # budget. The third section with this defect, after routes/configuration and the deployment
-    # section, both fixed from the same diagnosis (R5 acc3).
+    # section, both fixed from the same diagnosis (R5 acc3, 2026-09-07).
     #
     # And the cliff was INVERTED, which is why nobody noticed: 41 tables took the names-only branch
     # and cost 674 tokens while 40 took the detailed one and cost 3,866. The "large schema" path was

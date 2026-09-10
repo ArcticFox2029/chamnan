@@ -329,7 +329,7 @@ def main():
     # were the only agents kept current, while the twenty-one reading a written snapshot kept the
     # one from the day they were set up. Reproduced: after a commit adding a file, MAP.md named it
     # and `.cursor/rules/chamnan.mdc` had the identical md5 and always would. The README calls that
-    # hook the thing which automates exactly this (R2 acc3 adapters).
+    # hook the thing which automates exactly this (R2 acc3, 2026-09-08 adapters).
     #
     # This branch NAMES the agents and writes nothing; the hook loops and calls `--write` for each.
     # Doing the writing here would mean either a second copy of the fifty-line write path below --

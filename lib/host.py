@@ -76,7 +76,7 @@ _AGENTS = {
         #
         # It is RUNNING-tier evidence, which is the strongest kind here and the kind only two of
         # twenty-three agents had: a file marker says somebody once used this agent in this
-        # repository, an env var says it is the process asking right now (R2 acc3 adapters).
+        # repository, an env var says it is the process asking right now (R2 acc3, 2026-09-08 adapters).
         # `.cursor/rules/` is the current file convention and `.cursorrules` the legacy one.
         "env": ("CURSOR_AGENT",),
         "repo": (".cursor/", ".cursorrules"),
@@ -243,7 +243,7 @@ def primary(root=None, env=None, home=None):
 # Measured on this repository the day this was written: chamnan's block 8,925 bytes against its own
 # ceiling, `CLAUDE.md` 17,116 bytes with no budget of any kind. Nearly twice the size, same context,
 # never mentioned. A tool whose whole argument is context economy should not have a blind spot
-# shaped exactly like its own subject (R5 acc3 new_ideas #2).
+# shaped exactly like its own subject (R5 acc3, 2026-09-07 new_ideas #2).
 #
 # Derived from `_AGENTS` rather than listing `CLAUDE.md`, because the same blind spot exists for
 # every other vendor's file and a hardcoded name would cover one of twenty-four.
@@ -280,7 +280,7 @@ def context_files(root):
     # its directory, and the repository this was written in has one: the report showed 17,116 bytes
     # of un-budgeted context beside the block while the real floor for a session working in the
     # application directory is 28,168. The caller's own comment calls this class of gap "a blind
-    # spot shaped like its own subject" — and had it one directory down (R5 agent3).
+    # spot shaped like its own subject" — and had it one directory down (R5 agent3, 2026-09-09).
     #
     # Bounded on purpose. Two levels, and only into directories that hold source rather than
     # payload: a full walk of a large repository to add a line to a report is a cost the report
