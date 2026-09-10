@@ -49,7 +49,7 @@ index is worth sending, never where anything goes.
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
 | *"does a context file actually help"* | **Not with correctness.** Measured elsewhere: human-written context files **+4%**, LLM-generated **−2%**, and a 288-attempt study found **no correctness gain but −29% runtime and −17% output tokens**. chamnan claims the second thing, not the first — see [what a context file measurably does](#what-a-context-file-measurably-does-including-the-part-that-argues-against-this-one), which includes the finding that argues against its own flagship feature. |
-| *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — 22 named adapters plus a generic fallback, each writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
+| *"does it work with Cursor / Windsurf / Copilot / Zed / Aider"* | Yes — an adapter for each, writing the file that tool actually reads. `chamnan-context --write <name>`. [The list](#any-agent-not-only-claude-code) |
 | *"does it work on Windows"* | Yes, and on macOS and Linux — those three run in CI on every commit, WSL as Linux. [Per-OS instructions](#running-it-on-each-operating-system) |
 | *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
 | *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
@@ -1047,7 +1047,7 @@ chamnan-context --write cursor   set that agent up to read it
 chamnan-context --model kimi     size it for the context window the model actually has
 ```
 
-**35 agent names can be written**, from 23 adapters. Where an agent has a
+**35 agent names can be written**, from 22 adapters. Where an agent has a
 file of its own, chamnan writes that file; where several agents read the same one, they share it
 rather than each getting a copy that drifts.
 
@@ -1065,7 +1065,7 @@ rather than each getting a copy that drifts.
 | `generic` | `AGENTS.md` |
 | `goose` | `.goosehints` |
 | `hermes` | `.hermes.md` — the file Hermes Agent gives highest priority, above `AGENTS.md` |
-| `grok` | `.grok/rules/chamnan.md` |
+| `grok` | `AGENTS.md` |
 | `iflow` | `IFLOW.md` |
 | `junie` | `.junie/AGENTS.md` |
 | `kiro` | `.kiro/steering/chamnan.md` |

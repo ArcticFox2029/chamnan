@@ -16506,8 +16506,17 @@ _undetected = sorted(set(adapters_mod.ADAPTERS) - set(host_mod.ORDER))
 check("detection covers EVERY agent that has an adapter", not _undetected)
 if _undetected:
     print("      adapters with no detection entry:", _undetected)
-check("...and nothing is detectable without one, except claude",
-      sorted(set(host_mod.ORDER) - set(adapters_mod.ADAPTERS)) == ["claude"])
+# 🐛 [2026-09-10] This compared ORDER against ADAPTERS, so a detectable agent that is an ALIAS
+# failed it — and an alias is writable, which is the property this line is actually about. It went
+# red when `grok` became an alias of `generic`: xAI's own configuration reference shows nothing
+# reads the path its module had been writing, but `.grok/` genuinely IS a project directory, so the
+# detection is correct and only the target was wrong. Removing it from ORDER to satisfy the check
+# would have made chamnan blind to a host that is plainly installed, which is the defect the
+# comment above records being fixed. Compared against every writable name instead; `claude` remains
+# the one detectable thing with no file at all, because its delivery is a hook.
+check("...and nothing is detectable without a way to write it, except claude",
+      sorted(set(host_mod.ORDER) - set(adapters_mod.ADAPTERS) - set(adapters_mod.ALIASES))
+      == ["claude"])
 check("...and every detected name can actually be written, except claude whose delivery is a hook",
       all(n == "claude" or adapters_mod.for_agent(n) is not None for n in host_mod.ORDER))
 # REPO markers only for the ones added. HOME is what host.py's own docstring calls the weakest and
@@ -28375,6 +28384,40 @@ _t_found51 = [n for n in _ast51.walk(_t_probe51)
               and isinstance(n.args[0], _ast51.GeneratorExp) and n.args[0].generators[0].ifs]
 check("...and the detector recognises the shape it is looking for, so silence means absence",
       len(_t_found51) == 1, saw="probe matched %d time(s)" % (len(_t_found51),))
+# ---- 52_the_published_adapter_count_is_the_one_in_the_code.py
+# ------------------------------- an alias documented as writing a file it does not write
+# 🐛 [2026-09-10] `grok` had a MODULE writing `.grok/rules/chamnan.md`, and xAI's own configuration
+# reference lists `rules/` at neither project nor home scope — the one documented per-project
+# instruction mechanism is `AGENTS.md`. Everything chamnan wrote for Grok was read by nothing, and
+# the README's own table said the same wrong path with the same confidence. `mistral` was the same
+# defect five days earlier (R6 agent 1, finding 1; R8 agent 1 before it).
+#
+# The README's adapter COUNT is already guarded — the suite reads it out of the sentence that states
+# it and compares it to `len(ADAPTERS)`. This does not duplicate that with a second convention: two
+# checks counting the same set two ways is how a number becomes unfixable. What was NOT guarded is
+# the table a reader actually consults, where an alias can go on naming its old file forever.
+import adapters as _t_ad52
+
+_t_readme52 = (ROOT / "README.md").read_text(encoding="utf-8")
+
+check("there are aliases to check, so this is not passing on an empty set",
+      len(_t_ad52.ALIASES) >= 1, saw=", ".join(sorted(_t_ad52.ALIASES)) or "none")
+
+_t_lying52 = []
+for _t_alias52, _t_to52 in sorted(_t_ad52.ALIASES.items()):
+    _t_target52 = getattr(_t_ad52.ADAPTERS.get(_t_to52), "TARGET", "")
+    for _t_ln52 in _t_readme52.splitlines():
+        if _t_ln52.startswith("| `%s`" % _t_alias52) and _t_target52 \
+                and _t_target52 not in _t_ln52:
+            _t_lying52.append("%s writes %s, the table says %s"
+                              % (_t_alias52, _t_target52, _t_ln52.strip()))
+check("NO ALIAS IS DOCUMENTED AS WRITING A FILE IT DOES NOT WRITE",
+      not _t_lying52, saw="\n".join(_t_lying52) or None)
+
+# Deliberately NOT asserted: that every alias appears in the table. Most do not and should not —
+# the table documents adapters, and an alias is a NAME for one, listed with the other names. Eleven
+# of the twelve aliases here have no row at all, correctly. The assertion above only judges a row
+# that exists, which is the whole failure: a row that outlives the module it described.
 # ============================ end of the folded surgical pool
 
 

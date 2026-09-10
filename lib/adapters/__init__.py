@@ -51,7 +51,6 @@ from . import copilot
 from . import cursor
 from . import gemini
 from . import goose
-from . import grok
 from . import generic
 from . import iflow
 from . import junie
@@ -79,7 +78,6 @@ ADAPTERS = {
     cursor.NAME: cursor,
     gemini.NAME: gemini,
     goose.NAME: goose,
-    grok.NAME: grok,
     generic.NAME: generic,
     iflow.NAME: iflow,
     junie.NAME: junie,
@@ -131,6 +129,25 @@ ALIASES = {
     # a `.vibe/AGENTS.md` inside a checkout. An alias and not a module, for the reason every name
     # above is: two modules writing one path would give that path two owners.
     "mistral": generic.NAME,
+    # 🐛 [2026-09-10] Grok Build was a MODULE writing `.grok/rules/chamnan.md`, on the reading —
+    # stated in its own docstring — that Grok reads its own `.grok/rules/` directory as well as the
+    # root files. Checked against xAI's own configuration reference rather than a summary
+    # (xai-org/grok-build, `main`, `docs/user-guide/05-configuration.md`, 874 lines, 2026-09-09):
+    # every `rules` occurrence there is either `[permission] rules` or the compatibility layer for
+    # OTHER vendors' directories. The per-project file table lists `config.toml`, `skills/`,
+    # `hooks/`, `agents/`, `lsp.json` and `sandbox.toml` — no `rules/` — and the home table has no
+    # `rules/` either. The one documented per-project instruction mechanism is `AGENTS.md`. So
+    # everything chamnan wrote for Grok was read by nothing (R6 agent 1, finding 1).
+    #
+    # An alias and not a module, for the reason every name above is: two modules writing one path
+    # would give that path two owners.
+    #
+    # Note what did NOT change, because copying the `mistral` precedent whole would be a second
+    # bug: `.vibe/` lost its row in `host.py`'s marker table because it is Vibe's HOME directory
+    # and a repository never has one. `.grok/` genuinely IS a project directory in the reference
+    # above, so finding one in a checkout really does mean Grok Build is in use. The detection is
+    # right; only the write target was wrong.
+    "grok": generic.NAME,
 }
 
 
