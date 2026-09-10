@@ -57,13 +57,50 @@ def _head_from_disk(root):
             return head                   # detached
         if not head.startswith("ref: "):
             return ""
-        ref = git_dir / head[5:].strip()
-        if not ref.is_file():
-            return ""                     # packed-refs, or an unborn branch
+        name = head[5:].strip()
+        ref = git_dir / name
+        if not ref.is_file():             # packed, or an unborn branch
+            return _packed_ref(git_dir, name)
         value = ref.read_text(encoding="utf-8-sig").strip()
         return value if _SHA.match(value) else ""
     except (OSError, ValueError, UnicodeDecodeError):
         return ""
+
+
+def _packed_ref(git_dir, name):
+    """`name`'s sha out of `.git/packed-refs`, or "" when that file cannot answer unambiguously.
+
+    Consulted only when the loose ref file is absent, which is git's own precedence: a repository
+    that has been packed keeps a branch tip here instead, and one that has been packed and then
+    committed to has both, with the loose file winning.
+
+    🐛 [2026-09-11] This whole branch used to `return ""` and leave a packed ref to the
+    subprocess -- and packing is not an edge case, it is what `git gc` does to every repository
+    that lives long enough. chamnan's own workspace packed its refs on 2026-09-11 and the fast path
+    above stopped firing that day: `collapse()` runs several times per session start and each one
+    spawned `git rev-parse HEAD`. The suite caught it as `...and ask for HEAD at most once`, a check
+    written for a different reason entirely. So the fast path was measured on a young repository and
+    quietly did nothing on a mature one, which is the shape this file already carries three records
+    of -- a rule applied to the member in front of me and not to the set.
+
+    Same contract as the rest of this path: the value is a CACHE KEY, so a wrong one would serve a
+    stale churn ranking as current. Every uncertainty returns "" and lets the caller ask git.
+    """
+    try:
+        raw = (git_dir / "packed-refs").read_text(encoding="utf-8-sig")
+    except (OSError, ValueError, UnicodeDecodeError):
+        return ""
+    for line in raw.splitlines():
+        # `#` opens the header and `^` is the peeled target of the tag on the line above. Skipped
+        # for legibility, NOT for correctness: verified 2026-09-11 that neither can be mistaken for
+        # the ref being sought, because a `^` line has no name field at all and a header's is prose.
+        # The match below is what makes this safe, and it is exact.
+        if not line or line[0] in "#^":
+            continue
+        sha, _, found = line.partition(" ")
+        if found.strip() == name:
+            return sha if _SHA.match(sha) else ""
+    return ""
 
 
 _CAN_SPEAK = {}

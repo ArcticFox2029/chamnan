@@ -12402,10 +12402,39 @@ try:
     if _wrong:
         print("      disagreed with git for: " + ", ".join(_wrong))
     check("THE CHURN CACHE KEY IS WHAT GIT WOULD SAY, IN EVERY REPOSITORY SHAPE", _wrong == [])
-    check("...and the ordinary case is answered without spawning git at all",
-          bool(rollup._head_from_disk(_shapes[0][1])))
-    check("...while a packed ref or a worktree falls back rather than guessing",
-          not rollup._head_from_disk(_packed) and not rollup._head_from_disk(_gh / "wt"))
+    # Asserted over the POPULATION, not over `_shapes[0]`. The version before this one read the
+    # ordinary shape and stopped, so it went on passing while the disk reader silently declined
+    # every packed repository -- which is every repository `git gc` has run on. A shape that
+    # answers at all must answer CORRECTLY; a shape that declines is free to.
+    _disk = {n: rollup._head_from_disk(r) for n, r in _shapes}
+    _lied = [n for n, r in _shapes if _disk[n] and _disk[n] != _git_head(r)]
+    if _lied:
+        print("      answered from disk but disagreed with git: " + ", ".join(_lied))
+    check("...and NO SHAPE ANSWERS FROM DISK WITH SOMETHING GIT WOULD CONTRADICT", _lied == [])
+    check("...the two ordinary shapes are both answered without spawning git at all",
+          bool(_disk["normal branch"]) and bool(_disk["detached HEAD"]))
+    # Packing is what happens to a repository that lives long enough, so leaving it to the
+    # subprocess meant the fast path worked on a fixture and not on a real checkout.
+    check("...INCLUDING A PACKED REF, WHICH IS EVERY REPOSITORY GIT HAS EVER GC'd",
+          bool(_disk["packed refs"]))
+    check("...while a worktree, an unborn HEAD and a non-repository decline rather than guess",
+          not _disk["worktree"] and not _disk["unborn HEAD"] and not _disk["not a repository"])
+    # The point of reading HEAD off the filesystem is that `collapse()` runs several times per
+    # session start and each call re-derives the cache key. A shape that declines pays a
+    # subprocess EVERY time, so "answered from disk" and "asked git once" are the same property
+    # seen from two sides -- and the sibling check ~7,300 lines up sees only the other side.
+    _spawned = []
+    _realrun = rollup.subprocess.run
+    def _watch(*a, **k):
+        _spawned.append(list(a[0]) if a and a[0] else [])
+        return _realrun(*a, **k)
+    rollup.subprocess.run = _watch
+    try:
+        for _ in range(4):
+            rollup._head(_packed)
+    finally:
+        rollup.subprocess.run = _realrun
+    check("...so four HEAD reads of a packed repository spawn git ZERO times", _spawned == [])
 finally:
     subprocess.run(["git", "worktree", "prune"], cwd=_gh / "wtbase", capture_output=True)
     _rmtree(_gh, ignore_errors=True)
