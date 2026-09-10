@@ -632,6 +632,13 @@ def index_is_behind(root, map_path):
                 changed.append((_mt, f))
             except OSError:
                 continue
+        # An index whose OWN mtime is in the future silences this comparison, and clamping it here
+        # does NOT fix that — measured 2026-09-10. Both sides clamp to now, so `newest <= built`
+        # stays true for every real source file and the warning never fires again. mtime cannot
+        # distinguish "the index is current" from "the index's timestamp is nonsense"; only reading
+        # the index against the tree can, which is what `chamnan-map --verify` already does
+        # (1,448 claims checked on this repository). R4 agent 3's finding 6 is real and its
+        # suggested fix is not the answer; the dead-ends file records why.
         built = map_path.stat().st_mtime
         if newest <= built:
             return 0, []

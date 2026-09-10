@@ -484,7 +484,19 @@ def prune(root, days):
                     # (2026, 2, 30) and silently returns March 2nd. An impossible date is a typo,
                     # and a typo must not become a deletion decision that looks correct.
                     datetime.date(y, m, dd)
-                    age = time.time() - calendar.timegm((y, m, dd, 12, 0, 0))
+                    _ts = calendar.timegm((y, m, dd, 12, 0, 0))
+                    # 🐛 [2026-09-10] `ledger._ymd_to_ts` refuses a date in the FUTURE and this
+                    # copy — the one that DELETES — never got that half. A record named
+                    # `2099-01-01` gets a negative age, is never doomed, and is therefore always
+                    # the file `keep_the_newest` spares when the pass would take every one: a
+                    # single typo'd filename makes the "always spare one" promise protect the
+                    # wrong file and delete the genuinely newest. A day of slack, so a record
+                    # written in a timezone ahead of this one is not refused for being an hour
+                    # early (R4 agent 3, finding 5). Third copy of this parser, third time this
+                    # exact pair has been half-applied.
+                    if _ts > time.time() + 86400:
+                        raise ValueError("a date in the future is not an age")
+                    age = time.time() - _ts
                 except (ValueError, OverflowError):
                     age = None      # an impossible date is not a date; fall back to mtime
             if age is not None:

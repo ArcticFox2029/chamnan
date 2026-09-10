@@ -394,8 +394,19 @@ def enabled(part, root=None):
 # have deleted the whole feature after seven quiet days — the identical failure the comment
 # below describes being fixed for its two siblings. A log that bounds itself by record must
 # say so here, or the directory sweep bounds it by date instead.
+# 🐛 [2026-09-10] `block_shape.jsonl` and `gate_runs.jsonl` were missing from this tuple, so both
+# were deleted WHOLE after seven quiet days despite bounding themselves by record. They are not
+# ordinary scratch: the first is the only record of what the session block actually delivered — 233
+# firings, and the evidence base for every question about what the block costs — and the second is
+# what lets the release gate say "4,613 checks — was 4,605" instead of a bare number nobody can
+# compare. A week without a session on a repository is not unusual, and neither file announces its
+# own deletion (R4 agent 3, findings 3 and 4).
+#
+# The reason it was missed is worth keeping: `blocklog` declares its path as `"logs/block_shape.jsonl"`
+# — WITH the directory — so a search for a bare `"*.jsonl"` filename literal walks straight past it.
+# `44_...` in the check pool now asserts the population instead of trusting this list to be complete.
 SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl",
-                    "subagent_start.jsonl")
+                    "subagent_start.jsonl", "block_shape.jsonl", "gate_runs.jsonl")
 
 
 def expiring_logs(root=None, within_days=1.0):

@@ -213,7 +213,30 @@ def render(text, budget, path_for_marker):
 
     marker = ""
     if dropped_chars > 0:
-        marker = f"_…{_human(dropped_chars)} more — read `{path_for_marker}`_"
+        # 🐛 [2026-09-10] This said only "…9.3k more". A number is not a reason to go and read; a
+        # list of what is MISSING is. The rules section already names every rule it could not show
+        # and delivered measurably better for it — 3 of 10 arriving with a body became 5 of 10 when
+        # its pointer stopped wasting bytes on repetition — and this is the same shape one store
+        # over, which is the defect this repository records more than any other. The headings are
+        # free here: the cut is an offset into `unpinned_text`, so what fell past it is already in
+        # hand (R1 finding, `state_outgrows_its_budget_unnoticed`, item 2).
+        #
+        # Titles only, and at most four. The point is to make the reader decide whether to open the
+        # file, not to smuggle the section back in past its own budget.
+        _lost = [h for h in (_heading_text(m.group(2)).strip()
+                             for m in md.headings(_HEADING, unpinned_text) if m.start() >= cut) if h]
+        _shown = _lost[:4]
+        if _shown:
+            _names = ", ".join(f"**{h}**" for h in _shown)
+            # The ellipsis counts what was LOST, not what exists. Comparing against every heading in
+            # the file made it appear whenever anything survived the cut, which says "there is more
+            # than this" about a list that is already complete -- the small dishonesty that teaches
+            # a reader the line is decorative.
+            _more = "…" if len(_lost) > len(_shown) else ""
+            marker = (f"_…{_human(dropped_chars)} more, not shown: {_names}{_more} — "
+                      f"read `{path_for_marker}`_")
+        else:
+            marker = f"_…{_human(dropped_chars)} more — read `{path_for_marker}`_"
     # Pins are never cut, so a pinned block larger than the whole budget is delivered in full and
     # the block is over budget by however much it exceeds it. That is the right behaviour -- the
     # point of a pin is that it survives -- but the marker used to describe only the unpinned

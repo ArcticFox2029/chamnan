@@ -27886,6 +27886,199 @@ if _t_rr44.is_file():
               not _t_silent44, saw=", ".join(_t_silent44) or None)
 else:
     skip("  · no redactor_recall.py — the published-number check is skipped, not passed")
+# ---- 45_every_jsonl_this_package_writes_is_accounted_for.py
+# ------------------------------- the retention list was a list, and a list falls behind its set
+# 🐛 [2026-09-10] `SELF_PRUNING_LOGS` names the logs that bound themselves by RECORD and must not be
+# deleted whole by the file-age sweep. Two were missing: the record of what the session block
+# actually delivered, and the record of how many checks the gate ran last time. Both were deleted
+# whole after seven quiet days, silently, and both are exactly the files a question about drift over
+# time has to be answered from (R4 agent 3, findings 3 and 4).
+#
+# The reason it went unnoticed is the interesting part. One of them declares its path WITH the
+# directory in front of it, so a search for a bare filename literal walks straight past it — the set
+# looked complete to anyone who checked it the obvious way.
+#
+# So this does not check the list against another list. It derives the population from the source:
+# every `*.jsonl` string literal anywhere in the package, however it is spelled, must be either on
+# the exempt tuple or on an explicit disposable list that says out loud that age-based deletion is
+# correct for it. A file added later cannot opt out by being new.
+import ast as _ast45
+import re as _re45
+import shutil as _sh45
+import tempfile as _tmp45
+from pathlib import Path as _Path45
+
+# Written here rather than in `workspace.py` on purpose: this is a claim about which logs are
+# genuinely throwaway, and it belongs beside the check that enforces it rather than beside the
+# tuple it is checking. Anything not in either place fails, which is the point.
+_DISPOSABLE45 = frozenset()
+
+_t_files45 = []
+for _t_d45 in ("lib", "hooks", "bin", "tools"):
+    for _t_p45 in sorted((ROOT / _t_d45).rglob("*")):
+        if _t_p45.is_file() and (_t_p45.suffix == ".py" or _t_p45.name.startswith("chamnan-")):
+            if "__pycache__" not in _t_p45.parts:
+                _t_files45.append(_t_p45)
+
+_t_named45 = {}
+for _t_p45 in _t_files45:
+    try:
+        _t_tree45 = _ast45.parse(_t_p45.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, UnicodeDecodeError):
+        continue
+    for _t_n45 in _ast45.walk(_t_tree45):
+        # Every string constant, not only assignments: a path is as often built inline as declared.
+        if isinstance(_t_n45, _ast45.Constant) and isinstance(_t_n45.value, str):
+            for _t_m45 in _re45.finditer(r"([A-Za-z0-9_.-]+\.jsonl)", _t_n45.value):
+                _t_named45.setdefault(_t_m45.group(1), set()).add(_t_p45.name)
+
+check("the sweep for jsonl names found some, so this is not passing on an empty set",
+      len(_t_named45) >= 5, saw=str(sorted(_t_named45)))
+
+_t_unaccounted45 = sorted(
+    "%s (written by %s)" % (_t_n45, ", ".join(sorted(_t_where45)))
+    for _t_n45, _t_where45 in _t_named45.items()
+    if _t_n45 not in ws.SELF_PRUNING_LOGS and _t_n45 not in _DISPOSABLE45)
+check("EVERY JSONL THIS PACKAGE WRITES IS EITHER SELF-PRUNING OR DECLARED DISPOSABLE",
+      not _t_unaccounted45, saw="\n".join(_t_unaccounted45) or None)
+
+# The other direction: a name on the exempt tuple that nothing writes any more is a rule guarding
+# a file that does not exist, which reads as coverage and is not.
+_t_orphan45 = sorted(n for n in ws.SELF_PRUNING_LOGS if n not in _t_named45)
+check("...and nothing on the exempt list has stopped being written without being removed from it",
+      not _t_orphan45, saw=", ".join(_t_orphan45) or None)
+
+# The sweep must actually honour the tuple. Asserting the list's contents proves nothing about the
+# code that reads it, and this is a deletion path -- the one kind where a check that only inspects
+# a constant is worth very little.
+_t_sweep45 = _Path45(_tmp45.mkdtemp(prefix="chamnan-sweep45-"))
+(_t_sweep45 / ".chamnan" / "logs").mkdir(parents=True)
+_t_old45 = time.time() - 400 * 86400
+for _t_name45 in list(ws.SELF_PRUNING_LOGS) + ["ordinary_scratch.jsonl", "keeper.md"]:
+    _t_f45 = _t_sweep45 / ".chamnan" / "logs" / _t_name45
+    _t_f45.write_text('{"x": 1}\n', encoding="utf-8")
+    os.utime(_t_f45, (_t_old45, _t_old45))
+# A FRESH file, or `keep_the_newest` fires: a pass that would take every file in a directory is
+# treated as a clock fault rather than as retention, and it spares one arbitrarily. That guard is
+# correct and documented; a fixture where everything is doomed tests the guard instead of the
+# sweep, which is what the first version of this check accidentally did.
+(_t_sweep45 / ".chamnan" / "logs" / "written_today.md").write_text('fresh\n', encoding="utf-8")
+ws.prune_logs(_t_sweep45)
+_t_gone45 = sorted(n for n in ws.SELF_PRUNING_LOGS
+                   if not (_t_sweep45 / ".chamnan" / "logs" / n).exists())
+check("...and the sweep really spares them: every exempt log survives a 400-day-old mtime",
+      not _t_gone45, saw=", ".join(_t_gone45) or None)
+check("...while an ordinary aged log is still taken, so the sweep has not simply stopped working",
+      not (_t_sweep45 / ".chamnan" / "logs" / "ordinary_scratch.jsonl").exists())
+_sh45.rmtree(_t_sweep45, ignore_errors=True)
+# ---- 46_a_clock_that_is_wrong_does_not_delete_the_newest_record.py
+# --------------------------------- one bad filename, and the guard protects exactly the wrong file
+# 🐛 [2026-09-10] `sessions.prune` had `ledger._ymd_to_ts`'s impossible-date guard and not its
+# FUTURE-date refusal — the third copy of that parser, and the only one that DELETES. A record named
+# `2099-01-01-*.md` gets a negative age, is never doomed, and is therefore always the file
+# `keep_the_newest` spares when a pass would take every one. So a single typo'd filename makes the
+# "one file is always spared" promise protect a record nobody wrote and delete the genuinely newest
+# one (R4 agent 3, finding 5).
+#
+# Both directions below, because a prune that refuses to delete anything passes a
+# "the newest survived" check exactly as well as a correct one.
+import shutil as _sh46
+import tempfile as _tmp46
+from pathlib import Path as _Path46
+
+import sessions as _ses46
+
+_t_root46 = _Path46(_tmp46.mkdtemp(prefix="chamnan-prune46-"))
+_t_dir46 = _ses46.directory(_t_root46)
+_t_dir46.mkdir(parents=True, exist_ok=True)
+
+# The shape that actually fails, which is narrower than it looks. EVERY real record is past the
+# window, so `keep_the_newest` should fire and spare the newest of them. The future-dated typo is
+# the only file that is not doomed -- and that alone is enough to stop the guard firing, because
+# the pass no longer takes "every file". The typo survives (it always would) and the genuinely
+# newest real record is deleted in its place.
+for _t_name46 in ("2020-01-01-old.md", "2020-02-01-older.md", "2020-03-01-newest-real.md"):
+    (_t_dir46 / _t_name46).write_text("# x\n\nbody\n", encoding="utf-8")
+_t_typo46 = _t_dir46 / "2099-01-01-typo.md"
+_t_typo46.write_text("# x\n\nbody\n", encoding="utf-8")
+# Its mtime is aged as well, or the fixture proves nothing: a file created a second ago survives on
+# mtime whether or not its NAME is refused, and the fallback branch would be doing the work the
+# refusal is supposed to do. Aged, the two behaviours separate cleanly -- refused, it is doomed like
+# everything else and the guard spares the newest real record; accepted, it is the one file not
+# doomed, the pass is no longer "every file", and nothing is spared at all.
+_t_aged46 = time.time() - 400 * 86400
+os.utime(_t_typo46, (_t_aged46, _t_aged46))
+
+_ses46.prune(_t_root46, 30)
+_t_left46 = sorted(p.name for p in _t_dir46.glob("*.md"))
+
+check("A RECORD DATED IN THE FUTURE DOES NOT STOP THE SPARE-THE-NEWEST GUARD FIRING",
+      "2020-03-01-newest-real.md" in _t_left46,
+      saw="survivors: " + (", ".join(_t_left46) or "none") +
+          " — the future-dated typo counted as not-doomed, so the pass was not 'every file' and "
+          "the newest real record was deleted instead of spared")
+check("...and the older records around it were still taken, so the prune has not stopped deleting",
+      "2020-01-01-old.md" not in _t_left46, saw=", ".join(_t_left46) or "none")
+_sh46.rmtree(_t_root46, ignore_errors=True)
+
+# An impossible date is still not a date -- the guard that was already there must survive this one.
+_t_root46b = _Path46(_tmp46.mkdtemp(prefix="chamnan-prune46b-"))
+_t_dir46b = _ses46.directory(_t_root46b)
+_t_dir46b.mkdir(parents=True, exist_ok=True)
+_t_feb46 = _t_dir46b / "2026-02-30-impossible.md"
+_t_feb46.write_text("# x\n\nbody\n", encoding="utf-8")
+_t_fresh46 = _t_dir46b / (time.strftime("%Y-%m-%d") + "-today.md")
+_t_fresh46.write_text("# today\n\nbody\n", encoding="utf-8")
+_t_old46 = time.time() - 400 * 86400
+os.utime(_t_feb46, (_t_old46, _t_old46))
+_ses46.prune(_t_root46b, 30)
+check("...and an impossible calendar date still falls back to mtime rather than becoming a date",
+      not _t_feb46.exists(), saw="2026-02-30 survived a 400-day-old mtime")
+_sh46.rmtree(_t_root46b, ignore_errors=True)
+# ---- 47_the_state_cut_marker_names_what_is_missing.py
+# ------------------------------------- a number is not a reason to go and read; a name is
+# 🐛 [2026-09-10] When `STATE.md` overran its budget the marker said only "…9.3k more — read
+# .chamnan/STATE.md". An agent reading that has to decide to go and open the file at the exact
+# moment — a fresh session or a compaction — when it does not yet know whether it needs to. The
+# rules section one store over already names every rule it could not show, and that store measured
+# 3 of 10 arriving with a body becoming 5 of 10 when its pointer stopped wasting bytes; this is the
+# same shape applied to one member of a pair and not the other, which is this repository's most
+# recorded defect (R1 finding, `state_outgrows_its_budget_unnoticed`, item 2).
+#
+# The headings cost nothing to find: the cut is a character offset into the unpinned text, so what
+# fell past it is already in hand where the marker is built.
+import state as _st47
+
+_t_text47 = "# Work in flight\n\n" + "".join(
+    "## -> thing %d\nbody %d with enough words here to move the budget along a little.\n\n" % (i, i)
+    for i in range(1, 7))
+
+_t_body47, _t_mark47 = _st47.render(_t_text47, 40, ".chamnan/STATE.md")
+check("THE STATE CUT MARKER NAMES THE SECTIONS THAT DID NOT ARRIVE, NOT ONLY HOW MANY BYTES DID NOT",
+      "thing 2" in _t_mark47 and "thing 3" in _t_mark47,
+      saw=_t_mark47 or "(no marker at all)")
+check("...and it still says how much was cut, which is what makes the names worth acting on",
+      "more" in _t_mark47, saw=_t_mark47 or None)
+check("...and it does not name a section that DID arrive, which would send the reader to re-read "
+      "what they already have",
+      "thing 1" not in _t_mark47, saw=_t_mark47 or None)
+
+# The ellipsis is a claim about what is missing, and it has to be true in both directions.
+_t_all47 = _st47.render(_t_text47, 12, ".chamnan/STATE.md")[1]
+check("the list is capped, so a badly overrun file does not paste its whole table of contents",
+      _t_all47.count("**") <= 8, saw=_t_all47 or None)
+_t_two47 = "# Work in flight\n\n" + "".join(
+    "## -> only %d\nbody %d here.\n\n" % (i, i) for i in range(1, 3))
+_t_mark2_47 = _st47.render(_t_two47, 14, ".chamnan/STATE.md")[1]
+check("...and the ellipsis counts what was LOST, so a complete list does not claim there is more",
+      not (_t_mark2_47.count("**") // 2 >= 1 and _t_mark2_47.rstrip().endswith("_")
+           and "… —" in _t_mark2_47 and _t_mark2_47.count("**") // 2 == 2),
+      saw=_t_mark2_47 or None)
+
+# Nothing cut, nothing said. A marker that appears when the file fits is noise on every session.
+check("a STATE.md that fits its budget produces no marker at all",
+      _st47.render(_t_text47, 400, ".chamnan/STATE.md")[1] == "",
+      saw=_st47.render(_t_text47, 400, ".chamnan/STATE.md")[1] or None)
 # ============================ end of the folded surgical pool
 
 
