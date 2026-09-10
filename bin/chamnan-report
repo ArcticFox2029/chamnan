@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -944,7 +945,7 @@ def _read_pointer_log(root):
     return fired, named
 
 
-def print_pointer(fired, named, opened):
+def print_pointer(fired, named, opened, root=None):
     """Did the session open what it was pointed at?
 
     The measurement `hooks/chamnan_file_pointer.py` was built to allow, and it is deliberately NOT "how
@@ -974,6 +975,44 @@ def print_pointer(fired, named, opened):
         print(f"      …and {len(followed) - 6} more")
     print("  (an observation, not a score: knowledge can be acted on without the file being")
     print("   opened, and a file can be opened for a reason that has nothing to do with this)")
+
+    # 🐛 [2026-09-10] This reported what WAS named and never the inverse, and the inverse is the
+    # question somebody actually has about a growing `skills/`: which of these is pulling its
+    # weight? A round proposed building a second usage store to answer it — a `record_call` for
+    # skills, a sibling index, its own lock and atomic write. None of that is needed: the pointer
+    # log already records every entry it named, and the store on disk says what exists. The answer
+    # is a set difference over two things already written down (R3 agent 5, idea 3).
+    #
+    # Measured before it was built, which is what decided it: 18 of 27 skills named at least once
+    # over 9.8 days and 93 firings, 9 never. Lopsided is the outcome the idea itself said would
+    # make this worth having; a flat distribution would have meant it added nothing.
+    #
+    # AGE is printed beside each one and is not decoration. A skill written yesterday has had no
+    # chance to be named, and calling it unused is how a store loses something that was working.
+    # This repository produced that exact case on the day the check was written: a rule moved into
+    # `skills/` that morning was in the never-named list by the afternoon.
+    if root is not None:
+        _sk_dir = ws.workspace(root) / "skills"
+        try:
+            _sk_all = {f"skills/{f.name}": f for f in _sk_dir.glob("*.md")
+                       if f.is_file() and f.name != "README.md"}
+        except OSError:
+            _sk_all = {}
+        _sk_never = sorted(set(_sk_all) - set(named))
+        if _sk_all and _sk_never:
+            print()
+            print(f"  {len(_sk_never)} of {len(_sk_all)} recorded skills were never named")
+            _now = time.time()
+            for _sk in _sk_never[:8]:
+                try:
+                    _age = (_now - _sk_all[_sk].stat().st_mtime) / 86400
+                    _when = f"{_age:.0f}d old" if _age >= 1 else "written today"
+                except OSError:
+                    _when = "age unknown"
+                print(f"      {mdblock.as_quoted(_sk, 90)}  ({_when})")
+            if len(_sk_never) > 8:
+                print(f"      …and {len(_sk_never) - 8} more")
+            print("  A new one has had no chance to be named; an old one is the question.")
     print()
 
 
@@ -1039,7 +1078,7 @@ def main(argv):
         # all before paying for the scan.
         fired, named = _read_pointer_log(root)
         entries, opened = collect(project_dir, want_opened=bool(fired), root=root)
-        print_pointer(fired, named, opened)
+        print_pointer(fired, named, opened, root)
     if not project_dir:
         # 🐛 [2026-08-28] Returned 1. A repository nobody has worked on in Claude Code yet has no
         # transcripts, which is the ordinary state on the day the plugin is installed — not a
