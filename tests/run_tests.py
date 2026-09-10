@@ -1319,9 +1319,13 @@ for _ in range(3):
         {"tool_name": "Bash", "tool_input": {"command": ".chamnan/tools/other.sh"},
          "tool_response": {"stdout": "", "stderr": "", "interrupted": True}}),
         capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=th_root)
-other_entry = next(e for e in tools_index.load(th_root) if e["name"] == "other.sh")
+other_entry = next((e for e in tools_index.load(th_root) if e["name"] == "other.sh"), None)
+check("the interrupted run was registered at all, which the assertion below assumes",
+      other_entry is not None,
+      saw="no other.sh entry in the index: " + ", ".join(
+          sorted(e["name"] for e in tools_index.load(th_root))) if other_entry is None else None)
 check("INTERRUPTED IS TRACKED SEPARATELY FROM STDERR",
-      other_entry["interrupted"] == 3 and other_entry["stderr_seen"] == 0)
+      bool(other_entry) and other_entry["interrupted"] == 3 and other_entry["stderr_seen"] == 0)
 
 demote_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-candidates"), "demote", "flaky.sh"],
                             capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=th_root)
@@ -1600,13 +1604,16 @@ check("the transcript scan is entered once, not once per consumer",
 # bucketing through one calendar conversion, which changed nothing this check exists to protect,
 # raised StopIteration and took the whole gate down with "a check did not produce a result". The
 # property is "the write site of touched_by_week", and how its key is computed is not part of it.
-_tbw = next(l for l in _rep_src.splitlines()
-            if "touched_by_week[" in l and ".add(" in l)
+_tbw = next((l for l in _rep_src.splitlines()
+             if "touched_by_week[" in l and ".add(" in l), None)
+check("the touched_by_week write site is still findable, which the two checks below read",
+      _tbw is not None, saw="no line writes into touched_by_week" if _tbw is None else None)
+_tbw = _tbw or ""
 # The nearest CODE line above it, not the previous line: a comment between a guard and the
 # statement it guards is ordinary, and reading line-1 blindly turns one into a missing guard.
 _rep_lines = _rep_src.splitlines()
 _guard = ""
-for _i in range(_rep_lines.index(_tbw) - 1, -1, -1):
+for _i in range((_rep_lines.index(_tbw) if _tbw in _rep_lines else 0) - 1, -1, -1):
     if _rep_lines[_i].strip() and not _rep_lines[_i].lstrip().startswith("#"):
         _guard = _rep_lines[_i]
         break
@@ -1624,9 +1631,13 @@ check("...and it now also requires the file to be under the repository being rep
 # is still the reason a usage-less line is let through the prefilter — that condition is
 # unrelated to and does not replace the root check, which `opened` now shares with
 # `touched_by_week`.
-_opn = next(l for l in _rep_src.splitlines() if 'opened.add(_fp.split(".chamnan/")[-1])' in l)
-_opn_guard_lines = _rep_src.splitlines()[_rep_src.splitlines().index(_opn) - 2:
-                                          _rep_src.splitlines().index(_opn)]
+_opn = next((l for l in _rep_src.splitlines()
+             if 'opened.add(_fp.split(".chamnan/")[-1])' in l), None)
+check("the opened-set write site is still findable, which the two checks below read",
+      _opn is not None, saw="no line writes into the opened set" if _opn is None else None)
+_opn = _opn or ""
+_opn_at = _rep_src.splitlines().index(_opn) if _opn in _rep_src.splitlines() else 0
+_opn_guard_lines = _rep_src.splitlines()[max(0, _opn_at - 2):_opn_at]
 _opn_guard = " ".join(_opn_guard_lines)
 check("the pointer set still does not require has_usage, since that is why the line was let through",
       "want_opened" in _opn_guard and "has_usage" not in _opn_guard)
@@ -15287,8 +15298,17 @@ check("every window in the table is a plausible token count",
 # (R8 agent 1). The check that broke was right to break — but it broke on its own stale premise
 # rather than on the behaviour it exists to test, which is that a window maps to a profile. Read
 # from the table now, so correcting a vendor's number can never again look like a regression here.
-_big_family = next(m for m, w in sorted(profiles_mod.MODEL_WINDOWS.items()) if w >= 1_000_000)
-_small_family = next(m for m, w in sorted(profiles_mod.MODEL_WINDOWS.items()) if w <= 200_000)
+# Defaults, so a table with no model at either end FAILS with that fact rather than raising and
+# reporting nothing at all for the whole run.
+_big_family = next((m for m, w in sorted(profiles_mod.MODEL_WINDOWS.items())
+                    if w >= 1_000_000), None)
+_small_family = next((m for m, w in sorted(profiles_mod.MODEL_WINDOWS.items())
+                      if w <= 200_000), None)
+check("the model-window table still has a model at each end for these two checks to use",
+      _big_family is not None and _small_family is not None,
+      saw="large=%r small=%r" % (_big_family, _small_family))
+_big_family = _big_family or next(iter(sorted(profiles_mod.MODEL_WINDOWS)), "")
+_small_family = _small_family or _big_family
 check(f"a large window lands in large-window: {_big_family} "
       f"({profiles_mod.MODEL_WINDOWS[_big_family]:,})",
       profiles_mod.by_model(_big_family)[0] == "large-window")
@@ -22613,10 +22633,16 @@ check("...and nothing chamnan wrote is left dirty behind it",
 # installed file holds a control character instead. That exact confusion is how a CR was shipped
 # into the hook on 2026-09-09 with this check passing; the sibling check that reads the INSTALLED
 # file ("AN INSTALLED SHELL SCRIPT CARRIES LF ENDINGS") is what caught it, on all five CI jobs.
+# A default, so a renamed or removed HOOK_BODY FAILS this check with the reason instead of raising
+# StopIteration and taking the whole run down with "a check did not produce a result".
 _hk_between = next(
-    _n.value.value for _n in ast.parse(
+    (_n.value.value for _n in ast.parse(
         (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8")).body
-    if isinstance(_n, ast.Assign) and getattr(_n.targets[0], "id", "") == "HOOK_BODY")
+     if isinstance(_n, ast.Assign) and getattr(_n.targets[0], "id", "") == "HOOK_BODY"), None)
+check("the hook body is still a module-level assignment this check can read",
+      _hk_between is not None,
+      saw="no HOOK_BODY assignment in bin/chamnan-map" if _hk_between is None else None)
+_hk_between = _hk_between or ""
 check("...and the hook body carries no control character of its own",
       not [c for c in _hk_between if ord(c) < 32 and c != "\n"],
       saw=sorted({repr(c) for c in _hk_between if ord(c) < 32 and c != "\n"}))
@@ -28225,6 +28251,130 @@ if _t_loaded49 and hasattr(_t_mod49, "_local_day"):
     check("...and the day-bucketing really does go through the one conversion",
           any("_by_week[_local_day(" in ln for ln in _t_lines49),
           saw="nothing keys a week bucket on _local_day()")
+# ---- 50_every_title_that_becomes_a_filename_goes_through_one_reduction.py
+# ------------------- the correction was written down three times and applied to the sentence never
+# 🐛 [2026-09-10] `mdblock`'s docstrings claimed "Both slug() functions in this codebase" and "all
+# four", and three OTHER files carried near-identical comments saying there are five and three of
+# them never called it. So the count was corrected in three places and fixed in none, and every one
+# of those comments had to be written by somebody who had just counted (R2 agent 3, finding 1).
+#
+# A count in a docstring is a fact about today wearing the clothes of a rule. Both sentences now
+# name the property instead, and this asserts the property directly — which is the only form that
+# cannot go stale when a sixth store is added.
+import ast as _ast50
+
+_t_lib50 = ROOT / "lib"
+_t_missing50, _t_seen50 = [], []
+for _t_f50 in sorted(_t_lib50.rglob("*.py")):
+    if "__pycache__" in _t_f50.parts or _t_f50.name == "mdblock.py":
+        continue
+    try:
+        _t_tree50 = _ast50.parse(_t_f50.read_text(encoding="utf-8", errors="replace"))
+    except (SyntaxError, UnicodeDecodeError):
+        continue
+    for _t_n50 in _ast50.walk(_t_tree50):
+        if not (isinstance(_t_n50, _ast50.FunctionDef) and _t_n50.name == "slug"):
+            continue
+        _t_calls50 = {
+            _t_c50.func.attr for _t_c50 in _ast50.walk(_t_n50)
+            if isinstance(_t_c50, _ast50.Call) and isinstance(_t_c50.func, _ast50.Attribute)}
+        _t_seen50.append("%s.slug" % _t_f50.stem)
+        # `ascii_stem` is the reduction; `filename_safe` is what keeps the result off a Windows
+        # device. A slug that does one and not the other is the half-applied shape this whole
+        # check exists for.
+        for _t_need50 in ("ascii_stem", "filename_safe"):
+            if _t_need50 not in _t_calls50:
+                _t_missing50.append("%s.slug does not call %s" % (_t_f50.stem, _t_need50))
+
+check("the walk found the slug functions, so this is not passing on an empty set",
+      len(_t_seen50) >= 3, saw=", ".join(_t_seen50) or "none found")
+check("EVERY SLUG THAT TURNS A TITLE INTO A FILENAME GOES THROUGH BOTH HALVES OF THE REDUCTION",
+      not _t_missing50, saw="\n".join(_t_missing50) or None)
+
+# And the docstrings must not go back to counting. Built at runtime rather than written out: this
+# file is folded into the suite it scans, and a check that quotes the phrase it forbids matches
+# itself -- recorded in this workspace as having happened before.
+_t_bad50 = ["both %s functions" % "slug()", "all four %s functions" % "`slug()`",
+            "all four %s" % "slug()"]
+_t_stale50 = []
+for _t_f50 in sorted(_t_lib50.rglob("*.py")):
+    if "__pycache__" in _t_f50.parts:
+        continue
+    _t_low50 = _t_f50.read_text(encoding="utf-8", errors="replace").lower()
+    for _t_phrase50 in _t_bad50:
+        if _t_phrase50.lower() in _t_low50:
+            _t_stale50.append("%s says %r" % (_t_f50.name, _t_phrase50))
+check("...and no docstring states how many of them there are, which is the fact that went stale",
+      not _t_stale50, saw="\n".join(_t_stale50) or None)
+# ---- 51_no_check_raises_instead_of_failing.py
+# ------------------------------- a raise inside a check is not a failure, it is a run with no result
+# 🐛 [2026-09-10] A check located a line in another file with `next(<genexp over splitlines()>)` and
+# no default. The key expression on that line changed — a change the check exists to be indifferent
+# to, and whose own comment said it was pinned to the property rather than the text — so the
+# generator was empty and it raised StopIteration. The gate reported NOT VERIFIED, a check did not
+# produce a result, after seventeen minutes, and every number in the run was unquotable.
+#
+# That is strictly worse than a failing check. A FAIL names what it wanted, the run completes, and
+# the rest of the numbers stand. A raise produces no verdict at all and points at the harness rather
+# than at the change that caused it. So: a search for an anchor in source text must be able to come
+# back empty, and the check that wanted it must say so.
+import ast as _ast51
+
+_t_suite51 = ROOT / "tests" / "run_tests.py"
+_t_src51 = _t_suite51.read_text(encoding="utf-8")
+_t_tree51 = _ast51.parse(_t_src51)
+
+_t_bare51 = []
+for _t_n51 in _ast51.walk(_t_tree51):
+    if not (isinstance(_t_n51, _ast51.Call) and isinstance(_t_n51.func, _ast51.Name)
+            and _t_n51.func.id == "next"):
+        continue
+    if len(_t_n51.args) >= 2 or _t_n51.keywords:
+        continue                                  # a default was passed; it cannot raise
+    # A `next()` over a genexp or a filter is a SEARCH: it can legitimately find nothing. A
+    # `next()` over an iterator the code just created and knows is non-empty is not the same
+    # thing, so only the searching shape is reported.
+    _t_arg51 = _t_n51.args[0] if _t_n51.args else None
+    _t_searching51 = isinstance(_t_arg51, (_ast51.GeneratorExp, _ast51.ListComp))
+    if isinstance(_t_arg51, _ast51.GeneratorExp) and not _t_arg51.generators[0].ifs:
+        _t_searching51 = False                    # no condition: it is a take-the-first, not a find
+    if _t_searching51:
+        _t_bare51.append("run_tests.py:%d" % _t_n51.lineno)
+
+check("NO CHECK IN THIS SUITE SEARCHES SOURCE WITH A NEXT() THAT CAN RAISE INSTEAD OF FAILING",
+      not _t_bare51,
+      saw="\n".join(_t_bare51[:6] + (["…and %d more" % (len(_t_bare51) - 6,)]
+                                     if len(_t_bare51) > 6 else [])) or None)
+
+# The same shape one level down: the pool files are folded into that suite, so a bare search here
+# becomes a bare search there.
+_t_pool51 = ROOT.parent.parent / ".chamnan" / "tools" / "checks"
+_t_pool_bare51 = []
+if _t_pool51.is_dir():
+    for _t_f51 in sorted(_t_pool51.glob("*.py")):
+        try:
+            _t_t51 = _ast51.parse(_t_f51.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, UnicodeDecodeError):
+            continue
+        for _t_n51 in _ast51.walk(_t_t51):
+            if (isinstance(_t_n51, _ast51.Call) and isinstance(_t_n51.func, _ast51.Name)
+                    and _t_n51.func.id == "next" and len(_t_n51.args) == 1
+                    and not _t_n51.keywords
+                    and isinstance(_t_n51.args[0], (_ast51.GeneratorExp, _ast51.ListComp))
+                    and getattr(_t_n51.args[0], "generators", [None])[0]
+                    and _t_n51.args[0].generators[0].ifs):
+                _t_pool_bare51.append("%s:%d" % (_t_f51.name, _t_n51.lineno))
+check("...and no pool file carries one either, since they are folded into that same suite",
+      not _t_pool_bare51, saw="\n".join(_t_pool_bare51[:6]) or None)
+
+# The walk must be able to SEE the shape, or both checks above pass by finding nothing anywhere.
+_t_probe51 = _ast51.parse('x = next(l for l in src.splitlines() if "needle" in l)\n')
+_t_found51 = [n for n in _ast51.walk(_t_probe51)
+              if isinstance(n, _ast51.Call) and isinstance(n.func, _ast51.Name)
+              and n.func.id == "next" and len(n.args) == 1 and not n.keywords
+              and isinstance(n.args[0], _ast51.GeneratorExp) and n.args[0].generators[0].ifs]
+check("...and the detector recognises the shape it is looking for, so silence means absence",
+      len(_t_found51) == 1, saw="probe matched %d time(s)" % (len(_t_found51),))
 # ============================ end of the folded surgical pool
 
 

@@ -427,7 +427,7 @@ _WINDOWS_RESERVED = frozenset(
 
 
 def ascii_stem(source):
-    """The `[a-z0-9-]` reduction all four `slug()` functions do, done once and done accent-safe.
+    """The `[a-z0-9-]` reduction every `slug()` in this package does, done once and accent-safe.
 
     🐛 [2026-09-08] Every `slug()` in this package reduced its title with
     `re.sub(r"[^a-zA-Z0-9]+", "-", title.lower())` on the RAW string, and the same four functions
@@ -461,7 +461,16 @@ def ascii_stem(source):
 def filename_safe(stem):
     """`stem`, or `_stem` when Windows would treat it as a device rather than a file.
 
-    🐛 Both slug() functions in this codebase reduce a title to `[a-z0-9-]` and use it as a filename.
+    🐛 Every store here that reduces a title to `[a-z0-9-]` uses the result as a filename.
+    🐛 [2026-09-10] This sentence and the one on `ascii_stem` above each carried a COUNT of the
+    stores doing this, and both counts were wrong. Three separate call sites carried
+    near-identical comments correcting the number in place rather than fixing it here -- the
+    correction written down three times and applied to the sentence never, which means three
+    people counted and none edited (R2 agent 3, finding 1). Neither sentence carries a number
+    any more: a count is a fact about today wearing the clothes of a rule, and the suite asserts
+    the population directly, which a number never could. The old wording is deliberately not
+    quoted here -- the check that forbids it reads this file.
+
     A thread called "CON" or a candidate sequence "nul" therefore produced `con.md` and `nul.md`,
     which on Windows are the console and the bit-bucket: the write does not fail, it goes to the
     device, and the record is gone. Applied to the stem chamnan chose, never to a name it was given,
@@ -564,8 +573,9 @@ def distinct_stem(directory_, base, title, title_reader, suffix=".md"):
 def fallback_name(source, kind):
     """A distinct, stable stem for a title the ASCII reduction emptied.
 
-    🐛 [2026-09-06] All four `slug()` functions in this package end `... or "session"` / `"entry"` /
-    `"thread"` / `"candidate"` -- the same latent bug written four times. The reduction keeps
+    🐛 [2026-09-06] Every `slug()` in this package ends `... or "session"` / `"entry"` / `"thread"`
+    / `"candidate"` -- the same latent bug written once per store. (The count that stood here was
+    stale by 2026-09-10, like the two above it; the property is what was ever meant.) The reduction keeps
     `[a-zA-Z0-9]` and nothing else, so EVERY title with no Latin letters in it reduces to the empty
     string and every one of them lands on that single constant name. In a Thai-language repository
     that is not an edge case, it is the normal case: two Thai-titled session records written on one

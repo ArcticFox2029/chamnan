@@ -1657,8 +1657,6 @@ def safe_tool_name(name):
     # 🐛 `mdblock.filename_safe` exists because a tool named "con" or "nul" becomes `con.sh` or
     # `nul.sh`, which on Windows are the console and the bit-bucket: the write does not fail, it
     # goes to the DEVICE and the tool is gone, while `tools/index.json` records it as promoted.
-    # Its docstring says "both slug() functions in this codebase" — there are five, and this was
-    # one of the three that never called it (R2 agent 1).
     import mdblock
     return mdblock.filename_safe(name)
 

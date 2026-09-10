@@ -523,8 +523,6 @@ def slug(title):
     # 🐛 `mdblock.filename_safe` exists because a record titled "CON" or "nul" becomes
     # `con.md` or `nul.md`, which on Windows are the console and the bit-bucket: the write
     # does not fail, it goes to the DEVICE, and the record is gone. Its own docstring says
-    # "both slug() functions in this codebase" — there are five, and three never called it
-    # (R2 agent 1 found one; the set walk found the other two).
     s = mdblock.ascii_stem(title)
     return mdblock.filename_safe(s[:40].rstrip("-")
                                  or mdblock.fallback_name(title, "session"))
