@@ -15698,9 +15698,20 @@ def _runtime_sources():
     A `.py`-only sweep reported "everything compiles" while `bin/chamnan-map` was broken, in this
     same session. Suffix is the wrong way to find source in a repository whose commands have none.
     """
+    # 🐛 [2026-09-11] The filter was a BLACKLIST — `.cmd`, `.sh`, `.json` — and a `.md` note added
+    # beside the hooks was therefore yielded to `ast.parse`, which raised SyntaxError inside a check
+    # and took the whole gate down with "a check did not produce a result". A blacklist of what is
+    # not source falls behind the moment somebody adds a file type nobody listed, which is this
+    # repository's most recorded defect wearing a different hat.
+    #
+    # A whitelist cannot fall behind: runtime source here is `.py`, or extensionless — the bin/
+    # commands, which is the case the docstring above exists for. Anything else is not source,
+    # whatever its suffix turns out to be.
     for folder in ("lib", "hooks", "bin"):
         for path in sorted((ROOT / folder).rglob("*")):
-            if path.is_dir() or "__pycache__" in str(path) or path.suffix in (".cmd", ".sh", ".json"):
+            if path.is_dir() or "__pycache__" in str(path):
+                continue
+            if path.suffix not in ("", ".py"):
                 continue
             try:
                 yield path, path.read_text(encoding="utf-8")
@@ -29041,6 +29052,75 @@ check("age_out returns text and a marker and rewrites nothing it was handed",
 check("...and a 📌-pinned section is never a candidate for being held back, at any age",
       "new thing" in _t_kept60, saw=_t_kept60[:120])
 _sh60.rmtree(_t_w60, ignore_errors=True)
+# ---- 61_hooks_json_holds_nothing_the_host_will_complain_about.py
+# ----------------- a warning on every session start, to hold a comment in a format with no comments
+# 🐛 [2026-09-11] `hooks.json` carried a `"_comment"` key — a genuinely useful record of why every
+# command string is prefixed with the plugin name — and Claude Code printed
+# `chamnan: hooks.json: unknown key "_comment" ignored` on EVERY session start because of it. The
+# key was ignored and nothing broke; what it cost was a warning line in front of a person opening a
+# session, from a plugin whose whole claim is that it does not add noise.
+#
+# JSON has no comments. The text moved to a sibling `.md` where a parser has no opinion about it.
+#
+# This checks the SHAPE rather than that one key name: `hooks.json` may hold `hooks` and nothing
+# else, so the next person who reaches for the same trick is told at commit time instead of by a
+# line in the owner's terminal on every start for ten days.
+import json as _js61
+
+_t_hj61 = ROOT / "hooks" / "hooks.json"
+if not _t_hj61.is_file():
+    skip("  · no hooks/hooks.json here — skipped, not passed")
+else:
+    _t_d61 = _js61.loads(_t_hj61.read_text(encoding="utf-8"))
+    check("hooks.json parses and has a `hooks` key at all",
+          isinstance(_t_d61, dict) and "hooks" in _t_d61, saw=str(list(_t_d61))[:100])
+
+    _t_extra61 = sorted(k for k in _t_d61 if k != "hooks")
+    check("HOOKS.JSON HOLDS NOTHING THE HOST WILL WARN ABOUT ON EVERY SESSION START",
+          not _t_extra61,
+          saw="extra top-level key(s): %s — the host prints 'unknown key ... ignored' for each, "
+              "once per session start. Put prose in a sibling .md." % (", ".join(_t_extra61),))
+
+    # ...and the registrations survived whatever removed the key. A file that parses and registers
+    # nothing is the silent version of this defect.
+    _t_regs61 = _t_d61.get("hooks", {})
+    _t_n61 = sum(len(v) for v in _t_regs61.values() if isinstance(v, list))
+    check("...and the registrations are still there, so nothing was lost tidying it",
+          _t_n61 >= 5, saw="%d registration(s) across %d event(s)"
+                           % (_t_n61, len(_t_regs61)))
+
+    # The record itself must still exist somewhere. Deleting the explanation to silence the warning
+    # would trade a warning for a lost reason, which is the worse of the two.
+    _t_kept61 = list((ROOT / "hooks").glob("*.md"))
+    check("...and the explanation it held still exists beside it",
+          any("plugin name" in f.read_text(encoding="utf-8", errors="replace")
+              for f in _t_kept61),
+          saw="no .md under hooks/ explains the command-string prefix")
+
+# 🐛 [2026-09-11] Adding that sibling `.md` broke the gate: `_runtime_sources()` filtered by a
+# BLACKLIST of non-source suffixes, so a markdown file under `hooks/` was handed to `ast.parse`,
+# which raised inside a check and produced "a check did not produce a result" — the whole run
+# unquotable. Fixed there by whitelisting `.py` and extensionless instead, which cannot fall behind
+# a file type nobody listed. Pinned here because this check is the reason that file exists.
+_t_src61 = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+check("the runtime-source sweep selects source by what it IS, not by listing what it is not",
+      'if path.suffix not in ("", ".py"):' in _t_src61,
+      saw="the sweep still filters by a blacklist of suffixes, so the next file type nobody "
+          "listed will be parsed as Python")
+
+# ...and prove it: every file that sweep now yields must actually parse.
+import ast as _ast61
+_t_unparseable61 = []
+for _t_folder61 in ("lib", "hooks", "bin"):
+    for _t_p61 in sorted((ROOT / _t_folder61).rglob("*")):
+        if _t_p61.is_dir() or "__pycache__" in str(_t_p61) or _t_p61.suffix not in ("", ".py"):
+            continue
+        try:
+            _ast61.parse(_t_p61.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            _t_unparseable61.append(str(_t_p61.relative_to(ROOT)))
+check("...and every file it yields is genuinely parseable Python",
+      not _t_unparseable61, saw="\n".join(_t_unparseable61[:5]) or None)
 # ============================ end of the folded surgical pool
 
 
