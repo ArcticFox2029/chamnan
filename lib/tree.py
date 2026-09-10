@@ -215,6 +215,26 @@ def _entries(root):
     return entries
 
 
+def rel_parts(path, root):
+    """`path`'s components below `root`, or its own components when it is not below root.
+
+    🐛 [2026-09-10] Written out byte for byte in `catalogs.py`, `deploy.py` and `schema.py`, which
+    are the three modules that group files by where they sit. Every copy was correct — and the
+    fallback is the interesting half: a path OUTSIDE the root keeps its own components rather than
+    raising, so a caller grouping by directory still gets an answer for a file the root does not
+    contain. Three modules each deciding that independently is three chances for one of them to
+    decide it differently, and a grouping that silently changes shape for out-of-tree paths is the
+    kind of thing nothing fails on (R1, the duplicate-body sweep).
+
+    Lives here rather than in `workspace`: all three already import `tree`, so this costs no new
+    dependency, and "which components of this path sit under that root" is what this module is for.
+    """
+    try:
+        return Path(path).relative_to(root).parts
+    except (ValueError, TypeError):
+        return Path(path).parts
+
+
 def files(root):
     """Every file under root that is not inside a skipped directory, sorted.
 
