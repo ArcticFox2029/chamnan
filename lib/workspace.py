@@ -405,8 +405,55 @@ def enabled(part, root=None):
 # The reason it was missed is worth keeping: `blocklog` declares its path as `"logs/block_shape.jsonl"`
 # — WITH the directory — so a search for a bare `"*.jsonl"` filename literal walks straight past it.
 # `44_...` in the check pool now asserts the population instead of trusting this list to be complete.
+def append_jsonl(root, rel, row, keep):
+    """Append one record to a workspace `.jsonl` and trim it to the newest `keep`. Never raises.
+
+    Lifted out of `blocklog.record` on 2026-09-10 rather than copied beside it: this package's
+    advisory count of function bodies written in more than one file was already at seven, and a
+    second bounded-append would have made it eight in the file whose whole subject is that defect.
+
+    Three properties the callers depend on, and each is here for a recorded reason:
+
+      * **Locked, and it SKIPS rather than waits.** Two sessions starting in the same second is
+        ordinary; a dropped telemetry record is a cheaper outcome than an interleaved file.
+      * **A line that parses but is not an object is discarded.** That is a half-written record,
+        and keeping it hands every reader an AttributeError instead of a number.
+      * **Written atomically**, because a torn last line is exactly what a reader cannot tell from
+        a legitimately different shape.
+
+    Telemetry must never be the thing that breaks a session, so every failure returns False.
+    """
+    try:
+        log = workspace(root) / rel
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with exclusive(log) as held:
+            if not held:
+                return False
+            prior = []
+            if log.is_file():
+                for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
+                    try:
+                        one = json.loads(line)
+                    except (json.JSONDecodeError, RecursionError):
+                        continue
+                    if isinstance(one, dict):
+                        prior.append(one)
+            prior.append(row)
+            atomic_write_text(
+                log, "\n".join(json.dumps(r, separators=(",", ":"), ensure_ascii=False)
+                               for r in prior[-keep:]) + "\n")
+        return True
+    except Exception:      # noqa: BLE001 — telemetry must never break a session
+        return False
+
+
 SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.jsonl",
-                    "subagent_start.jsonl", "block_shape.jsonl", "gate_runs.jsonl")
+                    "subagent_start.jsonl", "block_shape.jsonl", "gate_runs.jsonl",
+                    # One row per subagent run, bounded by record like the rest: what it cost and
+                    # whether it ran on the model its own file declares. A cost history is worth
+                    # having only if it is long enough to compare against, which an age sweep would
+                    # make it not.
+                    "agent_results.jsonl")
 
 
 def expiring_logs(root=None, within_days=1.0):

@@ -27980,6 +27980,14 @@ for _t_p45 in _t_files45:
     for _t_n45 in _ast45.walk(_t_tree45):
         # Every string constant, not only assignments: a path is as often built inline as declared.
         if isinstance(_t_n45, _ast45.Constant) and isinstance(_t_n45.value, str):
+            # Only what lands under `logs/`. `prune_logs` sweeps that directory and nothing else, so
+            # a `.jsonl` declared as `state/…` is not in this rule's scope and demanding an
+            # exemption for it would be asserting a rule that does not exist — the shape this check
+            # was written to stop, one level up. A bare filename is `logs/` by the convention every
+            # existing exempt name follows.
+            _t_where45 = _t_n45.value.rsplit("/", 1)[0] if "/" in _t_n45.value else "logs"
+            if _t_where45 not in ("logs", "./logs"):
+                continue
             for _t_m45 in _re45.finditer(r"([A-Za-z0-9_.-]+\.jsonl)", _t_n45.value):
                 _t_named45.setdefault(_t_m45.group(1), set()).add(_t_p45.name)
 
@@ -28487,7 +28495,8 @@ import re as _re54
 # session would consult to find skills did not list it (R16 agent 2, finding F6).
 #
 # This matters more than an ordinary stale document because of what the index is FOR. The skills
-# section of the session block is cut on 41 of 233 firings and never built on 149 more, so the
+# section of the session block is among the least-delivered there is — on this repository it has
+# never once arrived, and the current split is in `logs/block_shape.jsonl` rather than here — so the
 # README is what a session falls back to — and a fallback with holes in it is worse than none,
 # because it answers confidently.
 #
@@ -28705,6 +28714,175 @@ _t_cache56.write_text(_js56.dumps({"head": _t_live56, "counts": "not a mapping"}
 check("...and a malformed payload is refused even on an exact head match",
       _t_ro56._read_disk_cache(_t_cache56, _t_live56, _t_r56) is None)
 _sh56.rmtree(_t_r56, ignore_errors=True)
+# ---- 57_the_commit_gate_says_when_it_cannot_judge_the_index.py
+# ------------------- a gate that reports OK forever is worse than one that reports nothing
+# 🐛 [2026-09-10] `preflight.check_maps()` compares each generated map's mtime against the newest
+# changed source. A map whose OWN mtime is in the future is newer than every source file until
+# wall-clock time catches up, so it returned the identical "both maps are newer than the changed
+# source" it gives for a genuinely fresh index — forever, and indistinguishable from the real thing.
+# A bad `touch`, a restored backup, or clock skew on a build machine all produce it (R17 agent 5).
+#
+# This is the SECOND site of that defect. The first is in the session-start hook, and the same day
+# established that clamping does NOT fix it: clamp the index's mtime to now and every real source
+# file is still older, so the comparison stays silent either way. The difference here is that a gate
+# has somewhere to say so, where an advisory hook line does not — so this one reports that it cannot
+# judge, and names the check that consults no mtime at all.
+import importlib.machinery as _ilm57
+import importlib.util as _ilu57
+import time as _t57
+
+_t_pf57 = ROOT.parent.parent / ".chamnan" / "tools" / "preflight.py"
+if not _t_pf57.is_file():
+    skip("  · no .chamnan/tools/preflight.py here — the commit-gate check is skipped, not passed")
+else:
+    _t_ld57 = _ilm57.SourceFileLoader("preflight_57", str(_t_pf57))
+    _t_mod57 = _ilu57.module_from_spec(_ilu57.spec_from_loader("preflight_57", _t_ld57))
+    try:
+        _t_ld57.exec_module(_t_mod57)
+        _t_ok57 = True
+    except SystemExit:
+        _t_ok57 = True
+    except Exception as _t_e57:                   # pragma: no cover - that is the failure
+        _t_ok57 = False
+        print("      could not import preflight.py: %r" % (_t_e57,))
+
+    check("preflight.py imports so its map gate can be exercised directly",
+          _t_ok57 and hasattr(_t_mod57, "check_maps"), saw=None if _t_ok57 else "import failed")
+
+    if _t_ok57 and hasattr(_t_mod57, "check_maps"):
+        _t_src57 = [f for f in ("miki-hybridge-ai/src/memory_manager.py",
+                                "src/memory_manager.py")
+                    if (ROOT.parent.parent / f).is_file()][:1]
+        _t_maps57 = [getattr(_t_mod57, n) for n in ("ARCH_MAP", "COVERAGE_MAP")
+                     if getattr(_t_mod57, n, None) is not None
+                     and getattr(_t_mod57, n).is_file()]
+        if not _t_src57 or not _t_maps57:
+            skip("  · this workspace has no generated maps or no source fixture — skipped, not passed")
+        else:
+            _t_before57 = _t_mod57.check_maps(_t_src57)[0]
+            check("the gate answers at all for an ordinary changed source file",
+                  _t_before57 is not None, saw=repr(_t_before57))
+
+            _t_saved57 = [(m, m.stat().st_mtime) for m in _t_maps57]
+            try:
+                for _m57 in _t_maps57:
+                    os.utime(_m57, (_t57.time() + 10 * 365 * 86400,) * 2)
+                _t_status57, _t_lines57 = _t_mod57.check_maps(_t_src57)
+                _t_said57 = " ".join(_t_lines57).lower()
+            finally:
+                for _m57, _mt57 in _t_saved57:
+                    os.utime(_m57, (_mt57, _mt57))
+
+            check("A MAP WHOSE TIMESTAMP IS IN THE FUTURE IS NOT REPORTED AS FRESH",
+                  _t_status57 != getattr(_t_mod57, "OK", "OK"),
+                  saw="returned %r: %s" % (_t_status57, " | ".join(_t_lines57)[:120]))
+            check("...and the gate says WHY it cannot judge, rather than just failing",
+                  "future" in _t_said57,
+                  saw=" | ".join(_t_lines57)[:140])
+            check("...and points at the check that consults no mtime at all",
+                  "verify" in _t_said57, saw=" | ".join(_t_lines57)[:140])
+
+            _t_after57 = _t_mod57.check_maps(_t_src57)[0]
+            check("...and a restored timestamp goes back to the ordinary answer, so this is not a "
+                  "gate that now refuses everything",
+                  _t_after57 == _t_before57, saw="%r -> %r" % (_t_before57, _t_after57))
+# ---- 58_a_subagent_that_ignores_its_own_model_pin_is_recorded.py
+# ----------------- the field two rounds recommended reading is not on the event they named
+# 🐛 [2026-09-10] claude-code#89723 (open): a subagent shipped inside a PLUGIN does not honour the
+# `model:` key in its own frontmatter, while the identical file under a project's `.claude/agents/`
+# does. So an agent pinned to a cheap model silently runs on the session's model and the bill is the
+# only place it shows. Two chamnan agents pin one today.
+#
+# R7 agent 4 and R17 agent 8 independently recommended a `SubagentStop` hook reading `resolvedModel`.
+# That would not have worked: `SubagentStop`'s payload is `agent_id`, `agent_type`,
+# `agent_transcript_path`, `last_assistant_message` and the common fields — no model, no tokens.
+# `resolvedModel`, `modelsUsed`, `totalTokens` and `usage` are fields of the AGENT TOOL's
+# `tool_response`, read by a PostToolUse hook, and the reference says so outright. A SubagentStop
+# hook would have registered, fired on every subagent, read None, and reported nothing for as long
+# as it stood — which is why this check drives the hook with real payloads rather than trusting that
+# it is wired to the right event.
+import json as _js58
+import shutil as _sh58
+import subprocess as _sp58
+import tempfile as _tmp58
+from pathlib import Path as _Path58
+
+_t_hook58 = ROOT / "hooks" / "chamnan_agent_result.py"
+check("the Agent-result hook exists", _t_hook58.is_file(), saw=str(_t_hook58))
+
+_t_reg58 = _js58.loads((ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+_t_post58 = (_t_reg58.get("hooks", _t_reg58)).get("PostToolUse", [])
+_t_on_agent58 = [r for r in _t_post58 if r.get("matcher") == "Agent"]
+check("...and is registered on PostToolUse with matcher `Agent`, not on SubagentStop, which carries "
+      "none of the fields it reads",
+      bool(_t_on_agent58) and any("chamnan_agent_result" in h.get("command", "")
+                                  for r in _t_on_agent58 for h in r.get("hooks", [])),
+      saw=_js58.dumps(_t_post58)[:160])
+check("...and nothing registers SubagentStop, which would be the wired-to-nothing version of this",
+      "SubagentStop" not in (_t_reg58.get("hooks", _t_reg58)),
+      saw="a SubagentStop registration exists — check it is not reading model or token fields")
+
+if _t_hook58.is_file():
+    _t_ws58 = _Path58(_tmp58.mkdtemp(prefix="agentres58-"))
+    (_t_ws58 / ".chamnan").mkdir()
+    (_t_ws58 / ".claude" / "agents").mkdir(parents=True)
+    (_t_ws58 / ".claude" / "agents" / "pinned.md").write_text(
+        "---\nname: pinned\nmodel: haiku\ndescription: x\n---\n\nbody\n", encoding="utf-8")
+    (_t_ws58 / ".claude" / "agents" / "unpinned.md").write_text(
+        "---\nname: unpinned\ndescription: x\n---\n\nbody\n", encoding="utf-8")
+
+    def _fire58(agent, resolved, status="completed", tokens=None):
+        payload = {"cwd": str(_t_ws58), "hook_event_name": "PostToolUse", "tool_name": "Agent",
+                   "tool_input": {"subagent_type": agent},
+                   "tool_response": {"status": status, "resolvedModel": resolved,
+                                     **({"totalTokens": tokens} if tokens is not None else {})}}
+        r = _sp58.run([sys.executable, str(_t_hook58)], input=_js58.dumps(payload),
+                      capture_output=True, text=True, encoding="utf-8", errors="replace",
+                      timeout=120)
+        return r.returncode, r.stdout.strip()
+
+    def _rows58(rel):
+        f = _t_ws58 / ".chamnan" / rel
+        if not f.is_file():
+            return []
+        return [_js58.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    _rc58, _said58 = _fire58("pinned", "claude-haiku-4-5-20251001", tokens=1200)
+    check("a subagent that ran on the model it pins says nothing to the session",
+          _rc58 == 0 and not _said58, saw=_said58[:120])
+
+    _rc58, _said58 = _fire58("pinned", "claude-opus-5", tokens=98000)
+    check("A SUBAGENT THAT RAN ON A DIFFERENT MODEL THAN IT PINS IS REPORTED",
+          _rc58 == 0 and bool(_said58), saw="the hook said nothing")
+    check("...and it says so as context rather than by blocking, because the run already happened",
+          '"additionalContext"' in _said58 and '"decision"' not in _said58, saw=_said58[:140])
+
+    _rc58, _said58 = _fire58("unpinned", "claude-opus-5")
+    check("...and an agent that pins nothing is not accused of anything",
+          _rc58 == 0 and not _said58, saw=_said58[:120])
+
+    # The parser that reads the pin. A frontmatter reader that silently returns "" makes every
+    # assertion above pass by never finding a pin at all — which is how the first version of this
+    # hook behaved, and it looked identical from outside.
+    _t_declared58 = [r.get("declared") for r in _rows58("logs/agent_results.jsonl")]
+    check("...and the pin is actually being READ, not silently coming back empty",
+          _t_declared58.count("haiku") >= 2,
+          saw="declared values seen: %r" % (_t_declared58,))
+
+    _t_cost58 = _rows58("logs/agent_results.jsonl")
+    # Three fires above: matched, mismatched, unpinned. Counted from the calls rather than
+    # remembered — the first version of this line said four and the hook was right.
+    check("every run is logged, whether it matched or not, because the cost history is the point",
+          len(_t_cost58) == 3, saw="%d row(s): %r" % (len(_t_cost58),
+                                                      [r.get("agent") for r in _t_cost58]))
+    check("...and a backgrounded run's absent token count is absent, not zero",
+          all(r.get("tokens") is None for r in _t_cost58 if r.get("tokens") is None) and
+          any(r.get("tokens") == 98000 for r in _t_cost58),
+          saw=repr([r.get("tokens") for r in _t_cost58]))
+    check("...and only the mismatches reach the durable record",
+          len(_rows58("state/agent_model_mismatches.jsonl")) == 1,
+          saw="%d record(s)" % (len(_rows58("state/agent_model_mismatches.jsonl")),))
+    _sh58.rmtree(_t_ws58, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 

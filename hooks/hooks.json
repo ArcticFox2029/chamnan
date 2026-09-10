@@ -30,6 +30,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_scratch_watch.py\""
           }
         ]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_agent_result.py\""
+          }
+        ]
       }
     ],
     "SessionEnd": [

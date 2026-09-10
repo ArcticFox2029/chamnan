@@ -91,31 +91,12 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     holds the lock — two sessions starting in the same second is ordinary, and a dropped record is
     a cheaper outcome than an interleaved file.
     """
-    try:
-        log = ws.workspace(root) / LOG
-        log.parent.mkdir(parents=True, exist_ok=True)
-        with ws.exclusive(log) as held:
-            if not held:
-                return False
-            prior = []
-            if log.is_file():
-                for line in log.read_text(encoding="utf-8-sig", errors="replace").splitlines():
-                    try:
-                        one = json.loads(line)
-                    except (json.JSONDecodeError, RecursionError):
-                        continue
-                    # A line that parses but is not an object is a half-written record; keeping it
-                    # would hand every reader below an AttributeError instead of a number.
-                    if isinstance(one, dict):
-                        prior.append(one)
-            prior.append(shape(body, ceiling, when, source, resent, dropped,
-                               index_behind))
-            ws.atomic_write_text(
-                log, "\n".join(json.dumps(r, separators=(",", ":"), ensure_ascii=False)
-                                for r in prior[-KEEP:]) + "\n")
-        return True
-    except Exception:      # noqa: BLE001 — telemetry must never be the thing that breaks a session
-        return False
+    # The bounded append itself lives in `workspace.append_jsonl` since 2026-09-10 — it was written
+    # here first, and a second caller (the Agent-result hook) would have made it the eighth function
+    # body in this package written in more than one file, in the package that counts them.
+    return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
+                                            index_behind), KEEP)
+
 
 
 # How many earlier records a judgement is made against. Ten sessions is a few days of ordinary
