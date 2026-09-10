@@ -447,7 +447,9 @@ def print_inventory(root):
         _cd_unseen = _cd_prov.get("ai-inferred", 0) + _cd_prov.get("ai-drafted", 0)
         _cd_seen = sum(v for k, v in _cd_prov.items() if k in ("user", "ai-confirmed"))
         try:
+            _cd_gone = tools_index.missing_files(root)
             _cd_promoted = len({str(e.get("origin", "")) for e in tools_index.load(root)
+                                if e.get("name") not in _cd_gone
                                 if str(e.get("origin", "")).startswith("candidate:")})
         except Exception:
             _cd_promoted = 0
@@ -552,7 +554,7 @@ def print_inventory(root):
     except OSError:
         pass
     try:
-        _tl_n = len(tools_index.load(root))
+        _tl_n = len(tools_index.load(root)) - len(tools_index.missing_files(root))
         if _tl_n > _HOOK_LIST_CAP:
             _trunc.append(f"{_tl_n - _HOOK_LIST_CAP} of {_tl_n} registered tool(s)")
     except Exception:
@@ -813,10 +815,20 @@ def print_usage(root):
     else:
         print("  (nothing logged yet)")
 
-    tools = tools_index.usage(root)
-    if tools:
+    # 🐛 [2026-09-10] Three readers of `tools/index.json` answer a person and only two filtered out
+    # entries whose FILE is gone — the SessionStart hook drops them and `chamnan-promote --list`
+    # prints `← no such file in tools/`. This one printed them as ordinary rows at `0 runs`,
+    # indistinguishable from a real tool nobody uses and therefore worth demoting; and the two
+    # counters above had the same gap. The root CLAUDE.md names this command as how to answer "is
+    # chamnan worth keeping", so a phantom row here is the expensive kind of wrong (R1 agent 5).
+    #
+    # Said, not silently dropped: an entry pointing at nothing is a thing to fix, and hiding it
+    # would make the registry quietly wrong instead of visibly wrong.
+    _tl_gone = tools_index.missing_files(root)
+    tools = [(n, r) for n, r in tools_index.usage(root) if n not in _tl_gone]
+    if tools or _tl_gone:
         print("\nPromoted tools")
-        twidth = max(len(name) for name, _ in tools)
+        twidth = max([len(name) for name, _ in tools] or [1])
         # 🐛 [2026-09-08] `runs` was the only field printed, and two more were being written on
         # every call. `stderr_seen` is a WEAK signal by this module's own account -- plenty of
         # correct commands write progress there -- so it is said only when it is every run and
@@ -833,6 +845,13 @@ def print_usage(root):
                 _note += " · wrote to stderr every run"
             print(f"  {mdblock.as_quoted(name, 60):<{twidth}}   "
                   f"{runs:>3} run{'s' if runs != 1 else ''}{_note}")
+        if _tl_gone:
+            print(f"  {len(_tl_gone)} registered entr"
+                  f"{'y has' if len(_tl_gone) == 1 else 'ies have'} no file in tools/ and "
+                  f"{'is' if len(_tl_gone) == 1 else 'are'} read by nothing: "
+                  + ", ".join(mdblock.as_quoted(n, 40) for n in sorted(_tl_gone)[:4])
+                  + (f" +{len(_tl_gone) - 4} more" if len(_tl_gone) > 4 else ""))
+            print("  `chamnan-candidates demote <name>` removes the registration too.")
     # 🐛 [2026-09-08] `runs` is incremented by `record_call`, which only ever fires for a name in
     # `tools/index.json`, and the only two writers of that file are `chamnan-promote` and
     # `chamnan-candidates promote`. A script a person DROPPED INTO `tools/` -- which this project's

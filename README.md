@@ -1293,6 +1293,7 @@ From a shell, in the repository:
 | `chamnan-env set <name> --platform … --constraint …` | declare or update one environment; replaces in place |
 | `chamnan-env check` | which environment entries nobody has confirmed lately |
 | `chamnan-age` | which stored knowledge names a version no environment declares any more |
+| `chamnan-guard` | does anything staged for commit look like a credential — names the file and line, never the value, and never fails the commit (`--strict` does) |
 | `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then Usage (chamnan's own commands and any promoted tool, counts only, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the first two sections, then says so instead of inventing a trend |
 
 ### Reading an attachment without reading it

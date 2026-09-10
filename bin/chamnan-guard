@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""chamnan-guard — does anything staged for commit look like a credential?
+
+  chamnan-guard          scan the staged diff, name the files, never fail the commit
+  chamnan-guard --strict exit 1 instead, for a hook somebody opted into
+
+`lib/redact.py` exists to keep a secret out of everything that reaches the MODEL — the SessionStart
+block, `MAP.md`, the file each agent reads. It had never been pointed at the other direction a
+secret actually leaves a machine, which is `git commit`, and which is the direction this
+repository's own rules name first (R1 agent 5, finding 1).
+
+**It warns. It does not block.** The redactor's own published recall is 98.2% on a synthetic corpus
+of deliberately obvious shapes, and it verifies nothing against a live service — by the no-network
+rule, and permanently. A false positive that stops every commit is worse than the leak it guards
+against: the person turns the hook off, and then nothing is watching at all. `--strict` exists for
+somebody who has read that sentence and wants the gate anyway.
+
+**It never prints what it found.** The finding is a file and a line number. Echoing the matched text
+would copy the secret into a terminal, a CI log and an agent's transcript — three more places it
+now exists — which is the thing this command is for.
+
+Only ADDED lines are read. A removed line is a secret leaving the tree, and a context line is
+already committed: flagging either is noise that trains people to ignore the real one.
+"""
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import mdblock  # noqa: E402
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# Every `bin/` command shadows print with the scrubbing emitter. This one especially: it is holding
+# lines that may BE credentials, and one careless interpolation would print the thing it exists to
+# keep out of a terminal.
+print = redact.emit  # noqa: A001
+
+KNOWN_FLAGS = ("--strict",)
+
+# A commit is in the foreground of somebody's workflow. The redactor was measured at 32 ms on an
+# 18 KB diff, so the cap is not about the scan — it is about a pathological diff (a vendored blob,
+# a generated lockfile) turning a commit into a wait. Past this, the scan says what it skipped
+# rather than pretending it looked.
+MAX_DIFF_BYTES = 4_000_000
+
+
+def _staged_diff(root):
+    """The staged diff, or None when git cannot answer. Never raises."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _added_lines(diff):
+    """(path, line number, text) for every ADDED line, following the `+++`/`@@` headers.
+
+    The line number is the one in the file after the commit, which is what a person opens. `-U0`
+    means every hunk header is followed only by added and removed lines, so the counter needs no
+    context handling.
+    """
+    path, lineno = None, 0
+    for raw in diff.splitlines():
+        if raw.startswith("+++ "):
+            name = raw[4:].strip()
+            path = None if name == "/dev/null" else name[2:] if name[:2] in ("a/", "b/") else name
+            continue
+        if raw.startswith("@@"):
+            try:
+                after = raw.split("+", 1)[1].split(" ", 1)[0]
+                lineno = int(after.split(",", 1)[0])
+            except (IndexError, ValueError):
+                lineno = 0
+            continue
+        if raw.startswith("+") and path:
+            yield path, lineno, raw[1:]
+            lineno += 1
+
+
+def scan(diff):
+    """`{path: [line numbers]}` for added lines the redactor would have rewritten.
+
+    Asked line by line rather than over the whole diff, because the answer has to name a LINE. The
+    redactor is windowed and a whole-document call answers "did anything change" and nothing else,
+    which is not a finding somebody can act on.
+    """
+    found = {}
+    for path, lineno, text in _added_lines(diff):
+        if not text.strip():
+            continue
+        if redact.scrub(text) != text:
+            found.setdefault(path, []).append(lineno)
+    return found
+
+
+def main(argv):
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if _bad:
+        print(f"chamnan: unknown option {_bad[0]!r} — {', '.join(KNOWN_FLAGS)}", file=sys.stderr)
+        return 2
+
+    strict = "--strict" in argv
+    root = ws.find_root()
+    diff = _staged_diff(root)
+    if diff is None:
+        # Not a git repository, or git is not installed. Silence: this runs from a commit hook, and
+        # a command that cannot answer must not add a line to somebody's commit output.
+        return 0
+    if not diff.strip():
+        return 0
+    if len(diff.encode("utf-8", "replace")) > MAX_DIFF_BYTES:
+        print(f"chamnan-guard: staged diff is over {MAX_DIFF_BYTES // 1_000_000} MB — not scanned. "
+              f"Run `chamnan-guard` by hand if this commit should be checked.", file=sys.stderr)
+        return 0
+
+    found = scan(diff)
+    if not found:
+        return 0
+
+    _n = sum(len(v) for v in found.values())
+    print(f"chamnan-guard: {_n} staged line{'s' if _n != 1 else ''} in {len(found)} file"
+          f"{'s' if len(found) != 1 else ''} look{'' if _n != 1 else 's'} like a credential:",
+          file=sys.stderr)
+    for _p in sorted(found)[:6]:
+        _lines = found[_p]
+        _shown = ", ".join(str(n) for n in _lines[:6]) + (" …" if len(_lines) > 6 else "")
+        # The path is repository-authored text on its way to a terminal, like every other value
+        # these commands print.
+        print(f"    {mdblock.as_quoted(_p, 70)}  line {_shown}", file=sys.stderr)
+    if len(found) > 6:
+        print(f"    +{len(found) - 6} more file(s)", file=sys.stderr)
+    print("  Nothing is printed from those lines on purpose — reading them out would copy the "
+          "secret into this terminal and its transcript.", file=sys.stderr)
+    print("  This is a WARNING and the commit proceeds. `chamnan-guard --strict` fails instead.",
+          file=sys.stderr)
+    return 1 if strict else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

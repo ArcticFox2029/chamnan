@@ -120,6 +120,20 @@ if command -v chamnan-map >/dev/null 2>&1; then
     fi
   fi
 fi
+# The other direction a secret leaves a machine. `lib/redact.py` has always guarded what reaches the
+# MODEL — the session block, MAP.md, the file each agent reads — and never what reaches a COMMIT,
+# which is the direction this repository's own rules name first (R1 agent 5, finding 1).
+#
+# Outside the `--diff-filter=ACDR` branch above on purpose: that branch is about the INDEX going
+# stale, which only added, deleted and renamed files can do. A credential arrives by editing a file
+# that already exists, which is the case that branch deliberately skips.
+#
+# It warns and the commit proceeds. `chamnan-guard` exits 0 unless asked for `--strict`, and the
+# `|| true` is belt and braces: a tool that blocks commits on a 98.2% recall gets switched off, and
+# then nothing is watching at all.
+if command -v chamnan-guard >/dev/null 2>&1; then
+  chamnan-guard 2>&1 || true
+fi
 # <<< chamnan
 """
 

@@ -68,8 +68,10 @@ def show(root):
             # as if it were a filename is what makes it look legitimate.
             name, why = "(unusable name)", "  ← not a filename; ignored by sessions"
         else:
-            f = ws.workspace(root) / "tools" / name
-            if not (f.is_file() and ws.inside(f, root)):
+            # The same question the SessionStart hook asks before listing a tool, asked through
+            # the same function since 2026-09-10 — it was written out here and in two other places,
+            # and three copies of one predicate is how they start disagreeing (R1 agent 5).
+            if tools_index.real_name(root, name) is None:
                 why = "  ← no such file in tools/; ignored by sessions"
         if why:
             broken += 1

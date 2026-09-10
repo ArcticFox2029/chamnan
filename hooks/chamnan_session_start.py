@@ -47,6 +47,7 @@ import rulecheck  # noqa: E402
 import sessions  # noqa: E402
 import state  # noqa: E402
 import timeline  # noqa: E402
+import tools_index  # noqa: E402
 import tokens  # noqa: E402
 import workspace as ws  # noqa: E402
 
@@ -1807,15 +1808,20 @@ def main():
             # Not a dict, and `name` not a string, are both reachable from committed JSON: the
             # whole listing used to be one `.strip()` away from an AttributeError that would have
             # taken the section with it.
+            # 🐛 [2026-09-10] The three lines below were written out here, again in
+            # `chamnan-promote --list`, and a third time in `tools_index`. They agreed, which is the
+            # only reason nothing had gone wrong — and the round that looked at this saw one READER
+            # missing the check rather than the check existing three times. `tools_index.real_name`
+            # is the one definition now; it returns the validated name because this caller writes it
+            # back over the raw field (R1 agent 5, finding 5).
             def _real_tool(t):
-                if not isinstance(t, dict) or not isinstance(t.get("name"), str):
+                if not isinstance(t, dict):
                     return False
-                name = ws.safe_tool_name(t["name"])
+                name = tools_index.real_name(root, t.get("name"))
                 if name is None:
                     return False
                 t["name"] = name          # the validated form, not the raw field
-                f = wsdir / "tools" / name
-                return f.is_file() and ws.inside(f, root)
+                return True
             tools = [t for t in tools if _real_tool(t)] if isinstance(tools, list) else []
             if tools:
                 # index.json is in registration order, and this used to take the first MAX_TOOLS of it.

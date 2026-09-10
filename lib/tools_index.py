@@ -390,6 +390,61 @@ def signals(root):
             for e in load(root)}
 
 
+def missing_files(root):
+    """Names in the index whose tool FILE is not in `tools/` — registered, and read by nothing.
+
+    A registration and a file are two separate things, and `chamnan-candidates demote` is the only
+    path that removes both. Delete `.chamnan/tools/some-tool.py` by hand and the entry stays, with
+    its run counter, describing a file that is gone.
+
+    \U0001f41b [2026-09-10] THREE readers of this index answer a person, and only two of them
+    filtered these out. The SessionStart hook drops them, `chamnan-promote --list` prints
+    `← no such file in tools/; ignored by sessions` and counts them in its summary — and
+    `chamnan-report`'s "Promoted tools" section printed them as ordinary rows at `0 runs`,
+    indistinguishable from a real tool nobody uses and therefore worth demoting. Two of its other
+    counters had the same gap. The root `CLAUDE.md` names that command as how to answer "is chamnan
+    worth keeping", so a phantom row there is the expensive kind of wrong (R1 agent 5, finding 5).
+
+    The predicate lives HERE rather than being copied to a third caller: this module owns
+    `index.json`, so it is the one place that can answer what an entry refers to. `ws.inside` is
+    part of the question, not decoration — a name that escapes the workspace is not a tool of ours
+    however real the file it names.
+    """
+    return {str(e.get("name")) for e in load(root)
+            if real_name(root, e.get("name")) is None}
+
+
+def real_name(root, name):
+    """`name` in its validated form when a tool file by that name is really in `tools/`, else None.
+
+    The one predicate behind three callers that each used to carry their own copy — the SessionStart
+    hook's `_real_tool`, `chamnan-promote --list`, and `missing_files` above. They agreed, which is
+    the only reason nothing had gone wrong yet; the report that found this saw one reader missing the
+    check and not that the check existed three times (R1 agent 5, finding 5).
+
+    Three things, and every caller needs all three:
+
+      * the entry names something that can BE a filename — `safe_tool_name` refuses a path-shaped
+        or device-shaped name, and a name stays valid in the index after the file is gone;
+      * the file is there;
+      * and it is inside the workspace, so a name that escapes is not a tool of ours however real
+        the file it points at.
+
+    Returns the VALIDATED name rather than True: the hook writes it back over the raw field before
+    printing, and a predicate that answered yes/no would leave that caller normalising by hand.
+    """
+    if not isinstance(name, str) or not name:
+        return None
+    try:
+        safe = ws.safe_tool_name(name)
+        if safe is None:
+            return None
+        f = path(root).parent / safe
+        return safe if (f.is_file() and ws.inside(f, root)) else None
+    except (OSError, ValueError):
+        return None
+
+
 def usage(root):
     """(name, runs) for every registered tool, in registration order — the read side of the `runs`
     counter `record_call()` writes on every matched Bash call. Stage 11's whole job here: this
