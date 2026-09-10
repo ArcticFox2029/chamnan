@@ -305,17 +305,5 @@ def main():
     return 0
 
 
-def _never_fail_the_session():
-    """A hook that cannot read something exits 0 in silence rather than 1 with a traceback.
-
-    Same reasoning as the other write-only hooks here: stderr never reaches the transcript, so a
-    crash is invisible and the subagent simply starts without this.
-    """
-    try:
-        return main()
-    except Exception:
-        return 0
-
-
 if __name__ == "__main__":
-    sys.exit(_never_fail_the_session())
+    sys.exit(ws.never_fail(main))

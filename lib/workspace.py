@@ -828,7 +828,7 @@ def hook_root(payload=None):
         # raises TypeError on anything that is not a path-like. A dict, a list or a number there
         # killed chamnan_session_start.py outright — exit 1, ZERO bytes of stdout, a traceback the
         # transcript never sees — and that hook is the one hook of six deliberately NOT wrapped in
-        # `_never_fail_the_session`, on the stated reasoning that it "has something partial worth
+        # `never_fail` below, on the stated reasoning that it "has something partial worth
         # emitting". It has nothing partial to emit when it dies on its first line. The reasoning is
         # sound and the crash simply happened before it could apply, so the fix is here, where a
         # malformed payload becomes "no candidate" rather than an exception (R7 agent 9).
@@ -2330,6 +2330,33 @@ def wants_version(argv):
     typing it and getting "unknown flag" is worse than useless.
     """
     return any(a in VERSION_FLAGS for a in (argv or []))
+
+
+def never_fail(main):
+    """Run a hook's `main()` and return 0 whatever it raises. The return value is an exit code.
+
+    A hook's stderr never reaches the transcript, so a crash is INVISIBLE: the session simply starts
+    without whatever that hook contributes, and nothing says why. Measured with a `chmod 000` on
+    `.chamnan/logs` — the ordinary result of a container or CI run touching the workspace as root —
+    four of five hooks died that way. Silence is the correct failure for a hook that only writes.
+
+    `chamnan_session_start.py` deliberately does NOT use this: it has partial output worth emitting
+    when something fails, so it handles its own failures and says what it managed to produce.
+
+    🐛 [2026-09-10] These four lines were written out in SIX hooks, byte for byte, and the sixth was
+    added the same week by copying the fifth. Every copy was correct, so nothing had gone wrong yet —
+    and this package's most recorded defect is what happens next: somebody finds a problem in one and
+    fixes the copy in front of them. It is the wrapper whose entire job is that a hook must never
+    take a session down, so the version that is subtly different from the other five is the one that
+    does (R1, the duplicate-body sweep).
+
+    `BaseException` is not caught. A `KeyboardInterrupt` or a `SystemExit` is somebody or something
+    deliberately stopping this process, and swallowing that would make a hook unkillable.
+    """
+    try:
+        return main()
+    except Exception:      # noqa: BLE001 — the whole point: a hook must not take a session down
+        return 0
 
 
 def version_line():

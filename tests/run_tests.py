@@ -21046,7 +21046,7 @@ check("...and the matrix still declares the Python floor those versions were cho
 # 🐛 [2026-09-07] `payload["cwd"]` is whatever the host put in the JSON, and `pathlib.Path` raises
 # TypeError on anything that is not path-like. A dict there killed `chamnan_session_start.py`
 # outright: exit 1, ZERO bytes of stdout, a traceback the transcript never shows. That hook is the
-# one of six deliberately NOT wrapped in `_never_fail_the_session`, on the reasoning that it "has
+# one of six deliberately NOT wrapped in `workspace.never_fail`, on the reasoning that it "has
 # something partial worth emitting" — sound, and unreachable when it dies on its first line
 # (R7 agent 9).
 #
@@ -24354,7 +24354,7 @@ finally:
 
 
 # ------------------------------------------- garbage in, for every hook and not just two of them
-# 🐛 [2026-09-08] All six hooks carry a `_never_fail_the_session()` wrapper (or the equivalent
+# 🐛 [2026-09-08] All six hooks carry the `workspace.never_fail` wrapper (or the equivalent
 # top-level `except Exception`) written for exactly one purpose: garbage from the host must never
 # take a session down. Two of the six were fed garbage by this suite — `chamnan_session_start` got
 # one `"null"`, `chamnan_subagent_start` got a five-payload loop — and the other four were never
@@ -25267,7 +25267,7 @@ finally:
 # an adapter's target — so any byte that reaches a commit reaches the read. Measured: `b"1.24.0
 # \xff\xfe\n"` in `.version` killed `chamnan_session_start.py` outright, exit 1, zero bytes of
 # output, on every session until somebody found the file. That hook is deliberately the one without
-# a `_never_fail_the_session` wrapper, on the reasoning that it "has something partial worth
+# the `workspace.never_fail` wrapper, on the reasoning that it "has something partial worth
 # emitting" — and it had nothing to emit, because it died on its first read.
 #
 # `lib/rollup.py` catches it by name, so this was worked out once and reached one site. The suite
