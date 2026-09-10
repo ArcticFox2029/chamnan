@@ -65,6 +65,64 @@ SAMPLES = {
               "damit die Fahrer-App sie beim nächsten Abruf übernehmen kann. " * 6,
 }
 
+# 🐛 [2026-09-10] `lib/tokens.py`'s docstring is the published justification for its per-script
+# divisors and it quotes a six-row table — MAP.md's Quick Index and its Full Detail section, a real
+# STATE.md, this repository's own Python, JSON, URLs — measured "on the content chamnan actually
+# budgets". Not one of those six was in `SAMPLES`, which held seven language rows and nothing else.
+# So whoever produced that table did it with something that left no trace in the one file built to
+# make such a measurement re-runnable, and the next person to retune those divisors — which the
+# docstring says has already happened once — had no way to check they had not regressed the exact
+# artefact the module says matters most (R1 agent 5, finding 6).
+#
+# Read from disk at run time rather than pasted in. Two reasons, and the second is the harder rule:
+# a pasted sample is this repository's content frozen into a package that ships to other people's
+# repositories, and it stops being the thing it claims to measure the moment MAP.md changes. Read
+# live, the script measures the artefacts of WHOEVER runs it, which is what the docstring's phrase
+# actually means.
+#
+# A missing artefact is skipped rather than faked. A row measured against a stand-in is worse than
+# an absent row: it prints a number under a name that says "your MAP.md".
+ARTEFACTS = {
+    # Both halves of the index, because the docstring quotes them separately and they are different
+    # shapes: the Quick Index is dense one-line-per-file, the Full Detail is prose and signatures.
+    "map_quick_index": (".chamnan/MAP.md", "## Quick Index", "## Full Detail"),
+    "map_full_detail": (".chamnan/MAP.md", "## Full Detail", None),
+    "state_md": (".chamnan/STATE.md", None, None),
+    "json_blob": (".chamnan/tools/index.json", None, None),
+}
+
+# 12 KB is enough for a stable characters-per-token ratio and small enough that a full run does not
+# turn into real money: this script calls the live `claude` CLI once per sample.
+ARTEFACT_CAP = 12_000
+
+
+def artefact_samples(root):
+    """The real-artefact rows, read from `root`. Absent files are skipped, never substituted."""
+    out = {}
+    for name, (rel, start, stop) in ARTEFACTS.items():
+        try:
+            text = (Path(root) / rel).read_text(encoding="utf-8-sig", errors="replace")
+        except OSError:
+            continue
+        if start:
+            i = text.find(start)
+            if i < 0:
+                continue
+            text = text[i:]
+        if stop:
+            j = text.find(stop, len(start or ""))
+            if j > 0:
+                text = text[:j]
+        text = text.strip()
+        if len(text) >= 500:              # below this the per-call overhead swamps the measurement
+            out[name] = text[:ARTEFACT_CAP]
+    # URLs are the one row with no artefact to read: nothing chamnan writes is URL-dense, and the
+    # docstring's row is about what a URL costs, not about a file. Built, and said to be built.
+    out["urls_synthetic"] = ("See https://github.com/ArcticFox2029/chamnan/blob/main/lib/tokens.py "
+                             "and https://docs.example.com/v2/reference/pagination#cursor-based "
+                             "for the details. ") * 12
+    return out
+
 
 def claude_version():
     """The `claude` build these numbers were taken under, or "" — part of the provenance."""
@@ -124,13 +182,29 @@ def main():
                 "add to it.\nRe-run with --remeasure to take every number again.", file=sys.stderr)
         return 1
 
+    # The language rows are literal and travel with the package; the artefact rows are read from
+    # whatever repository this is being run in, so the table means "the content chamnan budgets
+    # HERE" rather than "the content it budgeted in the repo where this was written".
+    import workspace as _ws
+    _root = _ws.find_root()
+    samples = dict(SAMPLES)
+    _live = artefact_samples(_root)
+    samples.update(_live)
+    if _live:
+        print(f"artefacts read from {_root}: {', '.join(sorted(_live))}\n", flush=True)
+    _absent = sorted(set(ARTEFACTS) - set(_live))
+    if _absent:
+        # Named, not silently dropped. A table missing a row is a different statement from a table
+        # whose row was measured against a stand-in, and only one of them is honest.
+        print(f"not present here, so not measured: {', '.join(_absent)}\n", flush=True)
+
     results = {}
     print("baseline...", flush=True)
     results["_base"] = measure(INSTRUCTION, empty)
     base = results["_base"]
     print(f"baseline prompt = {base:,} tokens\n")
 
-    for name, text in SAMPLES.items():
+    for name, text in samples.items():
         results[name] = measure(INSTRUCTION + text, empty)
 
     # Provenance, so a later reader can tell whether these numbers still describe anything —
@@ -143,18 +217,18 @@ def main():
     }
     results["_ratios"] = {
         name: round(len(text) / (results[name] - base), 2)
-        for name, text in SAMPLES.items() if results[name] - base > 0
+        for name, text in samples.items() if results[name] - base > 0
     }
     OUT.write_text(json.dumps(results, indent=2))
-    _report(results, base)
+    _report(results, base, samples)
     print(f"\nwrote {OUT}")
     return 0
 
 
-def _report(results, base):
+def _report(results, base, samples=None):
     print(f"{'sample':<16}{'chars':>8}{'tokens':>9}{'chars/token':>13}")
     print("-" * 46)
-    for name, text in SAMPLES.items():
+    for name, text in (samples if samples is not None else SAMPLES).items():
         tokens = results.get(name, 0) - base
         chars = len(text)
         if tokens <= 0:
