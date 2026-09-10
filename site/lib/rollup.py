@@ -66,6 +66,31 @@ def _head_from_disk(root):
         return ""
 
 
+_CAN_SPEAK = {}
+
+
+def _git_can_speak_for(root):
+    """`ws.git_can_speak_for`, asked at most once per root per process.
+
+    Measured 2026-09-10: the call is ~200 ms here, and this file asks it on two paths that can both
+    run in one `_churn` — the drift check and the rebuild below it. Whether git recognises a
+    directory does not change inside the lifetime of a hook that lives about a second, and every
+    caller in this file treats a False as "do less", so a memo cannot turn a correct answer into a
+    dangerous one. Kept local rather than pushed into `workspace` because a process that outlives a
+    `git init` would want the live answer, and only this file knows it does not.
+    
+    🐛 [2026-09-10] Named `_can_speak_for` at first, and the release gate refused every caller of
+    it: `EVERY git -C CALLER FIRST ASKS GIT WHETHER IT CAN SPEAK FOR THAT DIRECTORY` reads the
+    enclosing function's own source for the guard's NAME, and an indirection hid it. The check is
+    right to insist — a reader standing at a `git -C` call has to see that the question was asked,
+    and `_can_speak_for(root)` does not say which question. The name carries it now.
+"""
+    key = str(root)
+    if key not in _CAN_SPEAK:
+        _CAN_SPEAK[key] = ws.git_can_speak_for(root)
+    return _CAN_SPEAK[key]
+
+
 def _head(root):
     """The commit the churn answer belongs to, or "" when git cannot say.
 
@@ -80,7 +105,11 @@ def _head(root):
     # `git_can_speak_for`, not `git_owns`: HEAD is the same commit whether this directory is the
     # repository root or a subproject inside it, because it is the same repository. See that
     # function for the measurement that removed the distinction this guard was written around.
-    if not ws.git_can_speak_for(root):
+    #
+    # Through the memo, like the other two sites in this file — one question, asked once per root
+    # per process. `_head` and `_churn` both run on every SessionStart firing, so leaving this one
+    # direct meant paying ~200 ms twice for an answer that cannot change inside a hook's lifetime.
+    if not _git_can_speak_for(root):
         return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -99,16 +128,76 @@ def _disk_cache_path(root, window):
         return None
 
 
-def _read_disk_cache(path, head):
-    """The stored counts when they belong to this commit, else None. Never raises."""
+# How far the stored ranking may drift from HEAD before it is rebuilt, in commits.
+#
+# 🐛 [2026-09-10] The cache was keyed on HEAD EXACTLY, so any commit invalidated it — and the
+# process it exists to serve is the SessionStart hook, which fires when somebody sits down to work
+# on a repository they are committing to. The cache was therefore missing precisely when it was
+# needed and hitting only when nothing was happening. Measured on this repository: a cold `_churn`
+# is **777 ms**, the full 600-commit window alone is **599 ms**, and the whole hook is 1.5 s — so
+# this was ~40% of every session start during active work, paid again for an answer that had moved
+# by one commit out of six hundred.
+#
+# What the counts are FOR bounds how exact they need to be: they rank which filenames appear on a
+# rolled-up directory line. Twenty-five commits of drift out of six hundred is a 4% shift in a
+# display ordering. `git rev-list --count` answers the drift question in about 10 ms against the
+# 599 ms it avoids, and a rebuild still happens — just twenty-five times less often.
+#
+# Deliberately NOT an incremental merge, which was measured at 27 ms and is tempting: adding the new
+# commits without evicting the oldest silently widens the window past 600, and evicting correctly
+# means re-deriving which commits fell out — the full query again. A bounded staleness that says so
+# is honest; a window that grows without anyone noticing is the shape of defect this file already
+# carries three records of.
+CHURN_MAX_DRIFT = 25
+
+
+def _commits_between(root, old_head, head):
+    """How many commits HEAD is ahead of the cached one, or None when git cannot say.
+
+    None is returned for every uncertainty -- an unknown commit after a rebase or a shallow clone,
+    a repository git will not answer for -- and every caller treats None as "rebuild", so the
+    failure direction is the slow correct one rather than a stale ranking nobody can explain.
+    """
+    if not (root and old_head and head) or old_head == head:
+        return 0 if old_head == head else None
+    # 🐛 [2026-09-10] Added a `git -C` caller and did not ask this first — the rule every other
+    # caller in this package follows, and the defect this repository records more often than any
+    # other: one member of a set given a guard and the identical one beside it left. `git -C` on a
+    # directory git does not recognise answers about a PARENT repository, so an unguarded count
+    # here would compare two commits from somebody else's history and serve a cache on the answer.
+    # The suite's own `EVERY git -C CALLER FIRST ASKS GIT WHETHER IT CAN SPEAK FOR THAT DIRECTORY`
+    # caught it, which is exactly what that check exists for.
+    if not _git_can_speak_for(root):
+        return None
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-list", "--count", f"{old_head}..{head}"],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=30)
+        return int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else None
+    except Exception:
+        return None
+
+
+def _read_disk_cache(path, head, root=None):
+    """The stored counts when they are close enough to this commit to still rank the same, else None.
+
+    "Close enough" rather than "identical" -- see `CHURN_MAX_DRIFT` above for the measurement that
+    forced that, and for why this is a bounded staleness rather than an incremental update.
+    """
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))
     except Exception:
         return None
-    if not isinstance(data, dict) or data.get("head") != head:
+    if not isinstance(data, dict):
         return None
     counts = data.get("counts")
-    return counts if isinstance(counts, dict) else None
+    if not isinstance(counts, dict):
+        return None
+    stored = data.get("head")
+    if stored == head:
+        return counts
+    drift = _commits_between(root, stored, head)
+    return counts if drift is not None and 0 <= drift <= CHURN_MAX_DRIFT else None
 
 
 def _remember(path, head, key, counts):
@@ -147,13 +236,13 @@ def _churn(root, window=CHURN_WINDOW):
     # HEAD means an unchanged answer, and `git rev-parse HEAD` costs 44 ms against 1,263.
     head, disk = _head(root), _disk_cache_path(root, window)
     if head and disk:
-        cached = _read_disk_cache(disk, head)
+        cached = _read_disk_cache(disk, head, root)
         if cached is not None:
             return _CHURN_CACHE.setdefault(key, cached)
     # The one query in this file that was genuinely unscoped: `git log` with no pathspec lists
     # the WHOLE monorepo with repository-root-relative paths. `--relative -- .` below fixes that,
     # and is a no-op at a repository root, so the weaker gate is now safe here too.
-    if not ws.git_can_speak_for(root):
+    if not _git_can_speak_for(root):
         return _CHURN_CACHE.setdefault(key, {})
     try:
         out = subprocess.run(

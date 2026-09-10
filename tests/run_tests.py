@@ -28619,6 +28619,92 @@ else:
             _t_broken55.append("%s -> raised %r" % (_t_p55.name, _t_e55))
     check("...AND EVERY ONE OF THEM RUNS CLEAN WHEN SPAWNED THROUGH `sh -c`, AS THE HOST DOES",
           not _t_broken55, saw="\n".join(_t_broken55) or None)
+# ---- 56_the_churn_cache_survives_the_commits_it_exists_to_outlive.py
+# ------------------- the cache missed precisely when it was needed, and hit only when nothing moved
+# 🐛 [2026-09-10] `rollup`'s churn cache was keyed on HEAD EXACTLY, so any commit invalidated it.
+# The process it exists to serve is the SessionStart hook, which fires when somebody sits down to
+# work on a repository they are committing to — so it missed during work and hit only while nothing
+# was happening. Measured here: a cold `_churn` is 777 ms, the 600-commit `git log` alone is 599 ms,
+# and the whole hook was 1,534 ms. With a five-commit-stale cache the hook is 898 ms — 41% off every
+# session start and every compaction during active development.
+#
+# The counts rank which filenames appear on a rolled-up directory line, so 25 commits of drift out
+# of 600 is a 4% shift in a display ordering, and `git rev-list --count` answers the drift question
+# in ~10 ms against the 599 ms it avoids.
+#
+# Both directions, and the second is the one that keeps this honest: a cache that never rebuilt
+# would pass a "does it serve a stale cache" check exactly as well as a correct one.
+import json as _js56
+import subprocess as _sp56
+import tempfile as _tmp56
+import shutil as _sh56
+from pathlib import Path as _Path56
+
+import rollup as _t_ro56
+
+check("the drift bound is a real number this check can reason about",
+      isinstance(_t_ro56.CHURN_MAX_DRIFT, int) and _t_ro56.CHURN_MAX_DRIFT > 0,
+      saw=repr(getattr(_t_ro56, "CHURN_MAX_DRIFT", None)))
+
+# A throwaway repository, so this asserts behaviour rather than reading this repo's live cache.
+_t_r56 = _Path56(_tmp56.mkdtemp(prefix="chamnan-churn56-"))
+_sp56.run(["git", "-C", str(_t_r56), "init", "-q"], capture_output=True)
+for _cfg56 in (("user.email", "t@example.invalid"), ("user.name", "t")):
+    _sp56.run(["git", "-C", str(_t_r56), "config"] + list(_cfg56), capture_output=True)
+# 🐛 [2026-09-10] This built `CHURN_MAX_DRIFT + 8` commits, deriving its fixture size from the very
+# constant under test — so a mutation raising the bound to 100,000 made the check try to build
+# 100,008 commits and it had to be killed. A check whose RUNTIME is controlled by the value it is
+# checking cannot be mutation-tested, which is the one thing it most needs to survive. Capped, and
+# the far-behind case is expressed as "older than the bound allows" rather than by counting commits.
+_t_cap56 = min(_t_ro56.CHURN_MAX_DRIFT + 8, 40)
+_t_heads56 = []
+for _i56 in range(_t_cap56):
+    (_t_r56 / ("f%d.py" % _i56)).write_text("x = %d\n" % _i56, encoding="utf-8")
+    _sp56.run(["git", "-C", str(_t_r56), "add", "-A"], capture_output=True)
+    _sp56.run(["git", "-C", str(_t_r56), "commit", "-qm", "c%d" % _i56], capture_output=True)
+    _t_heads56.append(_sp56.run(["git", "-C", str(_t_r56), "rev-parse", "HEAD"],
+                                capture_output=True, text=True).stdout.strip())
+
+_t_live56 = _t_heads56[-1]
+_t_near56 = _t_heads56[-3]                       # 2 commits behind: inside the bound
+# Far behind: outside the bound whenever the bound is smaller than the fixture. When a mutation
+# raises the bound past the fixture there is no "outside" to test, so the assertion says so rather
+# than failing for the wrong reason — the check reports that it could not be made meaningful.
+_t_far56 = _t_heads56[0]
+_t_far_is_outside56 = _t_ro56.CHURN_MAX_DRIFT < _t_cap56 - 1
+_t_cache56 = _t_r56 / "churn.json"
+_t_marker56 = {"SENTINEL_NOT_FROM_GIT": 999}
+
+
+def _served56(stored_head):
+    _t_cache56.write_text(_js56.dumps({"head": stored_head, "counts": _t_marker56}),
+                          encoding="utf-8")
+    return _t_ro56._read_disk_cache(_t_cache56, _t_live56, _t_r56)
+
+
+check("AN EXACT HEAD MATCH IS STILL SERVED FROM CACHE",
+      _served56(_t_live56) == _t_marker56, saw=repr(_served56(_t_live56))[:80])
+check("...AND A CACHE A FEW COMMITS BEHIND IS SERVED TOO, WHICH IS THE WHOLE POINT",
+      _served56(_t_near56) == _t_marker56, saw=repr(_served56(_t_near56))[:80])
+check("the drift bound is small enough for this fixture to contain a commit outside it",
+      _t_far_is_outside56,
+      saw="CHURN_MAX_DRIFT=%s is >= the %d-commit fixture, so 'past the bound' cannot be tested "
+          "here — the bound is too large to be meaningful" % (_t_ro56.CHURN_MAX_DRIFT, _t_cap56))
+check("...and one past the drift bound is REFUSED, so the ranking cannot silently age forever",
+      (not _t_far_is_outside56) or _served56(_t_far56) is None,
+      saw=repr(_served56(_t_far56))[:80])
+
+# A commit git cannot relate to HEAD — after a rebase, or a shallow clone — must rebuild rather than
+# serve counts nobody can explain. The failure direction is the slow correct one.
+check("...and a commit git cannot relate to HEAD rebuilds rather than serving something unexplainable",
+      _served56("0" * 40) is None, saw=repr(_served56("0" * 40))[:80])
+
+# The counts themselves must still be validated: a cache whose payload is not a mapping is not a
+# cache, whatever its head says.
+_t_cache56.write_text(_js56.dumps({"head": _t_live56, "counts": "not a mapping"}), encoding="utf-8")
+check("...and a malformed payload is refused even on an exact head match",
+      _t_ro56._read_disk_cache(_t_cache56, _t_live56, _t_r56) is None)
+_sh56.rmtree(_t_r56, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 
