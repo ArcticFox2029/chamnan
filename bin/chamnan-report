@@ -196,6 +196,20 @@ def _shared_tail(want, have):
     return n
 
 
+def _local_day(ts):
+    """The LOCAL calendar date of a transcript timestamp, as `YYYY-MM-DD`.
+
+    One conversion, used everywhere a record is filed under a day, because two calendars in one
+    function is how a percentage gets compared against a marker built on a different grid. Falls
+    back to the raw prefix when the stamp is not parseable -- an unreadable timestamp is not a
+    reason to drop a record, and the old behaviour is the right thing to degrade to.
+    """
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone().strftime("%Y-%m-%d")
+    except (ValueError, TypeError):
+        return ts[:10]
+
+
 def collect(project_dir, want_opened=False, root=None):
     """Read every transcript line once.
 
@@ -288,7 +302,21 @@ def collect(project_dir, want_opened=False, root=None):
                         # docstring: a subagent sent elsewhere writes its paths into this
                         # repository's transcript, and they are not work on this repository.
                         if has_usage and ts and (root is None or _fp.startswith(_root_prefix)):
-                            touched_by_week[ts[:10]].add(_fp)
+                            # 🐛 [2026-09-10] This was `ts[:10]` — the first ten characters of the
+                            # RAW timestamp, which Claude Code writes in UTC. Fifteen lines down,
+                            # the same loop over the same records converts the same `ts` to LOCAL
+                            # for `marker_week`, and `_workspace_created` is local too. So the
+                            # repeat-work line — the caveat that decides whether the headline
+                            # percentage means anything — bucketed its days on one calendar and
+                            # compared them against a marker built on another. Measured on this
+                            # machine's real transcripts: 87,945 usage records, 14.0% landing on a
+                            # different day and 1.9% on a different ISO week, with seven of eight
+                            # weekly totals differing. In UTC+7 every call between local midnight
+                            # and 07:00 was filed under the previous day (R4 agent 3, finding 2).
+                            #
+                            # Silent, unlike the two composition artefacts this function's own
+                            # comments already record: both numbers looked plausible.
+                            touched_by_week[_local_day(ts)].add(_fp)
                         # 🐛 Same contamination as touched_by_week above, one screen down, missed
                         # by that fix: `opened` stripped everything up to the LAST ".chamnan/" in
                         # the path with no root check at all, so a subagent sent to a DIFFERENT

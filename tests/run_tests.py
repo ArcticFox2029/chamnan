@@ -1595,8 +1595,21 @@ check("the transcript scan is entered once, not once per consumer",
 # scoped to the repository, and an exact-text assertion failed on a change that preserved
 # everything it was written to protect — the fourth time this session a literal match stood in for
 # the thing it meant.
-_tbw = next(l for l in _rep_src.splitlines() if "touched_by_week[ts[:10]].add" in l)
-_guard = _rep_src.splitlines()[_rep_src.splitlines().index(_tbw) - 1]
+# 🐛 [2026-09-10] ...and it was still a literal. The comment above says "pinned to the PROPERTY,
+# not the exact line", and the pattern it used contained the KEY EXPRESSION — so putting the day
+# bucketing through one calendar conversion, which changed nothing this check exists to protect,
+# raised StopIteration and took the whole gate down with "a check did not produce a result". The
+# property is "the write site of touched_by_week", and how its key is computed is not part of it.
+_tbw = next(l for l in _rep_src.splitlines()
+            if "touched_by_week[" in l and ".add(" in l)
+# The nearest CODE line above it, not the previous line: a comment between a guard and the
+# statement it guards is ordinary, and reading line-1 blindly turns one into a missing guard.
+_rep_lines = _rep_src.splitlines()
+_guard = ""
+for _i in range(_rep_lines.index(_tbw) - 1, -1, -1):
+    if _rep_lines[_i].strip() and not _rep_lines[_i].lstrip().startswith("#"):
+        _guard = _rep_lines[_i]
+        break
 check("touched_by_week still keeps the has_usage condition the prefilter used to give it",
       "has_usage" in _guard and _guard.lstrip().startswith("if "))
 check("...and it now also requires the file to be under the repository being reported on",
@@ -28079,6 +28092,139 @@ check("...and the ellipsis counts what was LOST, so a complete list does not cla
 check("a STATE.md that fits its budget produces no marker at all",
       _st47.render(_t_text47, 400, ".chamnan/STATE.md")[1] == "",
       saw=_st47.render(_t_text47, 400, ".chamnan/STATE.md")[1] or None)
+# ---- 48_the_always_injected_ledger_line_means_todays_date.py
+# --------------------------- "today" meant "within 24 hours of noon UTC", which is not what it says
+# 🐛 [2026-09-10] `_age` divided elapsed seconds by 86400 while `_ymd_to_ts` anchors a written date
+# at NOON UTC, so "last write today" meant "within 24 hours of noon UTC on that date" rather than
+# "on today's date". East of UTC the two diverge by the offset: measured here, a record written
+# YESTERDAY was announced as "today" for 19 of the 24 hours of the day (R4 agent 3, finding 1).
+#
+# This line is injected into every session. The module's own docstring says the ledger exists
+# because "a count that never changes gets tuned out" — a date that is wrong for most of the day is
+# the same failure wearing a friendlier face, and it is worse than a stale count because it reads
+# as fresh evidence that work happened today.
+#
+# Swept across all 24 local hours in BOTH directions. A `_age` that never says "today" passes a
+# "yesterday is not called today" check exactly as well as a correct one.
+import calendar as _cal48
+import datetime as _dt48
+
+import ledger as _lg48
+
+
+def _noon_utc48(d):
+    """A date the way `_ymd_to_ts` stores one. Noon UTC is deliberate: it lands on the same LOCAL
+    date for every offset within ±12, which is what makes a calendar comparison correct."""
+    return _cal48.timegm((d.year, d.month, d.day, 12, 0, 0))
+
+
+def _local_hour48(d, hour):
+    return time.mktime((d.year, d.month, d.day, hour, 0, 0, 0, 0, -1))
+
+
+_t_today48 = _dt48.date.today()
+_t_yest48 = _t_today48 - _dt48.timedelta(days=1)
+
+_t_wrong48 = [h for h in range(24)
+              if _lg48._age(_noon_utc48(_t_yest48), _local_hour48(_t_today48, h)) == "today"]
+check("A RECORD WRITTEN YESTERDAY IS NEVER ANNOUNCED AS WRITTEN TODAY, AT ANY HOUR",
+      not _t_wrong48,
+      saw="called 'today' at local hour(s) %s" % (", ".join(str(h) for h in _t_wrong48),)
+          if _t_wrong48 else None)
+
+_t_missed48 = [h for h in range(24)
+               if _lg48._age(_noon_utc48(_t_today48), _local_hour48(_t_today48, h)) != "today"]
+check("...and a record written TODAY is announced as today at every hour, so the fix did not simply "
+      "stop the word being used",
+      not _t_missed48,
+      saw="not called 'today' at local hour(s) %s" % (", ".join(str(h) for h in _t_missed48),)
+          if _t_missed48 else None)
+
+_t_two48 = _lg48._age(_noon_utc48(_t_today48 - _dt48.timedelta(days=2)),
+                      _local_hour48(_t_today48, 3))
+check("...and the days still count: two calendar days back reads as 2 days ago, not 1 and not today",
+      _t_two48 == "2 days ago", saw=_t_two48)
+
+_t_one48 = _lg48._age(_noon_utc48(_t_yest48), _local_hour48(_t_today48, 3))
+check("...and one calendar day back is singular, which is the wording the block actually prints",
+      _t_one48 == "1 day ago", saw=_t_one48)
+# ---- 49_one_calendar_for_every_day_a_record_is_filed_under.py
+# ------------------------- two calendars in one function, and the percentage compared across them
+# 🐛 [2026-09-10] `chamnan-report`'s scan filed each record's day as `ts[:10]` — the raw timestamp
+# prefix, which Claude Code writes in UTC — while fifteen lines below, the same loop over the same
+# records converted the same stamp to LOCAL for `marker_week`, and `_workspace_created` was local
+# too. So the repeat-work caveat, the one the code's own comment calls the answer to "was this week
+# the same work as last week", bucketed days on one grid and compared them against a marker built on
+# another. Measured on this machine's real transcripts: 87,945 usage records, 14.0% landing on a
+# different day, 1.9% on a different ISO week, seven of eight weekly totals differing. In UTC+7
+# every call between local midnight and 07:00 was filed under the previous day (R4 agent 3,
+# finding 2).
+#
+# What makes it worth a check rather than a fix is that it was SILENT — both numbers looked
+# plausible, which is the same shape as the two composition artefacts that function already records.
+import datetime as _dt49
+import importlib.machinery as _ilm49
+import importlib.util as _ilu49
+
+_t_rep49 = ROOT / "bin" / "chamnan-report"
+_t_spec49 = _ilu49.spec_from_loader(
+    "chamnan_report_49", _ilm49.SourceFileLoader("chamnan_report_49", str(_t_rep49)))
+_t_mod49 = _ilu49.module_from_spec(_t_spec49)
+try:
+    _t_spec49.loader.exec_module(_t_mod49)
+    _t_loaded49 = True
+except SystemExit:
+    _t_loaded49 = True                      # it ran main(); the functions are still bound
+except Exception as _t_e49:                 # pragma: no cover - that is the failure
+    _t_loaded49 = False
+    print("      could not import chamnan-report: %r" % (_t_e49,))
+
+check("chamnan-report can be imported so its day-bucketing can be exercised directly",
+      _t_loaded49 and hasattr(_t_mod49, "_local_day"),
+      saw=None if _t_loaded49 and hasattr(_t_mod49, "_local_day")
+          else "no _local_day: the two-calendar fix is not present")
+
+if _t_loaded49 and hasattr(_t_mod49, "_local_day"):
+    _t_day49 = _t_mod49._local_day
+    # A stamp that is one local day away from its own UTC prefix. Built from the running machine's
+    # real offset rather than assuming one, so this check means the same thing in every timezone --
+    # and skips itself, out loud, where UTC and local cannot disagree.
+    _t_off49 = -time.timezone if not time.daylight else -time.altzone
+    if _t_off49 == 0:
+        skip("  · this machine runs on UTC, where the two calendars cannot disagree")
+    else:
+        # Pick an instant whose UTC date and local date differ: just after local midnight when the
+        # offset is positive, just before it when negative.
+        _t_base49 = _dt49.datetime(2026, 3, 15, 2 if _t_off49 > 0 else 22,
+                                   tzinfo=_dt49.timezone(_dt49.timedelta(seconds=_t_off49)))
+        _t_utc49 = _t_base49.astimezone(_dt49.timezone.utc)
+        _t_stamp49 = _t_utc49.strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        check("EVERY DAY A RECORD IS FILED UNDER IS THE LOCAL ONE, NOT THE RAW UTC PREFIX",
+              _t_day49(_t_stamp49) == _t_base49.strftime("%Y-%m-%d"),
+              saw="stamp %s -> %s, local date is %s"
+                  % (_t_stamp49, _t_day49(_t_stamp49), _t_base49.strftime("%Y-%m-%d")))
+        check("...and the two really do disagree for this stamp, so the check is not vacuous",
+              _t_stamp49[:10] != _t_base49.strftime("%Y-%m-%d"),
+              saw="UTC prefix and local date are the same: %s" % (_t_stamp49[:10],))
+
+    # An unparseable stamp must degrade to the old behaviour rather than drop the record: a bad
+    # timestamp is not a reason to lose a day's work from the count.
+    check("...and an unreadable timestamp falls back to its own prefix instead of raising",
+          _t_day49("not-a-timestamp") == "not-a-timestamp"[:10],
+          saw=_t_day49("not-a-timestamp"))
+
+    # Every place a record is FILED under a day must go through the one conversion, or the fix is
+    # one member of a pair. `_local_day`'s own fallback line is the single legitimate use of the raw
+    # prefix and is excluded by name — a check that greps for a pattern its own remedy contains
+    # matches itself, which this workspace has recorded happening before.
+    _t_lines49 = _t_rep49.read_text(encoding="utf-8").splitlines()
+    _t_raw49 = [ln.strip() for ln in _t_lines49
+                if "_by_week[" in ln and "ts[:10]" in ln and not ln.lstrip().startswith("#")]
+    check("...and no live line still buckets a record on the raw UTC prefix",
+          not _t_raw49, saw="\n".join(_t_raw49[:3]) or None)
+    check("...and the day-bucketing really does go through the one conversion",
+          any("_by_week[_local_day(" in ln for ln in _t_lines49),
+          saw="nothing keys a week bucket on _local_day()")
 # ============================ end of the folded surgical pool
 
 

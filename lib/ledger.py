@@ -15,6 +15,7 @@ has not created it) reads as absent, not zero, and its clause is simply omitted 
 is what lets `candidates/` (added in 1.5.1) join the ledger automatically the day it starts existing,
 with no further change here.
 """
+import datetime
 import re
 import time
 
@@ -202,7 +203,20 @@ def snapshot(root, now=None):
 
 
 def _age(seconds, now):
-    days = int((now - seconds) // 86400)
+    # 🐛 [2026-09-10] This was `int((now - seconds) // 86400)`, a 24-hour block rather than a
+    # calendar day, and `_ymd_to_ts` anchors a written date at NOON UTC. So "today" meant "within
+    # 24 hours of noon UTC on that date" and not "on today's date": east of UTC the two diverge by
+    # the offset, and a record written yesterday was called "today" for 19 of 24 local hours here
+    # (R4 agent 3, finding 1). This line is injected into every session, and the module's own
+    # docstring says it exists because a count that never changes gets tuned out — a date that is
+    # wrong most of the day is the same failure with a friendlier face.
+    #
+    # The noon anchor is what makes the calendar comparison correct rather than a second problem:
+    # noon UTC falls on the same LOCAL date for every offset within ±12, which is why it was
+    # chosen. So `_ymd_to_ts` is deliberately left alone here — the future-date refusal and the
+    # ordering both rest on it, and a second date convention beside the first is the defect this
+    # repository records more than any other.
+    days = (datetime.date.fromtimestamp(now) - datetime.date.fromtimestamp(seconds)).days
     if days <= 0:
         return "today"
     if days == 1:
