@@ -107,12 +107,14 @@ def main():
         "at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "lines": [f"{fam['n']}x  `{fam['head'][:70]}`" for fam in repeated[:MAX_LISTED]],
     }
+    # \U0001f41b [2026-09-10] `Path.write_text` truncates on open, and this file has exactly one
+    # reader: `chamnan_session_start.py`, which `json.load`s it and deletes it. A session ending
+    # while the next one starts — closing one window and opening another is how that happens — let
+    # the reader see the truncated middle, and a `json.load` on it drops the whole digest silently.
+    # The repository's answer to this has been one function since `atomic_write_text` was written;
+    # this call and `workspace.reconcile_version` were the two shipped writers still not using it.
     out = wsdir / "logs" / DIGEST_NAME
-    try:
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(digest, ensure_ascii=False), encoding="utf-8")
-    except OSError:
-        pass
+    ws.atomic_write_text(out, json.dumps(digest, ensure_ascii=False))
     return 0
 
 

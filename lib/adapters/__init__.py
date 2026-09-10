@@ -161,6 +161,28 @@ def names():
     return sorted(set(ADAPTERS) | set(ALIASES))
 
 
+def names_canonical_first():
+    """`names()`, but every REGISTERED adapter before any alias. Alphabetical within each group.
+
+    For callers that walk the names and keep the first one reaching a given `TARGET`. `names()` is
+    plain alphabetical, and fourteen of these names — `generic` and its thirteen aliases — share
+    the root `AGENTS.md`, so plain alphabetical hands that file to whichever alias happens to sort
+    earliest.
+
+    \U0001f41b [2026-09-10] It sorted earliest to `amp`, so `--written-agents` answered `amp` for a
+    repository that had run `--write generic`. The flag's help says it names "each agent whose
+    context file exists here", the installed pre-commit hook loops over its output, and what both
+    were told was a third-party product (Sourcegraph Amp) that a user of Codex, OpenCode, Devin,
+    Kilo, Kimi, Mistral Vibe, Crush, Warp, DeepSeek or Muse does not have and never mentioned. The
+    refresh still worked — the alias resolves to the same file — so nothing failed; the answer was
+    just untrue, in the two places anybody reads it (R4 agent 1, finding 8).
+
+    An alias is a spelling of an adapter. Asked which agent a file belongs to, the answer is the
+    adapter, and that does not depend on where its aliases fall in the alphabet.
+    """
+    return sorted(set(ADAPTERS) | set(ALIASES), key=lambda n: (n not in ADAPTERS, n))
+
+
 # Agents that read their OWN file AND the root `AGENTS.md`, so a repository that has run both
 # `--write generic` and `--write <this>` sends the identical block to that tool twice, every
 # session, and pays for it twice. Each entry verified against the vendor's own documentation on
@@ -180,7 +202,62 @@ def names():
 # What this set is FOR: telling the user at the moment they create the duplicate. The round that
 # found this proposed recording it in each adapter's docstring, which reaches a maintainer reading
 # the source and never reaches the person paying the tokens.
-ALSO_READS_AGENTS_MD = frozenset({"roo", "continue", "windsurf", "copilot"})
+# 🐛 [2026-09-10] This was a literal `frozenset({"roo", "continue", "windsurf", "copilot"})` and
+# EIGHT vendors qualified. The evidence for the four that were missing was already written down —
+# in their own adapter docstrings, saying in plain words that the vendor reads a root `AGENTS.md`
+# as well as its own file. So `--write generic` followed by `--write goose` printed nothing while
+# `--write generic` followed by `--write roo` printed the full duplicate-delivery warning: the
+# same condition, the same cost, warned about for one and not the other (R4 agent 1, finding 6).
+#
+# Derived from a declaration each adapter carries beside its own TARGET. An adapter added later
+# joins this set by declaring it, not by somebody remembering to come back here — which is the
+# only shape that survives, in the package whose commonest defect is a rule applied to one member
+# of a set and forgotten in the identical ones beside it.
+ALSO_READS_AGENTS_MD = frozenset(
+    name for name, mod in ADAPTERS.items() if getattr(mod, "ALSO_READS_AGENTS_MD", False))
+
+
+def duplicating_agents_md(root, writing):
+    """The agents that would now be handed the SAME block twice, given what is already here.
+
+    `writing` is whatever the user typed, alias included. Returns canonical adapter names, sorted,
+    and never includes `writing` itself — the caller is naming the OTHER side of the duplicate.
+
+    \U0001f41b [2026-09-10] The condition this replaces asked one question in one direction: is the
+    agent being written now one that also reads `AGENTS.md`, and is the root file already here.
+    Write the two files the other way round — `--write roo` first, then `--write generic` — and the
+    identical duplicate is created in silence, because no branch existed for `generic`. That is
+    roughly half of real orderings, and it is the MORE likely half: `AGENTS.md` is the thing people
+    add last, once they notice it covers thirteen more tools. The warning's own comment says it is
+    printed at the only moment the person paying has both the information and the choice, and in
+    half of those orderings that moment passed without it (R4 agent 1, finding 7).
+
+    The same condition also compared `args.write` raw against a set of CANONICAL names. No alias
+    reaches one of those seven adapters TODAY — every alias in the table points at `generic` — so
+    that half is a guard rather than a live fix, and it is written here because the fix it guards
+    is the one that keeps being needed: this package's commonest defect is a rule that holds for
+    the members somebody listed and not for the ones added beside them.
+    """
+    canonical = ALIASES.get(writing, writing)
+    here = []
+    if canonical == generic.NAME:
+        # Writing the root file: every agent that has its own file here AND reads AGENTS.md too.
+        for name in sorted(ALSO_READS_AGENTS_MD):
+            adapter = ADAPTERS.get(name)
+            target = getattr(adapter, "TARGET", None)
+            if not target:
+                continue
+            try:
+                path = safe_target(root, target)
+                if path is None or path.is_symlink() or not path.is_file():
+                    continue
+                if wrote_this(name, path.read_text(encoding="utf-8-sig", errors="replace")):
+                    here.append(name)
+            except OSError:
+                continue
+    elif canonical in ALSO_READS_AGENTS_MD and wrote_the_generic_file(root):
+        here.append(generic.NAME)
+    return here
 
 
 def wrote_this(name, text):

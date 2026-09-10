@@ -1,6 +1,6 @@
 # Why every command string in `hooks.json` is prefixed with the plugin name
 
-Moved out of `hooks.json` on 2026-09-11. It had lived there as a `"_comment"` key since
+Moved out of `hooks.json` on 2026-09-10. It had lived there as a `"_comment"` key since
 2026-09-01, and Claude Code prints `chamnan: hooks.json: unknown key "_comment" ignored`
 on **every session start** because of it. JSON has no comments; a plugin whose whole claim is
 that it does not add noise should not be adding a warning line to every startup to hold one.

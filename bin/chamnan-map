@@ -350,8 +350,19 @@ def install_git_hook(root):
                 return 0
             start = existing.index(HOOK_MARKER)
             end = existing.index("# <<< chamnan", start) + len("# <<< chamnan")
-            target.write_text(existing[:start] + body.strip() + existing[end:],
-                              encoding="utf-8")
+            # \U0001f41b [2026-09-10] The THIRD write in this function, and the only one still on
+            # `Path.write_text` — the two `write_or_raise` calls fifty lines below carry a comment
+            # explaining, at length, why a hook install must not use it: CRLF from TextIOWrapper
+            # makes `#!/bin/sh\r` unrunnable on Windows, there is no tmp-then-rename, and the
+            # return value was discarded under a printed success. Every one of those applies here.
+            # This branch is the UPGRADE path, which is worse than the install path when it lies:
+            # it says the stale hook was replaced, and a caller who is told that has no reason to
+            # look again (R4 agent 1).
+            try:
+                ws.write_or_raise(target, existing[:start] + body.strip() + existing[end:])
+            except OSError as err:
+                print(f"chamnan: {err}", file=sys.stderr)
+                return 1
             print(f"chamnan: updated the installed hook in {_show(target, root)} — it was made "
                   f"from an older template")
             return 0

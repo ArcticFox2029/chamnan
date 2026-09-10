@@ -36,6 +36,16 @@ matching this one.
 """
 
 NAME = "goose"
+# This vendor reads the root `AGENTS.md` AS WELL AS its own file, so a repository that has
+# run both `--write generic` and `--write <this>` sends the identical block twice, every
+# session, and pays for it twice. Declared here rather than listed in `__init__.py`:
+# 🐛 [2026-09-10] that list held four names while EIGHT vendors qualified, and the evidence
+# for the missing four was sitting in their own docstrings. A set kept beside the thing it
+# describes cannot drift from it (R4 agent 1, finding 6).
+# Evidence: this adapter's own docstring above: Goose reads a root `AGENTS.md` by default as well
+# as `.goosehints` (R8 agent 1).
+ALSO_READS_AGENTS_MD = True
+
 TARGET = ".goosehints"
 CEILING = None
 

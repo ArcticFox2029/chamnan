@@ -87,12 +87,23 @@ def _stabilise_fence(body):
     disk is a different threat model from a live session anyway, since whoever can edit the file
     does not need to forge a marker inside it.
     """
-    found = _FENCE.search(body)
-    if not found:
+    # 🐛 [2026-09-10] Masking and unmasking were `str.replace` over the WHOLE document, so both
+    # steps reached content that was never part of a fence. Any `000000` already in the repository's
+    # own prose — a zero-padded id, a timestamp, a hex colour, an amount, `0.000000` in a
+    # measurement — came out of the second replace rewritten to the fence digest, in every output
+    # path and every vendor's file. And a nonce that happened to appear in the body was masked
+    # there too, so the digest was taken over content the masking had corrupted (R4 agent 1,
+    # finding 2).
+    #
+    # Scoped to the fence by substituting through `_FENCE` itself, which is the only thing that
+    # knows where a fence is. Nothing outside a `[repo:…]` / `[/repo:…]` marker is touched at
+    # either step, and the digest is taken over a body that differs from the input only inside
+    # those markers.
+    if not _FENCE.search(body):
         return body
-    masked = body.replace(found.group(1), "0" * 6)
+    masked = _FENCE.sub(lambda m: m.group(0).replace(m.group(1), "0" * 6), body)
     stable = hashlib.blake2s(masked.encode("utf-8"), digest_size=3).hexdigest()
-    return masked.replace("0" * 6, stable)
+    return _FENCE.sub(lambda m: m.group(0).replace(m.group(1), stable), masked)
 
 
 def _load_hook():
@@ -294,7 +305,28 @@ def main():
             # Minus what this adapter wraps around the block. The ceiling is a promise about the
             # FILE, and the file is the block plus the wrapper plus the marker — sizing the block to
             # the whole ceiling wrote over it every time the ceiling bound.
-            args.ceiling = max(1, declared - adapters.fixed_overhead(args.write))
+            # 🐛 [2026-09-10] ...and the SNAPSHOT NOTE, which the write path appends AFTER this
+            # ceiling has already been applied and which `fixed_overhead` cannot see, because it is
+            # this command's line rather than the adapter's wrapper. It is 218-223 bytes, so every
+            # `--write` landed over the declared ceiling at every profile: measured 12,097 against
+            # 12,000 by default, 12,017 at `--profile small-window`, 12,169 for `--write
+            # antigravity`, and over in 4 of 4 forced-ceiling probes. The fix that added
+            # `fixed_overhead` landed on two of the three things the file gains around the block
+            # and was forgotten on the third, which shipped in the same release (R4 agent 1,
+            # finding 1).
+            #
+            # Worse than the overshoot: Windsurf and Antigravity truncate silently at 12,000, so
+            # what was cut was the note itself — the one line telling the reader the file is a
+            # snapshot and how to refresh it. And the warning printed at the overshoot told them to
+            # lower `index_token_budget` or pass a smaller `--window`, which NO value could satisfy,
+            # because the note was appended after every one of them. A tool that reports a
+            # violation and then gives advice that cannot clear it teaches the reader to skip the
+            # warning.
+            #
+            # Measured here rather than estimated: the note carries today's date, the map's commit
+            # and the agent's name, so its length is knowable exactly and only at this point.
+            _footer = len(("\n" + _snapshot_note(root, args.write) + "\n").encode())
+            args.ceiling = max(1, declared - adapters.fixed_overhead(args.write) - _footer)
             detected["ceiling"] = declared
 
     # Detection was inert: `host.agents()` had one consumer, `--detect`'s JSON dump, and nothing
@@ -349,7 +381,7 @@ def main():
         # says it is what the hook loops over, so answering per FILE is answering the question it
         # was asked (2026-09-08).
         seen = set()
-        for name in adapters.names():
+        for name in adapters.names_canonical_first():
             adapter = adapters.for_agent(name)
             target = getattr(adapter, "TARGET", None)
             if not target or target in seen:
@@ -402,12 +434,24 @@ def main():
         #
         # Said HERE, at the moment the second file is created, because that is the only moment the
         # person paying has both the information and the choice (R8 agent 16).
-        if args.write in adapters.ALSO_READS_AGENTS_MD and adapters.wrote_the_generic_file(root):
-            _root_file = adapters.for_agent("generic").TARGET
+        # 🐛 [2026-09-10] Asked in ONE direction, of a set of canonical names, against a raw
+        # argument: `--write roo` then `--write generic` created the same duplicate in silence, and
+        # so did any alias. `duplicating_agents_md` asks it from whichever side is being written
+        # (R4 agent 1, finding 7).
+        _root_file = adapters.for_agent("generic").TARGET
+        _dupes = adapters.duplicating_agents_md(root, args.write)
+        if _dupes == [adapters.for_agent("generic").NAME]:
             print(f"  ⚠ {args.write} also reads the root {_root_file}, which chamnan already wrote "
                   f"here — so this block now reaches it twice every session, and costs twice. Keep "
                   f"whichever suits you and delete the other: this file carries {args.write}'s own "
                   f"frontmatter, {_root_file} is read by every agent that has no file of its own.")
+        elif _dupes:
+            _list = ", ".join(_dupes)
+            print(f"  ⚠ {_root_file} is also read by {_list}, which chamnan has already written a "
+                  f"file for here — so this block now reaches {'each of them' if len(_dupes) > 1 else 'it'} "
+                  f"twice every session, and costs twice. Keep whichever suits you and delete the "
+                  f"other: each of those files carries its own agent's frontmatter, {_root_file} is "
+                  f"read by every agent that has no file of its own.")
         # 🐛 [2026-09-08] `CEILING` means "the byte limit that agent's delivery imposes, or None
         # when there is none" -- a statement about the VENDOR. Fifteen of twenty-three adapters have
         # None, and what fell out of that is a decision nobody made: an agent whose vendor imposes
@@ -443,9 +487,31 @@ def main():
                 hard = getattr(adapters.for_agent(args.write), "CEILING_IS_HARD", False)
                 what = ("That agent reads NONE of a file past it — the whole file is rejected"
                         if hard else "That agent truncates silently past it")
+                # 🐛 [2026-09-10] The advice was printed unconditionally and there are repositories
+                # where NO value of either setting can satisfy it. Both levers shrink the INDEX;
+                # what is left when the index is gone — the pinned sections, the rules, the wrapper,
+                # the snapshot line — is a floor the settings do not reach. Told to lower a number
+                # that cannot help, a reader tries it, watches nothing change, and learns to skip
+                # the warning. That costs more than the overshoot it was reporting (R4 agent 1,
+                # finding 1).
+                #
+                # Measured, not guessed: the block is rebuilt at a ceiling of 1, which is what this
+                # repository is when nothing droppable is left. Rebuilding is only paid on the path
+                # that is already over the limit.
+                _floor = (len(build(root, profile, 1, agent=args.write).encode())
+                          + adapters.fixed_overhead(args.write)
+                          + len(("\n" + _snapshot_note(root, args.write) + "\n").encode()))
+                if _floor > limit:
+                    _advice = (f"neither index_token_budget nor --window can clear it: with the "
+                               f"whole index dropped this file is still about {_floor:,} bytes, "
+                               f"which is the pinned sections, the rules and {args.write}'s own "
+                               f"wrapper. Shorten what is pinned, or write for an agent with more "
+                               f"room.")
+                else:
+                    _advice = ("lower index_token_budget in .chamnan/config.json, or pass "
+                               "--window smaller.")
                 print(f"  ⚠ {size:,} bytes, over {args.write}'s {limit:,}-byte limit by "
-                      f"{size - limit:,}. {what} — lower "
-                      f"index_token_budget in .chamnan/config.json, or pass --window smaller.")
+                      f"{size - limit:,}. {what} — {_advice}")
         # An agent that does not auto-discover its own context file is only half installed by
         # writing it. Saying so is the difference between a working setup and a file nobody opens.
         manual = getattr(adapters.for_agent(args.write), "MANUAL_STEP", "")

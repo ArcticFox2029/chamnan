@@ -1363,18 +1363,26 @@ def reconcile_version(root, running):
         # PERSISTING, and a payload that is overwritten on first sight has one session to act
         # instead of every session forever. What is given up is knowing which version was recorded,
         # and that was already unknowable: the string could not be parsed.
-        try:
-            path.write_text(running + "\n", encoding="utf-8")
-        except OSError:
-            pass
+        atomic_write_text(path, running + "\n")
         return "an unreadable version"
     if seen and _as_tuple(running) < _as_tuple(seen):
         return seen
+    # \U0001f41b [2026-09-10] Both writes above and here were `Path.write_text`, which TRUNCATES on
+    # open. `.version` is written by every session that starts in this workspace, and this function
+    # is one of the first things a session does, so two starting together is the ordinary case
+    # rather than the exotic one — one session's read landing inside the other's truncation window
+    # returns "", and a process killed mid-write leaves a short file that `_VERSION_SHAPE` rejects.
+    # That branch does not merely stay quiet: it prints ⚠ "an unreadable version" in chamnan's own
+    # voice, so the failure mode of the unsafe write is a warning about a corruption the write
+    # itself caused.
+    #
+    # `atomic_write_text` is the fix this repository already made in five other places — `state.py`
+    # first, then `coedit.py`, `rollup.py`, `pointer.py` and `chamnan-map`. This was the sixth and
+    # was not on that list. No lock is wanted here on top of it: every writer is putting down the
+    # same string, so a lost update costs nothing, and a session must never wait on a lock to learn
+    # its own version (R4 agent 1).
     if seen != running:
-        try:
-            path.write_text(running + "\n", encoding="utf-8")
-        except OSError:
-            pass
+        atomic_write_text(path, running + "\n")
     return ""
 
 
@@ -1726,12 +1734,18 @@ def safe_tool_name(name):
 # A mutex built from os.open(O_CREAT|O_EXCL), which is atomic on POSIX and on Windows alike, so it
 # needs neither fcntl nor msvcrt and stays inside the standard library.
 #
-# lib/pointer.py faced the same lost-update problem and chose NOT to lock: it gave every session its
-# own file, and its comment sets out why — flock is not reentrant across two descriptors in one
-# process, and fcntl drops every lock a process holds the moment ANY descriptor to the file closes.
-# That answer is right there and wrong here. `tools/index.json` is a shared registry: every session
-# has to see the same list of tools, so per-session files are not available and a lock is the only
-# thing left.
+# Two things this mutex is deliberately NOT: not `flock`, which is not reentrant across two
+# descriptors in one process, and not `fcntl`, which drops every lock a process holds the moment ANY
+# descriptor to the file closes. `tools/index.json` is a shared registry — every session has to see
+# the same list of tools — so sidestepping the problem with a file per session, the way some logs
+# can, is not available here and a lock is the only thing left.
+#
+# 🐛 [2026-09-10] The paragraph above used to say that `lib/pointer.py` had faced the same
+# problem and answered it with a file per session. It had not: `pointer.EVENT_LOG` is one shared
+# path carrying `session` as a FIELD, and its trim was an unlocked read-modify-write on it — the
+# very lost update this mutex exists for, held up here as the example of not needing one. It now
+# calls `append_jsonl`, below, which takes this lock. A design note describing a design the code has
+# left is worse than no note: it argues against the fix.
 #
 # Held for a read-modify-write of a few hundred bytes, so the wait is bounded and short. A lock left
 # behind by a killed process is broken after LOCK_STALE seconds rather than waited on forever, and

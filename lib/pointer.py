@@ -373,18 +373,22 @@ def note(wsdir, session_id, rel_path, hits, ms):
     """
     rec = {"t": int(time.time()), "session": session_id, "path": rel_path,
            "named": [h[1] for h in hits], "ms": round(ms, 1)}
-    try:
-        p = Path(wsdir) / EVENT_LOG
-        p.parent.mkdir(parents=True, exist_ok=True)
-        with p.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        _trim(p)
-    except OSError:
-        pass
+    # 🐛 [2026-09-10] The bound added the day before was a `_trim()` here that did an
+    # unlocked read-modify-write on `EVENT_LOG` — and `EVENT_LOG` is ONE path that every session on
+    # the machine writes, carrying `session` as a FIELD rather than as a filename. A record appended
+    # between one session's `read_text` and its `atomic_write_text` was dropped: the lost update
+    # `blocklog` and `tools_index` each take `ws.exclusive` to prevent. Silent when it happened, and
+    # rare enough to stay silent — the trim only woke past 200 KB (R4 agent 1, finding 4).
+    #
+    # `ws.append_jsonl` is that entire pattern — locked, SKIPPING rather than blocking when another
+    # process holds it, atomic, bounded by `keep` — extracted on 2026-09-10 and already the writer
+    # for two other logs. A fourth hand-rolled copy, in the package whose own advisory counts
+    # function bodies written in more than one file, was not the answer. It never raises.
+    ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
 
 
-# 🐛 [2026-09-09] `workspace.SELF_PRUNING_LOGS` exempts this file from the 7-day sweep, and its own
-# comment states the contract: "A log that bounds itself by record must say so here, or the
+# 🐛 [2026-09-09] `workspace.SELF_PRUNING_LOGS` exempts this file from the 7-day sweep, and
+# its own comment states the contract: "A log that bounds itself by record must say so here, or the
 # directory sweep bounds it by date instead." This file was on that list and nothing bounded it —
 # `note()` was the only writer and it only appended. Every sibling on that list has a `KEEP`; this
 # one had the exemption without the obligation (R4 agent 4).
@@ -392,16 +396,3 @@ def note(wsdir, session_id, rel_path, hits, ms):
 # By record rather than by date, which is what the exemption promises. One PreToolUse firing per
 # file pointer is a handful a session, so this holds months of them.
 KEEP = 2000
-
-
-def _trim(path):
-    """Hold the newest KEEP records. Cheap: nothing is read until the file is worth reading."""
-    try:
-        if path.stat().st_size < 200_000:
-            return
-        lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
-        if len(lines) <= KEEP:
-            return
-        ws.atomic_write_text(path, "\n".join(lines[-KEEP:]) + "\n")
-    except (OSError, UnicodeDecodeError):
-        pass          # telemetry must never be the thing that breaks a session

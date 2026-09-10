@@ -311,7 +311,25 @@ def by_model(family):
     text = str(family).strip().lower().replace("_", "-")
     if not text:
         return DEFAULT, (f"no model family given. Using `{DEFAULT}` — pass --window to be exact.")
-    key = text.split("-")[0].split()[0].rstrip("0123456789.")
+    # 🐛 [2026-09-10] The normaliser was taught `_`, `-`, whitespace and trailing version digits,
+    # and never the two things every GATEWAY and every CLOUD PLATFORM puts in front of the family:
+    # a slash-separated publisher, and a dotted region/publisher prefix. So the three standard ways
+    # of addressing a hosted model all missed the table —
+    #
+    #   anthropic/claude-opus-5                    OpenRouter and most gateways
+    #   us.anthropic.claude-opus-5-20260101-v1:0   Bedrock
+    #   publishers/anthropic/models/claude-opus-5  Vertex
+    #
+    # — while the bare `claude-opus-5` matched. Every one of those families IS in the table, so the
+    # user was handed `standard`'s 3,000-token index budget while running a model `large-window`'s
+    # 8,000 was written for: 2.7× smaller, silently. And the note printed said the family "is not in
+    # the model table", which is true of the string and false of the family, so the honest reading
+    # of it is "my vendor is unsupported" rather than "I typed a prefix" (R4 agent 1, finding 9).
+    #
+    # Publisher first, then the family token, then the dotted prefix off what is left — in that
+    # order, because `gpt-5.6` has a dot the version-digit strip is meant to see and the region
+    # prefix is only ever ahead of the family, never behind it.
+    key = text.rsplit("/", 1)[-1].split("-")[0].split()[0].rsplit(".", 1)[-1].rstrip("0123456789.")
     if key in AMBIGUOUS:
         small, large = AMBIGUOUS[key]
         return DEFAULT, (f"`{family}` ships in two sizes that want different profiles: {small} "

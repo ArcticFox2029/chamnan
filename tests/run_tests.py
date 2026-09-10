@@ -10386,6 +10386,62 @@ if (_wt / "tree").is_dir():
           _r2.returncode == 0 and "already installed" in _r2.stdout)
 _rmtree(_wt, ignore_errors=True)
 
+# 🐛 [2026-09-10] `--install-git-hook` has THREE writes and only two of them were fixed. The append
+# branch and the fresh-install branch went to `write_or_raise` on 2026-09-07, under a comment that
+# spells out why a hook install must never use `Path.write_text` — CRLF from TextIOWrapper makes
+# `#!/bin/sh\r` unrunnable, there is no tmp-then-rename, and a discarded return value prints
+# success over a write that never landed. The UPGRADE branch sat forty lines ABOVE that comment and
+# kept `write_text`. It is the worst of the three to have lying: it reports that a stale hook was
+# replaced, and somebody told that has no reason to look again (R4 agent 1).
+_gu = Path(tempfile.mkdtemp()) / "up"
+_gu.mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=str(_gu), capture_output=True)
+(_gu / "m.py").write_text('"""M."""\ndef f(): pass\n', encoding="utf-8")
+_gu_run = lambda: subprocess.run(
+    [sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
+    cwd=str(_gu), capture_output=True, text=True, encoding="utf-8", errors="replace")
+_gu_run()
+_gu_hook = [h for h in (_gu / ".git" / "hooks").glob("*") if not h.name.endswith(".sample")]
+if _gu_hook:
+    _gu_hook = _gu_hook[0]
+    _gu_mode = _gu_hook.stat().st_mode & 0o7777
+    # Aged by its STAMP rather than by editing the body, because the stamp is what `git_hook_state`
+    # actually reads -- an edit anywhere else leaves it reporting "installed" and this fixture then
+    # tests the already-installed path while claiming to test the upgrade.
+    _gu_aged = re.sub(re.escape(ws.GIT_HOOK_STAMP) + r"\s*[0-9a-f]{8}",
+                      ws.GIT_HOOK_STAMP + " deadbeef",
+                      _gu_hook.read_text(encoding="utf-8"), count=1)
+    _gu_hook.write_text(_gu_aged, encoding="utf-8")
+    check("the fixture actually produced a STALE hook, not an already-installed one",
+          ws.git_hook_state(_gu, "any body at all") == "stale")
+    _gu_r = _gu_run()
+    check("UPGRADING A STALE GIT HOOK REWRITES IT AND KEEPS IT EXECUTABLE",
+          _gu_r.returncode == 0 and "deadbeef" not in _gu_hook.read_text(encoding="utf-8")
+          and (_gu_hook.stat().st_mode & 0o7777) == _gu_mode,
+          saw="rc=%d, mode=%s (was %s)"
+              % (_gu_r.returncode, oct(_gu_hook.stat().st_mode & 0o7777), oct(_gu_mode)))
+    check("...and no staging file is left beside it",
+          not list((_gu / ".git" / "hooks").glob("*.tmp")))
+    # The half that makes the fix worth having: a write it could not do must be REPORTED, in
+    # chamnan's own sentence.
+    #
+    # "exits 1 and did not say updated" is NOT enough, and asserting only that is how this check
+    # first passed against the very defect it was written for: `Path.write_text` on a read-only
+    # file raises PermissionError, nothing catches it, Python exits 1, and stdout is empty — so
+    # every clause held while the user got a raw traceback. Mutation-tested in both directions
+    # afterwards; the traceback clause is the one that does the work.
+    _gu_hook.write_text(_gu_aged, encoding="utf-8")
+    _gu_hook.chmod(0o444)
+    _gu_ro = _gu_run()
+    check("...and a hook it cannot write is reported in a sentence, not as a traceback",
+          _gu_ro.returncode == 1 and "updated" not in _gu_ro.stdout
+          and "Traceback" not in _gu_ro.stderr and _gu_ro.stderr.startswith("chamnan: ")
+          and "deadbeef" in _gu_hook.read_text(encoding="utf-8"),
+          saw="rc=%d stdout=%r stderr=%r"
+              % (_gu_ro.returncode, _gu_ro.stdout.strip()[:60], _gu_ro.stderr.strip()[:80]))
+    _gu_hook.chmod(0o644)
+_rmtree(_gu.parent, ignore_errors=True)
+
 # 🐛 estimate() ran per CHARACTER, calling _in() — itself a generator over range tuples — twice
 # each. Measured at 0.35 MB/s: on apache/commons-lang (625 files, 8.5 MB) it was 44 of
 # chamnan-map's 46 seconds of scan time, 96% of the command's runtime, producing one headline
@@ -14921,16 +14977,24 @@ check("kiro writes steering, where Kiro looks for it",
 check("...with inclusion: always, the mode that means orientation rather than a glob rule",
       "inclusion: always" in _krendered)
 _kdashes = [i for i, l in enumerate(_krendered.splitlines()) if l.strip() == "---"]
-check("its frontmatter opens and closes exactly once", _kdashes == [0, 2])
-check("...and a horizontal rule in the body cannot close it early",
-      "***" in _krendered and "after" in _krendered)
+# The FIRST two, not the whole list: the body handed in above contains a horizontal rule of its
+# own, and it is meant to still be there. `== [0, 2]` said "the frontmatter is closed" and measured
+# "nothing else in the file is three dashes", which is a claim about the user's prose.
+check("its frontmatter opens at the first line and closes at the third",
+      _kdashes[:2] == [0, 2], saw=str(_kdashes[:4]))
+# 🐛 [2026-09-10] This asserted the opposite of what is now true, and it is the reason the fence
+# guard survived four rounds: it checked that a body `---` had been rewritten to `***`, which reads
+# as "the frontmatter is protected" and is really "the body was edited". The frontmatter is closed
+# by the line above — `_kdashes == [0, 2]` is that same fact, measured — so nothing in the body can
+# reach it. What the user's content should do is arrive unchanged (R4 agent 1, finding 10).
+check("...and a horizontal rule in the body arrives as the writer typed it",
+      "\n---\n" in _krendered.split("---\n", 2)[-1] and "after" in _krendered)
 
-# The two frontmatter adapters keep their own copy of the fence guard on purpose. If one ever
-# imports the other's, a change made for one silently changes the other -- so assert they are
-# independent rather than that they are identical.
-check("cursor and kiro each own their fence guard rather than sharing one",
-      "_fence_safe" in Path(_kir.__file__).read_text(encoding="utf-8")
-      and "import cursor" not in Path(_kir.__file__).read_text(encoding="utf-8"))
+# The adapters stay independent — if one ever imports another's renderer, a change made for one
+# silently changes the other. Asserted as the absence of a cross-import rather than as the presence
+# of a duplicated helper, which is what this said while there was one to point at.
+check("cursor and kiro each render on their own rather than sharing a module",
+      "import cursor" not in Path(_kir.__file__).read_text(encoding="utf-8"))
 
 
 # ------------------------------------------------- amazonq, cline, and AGENTS.md
@@ -15372,6 +15436,32 @@ check("family lookup ignores case and separators",
 
 # Unknown is an answer with a reason attached, never an exception: this is read from a command
 # line, and a typo must cost a sentence rather than the run.
+# 🐛 [2026-09-10] The normaliser knew `_`, `-`, whitespace and trailing version digits, and not
+# the two prefixes every gateway and cloud platform puts in FRONT of the family. So the three
+# standard ways of naming a hosted model all fell through to "not in the model table" — literally
+# true of the string, false of the family — and handed the user `standard`'s 3,000-token index
+# budget while they ran a model `large-window`'s 8,000 was written for (R4 agent 1, finding 9).
+#
+# Derived from the table rather than from a list of examples: every family in it is addressed
+# through each of the three namespacings and must land where the bare name lands. A family added
+# to `MODEL_WINDOWS` tomorrow is covered without anybody coming back here.
+_ns_bad = []
+for _ns_family, _ns_window in sorted(profiles_mod.MODEL_WINDOWS.items()):
+    _ns_want = profiles_mod.by_model(_ns_family)[0]
+    for _ns_spelling in (f"anthropic/{_ns_family}-5",              # gateway / OpenRouter
+                         f"us.anthropic.{_ns_family}-5-20260101-v1:0",   # Bedrock
+                         f"publishers/anthropic/models/{_ns_family}-5"):  # Vertex
+        _ns_got = profiles_mod.by_model(_ns_spelling)[0]
+        if _ns_got != _ns_want:
+            _ns_bad.append(f"{_ns_spelling} -> {_ns_got}, bare {_ns_family} -> {_ns_want}")
+check("A NAMESPACED MODEL ID REACHES THE SAME PROFILE AS THE BARE FAMILY NAME",
+      not _ns_bad, saw="; ".join(_ns_bad[:6]) or None)
+# The other direction: a genuinely unknown family must still be reported as unknown, or the fix is
+# a normaliser that matches everything.
+check("...and a namespaced name for a family nobody registered is still unknown",
+      profiles_mod.by_model("acme/wholly-invented-9")[0] == profiles_mod.DEFAULT
+      and "not in the model table" in profiles_mod.by_model("acme/wholly-invented-9")[1])
+
 _uprofile, _unote = profiles_mod.by_model("no-such-model")
 check("an unknown family falls back to the default", _uprofile == profiles_mod.DEFAULT)
 check("...and says the table is a dated convenience rather than pretending it matched",
@@ -15698,7 +15788,7 @@ def _runtime_sources():
     A `.py`-only sweep reported "everything compiles" while `bin/chamnan-map` was broken, in this
     same session. Suffix is the wrong way to find source in a repository whose commands have none.
     """
-    # 🐛 [2026-09-11] The filter was a BLACKLIST — `.cmd`, `.sh`, `.json` — and a `.md` note added
+    # 🐛 [2026-09-10] The filter was a BLACKLIST — `.cmd`, `.sh`, `.json` — and a `.md` note added
     # beside the hooks was therefore yielded to `ast.parse`, which raised SyntaxError inside a check
     # and took the whole gate down with "a check did not produce a result". A blacklist of what is
     # not source falls behind the moment somebody adds a file type nobody listed, which is this
@@ -17243,51 +17333,65 @@ for _c in _self_count:
 for _c in _counted:
     print("      stale the moment a check is added:", _c)
 
-# 🐛 [2026-09-06] `_fence_safe` -- neutralise a body line that is exactly `---` so repository prose
-# cannot close a YAML frontmatter block early -- is defined SIX times, byte-identical, one per
-# frontmatter adapter. Three of the six docstrings argue for the duplication, and for a rendering
-# difference that argument is right: frontmatter FIELDS genuinely differ per agent, and a shared
-# base class would make a change for one silently change the others. This is not that. The hazard
-# and the fix are fixed by YAML itself, not chosen per adapter, and this repository has twice paid
-# for the same bet -- `mapper._clip()` and `write_target`'s discarded return, both "simple, stable,
-# per-caller copies are fine", both wrong (R5 agent 3).
+# 🐛 [2026-09-10] Six byte-identical `_fence_safe` copies lived in the frontmatter adapters,
+# rewriting a body line of exactly `---` to `***` so repository prose "could not close the YAML
+# frontmatter early". It could not close it anyway: every one of these adapters emits `---`, its
+# keys, and a CLOSING `---` before the body. The guard's only real effect was on a `---` that
+# FOLLOWS a text line — a setext `<h2>` underline — which it demoted to a paragraph plus a rule,
+# changing the outline of the document the agent is handed (R4 agent 1, finding 10).
 #
-# The adapters stay independent; what is closed is SILENT divergence. Two properties: the six
-# bodies are textually identical, and each one actually neutralises the line it exists for -- so
-# six copies that agree with each other and are all broken fails too.
-_fence_bodies = {}
+# The round before (R5 agent 3, 2026-09-06) asked whether the six copies AGREED and policed that.
+# They did. What it never asked was whether the thing they agreed on was needed, which is why the
+# checks it wrote are replaced here rather than contradicted.
+#
+# This asserts the property that makes the guard unnecessary, over the SET: every adapter that
+# emits frontmatter closes it before the body. An adapter that one day does not fails here and can
+# then be given a guard for a reason that is true.
+_fm_open, _fm_bad, _fm_leftover = [], [], []
 for _ap in sorted((ROOT / "lib" / "adapters").glob("*.py")):
-    _atext = _ap.read_text(encoding="utf-8")
-    for _an in ast.walk(ast.parse(_atext)):
-        if isinstance(_an, ast.FunctionDef) and _an.name == "_fence_safe":
-            _stmts = [_x for _x in _an.body
-                      if not (isinstance(_x, ast.Expr) and isinstance(_x.value, ast.Constant))]
-            _fence_bodies[_ap.name] = "\n".join(
-                (ast.get_source_segment(_atext, _x) or "").strip() for _x in _stmts)
-check(f"the fence-guard audit found the copies it is meant to police: {len(_fence_bodies)}",
-      len(_fence_bodies) >= 6)
-_fence_variants = sorted(set(_fence_bodies.values()))
-check("EVERY COPY OF _fence_safe IS THE SAME CODE", len(_fence_variants) == 1)
-if len(_fence_variants) > 1:
-    for _v in _fence_variants:
-        print("      variant in:", sorted(k for k, b in _fence_bodies.items() if b == _v))
-# Reached through the registry rather than by turning a filename into an agent name -- the module
-# is `continuedev.py` and the agent is `continue`, so a filename-derived lookup would quietly skip
-# one of the six and still report a pass.
-_fence_live, _fence_seen = [], set()
+    # `def `, not the bare name: the comment recording the removal names the function, and a
+    # substring match would report all six as still carrying it — this suite's own recorded trap,
+    # a check that matches the note describing its subject.
+    if re.search(r"(?m)^def _fence_safe\b", _ap.read_text(encoding="utf-8")):
+        # Named, not counted: a resurrected copy has to argue for itself in a comment somebody reads.
+        _fm_leftover.append(_ap.name)
+_fm_marker = "ZZBODYSTARTZZ"
 for _agent in sorted(adapters_mod.ADAPTERS):
     _mod = adapters_mod.for_agent(_agent)
-    _fn = getattr(_mod, "_fence_safe", None)
-    if _fn is None:
+    _render = getattr(_mod, "render", None)
+    if _render is None:
         continue
-    _fence_seen.add(Path(_mod.__file__).name)
-    if "---" in _fn("a\n---\nb"):
-        _fence_live.append(_agent)
-check("every file with a _fence_safe is reachable through the registry",
-      _fence_seen == set(_fence_bodies))
-check("...and none of them lets a bare --- line through", not _fence_live)
-for _f in _fence_live:
-    print("      still closes the frontmatter:", _f)
+    try:
+        _out = _render(_fm_marker + "\n\nordinary body\n")
+    except Exception as _fm_e:                      # a renderer that raises is its own failure
+        _fm_bad.append(f"{_agent}: {_fm_e!r}")
+        continue
+    if not _out.startswith("---\n"):
+        continue                                    # not a frontmatter adapter; nothing to close
+    _fm_open.append(_agent)
+    _fm_at = _out.index(_fm_marker)
+    # The closing delimiter has to be a line of its own BEFORE the body, not merely somewhere above.
+    _fm_closed = any(_l.strip() == "---" for _l in _out[4:_fm_at].splitlines())
+    if not _fm_closed:
+        _fm_bad.append(f"{_agent}: frontmatter is still open where the body starts")
+
+check(f"the frontmatter audit found adapters to police: {len(_fm_open)}", len(_fm_open) >= 6,
+      saw=", ".join(_fm_open) or "none — the sweep matched nothing, which is not a pass")
+check("EVERY FRONTMATTER ADAPTER CLOSES ITS FRONTMATTER BEFORE THE BODY",
+      not _fm_bad, saw="; ".join(_fm_bad) or None)
+check("...so no adapter still rewrites `---` out of the body it was handed",
+      not _fm_leftover,
+      saw="%s still carry a fence guard — the frontmatter is already closed where it runs, and its "
+          "one real effect is demoting a setext heading" % (", ".join(_fm_leftover),))
+
+# ...and the content actually survives, which is the user-visible half of removing the guard.
+_fm_setext = []
+for _agent in _fm_open:
+    _out = adapters_mod.for_agent(_agent).render("A heading\n---\n\nbody\n")
+    if "A heading\n---" not in _out:
+        _fm_setext.append(_agent)
+check("...and a setext heading in the block reaches the file intact",
+      not _fm_setext, saw=", ".join(_fm_setext) or None)
 
 # 🐛 [2026-09-06] The checks above verify that every adapter is PRESENT in the README. Nothing
 # verified the number the README states out loud, so `**35 agent names can be written**, from 24
@@ -22693,6 +22797,29 @@ check(f"THE REFRESH LOOP SEES THE FILE CHAMNAN WROTE (got: {_wa_names})", _wa_na
 _wa_targets = [adapters_mod.for_agent(n).TARGET for n in _wa_names]
 check(f"...once per FILE, not once per agent name ({_wa_targets})",
       len(set(_wa_targets)) == len(_wa_targets))
+# 🐛 [2026-09-10] Deduplicating by TARGET is right; deduplicating in ALPHABETICAL order was not.
+# Fourteen names share the root `AGENTS.md` and `amp` sorts earliest, so a repository that had run
+# `--write generic` was told its file belonged to `amp` — Sourcegraph Amp, a product the user of
+# Codex, OpenCode, Devin, Kilo, Kimi, Mistral Vibe, Crush, Warp, DeepSeek or Muse does not have.
+# The refresh still worked, because the alias resolves to the same file; the ANSWER was untrue, in
+# the flag's own output and in the pre-commit hook that loops over it (R4 agent 1, finding 8).
+#
+# Over the set: an alias is a spelling of an adapter, so whatever is printed for a file must be the
+# adapter. This does not care which names happen to be registered today.
+_wa_aliased = [n for n in _wa_names if n in adapters_mod.ALIASES]
+check("EVERY NAME `--written-agents` PRINTS IS A REGISTERED ADAPTER, NOT ONE OF ITS ALIASES",
+      not _wa_aliased,
+      saw="%s — each is an alias for %s, and the pre-commit hook prints it back at the user"
+          % (", ".join(_wa_aliased), ", ".join(adapters_mod.ALIASES.get(n, "?")
+                                               for n in _wa_aliased)))
+# ...and the ordering helper is what produced that, rather than the alphabetical one it replaced.
+check("...because the file walk asks for adapters before aliases",
+      "names_canonical_first" in (ROOT / "bin" / "chamnan-context").read_text(encoding="utf-8"))
+_wa_first = adapters_mod.names_canonical_first()
+check("...and that ordering really does put every adapter ahead of every alias",
+      max((_wa_first.index(n) for n in adapters_mod.ADAPTERS), default=-1)
+      < min((_wa_first.index(n) for n in adapters_mod.ALIASES
+             if n not in adapters_mod.ADAPTERS), default=10**6))
 
 
 # ------------------------- code joined to what the repository already learned, 2026-09-08
@@ -25255,12 +25382,22 @@ for _name in ws.SELF_PRUNING_LOGS:
             "subagent_start.jsonl": None}.get(_name)
     if not _mod:
         continue
-    # The PROPERTY, and it has three spellings across three modules — `pointer._trim`,
+    # The PROPERTY, and it had three spellings across three modules — `pointer._trim`,
     # `coedit._trim`, `workflows.prune`. Looking for the constant `KEEP` reported `coedit` as
     # unbounded (its cap is `MAX_LINES`); looking for `_trim` reported `workflows`. What they share
-    # is a function that drops old records, so that is what is asserted.
+    # is that old records get dropped, so that is what is asserted.
+    #
+    # This block also exists VERBATIM in `.chamnan/tools/checks/08_sweeps.py`; both were changed
+    # together. Two copies of one check is this repository's own commonest defect, and saying so is
+    # cheaper than the next person finding out because one of them failed alone.
+    #
+    # \U0001f41b [2026-09-10] A module can now satisfy that by DELEGATING rather than by defining:
+    # `pointer.note` dropped its own `_trim` — whose read-modify-write on a shared file was the
+    # lost update this suite exists to catch — for `ws.append_jsonl`, which takes the lock and
+    # trims to `keep` on the caller's behalf. Asserting the spelling would have read that fix as
+    # the log going unbounded and argued for putting the defect back.
     _src = (ROOT / "lib" / f"{_mod}.py")
-    if _src.is_file() and not re.search(r"(?m)^def (_trim|prune)\b",
+    if _src.is_file() and not re.search(r"(?m)^def (_trim|prune)\b|\bappend_jsonl\(",
                                         _src.read_text(encoding="utf-8")):
         _unbounded.append(f"{_name} ({_mod}.py)")
 check("...and every log exempted from the sweep as self-pruning actually bounds itself",
@@ -29054,7 +29191,7 @@ check("...and a 📌-pinned section is never a candidate for being held back, at
 _sh60.rmtree(_t_w60, ignore_errors=True)
 # ---- 61_hooks_json_holds_nothing_the_host_will_complain_about.py
 # ----------------- a warning on every session start, to hold a comment in a format with no comments
-# 🐛 [2026-09-11] `hooks.json` carried a `"_comment"` key — a genuinely useful record of why every
+# 🐛 [2026-09-10] `hooks.json` carried a `"_comment"` key — a genuinely useful record of why every
 # command string is prefixed with the plugin name — and Claude Code printed
 # `chamnan: hooks.json: unknown key "_comment" ignored` on EVERY session start because of it. The
 # key was ignored and nothing broke; what it cost was a warning line in front of a person opening a
@@ -29097,7 +29234,7 @@ else:
               for f in _t_kept61),
           saw="no .md under hooks/ explains the command-string prefix")
 
-# 🐛 [2026-09-11] Adding that sibling `.md` broke the gate: `_runtime_sources()` filtered by a
+# 🐛 [2026-09-10] Adding that sibling `.md` broke the gate: `_runtime_sources()` filtered by a
 # BLACKLIST of non-source suffixes, so a markdown file under `hooks/` was handed to `ast.parse`,
 # which raised inside a check and produced "a check did not produce a result" — the whole run
 # unquotable. Fixed there by whitelisting `.py` and extensionless instead, which cannot fall behind
