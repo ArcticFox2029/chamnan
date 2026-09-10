@@ -245,6 +245,28 @@ def _upsert_locked(root, sequence, observed, when, provenance, strict):
     is_new = not p.is_file()
     p.parent.mkdir(parents=True, exist_ok=True)
     _write(strict)(p, render(sequence, observed, when, provenance))
+    # 🐛 [2026-09-10] The merge above runs only on the branch that CREATES a file, so a duplicate
+    # sitting beside an existing target was never reconciled — every later upsert rewrote the target
+    # and stepped over the other one. Reproduced in this repository's own queue: two files, identical
+    # sequences, both observed 3 times, in a queue of eight where six rows describe one routine.
+    #
+    # Only an EXACT duplicate is collapsed here. A rotation or a contained run is the same habit
+    # seen at a different offset and is still merged on the create branch, where the longer sequence
+    # wins; doing that reconciliation on every upsert would rewrite files on every hook firing for
+    # no new information. Same commands in the same order at a second path is unambiguous.
+    for _other in entries(root):
+        try:
+            if _other.resolve() == p.resolve():
+                continue
+            _got = _fields(_other.read_text(encoding="utf-8-sig", errors="replace"))
+        except OSError:
+            continue
+        _seq = tuple(x.strip() for x in (_got.get("sequence") or "").split(",") if x.strip())
+        if _seq and _seq == tuple(sequence):
+            try:
+                _other.unlink()
+            except OSError:
+                pass
     return p, is_new
 
 
@@ -262,14 +284,34 @@ def _same_habit(root, sequence):
     other. Anything else is a different candidate and is left alone.
     """
     want = tuple(sequence)
+    # 🐛 [2026-09-10] This skipped `got == want` on the reasoning that `path_for` already finds the
+    # file recording this exact sequence — true of ONE file, and there can be two. The naming
+    # scheme gained a collision suffix, `path_for` prefers the legacy plain name when it holds the
+    # same sequence, and the suffixed file written before that preference existed is then reachable
+    # by nothing: not by `path_for`, and not by this merge, because the one condition that would
+    # have caught it was the one being skipped.
+    #
+    # Found in this repository's own queue: two files, byte-identical sequences, both observed 3
+    # times, sitting side by side in a queue of eight where six rows describe one routine. An exact
+    # duplicate is the easiest case to merge and was the only case excluded.
+    #
+    # Skipped by PATH now, which is what the original reasoning actually meant.
+    mine = path_for(root, sequence)
     for other in entries(root):
+        try:
+            if other.resolve() == mine.resolve():
+                continue
+        except OSError:
+            continue
         try:
             fields = _fields(other.read_text(encoding="utf-8-sig", errors="replace"))
         except OSError:
             continue
         got = tuple(x.strip() for x in (fields.get("sequence") or "").split(",") if x.strip())
-        if not got or got == want:
+        if not got:
             continue
+        if got == want:
+            return other, list(got)
         if want in _rotations(got) or got in _rotations(want):
             return other, list(got)
         longer, shorter = (got, want) if len(got) > len(want) else (want, got)
