@@ -1449,7 +1449,22 @@ def main():
                 import tree as _tree
                 with _tree.session():
                     behind, edited = index_is_behind(root, mp)
-                    n, examples = unindexed(root, text) if behind else (0, [])
+                    # 🐛 [2026-09-10] `dead_entries` used to be computed seventy lines below, and
+                    # `unindexed` was gated on `behind` ALONE — so a pure RENAME named the file that
+                    # went and never the file that arrived. `git mv a.py b.py` with no edit moves no
+                    # mtime (a rename is a directory-entry operation), so `behind` stays 0;
+                    # `dead_entries` fires unconditionally and correctly reports `a.py` as gone, and
+                    # `unindexed`, which is the half that would name `b.py`, never runs. The remedy
+                    # offered is right and the reason given for it is wrong: it reads as though the
+                    # file vanished rather than moved (R17 agent 5).
+                    #
+                    # One of a pair gated and the identical other not — this repository's most
+                    # recorded defect, in the function whose own comment two lines up is about
+                    # pairing these two walks. Moved inside the same `tree.session()` so the three
+                    # of them share one cached walk, and costs nothing extra on the ordinary path:
+                    # a tree with nothing behind and nothing dead still skips `unindexed`.
+                    _dead, _named, _dead_ex = dead_entries(root, text)
+                    n, examples = unindexed(root, text) if (behind or _dead) else (0, [])
                 _behind_seconds = behind
                 if behind:
                     # A count of what is missing, not an age. See unindexed() for why.
@@ -1519,8 +1534,24 @@ def main():
                 # moving a file moves no mtime forward -- so the one case where the index is not
                 # merely incomplete but describing a tree that no longer exists is exactly the case
                 # the age check cannot see. Reproduced live: 7 of 7 entries dead, 0 seconds behind.
-                _dead, _named, _dead_ex = dead_entries(root, text)
+                # (Computed above now, inside the shared tree walk; see the note there for why the
+                # ADD side of a rename needed it early.)
                 if _dead:
+                    # 🐛 [2026-09-10] A pure RENAME reaches here and, until this line, said only
+                    # that the old name was gone. The remedy it offers is right and the reason it
+                    # gives is wrong: it reads as a deletion, when what happened is that the file
+                    # moved and the NEW name is the one missing from the index. `unindexed` knows
+                    # that — it now runs whenever anything is dead, not only when the mtime moved —
+                    # and this is where its answer reaches the reader, because the "N not in it"
+                    # line above lives inside `if behind:` and a rename never sets `behind`
+                    # (R17 agent 5).
+                    _arrived = ""
+                    if n and not behind:
+                        _arrived = (" " + f"**{n} file(s) are in the tree and not in the index** — "
+                                    + ", ".join(f"`{mdblock.as_quoted(redact.scrub(e))}`"
+                                                for e in examples)
+                                    + ("…" if n > len(examples) else "")
+                                    + ", which is what a rename looks like from here.")
                     # Names come from a committed file, so they are made inert before interpolation
                     # and the whole line is scrubbed, like every sibling warning.
                     _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in _dead_ex)
@@ -1529,8 +1560,8 @@ def main():
                     # tree, 7 of 264 says a directory was cleaned up. They call for different reactions.
                     _stale_lines.append(redact.scrub(
                         f"_⚠ **{_dead} of {_named} file(s) this index names no longer exist** — "
-                        f"{_shown}{_more}. It is describing a tree that has moved on; rebuild it "
-                        f"with `chamnan-map`._\n"))
+                        f"{_shown}{_more}.{_arrived} It is describing a tree that has moved on; "
+                        f"rebuild it with `chamnan-map`._\n"))
 
         if cfg.get("environments", True):
             # Constraints, never versions. A constraint rules out a whole design before it is written

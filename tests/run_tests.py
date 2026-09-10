@@ -28883,6 +28883,75 @@ if _t_hook58.is_file():
           len(_rows58("state/agent_model_mismatches.jsonl")) == 1,
           saw="%d record(s)" % (len(_rows58("state/agent_model_mismatches.jsonl")),))
     _sh58.rmtree(_t_ws58, ignore_errors=True)
+# ---- 59_a_rename_names_the_file_that_arrived_not_only_the_one_that_went.py
+# ------------------ one of a pair gated on an mtime, and a rename moves no mtime at all
+# 🐛 [2026-09-10] `git mv a.py b.py` with no edit does not advance any mtime — a rename is a
+# directory-entry operation and the content is untouched — so `index_is_behind()` returns 0.
+# `dead_entries()` runs unconditionally and correctly reported `a.py` as gone; `unindexed()`, the
+# half that would name `b.py`, was gated on `behind` and therefore never ran. The session was told
+# the right remedy for the wrong reason: it read as a deletion when the file had moved, and the name
+# that actually needed indexing was never mentioned (R17 agent 5).
+#
+# One of a pair gated and the identical other not, in the function whose own comment is about
+# pairing those two walks. `unindexed` now runs when anything is dead as well as when the mtime
+# moved, and its answer reaches the reader through the dead-entries line, because the "N not in it"
+# line lives inside `if behind:` and a rename never sets `behind`.
+#
+# Driven end to end through the real hook against a real git repository, because every part of this
+# defect is in how three functions compose — reading any one of them shows nothing wrong.
+import shutil as _sh59
+import subprocess as _sp59
+import tempfile as _tmp59
+import time as _t59
+from pathlib import Path as _Path59
+
+_t_map59 = ROOT / "bin" / "chamnan-map"
+_t_hook59 = ROOT / "hooks" / "chamnan_session_start.py"
+
+if os.name == "nt" or not _t_map59.is_file() or not _t_hook59.is_file():
+    skip("  · needs a POSIX shell, chamnan-map and the session-start hook — skipped, not passed")
+else:
+    def _fixture59(rename):
+        d = _Path59(_tmp59.mkdtemp(prefix="rename59-"))
+        (d / "src").mkdir()
+        (d / "src" / "a.py").write_text("def hello():\n    return 1\n", encoding="utf-8")
+        for _c in (["init", "-q"], ["config", "user.email", "t@e.invalid"],
+                   ["config", "user.name", "t"], ["add", "-A"], ["commit", "-qm", "c"]):
+            _sp59.run(["git", "-C", str(d)] + _c, capture_output=True)
+        _sp59.run([sys.executable, str(_t_map59)], cwd=str(d), capture_output=True, timeout=600)
+        _t59.sleep(1.2)                       # so a real edit WOULD move the mtime past the map
+        if rename:
+            _sp59.run(["git", "-C", str(d), "mv", "src/a.py", "src/b.py"], capture_output=True)
+        return d
+
+    def _block59(d):
+        r = _sp59.run([sys.executable, str(_t_hook59)], cwd=str(d), input="",
+                      capture_output=True, text=True, encoding="utf-8", errors="replace",
+                      timeout=600, env=dict(os.environ, CHAMNAN_READ_ONLY="1"))
+        return r.stdout
+
+    _t_d59 = _fixture59(True)
+    _t_out59 = _block59(_t_d59)
+    _sh59.rmtree(_t_d59, ignore_errors=True)
+
+    check("the fixture produced a block at all, so the assertions below mean something",
+          "## chamnan" in _t_out59, saw=_t_out59[:120])
+    check("a pure rename still names the file that WENT",
+          "src/a.py" in _t_out59, saw="no mention of the removed name")
+    check("A PURE RENAME ALSO NAMES THE FILE THAT ARRIVED, WHICH IS THE ONE NEEDING INDEXING",
+          "src/b.py" in _t_out59,
+          saw="the block names the removed file and not the new one, so it reads as a deletion")
+    check("...and says what that shape IS, rather than leaving the reader to infer it",
+          "rename" in _t_out59.lower(), saw="nothing in the block uses the word")
+
+    # The other direction: a tree nobody touched must stay quiet. A warning that fires always is
+    # the failure this whole area keeps producing, and it would pass every assertion above.
+    _t_q59 = _fixture59(False)
+    _t_quiet59 = _block59(_t_q59)
+    _sh59.rmtree(_t_q59, ignore_errors=True)
+    check("...and an untouched tree produces no staleness warning at all",
+          "no longer exist" not in _t_quiet59 and "not in the index" not in _t_quiet59,
+          saw=" | ".join(l for l in _t_quiet59.splitlines() if "⚠" in l)[:160])
 # ============================ end of the folded surgical pool
 
 
