@@ -79,14 +79,6 @@ NEVER_EXPAND = {"Secret", "SealedSecret"}
 # `rel.parts`, which is what made the asymmetry findable. Two harms beyond the missing sections:
 # `mapper.scan` is unaffected, so the index and the catalogues then disagree about the same
 # repository; and the unignored-`.env` warning goes silent, which is the false-calm direction.
-def _rel_parts(path, root):
-    """`path`'s components below `root`, or its own components when it is not below root."""
-    try:
-        return pathlib.Path(path).relative_to(root).parts
-    except (ValueError, TypeError):
-        return pathlib.Path(path).parts
-
-
 def _read(root):
     # Nested checkouts are excluded here for the same reason as in mapper and catalogs: a checkout
     # inside a checkout is somebody else's code. This module is the one that made the consequence
@@ -96,7 +88,7 @@ def _read(root):
     nested = _nested_repo_dirs(root)
     for pattern in MANIFEST_GLOBS:
         for path in tree.matching(root, pattern):
-            if any(p in SKIP for p in _rel_parts(path, root)):
+            if any(p in SKIP for p in tree.rel_parts(path, root)):
                 continue
             if nested and any(parent.resolve() in nested for parent in path.parents):
                 continue
@@ -277,7 +269,7 @@ def scan(root):
     for name, group in (("Dockerfile", "ci"), ("Dockerfile.*", "ci"), ("Jenkinsfile", "ci"),
                         ("Makefile", "ci"), ("ansible.cfg", "ansible")):
         for path in tree.matching(root, name):
-            if not any(p in SKIP for p in _rel_parts(path, root)):
+            if not any(p in SKIP for p in tree.rel_parts(path, root)):
                 rel = str(path.relative_to(root).as_posix())
                 found[group].add(rel)
                 found["claimed"].add(rel)

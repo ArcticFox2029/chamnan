@@ -1000,8 +1000,8 @@ def print_pointer(fired, named, opened, root=None):
         print(f"      {mdblock.as_quoted(path, 100)}")
     if len(followed) > 6:
         print(f"      …and {len(followed) - 6} more")
-    print("  (an observation, not a score: knowledge can be acted on without the file being")
-    print("   opened, and a file can be opened for a reason that has nothing to do with this)")
+    print("  (an observation, not a score: knowledge can be acted on without the file being\n"
+          "   opened, and a file can be opened for a reason that has nothing to do with this)")
 
     # 🐛 [2026-09-10] This reported what WAS named and never the inverse, and the inverse is the
     # question somebody actually has about a growing `skills/`: which of these is pulling its
@@ -1027,19 +1027,23 @@ def print_pointer(fired, named, opened, root=None):
             _sk_all = {}
         _sk_never = sorted(set(_sk_all) - set(named))
         if _sk_all and _sk_never:
-            print()
-            print(f"  {len(_sk_never)} of {len(_sk_all)} recorded skills were never named")
+            # One block, assembled and printed once — the same economy the rules paragraph above
+            # uses, and for the same reason: this command is capped at 80 print calls on purpose so
+            # the screen stays short enough to act on, and a per-item print is how that cap goes.
             _now = time.time()
+            _sk_rows = []
             for _sk in _sk_never[:8]:
                 try:
                     _age = (_now - _sk_all[_sk].stat().st_mtime) / 86400
                     _when = f"{_age:.0f}d old" if _age >= 1 else "written today"
                 except OSError:
                     _when = "age unknown"
-                print(f"      {mdblock.as_quoted(_sk, 90)}  ({_when})")
+                _sk_rows.append(f"      {mdblock.as_quoted(_sk, 90)}  ({_when})")
             if len(_sk_never) > 8:
-                print(f"      …and {len(_sk_never) - 8} more")
-            print("  A new one has had no chance to be named; an old one is the question.")
+                _sk_rows.append(f"      …and {len(_sk_never) - 8} more")
+            print("\n  {} of {} recorded skills were never named\n{}\n  A new one has had no "
+                  "chance to be named; an old one is the question.".format(
+                      len(_sk_never), len(_sk_all), "\n".join(_sk_rows)))
     print()
 
 

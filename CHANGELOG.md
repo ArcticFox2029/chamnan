@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1240), and every one of these is on the
+[README](README.md#whats-new-in-1250), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -16,6 +16,169 @@ the version number and a new empty one starts.
 Nothing under **Unreleased** carries a version number, on purpose. Numbering it would put a version
 in this file that no tag matches — and on the machine chamnan is developed on, the installed plugin
 already reports the last released number while running newer code.
+
+---
+
+## What's new in 1.25.0
+
+**A guard you never point at anything reports nothing, for ever.** chamnan's redactor has always
+watched what leaves for the model. It had never been pointed at the direction a secret actually
+leaves a machine, which is `git commit` — and the pre-commit hook chamnan installs only rebuilt the
+index. Several things in this release are that shape: a check wired to one store of two, a version
+stamp nothing carried, a column header in a language the matcher did not read.
+
+The rest is **228 defect records** across 90 files, in a handful of shapes. They came from **57
+research rounds**, each named on the row of the attached index that carries the fix.
+
+### A password column in a language the redactor did not read
+
+**A blended recall number hid a whole class of leak.** The redactor scored well on prefixed vendor
+tokens — `ghp_`, `xoxb-`, `sk-ant-` — and the aggregate never moved while shape-only credentials
+stayed open. The one that mattered: a table whose COLUMN HEADER says what the values are.
+
+`chamnan-peek` built its summary from parsed rows. Column names went out comma-separated on one
+line and the sample rows pipe-separated a dozen lines below, so the two never formed a table, the
+column-marking rule had no header row to work from, and the choke point at the end scrubbed a
+document in which nothing looked like a credential. `redact.scrub()` on the same file's raw text had
+been redacting it correctly the whole time. The rule was there; the shape it needed was not.
+
+**And the header list was English.** A CSV column called `contraseña`, `senha`, `mot_de_passe`,
+`密码` or `รหัสผ่าน` printed its values. `_HEADER_LANGS` now claims **16 languages and 36 terms**,
+and the suite asserts every one of them is actually matched — so the next gap is a failing check
+rather than a silent miss.
+
+### The redactor now guards the direction a secret leaves
+
+`chamnan-guard` reads the staged diff and names files that look like they carry a credential.
+
+**It warns; it does not block.** Published recall is 98.2% on a synthetic corpus and it verifies
+nothing against a live service, so a false positive that stops every commit is worse than the leak
+it guards — the person turns it off, and then nothing is watching. `chamnan-guard --strict` exits 1
+for anyone who wants the gate.
+
+**It never prints what it found.** A finding is a path and line numbers; the matched text never
+leaves the scan. Reading it out would copy the secret into a terminal, a CI log and an agent's
+transcript — three more places it now exists.
+
+It reads ADDED lines only. A removed line is a secret leaving; a context line is already committed.
+The pre-commit hook runs it, deliberately outside the added/deleted/renamed branch that guards the
+index rebuild — because a credential arrives by editing a file that already exists.
+
+### Nothing chamnan wrote could say which chamnan wrote it
+
+A file written by 1.12 was structurally identical to one written by 1.24. No tool, no session and no
+reader could tell them apart, and the staleness machinery watched `MAP.md` and nothing else. The
+case that surfaced it was an installed git hook nineteen days and about nine releases behind the
+workspace's own version file sitting beside it, reported by nothing in all that time.
+
+Every artefact now carries the version that wrote it, and chamnan reports drift without being asked
+— in the session block and in `chamnan-map`, which is what the installed hook runs. Three states,
+because they need different answers: **no version** cannot be assumed current; **older** is a
+distance; **newer than the running build** is never quietly rewritten down.
+
+The order mattered more than the stamp. The marker FINDER was widened to accept both shapes before
+any writer emitted the new one — the other way round appends a second block to every `AGENTS.md` in
+the world, exactly once.
+
+### Checks that reported a pass they had not performed
+
+**A failure path asserted by its symptoms passes when the code crashes.** A check for "this refuses
+cleanly on a read-only file" tested exit 1, no success message, and the file unchanged. An uncaught
+`PermissionError` satisfies all three. Failure paths are now asserted by the artefact of HANDLING
+them — the sentence the code chose to print, and no traceback.
+
+**A check that greps for its own subject matches the comment describing it.** One asserted a hook
+"calls `chamnan-guard`" by substring, and passed on the comment naming the command while the
+invocation was gone.
+
+**A predicate can be too loose and report honest code as a defect.** One matched any function using
+`.relative_to`, `.parts` and an `except` — four unrelated functions — instead of the body shape it
+meant.
+
+### A rule applied to some members of a set
+
+The defect this codebase produces more than any other, and this release closes eight instances of it.
+
+- The vendors warned about duplicate delivery were **4 of 8 that qualify**; the set is now derived
+  from a declaration each adapter carries, so one added later joins by existing.
+- That warning also fired in **one ordering only** — writing `AGENTS.md` second created the same
+  duplicate in silence.
+- **Three copies** of "is this registered tool really there", and the round that found it reported
+  the one reader that was MISSING the check rather than that the check existed three times.
+- The `**Check:**` grammar was wired to `memory/rules/` and nowhere else, so four skills' trailers
+  had **never been evaluated once** — and six of the eight named a directory where the grammar
+  wants a file glob, so they could never have passed.
+- **Six byte-identical copies** of the wrapper whose entire job is that a hook cannot take a session
+  down; the sixth was added by copying the fifth.
+- Two derivations of the fence marker, and only one carried the reasoning for why it is safe.
+- Three modules that group files by location each decided the out-of-root case alone.
+- Every write in the package goes through the atomic writer — a rule applied one writer at a time
+  until three were still bare, two of them sitting beside the comment explaining why they should not
+  be.
+
+### Writes that were not atomic, and a runner outlived by its own child
+
+`Path.write_text` truncates on open. `.version` is written by every session that starts, and its
+own unreadable-file branch prints a ⚠ banner in chamnan's voice — so the failure mode of the unsafe
+write was a warning about the corruption the write itself caused.
+
+The check runner ran the script it generates with no timeout and no stdin. One sat for **5 hours 59
+minutes** at 1.3% CPU holding a machine down, with a frozen terminal and a `^C` that did nothing as
+the only symptom. Both fixed at the runner: a child cannot outlive the command that started it, and
+a child that reads stdin inherits a terminal nobody is typing at.
+
+### Reports that named the wrong thing
+
+- `chamnan-report` printed a hand-deleted tool as a real one at 0 runs — indistinguishable from one
+  worth demoting.
+- `--written-agents` named the root `AGENTS.md` as `amp`, a product the user of Codex, Devin, Kimi
+  or Warp has never mentioned. An alias is a spelling of an adapter; the answer is the adapter.
+- The model-family table missed **every namespaced ID** — `anthropic/claude-opus-5`, Bedrock's
+  `us.anthropic.…`, Vertex's `publishers/anthropic/models/…` — handing those users a 2.7× smaller
+  index budget while the note said their family was "not in the model table", which was true of the
+  string and false of the family.
+- A declared `CEILING` is a promise about the FILE, and the file is the block plus the wrapper plus
+  the marker plus the snapshot line. Three of the four were counted.
+
+### `chamnan-report` answers two more questions
+
+**Which recorded skills are pulling their weight** — from the pointer log and the store on disk,
+with each never-named skill's AGE beside it, because one written yesterday has had no chance.
+
+**What raising `rules_char_budget` would actually cost**, as a constraint and never a
+recommendation: on a store like this one, fitting a third of the rules costs more than half of
+everything chamnan may say at session start. Whether more rules SHOULD arrive in full is a
+judgement, and it stays with the person reading it.
+
+### Where each fix came from — attached to this release
+
+**`INDEX_CITED_IN_CODE.md` is attached as a file**, so any claim above can be followed to a diff
+without cloning anything.
+
+This release carries **197 research findings**; the index now holds **686** in total. Read the file
+for which finding became which line — it is generated from the source and from git, never written
+by hand:
+
+```bash
+python3 .chamnan/tools/research_citations.py --write
+```
+
+### Re-run it yourself
+
+**check 4845 / 4845**, and 1,465 of 1,465 index claims true, on the code this tag carries.
+
+    python3 Work-Mode/chamnan/tools/verify_release.py
+
+It runs the suite and the index claim check on your machine and prints what happened. It refuses to
+report a result when the suite's totals line is missing, because a run that dies mid-way prints no
+failure lines at all.
+
+### Credit
+
+**`peterbuildssecure` on dev.to.** He raised the redaction gap on chamnan's own write-up twice and
+was right both times, and his argument that a blended recall figure hides a weak class is what
+turned "the redactor scores well" into the per-language header work above. The `_HEADER_LANGS` list
+exists because of that discussion.
 
 ---
 
