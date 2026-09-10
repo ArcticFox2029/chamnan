@@ -28527,6 +28527,98 @@ else:
         _t_orphan54 = [n for n in _t_pointed54 if n not in _t_text54]
         check("...and every skill STATE.md points a session at is listed in that index",
               not _t_orphan54, saw=", ".join(_t_orphan54) or None)
+# ---- 55_every_hook_runs_the_way_the_host_actually_spawns_it.py
+# ------------------- fifteen call sites test the hook, and none of them the way it is really run
+# 🐛 [2026-09-10] Claude Code's hooks reference: a command hook runs in EXEC form when `args` is
+# set, and SHELL form when `args` is omitted — the command string handed to `sh -c` on macOS and
+# Linux, Git Bash or PowerShell on Windows. Every registration in `hooks/hooks.json` is a bare
+# quoted path with no `args`, so every one of chamnan's hooks is spawned through a shell that has
+# to resolve a `.py` path itself, using the exec bit and the shebang.
+#
+# The suite invoked them as `[sys.executable, str(path)]` at all ~15 call sites — exec form, the one
+# shape production never uses. So the exec bit, the shebang and the shell's own resolution were
+# tested nowhere, on any platform, and CI ran nothing under `hooks/` at all (R1 agent 1, finding 3).
+#
+# Nothing was broken when this was written — all six hooks ran clean in shell form. That is what a
+# coverage gap looks like from the inside, and it is why the check is worth more than the fix would
+# have been: the day the exec bit is lost in a packaging step, this is what says so.
+#
+# The population comes from `hooks.json`, so a hook registered later cannot opt out by being new.
+import json as _js55
+import subprocess as _sp55
+
+_t_hj55 = ROOT / "hooks" / "hooks.json"
+if not _t_hj55.is_file():
+    skip("  · no hooks/hooks.json here — the shell-form check is skipped, not passed")
+elif os.name == "nt":
+    skip("  · Windows resolves a bare .py path by file association, not by shebang — this check "
+         "is about the POSIX path and would assert the wrong thing here")
+else:
+    _t_reg55 = _js55.loads(_t_hj55.read_text(encoding="utf-8"))
+
+    def _commands55(node):
+        """Every `command` string in the registration tree, however it is nested."""
+        if isinstance(node, dict):
+            for k, v in node.items():
+                if k == "command" and isinstance(v, str):
+                    yield v
+                else:
+                    for c in _commands55(v):
+                        yield c
+        elif isinstance(node, list):
+            for v in node:
+                for c in _commands55(v):
+                    yield c
+
+    _t_cmds55 = sorted(set(_commands55(_t_reg55)))
+    check("hooks.json registers commands this check can read",
+          len(_t_cmds55) >= 3, saw="%d command(s)" % (len(_t_cmds55),))
+
+    # `"${CLAUDE_PLUGIN_ROOT}/hooks/x.py"` -> the file on disk.
+    _t_files55, _t_unresolved55 = [], []
+    for _t_c55 in _t_cmds55:
+        _t_rel55 = _t_c55.strip().strip('"').replace("${CLAUDE_PLUGIN_ROOT}/", "")
+        _t_p55 = ROOT / _t_rel55
+        if _t_p55.is_file():
+            _t_files55.append(_t_p55)
+        else:
+            _t_unresolved55.append(_t_c55)
+    check("...and every registered command names a file that is actually there",
+          not _t_unresolved55, saw="\n".join(_t_unresolved55) or None)
+
+    # `args` absent is what makes it shell form. If a registration ever gains one, this check is
+    # asserting the wrong shape and should say so rather than quietly passing.
+    _t_execform55 = [c for c in _commands55(_t_reg55)] and [
+        k for k in _js55.dumps(_t_reg55).split('"') if k == "args"]
+    check("...and no registration has gained an `args` field, which would make it exec form and "
+          "this check the wrong one",
+          not _t_execform55, saw="an `args` key is present in hooks.json")
+
+    _t_noexec55 = [str(p.relative_to(ROOT)) for p in _t_files55
+                   if not (p.stat().st_mode & 0o111)]
+    check("EVERY REGISTERED HOOK CARRIES THE EXEC BIT THE SHELL NEEDS TO RUN IT",
+          not _t_noexec55, saw="\n".join(_t_noexec55) or None)
+
+    _t_noshebang55 = [str(p.relative_to(ROOT)) for p in _t_files55
+                      if not p.read_text(encoding="utf-8", errors="replace").startswith("#!")]
+    check("...and a shebang, which is the only thing telling the shell what to run it with",
+          not _t_noshebang55, saw="\n".join(_t_noshebang55) or None)
+
+    # ...and it actually runs that way. The two above are necessary and not sufficient.
+    _t_broken55 = []
+    for _t_p55 in _t_files55:
+        try:
+            _t_r55 = _sp55.run(["sh", "-c", '"%s"' % (_t_p55,)], cwd=str(ROOT),
+                               input="", capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", timeout=180,
+                               env=dict(os.environ, CHAMNAN_READ_ONLY="1"))
+            if _t_r55.returncode != 0:
+                _t_broken55.append("%s -> exit %d: %s" % (_t_p55.name, _t_r55.returncode,
+                                                          _t_r55.stderr.strip()[:80]))
+        except Exception as _t_e55:                       # pragma: no cover - that is the failure
+            _t_broken55.append("%s -> raised %r" % (_t_p55.name, _t_e55))
+    check("...AND EVERY ONE OF THEM RUNS CLEAN WHEN SPAWNED THROUGH `sh -c`, AS THE HOST DOES",
+          not _t_broken55, saw="\n".join(_t_broken55) or None)
 # ============================ end of the folded surgical pool
 
 
