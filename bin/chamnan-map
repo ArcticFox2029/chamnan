@@ -1169,6 +1169,25 @@ def main(argv):
         print(f"  {_other} other file(s) here are not code: configuration, documentation, "
               f"manifests{_from}.")
 
+    # 🐛 [2026-09-10] A file `ast` refused outright fell back to `leading_comment()`, and one with
+    # no leading `#` header then came back identical to an ordinary undocumented file — so it was
+    # counted against the coverage figure as "the author did not describe this", not as "chamnan
+    # could not read this". Reported beside the parse warnings rather than with the not-indexed
+    # reasons above, because the file IS in the index; what is missing is everything the index was
+    # supposed to say about it (R2 agent 4, finding 4, matching semgrep#11443).
+    if mapper.SKIPPED_UNPARSEABLE:
+        print(f"\n  {len(mapper.SKIPPED_UNPARSEABLE)} file(s) could not be parsed at all, so they "
+              f"are indexed by name only:")
+        for path, why in mapper.SKIPPED_UNPARSEABLE[:4]:
+            rel = path.replace(str(root) + "/", "")
+            print(f"    {rel} — {why}" if why else f"    {rel}")
+        _upmore = len(mapper.SKIPPED_UNPARSEABLE) - 4
+        if _upmore > 0:
+            print(f"    +{_upmore} more")
+        print("  These count as undescribed in the coverage figure below, which is the same shape")
+        print("  as a file nobody documented — the difference is that this one cannot be fixed by")
+        print("  writing a docstring.")
+
     if mapper.PARSE_WARNINGS:
         print(f"\n  {len(mapper.PARSE_WARNINGS)} file(s) raised a parse warning while being read:")
         for path, count, msg in mapper.PARSE_WARNINGS[:4]:

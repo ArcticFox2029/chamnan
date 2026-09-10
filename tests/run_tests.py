@@ -10112,7 +10112,7 @@ _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme and "read-only" in _rdme.split("| **Git** |")[1][:900])
 
-# 🐛 Three ways a file could vanish from the index while the run reported full confidence.
+# 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
 # SKIPPED_TOO_LARGE and SKIPPED_BINARY were recorded with a comment saying "Recorded, not merely
 # skipped … false confidence rather than degraded confidence, which is the worse kind" — and then
 # read by nothing but one test. Measured on azadkuh/sqlite-amalgamation: sqlite3.c is 8.5 MB, 71%
@@ -10127,6 +10127,14 @@ subprocess.run(["git", "init", "-q", "."], cwd=str(_sil), capture_output=True)
 for _i in range(5):
     (_sil / "app" / "private" / f"m{_i}.py").write_text(f'"""Private {_i}."""\ndef p(): pass\n', encoding="utf-8")
 (_sil / "asset.py").write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)) * 50)
+# 🐛 [2026-09-10] The fourth, and the only one that was still silent. A file `ast` refuses outright
+# falls back to `leading_comment()`, so one with no leading `#` header returns exactly what an
+# ordinary undocumented file returns — and is counted against the coverage figure as "nobody wrote
+# a docstring" rather than "chamnan could not read this". `PARSE_WARNINGS` does not reach it: that
+# list is warnings raised during a parse that SUCCEEDED. Found by matching semgrep#11443, where the
+# same mechanism reported "100% of lines parsed, zero findings" over a file it never analysed
+# (R2 agent 4, finding 4). No leading comment on purpose — with one, the fallback hides it.
+(_sil / "unparseable.py").write_text("def broken(x\n    return x + 1\n", encoding="utf-8")
 if _CAN_DENY_READ:
     os.chmod(_sil / "app" / "private", 0o000)
 _silout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
@@ -10137,6 +10145,13 @@ if _CAN_DENY_READ:
           "COULD NOT BE READ" in _silout.stdout and "app/private" in _silout.stdout)
 check("...and a binary hiding behind a source extension is counted out loud",
       "binary content behind a source extension" in _silout.stdout)
+check("A FILE THAT COULD NOT BE PARSED AT ALL IS NAMED, NOT COUNTED AS UNDOCUMENTED",
+      "could not be parsed at all" in _silout.stdout and "unparseable.py" in _silout.stdout,
+      saw=_silout.stdout[-700:])
+# ...and it says WHY, because "could not be parsed" and "SyntaxError on line 2" are a different
+# amount of help, and the reason already exists at the point the failure is detected.
+check("...and says what the parser actually refused",
+      "SyntaxError" in _silout.stdout, saw=_silout.stdout[-400:])
 # The skip stays a skip — printing it is the whole fix, per the report that found it. What must not
 # happen is a clean repository growing any of these lines.
 _clean = Path(tempfile.mkdtemp())
@@ -10146,7 +10161,8 @@ for _i in range(6):
 _cout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
                        cwd=str(_clean), capture_output=True, text=True, encoding="utf-8", errors="replace")
 check("...while a repository with nothing skipped says nothing about skipping",
-      "not indexed" not in _cout.stdout and "COULD NOT BE READ" not in _cout.stdout)
+      "not indexed" not in _cout.stdout and "COULD NOT BE READ" not in _cout.stdout
+      and "could not be parsed at all" not in _cout.stdout)
 
 # 🐛 chamnan-report averaged a SUBAGENT STEP and a CONVERSATION TURN into one figure, and on this
 # machine the headline was entirely that artefact. Subagents carry about a fifth of a main-thread
