@@ -526,6 +526,12 @@ def _map_is_current_by_git(root, map_path):
 # already bounds each name at 80 characters, and what blew the block was the NUMBER of them.
 KEPT_KEYS_NAMED = 8
 
+# The artefact-drift lead line's ceiling, and the same reasoning as `KEPT_KEYS_NAMED` above: a lead
+# line has no heading, `fit.shrink` cannot drop it, and undroppable content is what pushes a block
+# past the host's limit. 320 bytes leaves the count, the newer-build warning and the command that
+# fixes it — everything a reader has to act on.
+DRIFT_LINE_BYTES = 320
+
 
 def index_is_behind(root, map_path):
     """Seconds the index is behind the newest source file, or 0 if it is current.
@@ -1581,10 +1587,28 @@ def main():
             if _unknown:
                 _bits.append(f"{len(_unknown)} carrying no version at all, so how old "
                              f"they are is not knowable from here")
-            _stale_lines.append(redact.scrub(
-                f"_⚠ **{len(_drift)} agent context file(s) were not written by this "
-                f"chamnan** — {'; '.join(_bits)}. Refresh with `chamnan-context --write "
-                f"<agent>`, which also stamps them._\n"))
+            # 🐛 [2026-09-11] Capped, and the cap belongs HERE rather than to `fit.shrink()`, for
+            # the reason the config-keys banner states in the same words: a lead line carries no
+            # `#` heading, so shrink cannot drop it. It is undroppable content, which `fit.py`'s
+            # own docstring names as the one thing that can exceed the ceiling on its own.
+            #
+            # This shipped uncapped for a day. Measured: 391 bytes on three drifted files, against
+            # a block sitting at 8,955 of 9,000 on this repository — so on any workspace with drift
+            # it pushed the block past the ceiling, and past the point where the host truncates a
+            # SessionStart hook to its first 2,048 bytes. The rule it broke is written directly
+            # above it, which makes it this package's most recorded defect committed while closing
+            # a report about that defect.
+            _drift_line = (f"_⚠ **{len(_drift)} agent context file(s) were not written by this "
+                           f"chamnan** — {'; '.join(_bits)}. Refresh with `chamnan-context "
+                           f"--write <agent>`, which also stamps them._")
+            if len(_drift_line.encode()) > DRIFT_LINE_BYTES:
+                # The COUNT survives the cap and the detail does not: how many artefacts are adrift
+                # is what makes somebody act, and the names are recoverable from the command this
+                # line already names.
+                _drift_line = (f"_⚠ **{len(_drift)} agent context file(s) were not written by this "
+                               f"chamnan**, {len(_ahead)} of them by a NEWER one. `chamnan-map` "
+                               f"lists them; `chamnan-context --write <agent>` refreshes one._")
+            _stale_lines.append(redact.scrub(_drift_line + "\n"))
 
         if cfg.get("environments", True):
             # Constraints, never versions. A constraint rules out a whole design before it is written

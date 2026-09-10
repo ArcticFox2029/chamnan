@@ -30550,6 +30550,475 @@ check("...and does NOT swallow an interrupt, which would make a hook unkillable"
       saw="`except BaseException` would catch Ctrl-C and SystemExit too — somebody or something "
           "deliberately stopping the process is not the failure this is for")
 _sys73.path.remove(str(ROOT / "lib"))
+# ---- 74_the_pointer_log_answers_which_skills_are_pulling_their_weight.py
+# --------------------- a second usage store was proposed for a question two existing files answer
+# 🐛 [2026-09-10] `chamnan-report` reported what the pointer NAMED and never the inverse — and the
+# inverse is the question somebody actually has about a growing `skills/`: which of these is pulling
+# its weight? A round proposed answering it by building a parallel usage store for skills: a
+# `record_call` equivalent, a sibling index, its own lock and atomic write, copy-adapted from
+# `tools_index.py` (R3 agent 5, idea 3).
+#
+# None of that is needed. `logs/pointer.jsonl` already records every entry the pointer named, and
+# the store on disk says what exists; the answer is a set difference over two things already
+# written down. A second store would have been a second thing to keep true.
+#
+# Measured before building, which is what decided it: 18 of 27 skills named at least once over 9.8
+# days and 93 firings, 9 never. The idea's own bar was that the distribution be lopsided rather than
+# flat, and it is.
+import json as _js74
+import re as _re74
+
+_t_rep74 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+
+check("the report answers the inverse, not only what was named",
+      "never named" in _t_rep74,
+      saw="it reports what the pointer named and nothing about what it never did, which is the "
+          "half somebody asks about a store that keeps growing")
+
+# The population, derived from the report's own source rather than from a list here: whatever set it
+# compares against must be the skills ON DISK, so a skill added tomorrow is in the question by
+# existing rather than by being added somewhere.
+check("...and the set it compares against is the skills on disk",
+      'ws.workspace(root) / "skills"' in _t_rep74 and "_sk_never" in _t_rep74,
+      saw="the never-named list is built from something other than the directory, so a new skill "
+          "joins it only when somebody remembers")
+
+# AGE is the half that keeps this honest. A skill written yesterday has had no chance to be named,
+# and calling it unused is how a store loses something that was working — this repository produced
+# exactly that case on the day the feature was written, with a rule moved into `skills/` that
+# morning appearing in the never-named list by the afternoon.
+check("...and each one is reported with its age",
+      "written today" in _t_rep74 and "st_mtime" in _t_rep74,
+      saw="a never-named list with no age reads a one-day-old skill and a thirty-six-day-old one "
+          "as the same finding")
+
+# It has to stay quiet when there is nothing to say — the design principle this command already
+# states for every other line it prints.
+check("...and says nothing when every skill has been named",
+      "if _sk_all and _sk_never:" in _t_rep74,
+      saw="a line that appears even when the answer is 'none' is one the reader learns to skip")
+
+# --- and the join actually works on this repository's own data, rather than being wired and empty.
+_t_log74 = ROOT.parent.parent / ".chamnan" / "logs" / "pointer.jsonl"
+_t_skills74 = ROOT.parent.parent / ".chamnan" / "skills"
+if not (_t_log74.is_file() and _t_skills74.is_dir()):
+    skip("  · no pointer log or skills store here — skipped, not passed")
+else:
+    _t_named74 = set()
+    for _t_line74 in _t_log74.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not _t_line74.strip():
+            continue
+        try:
+            _t_r74 = _js74.loads(_t_line74)
+        except ValueError:
+            continue
+        for _t_n74 in _t_r74.get("named", []) or []:
+            if isinstance(_t_n74, str) and _t_n74.startswith("skills/"):
+                _t_named74.add(_t_n74)
+    _t_disk74 = {f"skills/{p.name}" for p in _t_skills74.glob("*.md")
+                 if p.is_file() and p.name != "README.md"}
+    check(f"the pointer log names skills at all: {len(_t_named74)} of {len(_t_disk74)} on disk",
+          bool(_t_named74) and bool(_t_disk74),
+          saw="named=%d disk=%d — with either empty the report's line is wired to nothing"
+              % (len(_t_named74), len(_t_disk74)))
+    # Not asserted as a threshold. Whether the distribution stays lopsided is the thing being
+    # WATCHED, and a check that fails when a skill finally gets used would be measuring the wrong
+    # direction entirely.
+    print("      named at least once: %d, never: %d"
+          % (len(_t_named74 & _t_disk74), len(_t_disk74 - _t_named74)))
+# ---- 75_the_budget_line_states_the_ceiling_rather_than_recommending_a_number.py
+# ------------------ the overflow was stated and the only question it raises was left to a guess
+# 🐛 [2026-09-10] `chamnan-report` said "N of M rules reach a session as a title only (X characters
+# against a Y budget)" and stopped — leaving the one question that line raises, "so should I raise
+# it?", answerable only by guessing. A round proposed answering it with a SUGGESTED number, and its
+# own argument against that is the right one: "what would make today's rules fit" optimises for the
+# wrong quantity and says nothing about whether more rules SHOULD arrive in full, since a large rule
+# may deserve to stay a title. A mechanical answer to a judgement question (R3 agent 5, idea 7).
+#
+# So the line states the CONSTRAINT and recommends nothing. On this repository that turns out to
+# settle it anyway: fitting a third of the rules costs more than half of everything chamnan is
+# allowed to say, and fitting all of them costs three times the whole block. That is a fact about
+# the ceiling rather than an opinion about the rules.
+import re as _re75
+
+_t_rep75 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+
+check("the report says what raising the budget would cost",
+      "What raising it would cost" in _t_rep75,
+      saw="it states the overflow and leaves the only question it raises to a guess")
+
+# It must NOT recommend. The whole reason this is a constraint and not a suggestion is that the
+# judgement is the person's, and a number presented as the answer takes it away from them.
+_t_recommends75 = [w for w in ("suggested budget", "recommended budget", "set it to",
+                               "you should raise", "the right budget")
+                   if w in _t_rep75.lower()]
+check("...and does NOT recommend a number, which would answer a judgement question mechanically",
+      not _t_recommends75,
+      saw="%s — a large rule can deserve to stay a title, and nothing computed from today's sizes "
+          "knows that" % (", ".join(_t_recommends75),))
+
+# The ceiling is what makes the constraint real, and it has to come from the code rather than be
+# typed in — a number written here would drift the moment the ceiling moves.
+# Scoped to THIS line's own text, not to the file. `fit.CEILING` appears elsewhere in the command,
+# so a whole-file substring test passes while the constraint line quotes a literal — the same trap
+# that let an earlier check in this pool pass against the defect it was written for.
+_t_span75 = _t_rep75[_t_rep75.find("What raising it would cost"):]
+_t_span75 = _t_span75[:_t_span75.find("except Exception")] if "except Exception" in _t_span75 else _t_span75
+check("...and the block ceiling THIS line quotes comes from `fit.CEILING`, not from a literal",
+      "What raising it would cost" in _t_rep75 and "fit.CEILING" in _t_span75,
+      saw="a hardcoded ceiling stops being true the day the real one changes, and this line's whole "
+          "claim rests on it")
+
+# --- and the arithmetic is right on this repository's own store.
+import sys as _sys75
+_sys75.path.insert(0, str(ROOT / "lib"))
+import fit as _fit75                                               # noqa: E402
+import memory as _mem75                                            # noqa: E402
+
+_t_repo75 = ROOT.parent.parent
+_t_sizes75 = sorted(len(_b) for _n, _b in _mem75.rules_with_titles(_t_repo75))
+if not _t_sizes75:
+    skip("  · no rules in this workspace — skipped, not passed")
+else:
+    _t_all75 = sum(_t_sizes75)
+    check(f"fitting every rule in full costs more than the whole block: "
+          f"{_t_all75:,}c vs {_fit75.CEILING:,}B",
+          _t_all75 > _fit75.CEILING,
+          saw="the rules store fits inside the block, so the constraint line is stating something "
+              "that is not true here and the budget really is just a setting")
+    # The step the report prints first — a third of the rules — is the one that carries the point,
+    # so it has to be a real cut of the distribution rather than a round number.
+    _t_third75 = sum(_t_sizes75[:max(1, len(_t_sizes75) // 3)])
+    check("...and a third of them already costs more than half the block",
+          _t_third75 > _fit75.CEILING // 2,
+          saw=f"a third of the rules is {_t_third75:,}c against a {_fit75.CEILING:,}B block — if "
+              f"this stops holding the line is still true but no longer the answer")
+    _sys75.path.remove(str(ROOT / "lib"))
+# ---- 76_an_exact_duplicate_candidate_is_the_one_case_the_merge_excluded.py
+# ------------------- the easiest duplicate to collapse was the only one the merge refused to see
+# 🐛 [2026-09-10] `candidates._same_habit` merges a rotation of an existing sequence, or one sitting
+# contiguously inside another — a habit detected at a different offset in the command log. It
+# explicitly SKIPPED an identical sequence, on the reasoning that `path_for` already finds the file
+# recording it. That is true of one file, and there can be two: the naming scheme gained a collision
+# suffix, `path_for` prefers the legacy plain name where it holds the same sequence, and a suffixed
+# file written before that preference existed is reachable by nothing — not by `path_for`, and not
+# by the merge, because the one condition that would have caught it was the one being skipped.
+#
+# And the merge ran only on the branch that CREATES a file, so a duplicate beside an existing target
+# was never reconciled at all; every later upsert rewrote the target and stepped over it.
+#
+# Found in this repository's own queue: two files, byte-identical sequences, both observed 3 times,
+# in a queue of eight where six rows describe one routine — `python3 … git add … git commit`, which
+# is the commit sequence CLAUDE.md already documents (R3 agent 5, idea 4).
+import shutil as _sh76
+import sys as _sys76
+import tempfile as _tmp76
+from pathlib import Path as _Path76
+
+_sys76.path.insert(0, str(ROOT / "lib"))
+import candidates as _cd76                                         # noqa: E402
+import workspace as _ws76                                          # noqa: E402
+
+_t_root76 = _Path76(_tmp76.mkdtemp(prefix="chamnan-cand76-"))
+try:
+    (_t_root76 / ".git").mkdir(parents=True)
+    _ws76.ensure(_t_root76)
+    _t_dir76 = _cd76.directory(_t_root76)
+    _t_dir76.mkdir(parents=True, exist_ok=True)
+    _t_seq76 = ["python3", "s", "python3", "git add", "git commit"]
+
+    # The exact shape found on disk: the legacy plain name, and a suffixed orphan from before
+    # `path_for` learned to prefer the legacy one. Both hold the SAME sequence.
+    for _t_name76 in (_cd76._legacy_filename(_t_seq76), _cd76.slug(_t_seq76) + "-38edfc.md"):
+        (_t_dir76 / _t_name76).write_text(
+            _cd76.render(_t_seq76, 3, "2026-09-01", "ai-inferred"), encoding="utf-8")
+    check("the fixture really is two files for one sequence",
+          len(list(_cd76.entries(_t_root76))) == 2,
+          saw="%d file(s) — if the fixture cannot produce the state, it tests nothing"
+              % len(list(_cd76.entries(_t_root76))))
+
+    _cd76.upsert(_t_root76, _t_seq76, 4, "2026-09-10")
+    _t_left76 = sorted(p.name for p in _cd76.entries(_t_root76))
+    check("AN EXACT DUPLICATE AT A SECOND PATH IS COLLAPSED, NOT STEPPED OVER",
+          len(_t_left76) == 1,
+          saw="%s — a reviewer pays two decisions for one habit, and the queue's own count says two "
+              "things are waiting when one is" % (_t_left76,))
+    check("...and the surviving file carries the fresher count",
+          _cd76._fields((_t_dir76 / _t_left76[0]).read_text(encoding="utf-8-sig")
+                        ).get("observed") == "4",
+          saw=repr(_cd76._fields((_t_dir76 / _t_left76[0]).read_text(encoding="utf-8-sig"))))
+
+    # The other direction, and the one that makes this safe: a DIFFERENT habit is left alone. A
+    # collapse that is too eager loses candidates, which is worse than a queue that reads long.
+    _cd76.upsert(_t_root76, ["npm", "test"], 2, "2026-09-10")
+    check("...while a different habit still gets its own file",
+          len(list(_cd76.entries(_t_root76))) == 2,
+          saw="%d file(s) after adding an unrelated habit"
+              % len(list(_cd76.entries(_t_root76))))
+
+    # Rotations stay on the create branch, deliberately. Reconciling those on every upsert would
+    # rewrite files on every hook firing for no new information.
+    _t_rot76 = ["s", "python3", "git add", "git commit", "python3"]
+    _cd76.upsert(_t_root76, _t_rot76, 5, "2026-09-10")
+    check("...and a rotation of an existing habit is still merged rather than added",
+          len(list(_cd76.entries(_t_root76))) == 2,
+          saw="%s — a rotation is the same commands in the same cyclic order, which is one habit "
+              "seen at a different offset" % sorted(p.name for p in _cd76.entries(_t_root76)))
+finally:
+    _sh76.rmtree(_t_root76, ignore_errors=True)
+    _sys76.path.remove(str(ROOT / "lib"))
+# ---- 77_the_fence_marker_has_one_derivation.py
+# ----------------------- two identical derivations of a security-relevant value, one with a reason
+# 🐛 [2026-09-10] `_nonce_for` derives the `[repo:…]` fence marker, and both hooks that emit a fenced
+# block carried their own copy. The bodies were identical; the ELEVEN LINES of reasoning were in one
+# of them only — so the copy a reader met second had no reason attached, and the argument for why a
+# plain digest is safe here lived nowhere near the other one.
+#
+# The marker's job is that a file in the repository cannot close the fence early and speak in
+# chamnan's voice outside it. Two derivations of that is two chances for them to stop agreeing, and
+# the one that drifts is the one nobody reads the reasoning for (R1, the duplicate-body sweep).
+import ast as _ast77
+import sys as _sys77
+
+_sys77.path.insert(0, str(ROOT / "lib"))
+import workspace as _ws77                                          # noqa: E402
+
+check("the derivation has a shared home", callable(getattr(_ws77, "nonce_for", None)),
+      saw="workspace.nonce_for is gone, so each hook derives the fence marker on its own again")
+
+# Nobody has grown a copy back. By SHAPE as well as by name: a renamed copy must not be invisible.
+_t_own77 = []
+for _t_p77 in sorted((ROOT / "hooks").glob("chamnan_*.py")):
+    try:
+        _t_src77 = _t_p77.read_text(encoding="utf-8")
+        _t_tree77 = _ast77.parse(_t_src77)
+    except (SyntaxError, ValueError, UnicodeDecodeError):
+        continue
+    for _t_fn77 in _t_tree77.body:
+        if not isinstance(_t_fn77, _ast77.FunctionDef):
+            continue
+        _t_seg77 = _ast77.get_source_segment(_t_src77, _t_fn77) or ""
+        if "blake2s" in _t_seg77 and "digest_size=3" in _t_seg77:
+            _t_own77.append(f"{_t_p77.name}:{_t_fn77.name}")
+check("NO HOOK DERIVES THE FENCE MARKER ON ITS OWN",
+      not _t_own77,
+      saw="%s — the marker is what stops a committed file closing the fence and speaking in "
+          "chamnan's voice; two derivations is two chances for them to disagree"
+          % (", ".join(_t_own77),))
+
+# --- the properties the marker exists for, asked of the function rather than of a rendered block.
+check("it is CONSTANT for one session, which is what makes the prompt prefix cacheable",
+      _ws77.nonce_for("sess-1") == _ws77.nonce_for("sess-1"),
+      saw="a marker that changes per invocation invalidates the whole block against the previous "
+          "one — 39 blocks with 42 markers in one session is the measured version of that")
+check("...and differs between sessions",
+      _ws77.nonce_for("sess-1") != _ws77.nonce_for("sess-2"))
+check("...and falls back to something random when the payload carries no session id",
+      _ws77.nonce_for(None) != _ws77.nonce_for(None),
+      saw="a fixed fallback would be guessable from inside the repository, which is the one thing "
+          "this value must not be")
+check("...and is the six hex digits the fence pattern matches",
+      len(_ws77.nonce_for("sess-1")) == 6
+      and all(c in "0123456789abcdef" for c in _ws77.nonce_for("sess-1")),
+      saw=repr(_ws77.nonce_for("sess-1")))
+_sys77.path.remove(str(ROOT / "lib"))
+# ---- 78_grouping_a_path_under_a_root_has_one_answer.py
+# ------------------- three modules that group files by location, each deciding the edge case alone
+# 🐛 [2026-09-10] `_rel_parts` was written out byte for byte in `catalogs.py`, `deploy.py` and
+# `schema.py` — the three modules that group files by where they sit. Every copy was correct, and
+# the FALLBACK is the half worth noticing: a path outside the root keeps its own components rather
+# than raising, so a caller grouping by directory still gets an answer for a file the root does not
+# contain. Three modules each deciding that independently is three chances for one to decide it
+# differently, and a grouping that quietly changes shape for out-of-tree paths fails nothing
+# visibly (R1, the duplicate-body sweep).
+import ast as _ast78
+import sys as _sys78
+
+_sys78.path.insert(0, str(ROOT / "lib"))
+import tree as _tree78                                             # noqa: E402
+
+check("the shared answer exists", callable(getattr(_tree78, "rel_parts", None)),
+      saw="tree.rel_parts is gone, so each module decides the out-of-root case on its own again")
+
+# By SHAPE, over every module, so a renamed copy is still found and a fourth module is in the
+# population the day it is written.
+_t_copies78 = []
+for _t_p78 in sorted((ROOT / "lib").rglob("*.py")):
+    if _t_p78.name in ("tree.py", "__init__.py") or "__pycache__" in str(_t_p78):
+        continue
+    try:
+        _t_src78 = _t_p78.read_text(encoding="utf-8")
+        _t_tree78 = _ast78.parse(_t_src78)
+    except (SyntaxError, ValueError, UnicodeDecodeError):
+        continue
+    for _t_fn78 in _t_tree78.body:
+        if not isinstance(_t_fn78, _ast78.FunctionDef):
+            continue
+        # The whole BODY, not the primitives. A first version matched any function containing
+        # `.relative_to(`, `.parts` and an `except` — which is four honest functions in this
+        # package that do other things with the same tools, reported as copies of this one. What
+        # makes a copy a copy is that it is ONLY the try/return/except/return, nothing else.
+        _t_body78 = [s for s in _t_fn78.body
+                     if not (isinstance(s, _ast78.Expr) and isinstance(s.value, _ast78.Constant))]
+        if len(_t_body78) != 1 or not isinstance(_t_body78[0], _ast78.Try):
+            continue
+        _t_try78 = _t_body78[0]
+        if len(_t_try78.body) != 1 or not isinstance(_t_try78.body[0], _ast78.Return):
+            continue
+        if not all(len(h.body) == 1 and isinstance(h.body[0], _ast78.Return)
+                   for h in _t_try78.handlers) or not _t_try78.handlers:
+            continue
+        _t_seg78 = _ast78.get_source_segment(_t_src78, _t_fn78) or ""
+        if ".relative_to(" in _t_seg78 and ".parts" in _t_seg78:
+            _t_copies78.append(f"{_t_p78.name}:{_t_fn78.name}")
+check("NO MODULE ANSWERS 'WHICH COMPONENTS SIT UNDER THIS ROOT' ON ITS OWN",
+      not _t_copies78,
+      saw="%s — the copies agree until one of them does not, and the one that drifts changes how "
+          "files are grouped for paths outside the root, which nothing fails on"
+          % (", ".join(_t_copies78),))
+
+# --- both branches, because the fallback is the reason this function is not a one-liner.
+# Called through a guard, and that is not defensive padding: the whole point of this function is
+# that it does not raise, so a mutation that makes it raise would otherwise take the run down with
+# "a check did not produce a result" — strictly worse than a FAIL, because nothing above it can be
+# quoted either. Asking a no-raise contract by letting the raise escape is a recorded trap here.
+def _t_ask78(path, root):
+    try:
+        return _tree78.rel_parts(path, root)
+    except Exception as _t_e78:               # noqa: BLE001 — the raise IS the finding
+        return _t_e78
+
+
+_t_in78 = _t_ask78("/a/b/c/d.py", "/a/b")
+check("a path under the root gives the components below it",
+      _t_in78 == ("c", "d.py"), saw=repr(_t_in78))
+
+_t_out78 = _t_ask78("/x/y/z.py", "/a/b")
+check("...and a path OUTSIDE the root keeps its own, rather than raising",
+      isinstance(_t_out78, tuple) and _t_out78[-2:] == ("y", "z.py"),
+      saw="%r — a caller grouping by directory has to get an answer for a file the root does not "
+          "contain; raising there takes the whole grouping down" % (_t_out78,))
+
+_t_none78 = _t_ask78("/a/b/c.py", None)
+check("...and a root that is not path-like is the same fallback, not a crash",
+      isinstance(_t_none78, tuple) and _t_none78[-1] == "c.py",
+      saw="%r — TypeError is in the same except for a reason: a caller passing None gets a "
+          "grouping, not a traceback" % (_t_none78,))
+
+# ...and the three modules it came from still reach it.
+_t_users78 = [p.name for p in sorted((ROOT / "lib").glob("*.py"))
+              if "tree.rel_parts(" in p.read_text(encoding="utf-8", errors="replace")]
+check(f"...and the modules that grouped files still call it: {_t_users78}",
+      len(_t_users78) >= 3,
+      saw="%d caller(s) — an extraction nothing calls is a function nobody removed" % len(_t_users78))
+_sys78.path.remove(str(ROOT / "lib"))
+# ---- 79_every_lead_line_is_capped_because_shrink_cannot_drop_one.py
+# ------------------- a warning with no heading is undroppable, and undroppable content is the leak
+# 🐛 [2026-09-11] `fit.shrink` drops SECTIONS, and it finds them by their `#` heading. A lead line —
+# one of the `_⚠` warnings that sit ahead of the first heading — has none, so shrink cannot drop it
+# whatever the budget says. `fit.py`'s own docstring names undroppable content as the one thing that
+# can exceed the ceiling on its own, and the config-keys banner carries a cap for exactly that
+# reason, in a comment that says so.
+#
+# The artefact-drift line added on 2026-09-10 did not. Measured: 391 bytes on three drifted files,
+# against a block sitting at 8,955 of 9,000 on this repository — so on any workspace with drift it
+# pushed the block past the ceiling, and past the ~10,000 bytes at which the host truncates a
+# SessionStart hook to its first 2,048. It shipped for a day, in a release closing a report about
+# exactly this defect shape.
+#
+# Six firings in this workspace's own `block_shape.jsonl` are already recorded at 9,267 against a
+# stated ceiling of 9,000 — undroppable content, before this line existed.
+import ast as _ast79
+import re as _re79
+
+_t_hook79 = ROOT / "hooks" / "chamnan_session_start.py"
+_t_src79 = _t_hook79.read_text(encoding="utf-8")
+
+# --- 1. Derived: every place that appends a lead line must bound what it appends. The population is
+# the `_stale_lines.append` calls, so a seventh warning written next year is in it by existing.
+# Helpers whose RETURN is sliced, so a caller interpolating what they hand back is bounded without
+# a slice of its own. Derived from the file rather than listed by hand: a function is in this set
+# because its own `return` carries the slice, which is the thing that makes the caller safe.
+_T_BOUNDED_HELPERS79 = set()
+for _t_f79 in _ast79.parse(_t_src79).body:
+    if not isinstance(_t_f79, _ast79.FunctionDef):
+        continue
+    _t_seg79 = _ast79.get_source_segment(_t_src79, _t_f79) or ""
+    if _re79.search(r"(?m)^\s*return\b[^\n]*\[:\s*\d+\]", _t_seg79):
+        _T_BOUNDED_HELPERS79.add(_t_f79.name)
+
+_t_tree79 = _ast79.parse(_t_src79)
+_t_appends79, _t_unbounded79 = [], []
+for _t_n79 in _ast79.walk(_t_tree79):
+    if not (isinstance(_t_n79, _ast79.Call) and isinstance(_t_n79.func, _ast79.Attribute)
+            and _t_n79.func.attr == "append"
+            and getattr(_t_n79.func.value, "id", "") == "_stale_lines"):
+        continue
+    _t_appends79.append(_t_n79.lineno)
+    # A bound is a cap constant or a slice near the append — OR a sliced return in the helper the
+    # values came from, which is the case this check got wrong first time round: the dead-entries
+    # warning reads `dead_entries()`, whose own return is `dead[:3]`, and a window over the append
+    # site cannot see that. An AST sweep answers a question about one file's syntax; whether a
+    # value is bounded is a question about the call graph. Same correction this workspace recorded
+    # for a `with` guard the same week.
+    _t_near79 = "\n".join(_t_src79.splitlines()[max(0, _t_n79.lineno - 22):_t_n79.lineno])
+    if _re79.search(r"_BYTES\b|_NAMED\b|\[:\s*\w+\]|\[:\d+\]", _t_near79):
+        continue
+    if any(_t_fn79 in _t_near79 for _t_fn79 in _T_BOUNDED_HELPERS79):
+        continue
+    _t_unbounded79.append(_t_n79.lineno)
+
+check(f"the sweep found the lead-line writers it polices: {len(_t_appends79)}",
+      len(_t_appends79) >= 3,
+      saw="%d — a sweep that found none is not a pass" % len(_t_appends79))
+check("EVERY LEAD LINE IS BOUNDED, BECAUSE SHRINK CANNOT DROP ONE",
+      not _t_unbounded79,
+      saw="unbounded append at line(s) %s — a lead line has no heading, so it is undroppable, and "
+          "undroppable content is what pushes a block past the host's limit"
+          % (_t_unbounded79,))
+
+# --- 2. The drift line's own cap exists and is a real number.
+check("the artefact-drift line declares a byte ceiling",
+      "DRIFT_LINE_BYTES" in _t_src79,
+      saw="it is built without a cap, which is the state it shipped in for a day")
+_t_cap79 = _re79.search(r"(?m)^DRIFT_LINE_BYTES\s*=\s*(\d+)", _t_src79)
+check("...and it is small enough to be worth having",
+      bool(_t_cap79) and 100 <= int(_t_cap79.group(1)) <= 600,
+      saw=(_t_cap79.group(0) if _t_cap79 else "no constant")
+          + " — a cap near the ceiling bounds nothing")
+
+# --- 3. Both branches produce something under it, including the worst case. The fallback keeps the
+# COUNT, which is the fact that makes somebody act; the names are recoverable from the command the
+# line already names.
+_t_n = int(_t_cap79.group(1)) if _t_cap79 else 320
+
+
+def _t_line79(n_drift, n_ahead, bits):
+    line = (f"_⚠ **{n_drift} agent context file(s) were not written by this "
+            f"chamnan** — {'; '.join(bits)}. Refresh with `chamnan-context "
+            f"--write <agent>`, which also stamps them._")
+    if len(line.encode()) > _t_n:
+        line = (f"_⚠ **{n_drift} agent context file(s) were not written by this "
+                f"chamnan**, {n_ahead} of them by a NEWER one. `chamnan-map` "
+                f"lists them; `chamnan-context --write <agent>` refreshes one._")
+    return line
+
+
+_t_worst79 = _t_line79(15, 5, [
+    "5 written by a NEWER chamnan than the one running (`.gemini/settings.json`) — rewriting those "
+    "DOWN would lose what the newer one put there",
+    "6 written by chamnan 1.10.0, 1.12.3, 1.18.0, 1.20.1, 1.22.1, 1.23.1",
+    "4 carrying no version at all, so how old they are is not knowable from here"])
+_t_ordinary79 = _t_line79(2, 1, ["1 written by chamnan 1.10.0", "1 carrying no version at all"])
+check("...and the worst case it can produce still fits under that cap",
+      len(_t_worst79.encode()) <= _t_n,
+      saw="%d bytes against a %d cap" % (len(_t_worst79.encode()), _t_n))
+check("...while the capped form still carries the COUNT, which is what makes somebody act",
+      "15 agent context file(s)" in _t_worst79 and "chamnan-context --write" in _t_worst79,
+      saw=_t_worst79[:150])
+check("...and an ordinary case is not truncated for nothing",
+      "Refresh with" in _t_ordinary79,
+      saw=_t_ordinary79[:150])
 # ============================ end of the folded surgical pool
 
 
