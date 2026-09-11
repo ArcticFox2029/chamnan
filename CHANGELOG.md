@@ -236,7 +236,7 @@ line and the commit that fixed it, and a row nobody can follow to a diff is not 
 
 ### Re-run it yourself
 
-**check 4866 / 4866**, and 1,466 of 1,466 index claims true, on the code this tag carries.
+**check 4868 / 4868**, and 1,466 of 1,466 index claims true, on the code this tag carries.
 
     python3 tools/verify_release.py
 

@@ -17841,6 +17841,47 @@ def _node_src(node, source):
     except (ValueError, TypeError, AttributeError):
         return ""
 
+# ------------------------------- an API newer than the declared floor kills the job at IMPORT
+# \U0001f41b [2026-09-11] `ast.unparse` arrived in 3.9. chamnan declares 3.8 and CI runs it, so a
+# single use does not fail one check — it raises while the module is being read, the whole suite
+# dies before the first check, and the 3.8 job reports nothing about the other 4,800. It happened,
+# was fixed by writing `_node_src` above, and then happened AGAIN at a second site that the first
+# sweep never looked at. Two occurrences of one mistake in the file that carries the rule about
+# exactly that.
+#
+# Derived over every shipped source rather than pinned to the two sites that were wrong, so a third
+# is caught by existing. The replacement is `_node_src`, which reads the real source instead of
+# re-rendering it and is what these callers wanted anyway.
+# Named through ROOT, not `Path(__file__)`. `__file__` is whatever script is executing, and under
+# `suite_slice` that is a generated temp file — so the sweep read the slice instead of the suite and
+# reported clean while a planted `ast.unparse` sat in `run_tests.py` untouched. The first mutation
+# run caught it: a check that cannot be exercised by the tool used to develop checks is a check
+# nobody will notice has stopped working.
+_UNPARSE_SOURCES = ([ROOT / "tests" / "run_tests.py"] + sorted((ROOT / "lib").rglob("*.py"))
+                    + sorted((ROOT / "hooks").rglob("*.py")) + sorted((ROOT / "tools").rglob("*.py"))
+                    + [q for q in (ROOT / "bin").iterdir() if q.is_file() and not q.suffix])
+_unparse_users = []
+for _up in _UNPARSE_SOURCES:
+    if "site/lib/" in _up.as_posix() or "__pycache__" in _up.as_posix():
+        continue
+    try:
+        _up_src = _up.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for _i, _ln in enumerate(_up_src.splitlines(), 1):
+        # The bare name in a comment or a docstring is how the FIRST fix is recorded, so only a
+        # call counts. Built at runtime, because this file is swept by its own check.
+        if (".unparse" + "(") in _ln and not _ln.lstrip().startswith("#"):
+            _unparse_users.append(f"{_up.relative_to(ROOT).as_posix()}:{_i}")
+if _unparse_users:
+    print("      uses an API newer than the declared floor: " + "; ".join(_unparse_users[:6]))
+check("NOTHING SHIPPED CALLS ast.unparse, WHICH DOES NOT EXIST ON THE PYTHON THIS DECLARES",
+      not _unparse_users, saw="\n".join(_unparse_users[:6]) or None)
+# A sweep that reads no files proves nothing, and this one is built from four directory walks that
+# could each go empty after a move.
+check("...and the sweep for it actually read the sources", len(_UNPARSE_SOURCES) >= 20,
+      saw=f"{len(_UNPARSE_SOURCES)} file(s) swept")
+
 _LOCK_EXEMPT = {("lib/state.py", "age_out")}
 
 
@@ -25319,8 +25360,13 @@ try:
             _ok = True
         check(f"safe_target refuses {_rel}", _ok)
     _inside = adapters_mod.safe_target(str(_d / "repo"), "docs/ok.md")
+    # \U0001f41b [2026-09-11] `str(...).endswith("repo/docs/ok.md")` asserts a FORWARD slash, so
+    # this failed on Windows against a perfectly correct `...\\repo\\docs\\ok.md`. The subject of
+    # the check is that `safe_target` refuses an escape and still resolves an ordinary path — the
+    # separator is not part of that claim, and pinning it turned a platform convention into a
+    # failure. Compared through `as_posix()`, which normalises without weakening the assertion.
     check("...and still writes an ordinary path inside the repository",
-          str(_inside).endswith("repo/docs/ok.md"), saw=str(_inside))
+          Path(_inside).as_posix().endswith("repo/docs/ok.md"), saw=str(_inside))
 finally:
     shutil.rmtree(_d, ignore_errors=True)
 
@@ -25494,7 +25540,11 @@ def _strict_reads_unguarded():
                      + [_q for _q in (ROOT / "bin").iterdir()
                         if _q.is_file() and not _q.suffix]):
         try:
-            _tree = ast.parse(_p.read_text(encoding="utf-8"))
+            # Kept, not discarded: `_node_src` reads the ORIGINAL text and needs the source string,
+            # which the inline `ast.parse(...read_text())` threw away — which is why this site
+            # reached for `ast.unparse` and died on 3.8.
+            _src = _p.read_text(encoding="utf-8")
+            _tree = ast.parse(_src)
         except (OSError, SyntaxError, UnicodeDecodeError):
             continue
         for _node in ast.walk(_tree):
@@ -25510,9 +25560,15 @@ def _strict_reads_unguarded():
                         if _h.type is None:
                             _guards.append("*")
                         elif isinstance(_h.type, ast.Tuple):
-                            _guards += [ast.unparse(_e) for _e in _h.type.elts]
+                            # \U0001f41b [2026-09-11] `ast.unparse` again, and `_node_src` had
+                            # already been written for exactly this — the 3.8 job dies at IMPORT,
+                            # so the whole suite is lost and four other jobs' signal with it. The
+                            # record of the first fix is in `_node_src`'s own docstring, seven
+                            # thousand lines up, and this site was not swept when that one was.
+                            # The set, not the member, in the file that carries that rule.
+                            _guards += [_node_src(_e, _src) for _e in _h.type.elts]
                         else:
-                            _guards.append(ast.unparse(_h.type))
+                            _guards.append(_node_src(_h.type, _src))
             # `UnicodeDecodeError` is a `ValueError`; either name catches it, and so does a bare
             # `except` or `Exception`.
             if not any(_g in ("UnicodeDecodeError", "ValueError", "Exception", "BaseException", "*")
@@ -26267,9 +26323,17 @@ def _t_rules_ws(n, title_words):
     for _i in range(n):
         _t = " ".join(_t_rnd3.choice(_t_WORDS) for _ in range(title_words)) + f" {_i}"
         _titles.append(_t)
-        (_s / f"rule-{_i}.md").write_text(
-            f"# {_t}\n\nThe body of this rule, which is long enough that the share cannot hold it. "
-            + "detail " * 90 + "\n", encoding="utf-8")
+        # \U0001f41b [2026-09-11] `write_text` goes through io.TextIOWrapper, whose default
+        # translates every \n to os.linesep — so on Windows this fixture wrote CRLF while the
+        # shipped writer (`ws.atomic_write_text`, `newline=""`) pins LF and says why in its own
+        # comment. One extra byte per line pushed the store harder against the budget, and the
+        # check measured the platform's newline instead of the title length it is about: long
+        # titles fitted 4 bodies against short titles' 6, and the assertion allows 1.
+        # `write_bytes` writes exactly what it is given on every platform, and `newline=` on
+        # `write_text` is 3.10 — chamnan declares 3.8, which is the job that caught this.
+        (_s / f"rule-{_i}.md").write_bytes(
+            (f"# {_t}\n\nThe body of this rule, which is long enough that the share cannot hold it. "
+             + "detail " * 90 + "\n").encode("utf-8"))
     return _d, _titles
 
 
@@ -29971,7 +30035,13 @@ try:
             _t_refused66.append(_t_name66)      # an adapter that declines is not a failure here
             continue
         if _t_out66:
-            _t_wrote66.append(str(_Path66(_t_out66).relative_to(_t_root66)))
+            # \U0001f41b [2026-09-11] `str()` gives the PLATFORM separator, and the ledger stores
+            # `as_posix()` — deliberately, so a workspace written on one OS reads on another. On
+            # Windows every single path therefore missed: the check reported eleven adapters as
+            # recording nothing while the ledger held all eleven under forward slashes. The code
+            # was right and the test was wrong, which is the worse direction: it accuses the thing
+            # it is protecting. `as_posix()` was applied at the write and not at the read.
+            _t_wrote66.append(_Path66(_t_out66).relative_to(_t_root66).as_posix())
 
     _t_ledger66 = _ad66.written_artefacts(_t_root66)
     _t_unrecorded66 = sorted(set(_t_wrote66) - set(_t_ledger66))
