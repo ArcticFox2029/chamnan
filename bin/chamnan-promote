@@ -138,7 +138,12 @@ def main(argv):
         # user tries first must not be the one that does it.
         print(__doc__.strip() if __doc__ else
               "chamnan-promote <file> <name> --desc \"what it does\"")
-        return 0
+        # \U0001f41b [2026-09-11] ...but a BARE call is a misuse, not a request for help, and this
+        # returned 0 for both while `chamnan-impact` and `chamnan-peek` -- the same idiom, the same
+        # line, two files away -- returned `0 if argv else 2`. So `chamnan-promote && echo ok` with
+        # a forgotten argument reported success and promoted nothing. One member of a set of three
+        # (R2 agent 20).
+        return 0 if argv else 2
 
     _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
     if _bad:

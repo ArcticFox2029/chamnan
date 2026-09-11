@@ -66,7 +66,16 @@ def installs(start=None):
     except (OSError, ValueError, UnicodeDecodeError, RecursionError):
         return []
     out = []
-    for rec in (data.get("plugins") or {}).get(PLUGIN_KEY) or []:
+    # \U0001f41b [2026-09-11] The decode was held to every exception a malformed file can raise and
+    # the SHAPE was not: valid JSON whose top level is a list, a string or a number reached
+    # `data.get` and raised `AttributeError`, which nothing here caught. In the hook that is a raise
+    # inside `never_fail` — the block loses a section and says nothing, which is the precise failure
+    # this module exists to end, arriving through the module itself (R2 agent 9's brief, question 3).
+    # The same applies one level down: `plugins` may be a list, and a record may be anything at all.
+    if not isinstance(data, dict):
+        return []
+    plugins = data.get("plugins")
+    for rec in (plugins if isinstance(plugins, dict) else {}).get(PLUGIN_KEY) or []:
         if not isinstance(rec, dict):
             continue
         v = str(rec.get("version") or "")

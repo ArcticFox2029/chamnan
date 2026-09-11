@@ -354,9 +354,42 @@ SECRET_WORDS = (
     # from `    pass` — and it costs nothing on the secret side, because every real spelling of
     # this one carries a prefix (R1 agent 2).
     r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]pass(?:words?)?(?![A-Za-z])"
+    # \U0001f41b [2026-09-11] ...and the same word in SCREAMING_CASE, which the separator rule above
+    # cannot reach and which the 2026-09-10 fix gave to `TOKEN` and `KEY` and not to this one.
+    # `PASS=hunter2`, `DBPASS=`, `FTPPASS=` and `MYSQLPASS=` all passed through byte for byte, beside
+    # `PASSWORD=`, `PWD=` and `DB_PASS=`, which were caught. Ten members of the set were handled and
+    # the eleventh was not, which is this repository's most recorded defect, for the tenth time.
+    #
+    # The reason `pass` needs a leading component does not survive the case change, and that is what
+    # makes this safe rather than a relaxation: the component exists to separate a credential from
+    # Python's `pass` STATEMENT, and the statement is lowercase. Under `(?-i:)` an all-caps `PASS`
+    # cannot be it. So the prefix becomes optional here where it stays required one line above.
+    #
+    # The English words ending in -PASS are excluded by name, for the reason the `KEY` branch gives
+    # in full: credential prefixes are an open set that grows with every vendor, English words ending
+    # in "pass" are a closed one. `BYPASS=1` being destroyed is the same damage as `MONKEY_PATCH=1`.
+    # Written as a lookahead on the WHOLE word, so `BYPASSKEY` is still caught rather than smuggled.
+    r"|(?-i:(?<![A-Za-z])(?!(?:BY|COM|ENCOM|OVER|SUR|TRES|UNDER|RE|OUT)PASS(?:ES)?(?![A-Z0-9]))"
+    r"[A-Z0-9]*PASS(?:WORD)?S?)(?![A-Za-z])"
+    # `PWD` and `CRED` are the same omission one size down. Both are caught bare and after a
+    # separator, and neither was reachable with a SCREAMING prefix run against it -- `DBPWD=` and
+    # `APICRED=` beside `DB_PWD=` and `API_CRED=`, which were. A prefix is REQUIRED here, unlike
+    # `PASS` above, because three and four letters land inside real words too easily to give up the
+    # left boundary; `SACRED` is the one English word that ends in `CRED` and it is excluded by name.
+    r"|(?-i:(?<![A-Za-z])[A-Z0-9]+PWDS?)(?![A-Za-z])"
+    r"|(?-i:(?<![A-Za-z])(?!SACRED(?![A-Z0-9]))[A-Z0-9]+CREDS?)(?![A-Za-z])"
     # ...and the same words in CamelCase, where there is no separator to anchor on: dbPassword,
     # apiToken. Case-sensitive under `(?-i:)` for the reason the `key` branch below gives.
-    r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Secret|Token|Credential)s?)(?![A-Za-z])"
+    # \U0001f41b [2026-09-11] `Pwd`, `Cred`, `Storepass` and `Keypass` were absent from this list
+    # while sitting in the bare-word list two branches up, so `dbPwd = "..."` and `userCreds = "..."`
+    # leaked where `dbPassword` and `dbSecret` did not. The same set, the same omission, one line
+    # apart. The right boundary is what keeps `userCredit` and `totalCredits` out of it.
+    # `StorePass` and `KeyPass` carry the capital at each component, which is how CamelCase actually
+    # spells a two-word name and which the single-capital spellings beside them do not match. `Pass`
+    # on its own cannot join this list -- `lowPass`, `firstPass` and `bandPass` are ordinary
+    # identifiers -- so the two real credential names are written out instead.
+    r"|(?-i:(?<=[a-z0-9])(?:Password|Passwd|Passphrase|Secret|Token|Credential"
+    r"|Pwd|Cred|Storepass|Keypass|StorePass|KeyPass)s?)(?![A-Za-z])"
     # 🐛 [2026-09-10] ...and the same words in SCREAMING_CASE, which is how an env file and a CI
     # config actually spell them, and where there is neither a separator nor a case change to
     # anchor on. `APITOKEN`, `ACCESSKEY`, `PRIVATEKEY`, `SECRETTOKEN` and `CIRCLETOKEN` all passed
