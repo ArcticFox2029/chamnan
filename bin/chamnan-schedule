@@ -37,6 +37,7 @@ suspend, a hibernate, a timezone change or a clock set backwards are all surviva
 thing a sleeping machine cannot do is run something at the moment it was asleep for.
 """
 import os
+import signal
 import sys
 import uuid
 from pathlib import Path
@@ -70,6 +71,8 @@ def _set(argv, root):
         return 2
     rid = uuid.uuid4().hex[:8]
     _agent, _strength = sched.whose_session(root)
+    _transport, _handle = sched.transport_of()
+    _app_pid = sched.agent_process()
     runner = _flag(argv, "--runner")
     rec = {
         "id": rid,
@@ -86,6 +89,13 @@ def _set(argv, root):
         # With a router or several cascade pools in front of the models, the pool that was in use
         # is not something anybody can work out afterwards — so it is marked now or it is lost.
         "agent": _agent, "pool": _flag(argv, "--label", "") or _strength,
+        # HOW the command arrived, and the process it arrived through. Recorded at `set` because
+        # neither can be worked out later: a pane closes, a pid is reused, and nothing on the
+        # machine remembers which door a session came in by. The birth time is what makes the pid
+        # trustworthy two hours from now — a pid alone is reused, and this machine sleeps after one
+        # idle minute, so elapsed runtime is the one figure a suspend distorts.
+        "transport": _transport, "handle": _handle,
+        "app_pid": _app_pid, "app_started": sched.process_started(_app_pid),
         "cwd": str(root),
         "status": "pending",
         "created": sched._now_iso(),
@@ -148,7 +158,11 @@ def _cancel(argv, root):
         # exactly that, one of them a subagent that hung for 58 minutes.
         if sched.alive(r.get("pid")):
             try:
-                os.kill(int(r["pid"]), 15)
+                # SIGTERM by name, not 15. On Windows `os.kill` does not send a signal at all — it
+                # terminates the process and uses the number as the exit code — and here that is
+                # exactly the intent, so this one call is correct on both platforms. The call that
+                # was NOT correct was asking about liveness the same way; see `schedule.alive`.
+                os.kill(int(r["pid"]), signal.SIGTERM)
             except (OSError, ValueError):
                 pass
         try:

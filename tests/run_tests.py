@@ -32375,7 +32375,9 @@ check("NO SESSION-START PATH EVER STARTS OR FIRES A SCHEDULE",
 # --- 7. Cancel signals a recorded pid, and asks about liveness the same way.
 check("liveness is asked of a PID, never of a command line",
       "pgrep" not in _t_srccode89 and "pgrep" not in _t_cmd89
-      and "os.kill" in _t_srccode89,
+      # Through the package's one definition. This asserted `os.kill` until the Windows bug moved
+      # the question into `workspace._pid_is_alive`, where it belongs and where it already was.
+      and "_pid_is_alive" in _t_srccode89,
       saw="a `pgrep -f` pattern matches the pgrep that is searching for it, which has cost this "
           "project three incidents including a subagent that hung for 58 minutes")
 _t_live89 = [(v, _t_s89.alive(v)) for v in (_os89.getpid(), 999999, 0, -1, "abc", None)]
@@ -32476,6 +32478,257 @@ check("A BUSY STORE IS REPORTED AS BUSY, NOT AS A TRACEBACK NAMING THE FILE",
       saw="%s — a command that dies here prints the store's path while having written nothing to it"
           % "; ".join(_t_held89))
 _sh89.rmtree(_t_r89, ignore_errors=True)
+
+# --- 11. THE THREE ROUTES. A session left open IS the session, so the best answer is to type into
+# the one already running rather than to start anything. Which route a record takes is decided from
+# what was stored at `set`, never from what is true at firing time: a pane that closed and a pid
+# that was reused both look fine from outside, and both have to be caught by the pair the record
+# carries. The route is asserted over every transport, not over the one this machine happens to use.
+_t_base89 = {"id": "r", "when": "2026-09-12T01:00:00", "runner": ["claude", "-p"],
+             "resume_from": ".chamnan/STATE.md", "note": ""}
+_t_mine89 = _os89.getpid()
+_t_born89 = _t_s89.process_started(_t_mine89)
+
+check("this process's own birth time is readable, which the routing depends on",
+      bool(_t_born89), saw="no birth time — every record would fall back to `resume` and the pane "
+                           "route would be dead code on this platform")
+
+_t_routes89 = []
+for _t_tp89 in sorted(_t_s89.PANE_ROUTES):
+    _t_rec89 = dict(_t_base89, transport=_t_tp89, handle="h1",
+                    app_pid=_t_mine89, app_started=_t_born89)
+    _t_route89, _t_argv89 = _t_s89.delivery(_t_rec89)
+    if _t_route89 != "pane" or not _t_argv89 or _t_tp89 not in _t_argv89[0]:
+        _t_routes89.append("%s -> %s %s" % (_t_tp89, _t_route89, _t_argv89[:2]))
+check("EVERY MULTIPLEXER WITH A LIVE PANE IS ANSWERED THROUGH THAT PANE",
+      not _t_routes89,
+      saw="%s — a transport in the table that does not route to its own tool is dead config"
+          % "; ".join(_t_routes89))
+
+# ...and the two ways a pane can be gone, which are the whole reason the record stores a pair.
+_t_reused89 = dict(_t_base89, transport="tmux", handle="%9", app_pid=_t_mine89,
+                   app_started="Fri Sep 11 09:00:00 2026", session="abc-123")
+check("...but a pid whose BIRTH TIME disagrees is a different process, and is not typed into",
+      _t_s89.delivery(_t_reused89)[0] == "resume",
+      saw="routed to %s — typing into a reused pid is typing into somebody else's program"
+          % _t_s89.delivery(_t_reused89)[0])
+_t_dead89 = dict(_t_base89, transport="tmux", handle="%9", app_pid=999999,
+                 app_started=_t_born89, session="abc-123")
+check("...and a pid that is gone falls back rather than firing at nothing",
+      _t_s89.delivery(_t_dead89)[0] == "resume", saw=_t_s89.delivery(_t_dead89)[0])
+
+# A transport with no addressable pane is not given a worse version of the pane route.
+_t_nopane89 = [t for t in ("vscode", "cursor", "ssh", "cli", "windows-terminal")
+               if _t_s89.delivery(dict(_t_base89, transport=t, handle="1", session="s"))[0]
+               != "resume"]
+check("...and a transport with no addressable pane takes the resume route, not a worse pane one",
+      not _t_nopane89, saw=", ".join(_t_nopane89))
+
+# The last resort still points at the record, because that is all that survived.
+_t_fresh89 = _t_s89.delivery(dict(_t_base89, transport="cli", handle=""))
+check("...and with neither a pane nor a session, the runner is pointed at the written-down work",
+      _t_fresh89[0] == "fresh" and ".chamnan/STATE.md" in _t_fresh89[1][-1],
+      saw="%s %s" % (_t_fresh89[0], _t_fresh89[1][-1][:60]))
+
+# --- 12. `os.kill(pid, 0)` MEANS TWO DIFFERENT THINGS ON TWO PLATFORMS, and one of them is fatal.
+# 🐛 [2026-09-12] It is the POSIX idiom for "does this process exist". On Windows it is not a
+# question: CPython's own test suite states it — "os.kill on Windows can take an int which gets set
+# as the exit code" — so signal 0 there means TERMINATE WITH EXIT CODE 0. `schedule.alive` used it
+# unguarded, so on Windows `chamnan-schedule list` would have killed the process it was reporting
+# on, and the routing decision would have killed the user's own agent a moment before typing into it.
+#
+# Found with no Windows machine, by reading what the platform branch of CPython does rather than
+# assuming the POSIX idiom carries.
+#
+# The FIRST version of this check then failed the same way the reports it was written against do:
+# it matched the call and not its context, so it flagged `workspace.py`, where the identical line
+# sits behind an `os.name == "nt"` guard with a full Windows branch above it — correct code, called
+# a defect because one line was read without the block around it. The guard is what makes the idiom
+# safe, so the guard is what this asks about.
+import ast as _ast89
+
+
+def _t_guarded89(tree, call):
+    """True when `call` is unreachable on Windows because a branch above it already returned.
+
+    Two shapes, and the second is the one the first draft of this check missed. An `if/else` puts
+    the POSIX code in the `else`. An EARLY RETURN puts it after the `if` entirely — the Windows
+    branch handles the case and returns, so everything below is POSIX by construction. That is how
+    `workspace._pid_is_alive` is written, and reading only the first shape reported correct code as
+    a defect, which is the exact failure mode this whole round is about.
+    """
+    for _t_fn89 in _ast89.walk(tree):
+        if not isinstance(_t_fn89, (_ast89.FunctionDef, _ast89.AsyncFunctionDef)):
+            continue
+        if not any(_t_w89 is call for _t_w89 in _ast89.walk(_t_fn89)):
+            continue
+        for _t_node89 in _t_fn89.body:
+            if not isinstance(_t_node89, _ast89.If):
+                continue
+            _t_test89 = _ast89.dump(_t_node89.test)
+            if '"nt"' not in _t_test89 and "'nt'" not in _t_test89:
+                continue
+            # else-branch shape
+            for _t_inner89 in _t_node89.orelse:
+                if any(_t_w89 is call for _t_w89 in _ast89.walk(_t_inner89)):
+                    return True
+            # early-return shape: the call simply sits after the Windows branch
+            if getattr(call, "lineno", 0) > getattr(_t_node89, "lineno", 0) \
+                    and not any(_t_w89 is call for _t_w89 in _ast89.walk(_t_node89)):
+                return True
+    return False
+
+
+_t_zerokill89 = []
+for _t_f89 in (sorted((ROOT / "lib").rglob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+               + [p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix]):
+    try:
+        _t_tree89 = _ast89.parse(_t_f89.read_text(encoding="utf-8-sig", errors="replace"))
+    except (SyntaxError, ValueError, OSError):
+        continue
+    for _t_n89 in _ast89.walk(_t_tree89):
+        if not isinstance(_t_n89, _ast89.Call):
+            continue
+        _t_fn89 = _t_n89.func
+        if not (isinstance(_t_fn89, _ast89.Attribute) and _t_fn89.attr == "kill"
+                and getattr(_t_fn89.value, "id", "") == "os"):
+            continue
+        if len(_t_n89.args) < 2:
+            continue
+        _t_sig89 = _t_n89.args[1]
+        if (isinstance(_t_sig89, _ast89.Constant) and _t_sig89.value == 0
+                and not _t_guarded89(_t_tree89, _t_n89)):
+            _t_zerokill89.append("%s:%d" % (_t_f89.name, _t_n89.lineno))
+check("NO UNGUARDED `os.kill(pid, 0)` — IT IS A QUESTION ON POSIX AND A TERMINATION ON WINDOWS",
+      not _t_zerokill89,
+      saw="%s — outside a platform branch, the call that asks whether a process is alive kills it "
+          "on Windows" % ", ".join(_t_zerokill89))
+
+# ...and the sweep really did find the guarded ones, or it is passing because it matched nothing.
+_t_anykill89 = sum(
+    1 for _t_f89 in sorted((ROOT / "lib").rglob("*.py"))
+    for _t_n89 in _ast89.walk(_ast89.parse(_t_f89.read_text(encoding="utf-8", errors="replace")))
+    if isinstance(_t_n89, _ast89.Call) and isinstance(_t_n89.func, _ast89.Attribute)
+    and _t_n89.func.attr == "kill" and getattr(_t_n89.func.value, "id", "") == "os")
+check("...and the sweep reached this package's process calls at all: %d" % _t_anykill89,
+      _t_anykill89 >= 1,
+      saw="no `os.kill` found anywhere — the walk is matching nothing and would pass on any code")
+
+# ...and the liveness answer is still right here, which the fix must not have traded away.
+check("...and the liveness answer is still right on this platform",
+      _t_s89.alive(_os89.getpid()) is True and _t_s89.alive(999999) is False
+      and _t_s89.alive(0) is False and _t_s89.alive("abc") is False,
+      saw="alive(self)=%s alive(999999)=%s" % (_t_s89.alive(_os89.getpid()),
+                                               _t_s89.alive(999999)))
+
+# One definition, not two. The scheduler asks the package's existing answer rather than carrying a
+# second Windows branch — the first fix wrote one, and it was missing `use_last_error`, the
+# ACCESS_DENIED case, and the fact that exit code 259 is legal.
+_t_sched89 = _t_code_only89(ROOT / "lib" / "schedule.py")
+# The property is about LIVENESS specifically, not about touching the Windows API at all: reading a
+# process's BIRTH TIME has no equivalent in `workspace`, so that one does carry its own branch and
+# should. The first version of this check said "no OpenProcess anywhere in the file", which is a
+# broader rule than the reason behind it — and it failed the moment a second, legitimate Windows
+# branch arrived. A check wider than its own justification eventually accuses correct code.
+_t_schedtree89 = _ast89.parse((ROOT / "lib" / "schedule.py").read_text(encoding="utf-8"))
+_t_alivefn89 = next((n for n in _ast89.walk(_t_schedtree89)
+                     if isinstance(n, _ast89.FunctionDef) and n.name == "alive"), None)
+check("the sweep found the liveness function to judge", _t_alivefn89 is not None,
+      saw="`alive` is not defined in schedule.py — this check is measuring nothing")
+_t_alivebody89 = _ast89.dump(_t_alivefn89) if _t_alivefn89 else ""
+check("...and the LIVENESS question is asked through the package's one definition",
+      "_pid_is_alive" in _t_alivebody89,
+      saw="`alive` carries its own platform branch — a second place to get ACCESS_DENIED and the "
+          "legal exit code 259 wrong, both of which the existing one already handles")
+# ---- 90_a_posix_idiom_that_means_something_else_on_windows.py
+# ------------- the package ships to Windows and this machine will never run it there
+# 🐛 [2026-09-12] `schedule.alive` asked "does this process exist" with `os.kill(pid, 0)`, which is
+# the POSIX idiom and is NOT a question on Windows: CPython's own test suite says it in one line —
+# "os.kill on Windows can take an int which gets set as the exit code". Signal 0 there means
+# terminate with exit code 0, so on Windows `chamnan-schedule list` would have killed the process it
+# was reporting on, and the firing decision would have killed the user's own agent a moment before
+# typing into it. Found by reading what the platform branch of CPython does, on a machine with no
+# Windows, no container runtime and no way to install one.
+#
+# Surveyed afterwards across all three shapes this can take, because one fixed line is not a fix:
+#
+#   1. APIs that do not EXIST on Windows — `os.fork`, `fcntl`, `pwd`, `SIGKILL`. Zero in 84 files.
+#   2. APIs that exist and MEAN something else — `os.kill`, `os.access(X_OK)`, `os.unlink` on an
+#      open file. Five call sites, four already correct.
+#   3. Keyword arguments that are POSIX-only — `dir_fd=`, `follow_symlinks=`. Guarded already, and
+#      guarded the RIGHT way: `os.supports_dir_fd` asks whether the capability is there rather than
+#      asking the platform's name, which is the question that stays true on a platform nobody here
+#      has heard of yet.
+#
+# So this asserts the population rather than the one line, and the honest finding of the survey is
+# that the package was already careful — the defect was in the code added yesterday.
+import ast as _ast90
+
+_t_files90 = (sorted((ROOT / "lib").rglob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+              + [p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix])
+check("the platform sweep has files to read: %d" % len(_t_files90), len(_t_files90) >= 30,
+      saw="too few files — the sweep is measuring a fraction of the package")
+
+# --- 1. Nothing imports a module Windows does not have, and nothing calls an API it lacks.
+_t_ABSENT_MODULES90 = {"fcntl", "pwd", "grp", "resource", "termios", "pty", "tty", "posix"}
+_t_ABSENT_CALLS90 = {"os.fork", "os.setsid", "os.getuid", "os.geteuid", "os.getgid", "os.chown",
+                     "os.mkfifo", "os.uname", "os.killpg", "os.getpgid", "os.forkpty",
+                     "signal.alarm", "signal.setitimer", "signal.pause"}
+_t_ABSENT_ATTRS90 = {"signal.SIGKILL", "signal.SIGHUP", "signal.SIGUSR1", "signal.SIGUSR2",
+                     "signal.SIGQUIT", "signal.SIGCHLD"}
+_t_absent90 = []
+for _t_f90 in _t_files90:
+    try:
+        _t_tree90 = _ast90.parse(_t_f90.read_text(encoding="utf-8-sig", errors="replace"))
+    except (SyntaxError, ValueError, OSError):
+        continue
+    for _t_n90 in _ast90.walk(_t_tree90):
+        if isinstance(_t_n90, _ast90.Import):
+            for _t_a90 in _t_n90.names:
+                if _t_a90.name.split(".")[0] in _t_ABSENT_MODULES90:
+                    _t_absent90.append("%s:%d import %s" % (_t_f90.name, _t_n90.lineno, _t_a90.name))
+        elif isinstance(_t_n90, _ast90.ImportFrom):
+            if (_t_n90.module or "").split(".")[0] in _t_ABSENT_MODULES90:
+                _t_absent90.append("%s:%d from %s" % (_t_f90.name, _t_n90.lineno, _t_n90.module))
+        elif isinstance(_t_n90, _ast90.Attribute) and isinstance(_t_n90.value, _ast90.Name):
+            _t_full90 = "%s.%s" % (_t_n90.value.id, _t_n90.attr)
+            if _t_full90 in _t_ABSENT_CALLS90 or _t_full90 in _t_ABSENT_ATTRS90:
+                _t_absent90.append("%s:%d %s" % (_t_f90.name, _t_n90.lineno, _t_full90))
+check("NOTHING SHIPPED REACHES FOR AN API WINDOWS DOES NOT HAVE",
+      not _t_absent90,
+      saw="%s — an import at module scope fails the whole file there, and this machine cannot see "
+          "it" % "; ".join(_t_absent90[:5]))
+
+# --- 2. A POSIX-only keyword argument is used only where the capability was asked about. Asking
+# `os.supports_dir_fd` is the right question; asking `os.name` is a weaker one that happens to work.
+_t_kw90 = []
+for _t_f90 in _t_files90:
+    try:
+        _t_src90 = _t_f90.read_text(encoding="utf-8-sig", errors="replace")
+        _t_tree90 = _ast90.parse(_t_src90)
+    except (SyntaxError, ValueError, OSError):
+        continue
+    _t_asks90 = ("supports_dir_fd" in _t_src90 or "supports_follow_symlinks" in _t_src90
+                 or "supports_fd" in _t_src90)
+    for _t_n90 in _ast90.walk(_t_tree90):
+        if not isinstance(_t_n90, _ast90.Call):
+            continue
+        for _t_k90 in _t_n90.keywords:
+            if _t_k90.arg in ("dir_fd", "src_dir_fd", "dst_dir_fd") and not _t_asks90:
+                _t_kw90.append("%s:%d %s=" % (_t_f90.name, _t_n90.lineno, _t_k90.arg))
+check("...and a POSIX-only keyword is used only in a file that asked whether it is supported",
+      not _t_kw90,
+      saw="%s — `dir_fd` raises NotImplementedError where `openat` does not exist, and the file "
+          "never asked" % "; ".join(_t_kw90[:5]))
+
+# --- 3. The survey must not be passing because it matched nothing. `dir_fd` IS used in this
+# package, deliberately and correctly; if this count reaches zero the sweep above has stopped
+# seeing it and its silence would mean nothing.
+_t_dirfd90 = sum(1 for _t_f90 in _t_files90
+                 if "dir_fd" in _t_f90.read_text(encoding="utf-8-sig", errors="replace"))
+check("...and the sweep really does see the POSIX-only keywords this package uses: %d file(s)"
+      % _t_dirfd90, _t_dirfd90 >= 1,
+      saw="no file mentions `dir_fd` — either the package stopped using it or this sweep is blind")
 # ============================ end of the folded surgical pool
 
 

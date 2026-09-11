@@ -115,11 +115,21 @@ def alive(pid):
         return False
     if pid <= 0:
         return False
-    try:
-        os.kill(pid, 0)
-    except (OSError, ProcessLookupError, PermissionError) as exc:
-        return isinstance(exc, PermissionError)
-    return True
+    # \U0001f41b [2026-09-12] This asked with `os.kill(pid, 0)`, which is the POSIX idiom for "does
+    # this process exist" and is NOT a question on Windows — CPython's own test suite says so in one
+    # line: "os.kill on Windows can take an int which gets set as the exit code". Signal 0 there
+    # means terminate with exit code 0, so the call that asks whether a process is alive would have
+    # killed it: `chamnan-schedule list` would have stopped the process it was reporting on, and the
+    # routing decision would have killed the user's own agent a moment before typing into it.
+    #
+    # And then the fix was wrong a second time, which is the part worth recording. A Windows branch
+    # was written here from scratch — and `workspace._pid_is_alive` has been the package's answer to
+    # this exact question all along, with three things the new one did not have: `use_last_error`,
+    # because ctypes' own documentation says a raw `GetLastError` is unreliable; ACCESS_DENIED read
+    # as "it exists and we may not open it" rather than as absence; and exit code 259 treated as
+    # legal rather than as proof of life. One definition, not two.
+    import workspace as _ws
+    return _ws._pid_is_alive(pid)
 
 
 def detach_kwargs(osname):
@@ -190,9 +200,153 @@ def spawn(root, rid, prefix=()):
 # store that arrived inside a cloned repository starts nothing at all — which matters, because the
 # store names a command and a repository is not a trusted author.
 FIELDS = ("id", "when", "runner", "resume_from", "note", "account", "session", "agent", "pool",
-          "cwd", "pid", "status", "created")
+          "transport", "handle", "app_pid", "app_started", "cwd", "pid", "status", "created")
 
 DEFAULT_RUNNER = ("claude", "-p")
+
+
+# Every transport this can recognise, and the one fact each needs to be answered through.
+# Ordered: the first that matches wins, most specific first. `cli` matches everything left over and
+# is not a failure — a terminal with no multiplexer is the ordinary case.
+TRANSPORTS = (
+    ("tmux", "TMUX_PANE"),
+    ("vscode", "VSCODE_INJECTION"),
+    ("cursor", "CURSOR_TRACE_ID"),
+    ("wezterm", "WEZTERM_PANE"),
+    ("zellij", "ZELLIJ_SESSION_NAME"),
+    ("screen", "STY"),
+    ("windows-terminal", "WT_SESSION"),
+    ("ssh", "SSH_TTY"),
+)
+
+
+def transport_of(env=None):
+    """`(name, handle)` — how this session was reached, and the address to reach it again.
+
+    Derived from the table above rather than written as a chain of `if`s, so a terminal added to
+    it is answered by arriving. `("cli", "")` when nothing matches, which is an answer and not an
+    error: it simply means there is no pane to talk back to and the schedule must resume instead.
+    """
+    env = os.environ if env is None else env
+    for name, key in TRANSPORTS:
+        if env.get(key):
+            return name, env[key]
+    return "cli", ""
+
+
+def process_started(pid, run=None):
+    """The moment `pid` was born, as a string that never changes, or "" when it cannot be known.
+
+    \U0001f3af The owner's fix for pid reuse, sharpened by one step. They proposed recording how long
+    the app had been running and adding the wait to it — right in substance, and it needs a
+    tolerance, because "3h now, so 5h10m later" only holds if nothing distorted the clock. A BIRTH
+    TIME needs no tolerance at all: it never moves, so it is compared exactly. That matters on this
+    machine specifically, which sleeps after one idle minute — elapsed time keeps counting while it
+    does, so a wait across a suspend produces an elapsed figure nobody predicted, while the birth
+    time is the same string it always was.
+
+    \U0001f41b [2026-09-12] The first version shelled out to `ps` on POSIX and `powershell` on Windows,
+    and the gate refused it — correctly, and for a reason worth keeping. The README tells anyone
+    auditing this package that it executes exactly two things: `git`, and this interpreter re-running
+    a file that ships inside it. Adding `ps` would have been a third, which is a change to a promise
+    made to users, not an implementation detail. It would also have cost a process spawn — about
+    21ms each on this machine — for a question the kernel answers directly.
+
+    So all three platforms are read through the OS, with no child process at all:
+      Linux   `/proc/<pid>` exists and its ctime IS the moment the process was created.
+      macOS   `libproc.proc_pidinfo` with PROC_PIDTBSDINFO carries `pbi_start_tvsec`.
+      Windows `GetProcessTimes` on an opened handle gives creation time directly.
+    `run` stays in the signature so a test can inject a failure without a platform to fail on.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return ""
+    if pid <= 0:
+        return ""
+    if run is not None:                       # a test speaking for the platform
+        return str(run(pid) or "")
+    try:
+        if sys.platform.startswith("linux"):
+            return "%.6f" % pathlib.Path("/proc/%d" % pid).stat().st_ctime
+        if sys.platform == "darwin":
+            import ctypes
+            # PROC_PIDTBSDINFO is 1; the struct's `pbi_start_tvsec` sits at offset 120 and the
+            # call returns the bytes written, so a short answer is a failure rather than a value.
+            libc = ctypes.CDLL("libc.dylib", use_errno=True)
+            # The signature is declared. Without it ctypes guesses, and the guess is wrong here in
+            # two ways at once: the flavor argument arrives the wrong width and the return is
+            # truncated, so the first draft read 24 bytes of a file-descriptor list and turned it
+            # into a plausible-looking number. Verified against `ps -o lstart=` on two live
+            # processes before being trusted — the same rule the ID fixtures are held to.
+            libc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                          ctypes.c_void_p, ctypes.c_int]
+            libc.proc_pidinfo.restype = ctypes.c_int
+            buf = ctypes.create_string_buffer(1024)
+            # PROC_PIDTBSDINFO is 3, not 1 — 1 is PROC_PIDLISTFDS, which answers a different
+            # question and answers it successfully, which is why the wrong flavor read as data.
+            written = libc.proc_pidinfo(pid, 3, 0, buf, 1024)
+            if written < 128:
+                return ""
+            # `pbi_start_tvsec` at offset 120 of struct proc_bsdinfo.
+            return "%d" % int.from_bytes(buf.raw[120:128], "little")
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_errno=True)   # noqa: F821 — Windows only
+            handle = k32.OpenProcess(0x1000, False, pid)      # QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ""
+            try:
+                created = wintypes.FILETIME()
+                rest = [wintypes.FILETIME() for _ in range(3)]
+                if not k32.GetProcessTimes(handle, ctypes.byref(created),
+                                           *[ctypes.byref(x) for x in rest]):
+                    return ""
+                return "%d" % ((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            finally:
+                k32.CloseHandle(handle)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return ""
+    return ""
+
+
+def agent_process(start_pid=None, env=None, run=None):
+    """The pid of the agent this code runs underneath, from what the host itself says.
+
+    The messaging socket is named for the agent's own pid — a socket called `731.sock` is the host
+    stating which process it is, with no guessing and no walking.
+
+    \U0001f41b [2026-09-12] The first version walked the parent chain by shelling out to `ps` once per
+    level, up to twelve times, and matched process names against a list of agent names. Both halves
+    were wrong: twelve spawns to answer one question the socket already answers, and matching by
+    NAME is the `pgrep -f` mistake one step removed — this project has three incidents from deciding
+    what a process is by what it is called. Where no socket is offered the answer is 0, which the
+    caller already handles as "no session to talk back to" and routes around.
+    """
+    env = os.environ if env is None else env
+    sock = env.get("CLAUDE_CODE_MESSAGING_SOCKET", "")
+    if sock:
+        stem = os.path.basename(sock).split(".")[0]
+        if stem.isdigit():
+            return int(stem)
+    return 0
+
+
+def still_the_same(pid, started, run=None):
+    """True only when that pid is alive AND was born at the recorded moment.
+
+    Both halves. A pid alone is reused — after a reboot, or after enough process churn — and two
+    hours is long enough for it to happen. Answering "is it alive" and calling that identity is how
+    a schedule ends up typing into somebody else's program.
+    """
+    if not pid or not started:
+        return False
+    # Through `alive`, which knows what "is this process there" means on each platform. Asking with
+    # `os.kill(pid, 0)` directly is the bug recorded in that function: on Windows it terminates.
+    if not alive(pid):
+        return False
+    return process_started(pid, run=run) == started
 
 
 def whose_session(root, env=None):
@@ -348,6 +502,49 @@ def ws_cannot_answer():
     return ws.git_cannot_answer()
 
 
+def delivery(rec):
+    """How this record should be answered: `(route, argv)`. Three routes, best first.
+
+    \U0001f3af [2026-09-11 owner] The premise is that a session left open IS the session — so the best
+    answer is not to start anything, it is to type into the one already running. Three routes,
+    because no single one works everywhere and the difference is what a user actually has:
+
+    1. `pane` — the session is still open in a multiplexer, so the work continues in it with its
+       whole context intact. Nothing is started, nothing is resumed, nothing is lost. Only possible
+       when the transport has a pane AND the process that owned it is still the same process.
+    2. `resume` — the session is gone but its conversation is not. A new process is started and told
+       to continue that conversation, so the history survives even though the process did not.
+    3. `fresh` — nothing survives but what was written down, so the runner is pointed at the record.
+
+    The route is decided from what was stored at `set`, never from what is true now: a pane that
+    closed and a pid that was reused both look fine from the outside, and both are caught here by
+    the pair the record carries.
+    """
+    pid, born = rec.get("app_pid"), rec.get("app_started")
+    handle = rec.get("handle") or ""
+    if rec.get("transport") in PANE_ROUTES and handle and still_the_same(pid, born):
+        return "pane", PANE_ROUTES[rec["transport"]](handle, resume_prompt(rec))
+    if rec.get("session"):
+        return "resume", list(rec.get("runner") or DEFAULT_RUNNER) + [
+            "--resume", str(rec["session"]), resume_prompt(rec)]
+    return "fresh", list(rec.get("runner") or DEFAULT_RUNNER) + [resume_prompt(rec)]
+
+
+# How to type into a live pane, per multiplexer. A table rather than a chain of `if`s, so a
+# multiplexer added here is answered by arriving. Each entry is given the handle and the text and
+# returns the argv that delivers it.
+#
+# Only multiplexers appear here, and that is the honest limit: VS Code's terminal, a bare shell and
+# an ssh session have no addressable pane, so they take the `resume` route rather than a worse
+# version of this one.
+PANE_ROUTES = {
+    "tmux": lambda h, text: ["tmux", "send-keys", "-t", h, text, "Enter"],
+    "screen": lambda h, text: ["screen", "-S", h, "-X", "stuff", text + "\n"],
+    "wezterm": lambda h, text: ["wezterm", "cli", "send-text", "--pane-id", h, text + "\n"],
+    "zellij": lambda h, text: ["zellij", "action", "write-chars", text + "\n"],
+}
+
+
 def fire(root, rec, run=None, now=None):
     """Run the job once, record what happened, and return. Never becomes resident.
 
@@ -362,7 +559,7 @@ def fire(root, rec, run=None, now=None):
     non-negotiable would have shipped untestable.
     """
     import subprocess as sp
-    argv = list(rec.get("runner") or DEFAULT_RUNNER) + [resume_prompt(rec)]
+    route, argv = delivery(rec)
     logdir = root / ".chamnan" / LOGDIR
     logdir.mkdir(parents=True, exist_ok=True)
     log = logdir / ("%s.log" % rec.get("id"))
@@ -403,7 +600,7 @@ def fire(root, rec, run=None, now=None):
     except OSError:
         pass
     update(root, rec.get("id"), status="fired" if code == 0 else "failed",
-           fired=_now_iso(), late_seconds=late, exit_code=code)
+           fired=_now_iso(), late_seconds=late, exit_code=code, route=route)
     return code
 
 
