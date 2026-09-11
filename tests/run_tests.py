@@ -23295,10 +23295,29 @@ check("...and no published document prints an address for anyone to harvest",
 _RED_DEMOS = ("lib/redact.py", "site/lib/redact.py", "tools/redactor_recall.py",
               "bench/pinned.py", "docs/i18n/i18n_strings.py", "tests/run_tests.py",
               "tests/redactor_selfscan_baseline.txt")
-_red_tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True,
+# \U0001f41b [2026-09-11] `ls-files` alone lists files git ALREADY TRACKS, so a file added in the
+# same change the gate is gating has never been scanned by it. `lib/installs.py` was written, the
+# gate passed 4878/4878, the file was committed, and CI then refused it on all five platforms for a
+# literal the local run had never looked at — a plugin id whose `<name>@<name>` shape reads as an
+# email address to this package's own redactor.
+#
+# The sweep exists to stop a credential shipping. A new file is the likeliest place for one and was
+# the only place it could not see. `--others --exclude-standard` adds what is untracked and not
+# ignored, which is exactly the set that is about to be committed.
+_red_tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "--cached", "--others",
+                               "--exclude-standard"], capture_output=True,
                               text=True, encoding="utf-8", errors="replace").stdout.split()
 check("THE REDACTOR SWEEP HAS FILES TO SWEEP", len(_red_tracked) > 50,
-      saw=f"tracked: {len(_red_tracked)}")
+      saw=f"tracked and new: {len(_red_tracked)}")
+# A sweep that reads only what is committed cannot refuse what is about to be. Asserted against the
+# LISTS, not against the flags: the first version of this check looked for "--others" in the args of
+# a command it had just built itself, which is true however the sweep behaves.
+_red_cached = set(subprocess.run(["git", "-C", str(ROOT), "ls-files"], capture_output=True,
+                                 text=True, encoding="utf-8", errors="replace").stdout.split())
+check("...INCLUDING FILES NOT YET COMMITTED, WHICH IS WHERE A NEW LEAK ARRIVES",
+      set(_red_tracked) >= _red_cached,
+      saw=f"{len(set(_red_tracked) - _red_cached)} uncommitted file(s) in the sweep; "
+          f"committed-only would be {len(_red_cached)}")
 _red_hits = []
 for _rrel in _red_tracked:
     if _rrel in _RED_DEMOS or _rrel.startswith("docs/i18n/"):
@@ -26412,6 +26431,102 @@ check("...so a store with long titles delivers as many bodies as one with short 
       saw=f"gaps over {len(_t_gaps)} seeded draws: {_t_gaps} — worst {_t_worst}, typical {_t_typical}")
 check("...and the comparison actually ran, rather than passing on an empty list",
       len(_t_gaps) == 12, saw=f"{len(_t_gaps)} draw(s)")
+# ------------------------------- a NameError in the block is a SILENT section loss, not a crash
+# \U0001f41b [2026-09-11] The first wiring of the install check called `_running_version()`, which
+# lives in `adapters` and not in the hook. `never_fail` caught the `NameError` exactly as designed —
+# and the session block came out MISSING its rules section, its fence-meaning line and three of its
+# five fences, with no error anywhere. The suite found it only because a later check indexed `[0]`
+# of a list the truncation had emptied, and that crash is what made it visible.
+#
+# So the hook is held to producing a WHOLE block, not merely to not raising. A section count and a
+# fence count are cheap, and either one moving is the signature of a swallowed exception upstream.
+# \U0001f41b The first version tried to reuse a helper if one existed: `_hook_out(...) if
+# "_hook_out" in dir() else None`. In this suite `_hook_out` is a `CompletedProcess` VARIABLE, and
+# `dir()` at module level sees the name — so the guard passed and the call raised
+# `TypeError: 'CompletedProcess' object is not callable`, which killed the run at 17.6 minutes and
+# produced NOT VERIFIED. A conditional that tests for a NAME cannot tell a function from a value.
+# Written in the check whose whole subject is an exception that hides. Run it plainly.
+_wp19 = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                       input="{}", capture_output=True, text=True, encoding="utf-8",
+                       errors="replace", cwd=str(ROOT.parent.parent), timeout=180)
+_whole = _wp19.stdout or ""
+_w_fences = _whole.count("[repo:")
+_w_heads = len([l for l in _whole.splitlines() if l.startswith("### ")])
+check("THE SESSION BLOCK COMES OUT WHOLE, NOT MERELY WITHOUT RAISING",
+      _w_fences >= 2 and _w_heads >= 1,
+      saw=f"{_w_fences} fence(s), {_w_heads} section heading(s) — a swallowed exception truncates "
+          f"the block and reports nothing, which is how this was missed")
+check("...and every opened fence is closed, so nothing after it renders as code",
+      _whole.count("[repo:") == _whole.count("[/repo:"),
+      saw=f"{_whole.count('[repo:')} opened, {_whole.count('[/repo:')} closed")
+
+# ------------------------- the install that ANSWERS is not always the install that was updated
+# \U0001f41b [2026-09-11] 1.25.0 was deployed to three accounts, each verified file by file against
+# the release, and reported complete. One of them kept serving 1.24.0: a host holds one install per
+# SCOPE — user, project, local, managed — the narrowest wins, and `claude plugin update <plugin>`
+# updates USER and prints success. A `project` install pinned at the home directory therefore stayed
+# a release behind and answered every session opened anywhere under it.
+#
+# Every version string anyone thought to check said 1.25.0, including the verification script, which
+# read `[...][0]` — the first record — and stopped. The rule this file states more than any other,
+# in the tool written to check exactly this.
+#
+# `ws.reconcile_version` cannot cover it: that reports a DOWNGRADE, which requires the older build to
+# have already run in a workspace a newer one touched. `installs` reads the host's own registry, so
+# it knows before anything runs.
+import installs
+
+_i19_home = Path(tempfile.mkdtemp(prefix="chamnan-installs-"))
+try:
+    _i19_reg = _i19_home / "plugins"
+    (_i19_reg / "cache" / "chamnan" / "chamnan" / "1.25.0" / "lib").mkdir(parents=True)
+    _i19_here = _i19_reg / "cache" / "chamnan" / "chamnan" / "1.25.0" / "lib" / "installs.py"
+    _i19_here.write_text("", encoding="utf-8")
+
+    def _i19_write(records):
+        (_i19_reg / "installed_plugins.json").write_text(
+            json.dumps({"version": 2, "plugins": {"chamnan@chamnan": records}}), encoding="utf-8")
+
+    _i19_user = {"scope": "user", "version": "1.25.0", "installPath": "/x/1.25.0"}
+    _i19_proj = {"scope": "project", "projectPath": "/Users/alice", "version": "1.24.0",
+                 "installPath": "/x/1.24.0"}
+
+    _i19_write([_i19_user])
+    check("one install at the running version says nothing",
+          installs.disagreement("1.25.0", _i19_here) == "",
+          saw=installs.disagreement("1.25.0", _i19_here))
+
+    _i19_write([_i19_user, _i19_proj])
+    _i19_msg = installs.disagreement("1.25.0", _i19_here)
+    check("A SECOND INSTALL AT ANOTHER VERSION IS REPORTED, NOT AVERAGED AWAY", bool(_i19_msg),
+          saw="two installs, one a release behind, and nothing said so")
+    # \U0001f41b `"project" in msg` passed with the scope REMOVED from the listing, because the
+    # sentence already ends "…from the project path". A check that can be satisfied by its own
+    # boilerplate is not checking the thing it names. The parenthesised form is the listing's.
+    check("...and it names the SCOPE, which is what the fix needs",
+          "(project" in _i19_msg and "-s <scope>" in _i19_msg, saw=_i19_msg)
+    check("...and the version that is behind", "1.24.0" in _i19_msg, saw=_i19_msg)
+    # The reverse direction is a fault too: reading a copy that is NOT the one that will answer.
+    check("...and a NEWER sibling is reported just as loudly as an older one",
+          bool(installs.disagreement("1.24.0", _i19_here)))
+    check("...and the line fits the lead-line cap it is injected under",
+          len(_i19_msg.encode()) <= 320 * 2,
+          saw=f"{len(_i19_msg.encode())} bytes")
+
+    # A registry that cannot be read is not a fault: chamnan runs out of a checkout too.
+    # Asserted WITHOUT letting the call raise into the runner — a `json.JSONDecodeError` escaping
+    # here does not fail this check, it kills the block and every check after it, which this suite
+    # records as worse than a failure because it reports nothing at all.
+    (_i19_reg / "installed_plugins.json").write_text("{ not json", encoding="utf-8")
+    try:
+        _i19_bad = installs.disagreement("1.25.0", _i19_here)
+    except Exception as _i19_e:
+        _i19_bad = f"RAISED {type(_i19_e).__name__}"
+    check("an unreadable registry is silent rather than alarming, and does not raise",
+          _i19_bad == "", saw=_i19_bad)
+finally:
+    _rmtree(_i19_home, ignore_errors=True)
+
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption

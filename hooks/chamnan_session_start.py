@@ -24,6 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 import environments  # noqa: E402
 import fit  # noqa: E402
+import installs  # noqa: E402
 import ledger  # noqa: E402
 import memory  # noqa: E402
 import milestones  # noqa: E402
@@ -1609,6 +1610,28 @@ def main():
                                f"chamnan**, {len(_ahead)} of them by a NEWER one. `chamnan-map` "
                                f"lists them; `chamnan-context --write <agent>` refreshes one._")
             _stale_lines.append(redact.scrub(_drift_line + "\n"))
+
+        # ------------------- the copy that answers may not be the copy that was updated
+        # A host holds one install per SCOPE — user, project, local, managed — and the narrowest
+        # wins. `claude plugin update chamnan@chamnan` updates USER and reports success, which is
+        # true and incomplete: 1.25.0 was deployed to three accounts, verified file by file, and one
+        # kept serving 1.24.0 from a `project` install pinned at the home directory, so every session
+        # anywhere under it ran the older code. Every version string anyone checked said 1.25.0.
+        #
+        # `ws.reconcile_version` cannot see this. It reports a DOWNGRADE, which needs the old build
+        # to have run in a workspace a newer one already touched — after the fact, and only there.
+        # This reads the host's own registry, which knows before anything runs.
+        _install_line = installs.disagreement(installs.running_version())
+        if _install_line:
+            if len(_install_line.encode()) > DRIFT_LINE_BYTES:
+                # Same rule as the drift line above and for the same reason: a lead line carries no
+                # heading, so `fit.shrink` cannot drop it, and an uncapped one is the single thing
+                # that can push the block past the ceiling. The COUNT and the command survive.
+                _n = len(installs.stale_installs(installs.running_version()))
+                _install_line = (f"**{_n} other install(s) of chamnan are registered here** while "
+                                 f"{installs.running_version()} is running, and a narrower scope wins. "
+                                 f"`claude plugin list` names them; update each with `-s <scope>`.")
+            _stale_lines.append(redact.scrub(f"_⚠ {_install_line}_\n"))
 
         if cfg.get("environments", True):
             # Constraints, never versions. A constraint rules out a whole design before it is written

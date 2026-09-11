@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1250), and every one of these is on the
+[README](README.md#whats-new-in-1251), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -16,6 +16,55 @@ the version number and a new empty one starts.
 Nothing under **Unreleased** carries a version number, on purpose. Numbering it would put a version
 in this file that no tag matches — and on the machine chamnan is developed on, the installed plugin
 already reports the last released number while running newer code.
+
+---
+
+## What's new in 1.25.1
+
+**A plugin can be installed more than once on the same machine, and the copy that answers is not
+always the copy you updated.**
+
+1.25.0 was deployed to three accounts. Each one was verified file by file against the release and
+reported complete. One of them went on serving 1.24.0.
+
+A host keeps one install per **scope** — `user`, `project`, `local`, `managed` — and the narrowest
+one wins. `claude plugin update chamnan@chamnan` updates `user` and prints `✔ updated to 1.25.0`,
+which is true and is not the whole truth: a `project` install pinned at the home directory stayed a
+release behind, and because every session runs somewhere under the home directory, that was the copy
+answering. Its hooks, its `bin/` commands, its agents and its skills were all a release old.
+
+Every version string anyone thought to check said 1.25.0, including the script written to check it —
+which read the first record in the registry and stopped.
+
+**chamnan now says so at session start.** It reads the host's own install registry, which is a file
+sitting beside the cache it is running out of, and names any other version registered on the
+machine — with the **scope**, because that is the part the fix needs:
+
+    claude plugin update chamnan@chamnan -s project
+
+Without `-s` the obvious command updates `user`, reports success, and changes nothing.
+
+**Why the existing check could not catch it.** `reconcile_version` reports a *downgrade* — an older
+build running in a workspace a newer one has already touched. That fires after the wrong version has
+run, and only where a newer one has been. It cannot see an install sitting unused that will win the
+next time a session opens in a different directory. The new check looks at the installation rather
+than at the workspace, which is the only place the answer exists before the damage.
+
+No network and no host API: the registry is a file the host already maintains.
+
+**The gate that was supposed to catch this could not see the file.** `lib/installs.py` was written,
+the suite passed 4,878 of 4,878, the file was committed, and CI then refused it on all five
+platforms for a literal the local run had never read: the redactor self-scan listed files with
+`git ls-files`, which names only what git ALREADY TRACKS. A file added by the same change the gate
+is gating had never been scanned by it — and a new file is the likeliest place for a credential to
+arrive. The sweep now includes what is untracked and not ignored, which is exactly the set about to
+be committed.
+
+### Re-run it yourself
+
+**check 4879 / 4879**, and 1,475 of 1,475 index claims true, on the code this tag carries.
+
+    python3 tools/verify_release.py
 
 ---
 

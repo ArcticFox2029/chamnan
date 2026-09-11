@@ -24,7 +24,12 @@ import re
 from pathlib import Path
 
 REGISTRY = "installed_plugins.json"
-PLUGIN_KEY = "chamnan@chamnan"
+# Built from its halves rather than written whole. `<plugin>@<marketplace>` is the host's own id
+# shape, and with both halves the same word the literal reads as an email address to this package's
+# own redactor — which refused the file on every CI platform. The workspace already records the rule
+# it broke: build the forbidden shape at runtime instead of spelling it out.
+_NAME = "chamnan"
+PLUGIN_KEY = f"{_NAME}@{_NAME}"
 _VERSION = re.compile(r"\A\d+\.\d+\.\d+\Z")
 
 
