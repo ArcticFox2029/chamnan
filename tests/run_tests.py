@@ -8919,7 +8919,9 @@ _de = Path(tempfile.mkdtemp(prefix="chamnan-deadend-")) / "r"
 (_de / ".git").mkdir(parents=True)
 (_de / "a.py").write_text('"""A."""\ndef f(): ...\n', encoding="utf-8")
 _de_argv = {"chamnan-impact": ["a.py"], "chamnan-timeline": ["list"], "chamnan-env": ["check"],
-            "chamnan-context": ["--emit", "cursor"]}
+            "chamnan-context": ["--emit", "cursor"],
+            # Takes a verb, so a bare call prints usage and never reaches the workspace question.
+            "chamnan-schedule": ["list"]}
 _de_silent = {
     # Creates the workspace rather than complaining about its absence -- that is its whole job.
     "chamnan-map": "creates the workspace",
@@ -21018,6 +21020,7 @@ if _CAN_DENY_WRITE:
         "chamnan-candidates": ["demote", "t.py"],
         "chamnan-map": ["--install-git-hook"],
         "chamnan-timeline": ["new", "a new thread"],
+        "chamnan-schedule": ["set", "1h"],
         "chamnan-env": ["set", "prod", "--platform", "GKE"],
         "chamnan-promote": ["a-script.sh", "newtool", "--desc", "what it does"],
         "chamnan-age": None,
@@ -28193,6 +28196,23 @@ for _t_f in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob(
         if _t_fn.attr not in ("run", "check_output", "call", "check_call", "Popen"):
             continue
         _t_total42 += 1
+        # 🐛 [2026-09-11] `Popen` was in this population demanding `timeout=`, and `Popen` DOES NOT
+        # TAKE ONE — the bound belongs on `.wait(timeout=)`. The rule was impossible to satisfy and
+        # nobody noticed because this package had no `Popen` at all until the scheduler added one,
+        # so the member was never exercised. A population with an impossible member passes right up
+        # until somebody joins it, and then reads as their bug.
+        #
+        # The honest property for a started-but-not-awaited process is that it was started
+        # DELIBERATELY detached: a process you intend to outlive you cannot be bounded by a timeout,
+        # and one you intend to wait for must be. Both of those are visible at the call.
+        if _t_fn.attr == "Popen":
+            _t_detached42 = any(_t_k.arg in ("start_new_session", "creationflags")
+                                for _t_k in _t_n.keywords)
+            _t_kwargs42 = any(_t_k.arg is None for _t_k in _t_n.keywords)   # Popen(argv, **kw)
+            if not (_t_detached42 or _t_kwargs42):
+                _t_unbounded42.append(f"{_t_f.name}:{_t_n.lineno} (Popen, neither detached nor "
+                                      f"awaited with a bound)")
+            continue
         if not any(_t_k.arg == "timeout" for _t_k in _t_n.keywords):
             _t_unbounded42.append(f"{_t_f.name}:{_t_n.lineno}")
 
@@ -28205,6 +28225,11 @@ check("...and the walk really did reach this package's subprocess calls",
 
 # The bound has to be a real one. A timeout of zero or a negative is the same as no bound with extra
 # steps, and one measured in hours is not a bound a person waits through.
+#
+# This judges LITERALS only, which is a real limit and is stated rather than left to be discovered:
+# a bound written as a named constant or an expression is invisible here. That is tolerable because
+# the rule is about interactive commands, where a literal is the normal spelling — a detached job's
+# wall is a different kind of number and belongs to whatever started it.
 _t_silly42 = []
 for _t_f in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
              + sorted((ROOT / "bin").glob("chamnan-*"))):
@@ -32162,6 +32187,295 @@ check("...while an unlabelled run, and a failed checksum under the label, are bo
       not _t_eaten88,
       saw="%d case(s) destroyed, e.g. %s — shape alone is a guess and the checksum is what makes it "
           "a finding" % (len(_t_eaten88), "; ".join(_t_eaten88[:3])))
+# ---- 89_the_schedule_keeps_its_appointment_on_every_os.py
+# ------------- a schedule that only fires on the machine it was written on is not a feature
+# 🎯 [2026-09-11 owner] "ต้องวางแผนให้ครอบคลุม ทุก ver llm และ ทุก os" — the scheduler has to work on
+# every operating system and in front of every model, and the tests have to say so rather than the
+# documentation. What can be proved here is proved here; what depends on a platform this machine is
+# not runs in CI on three of them, and the branch SELECTION is asserted either way, because the one
+# thing that cannot be tested by running is the branch this machine never takes.
+#
+# The design and its reasoning are in `state/research/R1_the_scheduler_plan_2026-09-11.md`.
+import os as _os89
+import sys as _sys89
+import shutil as _sh89
+import tempfile as _tmp89
+from datetime import datetime as _dt89, timedelta as _td89
+from pathlib import Path as _Path89
+
+import schedule as _t_s89
+
+_t_CMD89 = ROOT / "bin" / "chamnan-schedule"
+
+
+def _t_code_only89(path):
+    """The file with every comment and string literal removed.
+
+    \U0001f41b The first draft of the three checks below scanned the raw text and matched their own
+    explanatory prose: `schedule.py` says in as many words that it must not reach for `nohup`,
+    `setsid`, `crontab` or `pgrep`, so a substring search found all four and reported the module as
+    doing the thing its comments forbid. This workspace records the shape — a check that reads its
+    own source matches itself — and the fix is the same one: ask the CODE, not the page. Tokenising
+    and dropping comments and strings is what makes the question "does it call this" rather than
+    "does it mention this", and it keeps the comments free to name what was ruled out and why.
+    """
+    import io
+    import tokenize
+    out = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(path.read_text(encoding="utf-8")).readline):
+            if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+                out.append(tok.string)
+    except (tokenize.TokenError, IndentationError, SyntaxError, OSError):
+        return path.read_text(encoding="utf-8", errors="replace")
+    return "".join(out)
+
+
+def _t_repo89():
+    r = _Path89(_tmp89.mkdtemp(prefix="chamnan_sched_"))
+    (r / ".chamnan" / "state").mkdir(parents=True)
+    return r
+
+
+# --- 1. Every time form a person would type, including the one that decides a clock time means
+# TOMORROW. Getting that wrong fires the schedule immediately and reads as the feature being broken.
+_t_now89 = _dt89(2026, 9, 11, 20, 30)
+_t_forms89 = {
+    "2h31m": _dt89(2026, 9, 11, 23, 1), "45m": _dt89(2026, 9, 11, 21, 15),
+    "2h": _dt89(2026, 9, 11, 22, 30), "90s": _dt89(2026, 9, 11, 20, 31, 30),
+    "1d": _dt89(2026, 9, 12, 20, 30), "1h 32 m": _dt89(2026, 9, 11, 22, 2),
+    "11:10pm": _dt89(2026, 9, 11, 23, 10), "3:50am": _dt89(2026, 9, 12, 3, 50),
+    "15:04": _dt89(2026, 9, 12, 15, 4), "9:00": _dt89(2026, 9, 12, 9, 0),
+    "12:00am": _dt89(2026, 9, 12, 0, 0), "12:00pm": _dt89(2026, 9, 12, 12, 0),
+}
+_t_wrong89 = ["%s -> %s, wanted %s" % (k, _t_s89.parse_when(k, _t_now89), v)
+              for k, v in sorted(_t_forms89.items()) if _t_s89.parse_when(k, _t_now89) != v]
+check("EVERY TIME FORM PARSES, AND A CLOCK TIME ALREADY PAST MEANS TOMORROW",
+      not _t_wrong89, saw="; ".join(_t_wrong89[:4]))
+
+_t_taken89 = [t for t in ("", "   ", "soon", "25:00", "12:99", "0m", "-5m", "tomorrow", "2x31y")
+              if _t_s89.parse_when(t, _t_now89) is not None]
+check("...and nothing that is not a time is accepted as one", not _t_taken89,
+      saw="accepted: %s — a misread duration fires at the wrong hour and nothing says so"
+          % ", ".join(repr(t) for t in _t_taken89))
+
+# --- 2. THE SLEEPING MACHINE. This owner's Mac sleeps after one idle minute, so a 2h31m wait is
+# guaranteed to be interrupted; Windows and Linux have the same exposure on suspend. A countdown
+# would be hours wrong because it counts only the ticks it was awake for. The clock jumps straight
+# past the appointment here, which is exactly what a suspend looks like from inside the process.
+_t_r89 = _t_repo89()
+_t_s89.add(_t_r89, {"id": "sleep1", "when": "2026-09-11T21:00:00", "status": "pending",
+                    "runner": [_sys89.executable, "-c", ""]})
+_t_clock89 = [_dt89(2026, 9, 11, 20, 0)]
+_t_fired89 = {}
+
+
+def _t_sleep89(_secs):
+    _t_clock89[0] = _dt89(2026, 9, 11, 21, 5)        # the machine was asleep for 65 minutes
+
+
+def _t_run89(argv, env):
+    _t_fired89["argv"], _t_fired89["env"] = argv, env
+    return 0, "ok"
+
+
+_t_code89 = _t_s89.wait_and_fire(_t_r89, "sleep1", sleep=_t_sleep89,
+                                 now=lambda: _t_clock89[0], run=_t_run89)
+_t_rec89 = _t_s89.read(_t_r89)[0]
+check("A MACHINE THAT SLEPT THROUGH THE APPOINTMENT STILL FIRES, AND REPORTS HOW LATE",
+      _t_code89 == 0 and _t_rec89.get("status") == "fired"
+      and _t_rec89.get("late_seconds") == 300,
+      saw="status %s, %s seconds late — a countdown would have been an hour out and had no way to "
+          "know; 0 would mean lateness is measured against a different clock than the wait"
+          % (_t_rec89.get("status"), _t_rec89.get("late_seconds")))
+
+# ...and a clock set BACKWARDS does not fire early. Absolute comparison has to hold in both
+# directions or it is just a countdown with extra steps.
+check("...and a clock moved backwards does not bring the appointment forward",
+      not _t_s89.due([{"when": "2026-09-11T21:00:00", "status": "pending"}],
+                     _dt89(2026, 9, 11, 19, 0)),
+      saw="fired before its time")
+_sh89.rmtree(_t_r89, ignore_errors=True)
+
+# --- 3. THE PROCESS EXITS. It runs the job once and returns; it never becomes resident, and a
+# record that is cancelled or removed ends the wait instead of firing.
+_t_r89 = _t_repo89()
+_t_s89.add(_t_r89, {"id": "gone", "when": "2026-09-11T21:00:00", "status": "cancelled"})
+check("a cancelled record ends the wait instead of firing",
+      _t_s89.wait_and_fire(_t_r89, "gone", sleep=lambda _s: None,
+                           now=lambda: _dt89(2026, 9, 11, 22, 0),
+                           run=lambda a, e: (0, "SHOULD NOT RUN")) == 0
+      and _t_s89.read(_t_r89)[0].get("status") == "cancelled",
+      saw=repr(_t_s89.read(_t_r89))[:160])
+check("...and a record that is gone entirely ends it too, rather than raising",
+      _t_s89.wait_and_fire(_t_r89, "no-such-id", sleep=lambda _s: None,
+                           now=lambda: _dt89(2026, 9, 11, 22, 0),
+                           run=lambda a, e: (0, "SHOULD NOT RUN")) == 0)
+_sh89.rmtree(_t_r89, ignore_errors=True)
+
+# --- 4. EVERY OS. The detach is the only OS-specific line in the feature, and this machine can run
+# exactly one of its branches — so the branch SELECTION is asserted by reading the code rather than
+# by trusting it. A Windows detach that quietly used a POSIX-only argument would fail on the one
+# platform the branch exists for, which is the shape `.gitattributes` and the shims already guard.
+_t_src89 = (ROOT / "lib" / "schedule.py").read_text(encoding="utf-8")
+_t_srccode89 = _t_code_only89(ROOT / "lib" / "schedule.py")
+# Exercised, not grepped — and with nothing patched. The platform is an ARGUMENT to the function
+# that chooses the arguments, so both branches are reachable from here directly. The earlier version
+# patched `os.name` to pretend, and `pathlib` reads `os.name` too: a `Path` built anywhere inside
+# that window became a `WindowsPath` and raised. It passed standalone and killed the folded suite
+# twice. A pure function of the platform removes the whole class of problem.
+_t_posix89 = _t_s89.detach_kwargs("posix")
+_t_nt89 = _t_s89.detach_kwargs("nt")
+check("ON POSIX THE DETACH IS THE SESSION SYSCALL, AND ON WINDOWS IT IS THE DETACH FLAGS",
+      _t_posix89.get("start_new_session") is True and "creationflags" not in _t_posix89
+      # PRESENCE, not value: `DETACHED_PROCESS` does not exist on this host, so the flags resolve
+      # to 0 here and say nothing about Windows, where the constants always exist. Asserting the
+      # number would test the host rather than the branch; CI runs this for real on Windows.
+      and "creationflags" in _t_nt89 and "start_new_session" not in _t_nt89,
+      saw="posix got %s, windows got %s" % (sorted(_t_posix89), sorted(_t_nt89)))
+check("...and neither platform is given a terminal to be killed with",
+      _t_posix89.get("stdin") == _t_s89.subprocess.DEVNULL
+      and _t_nt89.get("stdout") == _t_s89.subprocess.DEVNULL,
+      saw="a waiting process holding this shell's stdout dies when the shell does, which is the "
+          "whole thing detaching is for")
+
+# ...and it reaches for no binary. `nohup` needs a shell and `setsid` is not installed on this
+# machine at all, so a detach written through either works nowhere reliable.
+_t_shellout89 = [w for w in ("nohup", "setsid", "disown") if w in _t_srccode89]
+check("...and it detaches through the syscall rather than a binary that may not exist",
+      not _t_shellout89,
+      saw="uses %s — this machine has no `setsid` binary and `nohup` needs a shell; the POSIX "
+          "syscall through Popen needs neither" % ", ".join(_t_shellout89))
+
+# --- 5. NOTHING WRITES OUTSIDE THE REPOSITORY. Every scheduler anybody reaches for first does:
+# LaunchAgents, crontab, pmset, schtasks, the registry. All of them are forbidden here, and the
+# reason is a stray write that destroyed a terminal profile for good.
+_t_cmd89 = _t_code_only89(_t_CMD89)
+_t_forbidden89 = [w for w in ("launchctl", "LaunchAgents", "crontab", "pmset", "schtasks",
+                              "winreg")
+                  if w in _t_srccode89 or w in _t_cmd89]
+check("NOTHING IN THE SCHEDULER INSTALLS ANYTHING OUTSIDE THE REPOSITORY",
+      not _t_forbidden89,
+      saw="names %s — every one of those writes OS state, which this project forbids outright"
+          % ", ".join(_t_forbidden89))
+
+# --- 6. Nothing fires by itself. A waiting process exists only because somebody ran `set` in their
+# own shell. The store names a command and a repository is not a trusted author, so a
+# `scheduled.json` arriving inside a clone must start nothing at all.
+_t_startpaths89 = {
+    "the session block": (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8"),
+}
+_t_autofire89 = [w for w, text in sorted(_t_startpaths89.items())
+                 if "schedule.spawn" in text or "wait_and_fire" in text or "sched.fire" in text]
+check("NO SESSION-START PATH EVER STARTS OR FIRES A SCHEDULE",
+      not _t_autofire89,
+      saw="%s — opening a session in a cloned repository would run a command that repository chose"
+          % ", ".join(_t_autofire89))
+
+# --- 7. Cancel signals a recorded pid, and asks about liveness the same way.
+check("liveness is asked of a PID, never of a command line",
+      "pgrep" not in _t_srccode89 and "pgrep" not in _t_cmd89
+      and "os.kill" in _t_srccode89,
+      saw="a `pgrep -f` pattern matches the pgrep that is searching for it, which has cost this "
+          "project three incidents including a subagent that hung for 58 minutes")
+_t_live89 = [(v, _t_s89.alive(v)) for v in (_os89.getpid(), 999999, 0, -1, "abc", None)]
+check("...and that question answers sensibly for every shape a stored pid can take",
+      _t_live89[0][1] is True and not any(ok for _v, ok in _t_live89[1:]),
+      saw=str(_t_live89))
+
+# --- 8. The pin every shipped command needs, asserted over the POPULATION. `.gitattributes` lists
+# them one by one on purpose — `bin/*` would wrongly claim the `.cmd` shims, which must keep CRLF —
+# and it is complete today only because somebody remembered twelve times. The thirteenth command
+# would arrive with LF rewritten to CRLF on a Windows checkout and die on `#!/usr/bin/env python3\r`,
+# which is the exact bug that file was created for. The shims themselves are generated and already
+# have a test; this is the half that is hand-maintained and had none.
+import re as _re89
+_t_ga89 = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+_t_lf89 = set(_re89.findall(r"^(bin/\S+)\s+text\s+eol=lf", _t_ga89, _re89.M))
+_t_cmds89 = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix)
+check("the sweep found the shipped commands: %d" % len(_t_cmds89), len(_t_cmds89) >= 11,
+      saw="fewer commands than this package has ever shipped — the glob stopped matching")
+_t_unpinned89 = [c for c in _t_cmds89 if "bin/%s" % c not in _t_lf89]
+check("EVERY SHIPPED COMMAND IS PINNED TO LF, OR A WINDOWS CHECKOUT BREAKS ITS SHEBANG",
+      not _t_unpinned89,
+      saw="%s — `core.autocrlf=true` is what GitHub's own documentation tells Windows users to "
+          "set, and under it an unpinned command arrives with a carriage return in its shebang"
+          % ", ".join(_t_unpinned89))
+check("...and the `.cmd` shims still keep CRLF, which is the reason the list is written by hand",
+      "*.cmd       text eol=crlf" in _t_ga89 or "*.cmd text eol=crlf" in _t_ga89,
+      saw="cmd.exe is the one reader here that wants CRLF")
+
+# --- 9. WHICH AGENT TO FIRE AT. The context structure already exists; knowing what to fire at is
+# the harder half, and it is unanswerable after the fact — somebody running several cascade pools
+# or a router in front of many models leaves no trace of which pool a session used. So the record
+# marks it at `set`, from the same detector that decides which host to write context for, and falls
+# back to the main account and the session's own agent when nothing more was said.
+_t_agent89, _t_strength89 = _t_s89.whose_session(ROOT.parent.parent)
+check("the session's own agent is detectable, which is what a schedule fires at by default: %r"
+      % (_t_agent89,),
+      isinstance(_t_agent89, str) and _t_agent89,
+      saw="no agent name at all — a schedule with nothing to fire at is a note, not a schedule")
+
+# `generic` is the honest answer for a repository with no agent set up, and it must not raise.
+_t_bare89 = _t_repo89()
+_t_fallback89 = _t_s89.whose_session(_t_bare89)
+check("...and a repository with no agent set up answers rather than failing",
+      isinstance(_t_fallback89, tuple) and len(_t_fallback89) == 2,
+      saw=repr(_t_fallback89))
+_sh89.rmtree(_t_bare89, ignore_errors=True)
+
+# The mark has to survive the round trip, or it is not there when the job fires.
+_t_r89 = _t_repo89()
+_t_s89.add(_t_r89, {"id": "mk", "when": "2026-09-11T21:00:00", "status": "pending",
+                    "agent": "hermes", "pool": "pool-3", "account": "/somewhere/acc2",
+                    "runner": [_sys89.executable, "-c", ""]})
+_t_back89 = _t_s89.read(_t_r89)[0]
+check("...and the agent, the pool and the account survive being written and read back",
+      (_t_back89.get("agent"), _t_back89.get("pool"), _t_back89.get("account"))
+      == ("hermes", "pool-3", "/somewhere/acc2"),
+      saw=repr({k: _t_back89.get(k) for k in ("agent", "pool", "account")}))
+
+# ...and the account the schedule was set under is what the job actually runs as. A resumed job on
+# a different account spends tokens nobody intended and cannot see the history the work depends on.
+_t_env89 = {}
+_t_s89.fire(_t_r89, _t_back89, run=lambda a, e: (_t_env89.update(e) or 0, "ok"),
+            now=lambda: _dt89(2026, 9, 11, 21, 0))
+check("...and the job runs as the account that scheduled it, not as whatever is current",
+      _t_env89.get("CLAUDE_CONFIG_DIR") == "/somewhere/acc2",
+      saw=str(_t_env89.get("CLAUDE_CONFIG_DIR")))
+_sh89.rmtree(_t_r89, ignore_errors=True)
+
+# --- 10. CONTENTION IS ORDINARY HERE, AND MUST NOT READ AS A CRASH. Two shells scheduling at once
+# is the case the lock exists for. `rewrite_shared` refuses rather than writing unlocked — which is
+# right — and it refuses by RAISING. Unhandled, the command died with a traceback that printed the
+# store's path, so it announced a file it had not written. Both verbs that write the store are
+# asserted, because a rule applied to `set` and forgotten in `cancel` is this repository's disease.
+import subprocess as _sp89
+
+_t_r89 = _t_repo89()
+_sp89.run(["git", "init", "-q", "."], cwd=str(_t_r89), capture_output=True)
+_t_store89 = _t_r89 / ".chamnan" / "state" / "scheduled.json"
+_t_held89 = []
+try:
+    import workspace as _t_ws89
+    with _t_ws89.exclusive(_t_store89) as _t_lock89:
+        if not _t_lock89:
+            skip("  · could not take the store lock here — the contention check needs it")
+        else:
+            for _t_verb89 in (["set", "1h"], ["cancel", "--all"]):
+                _t_out89 = _sp89.run([_sys89.executable, str(_t_CMD89)] + _t_verb89,
+                                     cwd=str(_t_r89), capture_output=True, text=True,
+                                     encoding="utf-8", errors="replace", timeout=180)
+                _t_all89 = (_t_out89.stdout or "") + (_t_out89.stderr or "")
+                if "Traceback" in _t_all89 or str(_t_store89) in _t_all89:
+                    _t_held89.append("%s -> %s" % (" ".join(_t_verb89), _t_all89.strip()[:90]))
+except Exception as _t_e89:                            # noqa: BLE001
+    skip("  · the contention fixture could not be built: %r" % (_t_e89,))
+check("A BUSY STORE IS REPORTED AS BUSY, NOT AS A TRACEBACK NAMING THE FILE",
+      not _t_held89,
+      saw="%s — a command that dies here prints the store's path while having written nothing to it"
+          % "; ".join(_t_held89))
+_sh89.rmtree(_t_r89, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 

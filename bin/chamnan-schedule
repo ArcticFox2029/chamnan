@@ -1,0 +1,202 @@
+#!/usr/bin/env python3
+"""chamnan-schedule — finish this work later, when the limit has reset.
+
+  chamnan-schedule set 2h31m              resume this session's work in 2h31m
+  chamnan-schedule set 11:10pm            ...at a wall-clock time instead
+  chamnan-schedule set 2h31m --note "..." with an extra instruction for the resumed session
+  chamnan-schedule list                   what is pending, and whether anything is waiting for it
+  chamnan-schedule cancel <id>            end one; --all ends every pending one
+
+Options for `set`:
+  --note "..."        an extra instruction handed to the resumed session
+  --label <name>      your own name for it — an account, a vendor, a pool
+  --resume-from <p>   where the work is written down (default `.chamnan/STATE.md`)
+  --runner "<cmd>"    what to run instead of the default CLI — the extension point for a
+                      harness, a router, or any model with no CLI of its own
+  --caffeinate        macOS only: hold the machine awake until it fires. Opt-in, because
+                      keeping a laptop awake for hours is your decision and not a default.
+
+**A schedule, never an auto-renew.** Nothing here notices that a limit was hit, nothing decides on
+its own that work should resume, and nothing repeats unless you ask for a repeat. The owner's
+reasoning: there is no way to know whether somebody else's session wants to wake itself up, so a
+person names the time and chamnan keeps the appointment.
+
+**It carries the WORK, not a command line.** The case this is for is "the limit is about to be hit
+and the job must carry on" — and a command line cannot express *finish what you were doing*. It
+would mean retyping the job at the moment the session is ending, which is the thing this avoids. The
+record points at where the work is already written down, and the runner is told to resume from
+there. A schedule is worth exactly what that record is worth.
+
+**No LaunchAgent, no crontab, no pmset, no registry task.** Every one of those writes outside the
+repository. What runs is a detached child of your own shell: nothing to install, nothing to
+uninstall, no privileges, and it exits the moment it has fired.
+
+**On a machine that sleeps it fires LATE and says how late.** This is not a countdown — a process
+that subtracts ticks counts only the ones it was awake for. It compares against the clock, so a
+suspend, a hibernate, a timezone change or a clock set backwards are all survivable, and the one
+thing a sleeping machine cannot do is run something at the moment it was asleep for.
+"""
+import os
+import sys
+import uuid
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import mdblock  # noqa: E402
+import redact  # noqa: E402
+import schedule as sched  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
+# like it could carry a secret today. A note is repository-authored free text and a runner argv can
+# name anything; deciding per command which ones "only print numbers" is the judgement that has
+# been wrong every time it was made here.
+print = redact.emit  # noqa: A001
+
+KNOWN_FLAGS = ("--note", "--label", "--resume-from", "--runner", "--all", "--caffeinate")
+TAKES_VALUE = ("--note", "--label", "--resume-from", "--runner")
+
+
+def _flag(argv, name, default=None):
+    return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
+
+
+def _set(argv, root):
+    when = sched.parse_when(argv[1] if len(argv) > 1 else "")
+    if when is None:
+        print("chamnan: give a duration like 2h31m, 45m or 1d, or a clock time like 11:10pm.",
+              file=sys.stderr)
+        return 2
+    rid = uuid.uuid4().hex[:8]
+    _agent, _strength = sched.whose_session(root)
+    runner = _flag(argv, "--runner")
+    rec = {
+        "id": rid,
+        "when": when.isoformat(timespec="seconds"),
+        "runner": runner.split() if runner else list(sched.DEFAULT_RUNNER),
+        "resume_from": _flag(argv, "--resume-from", ".chamnan/STATE.md"),
+        "note": _flag(argv, "--note", ""),
+        "label": _flag(argv, "--label", ""),
+        # The config directory in force RIGHT NOW, not a name and not a default. The schedule
+        # belongs to the session and the account that created it.
+        "account": os.environ.get("CLAUDE_CONFIG_DIR", ""),
+        "session": os.environ.get("CLAUDE_SESSION_ID", ""),
+        # Which agent this session is running under, recorded at `set` and not inferred later.
+        # With a router or several cascade pools in front of the models, the pool that was in use
+        # is not something anybody can work out afterwards — so it is marked now or it is lost.
+        "agent": _agent, "pool": _flag(argv, "--label", "") or _strength,
+        "cwd": str(root),
+        "status": "pending",
+        "created": sched._now_iso(),
+        "pid": 0,
+    }
+    try:
+        sched.add(root, rec)
+    except TimeoutError:
+        # \U0001f41b [2026-09-11] `rewrite_shared` refuses rather than writing unlocked when another
+        # process holds the store, which is correct — and it does it by RAISING. Unhandled, the
+        # command died with a traceback that named the store's path, so it announced a file it had
+        # not written. Contention here is ordinary: two shells scheduling at once is the case the
+        # lock exists for, and it must read as "try again", not as a crash.
+        print("chamnan: another process is writing the schedule store. Nothing was scheduled — "
+              "run it again in a moment.", file=sys.stderr)
+        return 1
+    prefix = ()
+    if "--caffeinate" in argv and sys.platform == "darwin":
+        # User-level, tied to this process, dies with it. It writes no configuration anywhere —
+        # which is why it is allowed at all, and it is opt-in because holding a laptop awake for
+        # two and a half hours is the user's decision and not a default anybody should inherit.
+        prefix = ("caffeinate", "-i")
+    try:
+        pid = sched.spawn(root, rid, prefix)
+    except OSError as exc:
+        sched.update(root, rid, status="failed", detail="could not start the waiter")
+        print(f"chamnan: could not start the waiting process ({exc.__class__.__name__}).",
+              file=sys.stderr)
+        return 1
+    sched.update(root, rid, pid=pid)
+    print(f"chamnan: {rid} will resume this work at {when.strftime('%H:%M')} as "
+          f"{mdblock.as_quoted(_agent, 24)} "
+          f"({mdblock.as_quoted(argv[1], 24)} from now). Nothing else is needed — it is a detached "
+          f"process, not a service, and it exits once it has fired. `chamnan-schedule cancel {rid}` "
+          f"stops it.")
+    return 0
+
+
+def _list(root):
+    rows = sched.read(root)
+    if not rows:
+        print("chamnan: nothing scheduled.")
+        return 0
+    for r in sorted(rows, key=lambda x: str(x.get("when"))):
+        print("  " + mdblock.as_quoted(sched.describe(r), 200))
+    return 0
+
+
+def _cancel(argv, root):
+    rows = sched.read(root)
+    wanted = [r for r in rows if (r.get("status") or "pending") == "pending"] if "--all" in argv \
+        else [r for r in rows if r.get("id") == (argv[1] if len(argv) > 1 else None)]
+    if not wanted:
+        print("chamnan: nothing matched — `chamnan-schedule list` shows what is pending.",
+              file=sys.stderr)
+        return 1
+    for r in wanted:
+        # By the pid the process wrote down, never by matching a command line. `pgrep -f <pattern>`
+        # matches the pgrep that is doing the searching, and this project has three incidents from
+        # exactly that, one of them a subagent that hung for 58 minutes.
+        if sched.alive(r.get("pid")):
+            try:
+                os.kill(int(r["pid"]), 15)
+            except (OSError, ValueError):
+                pass
+        try:
+            sched.update(root, r.get("id"), status="cancelled")
+        except TimeoutError:
+            print("chamnan: another process is writing the schedule store. The waiting process was "
+                  "stopped but its record was not updated — run `cancel` again in a moment.",
+                  file=sys.stderr)
+            return 1
+        print(f"chamnan: cancelled {r.get('id')}")
+    return 0
+
+
+def main(argv):
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if not argv or ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0 if argv else 2
+
+    # The waiting process re-enters here. It is not a documented verb: nothing but `set` should
+    # start one, and a store that arrived inside a cloned repository must start nothing at all.
+    if argv[0] == "--wait" and len(argv) > 1:
+        return sched.wait_and_fire(ws.find_root(), argv[1])
+
+    _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE)
+    if _bad:
+        print(f"chamnan: unknown option {_bad[0]!r} — {', '.join(KNOWN_FLAGS)}", file=sys.stderr)
+        return 2
+
+    root = ws.find_root()
+    if not ws.workspace(root).is_dir():
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index.", file=sys.stderr)
+        return 1
+
+    verb = argv[0]
+    if verb == "set":
+        return _set(argv, root)
+    if verb == "list":
+        return _list(root)
+    if verb == "cancel":
+        return _cancel(argv, root)
+    print(f"chamnan: unknown action {mdblock.as_quoted(verb, 30)!r} — set, list or cancel.",
+          file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
