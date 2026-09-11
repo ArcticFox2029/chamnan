@@ -655,6 +655,51 @@ recommendation: on a store like this one, fitting a third of the rules costs mor
 everything chamnan may say at session start. Whether more rules SHOULD arrive in full is a
 judgement, and it stays with the person reading it.
 
+### The test suite failed for everyone except the machine that wrote it
+
+**If you cloned chamnan and ran its own test suite, fifteen checks failed.** Not because anything
+was broken — because those checks read the development workspace, two directories above the
+checkout, which exists on one machine in the world.
+
+Nothing distinguished them from real failures. The suite ships with the package, and a suite that
+cries fifteen times is one nobody runs twice.
+
+The checks that genuinely test the development environment now say so and skip, naming what they
+skipped and why. They run for anyone who has that workspace and stay quiet for everyone else — and
+a silent `is_file()` guard was not accepted as the fix, because a check that quietly does nothing
+looks exactly like coverage.
+
+### A published number measured over a corpus missing the case it was about
+
+**The redactor's recall figure was one blended number, and one blended number can hide an entire
+class.** Splitting it by the retrieval problem each case poses — a credential named by an
+assignment, sitting under a column header, described in prose, or standing bare — showed the
+column-header class held **no cases at all**.
+
+That is the class that leaked. A password under a CSV header escaped in every language including
+English until this release fixed it, and the number published beside that fix had never tested it.
+
+The corpus now derives its column cases from the redactor's own list of claimed languages, so a
+language it claims is a language it is measured on. Sixteen languages, thirty-six cases.
+
+**And the fix moved the headline the wrong way, which is worth saying plainly.** Those thirty-six
+cases pass, so the blended figure ROSE from 98.3% to 99.0% — a number improved by testing more of
+what already worked. A headline that flatters is the same defect as a headline that hides. So the
+documents publish the pair: **99.0% overall, 93.8% in the weakest class**, and a check fails if
+either number goes missing.
+
+### Two more numbers that could be confidently wrong
+
+**A file chamnan cannot read is not a file nobody described.** Both landed in the coverage figure as
+the same miss, and only one is fixable by writing a docstring. The coverage line now says which is
+which, and still counts them — removing them raises the percentage, which would mean a repository
+scoring better because chamnan could read less of it.
+
+**The list of accepted findings could grow without anyone noticing.** When the redactor's self-scan
+finds something new, the cheapest way to make the check pass is to add it to the accepted list,
+which silences a real finding exactly as well as fixing one. The list has a ceiling now, and raising
+it has to appear in a diff.
+
 ### Where each fix came from — attached to this release
 
 **`INDEX_CITED_IN_CODE.md` is attached as a file**, so any claim above can be followed to a diff
@@ -667,7 +712,7 @@ line and the commit that fixed it, and a row nobody can follow to a diff is not 
 
 ### Re-run it yourself
 
-**check 4858 / 4858**, and 1,464 of 1,464 index claims true, on the code this tag carries.
+**check 4866 / 4866**, and 1,466 of 1,466 index claims true, on the code this tag carries.
 
     python3 tools/verify_release.py
 
@@ -677,10 +722,24 @@ failure lines at all.
 
 ### Credit
 
-**`peterbuildssecure` on dev.to.** He raised the redaction gap on chamnan's own write-up twice and
-was right both times, and his argument that a blended recall figure hides a weak class is what
-turned "the redactor scores well" into the per-language header work above. The `_HEADER_LANGS` list
-exists because of that discussion.
+**Peter (`peterbuildssecure`) on dev.to** — a DevSecOps builder whose stated audience is solo
+founders and small teams shipping with AI.
+
+He raised the redaction gap on chamnan's own write-up twice and was right both times. His argument
+that a blended recall figure hides a weak class is what turned "the redactor scores well" into the
+per-language header work in this release: a password sitting under a CSV column header escaped in
+**every language, English included**, while the aggregate number never moved. `_HEADER_LANGS` exists
+because of that discussion.
+
+Four of his arguments are built into this release, and the one above was not the only thing they
+found. Measuring recall per class — his point, applied — showed that the corpus behind the published
+figure contained **no column-header case at all**. The vulnerability had been fixed; the measurement
+that should have caught it never sampled it.
+
+His other three: report a rate with its denominator, keep a third bucket for cases the tool cannot
+decide rather than counting them as misses, and hold the list of accepted findings to the same
+review as the thing it governs. Each one names a way a number can be confidently wrong, which is
+this project's own recurring failure.
 
 _Earlier releases are in [CHANGELOG.md](CHANGELOG.md)._
 
