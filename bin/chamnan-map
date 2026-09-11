@@ -1217,7 +1217,11 @@ def main(argv):
             _says = {"ahead": f"written by chamnan {_ver}, which is NEWER than this one — "
                               f"rewriting it would lose what that build put there",
                      "behind": f"written by chamnan {_ver}",
-                     "unknown": "carries no version, so its age is not knowable from here"}[_state]
+                     "unknown": "carries no version, so its age is not knowable from here",
+                     "orphan": f"recorded as written by chamnan {_ver or 'an unknown build'}, but "
+                               f"no adapter claims that path any more — nothing will refresh it and "
+                               f"nothing will remove it"}.get(
+                         _state, f"in an unrecognised state ({_state})")
             print(f"    {_rel} — {_says}")
         _dmore = len(_drift) - 6
         if _dmore > 0:

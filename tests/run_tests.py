@@ -31791,6 +31791,174 @@ for _t_name84 in _t_usage84:
         _t_helpbad84.append("%s --help exits %d" % (_t_name84, _t_h84.returncode))
 check("...while asking for help on purpose still succeeds", not _t_helpbad84,
       saw=", ".join(_t_helpbad84))
+# ---- 85_a_credential_word_counts_from_either_side.py
+# ------------------ the neighbour rule only ever looked one way, for eleven months
+# 🐛 [2026-09-11] `token` and `key` require a component beside them, with a measurement behind it:
+# bare, they accounted for 70 of 129 destroyed lines. But the rule only ever looked LEFT. So
+# `TOKEN_A=`, `TOKEN_B=`, `KEY_OLD=` and `TOKEN_PROD=` matched nothing at all, while `DB_TOKEN=` and
+# `access_token_a=` were caught and so was every one of the other ten credential words in that same
+# shape. A real key-shaped line in this machine's own tree, spelled `KEY_1=`, was unredacted
+# (R3 agent2 — found by probing an outward claim that was itself wrong: the claim was that base64
+# encoding is the bypass, and the probe showed encodings are caught and a SPLIT name is not).
+#
+# The cases are built from the scheme rather than typed out: every credential word, under every
+# qualifier shape a rotation or an environment split actually uses, in both cases. A member nobody
+# thought of is covered because nobody had to think of it.
+import itertools as _it85
+import redact as _t_rd85
+
+_t_words85 = ("token", "key")                       # the two that require a neighbour
+_t_other85 = ("password", "passwd", "secret", "credential", "pwd", "cred", "passphrase")
+_t_quals85 = ("a", "b", "1", "2", "old", "new", "prod", "dev", "primary", "backup", "eu", "v2")
+_t_val85 = "hunter2superSecretValue"
+
+# --- 1. The trailing qualifier, over the whole product of word and qualifier, in both cases.
+_t_missed85 = []
+for _t_w85, _t_q85 in _it85.product(_t_words85, _t_quals85):
+    for _t_case85 in (lambda s: s.upper(), lambda s: s):
+        _t_line85 = "%s_%s=%s" % (_t_case85(_t_w85), _t_case85(_t_q85), _t_val85)
+        if _t_rd85.scrub(_t_line85) == _t_line85:
+            _t_missed85.append(_t_line85)
+check("the sweep built the leading-word population: %d case(s)"
+      % (len(_t_words85) * len(_t_quals85) * 2),
+      len(_t_words85) * len(_t_quals85) * 2 >= 40,
+      saw="fewer cases than the scheme should produce — the product stopped expanding")
+check("A CREDENTIAL WORD COUNTS WHETHER ITS COMPONENT SITS LEFT OR RIGHT",
+      not _t_missed85,
+      saw="%s — the neighbour rule looked only left, so a rotation suffix or an environment split "
+          "put the name outside every rule" % ", ".join(_t_missed85[:6]))
+
+# ...and the words that never needed a neighbour still do not, in the same shape. Asserted beside
+# the ones that changed, because a fix that reaches the new shape by loosening the old one is a
+# regression wearing a pass.
+_t_broke85 = ["%s_%s=%s" % (_t_w85.upper(), _t_q85.upper(), _t_val85)
+              for _t_w85, _t_q85 in _it85.product(_t_other85, _t_quals85)
+              if _t_rd85.scrub("%s_%s=%s" % (_t_w85.upper(), _t_q85.upper(), _t_val85))
+              == "%s_%s=%s" % (_t_w85.upper(), _t_q85.upper(), _t_val85)]
+check("...and the words that never needed one are unchanged", not _t_broke85,
+      saw=", ".join(_t_broke85[:6]))
+
+# --- 2. The other direction, which is the load-bearing half. A LEADING credential word is weak
+# evidence: these are ordinary names, and the value is what separates them. `token_uri` is in every
+# Google service-account file and holds a public URL.
+_t_ordinary85 = [
+    '  "token_uri": "https://oauth2.googleapis.com/token",',
+    '"token_cost": 1250,',
+    'token_endpoint = "https://auth.example.com/oauth/token"',
+    'key_first = sorted(rows)[0]',
+    'key_first = describe_dir / "key-first.md"',
+    'token_budget = 9000',
+    'index_token_budget = 4096',
+    'key_length = 2048',
+    'TOKEN_TTL=3600',
+    'KEY_FILE=/etc/ssl/private/server.pem',
+    'TOKEN_HEADER=Authorization',
+    'key_order = ("name", "scope")',
+    'token_pattern = r"[A-Za-z0-9]+"',
+    'key_name = "signing"',
+    'token_type = "Bearer"',
+]
+_t_eaten85 = [s for s in _t_ordinary85 if _t_rd85.scrub(s) != s]
+check("...and a LEADING credential word does not fire on a value that is not one",
+      not _t_eaten85,
+      saw="\n".join("%s -> %s" % (s, _t_rd85.scrub(s)) for s in _t_eaten85) or None)
+
+# The gate is the VALUE, so the same ordinary names must still redact when they really do hold one.
+# Without this the rule above could be satisfied by refusing the whole shape, which is the failure
+# mode a one-directional check cannot see.
+_t_slipped85 = [n for n in ("token_uri", "token_cost", "key_first", "key_length", "TOKEN_TTL")
+                if _t_rd85.scrub("%s = \"%s\"" % (n, _t_val85)) == "%s = \"%s\"" % (n, _t_val85)]
+check("...but the same names DO redact when the value is credential-shaped after all",
+      not _t_slipped85,
+      saw="%s — the gate refused the whole shape rather than judging the value, which passes the "
+          "check above for the wrong reason" % ", ".join(_t_slipped85))
+
+# --- 3. A trailing credential word is strong evidence and must not have been dragged into the gate.
+_t_trailing85 = [s for s in ("DB_TOKEN=%s" % _t_val85, "access_token = \"%s\"" % _t_val85,
+                             "API_KEY=%s" % _t_val85, "signing_key = \"%s\"" % _t_val85)
+                 if _t_rd85.scrub(s) == s]
+check("...and a word that TRAILS its component is judged as before, not by the new gate",
+      not _t_trailing85, saw=", ".join(_t_trailing85))
+# ---- 86_a_ledger_entry_no_adapter_claims.py
+# ------------- the drift report derived its population from one side of a two-sided relationship
+# 🐛 [2026-09-11] `artefact_drift` walks every adapter's declared TARGET — which is what makes it
+# survive a new adapter being added, and is the right direction. It was the only direction it looked.
+# A ledger entry naming a path no adapter declares any more, because the adapter was renamed or
+# retired, was invisible to it: the file stays on disk, nothing claims it, nothing can refresh or
+# remove it, and no report mentions it (R2 agent29).
+#
+# Three sites, because a producer that learns a new state and a reader that does not is a finding
+# detected and thrown away — and one of the two readers looked the state up in a dict literal, so it
+# would have raised KeyError rather than merely staying quiet.
+import json as _json86
+import shutil as _sh86
+import tempfile as _tmp86
+from pathlib import Path as _Path86
+
+import adapters as _ad86
+
+
+def _t_repo86(ledger_entries):
+    root = _Path86(_tmp86.mkdtemp(prefix="chamnan_orphan_"))
+    (root / ".chamnan" / "state").mkdir(parents=True)
+    (root / ".chamnan" / "state" / "written_artefacts.json").write_text(
+        _json86.dumps(ledger_entries), encoding="utf-8")
+    return root
+
+
+_t_targets86 = {getattr(_ad86.for_agent(n), "TARGET", None) for n in _ad86.ADAPTERS}
+_t_targets86.discard(None)
+check("the sweep found the adapters' declared targets: %d" % len(_t_targets86),
+      len(_t_targets86) >= 8,
+      saw="%s — fewer targets than this package has adapters means the derivation broke and this "
+          "check is judging an empty set" % sorted(_t_targets86))
+
+# --- 1. A ledger entry for a path NO adapter declares is reported.
+_t_orphan86 = "docs/retired-agent/context.md"
+assert _t_orphan86 not in _t_targets86
+_t_r86 = _t_repo86({_t_orphan86: {"version": "1.20.0", "at": 1789000000}})
+_t_states86 = {s for _r, s, _v in _ad86.artefact_drift(_t_r86, "1.25.1")}
+_t_named86 = [r for r, s, _v in _ad86.artefact_drift(_t_r86, "1.25.1") if s == "orphan"]
+check("A LEDGER ENTRY NO ADAPTER CLAIMS ANY MORE IS REPORTED, NOT SILENTLY DROPPED",
+      _t_named86 == [_t_orphan86],
+      saw="states seen: %s — the report walked the adapters and never the ledger, so a retired "
+          "adapter's file becomes permanently invisible" % sorted(_t_states86))
+_sh86.rmtree(_t_r86, ignore_errors=True)
+
+# --- 2. ...and an entry for a path an adapter DOES declare is not called an orphan, whatever else
+# it is. Without this the rule above is satisfied by calling everything an orphan.
+_t_real86 = sorted(_t_targets86)[0]
+_t_r86 = _t_repo86({_t_real86: {"version": "1.20.0", "at": 1789000000}})
+_t_wrong86 = [r for r, s, _v in _ad86.artefact_drift(_t_r86, "1.25.1")
+              if s == "orphan" and r == _t_real86]
+check("...and a path an adapter still declares is never called an orphan", not _t_wrong86,
+      saw=str(_t_wrong86))
+_sh86.rmtree(_t_r86, ignore_errors=True)
+
+# --- 3. An empty ledger produces no orphans and no exception. The ledger is empty on most
+# repositories, and a report that invents findings from nothing is worse than one that is quiet.
+_t_r86 = _t_repo86({})
+check("...and an empty ledger yields nothing rather than raising",
+      _ad86.artefact_drift(_t_r86, "1.25.1") == [],
+      saw=repr(_ad86.artefact_drift(_t_r86, "1.25.1"))[:160])
+_sh86.rmtree(_t_r86, ignore_errors=True)
+
+# --- 4. EVERY reader of the drift report handles every state the producer can emit. This is the
+# half that would have crashed: one reader looks the state up in a dict literal.
+_t_src86 = {
+    "the session block": (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8"),
+    "chamnan-map": (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8"),
+}
+_t_emitted86 = ("ahead", "behind", "unknown", "orphan")
+_t_deaf86 = ["%s (%s)" % (_t_where86, _t_st86)
+             for _t_where86, _t_text86 in sorted(_t_src86.items())
+             for _t_st86 in _t_emitted86
+             if '"%s"' % _t_st86 not in _t_text86]
+check("...and EVERY reader of the drift report names EVERY state the producer can emit",
+      not _t_deaf86,
+      saw="%s — a state the producer emits and a reader does not name is either a silent drop or a "
+          "KeyError, and which one it is depends on how that reader happens to be written"
+          % ", ".join(_t_deaf86))
 # ============================ end of the folded surgical pool
 
 

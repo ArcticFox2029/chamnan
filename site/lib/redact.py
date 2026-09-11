@@ -343,6 +343,21 @@ SECRET_WORDS = (
     # the identifier family this module's own docstring says was already fixed once. The credential
     # spellings — access_token, auth_token, api_token, refresh_token — all carry one.
     r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]tokens?(?![A-Za-z])"
+    # \U0001f41b [2026-09-11] ...and the same component on the OTHER side. `token` and `key`
+    # require a neighbour, for the measured reason above -- but the rule only ever looked LEFT,
+    # so `TOKEN_A=`, `TOKEN_B=`, `KEY_OLD=` and `TOKEN_PROD=` had no rule at all while
+    # `DB_TOKEN=` and `access_token_a=` were caught, and while every one of the other ten
+    # credential words was caught in that shape. Found by probing an outward finding that was
+    # itself wrong: a secret split across `TOKEN_A`/`TOKEN_B` was the case it could not see
+    # (R3 agent2). A real key-shaped line in this machine's own tree, spelled `KEY_1=`, is
+    # unredacted today and caught by this.
+    #
+    # A LEADING credential word is weaker evidence than a trailing one -- `token_uri`,
+    # `token_cost` and `key_first` are ordinary names, and `token_uri` sits in every Google
+    # service-account file holding a public URL -- so the value has to agree before this
+    # fires. That condition lives in `_looks_like_a_credential_name`, which every assignment
+    # rule already calls, rather than in each rule's own guard chain.
+    r"|(?<![A-Za-z])tokens?[_-][A-Za-z0-9]+(?![A-Za-z])"
     # 🐛 [2026-09-09] `pass` was absent from this list in every form, and `ansible_ssh_pass` /
     # `ansible_become_pass` are Ansible's own documented inventory variables rather than a guess —
     # they sit in inventory files and playbooks in the open. `db_pass` and `mysql_pass` are the
@@ -428,6 +443,7 @@ SECRET_WORDS = (
     # and stops the single largest source of damage on the other. `password`, `secret` and
     # `credential` keep their bare form, because `password = "…"` really is one.
     r"|(?<![A-Za-z])[A-Za-z0-9]+[_-]keys?(?![A-Za-z])"
+    r"|(?<![A-Za-z])keys?[_-][A-Za-z0-9]+(?![A-Za-z])"
     # ...and the same component written in CamelCase, where there is no separator to anchor on:
     # AccountKey, ApiKey, PrivateKey. `(?-i:...)` turns the surrounding re.I off for this branch
     # only, because the distinction IS the case -- a capital K after a lowercase letter is a word
@@ -913,6 +929,13 @@ def _redact_literals_in(expr):
     return "".join(out)
 
 
+# A name whose FIRST component is `token` or `key`, with something after it. This is the weak
+# half of the evidence the trailing form carries: `api_token` is a credential, `token_uri` is a URL,
+# and the difference is not in the name. Matched case-insensitively and anchored at the start, so
+# `DB_TOKEN` and `access_token` -- where the word TRAILS -- are not in this population at all.
+_CREDENTIAL_WORD_LEADS = re.compile(r"\A(?:tokens?|keys?)[_-][A-Za-z0-9]", re.I)
+
+
 def _looks_like_a_credential_name(key, value=None):
     """False when the name's own tail says it is something other than a credential.
 
@@ -921,6 +944,14 @@ def _looks_like_a_credential_name(key, value=None):
     header or an ordering, and no value it holds is a secret.
     """
     bare = re.sub(r"['\"\s:=]+$", "", (key or "").strip())
+    # \U0001f41b [2026-09-11] A LEADING credential word only counts when the value agrees. Without
+    # this, teaching `SECRET_WORDS` to look right as well as left destroyed `"token_uri":
+    # "https://oauth2.googleapis.com/token"` -- a public URL in every Google service-account file --
+    # along with `token_cost` and `key_first`. Measured over 8,806 files: the ungated version
+    # destroyed 21 ordinary lines, this one destroys none of them and still catches every
+    # `TOKEN_A=` shape (R3 agent2, found by probing a claim that was itself wrong).
+    if _CREDENTIAL_WORD_LEADS.match(bare) and not _value_overrides_the_name(value, key):
+        return False
     if not _NOT_A_CREDENTIAL_NAME.search(bare):
         return True
     # 🐛 The tail decided alone, so ~50 ordinary endings — `id`, `type`, `name`, `field` — exempted

@@ -1577,11 +1577,19 @@ def main():
             _ahead = [r for r, s, _v in _drift if s == "ahead"]
             _behind = [(r, v) for r, s, v in _drift if s == "behind"]
             _unknown = [r for r, s, _v in _drift if s == "unknown"]
+            # An orphan is not a stale file — it is a file nothing will ever write again. Named
+            # here because the filter above drops every state it does not list, so a producer that
+            # learns a new one and a reader that does not is a finding detected and never surfaced.
+            _orphan = [r for r, s, _v in _drift if s == "orphan"]
             _bits = []
             if _ahead:
                 _bits.append(f"{len(_ahead)} written by a NEWER chamnan than the one "
                              f"running (`{mdblock.as_quoted(_ahead[0])}`) — rewriting "
                              f"those DOWN would lose what the newer one put there")
+            if _orphan:
+                _bits.append(f"{len(_orphan)} recorded as written by chamnan "
+                             f"(`{mdblock.as_quoted(_orphan[0])}`) but claimed by no adapter any "
+                             f"more, so nothing will refresh or remove them")
             if _behind:
                 _bits.append(f"{len(_behind)} written by chamnan "
                              f"{', '.join(sorted({v for _r, v in _behind}))}")

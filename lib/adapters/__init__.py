@@ -651,6 +651,19 @@ def artefact_drift(root, running=None):
             out.append((rel, "behind", version))
         else:
             out.append((rel, "ahead", version))
+    # \U0001f41b [2026-09-11] The loop above derives its population from every adapter's declared
+    # TARGET, which is what makes it survive a new adapter — and it was the ONLY direction it ever
+    # looked. A ledger entry naming a path no adapter declares any more, because the adapter was
+    # renamed or retired, was invisible: the file stays on disk with nothing claiming it, and
+    # nothing can report it or clean it up. A population derived from one side of a two-sided
+    # relationship, which is the same shape as a check that filters its own input away (R2 agent29).
+    #
+    # Reported as its own state rather than folded into "unknown", because the remedy differs: an
+    # unknown file is refreshed by writing it again, and an orphan cannot be — no adapter will ever
+    # write that path again, so somebody has to decide whether it goes.
+    for rel in sorted(ledger):
+        if rel not in seen:
+            out.append((rel, "orphan", (ledger.get(rel) or {}).get("version", "")))
     return sorted(out)
 
 
