@@ -16568,9 +16568,22 @@ if not _measurable:
 if _measurable:
     _ratio_1 = _imp_times[_IMPACT_SIZES[1]] / max(_imp_times[_IMPACT_SIZES[0]], 1e-6)
     _ratio_2 = _imp_times[_IMPACT_SIZES[2]] / max(_imp_times[_IMPACT_SIZES[1]], 1e-6)
+    # \U0001f41b [found by CI on macOS, 2026-09-11] Each doubling was bounded on its own, and a
+    # shared runner produced 3.11 then 1.74 — over the bound on the first pair and BELOW linear on
+    # the second. Quadratic growth is ~4.0 on every pair; one high ratio beside a low one is noise
+    # in the smallest measurement, which is the one most exposed to it at 81 ms.
+    #
+    # Judged end to end instead. Over the whole 4x range linear predicts 4x and quadratic 16x, so
+    # the bound sits at 8 — twice linear, half quadratic, and it cannot be tripped by a single noisy
+    # pair. The per-pair figures are still printed, because they are what a real regression would be
+    # read from.
+    _span = _imp_times[_IMPACT_SIZES[2]] / max(_imp_times[_IMPACT_SIZES[0]], 1e-6)
+    _size_span = _IMPACT_SIZES[2] / _IMPACT_SIZES[0]
     check("THE IMPACT MAP SCALES LINEARLY, NOT QUADRATICALLY, IN FILE COUNT",
-          _ratio_1 < 3.0 and _ratio_2 < 3.0)
-    if not (_ratio_1 < 3.0 and _ratio_2 < 3.0):
+          _span < _size_span * 2,
+          saw=f"{_span:.2f}x time for {_size_span:.0f}x files — linear is {_size_span:.0f}, "
+              f"quadratic is {_size_span ** 2:.0f}, the bound is {_size_span * 2:.0f}")
+    if not _span < _size_span * 2:
         print(f"     doubling ratios: {_ratio_1:.2f}, {_ratio_2:.2f} "
               f"(times {' '.join(f'{_imp_times[k]:.3f}s' for k in _IMPACT_SIZES)})")
 
