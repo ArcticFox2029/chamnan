@@ -26446,10 +26446,21 @@ check("...and the comparison actually ran, rather than passing on an empty list"
 # `TypeError: 'CompletedProcess' object is not callable`, which killed the run at 17.6 minutes and
 # produced NOT VERIFIED. A conditional that tests for a NAME cannot tell a function from a value.
 # Written in the check whose whole subject is an exception that hides. Run it plainly.
-_wp19 = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
-                       input="{}", capture_output=True, text=True, encoding="utf-8",
-                       errors="replace", cwd=str(ROOT.parent.parent), timeout=180)
-_whole = _wp19.stdout or ""
+# \U0001f41b Run against a FIXTURE, not against `ROOT.parent.parent`. The first version used the
+# development checkout's parent, where a workspace happens to exist — and in CI, which is a bare
+# clone with none, the hook correctly produced nothing and the check read it as a truncated block.
+# Zero fences on a repository with no workspace is the right answer, not a defect.
+#
+# That is the sixteenth instance of this exact shape in this file, and fifteen of them were fixed
+# this same morning. `make_workspace` exists for it and its docstring says so.
+_ws19 = make_workspace("chamnan-whole-block-")
+try:
+    _wp19 = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
+                           input="{}", capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", cwd=str(_ws19), timeout=180)
+    _whole = _wp19.stdout or ""
+finally:
+    _rmtree(_ws19, ignore_errors=True)
 _w_fences = _whole.count("[repo:")
 _w_heads = len([l for l in _whole.splitlines() if l.startswith("### ")])
 check("THE SESSION BLOCK COMES OUT WHOLE, NOT MERELY WITHOUT RAISING",
