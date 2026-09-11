@@ -169,6 +169,14 @@ def whole_graphemes(text):
     return text
 
 
+# A path used as a LOOKUP KEY rather than as display text. `as_quoted`'s 80-character default is a
+# display limit, and clipping a key destroys it: MAP.md's own header tells a reader to find a
+# section with ``grep '^## `path`'``, and a heading ending in an ellipsis cannot be found that way.
+# Bounded rather than unbounded, because the value is still repository-authored — but bounded at the
+# length a real path can reach instead of at the length that reads nicely in a sentence.
+PATH_AS_KEY = 4096
+
+
 def as_quoted(value, limit=80):
     """Repository-authored text, made safe to print inside chamnan's OWN sentence.
 

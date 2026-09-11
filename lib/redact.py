@@ -1995,6 +1995,21 @@ _IBAN = re.compile(r"(?i)(?<![A-Za-z0-9])("
 # `_SEP` is the shared set and this is the FOURTH rule in this file found spelling its own
 # copy of it; the gate above was the third, fixed this morning. The grouping is still
 # required, so the bare 11-digit run stays unmatched for the reason below.
+# \U0001f41b [2026-09-11] CPF had the dotted form and nothing else, while RRN beside it carries
+# DASHED, BARE and a WORD gate, and Aadhaar carries its pattern and a WORD gate. So a valid CPF
+# written as eleven plain digits was unredacted even under an explicit `cpf =` label — the module's
+# own validator returned True for it and no rule ever asked. Two of three keyword-gated schemes had
+# the keyword path and the third did not, in the block whose comment eight lines down already
+# records being bitten by exactly this on 2026-09-08 (R2 agent26, which reported the corpus gap that
+# hid it: four of six schemes have no case at all, so the published recall figure never fires them).
+#
+# Gated on the word for the reason the siblings give in full: roughly one in eleven random 11-digit
+# runs passes mod 11, and an order id or a timestamp is eleven digits often enough that shape alone
+# would be a guess. The word is what makes it a finding. Brazil spells it out as well as abbreviates.
+_CPF_BARE = re.compile(r"(?<![0-9A-Za-z_-])([0-9]{11})(?![0-9A-Za-z_-])")
+_CPF_WORD = re.compile(
+    r"(?i)(?<![a-z])(cpf|cadastro[_ -]?de[_ -]?pessoas[_ -]?f[i\u00ed]sicas"
+    r"|cadastro[_ -]?pessoa[_ -]?f[i\u00ed]sica)(?![a-z])")
 _CPF_DOTTED = re.compile(r"(?<![0-9])([0-9]{3}" + _SEP + r"[0-9]{3}" + _SEP
                          + r"[0-9]{3}" + _SEP + r"[0-9]{2})(?![0-9])")
 _AADHAAR = re.compile(r"(?<![0-9])([0-9]{4}" + _SEP + r"?[0-9]{4}" + _SEP + r"?[0-9]{4})(?![0-9])")
@@ -2114,7 +2129,16 @@ def _thai_national_id(digits):
 # there was no long digit run and returned the text untouched. Two lists that must agree is
 # the defect this file already warns about two hundred lines up, in its own words, about a
 # different pair. Built from `_SEP` now, so there is one list.
-_A_LONG_DIGIT_RUN = re.compile(r"[0-9](?:[0-9]|" + _SEP + r"){10,}[0-9]")
+# \U0001f41b [2026-09-11] `{10,}` made the shortest run this gate admits TWELVE characters, and
+# CPF is ELEVEN digits. So every bare CPF was refused by the gate before a single rule ran —
+# which is why only the dotted form ever worked, at fourteen characters. The threshold was
+# right for every other scheme here (card 12-19, Aadhaar 12, RRN 13, Thai 13, IBAN 15 and up)
+# and the one member below the line was the one nobody checked it against. Derived from the
+# schemes now rather than written as a number: the gate admits the shortest identifier any
+# rule below it can match, so adding a shorter scheme moves this by arriving.
+SHORTEST_IDENTIFIER = 11        # CPF. Nothing this layer matches is shorter.
+_A_LONG_DIGIT_RUN = re.compile(
+    r"[0-9](?:[0-9]|" + _SEP + r"){%d,}[0-9]" % (SHORTEST_IDENTIFIER - 2))
 
 
 # The delimiters a real export uses. `|` is here for the markdown table form, which is how a
@@ -2489,6 +2513,9 @@ def _redact_personal_data(text):
         # forgotten in the identical ones beside it this repository's recurring defect.
         spans += [m.span(1) for m in _IBAN.finditer(folded) if _iban(m.group(1))]
         spans += [m.span(1) for m in _CPF_DOTTED.finditer(folded) if _cpf(m.group(1))]
+        # ...and the bare eleven digits, behind the word, in the same shape as the two rules below.
+        if _CPF_WORD.search(context):
+            spans += [m.span(1) for m in _CPF_BARE.finditer(folded) if _cpf(m.group(1))]
         # Korea, gated for the same reason Aadhaar is and in the same shape: one in ten random runs
         # passes the checksum, so the keyword is what makes this a finding rather than a guess.
         if _RRN_WORD.search(context):

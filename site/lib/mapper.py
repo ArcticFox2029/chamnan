@@ -2240,7 +2240,18 @@ def _render(files, root):
     if detail:
         lines += [detail, ""]
     for f in files:
-        lines.append(f"## `{mdblock.as_quoted(f['path'])}`")
+        # \U0001f41b [2026-09-11] This took `as_quoted`'s 80-character DISPLAY default, so every
+        # path longer than that arrived as a heading ending in an ellipsis — 19 of 449 on this
+        # repository, all of them the longest-named files in `tools/checks/`. The comment fifty
+        # lines up states the contract this breaks in as many words: the Quick Index may be
+        # shortened BECAUSE Full Detail headings are untouched and greppable by full path. They
+        # were not untouched, so the nineteen files with the most descriptive names were the exact
+        # nineteen a session could not look up, and the index reported them as present
+        # (R2 agent13, which saw the ellipsis and called it a display bug).
+        #
+        # A heading here is a KEY. It is still made inert — a backtick would close the span early —
+        # but it is no longer clipped.
+        lines.append(f"## `{mdblock.as_quoted(f['path'], mdblock.PATH_AS_KEY)}`")
         if f["doc"]:
             lines.append(mdblock.demote_headings(f["doc"]))
         lines.append("")

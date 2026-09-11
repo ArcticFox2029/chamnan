@@ -31959,6 +31959,209 @@ check("...and EVERY reader of the drift report names EVERY state the producer ca
       saw="%s — a state the producer emits and a reader does not name is either a silent drop or a "
           "KeyError, and which one it is depends on how that reader happens to be written"
           % ", ".join(_t_deaf86))
+# ---- 87_a_full_detail_heading_is_a_key_not_a_sentence.py
+# ----------------- the index reported them present, and they were the ones you could not look up
+# 🐛 [2026-09-11] MAP.md's Full Detail heading is the lookup key for a file — the file's own header
+# tells a reader to find a section with ``grep '^## `path`'``, and the Quick Index is allowed to drop
+# its path prefixes BECAUSE Full Detail headings are untouched. They were not untouched: the heading
+# passed the path through `as_quoted`, whose 80-character default is a DISPLAY limit, so every path
+# longer than that arrived ending in an ellipsis. Nineteen of 449 on this repository, every one of
+# them in `tools/checks/`, and they were the nineteen with the most descriptive names — so the files
+# whose names say most about them were exactly the ones no session could reach. The index listed
+# them as present, which is why nothing ever reported it (R2 agent13 saw the ellipsis and read it as
+# cosmetic).
+#
+# Asserted on a BUILT map rather than on the committed one, so this fails when the builder regresses
+# rather than when somebody forgets to rebuild.
+import re as _re87
+import shutil as _sh87
+import tempfile as _tmp87
+from pathlib import Path as _Path87
+
+import mapper as _t_mp87
+import mdblock as _t_mb87
+
+# A fixture whose paths straddle the old 80-character limit, built from the limit itself rather than
+# typed out — the number is the thing under test, so a hand-picked length would stop testing it the
+# day it moved.
+_t_root87 = _Path87(_tmp87.mkdtemp(prefix="chamnan_key_"))
+_t_made87 = []
+for _t_extra87 in (-8, 0, 8, 64):
+    _t_stem87 = "d" * max(4, _t_mb87.as_quoted.__defaults__[0] + _t_extra87 - len("sub/") - len(".py"))
+    _t_p87 = _t_root87 / "sub" / ("%s.py" % _t_stem87)
+    _t_p87.parent.mkdir(parents=True, exist_ok=True)
+    _t_p87.write_text("# one line about it\ndef go():\n    return 1\n", encoding="utf-8")
+    _t_made87.append("sub/%s.py" % _t_stem87)
+
+check("the fixture spans the display limit in both directions: %d file(s)" % len(_t_made87),
+      len(_t_made87) == 4 and any(len(p) > 80 for p in _t_made87)
+      and any(len(p) < 80 for p in _t_made87),
+      saw=str([len(p) for p in _t_made87]))
+
+# The BUILDER, not the artefact. Reading the committed MAP.md would make this check pass or fail on
+# whether somebody remembered to rebuild, which is a different question and the one that hides this
+# defect — a file added since the last build and a file the builder cannot name look identical from
+# the artefact alone.
+_t_mp87.reset_skips()
+_t_text87 = _t_mp87.render(list(_t_mp87.scan(_t_root87)), _t_root87)
+_t_heads87 = _re87.findall(r"^## `([^`]+)`$", _t_text87, _re87.M)
+check("the built map has Full Detail headings to judge: %d" % len(_t_heads87),
+      len(_t_heads87) >= 3, saw="only %d heading(s) — this check is measuring nothing"
+                                % len(_t_heads87))
+
+_t_clipped87 = [h for h in _t_heads87 if h.endswith("…")]
+check("A FULL DETAIL HEADING CARRIES THE WHOLE PATH, BECAUSE IT IS A KEY",
+      not _t_clipped87,
+      saw="%s — the file's own header tells a reader to grep this heading by path, and a heading "
+          "ending in an ellipsis cannot be found that way while still being listed as present"
+          % "; ".join(_t_clipped87[:4]))
+
+# ...and the safety half is untouched. The heading is still made inert: a backtick in a filename
+# would close the span early and let the rest render as chamnan speaking rather than as the
+# repository's text. Clipping and sanitising are two jobs and only one of them was wrong.
+_t_nasty87 = _t_mb87.as_quoted("sub/we`ird\nname.py", _t_mb87.PATH_AS_KEY)
+check("...and it is still made inert, which is the other half of what that helper is for",
+      "`" not in _t_nasty87 and "\n" not in _t_nasty87, saw=repr(_t_nasty87))
+
+# The bound is still a bound. Unbounded would let a crafted path put a megabyte into the index.
+_t_huge87 = _t_mb87.as_quoted("x" * (_t_mb87.PATH_AS_KEY + 500), _t_mb87.PATH_AS_KEY)
+check("...and a path longer than any real one is still bounded",
+      len(_t_huge87) <= _t_mb87.PATH_AS_KEY, saw="%d chars" % len(_t_huge87))
+_sh87.rmtree(_t_root87, ignore_errors=True)
+# ---- 88_every_identifier_scheme_is_reachable_and_measured.py
+# --------- four of six schemes had no corpus case, and the one below the gate could never fire
+# 🐛 [2026-09-11] The personal-data layer implements six identifier schemes and the published recall
+# corpus exercises two of them. IBAN, CPF, RRN and Aadhaar had no case at all, so all four could have
+# been wholly broken without the published figure moving — and one of them was (R2 agent26).
+#
+# CPF is eleven digits. `_A_LONG_DIGIT_RUN`, the fast-path gate every rule sits behind, required
+# TWELVE characters, so a bare CPF was refused before any rule ran; only the dotted form, at
+# fourteen, ever worked. The threshold was correct for every other scheme (card 12-19, Aadhaar 12,
+# RRN 13, Thai 13, IBAN 15 and up) and the single member below the line was the one nobody checked
+# it against. CPF also had no keyword rule at all, while RRN beside it carries DASHED, BARE and a
+# WORD gate and Aadhaar carries its pattern and a WORD gate — two of three, and the third forgotten.
+#
+# Every identifier below is COMPUTED from its own scheme and asserted valid by the module's own
+# validator BEFORE it is used. A hand-written identifier has been invalid three times in this
+# repository and each time it looked exactly like a redaction leak; the first draft of this very
+# check produced an 18-character GB IBAN and read as a failure of the IBAN rule, which is fine.
+import random as _rnd88
+import string as _str88
+
+import redact as _t_rd88
+
+_t_r88 = _rnd88.Random(20260911)
+
+
+def _t_with_check_digits88(body, valid, n=1):
+    """`body` plus the one final digit that makes it pass `valid`, or None if no digit does.
+
+    Derived rather than computed, and that is deliberate twice over. It removes the arithmetic that
+    was wrong in the first draft of this file — a hand-written Korean RRN and an Aadhaar Verhoeff,
+    both invalid, both of which read exactly like the rule failing. And the search asserts a real
+    property on the way past: a genuine check-digit scheme admits EXACTLY ONE of the ten candidates,
+    so a rule that takes several is not checking a digit at all and a rule that takes none is dead.
+    """
+    import itertools
+    ok = ["".join(t) for t in itertools.product("0123456789", repeat=n) if valid(body + "".join(t))]
+    return (body + ok[0]) if len(ok) == 1 else None
+
+
+def _t_body88(n, first_range=None):
+    d = [str(_t_r88.randint(*(first_range or (0, 9))))] if first_range else []
+    return "".join(d) + "".join(str(_t_r88.randint(0, 9)) for _ in range(n - len(d)))
+
+
+def _t_cpf88():
+    return _t_with_check_digits88(_t_body88(9), _t_rd88._cpf, 2)
+
+
+def _t_rrn88():
+    # The seventh digit is the century-and-sex marker and the pattern admits 1-8 only, so a body
+    # with 0 or 9 there is unmatchable however good its checksum is.
+    b = _t_body88(6) + str(_t_r88.randint(1, 8)) + _t_body88(5)
+    return _t_with_check_digits88(b, _t_rd88._rrn)
+
+
+def _t_aadhaar88():
+    return _t_with_check_digits88(str(_t_r88.randint(1, 9)) + _t_body88(10),
+                                  _t_rd88._aadhaar)
+
+
+def _t_iban88(cc):
+    n = _t_rd88._IBAN_LENGTHS[cc] - 4
+    bban = "".join(_t_r88.choice(_str88.digits) for _ in range(n))
+    v = int("".join(str(int(ch, 36)) for ch in bban + cc + "00"))
+    return "%s%02d%s" % (cc, 98 - (v % 97), bban)
+
+
+# --- 0. The fixtures must be valid before they can test anything. This is the check that the other
+# three depend on, and the one whose absence has produced a false leak report three times.
+_t_gen88 = {"cpf": (_t_cpf88, _t_rd88._cpf), "rrn": (_t_rrn88, _t_rd88._rrn),
+            "aadhaar": (_t_aadhaar88, _t_rd88._aadhaar)}
+_t_pool88 = {k: [v for v in (g() for _ in range(15)) if v] for k, (g, _v) in _t_gen88.items()}
+check("each scheme admits exactly one check digit per body, so fixtures could be built: %s"
+      % {k: len(v) for k, v in sorted(_t_pool88.items())},
+      all(len(v) >= 12 for v in _t_pool88.values()),
+      saw="a scheme that yielded few or no fixtures either accepts several final digits — so it is not checking one — or accepts none, in which case nothing below it can ever fire")
+_t_pool88["iban"] = [_t_iban88(cc) for cc in ("GB", "DE", "FR", "NL", "ES", "IT", "BR", "PT")
+                     if cc in _t_rd88._IBAN_LENGTHS]
+_t_invalid88 = ["%s:%s" % (k, v) for k, (_g, val) in _t_gen88.items()
+                for v in _t_pool88[k] if not val(v)]
+_t_invalid88 += ["iban:%s" % v for v in _t_pool88["iban"] if not _t_rd88._iban(v)]
+check("every generated identifier is valid by the module's OWN validator: %d case(s)"
+      % sum(len(v) for v in _t_pool88.values()),
+      not _t_invalid88,
+      saw="%s — the fixture is wrong, not the rule, and an invalid fixture reads exactly like a "
+          "redaction leak" % ", ".join(_t_invalid88[:4]))
+
+# --- 1. The gate admits the shortest scheme any rule below it can match.
+check("the fast-path gate admits the shortest identifier the layer implements",
+      _t_rd88.SHORTEST_IDENTIFIER == 11
+      and _t_rd88._A_LONG_DIGIT_RUN.search("1" * _t_rd88.SHORTEST_IDENTIFIER) is not None,
+      saw="a run of %d digits does not reach the rules at all, so every scheme that short is dead "
+          "however well its own pattern is written" % _t_rd88.SHORTEST_IDENTIFIER)
+
+# --- 2. Every keyword-gated scheme catches its BARE form under its own label.
+_t_labels88 = {"cpf": ("cpf", "CPF", "cadastro_de_pessoas_fisicas"),
+               "rrn": ("rrn", "resident_registration", "korean_id"),
+               "aadhaar": ("aadhaar", "aadhar", "uidai")}
+_t_missed88 = []
+for _t_k88, _t_words88 in sorted(_t_labels88.items()):
+    for _t_v88 in _t_pool88[_t_k88]:
+        for _t_w88 in _t_words88:
+            for _t_line88 in ('%s = "%s"' % (_t_w88, _t_v88), "%s: %s" % (_t_w88, _t_v88)):
+                if _t_rd88.scrub(_t_line88) == _t_line88:
+                    _t_missed88.append(_t_line88)
+check("EVERY KEYWORD-GATED IDENTIFIER SCHEME CATCHES ITS BARE FORM UNDER ITS OWN LABEL",
+      not _t_missed88,
+      saw="%d of %d case(s) missed, e.g. %s — two of the three schemes had the keyword path and the "
+          "third did not"
+          % (len(_t_missed88),
+             sum(len(_t_pool88[k]) * len(w) * 2 for k, w in _t_labels88.items()),
+             "; ".join(_t_missed88[:3])))
+
+# --- 3. IBAN needs no label: its country code and length are the context.
+_t_ib88 = [v for v in _t_pool88["iban"] if _t_rd88.scrub(v) == v]
+check("...and an IBAN is caught on its own, because its country and length ARE the context",
+      not _t_ib88, saw=", ".join(_t_ib88[:4]))
+
+# --- 4. The other direction, and it is the one that decides whether the gate above is a gate or a
+# blanket. An ordinary digit run of each length must survive, labelled or not, and a real
+# identifier with one digit changed must survive even under its own label.
+_t_eaten88 = []
+for _t_k88, _t_words88 in sorted(_t_labels88.items()):
+    for _t_v88 in _t_pool88[_t_k88][:8]:
+        _t_bad88 = _t_v88[:-1] + str((int(_t_v88[-1]) + 1) % 10)
+        for _t_line88 in ('%s = "%s"' % (_t_words88[0], _t_bad88),
+                          'order_id = %s' % _t_v88, 'seq = "%s"' % _t_v88,
+                          'timestamp_ns = %s' % _t_v88):
+            if _t_rd88.scrub(_t_line88) != _t_line88:
+                _t_eaten88.append(_t_line88)
+check("...while an unlabelled run, and a failed checksum under the label, are both left alone",
+      not _t_eaten88,
+      saw="%d case(s) destroyed, e.g. %s — shape alone is a guess and the checksum is what makes it "
+          "a finding" % (len(_t_eaten88), "; ".join(_t_eaten88[:3])))
 # ============================ end of the folded surgical pool
 
 
