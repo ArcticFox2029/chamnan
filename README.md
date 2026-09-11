@@ -53,7 +53,7 @@ index is worth sending, never where anything goes.
 | *"does it work on Windows"* | Yes, and on macOS and Linux — those three run in CI on every commit, WSL as Linux. [Per-OS instructions](#running-it-on-each-operating-system) |
 | *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
 | *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **98.3% recall / 100% precision** on a 60-secret, 48-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **99.0% recall / 100% precision** on a 96-secret, 48-decoy corpus, with the ceiling it cannot reach stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
@@ -527,7 +527,8 @@ rather than a silent miss.
 
 `chamnan-guard` reads the staged diff and names files that look like they carry a credential.
 
-**It warns; it does not block.** Published recall is 98.2% on a synthetic corpus and it verifies
+**It warns; it does not block.** Published recall is 99.0% on a synthetic corpus, and 93.8% in its
+weakest class, and it verifies
 nothing against a live service, so a false positive that stops every commit is worse than the leak
 it guards — the person turns it off, and then nothing is watching. `chamnan-guard --strict` exits 1
 for anyone who wants the gate.
@@ -1327,7 +1328,8 @@ corpus of 60 secret shapes and 48 ordinary strings that must survive:
 
 | | |
 |---|---|
-| recall | **98.3%** — 59 of 60 secret and personal-data shapes redacted |
+| recall | **99.0%** — 95 of 96 secret and personal-data shapes redacted |
+| weakest class | **93.8%** — 15 of 16 bare-token shapes, the class with no name or column to go on |
 | precision, on the corpus | **100%** — 0 of 48 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
 | precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |
 | `scrub()` applied to whole source files | **69 lines damaged**, down from 144 |
@@ -1824,7 +1826,7 @@ Sources: [arXiv:2601.09832](https://arxiv.org/abs/2601.09832); [arXiv:1907.00376
 | | |
 |---|---|
 | chamnan's redactor, **before** | **66.7%** recall / **81.8%** precision |
-| chamnan's redactor, **after** | **98.3%** recall / **100%** precision |
+| chamnan's redactor, **after** | **99.0%** recall / **100%** precision (weakest class **93.8%**) |
 | corpus | 60 secret shapes, 48 ordinary strings that must survive |
 | **the ceiling it cannot reach** | verification by live API call: TruffleHog **6% → 90%** precision |
 
@@ -1924,7 +1926,7 @@ question is not whether it participates — it does — but whether the chain ca
 | link | chamnan |
 |---|---|
 | 1. repo content reaches the agent | **yes, by design** — mitigated only by the fence below, which is worth about a halving |
-| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **98.3% recall / 100% precision** |
+| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **99.0% recall / 100% precision**, weakest class **93.8%** |
 | 3. it is written into something that configures or executes | **no**, and this is now pinned by tests |
 | 4. a capability turns that into network activity | **no** — pinned by the tests in §9 |
 

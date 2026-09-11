@@ -1153,6 +1153,23 @@ def main(argv):
     # under-documentation (R10 agent 4). The line naming the unreadable extensions is printed above,
     # but nothing connected it to the number a reader takes away. This is the connection, and it
     # appears only when there is something to connect.
+    # \U0001f41b [2026-09-11] A file `ast` refused outright is counted against this rate as though
+    # nobody had described it, and the difference matters: one is fixed by writing a docstring and
+    # the other cannot be. The paragraph above says so, in prose, several lines earlier and only
+    # when there are such files — while the NUMBER, which is the part anybody quotes, said nothing.
+    #
+    # A third state, not a miss. Raised by a reader (`peterbuildssecure`, dev.to, 2026-09-09):
+    # *"I'd add a bucket for 'true positive, unconfirmable' … and report those separately rather
+    # than silently counting them as recall misses."* It is the same argument that put the weakest
+    # class beside the redactor's headline.
+    #
+    # Counted IN the rate rather than carved out of it, deliberately. Removing them from the
+    # denominator would raise the percentage, and a coverage figure that improves because chamnan
+    # got worse at reading the repository is the flattering arithmetic this file already carries
+    # three records of. Stated beside the number, pessimistic in the number.
+    _unparsed = len(getattr(mapper, "SKIPPED_UNPARSEABLE", ()))
+    if _unparsed:
+        note += f", {_unparsed} chamnan could not parse rather than nobody described"
     if _unknown and total:
         note += f", of the {total} chamnan can read"
     print(f"  described    [{bar}] {have}/{total} files ({pct:.0f}%{note})")

@@ -903,6 +903,33 @@ def make_workspace(prefix):
     return root
 
 
+def owner_workspace(what):
+    """The `.chamnan` workspace this checkout sits beside, or None with a SKIP that says why.
+
+    Some blocks below assert things about the DEVELOPMENT workspace rather than about the package:
+    that `publication-guard.py` is installed, that the dispatch auditor exists, that the repeat
+    detector can name a registered tool. Those are true where chamnan is developed and meaningless
+    in a clone, where two directories up holds somebody's home directory or nothing at all.
+
+    🐛 [2026-09-11] `make_workspace` above carries the bug report for exactly this — *"two
+    blocks here used `ROOT.parent.parent` … CI found both on its first run"* — and the rule was
+    applied to those two and to none of the fifteen written since. The private-repo half of the
+    1.25.0 release test ran for the first time and every one of its five jobs failed, on all three
+    platforms and both Python versions, for this and nothing else. The suite SHIPS: anybody who
+    cloned the repository and ran it got the same fifteen failures and no way to tell them from real
+    ones.
+
+    A skip that says it skipped, never a silent `is_file()` guard — this file's own argument against
+    those is that a check which quietly does nothing looks exactly like coverage.
+    """
+    ws = ROOT.parent.parent / ".chamnan"
+    if (ws / "tools").is_dir():
+        return ws
+    skip(f"  [SKIP] {what} — no .chamnan workspace beside this checkout, so these assert the "
+         f"development environment rather than the package")
+    return None
+
+
 def import_hook_module(name):
     """Load a hooks/*.py file as an importable module, for unit-testing a function inside it
     directly rather than only through its subprocess/stdout behaviour."""
@@ -23262,6 +23289,48 @@ _red_new = [h for h in _red_hits
 check("...and chamnan's own redactor finds nothing NEW in the tree chamnan ships",
       not _red_new, saw="\n".join(_red_new[:8]))
 
+# 🐛 [2026-09-11] The check above fails when a NEW line appears — and the cheapest way to
+# make it pass is to append that line's hash to the baseline, which silences a real finding exactly
+# as well as fixing one. The file's own header says "the accepted set may only shrink by hand", and
+# until now nothing enforced it: the accepted set could grow in a diff nobody looked twice at.
+#
+# Raised by a reader (`peterbuildssecure`, dev.to, 2026-09-09), whose framing is the right one:
+# *"does removing something from the policy file get the same review rigor as removing it from the
+# live database, or can the list itself quietly shrink?"* The answer here was no rigor at all.
+#
+# THE PAIR IS THE POINT. `~/.chamnan-denylist` got a high-water mark the same week; this file, named
+# beside it in the same paragraph of the same document, did not — a rule applied to one member of a
+# set of two, which is this repository's own commonest defect and is why the reader's note sat open.
+#
+# The two lists fail in OPPOSITE directions, so the guards are not copies. A denylist is dangerous
+# when it SHRINKS: a removed term re-opens what it was added for, so `check_the_list_has_not_shrunk`
+# warns on a drop and is silent on growth. An accepted-findings baseline is dangerous when it GROWS,
+# because every added line is one fewer thing the scan can report. Hence a ceiling here and a floor
+# there.
+#
+# A committed constant rather than a stored mark, deliberately: raising it has to appear in a diff,
+# which is the review rigor the argument asks for. Lowering it needs no ceremony -- a fixed line
+# leaving the baseline is the outcome this whole file wants.
+#
+# Counted in LINES, not in `_red_base`. That set holds unique hashes and collapses the nine lines
+# that accept identical text in different files -- 51 lines, 42 entries -- so bounding the set would
+# let somebody append a line whose hash is already accepted and grow the list without moving the
+# number. The line count is also the thing a reviewer sees in the diff, which is the whole argument.
+# Caught by the floor check below on this check's first run, which is what that floor is for.
+_red_base_lines = [ln for ln in _red_base_path.read_text(encoding="utf-8").split("\n")
+                   if ln.strip() and not ln.startswith("#")] if _red_base_path.is_file() else []
+RED_BASELINE_MAX = 51
+check("THE ACCEPTED-FINDINGS BASELINE CANNOT GROW WITHOUT SOMEBODY RAISING THE CEILING",
+      len(_red_base_lines) <= RED_BASELINE_MAX,
+      saw=f"{len(_red_base_lines)} accepted lines against a ceiling of {RED_BASELINE_MAX} — "
+          f"a new line was accepted rather than fixed, or the ceiling needs a reviewed bump")
+# A ceiling far above the real count is not a ceiling. If entries are fixed and removed, this fails
+# and the ceiling comes down with them, so the bound keeps tracking the file instead of rotting
+# above it the way a number written once always does.
+check("...and the ceiling still sits ON the baseline rather than far above it",
+      len(_red_base_lines) >= RED_BASELINE_MAX - 5,
+      saw=f"{len(_red_base_lines)} lines, ceiling {RED_BASELINE_MAX} — lower the ceiling to match")
+
 # ------------------- every reader of the workspace asks whether the file is in it, 2026-09-09
 # 🐛 Five DIRECTORY stores were given a containment check on 2026-09-08. The three single-FILE
 # stores beside them were not, and neither was `pointer.related`, which lives in another module and
@@ -24746,6 +24815,36 @@ try:
           "+ deployment section included" in _r24_out)
 finally:
     _rmtree(_r24, ignore_errors=True)
+
+# --------------------------------- a file chamnan cannot READ is not a file nobody DESCRIBED
+# \U0001f41b [2026-09-11] Both land in the coverage figure as the same miss, and only one can be
+# fixed by writing a docstring. The prose above the number said so; the number said nothing, and the
+# number is the part that gets quoted.
+#
+# Raised by a reader (`peterbuildssecure`, dev.to, 2026-09-09): *"I'd add a bucket for 'true
+# positive, unconfirmable' … and report those separately rather than silently counting them as
+# recall misses."* Same argument that put the redactor's weakest class beside its headline.
+#
+# The count stays INSIDE the rate. Carving it out would raise the percentage, and a coverage figure
+# that improves because chamnan got worse at reading the repository is the flattering arithmetic
+# this suite exists to make impossible. Pessimistic in the number, explicit beside it.
+_up24 = Path(tempfile.mkdtemp(prefix="chamnan-unparsed-"))
+try:
+    (_up24 / "src").mkdir()
+    (_up24 / "src" / "good.py").write_text('def ok():\n    """Described."""\n    return 1\n',
+                                           encoding="utf-8")
+    # Refused by `ast` outright, not merely undocumented — that is the whole distinction.
+    (_up24 / "src" / "bad.py").write_text("def broken(:\n    not python at all\n", encoding="utf-8")
+    _up24_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")],
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", cwd=str(_up24)).stdout
+    _up24_line = next((l for l in _up24_out.splitlines() if "described" in l and "files (" in l), "")
+    check("THE COVERAGE LINE SAYS WHICH MISSES ARE CHAMNAN'S OWN, NOT THE AUTHOR'S",
+          "could not parse" in _up24_line, saw=_up24_line or "no coverage line printed")
+    check("...and the rate still counts them, so the number cannot improve by reading less",
+          "1/2 files (50%" in _up24_line, saw=_up24_line)
+finally:
+    _rmtree(_up24, ignore_errors=True)
 
 # ------------------------------------------- every command in the README's table, not found
 # 🐛 [2026-09-09] `chamnan-map` from a shell answers `command not found` until somebody puts `bin/`
@@ -27544,10 +27643,11 @@ check("...and each rule that differs from fnmatch is the one git actually applie
 # tree clean at 194 files. A session seeing the first number without the second would have rewritten
 # a hundred internal notes to fix nothing, destroying the specificity those notes exist for.
 _t_git36 = shutil.which("git")
+_t_ws36 = owner_workspace("the publication-guard checks") if _t_git36 else None
 if not _t_git36:
     skip("  · no git on this machine — the guard-scope check is skipped, not passed")
-else:
-    _t_guard = ROOT.parent.parent / ".chamnan" / "tools" / "publication-guard.py"
+elif _t_ws36 is not None:
+    _t_guard = _t_ws36 / "tools" / "publication-guard.py"
     check("the publication guard is installed where the release gate looks for it",
           _t_guard.is_file() or (_t_guard.parent / "publication_guard.py").is_file(),
           saw=str(_t_guard))
@@ -27583,38 +27683,40 @@ else:
 # this checked that a function NAME appeared in the source, and renaming the function away left the
 # call site behind — so the check passed over a guard that no longer had the function at all. A
 # check that can pass when the thing is gone is not a check.
-_t_spec36 = importlib.util.spec_from_file_location(
-    "_chamnan_guard", str(ROOT.parent.parent / ".chamnan" / "tools" / "publication-guard.py"))
-_t_guard_mod = importlib.util.module_from_spec(_t_spec36)
-try:
-    _t_spec36.loader.exec_module(_t_guard_mod)
-    _t_loaded = True
-except Exception as _e:
-    _t_loaded = False
-check("the publication guard imports as a module, so its behaviour can be asked directly",
-      _t_loaded, saw=None if _t_loaded else "it does not import")
-
-if _t_loaded and hasattr(_t_guard_mod, "check_the_list_has_not_shrunk"):
-    _t_home = Path(tempfile.mkdtemp(prefix="chamnan-hw-"))
-    _t_was = _t_guard_mod.HIGH_WATER
+_t_ws36b = owner_workspace("the publication-guard behaviour checks")
+if _t_ws36b is not None:
+    _t_spec36 = importlib.util.spec_from_file_location(
+        "_chamnan_guard", str(_t_ws36b / "tools" / "publication-guard.py"))
+    _t_guard_mod = importlib.util.module_from_spec(_t_spec36)
     try:
-        _t_guard_mod.HIGH_WATER = _t_home / "seen.json"
-        # Seven terms, then five: the drop has to be reported, and the report has to name both.
-        _t_first = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e", "f", "g"])
-        _t_after = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e"])
-        check("a denylist that gets shorter is reported, naming what it used to hold",
-              _t_first is None and _t_after and "7" in _t_after and "5" in _t_after,
-              saw=f"first={_t_first!r} after={_t_after!r}")
-        # ...and growing it says nothing, or the warning becomes noise and stops being read.
-        _t_grown = _t_guard_mod.check_the_list_has_not_shrunk(["a"] * 12)
-        check("...and adding terms is silent, so the warning stays worth reading",
-              _t_grown is None, saw=repr(_t_grown))
-    finally:
-        _t_guard_mod.HIGH_WATER = _t_was
-        shutil.rmtree(_t_home, ignore_errors=True)
-else:
-    check("the guard has a high-water mark for its own denylist",
-          False, saw="check_the_list_has_not_shrunk is not defined in the guard")
+        _t_spec36.loader.exec_module(_t_guard_mod)
+        _t_loaded = True
+    except Exception as _e:
+        _t_loaded = False
+    check("the publication guard imports as a module, so its behaviour can be asked directly",
+          _t_loaded, saw=None if _t_loaded else "it does not import")
+
+    if _t_loaded and hasattr(_t_guard_mod, "check_the_list_has_not_shrunk"):
+        _t_home = Path(tempfile.mkdtemp(prefix="chamnan-hw-"))
+        _t_was = _t_guard_mod.HIGH_WATER
+        try:
+            _t_guard_mod.HIGH_WATER = _t_home / "seen.json"
+            # Seven terms, then five: the drop has to be reported, and the report has to name both.
+            _t_first = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e", "f", "g"])
+            _t_after = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e"])
+            check("a denylist that gets shorter is reported, naming what it used to hold",
+                  _t_first is None and _t_after and "7" in _t_after and "5" in _t_after,
+                  saw=f"first={_t_first!r} after={_t_after!r}")
+            # ...and growing it says nothing, or the warning becomes noise and stops being read.
+            _t_grown = _t_guard_mod.check_the_list_has_not_shrunk(["a"] * 12)
+            check("...and adding terms is silent, so the warning stays worth reading",
+                  _t_grown is None, saw=repr(_t_grown))
+        finally:
+            _t_guard_mod.HIGH_WATER = _t_was
+            shutil.rmtree(_t_home, ignore_errors=True)
+    else:
+        check("the guard has a high-water mark for its own denylist",
+              False, saw="check_the_list_has_not_shrunk is not defined in the guard")
 # ---- 37_two_different_sequences_get_two_candidate_files.py
 # ------------------------------------------- the second habit overwrote the first, silently
 # 🐛 [2026-09-10] `candidates.slug` truncated at 60 characters with no collision check, so two
@@ -27717,51 +27819,53 @@ finally:
 # `match_call` answers a different question — which registered tool a command INVOKES — by literal
 # path substring, so it cannot see a script somebody is about to write instead (R7 agent 2,
 # findings 1 and 2, reached from the other end).
-_t_root38 = ROOT.parent.parent
+_t_ws38 = owner_workspace("the repeat-detector checks")
+if _t_ws38 is not None:
+    _t_root38 = _t_ws38.parent
 
-# It has to FIND the obvious ones. These are real registered tools and real descriptions of what
-# they do, phrased the way somebody would describe the script they were about to write.
-_t_should_find = [
-    ("move a finished research report into old and record the filing marker", "archive_report"),
-    ("find duplicated runs of lines in a file to catch a folded check pasted twice", "duplicate_runs"),
-]
-_t_missed38 = []
-for _t_text, _t_want in _t_should_find:
-    _t_got = tools_index.likely_already_done(_t_root38, _t_text)
-    if not _t_got or _t_want not in _t_got[0]:
-        _t_missed38.append(f"{_t_text[:46]}… -> {_t_got[0] if _t_got else None}, wanted {_t_want}")
-check("the repeat detector can name a registered tool that already does the job",
-      not _t_missed38, saw="\n".join(_t_missed38) or None)
+    # It has to FIND the obvious ones. These are real registered tools and real descriptions of what
+    # they do, phrased the way somebody would describe the script they were about to write.
+    _t_should_find = [
+        ("move a finished research report into old and record the filing marker", "archive_report"),
+        ("find duplicated runs of lines in a file to catch a folded check pasted twice", "duplicate_runs"),
+    ]
+    _t_missed38 = []
+    for _t_text, _t_want in _t_should_find:
+        _t_got = tools_index.likely_already_done(_t_root38, _t_text)
+        if not _t_got or _t_want not in _t_got[0]:
+            _t_missed38.append(f"{_t_text[:46]}… -> {_t_got[0] if _t_got else None}, wanted {_t_want}")
+    check("the repeat detector can name a registered tool that already does the job",
+          not _t_missed38, saw="\n".join(_t_missed38) or None)
 
-# Naming the WRONG tool is worse than naming none — it sends somebody to read something unrelated
-# and teaches them to ignore the line. `match_call`'s own docstring argues for that direction and
-# this follows it: unrelated work must return nothing at all.
-_t_false38 = []
-for _t_text in ("compute the fibonacci sequence and draw a mandelbrot set in colour",
-                "reverse a linked list and balance a red black tree",
-                "render a christmas tree in ascii art with blinking lights",
-                "solve a sudoku grid by constraint propagation"):
-    _t_got = tools_index.likely_already_done(_t_root38, _t_text)
-    if _t_got:
-        _t_false38.append(f"{_t_text[:44]}… -> {_t_got[0]}")
-check("...and unrelated work is not matched to a tool at all",
-      not _t_false38, saw="\n".join(_t_false38) or None)
+    # Naming the WRONG tool is worse than naming none — it sends somebody to read something unrelated
+    # and teaches them to ignore the line. `match_call`'s own docstring argues for that direction and
+    # this follows it: unrelated work must return nothing at all.
+    _t_false38 = []
+    for _t_text in ("compute the fibonacci sequence and draw a mandelbrot set in colour",
+                    "reverse a linked list and balance a red black tree",
+                    "render a christmas tree in ascii art with blinking lights",
+                    "solve a sudoku grid by constraint propagation"):
+        _t_got = tools_index.likely_already_done(_t_root38, _t_text)
+        if _t_got:
+            _t_false38.append(f"{_t_text[:44]}… -> {_t_got[0]}")
+    check("...and unrelated work is not matched to a tool at all",
+          not _t_false38, saw="\n".join(_t_false38) or None)
 
-# Too little to go on is not a match. A one-word script description cannot identify anything, and
-# guessing from it is how the false positives above would start.
-_t_thin = [_t for _t in ("", "x", "run it", "check", "python3 -c")
-           if tools_index.likely_already_done(_t_root38, _t)]
-check("...and a description too thin to identify anything returns nothing",
-      not _t_thin, saw=", ".join(repr(t) for t in _t_thin) or None)
+    # Too little to go on is not a match. A one-word script description cannot identify anything, and
+    # guessing from it is how the false positives above would start.
+    _t_thin = [_t for _t in ("", "x", "run it", "check", "python3 -c")
+               if tools_index.likely_already_done(_t_root38, _t)]
+    check("...and a description too thin to identify anything returns nothing",
+          not _t_thin, saw=", ".join(repr(t) for t in _t_thin) or None)
 
-# The hook has to actually consult it, and has to survive it failing — a nudge that crashes a
-# PostToolUse hook costs the session every later tool call.
-_t_watch38 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8-sig",
-                                                                    errors="replace")
-check("the hook consults the index before telling anyone to write another script",
-      "likely_already_done" in _t_watch38, saw=None)
-check("...and it degrades to the old message rather than failing the tool call",
-      "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
+    # The hook has to actually consult it, and has to survive it failing — a nudge that crashes a
+    # PostToolUse hook costs the session every later tool call.
+    _t_watch38 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8-sig",
+                                                                        errors="replace")
+    check("the hook consults the index before telling anyone to write another script",
+          "likely_already_done" in _t_watch38, saw=None)
+    check("...and it degrades to the old message rather than failing the tool call",
+          "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
 # ---- 39_a_pin_buys_share_not_only_order.py
 # ------------------------------------------- a pin that reached the title and stopped there
 # 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
@@ -27924,52 +28028,54 @@ check("...and the bounds stay generous rather than becoming a second opinion abo
 # fable outright, which covers every cross-account dispatch. `dispatch_model_audit.py` looks BACK
 # over what actually ran, which is the only thing that can catch a dispatch nobody routed through
 # the wrapper — and on this machine it found 22 to look at across 1,035 dispatches.
-_t_audit41 = ROOT.parent.parent / ".chamnan" / "tools" / "dispatch_model_audit.py"
-check("the dispatch auditor is installed",
-      _t_audit41.is_file(), saw=str(_t_audit41))
+_t_ws41 = owner_workspace("the dispatch-auditor checks")
+if _t_ws41 is not None:
+    _t_audit41 = _t_ws41 / "tools" / "dispatch_model_audit.py"
+    check("the dispatch auditor is installed",
+          _t_audit41.is_file(), saw=str(_t_audit41))
 
-_t_src41 = _t_audit41.read_text(encoding="utf-8-sig", errors="replace") if _t_audit41.is_file() else ""
+    _t_src41 = _t_audit41.read_text(encoding="utf-8-sig", errors="replace") if _t_audit41.is_file() else ""
 
-# The wrapper's refusal, asserted behaviourally rather than by reading its source: a research
-# dispatch on an expensive model must be refused before it costs anything.
-# `os.name != "nt"` rather than `shutil.which("bash")`: the dispatcher is a shell script and this
-# block runs one, which is POSIX-only. The suite has a check that every POSIX-only construct sits
-# behind a platform gate it recognises — `_POSIX`, `os.name` or `sys.platform` — and a `which`
-# lookup is not one of them. It caught this the first time this file was folded in, which is the
-# fold doing its job: a check that ships with the plugin is held to the same bar as the plugin.
-_t_disp41 = ROOT.parent.parent / ".chamnan" / "tools" / "dispatch_research.sh"
-if os.name != "nt" and _t_disp41.is_file() and shutil.which("bash"):
-    _t_allowed = []
-    for _t_model in ("opus", "claude-opus-5", "fable", "mythos"):
-        _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x",
-                               _t_model], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
-        # Refused for the model, not merely for the missing brief: exit 3 is the model refusal.
-        if _t_r.returncode != 3:
-            _t_allowed.append(f"{_t_model}: exit {_t_r.returncode}, {_t_r.stdout.strip()[:50]}")
-    check("a research dispatch on an expensive model is refused before it costs anything",
-          not _t_allowed, saw="\n".join(_t_allowed) or None)
+    # The wrapper's refusal, asserted behaviourally rather than by reading its source: a research
+    # dispatch on an expensive model must be refused before it costs anything.
+    # `os.name != "nt"` rather than `shutil.which("bash")`: the dispatcher is a shell script and this
+    # block runs one, which is POSIX-only. The suite has a check that every POSIX-only construct sits
+    # behind a platform gate it recognises — `_POSIX`, `os.name` or `sys.platform` — and a `which`
+    # lookup is not one of them. It caught this the first time this file was folded in, which is the
+    # fold doing its job: a check that ships with the plugin is held to the same bar as the plugin.
+    _t_disp41 = _t_ws41 / "tools" / "dispatch_research.sh"
+    if os.name != "nt" and _t_disp41.is_file() and shutil.which("bash"):
+        _t_allowed = []
+        for _t_model in ("opus", "claude-opus-5", "fable", "mythos"):
+            _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x",
+                                   _t_model], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+            # Refused for the model, not merely for the missing brief: exit 3 is the model refusal.
+            if _t_r.returncode != 3:
+                _t_allowed.append(f"{_t_model}: exit {_t_r.returncode}, {_t_r.stdout.strip()[:50]}")
+        check("a research dispatch on an expensive model is refused before it costs anything",
+              not _t_allowed, saw="\n".join(_t_allowed) or None)
 
-    # ...and sonnet is NOT refused, or the wrapper has simply stopped working.
-    _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x", "sonnet"],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace")
-    check("...and sonnet is still allowed, so the refusal is about the model and not about everything",
-          _t_r.returncode != 3, saw=f"exit {_t_r.returncode}: {_t_r.stdout.strip()[:60]}")
-else:
-    skip("  · no dispatcher or no bash — the refusal check is skipped, not passed")
+        # ...and sonnet is NOT refused, or the wrapper has simply stopped working.
+        _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x", "sonnet"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check("...and sonnet is still allowed, so the refusal is about the model and not about everything",
+              _t_r.returncode != 3, saw=f"exit {_t_r.returncode}: {_t_r.stdout.strip()[:60]}")
+    else:
+        skip("  · no dispatcher or no bash — the refusal check is skipped, not passed")
 
-# The auditor must recover a model the sidecar does not carry. That is the half that makes it useful:
-# the field is present on some dispatches and not others, measured at 58%, and the transcript names
-# the model on every assistant turn.
-check("the auditor falls back to the transcript when the sidecar has no model",
-      "transcript" in _t_src41 and "message" in _t_src41 and "model" in _t_src41)
+    # The auditor must recover a model the sidecar does not carry. That is the half that makes it useful:
+    # the field is present on some dispatches and not others, measured at 58%, and the transcript names
+    # the model on every assistant turn.
+    check("the auditor falls back to the transcript when the sidecar has no model",
+          "transcript" in _t_src41 and "message" in _t_src41 and "model" in _t_src41)
 
-# And it must know where the records actually live. The first version globbed one directory level
-# and reported "no subagent records" over fifteen real files — the quietest way for an audit to be
-# useless, and the reason this check exists at all.
-check("...and it looks where the records are, rather than reporting nothing and passing",
-      "*/*/subagents/*.meta.json" in _t_src41,
-      saw="the glob does not reach projects/<project>/<session>/subagents/")
+    # And it must know where the records actually live. The first version globbed one directory level
+    # and reported "no subagent records" over fifteen real files — the quietest way for an audit to be
+    # useless, and the reason this check exists at all.
+    check("...and it looks where the records are, rather than reporting nothing and passing",
+          "*/*/subagents/*.meta.json" in _t_src41,
+          saw="the glob does not reach projects/<project>/<session>/subagents/")
 # ---- 42_every_subprocess_this_package_starts_is_bounded.py
 # ------------------------------------------- fourteen of fifteen, and the fifteenth waits forever
 # 🐛 [2026-09-10] Every `subprocess.run` in this package passes `timeout=` except one:
@@ -28232,6 +28338,61 @@ if _t_rr44.is_file():
                                                                      errors="replace")]
         check("...and both documents state the live recall figure rather than going quiet",
               not _t_silent44, saw=", ".join(_t_silent44) or None)
+
+    # 🐛 [2026-09-11] The published figure was a single blend, and stratifying the corpus
+    # showed the `column` class had ZERO cases in it — a credential under a CSV header, the one
+    # class that actually leaked in every language until 1.25 fixed it. An empty class does not
+    # appear in a breakdown as a zero; it does not appear at all, which is why it survived being
+    # looked at. The corpus is derived from `redact._HEADER_LANGS` now, so a language the redactor
+    # claims is a language the corpus samples.
+    #
+    # These three hold the reader's argument in place (`peterbuildssecure`, dev.to): a blended
+    # recall number hides a weak class, so the classes must exist, must all be sampled, and the
+    # WEAKEST must be published beside the headline. Publishing only the blend is how 98.2% stayed
+    # comfortable while a whole class was open — and note that adding the column cases RAISED the
+    # blend to 99.0%, which is the same trap from the other side: a headline improved by sampling
+    # more of what already works.
+    _t_cls44 = dict((m.group(1), (int(m.group(2)), int(m.group(3)))) for m in
+                    _re44.finditer(r"(?m)^\s{2}(\w+)\s+[\d.]+%\s+\((\d+)/(\d+)\)", _t_out44))
+    check("THE RECALL TOOL REPORTS PER CLASS, NOT ONE BLENDED NUMBER",
+          len(_t_cls44) >= 4, saw=f"classes reported: {sorted(_t_cls44)}")
+    _t_empty44 = sorted(k for k, (_, seen) in _t_cls44.items() if seen == 0)
+    check("...and no class is empty, because an empty class is invisible rather than zero",
+          not _t_empty44, saw=", ".join(_t_empty44) or None)
+    check("...INCLUDING THE COLUMN-HEADER CLASS, WHICH HAD NO CASES AT ALL UNTIL 2026-09-11",
+          _t_cls44.get("column", (0, 0))[1] > 0, saw=f"column: {_t_cls44.get('column')}")
+
+    # Every language the redactor CLAIMS must be a language the corpus SAMPLES. Derived from the
+    # redactor's own declaration rather than from a list here, so the two cannot drift: the failure
+    # this replaces was a claimed coverage of nineteen variants of which eleven escaped when tested.
+    # Compared as SETS, by importing the harness. The first version grepped the tool's stdout for
+    # language names, which it never prints — so it reported all sixteen as unsampled while every
+    # one of them was in the corpus. A check that reads a report instead of the thing reported on
+    # answers a different question than the one it asks.
+    _t_langs44 = sorted(getattr(redact, "_HEADER_LANGS", {}))
+    _t_spec44 = importlib.util.spec_from_file_location("_rr44mod", str(_t_rr44))
+    _t_mod44 = importlib.util.module_from_spec(_t_spec44)
+    try:
+        _t_spec44.loader.exec_module(_t_mod44)
+        _t_cases44 = " ".join(lbl for lbl, _, _ in getattr(_t_mod44, "COLUMNS", []))
+    except Exception as _t_e44:
+        _t_cases44 = ""
+        print(f"      could not import the recall harness to compare corpora: {_t_e44}")
+    _t_unsampled44 = [l for l in _t_langs44 if l not in _t_cases44]
+    check("...and EVERY LANGUAGE THE REDACTOR CLAIMS TO COVER HAS A CASE IN THE CORPUS",
+          bool(_t_langs44) and not _t_unsampled44,
+          saw=f"{len(_t_langs44)} claimed, unsampled: {_t_unsampled44}")
+
+    if _t_cls44:
+        _t_weak44 = min(_t_cls44.items(), key=lambda kv: kv[1][0] / max(kv[1][1], 1))
+        _t_weakpct44 = f"{_t_weak44[1][0] / _t_weak44[1][1] * 100:.1f}"
+        _t_noweak44 = [d for d in ("README.md", "SECURITY.md")
+                       if (ROOT / d).is_file()
+                       and f"{_t_weakpct44}%" not in (ROOT / d).read_text(encoding="utf-8",
+                                                                         errors="replace")]
+        check("...and the documents publish the WEAKEST class beside the headline, not just the blend",
+              not _t_noweak44,
+              saw=f"weakest is {_t_weak44[0]} at {_t_weakpct44}%; missing from: {_t_noweak44}")
 else:
     skip("  · no redactor_recall.py — the published-number check is skipped, not passed")
 # ---- 45_every_jsonl_this_package_writes_is_accounted_for.py
@@ -28823,39 +28984,41 @@ import re as _re54
 # Both directions: a file with no entry is unfindable, and an entry naming a file that no longer
 # exists sends a reader to nothing. The second is the dangling-pointer shape this workspace has now
 # recorded three times in three different stores.
-_t_sk54 = ROOT.parent.parent / ".chamnan" / "skills"
-_t_readme54 = _t_sk54 / "README.md"
+_t_ws54 = owner_workspace("the skills-index checks")
+if _t_ws54 is not None:
+    _t_sk54 = _t_ws54 / "skills"
+    _t_readme54 = _t_sk54 / "README.md"
 
-if not _t_readme54.is_file():
-    skip("  · no .chamnan/skills/README.md here — the index check is skipped, not passed")
-else:
-    _t_text54 = _t_readme54.read_text(encoding="utf-8", errors="replace")
-    _t_files54 = sorted(p.name for p in _t_sk54.glob("*.md") if p.name.upper() != "README.MD")
+    if not _t_readme54.is_file():
+        skip("  · no .chamnan/skills/README.md here — the index check is skipped, not passed")
+    else:
+        _t_text54 = _t_readme54.read_text(encoding="utf-8", errors="replace")
+        _t_files54 = sorted(p.name for p in _t_sk54.glob("*.md") if p.name.upper() != "README.MD")
 
-    check("there are skill files to index, so this is not passing on an empty directory",
-          len(_t_files54) >= 3, saw="%d file(s)" % (len(_t_files54),))
+        check("there are skill files to index, so this is not passing on an empty directory",
+              len(_t_files54) >= 3, saw="%d file(s)" % (len(_t_files54),))
 
-    _t_unlisted54 = [f for f in _t_files54 if f not in _t_text54]
-    check("THE SKILLS INDEX NAMES EVERY SKILL FILE THAT EXISTS",
-          not _t_unlisted54, saw="\n".join(_t_unlisted54) or None)
+        _t_unlisted54 = [f for f in _t_files54 if f not in _t_text54]
+        check("THE SKILLS INDEX NAMES EVERY SKILL FILE THAT EXISTS",
+              not _t_unlisted54, saw="\n".join(_t_unlisted54) or None)
 
-    # An entry pointing at a file that is gone. `(name.md)` is the link form the index uses.
-    _t_named54 = sorted(set(_re54.findall(r"\(([A-Za-z0-9_.-]+\.md)\)", _t_text54)))
-    _t_dangling54 = [n for n in _t_named54 if n.upper() != "README.MD"
-                     and not (_t_sk54 / n).is_file()]
-    check("...and every entry in it points at a file that is still there",
-          not _t_dangling54, saw=", ".join(_t_dangling54) or None)
+        # An entry pointing at a file that is gone. `(name.md)` is the link form the index uses.
+        _t_named54 = sorted(set(_re54.findall(r"\(([A-Za-z0-9_.-]+\.md)\)", _t_text54)))
+        _t_dangling54 = [n for n in _t_named54 if n.upper() != "README.MD"
+                         and not (_t_sk54 / n).is_file()]
+        check("...and every entry in it points at a file that is still there",
+              not _t_dangling54, saw=", ".join(_t_dangling54) or None)
 
-    # A skill the block's own STATE.md points at must be findable through the index too, or the
-    # two disagree about what exists — which is exactly how this was found.
-    _t_state54 = ROOT.parent.parent / ".chamnan" / "STATE.md"
-    if _t_state54.is_file():
-        _t_st54 = _t_state54.read_text(encoding="utf-8", errors="replace")
-        _t_pointed54 = sorted({m for m in _re54.findall(
-            r"\.chamnan/skills/([A-Za-z0-9_.-]+\.md)", _t_st54)})
-        _t_orphan54 = [n for n in _t_pointed54 if n not in _t_text54]
-        check("...and every skill STATE.md points a session at is listed in that index",
-              not _t_orphan54, saw=", ".join(_t_orphan54) or None)
+        # A skill the block's own STATE.md points at must be findable through the index too, or the
+        # two disagree about what exists — which is exactly how this was found.
+        _t_state54 = _t_ws54 / "STATE.md"
+        if _t_state54.is_file():
+            _t_st54 = _t_state54.read_text(encoding="utf-8", errors="replace")
+            _t_pointed54 = sorted({m for m in _re54.findall(
+                r"\.chamnan/skills/([A-Za-z0-9_.-]+\.md)", _t_st54)})
+            _t_orphan54 = [n for n in _t_pointed54 if n not in _t_text54]
+            check("...and every skill STATE.md points a session at is listed in that index",
+                  not _t_orphan54, saw=", ".join(_t_orphan54) or None)
 # ---- 55_every_hook_runs_the_way_the_host_actually_spawns_it.py
 # ------------------- fifteen call sites test the hook, and none of them the way it is really run
 # 🐛 [2026-09-10] Claude Code's hooks reference: a command hook runs in EXEC form when `args` is
@@ -30408,63 +30571,65 @@ _t_repo71 = ROOT.parent.parent
 # --- 1. Every reader that evaluates trailers reads every store that HAS them. Derived from the
 # stores on disk rather than from a list here: a third store growing a trailer joins this population
 # the day it does.
-_t_stores71 = {}
-for _t_name71, _t_dir71 in (("rules", ".chamnan/memory/rules"),
-                            ("skills", ".chamnan/skills"),
-                            ("decisions", ".chamnan/memory/decisions"),
-                            ("lessons", ".chamnan/memory/lessons")):
-    _t_d71 = _t_repo71 / _t_dir71
-    if not _t_d71.is_dir():
-        continue
-    _t_n71 = sum(1 for _f in _t_d71.glob("*.md")
-                 if "**Check:**" in _f.read_text(encoding="utf-8", errors="replace"))
-    if _t_n71:
-        _t_stores71[_t_name71] = _t_n71
+_t_ws71 = owner_workspace("the check-trailer sweep")
+if _t_ws71 is not None:
+    _t_stores71 = {}
+    for _t_name71, _t_dir71 in (("rules", ".chamnan/memory/rules"),
+                                ("skills", ".chamnan/skills"),
+                                ("decisions", ".chamnan/memory/decisions"),
+                                ("lessons", ".chamnan/memory/lessons")):
+        _t_d71 = _t_repo71 / _t_dir71
+        if not _t_d71.is_dir():
+            continue
+        _t_n71 = sum(1 for _f in _t_d71.glob("*.md")
+                     if "**Check:**" in _f.read_text(encoding="utf-8", errors="replace"))
+        if _t_n71:
+            _t_stores71[_t_name71] = _t_n71
 
-_t_hook71 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
-_t_rep71 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
-_t_unread71 = []
-for _t_store71 in sorted(_t_stores71):
-    _t_fn71 = "%s_with_titles" % _t_store71
-    for _t_label71, _t_src71 in (("the session block", _t_hook71), ("chamnan-report", _t_rep71)):
-        if _t_fn71 not in _t_src71:
-            _t_unread71.append(f"{_t_store71} ({_t_label71})")
+    _t_hook71 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+    _t_rep71 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+    _t_unread71 = []
+    for _t_store71 in sorted(_t_stores71):
+        _t_fn71 = "%s_with_titles" % _t_store71
+        for _t_label71, _t_src71 in (("the session block", _t_hook71), ("chamnan-report", _t_rep71)):
+            if _t_fn71 not in _t_src71:
+                _t_unread71.append(f"{_t_store71} ({_t_label71})")
 
-check(f"the sweep found the stores that carry trailers: {_t_stores71}",
-      bool(_t_stores71),
-      saw="no store on disk carries a `**Check:**` trailer — this check is measuring nothing")
-check("EVERY STORE THAT CARRIES CHECK TRAILERS IS READ BY EVERY READER THAT EVALUATES THEM",
-      not _t_unread71,
-      saw="%s — a trailer in a store nobody feeds to `rulecheck` is a claim that has never once "
-          "been tested, and nothing says so" % (", ".join(_t_unread71),))
+    check(f"the sweep found the stores that carry trailers: {_t_stores71}",
+          bool(_t_stores71),
+          saw="no store on disk carries a `**Check:**` trailer — this check is measuring nothing")
+    check("EVERY STORE THAT CARRIES CHECK TRAILERS IS READ BY EVERY READER THAT EVALUATES THEM",
+          not _t_unread71,
+          saw="%s — a trailer in a store nobody feeds to `rulecheck` is a claim that has never once "
+              "been tested, and nothing says so" % (", ".join(_t_unread71),))
 
-# --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
-# file, so the check reports `unverifiable` forever — indistinguishable, to anyone skimming, from a
-# check that simply has nothing to look at yet. Six of eight were in that state and had been since
-# they were written.
-_t_dead71 = []
-for _t_title71, _t_text71 in (_mem71.rules_with_titles(_t_repo71)
-                              + _mem71.skills_with_titles(_t_repo71)):
-    for _t_mode71, _t_pat71, _t_glob71, _t_every71 in _rc71.parse(_t_text71):
-        _t_target71 = _t_repo71 / _t_glob71
-        if _t_target71.is_dir():
-            _t_dead71.append(f"{_t_title71[:40]}: `{_t_glob71}` is a directory")
+    # --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
+    # file, so the check reports `unverifiable` forever — indistinguishable, to anyone skimming, from a
+    # check that simply has nothing to look at yet. Six of eight were in that state and had been since
+    # they were written.
+    _t_dead71 = []
+    for _t_title71, _t_text71 in (_mem71.rules_with_titles(_t_repo71)
+                                  + _mem71.skills_with_titles(_t_repo71)):
+        for _t_mode71, _t_pat71, _t_glob71, _t_every71 in _rc71.parse(_t_text71):
+            _t_target71 = _t_repo71 / _t_glob71
+            if _t_target71.is_dir():
+                _t_dead71.append(f"{_t_title71[:40]}: `{_t_glob71}` is a directory")
 
-check("...and no trailer names a DIRECTORY where the grammar wants a file glob",
-      not _t_dead71,
-      saw="%s — matches no file, so it reports `unverifiable` for ever and reads as 'nothing to "
-          "check yet' rather than as a broken claim" % ("; ".join(_t_dead71[:5]),))
+    check("...and no trailer names a DIRECTORY where the grammar wants a file glob",
+          not _t_dead71,
+          saw="%s — matches no file, so it reports `unverifiable` for ever and reads as 'nothing to "
+              "check yet' rather than as a broken claim" % ("; ".join(_t_dead71[:5]),))
 
-# --- 3. The trailers that exist actually pass right now. A grammar wired to a store whose every
-# claim is broken is worse than not wiring it: the line it prints becomes noise people skip.
-_t_results71 = _rc71.run(_t_repo71, _mem71.skills_with_titles(_t_repo71))
-_t_bad71 = [(t, s, d) for t, s, d in _t_results71 if s not in ("holds",)]
-check(f"...and this repository's own skill trailers hold: {len(_t_results71)} evaluated",
-      _t_results71 and not _t_bad71,
-      saw="%d evaluated, %s" % (len(_t_results71),
-                                "; ".join(f"{t[:30]} {s}: {d[:60]}" for t, s, d in _t_bad71[:4])
-                                or "none ran at all"))
-_sys71.path.remove(str(ROOT / "lib"))
+    # --- 3. The trailers that exist actually pass right now. A grammar wired to a store whose every
+    # claim is broken is worse than not wiring it: the line it prints becomes noise people skip.
+    _t_results71 = _rc71.run(_t_repo71, _mem71.skills_with_titles(_t_repo71))
+    _t_bad71 = [(t, s, d) for t, s, d in _t_results71 if s not in ("holds",)]
+    check(f"...and this repository's own skill trailers hold: {len(_t_results71)} evaluated",
+          _t_results71 and not _t_bad71,
+          saw="%d evaluated, %s" % (len(_t_results71),
+                                    "; ".join(f"{t[:30]} {s}: {d[:60]}" for t, s, d in _t_bad71[:4])
+                                    or "none ran at all"))
+    _sys71.path.remove(str(ROOT / "lib"))
 # ---- 72_the_calibration_measures_the_artefacts_its_own_table_quotes.py
 # ------------- a published table of numbers, and the script built to reproduce it measured none of it
 # 🐛 [2026-09-10] `lib/tokens.py`'s docstring is the published justification for its per-script
@@ -30517,16 +30682,20 @@ else:
           saw="%s quoted in tokens.py's own justification and absent from the script built to "
               "reproduce it" % (", ".join(_t_gap72),))
 
-    # ...and the rows resolve against a real repository rather than merely being declared.
-    _t_live72 = _t_c72.artefact_samples(ROOT.parent.parent)
-    check(f"...and they resolve here: {sorted(_t_live72)}",
-          len(_t_live72) >= 4,
-          saw="%d row(s) resolved — a declaration that reads nothing measures nothing"
-              % len(_t_live72))
-    check("...with the two halves of MAP.md kept apart, which is how the table quotes them",
-          "## Full Detail" not in _t_live72.get("map_quick_index", "")
-          and _t_live72.get("map_full_detail", "x")[:14] == "## Full Detail",
-          saw="quick index leaked into full detail, so both rows measure the same thing")
+    # ...and the rows resolve against a real repository rather than merely being declared. That
+    # needs a repository with a workspace in it: in a clone, `artefact_samples` finds one synthetic
+    # row and the count assertion below fails for the environment rather than for the code.
+    _t_ws72 = owner_workspace("the calibration's live-artefact rows")
+    if _t_ws72 is not None:
+        _t_live72 = _t_c72.artefact_samples(_t_ws72.parent)
+        check(f"...and they resolve here: {sorted(_t_live72)}",
+              len(_t_live72) >= 4,
+              saw="%d row(s) resolved — a declaration that reads nothing measures nothing"
+                  % len(_t_live72))
+        check("...with the two halves of MAP.md kept apart, which is how the table quotes them",
+              "## Full Detail" not in _t_live72.get("map_quick_index", "")
+              and _t_live72.get("map_full_detail", "x")[:14] == "## Full Detail",
+              saw="quick index leaked into full detail, so both rows measure the same thing")
 
     # A missing artefact must be SKIPPED, never substituted. A row measured against a stand-in
     # prints a number under a name that says "your MAP.md", which is worse than an absent row.

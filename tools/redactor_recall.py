@@ -20,6 +20,7 @@ was not IN the published repository -- it lived only in the workspace chamnan is
 numbers a reader is asked to trust, credited to a tool they cannot run. It ships here now, and it
 locates `lib/` from its own position so it works from a clean clone with nothing installed.
 """
+import re
 import sys
 from pathlib import Path
 
@@ -232,17 +233,81 @@ NEGATIVES = [
 ]
 
 
+# 🐛 [2026-09-11] One blended recall figure over sixty cases, which is the shape of number
+# this file exists to make checkable and was not. Raised by a reader (`peterbuildssecure`, dev.to,
+# 2026-09-09): *"a pipeline can hit strong recall on straightforward single-shot payloads while
+# systematically missing anything that requires chaining, and a blended recall number hides that
+# completely."*
+#
+# It had already happened here. A credential sitting under a CSV column header leaked in EVERY
+# language, English included, while the aggregate never moved — a strong prefixed-token class
+# carrying a broken column class on its back. The FIX for that shipped in 1.25; the MEASUREMENT that
+# would have caught it did not, so the same blindness was still available to the next weak class.
+#
+# Classified by the SHAPE OF THE TEXT, never by whether the secret carries a vendor prefix. Deriving
+# the class from the redactor's own prefix list would be circular: a prefix the redactor forgot
+# would silently move its case from the easy class to the hard one and the two rates would both
+# drift to meet in the middle. Structure is decided by the corpus, not by the thing under test.
+_COLUMNAR = re.compile(r"(?m)^[^\n]*[,\t][^\n]*[,\t]")
+_ASSIGNED = re.compile(r"(?m)^\s*[\w.\-]+\s*[=:]\s*\S")
+
+
+def shape_of(text):
+    """Which retrieval problem this case poses, from the text alone.
+
+    The classes are the ways a credential can be findable: named by an assignment, positioned under
+    a column header, described by surrounding prose, or standing on its own with nothing but its own
+    characters to go on. A redactor can be excellent at one and blind in another, and that is
+    exactly what a single averaged figure conceals.
+    """
+    if _COLUMNAR.search(text):
+        return "column"
+    if _ASSIGNED.search(text):
+        return "assignment"
+    return "prose" if len(text.split()) >= 4 else "bare"
+
+
+# 🐛 [2026-09-11] Stratifying the corpus by shape found that the `column` class had ZERO
+# cases in it. The published recall figure — quoted in the release notes and in outreach — was
+# computed over a corpus that did not sample the one class that actually leaked: a credential under
+# a CSV column header, which escaped in every language including English until 1.25 fixed it. The
+# fix has checks in the suite; the NUMBER this file publishes was still blind to the class.
+#
+# You cannot see a weak class you do not sample, which is the whole of the reader's argument and is
+# why an empty class is worse than a low one — it does not even appear in the breakdown as a zero.
+#
+# DERIVED from `redact._HEADER_LANGS`, the list the redactor itself claims to cover, so a language
+# added there is measured by existing rather than by somebody remembering to add a case here. That
+# is the same rule this repository states as "assert the population, not the instance", and a
+# hand-written copy of a 16-language list is exactly how the two drift apart.
+#
+# The secret is built from a scheme at runtime rather than typed as a literal: a credential-shaped
+# constant in a committed file is how this workspace has tripped its own publication guard before.
+_COLUMN_SECRET = "Zx" + "7" * 6 + "qW"
+COLUMNS = [
+    (f"{_lang} column header `{_word}`",
+     f"name,email,{_word}\nalice,alice@example.test,{_COLUMN_SECRET}",
+     _COLUMN_SECRET)
+    for _lang, _words in sorted(redact._HEADER_LANGS.items())
+    for _word in _words
+]
+
 def main():
     verbose = "--verbose" in sys.argv
     caught, missed = [], []
-    for label, text, secret in POSITIVES + PERSONAL:
-        (caught if secret not in redact.scrub(text) else missed).append(label)
+    by_shape = {}
+    for label, text, secret in POSITIVES + COLUMNS + PERSONAL:
+        hit = secret not in redact.scrub(text)
+        (caught if hit else missed).append(label)
+        kind = "personal" if (label, text, secret) in PERSONAL else shape_of(text)
+        seen, ok = by_shape.get(kind, (0, 0))
+        by_shape[kind] = (seen + 1, ok + (1 if hit else 0))
 
     clean, eaten = [], []
     for label, text in NEGATIVES:
         (eaten if redact.PLACEHOLDER in redact.scrub(text) else clean).append(label)
 
-    recall = len(caught) / (len(POSITIVES) + len(PERSONAL)) * 100
+    recall = len(caught) / (len(POSITIVES) + len(COLUMNS) + len(PERSONAL)) * 100
     # Precision here is over this corpus: of everything redacted, how much deserved it. A labelled
     # corpus cannot give the precision a repo-wide scan would; it can give the pair honestly.
     flagged = len(caught) + len(eaten)
@@ -251,10 +316,16 @@ def main():
     # 🐛 The denominator was `len(POSITIVES)` while the numerator counted the personal-data corpus
     # too, so the line read "48/42" — a rate over 100% printed as if it were a result. A number
     # this file exists to publish must be arithmetic somebody can check.
-    print(f"recall     {recall:5.1f}%   ({len(caught)}/{len(POSITIVES) + len(PERSONAL)} "
+    print(f"recall     {recall:5.1f}%   ({len(caught)}/{len(POSITIVES) + len(COLUMNS) + len(PERSONAL)} "
           f"secret and personal-data shapes redacted)")
     print(f"precision  {precision:5.1f}%   ({len(caught)}/{flagged} redactions deserved)")
     print(f"           {len(eaten)}/{len(NEGATIVES)} ordinary strings damaged")
+
+    # Every class with its own denominator, weakest first, because the weakest is the whole reason
+    # this breakdown exists and a reader should not have to scan for it.
+    print("\nby the retrieval problem each case poses — the blended figure above hides these:")
+    for kind, (seen, ok) in sorted(by_shape.items(), key=lambda kv: kv[1][1] / max(kv[1][0], 1)):
+        print(f"  {kind:11s} {ok / seen * 100:5.1f}%   ({ok}/{seen})")
 
     if missed:
         print(f"\nnot caught ({len(missed)}) — no prefix and no keyword, so only entropy would "

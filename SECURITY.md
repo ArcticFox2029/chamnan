@@ -39,7 +39,9 @@ along with the link chamnan breaks.
 Everything chamnan is about to write or inject passes a credential filter first. Measured against a
 labelled corpus of 60 secret and personal-data shapes and 48 ordinary strings that must survive:
 
-**98.3% recall (59 of 60) · 100% precision.**
+**99.0% recall (95 of 96) · 100% precision — and 93.8% in its weakest class (15 of 16).**
+
+The pair is deliberate. A blended figure hides a weak class: this corpus gained 36 column-header cases on 2026-09-11 and the headline ROSE, because the class it had been missing turned out to pass. Read the weakest number, not the average.
 
 That is not 100% recall, and the missed shape is named in the README rather than hidden. Two limits
 follow from it, and both are worth knowing before you point this at a private repository:

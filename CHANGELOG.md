@@ -51,7 +51,8 @@ rather than a silent miss.
 
 `chamnan-guard` reads the staged diff and names files that look like they carry a credential.
 
-**It warns; it does not block.** Published recall is 98.2% on a synthetic corpus and it verifies
+**It warns; it does not block.** Published recall is 99.0% on a synthetic corpus, and 93.8% in its
+weakest class, and it verifies
 nothing against a live service, so a false positive that stops every commit is worse than the leak
 it guards — the person turns it off, and then nothing is watching. `chamnan-guard --strict` exits 1
 for anyone who wants the gate.
