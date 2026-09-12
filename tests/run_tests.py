@@ -10153,12 +10153,14 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # defaults. The README's list went from ten paths to eleven in the same commit, which is the event
 # this check exists to force.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      3 <= _gitcalls <= 21)
+      _gitcalls == 21)
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
-      "was **false**" in _rdme and "read-only" in _rdme.split("| **Git** |")[1][:900])
+      "was **false**" in _rdme
+      and "Twenty-one call sites serve twelve read-only paths"
+          in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
 # SKIPPED_TOO_LARGE and SKIPPED_BINARY were recorded with a comment saying "Recorded, not merely
@@ -12159,8 +12161,23 @@ check("A CANDIDATE'S STEPS CANNOT OPEN A HEADING IN THE FILE THEY ARE WRITTEN TO
       not any(ln.startswith("#") for ln in _cand_out.splitlines()[1:]))
 check("...and carry no control character into a file that gets committed",
       not any(c in _cand_out for c in ("\x1b", "\x07", "\u202e", "\r")))
-check("...and the record keeps its five fields, so folding did not eat the structure",
-      len([ln for ln in _cand_out.splitlines() if ln.startswith("**")]) == 4)
+# 🐛 [2026-09-12] This said "five fields" in its name and asserted `== 4`, and the two had disagreed
+# since it was written. `Status:` was added to the record today and the count became 5, so a correct
+# change failed a check whose own title said the new number was right. A literal count is a claim
+# about the renderer restated by hand; read it off the renderer instead, and this can only fail when
+# folding really has eaten a field.
+# Scoped to `render()`. Read over the whole module it also catches `set_provenance` and
+# `set_status`, which rewrite one line each and are not fields of a new record — the first draft of
+# this returned seven labels for a five-field record.
+_cand_src = (ROOT / "lib" / "candidates.py").read_text(encoding="utf-8")
+_cand_render = _cand_src[_cand_src.index("def render("):]
+_cand_render = _cand_render[:_cand_render.index("\ndef ")]
+_cand_labels = re.findall(r'f"\*\*([A-Za-z ]+):\*\*', _cand_render)
+_cand_seen = [ln.split(":**")[0].lstrip("*") for ln in _cand_out.splitlines()
+              if ln.startswith("**")]
+check("...and the record keeps every field the renderer emits (%s), so folding did not eat the "
+      "structure" % ", ".join(_cand_labels),
+      bool(_cand_labels) and _cand_seen == _cand_labels)
 
 # 🐛 The SubagentStart pointer carried NO fence and no framing line, while the session-start block
 # has had both since 1.9 — so a rule title landed in the same sentence as chamnan's own instruction
@@ -24202,8 +24219,9 @@ try:
     check("A SCRIPT DROPPED INTO tools/ IS REPORTED AS UNREPORTABLE, NOT IGNORED",
           "1 of 1 file(s) in tools/ are not registered" in _r1.stdout
           and "dropped_in.py" in _r1.stdout)
+    _r1_usage = _r1.stdout.split("Usage", 1)[-1]
     check("...and package scaffolding is not counted as a tool nobody promoted",
-          "__init__.py" not in _r1.stdout)
+          "__init__.py" not in _r1_usage)
 finally:
     _rmtree(_treg, ignore_errors=True)
 
@@ -25841,6 +25859,268 @@ try:
           _ss.rebuild_hook_installed(_d) is (ws.git_hook_state(_d, _tmpl) == "installed"))
 finally:
     shutil.rmtree(_d, ignore_errors=True)
+# ---- 100_evidence_and_review_status_are_separate.py
+# --------------------------- what was observed survives the adjective a review awards afterwards
+# 🎯 [2026-09-12, R3 RQ8] A candidate carried `Observed:` but encoded review state inside
+# `Provenance: ai-confirmed`, so a reader could not ask independently what the detector observed
+# and what a later review concluded. New files carry explicit Status; old provenance-only files
+# remain promotable. This drives creation and confirmation rather than asserting source spelling.
+import subprocess as _sp100
+import sys as _sys100
+import tempfile as _tmp100
+from pathlib import Path as _Path100
+
+import candidates as _cd100
+import workspace as _ws100
+
+_t_root100 = _Path100(_tmp100.mkdtemp(prefix="chamnan-evidence100-"))
+(_t_root100 / ".git").mkdir()
+_ws100.ensure(_t_root100)
+_t_sequences100 = (
+    ["git add", "git commit", "git push"],
+    ["python3 check.py", "python3 mutation-check.py"],
+)
+for _t_index100, _t_sequence100 in enumerate(_t_sequences100, 3):
+    _cd100.upsert(_t_root100, _t_sequence100, _t_index100, "2026-09-12",
+                  provenance="ai-inferred")
+_t_entries100 = _cd100.entries(_t_root100)
+check("the evidence sweep found every candidate fixture: %d" % len(_t_entries100),
+      len(_t_entries100) == len(_t_sequences100) and len(_t_entries100) >= 2,
+      saw="a sweep that found nothing would make every lineage assertion below vacuous")
+
+_t_fresh100 = [_cd100.fields_of(path) for path in _t_entries100]
+check("EVERY NEW CANDIDATE RECORDS OBSERVATION, REVIEW STATUS AND PROVENANCE SEPARATELY",
+      all(fields.get("observed") in ("3", "4")
+          and fields.get("status") == "observed"
+          and fields.get("provenance") == "ai-inferred" for fields in _t_fresh100),
+      saw=repr(_t_fresh100))
+
+_t_before100 = _cd100.fields_of(_t_entries100[0])
+_t_cmd100 = ROOT / "bin" / "chamnan-candidates"
+_t_confirm100 = _sp100.run(
+    [_sys100.executable, str(_t_cmd100), "confirm", "1"], cwd=str(_t_root100),
+    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+_t_after100 = _cd100.fields_of(_t_entries100[0])
+check("CONFIRM CHANGES THE AWARDED STATUS WITHOUT CHANGING WHAT WAS OBSERVED",
+      _t_confirm100.returncode == 0
+      and _t_after100.get("status") == "confirmed"
+      and _t_after100.get("observed") == _t_before100.get("observed")
+      and _t_after100.get("last seen") == _t_before100.get("last seen"),
+      saw="before=%r after=%r stderr=%r" %
+          (_t_before100, _t_after100, _t_confirm100.stderr))
+
+# An automatic upsert may arrive after human review. It refreshes the observation but must not
+# silently downgrade the independent decision back to observed.
+_t_confirmed_sequence100 = [s.strip() for s in _t_after100["sequence"].split(",")]
+_cd100.upsert(_t_root100, _t_confirmed_sequence100, 9, "2026-09-13",
+              provenance="ai-inferred")
+_t_refreshed100 = _cd100.fields_of(_t_entries100[0])
+check("...and later detector evidence refreshes the count without undoing confirmation",
+      _t_refreshed100.get("observed") == "9"
+      and _t_refreshed100.get("status") == "confirmed",
+      saw=repr(_t_refreshed100))
+
+_t_legacy100 = _cd100.directory(_t_root100) / "legacy-confirmed.md"
+_t_legacy100.write_text(
+    "# Legacy\n\n**Sequence:** make, test\n**Observed:** 2\n"
+    "**Last seen:** 2026-09-01\n**Provenance:** ai-confirmed\n", encoding="utf-8")
+check("A LEGACY PROVENANCE-ONLY CANDIDATE STILL READS AS CONFIRMED",
+      _cd100.status_of(_cd100.fields_of(_t_legacy100)) == "confirmed",
+      saw=repr(_cd100.fields_of(_t_legacy100)))
+
+_t_promote100 = _sp100.run(
+    [_sys100.executable, str(_t_cmd100), "promote", "legacy-confirmed"], cwd=str(_t_root100),
+    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+check("...and the old file is not stranded by the new promotion gate",
+      _t_promote100.returncode == 0 and "Suggested" in _t_promote100.stdout,
+      saw="exit=%r stdout=%r stderr=%r" %
+          (_t_promote100.returncode, _t_promote100.stdout, _t_promote100.stderr))
+
+try:
+    _cd100.set_status(_t_entries100[1], "self-certified")
+    _t_bad_status100 = "accepted"
+except ValueError:
+    _t_bad_status100 = "refused"
+check("...and a report cannot invent its own status adjective",
+      _t_bad_status100 == "refused", saw=_t_bad_status100)
+
+shutil.rmtree(_t_root100, ignore_errors=True)
+# ---- 100_untracked_workspace_state_is_named_once.py
+# ----------------------- written here is not durable until the repository carries it somewhere
+# 🎯 [2026-09-12, R2 RQ6] One issue and one discussion independently showed users unsure whether
+# `.chamnan/` belongs in version control, while no runtime surface said when durable workspace files
+# were untracked. Drive the real SessionStart hook in a disposable git repository: the path must be
+# exact, the advice must name only that path, and an unchanged state must not become a standing nag.
+import json as _json100
+import os as _os100
+import subprocess as _sp100
+import sys as _sys100
+import tempfile as _tmp100
+from pathlib import Path as _Path100
+
+import ledger as _ledger100
+import workspace as _ws100
+
+_t_hook100 = ROOT / "hooks" / "chamnan_session_start.py"
+_t_source100 = _t_hook100.read_text(encoding="utf-8")
+_t_sites100 = [line for line in _t_source100.splitlines()
+               if "ledger.persistence_reminder(" in line]
+check("the sweep found the SessionStart persistence surface: %d" % len(_t_sites100),
+      len(_t_sites100) == 2,
+      saw="%r — a sweep that found nothing makes every delivery assertion below vacuous"
+          % _t_sites100)
+
+_t_root100 = _Path100(_tmp100.mkdtemp(prefix="chamnan-persistence-reminder-"))
+_sp100.run(["git", "init", "-q", str(_t_root100)], check=True, capture_output=True, timeout=10)
+_sp100.run(["git", "-C", str(_t_root100), "config", "user.email", "check@example.invalid"],
+           check=True, capture_output=True, timeout=10)
+_sp100.run(["git", "-C", str(_t_root100), "config", "user.name", "Check 100"],
+           check=True, capture_output=True, timeout=10)
+_ws100.ensure(_t_root100)
+_sp100.run(["git", "-C", str(_t_root100), "add", ".chamnan"],
+           check=True, capture_output=True, timeout=10)
+_sp100.run(["git", "-C", str(_t_root100), "commit", "-qm", "fixture"],
+           check=True, capture_output=True, timeout=10)
+
+_t_first_path100 = _t_root100 / ".chamnan" / "memory" / "lessons" / "needs-commit.md"
+_t_first_path100.write_text("# Needs commit\n", encoding="utf-8")
+_t_state100 = _ledger100.persistence(_t_root100)
+check("the fixture produced a non-empty durable population with exactly one untracked member",
+      bool(_t_state100) and len(_t_state100["durable"]) >= 4
+      and _t_state100["untracked"] == [".chamnan/memory/lessons/needs-commit.md"],
+      saw=repr(_t_state100))
+
+_t_payload100 = _json100.dumps({"cwd": str(_t_root100), "session_id": "check-100",
+                                "source": "startup"})
+_t_env100 = dict(_os100.environ)
+_t_first100 = _sp100.run([_sys100.executable, str(_t_hook100)], input=_t_payload100,
+                         capture_output=True, text=True, cwd=str(_t_root100), env=_t_env100,
+                         timeout=60)
+check("THE REAL SESSIONSTART NAMES THE EXACT UNTRACKED PATH AND NARROW GIT ADD",
+      _t_first100.returncode == 0
+      and "`.chamnan/memory/lessons/needs-commit.md`" in _t_first100.stdout
+      and ("git add -- .chamnan/.version "
+           ".chamnan/memory/lessons/needs-commit.md") in _t_first100.stdout,
+      saw="exit=%r stdout=%r stderr=%r" %
+          (_t_first100.returncode, _t_first100.stdout[:700], _t_first100.stderr[:300]))
+_t_reminder_lines100 = [line for line in _t_first100.stdout.splitlines()
+                        if "durable chamnan files are not tracked" in line]
+check("...and the heading-less reminder fits its declared undroppable-content ceiling",
+      len(_t_reminder_lines100) == 1
+      and len(_t_reminder_lines100[0].encode()) <= _ledger100.PERSISTENCE_REMINDER_BYTES
+      and 100 <= _ledger100.PERSISTENCE_REMINDER_BYTES <= 600,
+      saw="lines=%r cap=%r" %
+          (_t_reminder_lines100, _ledger100.PERSISTENCE_REMINDER_BYTES))
+
+_t_second100 = _sp100.run([_sys100.executable, str(_t_hook100)], input=_t_payload100,
+                          capture_output=True, text=True, cwd=str(_t_root100), env=_t_env100,
+                          timeout=60)
+check("AN UNCHANGED UNTRACKED SET IS NOT REPEATED ON THE NEXT SESSIONSTART",
+      "durable chamnan files are not tracked" not in _t_second100.stdout,
+      saw=_t_second100.stdout[:700])
+
+_t_second_path100 = _t_root100 / ".chamnan" / "memory" / "rules" / "another.md"
+_t_second_path100.write_text("# Another\n", encoding="utf-8")
+_t_transcript100 = _t_root100 / "resume.jsonl"
+_t_resume_id100 = "check-100-resume"
+_t_transcript100.write_text("[repo:%s]\n" % _ws100.nonce_for(_t_resume_id100), encoding="utf-8")
+_t_resume_payload100 = _json100.dumps({
+    "cwd": str(_t_root100), "session_id": _t_resume_id100, "source": "resume",
+    "transcript_path": str(_t_transcript100),
+})
+_t_changed100 = _sp100.run([_sys100.executable, str(_t_hook100)], input=_t_resume_payload100,
+                           capture_output=True, text=True, cwd=str(_t_root100), env=_t_env100,
+                           timeout=60)
+check("A CHANGED SET IS NAMED AGAIN ON THE EARLY-RESUME PATH, WITH BOTH CURRENT PATHS",
+      ".chamnan/memory/lessons/needs-commit.md" in _t_changed100.stdout
+      and ".chamnan/memory/rules/another.md" in _t_changed100.stdout,
+      saw=_t_changed100.stdout[:900])
+
+shutil.rmtree(_t_root100, ignore_errors=True)
+# ---- 101_report_exposes_the_persistence_funnel.py
+# ----------------------- a reminder being printed is not evidence that repository state survived
+# 🎯 [2026-09-12, R2 RQ6] The proposed outcome is a funnel — written, tracked, committed, fresh
+# clone — and the SessionStart cue can observe only the middle. Drive the on-demand report against
+# a disposable repository with one file in each relevant state so it cannot flatten "tracked" and
+# "current bytes committed" into the same claim.
+import os as _os101
+import subprocess as _sp101
+import sys as _sys101
+import tempfile as _tmp101
+from pathlib import Path as _Path101
+
+import ledger as _ledger101
+import workspace as _ws101
+
+_t_report101 = ROOT / "bin" / "chamnan-report"
+_t_source101 = _t_report101.read_text(encoding="utf-8")
+_t_sites101 = [line for line in _t_source101.splitlines()
+               if line.strip() == "print_persistence(root)"]
+check("the sweep found the report persistence surface: %d" % len(_t_sites101),
+      len(_t_sites101) == 1,
+      saw="%r — no call means the helper can be correct while users never see it" % _t_sites101)
+
+_t_root101 = _Path101(_tmp101.mkdtemp(prefix="chamnan-persistence-report-"))
+_sp101.run(["git", "init", "-q", str(_t_root101)], check=True, capture_output=True, timeout=10)
+_sp101.run(["git", "-C", str(_t_root101), "config", "user.email", "check@example.invalid"],
+           check=True, capture_output=True, timeout=10)
+_sp101.run(["git", "-C", str(_t_root101), "config", "user.name", "Check 101"],
+           check=True, capture_output=True, timeout=10)
+_ws101.ensure(_t_root101)
+_sp101.run(["git", "-C", str(_t_root101), "add", ".chamnan"],
+           check=True, capture_output=True, timeout=10)
+_sp101.run(["git", "-C", str(_t_root101), "commit", "-qm", "fixture"],
+           check=True, capture_output=True, timeout=10)
+
+_t_changed_path101 = _t_root101 / ".chamnan" / "config.json"
+_t_changed_path101.write_text(_t_changed_path101.read_text(encoding="utf-8") + "\n",
+                              encoding="utf-8")
+_t_new_path101 = _t_root101 / ".chamnan" / "memory" / "lessons" / "untracked.md"
+_t_new_path101.write_text("# Untracked\n", encoding="utf-8")
+_t_state101 = _ledger101.persistence(_t_root101)
+check("the fixture exercised committed, changed-tracked, and untracked durable states",
+      bool(_t_state101) and _t_state101["committed"]
+      and ".chamnan/config.json" in _t_state101["uncommitted"]
+      and _t_state101["untracked"] == [".chamnan/memory/lessons/untracked.md"],
+      saw=repr(_t_state101))
+
+_t_home101 = _t_root101 / "empty-home"
+_t_home101.mkdir()
+_t_env101 = dict(_os101.environ)
+_t_env101["HOME"] = str(_t_home101)
+_t_run101 = _sp101.run([_sys101.executable, str(_t_report101)], capture_output=True, text=True,
+                       cwd=str(_t_root101), env=_t_env101, timeout=60)
+_t_out101 = _t_run101.stdout
+check("THE REPORT SEPARATES TRACKED FILES FROM CURRENT BYTES THAT ARE COMMITTED",
+      _t_run101.returncode == 0 and "Repository persistence" in _t_out101
+      and ("%d of %d tracked" %
+           (len(_t_state101["tracked"]), len(_t_state101["durable"]))) in _t_out101
+      and ("%d of %d have their current bytes committed" %
+           (len(_t_state101["committed"]), len(_t_state101["durable"]))) in _t_out101,
+      saw="exit=%r output=%r stderr=%r" %
+          (_t_run101.returncode, _t_out101[:1200], _t_run101.stderr[:300]))
+check("...and it names every non-persisted path plus an exact staging command",
+      ".chamnan/config.json" in _t_out101
+      and ".chamnan/memory/lessons/untracked.md" in _t_out101
+      and "git add -- .chamnan/config.json .chamnan/memory/lessons/untracked.md" in _t_out101
+      and "a later commit is what makes those current bytes survive a fresh clone" in _t_out101,
+      saw=_t_out101[:1600])
+
+_t_clone_parent101 = _Path101(_tmp101.mkdtemp(prefix="chamnan-persistence-clone-"))
+_t_clone101 = _t_clone_parent101 / "clone"
+_sp101.run(["git", "clone", "-q", str(_t_root101), str(_t_clone101)],
+           check=True, capture_output=True, timeout=30)
+check("A FRESH CLONE GETS THE COMMITTED COPY, NOT EITHER CURRENT UNCOMMITTED COPY",
+      not (_t_clone101 / ".chamnan" / "memory" / "lessons" / "untracked.md").exists()
+      and (_t_clone101 / ".chamnan" / "config.json").read_bytes()
+      != _t_changed_path101.read_bytes(),
+      saw="untracked exists=%r config bytes equal=%r" %
+          ((_t_clone101 / ".chamnan" / "memory" / "lessons" / "untracked.md").exists(),
+           (_t_clone101 / ".chamnan" / "config.json").read_bytes()
+           == _t_changed_path101.read_bytes()))
+
+shutil.rmtree(_t_root101, ignore_errors=True)
+shutil.rmtree(_t_clone_parent101, ignore_errors=True)
 # ---- 10_offer_fatigue.py
 # 🐛 [2026-09-09] The hook-install OFFER fired on every qualifying session forever, three lines
 # below a comment saying a repeated warning "trains the reader to skip the line". The guard for
@@ -33574,6 +33854,138 @@ if _t_has_preview98:
     check("...and the uncontrolled boundary leads the controlled bytes",
           _t_preview98.index("NOT CONTROLLED") < _t_preview98.index("CONTROLLED"),
           saw=_t_preview98[:500])
+# ---- 99_structured_reset_discovery_keeps_the_manual_path.py
+# ---------------- a documented reset is an offered source, not a replacement for a person's time
+# 🎯 [2026-09-12, R2 RQ5] Claude status payloads expose `rate_limits.*.resets_at`; Codex's
+# `account/rateLimits/read` exposes `rateLimits.*.resetsAt`. Each vendor also has a live N=1 report
+# of the field being absent or misleading, so this feeds recorded JSON shapes and asserts both
+# directions: structured future values work, while absent/malformed/past values return to the exact
+# manual prompt the command already had. The input is faked; the assertion is not.
+import contextlib as _cl99
+import importlib.machinery as _ilm99
+import importlib.util as _ilu99
+import io as _io99
+import json as _js99
+import tempfile as _tmp99
+from datetime import datetime as _dt99
+from pathlib import Path as _Path99
+
+import schedule as _sc99
+
+_t_now99 = _dt99(2026, 9, 12, 20, 0)
+_t_claude99 = {"rate_limits": {
+    "five_hour": {"used_percentage": 100, "resets_at": _t_now99.timestamp() + 3600},
+    "seven_day": {"used_percentage": 92, "resets_at": _t_now99.timestamp() + 7200},
+    "missing": {"used_percentage": 40},
+}}
+_t_codex99 = {"id": 7, "result": {"rateLimits": {
+    "primary": {"usedPercent": 100, "resetsAt": _t_now99.timestamp() + 1800},
+    "secondary": {"usedPercent": 80, "resetsAt": _t_now99.timestamp() + 5400},
+}}, "unrelated": {"resetsAt": _t_now99.timestamp() + 10}}
+
+_t_observed99 = (_sc99.reset_observations(_t_claude99, now=_t_now99)
+                 + _sc99.reset_observations(_t_codex99, now=_t_now99))
+check("the reset sweep found both recorded vendor shapes: %d observation(s)" % len(_t_observed99),
+      len(_t_observed99) == 4
+      and {item["provider"] for item in _t_observed99} == {"claude", "codex"},
+      saw="%r — a sweep that found nothing makes every reset assertion below vacuous"
+          % (_t_observed99,))
+
+_t_first99, _t_first_obs99 = _sc99.reset_time(_t_codex99, now=_t_now99)
+check("THE EARLIEST STRUCTURED FUTURE RESET IS OFFERED WITH THE EXISTING SAFETY BUFFER",
+      _t_first99 == _dt99(2026, 9, 12, 20, 32)
+      and _t_first_obs99["limit_kind"] == "primary",
+      saw="time=%r observation=%r" % (_t_first99, _t_first_obs99))
+_t_named99, _t_named_obs99 = _sc99.reset_time(
+    _t_claude99, now=_t_now99, limit_kind="seven_day")
+check("...and a named window selects that window rather than silently taking another",
+      _t_named99 == _dt99(2026, 9, 12, 22, 2)
+      and _t_named_obs99["limit_kind"] == "seven_day",
+      saw="time=%r observation=%r" % (_t_named99, _t_named_obs99))
+
+_t_bad_shapes99 = (
+    {}, {"rate_limits": {}}, {"rate_limits": {"five_hour": {"resets_at": None}}},
+    {"rate_limits": {"five_hour": {"resets_at": _t_now99.timestamp() - 1}}},
+    {"rateLimits": {"primary": {"resetsAt": "not-a-time"}}}, [], None,
+)
+_t_bad_answers99 = [_sc99.reset_time(value, now=_t_now99) for value in _t_bad_shapes99]
+check("MISSING, NULL, MALFORMED AND PAST RESET FIELDS PRODUCE NO GUESSED APPOINTMENT",
+      all(answer == (None, None) for answer in _t_bad_answers99),
+      saw=repr(_t_bad_answers99))
+
+# Drive the command surface with a recorded payload, while replacing only the detached waiter with
+# a pid fixture. The record write is real, so this proves the discovery survives into scheduled.json.
+_t_cmd_path99 = ROOT / "bin" / "chamnan-schedule"
+_t_spec99 = _ilu99.spec_from_loader(
+    "chamnan_schedule_99", _ilm99.SourceFileLoader("chamnan_schedule_99", str(_t_cmd_path99)))
+_t_cmd99 = _ilu99.module_from_spec(_t_spec99)
+_t_spec99.loader.exec_module(_t_cmd99)
+_t_cmd99.sched.spawn = lambda _root, _rid, _prefix=(): 4242
+_t_cmd99.sched.whose_session = lambda _root: ("codex", "running")
+_t_cmd99.sched.agent_process = lambda: 0
+
+_t_root99 = _Path99(_tmp99.mkdtemp(prefix="chamnan-reset99-"))
+(_t_root99 / ".chamnan" / "state").mkdir(parents=True)
+_t_payload_path99 = _t_root99 / "codex-response.json"
+_t_payload_path99.write_text(_js99.dumps(_t_codex99), encoding="utf-8")
+_t_out99, _t_err99 = _io99.StringIO(), _io99.StringIO()
+with _cl99.redirect_stdout(_t_out99), _cl99.redirect_stderr(_t_err99):
+    _t_code99 = _t_cmd99._set(
+        ["set", "--reset-json", str(_t_payload_path99), "--reset-window", "primary"], _t_root99)
+_t_stored99 = _t_cmd99.sched.read(_t_root99)
+check("THE COMMAND RECORDS WHICH STRUCTURED RESET PRODUCED THE APPOINTMENT",
+      _t_code99 == 0 and len(_t_stored99) == 1
+      and _t_stored99[0].get("reset_provider") == "codex"
+      and _t_stored99[0].get("reset_kind") == "primary"
+      and _t_stored99[0].get("reset_source") == "account/rateLimits/read",
+      saw="exit=%r rows=%r stderr=%r" % (_t_code99, _t_stored99, _t_err99.getvalue()))
+
+_t_empty_path99 = _t_root99 / "missing-fields.json"
+_t_empty_path99.write_text("{}", encoding="utf-8")
+_t_empty_err99 = _io99.StringIO()
+with _cl99.redirect_stderr(_t_empty_err99):
+    _t_empty_code99 = _t_cmd99._set(
+        ["set", "--reset-json", str(_t_empty_path99)], _t_root99)
+_t_empty_message99 = _t_empty_err99.getvalue().strip()
+check("A READABLE RESET FILE WITH NO USABLE RESET SAYS BOTH THINGS",
+      _t_empty_code99 == 2
+      and _t_empty_message99
+      == ("chamnan: --reset-json read %r, but it carries no usable future reset. A typed "
+          "duration like 2h31m, 45m or 1d is still accepted." % str(_t_empty_path99)),
+      saw="exit=%r message=%r" % (_t_empty_code99, _t_empty_message99))
+
+_t_unreadable_path99 = _t_root99 / "does-not-exist.json"
+_t_unreadable_err99 = _io99.StringIO()
+with _cl99.redirect_stderr(_t_unreadable_err99):
+    _t_unreadable_code99 = _t_cmd99._set(
+        ["set", "--reset-json", str(_t_unreadable_path99)], _t_root99)
+_t_unreadable_message99 = _t_unreadable_err99.getvalue().strip()
+check("AN UNREADABLE RESET FILE SAYS SO AND NAMES THE PATH",
+      _t_unreadable_code99 == 2
+      and _t_unreadable_message99
+      == ("chamnan: --reset-json could not read %r. Give a typed duration instead, like "
+          "2h31m, 45m or 1d." % str(_t_unreadable_path99)),
+      saw="exit=%r message=%r" % (_t_unreadable_code99, _t_unreadable_message99))
+
+_t_manual_err99 = _io99.StringIO()
+with _cl99.redirect_stderr(_t_manual_err99):
+    _t_manual_code99 = _t_cmd99._set(["set"], _t_root99)
+_t_manual_message99 = _t_manual_err99.getvalue().strip()
+check("THE NO-FLAG PATH KEEPS THE EXISTING MANUAL INSTRUCTION BYTE-FOR-BYTE",
+      _t_manual_code99 == 2
+      and _t_manual_message99
+      == "chamnan: give a duration like 2h31m, 45m or 1d, or a clock time like 11:10pm.",
+      saw="exit=%r message=%r" % (_t_manual_code99, _t_manual_message99))
+
+_t_fallback_messages99 = {
+    _t_empty_message99, _t_unreadable_message99, _t_manual_message99,
+}
+check("THE THREE FALLBACK SITUATIONS HAVE THREE DIFFERENT MESSAGES",
+      len(_t_fallback_messages99) == 3,
+      saw="%d distinct message(s): %r" % (len(_t_fallback_messages99),
+                                          sorted(_t_fallback_messages99)))
+
+shutil.rmtree(_t_root99, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 

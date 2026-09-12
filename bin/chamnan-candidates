@@ -6,7 +6,7 @@
 is the other half: looking at what accumulated, and deciding what to do with each one.
 
   chamnan-candidates                       list what is waiting (same as `list`, `--list`, `-l`)
-  chamnan-candidates confirm <id>          mark reviewed and worth keeping (Provenance -> ai-confirmed)
+  chamnan-candidates confirm <id>          mark its evidence reviewed (Status -> confirmed)
   chamnan-candidates reject <id>           delete it — not a routine worth keeping
   chamnan-candidates edit <id>             print the file's path, to open and adjust by hand
   chamnan-candidates promote <id>          suggest where a CONFIRMED candidate belongs, decide nothing
@@ -20,8 +20,9 @@ without `.md`. `demote` takes a TOOL's name instead — from `.chamnan/tools/`, 
 that suggested it (`chamnan-candidates demote deploy-check.sh`).
 
 **`confirm` does not promote anything into `skills/` or `tools/`.** It only records that a human
-looked at the candidate and thinks the routine is real — moving Provenance from `ai-inferred` to
-`ai-confirmed`. `promote` requires that step to have already happened; it refuses an unconfirmed
+looked at the candidate and thinks the routine is real — moving Status from `observed` to
+`confirmed`. Provenance stays visible beside that decision. `promote` requires that step to have
+already happened; it refuses an unconfirmed
 candidate rather than skip a link in evidence -> candidate -> human confirm -> memory.
 
 **Promoting to `tool` never writes real commands, because chamnan does not have them.** A
@@ -77,7 +78,7 @@ def cmd_list(root):
         f = candidates.fields_of(p)
         print(f"[{i}] {_title(p)}")
         print(f"    observed {f.get('observed', '?')} time(s) · last seen {f.get('last seen', '?')} "
-              f"· {f.get('provenance', '?')}")
+              f"· {candidates.status_of(f)} · {f.get('provenance', '?')}")
     # 🐛 [2026-09-08] Same gap as threads/ and sessions/, and the mildest of the three: this store
     # is not injected into a session, so a person has to run this command before a collapsing pair
     # does any harm. Warned anyway -- the call is already computed elsewhere and four lines here is
@@ -106,9 +107,12 @@ def cmd_confirm(root, ident):
     p = _find_or_complain(root, ident)
     if p is None:
         return 1
+    candidates.set_status(p, "confirmed")
+    # Retained for older readers whose only status signal is provenance. New readers use Status,
+    # and the two fields on disk make the observed evidence distinct from the awarded adjective.
     candidates.set_provenance(p, "ai-confirmed")
     print(f"chamnan: confirmed — {_title(p)}")
-    print(f"  Provenance -> ai-confirmed. To keep it, run:")
+    print(f"  Status -> confirmed; evidence remains observed separately. To keep it, run:")
     print(f"    chamnan-promote <script-file> <name>   (a tool)")
     print(f"    /chamnan:capture                        (a written-out procedure)")
     return 0
@@ -148,7 +152,7 @@ def cmd_promote(root, ident, destination=None, name=None):
     title = _title(p)
     sequence = _sequence_of(fields)
 
-    if fields.get("provenance") not in CONFIRMED_PROVENANCE:
+    if candidates.status_of(fields) != "confirmed":
         print(f"chamnan: {title!r} has not been confirmed yet — run "
               f"`chamnan-candidates confirm {ident}` first", file=sys.stderr)
         return 1

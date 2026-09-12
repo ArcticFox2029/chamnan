@@ -1188,6 +1188,9 @@ def main():
                             "on; rebuild it with `chamnan-map`._"))
         except Exception:
             pass
+        _resume_persistence = ledger.persistence_reminder(root)
+        if _resume_persistence:
+            _lines.append(redact.scrub(_resume_persistence))
         # 🐛 [2026-09-09] This branch returned without telling blocklog it had run, so every figure
         # derived from `block_shape.jsonl` — here and in `chamnan-report` — counted full
         # reinjections only. How much of an ordinary day takes the cheap path was not a question
@@ -1329,6 +1332,19 @@ def main():
                            f"KEPT rather than dropped: {kept}. An older chamnan will delete them — "
                            f"`{ws.plugin_version(HERE.parent)}` keeps them because `.version` says a "
                            f"newer one has been here.\n")
+
+        # A repository can carry a complete workspace on this machine and lose it on the next
+        # clone. RQ6 found that tracked/committed status was invisible, and one issue plus one
+        # discussion independently showed users unsure whether `.chamnan/` was meant to be
+        # versioned. This runs after reconcile_version, because `.version` is one of the durable
+        # files that call may create; taking the fingerprint earlier repeats on the next session.
+        # One porcelain read per firing, shared with the section below rather than cached in
+        # a module dict: a working tree has no cheap fingerprint, so a memo of it cannot be
+        # invalidated and went stale the first time anything asked twice (2026-09-12).
+        _git_snapshot = ws.git_status(root)
+        _persistence = ledger.persistence_reminder(root, _git_snapshot)
+        if _persistence:
+            out.append(redact.scrub(_persistence) + "\n")
 
         if cfg.get("ledger", True):
             # Always the first thing in the injection, and gated on nothing but the flag itself --
@@ -1829,7 +1845,8 @@ def main():
                 # already been handed the same list. `chamnan-context`, which emits for the other
                 # two dozen agents, calls the same function without this argument and keeps them.
                 carried = redact.scrub(
-                    sessions.where_git_says_you_stopped(root, name_files=False))
+                    sessions.where_git_says_you_stopped(
+                        root, name_files=False, status=_git_snapshot))
             # 🐛 [2026-09-08] `sessions/` is the fourth store whose filenames a PERSON types --
             # `skills/remember`'s sibling, `skills/resume/SKILL.md`, tells the agent to write
             # `.chamnan/sessions/YYYY-MM-DD-short-slug.md` directly rather than through

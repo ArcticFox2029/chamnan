@@ -203,7 +203,8 @@ FIELDS = ("id", "when", "runner", "resume_from", "note", "account", "session", "
           # `transport` and `handle` are recorded to REPORT where the schedule came from, not to answer
     # through — chamnan is a plugin that installs alongside a CLI, so a CLI is what it drives.
     "transport", "handle", "app_pid", "app_started", "runner_explicit",
-          "cwd", "pid", "status", "created")
+          "cwd", "pid", "status", "created", "reset_provider", "reset_kind", "reset_source",
+          "reset_observed_at", "reset_at")
 
 DEFAULT_RUNNER = ("claude", "-p")
 
@@ -243,6 +244,101 @@ RUNNERS = {
         "stdin": True,
     },
 }
+
+
+def reset_observations(payload, now=None):
+    """Structured future reset times in a Claude status payload or Codex rate-limit response.
+
+    Returns records with `provider`, `limit_kind`, `resets_at` and `source`, ordered by reset time.
+    Missing, nullable, malformed and past fields produce no record -- absence is expected for both
+    vendors and is the signal for the caller to retain the manual path, never to guess a delay.
+
+    🎯 [2026-09-12, R2 RQ5] Both current vendors expose an epoch-second reset, but both also
+    have a live N=1 report of the field being absent or misleading. This therefore reads only the
+    documented structured fields and offers them as an explicit source; it does not scrape UI text
+    and it does not replace the duration/clock parser a person already controls.
+    """
+    if not isinstance(payload, dict):
+        return []
+    now = now or datetime.now()
+    floor = now.timestamp()
+    found = []
+
+    def add(provider, kind, value, source):
+        if isinstance(value, bool):
+            return
+        try:
+            stamp = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return
+        if stamp <= floor:
+            return
+        found.append({"provider": provider, "limit_kind": str(kind), "resets_at": stamp,
+                      "source": source})
+
+    claude = payload.get("rate_limits")
+    if isinstance(claude, dict):
+        for kind, window in claude.items():
+            if isinstance(window, dict):
+                add("claude", kind, window.get("resets_at"), "statusline")
+
+    # `account/rateLimits/read` responses may wrap the result, but `rateLimits` is the documented
+    # boundary. Walk below that boundary only: an unrelated `resetsAt` elsewhere in a response is
+    # not quota evidence and must not become an appointment.
+    rate_roots = []
+
+    def collect_rate_roots(value):
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key == "rateLimits":
+                    rate_roots.append(child)
+                elif isinstance(child, (dict, list)):
+                    collect_rate_roots(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect_rate_roots(child)
+
+    collect_rate_roots(payload)
+
+    def collect_codex(value, path=()):
+        if isinstance(value, dict):
+            if "resetsAt" in value:
+                add("codex", ".".join(path) or "rate_limit", value.get("resetsAt"),
+                    "account/rateLimits/read")
+            for key, child in value.items():
+                if isinstance(child, (dict, list)):
+                    collect_codex(child, path + (str(key),))
+        elif isinstance(value, list):
+            for index, child in enumerate(value):
+                collect_codex(child, path + (str(index),))
+
+    for rate_root in rate_roots:
+        collect_codex(rate_root)
+
+    unique = {}
+    for observation in found:
+        key = (observation["provider"], observation["limit_kind"],
+               observation["resets_at"])
+        unique[key] = observation
+    return sorted(unique.values(), key=lambda item: item["resets_at"])
+
+
+def reset_time(payload, now=None, limit_kind=None):
+    """`(datetime-with-buffer, observation)` for the selected reset, or `(None, None)`.
+
+    The earliest future reset is the useful default: it is the first documented window at which
+    work may continue. `limit_kind` makes the choice explicit where a caller needs another window.
+    """
+    now = now or datetime.now()
+    observations = reset_observations(payload, now=now)
+    if limit_kind:
+        observations = [item for item in observations
+                        if item["limit_kind"] == str(limit_kind)]
+    if not observations:
+        return None, None
+    observation = observations[0]
+    target = datetime.fromtimestamp(observation["resets_at"], tz=now.tzinfo)
+    return target + timedelta(seconds=BUFFER_SECONDS), observation
 
 
 def runner_for(agent):

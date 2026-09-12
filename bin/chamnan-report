@@ -19,6 +19,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import sys
 import time
 from collections import defaultdict
@@ -730,6 +731,37 @@ def print_inventory(root):
     print()
 
 
+def print_persistence(root):
+    """What survives this working copy: on disk, tracked, and current bytes committed."""
+    state = ledger.persistence(root)
+    if state is None:
+        sys.stdout.write(
+            "Repository persistence\n  not checked — git could not answer for this repository\n\n")
+        return
+    total = len(state["durable"])
+    lines = [
+        "Repository persistence",
+        f"  {total} durable chamnan file(s) on disk",
+        f"  {len(state['tracked'])} of {total} tracked",
+        f"  {len(state['committed'])} of {total} have their current bytes committed",
+    ]
+    if state["untracked"]:
+        lines.append("  untracked:")
+        lines.extend(f"    {mdblock.as_quoted(path, mdblock.PATH_AS_KEY)}"
+                     for path in state["untracked"])
+    changed_tracked = sorted(set(state["uncommitted"]) - set(state["untracked"]))
+    if changed_tracked:
+        lines.append("  tracked, but current bytes are not committed:")
+        lines.extend(f"    {mdblock.as_quoted(path, mdblock.PATH_AS_KEY)}"
+                     for path in changed_tracked)
+    if state["uncommitted"]:
+        command = "git add -- " + " ".join(shlex.quote(path)
+                                             for path in state["uncommitted"])
+        lines.append(f"  stage exactly these copies with: {command}")
+        lines.append("  a later commit is what makes those current bytes survive a fresh clone")
+    sys.stdout.write("\n".join(lines) + "\n\n")
+
+
 def known_commands():
     """Every `chamnan-*` script in `bin/` alongside this one, sorted. Read from the directory
     rather than a hand-kept list, so a new CLI command is picked up here the day it is added,
@@ -1099,6 +1131,7 @@ def main(argv):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
     print_inventory(root)
+    print_persistence(root)
     print_block_trend(root)
     print_usage(root)
     project_dir = encoded_dir(root)

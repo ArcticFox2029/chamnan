@@ -3,6 +3,7 @@
 
   chamnan-schedule set 2h31m              resume this session's work in 2h31m
   chamnan-schedule set 11:10pm            ...at a wall-clock time instead
+  chamnan-schedule set --reset-json <p>   use a Claude/Codex structured reset; `-` reads stdin
   chamnan-schedule set 2h31m --note "..." with an extra instruction for the resumed session
   chamnan-schedule list                   what is pending, and whether anything is waiting for it
   chamnan-schedule cancel <id>            end one; --all ends every pending one
@@ -13,6 +14,8 @@ Options for `set`:
   --resume-from <p>   where the work is written down (default `.chamnan/STATE.md`)
   --runner "<cmd>"    what to run instead of the default CLI — the extension point for a
                       harness, a router, or any model with no CLI of its own
+  --reset-json <p>    read `rate_limits.*.resets_at` or `rateLimits.*.resetsAt` from JSON
+  --reset-window <n>  choose one named window instead of the earliest future reset
   --caffeinate        macOS only: hold the machine awake until it fires. Opt-in, because
                       keeping a laptop awake for hours is your decision and not a default.
 
@@ -36,6 +39,7 @@ that subtracts ticks counts only the ones it was awake for. It compares against 
 suspend, a hibernate, a timezone change or a clock set backwards are all survivable, and the one
 thing a sleeping machine cannot do is run something at the moment it was asleep for.
 """
+import json
 import os
 import shlex
 import sys
@@ -55,20 +59,56 @@ import workspace as ws  # noqa: E402
 # been wrong every time it was made here.
 print = redact.emit  # noqa: A001
 
-KNOWN_FLAGS = ("--note", "--label", "--resume-from", "--runner", "--all", "--caffeinate")
-TAKES_VALUE = ("--note", "--label", "--resume-from", "--runner")
+KNOWN_FLAGS = ("--note", "--label", "--resume-from", "--runner", "--reset-json",
+               "--reset-window", "--all", "--caffeinate")
+TAKES_VALUE = ("--note", "--label", "--resume-from", "--runner", "--reset-json",
+               "--reset-window")
 
 
 def _flag(argv, name, default=None):
     return argv[argv.index(name) + 1] if name in argv and argv.index(name) + 1 < len(argv) else default
 
 
+def _manual_time_error():
+    print("chamnan: give a duration like 2h31m, 45m or 1d, or a clock time like 11:10pm.",
+          file=sys.stderr)
+    return 2
+
+
+def _reset_payload(path):
+    """JSON from a file the user named, or stdin when the conventional `-` is named."""
+    try:
+        text = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return None, False
+    try:
+        return json.loads(text), True
+    except (ValueError, RecursionError):
+        return None, True
+
+
 def _set(argv, root):
-    when = sched.parse_when(argv[1] if len(argv) > 1 else "")
+    reset_path = _flag(argv, "--reset-json")
+    reset_observation = None
+    if reset_path:
+        reset_payload, reset_read = _reset_payload(reset_path)
+        if not reset_read:
+            print(f"chamnan: --reset-json could not read {reset_path!r}. Give a typed duration "
+                  "instead, like 2h31m, 45m or 1d.", file=sys.stderr)
+            return 2
+        when, reset_observation = sched.reset_time(
+            reset_payload, limit_kind=_flag(argv, "--reset-window"))
+    else:
+        when = sched.parse_when(argv[1] if len(argv) > 1 and not argv[1].startswith("--") else "")
     if when is None:
-        print("chamnan: give a duration like 2h31m, 45m or 1d, or a clock time like 11:10pm.",
-              file=sys.stderr)
-        return 2
+        # Missing vendor fields are normal. The exact manual answer remains the fallback rather
+        # than a guessed timestamp or a new failure mode (R2 RQ5).
+        if reset_path:
+            print(f"chamnan: --reset-json read {reset_path!r}, but it carries no usable future "
+                  "reset. A typed duration like 2h31m, 45m or 1d is still accepted.",
+                  file=sys.stderr)
+            return 2
+        return _manual_time_error()
     rid = uuid.uuid4().hex[:8]
     _agent, _strength = sched.whose_session(root)
     _transport, _handle = sched.transport_of()
@@ -125,6 +165,14 @@ def _set(argv, root):
         "created": sched._now_iso(),
         "pid": 0,
     }
+    if reset_observation:
+        rec.update({
+            "reset_provider": reset_observation["provider"],
+            "reset_kind": reset_observation["limit_kind"],
+            "reset_source": reset_observation["source"],
+            "reset_observed_at": sched._now_iso(),
+            "reset_at": reset_observation["resets_at"],
+        })
     try:
         sched.add(root, rec)
     except TimeoutError:
@@ -150,9 +198,18 @@ def _set(argv, root):
               file=sys.stderr)
         return 1
     sched.update(root, rid, pid=pid)
-    print(f"chamnan: {rid} will resume this work at {when.strftime('%H:%M')} as "
-          f"{mdblock.as_quoted(_agent, 24)} "
-          f"({mdblock.as_quoted(argv[1], 24)} from now). Nothing else is needed — it is a detached "
+    if reset_observation:
+        appointment = ("at %s from %s %s reset as %s" %
+                       (when.strftime("%H:%M"), reset_observation["provider"],
+                        reset_observation["limit_kind"], mdblock.as_quoted(_agent, 24)))
+    else:
+        # Keep the manual path's sentence byte-for-byte: structured discovery is additive, and a
+        # person who keeps typing a duration should see exactly the command they already know.
+        appointment = ("at %s as %s (%s from now)" %
+                       (when.strftime("%H:%M"), mdblock.as_quoted(_agent, 24),
+                        mdblock.as_quoted(argv[1], 24)))
+    print(f"chamnan: {rid} will resume this work {appointment}. Nothing else is needed — it is a "
+          f"detached "
           f"process, not a service, and it exits once it has fired. `chamnan-schedule cancel {rid}` "
           f"stops it.")
     return 0

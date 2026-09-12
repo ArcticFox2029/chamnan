@@ -16,12 +16,17 @@ is what lets `candidates/` (added in 1.5.1) join the ledger automatically the da
 with no further change here.
 """
 import datetime
+import hashlib
+import os
 import re
+import shlex
 import time
+from pathlib import Path
 
 import workspace as ws
 
 WEEK = 7 * 86400
+PERSISTENCE_REMINDER_BYTES = 600
 
 # Matches the date convention sessions.py documents for its own filenames: "sorted by filename,
 # which begins with the date". Used in preference to file mtime, because mtime resets to checkout
@@ -265,6 +270,97 @@ def render(snap):
 def line(root, now=None):
     """The full injected line, ready to print."""
     return "_" + render(snapshot(root, now)) + "_"
+
+
+def persistence(root, status=None):
+    """The durable workspace files on disk, and how far each has reached through git.
+
+    Returns ``None`` when git cannot speak for this exact repository. Otherwise the result names
+    every non-ignored file under the workspace, the untracked subset, and the subset whose current
+    bytes differ from ``HEAD``. A tracked file with local edits is not called persisted: a fresh
+    clone receives the committed bytes, not the copy on this machine.
+    """
+    root = ws.find_root(root)
+    if not ws.git_can_speak_for(root):
+        return None
+    try:
+        wsdir = ws.workspace(root)
+        rel = wsdir.relative_to(root).as_posix()
+        status = ws.git_status(root) if status is None else status
+        if status is None:
+            return None
+
+        durable = []
+        ignored = [name.rstrip("/") for code, name in status if code == "!!"]
+        for base, dirs, files in os.walk(wsdir, followlinks=False):
+            if Path(base) == wsdir:
+                dirs[:] = [d for d in dirs if d != "logs"]
+            for filename in files:
+                path = Path(base) / filename
+                name = path.relative_to(root).as_posix()
+                if any(name == item or name.startswith(item + "/") for item in ignored):
+                    continue
+            # `state/` mixes written research with local runtime cursors. The former is markdown;
+            # the latter is deliberately not part of the persistence funnel even on an old
+            # workspace whose .gitignore predates its producer. `logs/` is runtime by contract.
+                local = name[len(rel):].lstrip("/")
+                durable_state = not local.startswith("state/") or path.suffix.lower() == ".md"
+                if (path.is_file() and ws.inside(path, wsdir) and durable_state
+                        and path.name != ".DS_Store"):
+                    durable.append(name)
+        durable = sorted(set(durable))
+
+        changed, untracked = set(), set()
+        for code, name in status:
+            if name in durable:
+                changed.add(name)
+                if code == "??":
+                    untracked.add(name)
+        return {
+            "durable": durable,
+            "tracked": sorted(set(durable) - untracked),
+            "untracked": sorted(untracked),
+            "uncommitted": sorted(changed),
+            "committed": sorted(set(durable) - changed),
+        }
+    except ws.git_cannot_answer():
+        return None
+
+
+def persistence_reminder(root, status=None):
+    """One bounded, exact-path reminder per distinct untracked-workspace state."""
+    state = persistence(root, status)
+    if state is None:
+        return ""
+    fingerprint = hashlib.sha256("\0".join(state["untracked"]).encode()).hexdigest()
+    marker = ws.workspace(root) / "logs" / "nudge" / "persistence-state"
+    try:
+        previous = marker.read_text(encoding="ascii", errors="replace").strip() \
+            if marker.is_file() else ""
+    except OSError:
+        previous = ""
+    if previous == fingerprint:
+        return ""
+    if not ws.read_only():
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            with ws.exclusive(marker) as held:
+                if held:
+                    ws.atomic_write_text(marker, fingerprint + "\n", encoding="ascii")
+        except OSError:
+            pass
+    if not state["untracked"]:
+        return ""
+
+    command = "git add -- " + " ".join(shlex.quote(p) for p in state["untracked"])
+    paths = ", ".join(f"`{p}`" for p in state["untracked"])
+    line = (f"_⚠ {len(state['untracked'])} of {len(state['durable'])} durable chamnan files "
+            f"are not tracked: {paths}. Persist them with `{command}`._")
+    if "`" in command or len(line.encode()) > PERSISTENCE_REMINDER_BYTES:
+        line = (f"_⚠ {len(state['untracked'])} of {len(state['durable'])} durable chamnan "
+                "files are not tracked. `chamnan-report` names every path and a narrow "
+                "`git add` command._")
+    return line
 
 
 def inventory(root, now=None):

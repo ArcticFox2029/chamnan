@@ -2613,6 +2613,57 @@ def git_toplevel(root):
 
 _GIT_SPEAKS = {}
 
+# One process-wide snapshot, because SessionStart asks two questions of the same working tree:
+# what work is unfinished outside `.chamnan/`, and which durable workspace files are not yet in a
+# commit. Asking git separately made the hook pay two permanent process spawns for one notice. The
+# snapshot is taken after `ensure()` has finished writing, and every current caller is a one-shot
+# command or hook, so process lifetime is the right invalidation boundary.
+
+
+def git_status(root):
+    """One cached porcelain snapshot as ``(code, path)`` pairs, or None when git cannot answer.
+
+    Ignored entries are included as ``!!`` so a caller deriving its population from the filesystem
+    can exclude them without a second `ls-files` process. Rename/copy source names are consumed
+    here; the first NUL record is the path now in the working tree and is the one callers need.
+    """
+    # 🐛 [2026-09-12] Cached in a module-level dict keyed on the resolved root, and never
+    # invalidated. It was introduced to save two SessionStart spawns and it did — but a working tree
+    # has no cheap fingerprint: an untracked file appearing does not touch `.git/index`, and the two
+    # calls that exposed this are milliseconds apart, so neither a content key nor a TTL would have
+    # caught it. The suite asked on a clean tree, created a file, asked again, and got the clean
+    # answer back; the section that reports where work stopped went silent and the run crashed on
+    # the empty string rather than on anything that named the cause.
+    #
+    # `load_config`'s memo is safe because a config file HAS a cheap digest. This one does not, so
+    # it is not a memo: the single caller that wants one answer for two consumers reads it once and
+    # PASSES it, which saves the same spawn and cannot go stale.
+    answer = None
+    if git_can_speak_for(root):
+        try:
+            out = _subprocess().run(
+                ["git", "-C", str(root), "-c", "core.quotePath=false", "status",
+                 "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching", "--",
+                 "."],
+                stdin=_subprocess().DEVNULL, capture_output=True, timeout=5)
+            if out.returncode == 0:
+                answer, records, skip_old_name = [], out.stdout.split(b"\0"), False
+                for raw in records:
+                    if not raw:
+                        continue
+                    if skip_old_name:
+                        skip_old_name = False
+                        continue
+                    text = raw.decode("utf-8", "replace")
+                    if len(text) < 4:
+                        continue
+                    code, name = text[:2], text[3:]
+                    answer.append((code, name))
+                    skip_old_name = "R" in code or "C" in code
+        except git_cannot_answer():
+            answer = None
+    return answer
+
 
 def git_folds_case(root):
     """git's own `core.ignorecase` for `root`. False when git cannot answer.

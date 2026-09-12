@@ -15,12 +15,10 @@ starts existing, with no change to that module). Promotion into something a sess
 -- `/chamnan:capture` into skills/, or a future `/chamnan:remember` into memory/ -- is a human
 decision this module does not make.
 
-**`Provenance:` is one field, not two.** A separate `State:` (confirmed / observed / draft) would
-overlap it by about 80%, and two fields for one idea is how a format rots — the same reasoning
-`lib/memory.py` and the trailer grammar in `lib/milestones.py` already follow. `deprecated` is the
-value that retires a candidate without deleting it, matching `memory.py`'s refusal to prune by age:
-the oldest entry is usually the one nobody could reconstruct, so nothing here deletes on a timer
-either.
+**Evidence and status are different fields.** `Observed:` is what the workflow log actually
+contained; `Status:` is the review decision later awarded to that evidence. `Provenance:` remains
+for compatibility and says who or what wrote the candidate. Older files whose provenance already
+says `ai-confirmed` or `user` still read as confirmed, so the schema change does not strand them.
 
 **Keyed on the sequence, not on when it was seen.** The filename is derived from the signature
 sequence itself, so the SAME sequence detected again -- tomorrow, or on the next Bash call while it
@@ -35,6 +33,7 @@ import workspace as ws  # noqa: E402
 DIRNAME = "candidates"
 
 PROVENANCE = ("user", "ai-drafted", "ai-confirmed", "ai-inferred", "imported", "deprecated")
+STATUS = ("observed", "confirmed", "deprecated")
 
 _FIELD = re.compile(r"^\*\*([A-Za-z ]+):\*\*\s*(.*)$", re.M)
 
@@ -144,11 +143,25 @@ def _fields(text):
     return {m.group(1).strip().lower(): m.group(2).strip() for m in _FIELD.finditer(text)}
 
 
-def render(sequence, observed, last_seen, provenance):
+def status_of(fields):
+    """The explicit status, or the status an older provenance-only candidate already implied."""
+    status = fields.get("status") if isinstance(fields, dict) else None
+    if status in STATUS:
+        return status
+    provenance = fields.get("provenance") if isinstance(fields, dict) else None
+    if provenance == "deprecated":
+        return "deprecated"
+    return "confirmed" if provenance in ("ai-confirmed", "user") else "observed"
+
+
+def render(sequence, observed, last_seen, provenance, status=None):
     """The candidate file's full text. Raises ValueError on an unknown provenance -- rejected at
     the point of writing, never stored, per the closed enum this whole module exists to enforce."""
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
+    status = status or status_of({"provenance": provenance})
+    if status not in STATUS:
+        raise ValueError(f"unknown status: {status!r}")
     # 🐛 `title` was folded and `steps` was not — the same data, one line apart. A step carrying a
     # newline and a `## chamnan` heading, or an ANSI escape, therefore landed raw in a file that
     # gets COMMITTED, and the heading opened a section every later reader treats as real. Reachable
@@ -161,6 +174,7 @@ def render(sequence, observed, last_seen, provenance):
             f"**Sequence:** {steps}\n"
             f"**Observed:** {observed}\n"
             f"**Last seen:** {last_seen}\n"
+            f"**Status:** {status}\n"
             f"**Provenance:** {provenance}\n")
 
 
@@ -209,6 +223,7 @@ def _upsert_locked(root, sequence, observed, when, provenance, strict):
     """`upsert`'s body, with the candidates directory already locked. Split out so the lock is
     visible in the caller rather than buried, and so the early returns stay early returns."""
     p = path_for(root, sequence)
+    prior_status = status_of(fields_of(p)) if p.is_file() else None
     if not p.is_file():
         # 🐛 [2026-09-07] One workflow produced FIVE candidate files in this repository's own queue:
         # `python3, git add, git commit`, the same three rotated two ways, and two more with an
@@ -225,6 +240,7 @@ def _upsert_locked(root, sequence, observed, when, provenance, strict):
         existing = _same_habit(root, sequence)
         if existing is not None:
             kept, seen = existing
+            kept_status = status_of(fields_of(kept))
             # The LONGER sequence is the better description of the habit, and the count is the
             # larger of the two rather than their sum -- they are the same events counted twice.
             merged = sequence if len(sequence) > len(seen) else seen
@@ -240,11 +256,12 @@ def _upsert_locked(root, sequence, observed, when, provenance, strict):
             except (TypeError, ValueError):
                 was = 0
             target.parent.mkdir(parents=True, exist_ok=True)
-            _write(strict)(target, render(merged, max(observed, was), when, provenance))
+            _write(strict)(target, render(merged, max(observed, was), when, provenance,
+                                          status=kept_status))
             return target, False
     is_new = not p.is_file()
     p.parent.mkdir(parents=True, exist_ok=True)
-    _write(strict)(p, render(sequence, observed, when, provenance))
+    _write(strict)(p, render(sequence, observed, when, provenance, status=prior_status))
     # 🐛 [2026-09-10] The merge above runs only on the branch that CREATES a file, so a duplicate
     # sitting beside an existing target was never reconciled — every later upsert rewrote the target
     # and stepped over the other one. Reproduced in this repository's own queue: two files, identical
@@ -388,6 +405,24 @@ def set_provenance(path, provenance):
         text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)
     else:
         text = text.rstrip("\n") + f"\n{new_line}\n"
+    ws.write_or_raise(path, text)
+
+
+def set_status(path, status):
+    """Rewrite only `Status:`; provenance and the observation it describes stay untouched."""
+    if status not in STATUS:
+        raise ValueError(f"unknown status: {status!r}")
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    new_line = f"**Status:** {status}"
+    if "status" in _fields(text):
+        text = re.sub(r"^\*\*Status:\*\*.*$", new_line, text, count=1, flags=re.M)
+    else:
+        # Before Provenance keeps the stable trailer order used by freshly rendered candidates.
+        match = re.search(r"^\*\*Provenance:\*\*.*$", text, flags=re.M)
+        if match:
+            text = text[:match.start()] + new_line + "\n" + text[match.start():]
+        else:
+            text = text.rstrip("\n") + f"\n{new_line}\n"
     ws.write_or_raise(path, text)
 
 

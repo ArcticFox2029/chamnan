@@ -181,7 +181,7 @@ def title_of(path, text=None):
     return path.stem
 
 
-def where_git_says_you_stopped(root, limit=6, name_files=True):
+def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
     """What the repository itself says about the last session, when nobody wrote a record.
 
     `name_files=False` keeps the sentence and the count and drops the list of names. Pass it when
@@ -212,9 +212,8 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
         return ("**Where the last session stopped** — not available: `git` is not on this machine's "
                 "PATH, and this section is read from the working tree. Everything else in this "
                 "block works without it.")
-    # `git_can_speak_for`: the query below is `status --porcelain -- . :(exclude)<ws>`, already
-    # scoped to this directory, so a workspace in a monorepo subproject gets its own answer rather
-    # than an empty section. See that function.
+    # `git_can_speak_for`: the shared status query is scoped to this directory, so a workspace in a
+    # monorepo subproject gets its own answer rather than an empty section. See that function.
     if not ws.git_can_speak_for(root):
         # A git old enough to reject `-C` fails the call above, and "not a repository" is the wrong
         # thing to tell that reader — the two are indistinguishable from a return code, which is
@@ -243,15 +242,31 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
         #
         # Excluded rather than counted, and that is the right direction even once `.chamnan/` IS
         # committed: this section answers "where did I stop", and STATE.md changing every session
-        # is not an answer to it.
-        _ws_rel = ws.workspace(root).name
-        st = subprocess.run(["git", "-C", str(root), "-c", "core.quotePath=false",
-                             "status", "--porcelain", "--", ".", f":(exclude){_ws_rel}"],
-                            stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                            timeout=5)
-        if st.returncode != 0:
+        # is not an answer to it. The broader snapshot is shared with the persistence reminder;
+        # filtering here keeps this section's meaning while removing two extra SessionStart spawns.
+        # 🐛 [2026-09-12] Written as `ws.workspace(root).relative_to(root)`, which raises
+        # ValueError whenever the two sides disagree about symlinks — on macOS `root` arrives
+        # as `/var/...` and `workspace()` resolves to `/private/var/...`, so every fixture
+        # under a temp directory took that path. The section then vanished silently: an
+        # uncommitted file stopped being reported at all, and the suite crashed on the empty
+        # string rather than on the exception. `chamnan-map` carries a 🐛 for this exact
+        # call on this exact argument; it was reintroduced at a new site, which is the defect
+        # `memory/rules/the-set-not-the-member.md` is about.
+        #
+        # Both sides resolved, and the basename kept as the fallback the old code used.
+        try:
+            _ws_rel = ws.workspace(root).resolve().relative_to(
+                Path(root).resolve()).as_posix()
+        except (OSError, ValueError):
+            _ws_rel = ws.workspace(root).name
+        # Passed in by the one caller that also needs it, so the porcelain snapshot is
+        # read once per firing. Read here when nobody passed one, which is every other
+        # caller and every test.
+        status = ws.git_status(root) if status is None else status
+        if status is None:
             return ""
-        lines = [l for l in st.stdout.splitlines() if l.strip()]
+        lines = [(code, name) for code, name in status
+                 if code != "!!" and name != _ws_rel and not name.startswith(_ws_rel + "/")]
         if not lines:
             return ""          # a clean tree has nothing to carry forward, which is the good case
         br = subprocess.run(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
@@ -287,8 +302,8 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
     # Paths come from the repository, so they are made inert the way every other repository-authored
     # string in the injected block is. The caller scrubs.
     names, more = [], max(0, len(lines) - limit)
-    for line in lines[:limit]:
-        names.append(f"`{mdblock.as_quoted(line[3:].strip(), 60)}`")
+    for _code, name in lines[:limit]:
+        names.append(f"`{mdblock.as_quoted(name, 60)}`")
     tail = f" _+{more} more_" if more else ""
     # A detached HEAD is described in words rather than quoted as a name -- backticks around
     # "a detached HEAD at 1a2b3c4" would read as a branch with that name, which is the same
