@@ -173,6 +173,27 @@ def overlaps(root, home=None, found=None):
     for name, group in sorted(by_name.items()):
         if len(group) < 2:
             continue
+        # 🐛 [2026-09-12] `restates` below has always required a `workspace` record. These two did
+        # not, so two purely machine-global stores disagreeing with each other were reported as a
+        # finding ABOUT THE REPOSITORY the command was pointed at. Reproduced on a brand-new scratch
+        # repo whose `.chamnan/skills/` holds zero entries: `chamnan-report` opened with "7 skill(s)
+        # exist in two places with DIFFERENT contents", every one of them read out of
+        # `~/.claude/plugins/` on the machine running it. For a tool whose pitch is "measure it,
+        # trust the numbers", the first number a stranger sees was about somebody else's computer
+        # (R1 agent 2).
+        #
+        # The message was also untrue for that case. `snapshot_roots` says in its own docstring that
+        # marketplace snapshots are NOT loaded -- they are what a resync WOULD promote -- and the
+        # sentence claimed "which copy gets read depends on which one the host resolves first". A
+        # copy that is never read cannot be the one that is resolved.
+        #
+        # What this loses is real and is not being papered over: a repository report no longer
+        # notices two plugin copies disagreeing, or a cache drifting from its marketplace. Nothing
+        # else reports those today. The trade was made on the owner's word after acc4 was consulted
+        # and argued the same way -- a per-repository command answers about that repository, and an
+        # installation-level audit needs an audience of its own before it is worth keeping here.
+        if not any(r["store"] == "workspace" for r in group):
+            continue
         digests = {r["digest"] for r in group}
         plugins = {_plugin_of(r["store"]) for r in group}
         if len(digests) > 1:

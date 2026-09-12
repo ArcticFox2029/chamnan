@@ -65,19 +65,40 @@ def build(seed):
         # By default the snapshot agrees with the loaded copy. Divergence is planted, not incidental.
         s.joinpath("SKILL.md").write_text(text)
 
-    # plant: a snapshot that drifted from the loaded plugin
+    # plant: a snapshot that drifted from the loaded plugin -- planted to prove it is NOT reported.
+    # 🐛 [2026-09-12] Both copies live under the operator's home directory and neither is in the
+    # repository `overlaps` was asked about, so reporting it put somebody else's machine in a
+    # stranger's first `chamnan-report`. The plant stays and the expectation moves: a regression
+    # that starts reporting it again fails on `forbidden` below (R1 agent 2).
+    forbidden = set()
     if shipped and rnd.random() < 0.6:
         n = rnd.choice(shipped)
         p = snap / "skills" / n / "SKILL.md"
         p.write_text(p.read_text().replace("---\n\n", "---\nextra: true\n\n", 1) + "\ndrifted\n")
-        expected.add(("divergent", n))
+        forbidden.add(("divergent", n))
 
-    # plant: a workspace file answering to a shipped skill's own name
+    # plant: a workspace file answering to a shipped skill's own name. A name already carrying the
+    # drift above is skipped -- that group WOULD then hold a workspace record and be reported, while
+    # `forbidden` still claimed it, and the generator would be arguing with itself.
     if shipped and rnd.random() < 0.5:
-        n = rnd.choice([s for s in shipped if ("divergent", s) not in expected] or [None])
+        free = [s for s in shipped
+                if ("divergent", s) not in expected and ("divergent", s) not in forbidden]
+        n = rnd.choice(free or [None])
         if n:
             (root / ".chamnan" / "skills" / f"{n}.md").write_text(f"# Skill: {n}\n\nsomething else\n")
             expected.add(("divergent", n))   # different bytes -> divergent wins over shadowed
+
+    # plant: a workspace file carrying a shipped skill's own name AND its exact text -- `shadowed`.
+    # Neither generator planted one before today, so that branch of `overlaps` was asserted by
+    # nothing across fifty workspaces (acc4, reading both generators, 2026-09-12).
+    if shipped and rnd.random() < 0.5:
+        free = [s for s in shipped
+                if ("divergent", s) not in expected and ("divergent", s) not in forbidden]
+        n = rnd.choice(free or [None])
+        if n:
+            same = (cache / "skills" / n / "SKILL.md").read_text()
+            (root / ".chamnan" / "skills" / f"{n}.md").write_text(same)
+            expected.add(("shadowed", n))
 
     # plant: a workspace file that restates a shipped skill verbatim under its own name
     if shipped and rnd.random() < 0.5:
@@ -87,19 +108,26 @@ def build(seed):
         (root / ".chamnan" / "skills" / f"{n}.md").write_text(f"# Skill: {n}\n\n{core}\n")
         expected.add(("restates", n))
 
-    return root, home, expected
+    return root, home, expected, forbidden
 
 
 def main():
+    kinds_planted = set()
     for seed in range(50):
-        root, home, expected = build(seed)
+        root, home, expected, forbidden = build(seed)
         got = {(o["kind"], o["name"]) for o in so.overlaps(root, home)}
+        kinds_planted |= {k for k, _ in expected}
         check(f"seed {seed}: found every planted overlap", expected <= got)
         check(f"seed {seed}: reported nothing that was not planted", got <= expected)
+        check(f"seed {seed}: said nothing about two stores on the operator's own machine",
+              not (got & forbidden))
         shutil.rmtree(root.parent, ignore_errors=True)
+    check(f"the fifty workspaces planted every kind, so none of the above passed by never being "
+          f"exercised: {', '.join(sorted(kinds_planted))}",
+          kinds_planted >= {"divergent", "shadowed", "restates"})
 
     # mutation, the other direction: a detector that answers "everything" must not pass above
-    root, home, expected = build(101)
+    root, home, expected, _forbidden = build(101)
     everything = {("divergent", p.stem) for p in (root / ".chamnan" / "skills").glob("*.md")}
     check("a detector that reported every skill would be caught", not (everything <= expected)
           or not everything)

@@ -605,8 +605,11 @@ def print_inventory(root):
                          f"contents ({', '.join(sorted(_kinds['divergent'])[:4])}) — which copy "
                          f"gets read depends on which one the host resolves first")
         if _kinds["shadowed"]:
-            _said.append(f"{len(_kinds['shadowed'])} skill name(s) are provided by more than one "
-                         f"plugin ({', '.join(sorted(_kinds['shadowed'])[:4])})")
+            # "more than one plugin" was true while a group could be all-plugin. Every group
+            # reported now contains this repository's own workspace file, so the sentence has to
+            # name the two sides the reader can actually go and look at.
+            _said.append(f"{len(_kinds['shadowed'])} skill name(s) exist both in this workspace and "
+                         f"in an installed plugin ({', '.join(sorted(_kinds['shadowed'])[:4])})")
         if _kinds["restates"]:
             _said.append(f"{len(_kinds['restates'])} workspace skill(s) repeat a plugin skill's own "
                          f"text ({', '.join(sorted(_kinds['restates'])[:4])})")

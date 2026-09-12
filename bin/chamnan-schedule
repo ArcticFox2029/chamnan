@@ -37,6 +37,7 @@ suspend, a hibernate, a timezone change or a clock set backwards are all surviva
 thing a sleeping machine cannot do is run something at the moment it was asleep for.
 """
 import os
+import shlex
 import sys
 import uuid
 from pathlib import Path
@@ -73,10 +74,31 @@ def _set(argv, root):
     _transport, _handle = sched.transport_of()
     _app_pid = sched.agent_process()
     runner = _flag(argv, "--runner")
+    # 🐛 [2026-09-12] `runner.split()` -- whitespace, nothing else. `--help` documents this flag as
+    # the extension point for "a harness, a router, or any model with no CLI of its own", and such a
+    # command almost always carries a quoted argument. `--runner "/bin/sh -c 'date > out'"` became
+    # five argv entries with the quote characters still attached, and the failure surfaced when the
+    # job FIRED -- which for this feature means hours later, at the moment the limit reset, with
+    # nobody watching. The whole point of a schedule is that the person is not there.
+    #
+    # `shlex.split` reads it the way the shell the user copied it from would. It raises on an
+    # unbalanced quote, and that is caught HERE, at `set`, while they are still looking at the
+    # screen: the appointment is refused with the reason instead of kept and then wasted.
+    try:
+        runner_argv = shlex.split(runner) if runner else list(sched.DEFAULT_RUNNER)
+    except ValueError as exc:
+        print("chamnan: --runner is not a runnable command line — %s\n"
+              "  Quote it the way a shell would: --runner \"/bin/sh -c 'do the thing'\"" % exc,
+              file=sys.stderr)
+        return 2
+    if runner and not runner_argv:
+        print("chamnan: --runner was given but is empty — name a command, or leave the flag off "
+              "to use this session's own CLI.", file=sys.stderr)
+        return 2
     rec = {
         "id": rid,
         "when": when.isoformat(timespec="seconds"),
-        "runner": runner.split() if runner else list(sched.DEFAULT_RUNNER),
+        "runner": runner_argv,
         # Whether the user NAMED it. A named runner is an instruction about what to execute, and the
         # pane route executes nothing — so naming one has to switch the route, not be ignored by it.
         "runner_explicit": bool(runner),

@@ -468,13 +468,20 @@ Everything lives in one directory at the repository root, and nothing outside it
 │   └── rules/      standing constraints — injected every session
 ├── skills/         procedures you chose to keep     (starts empty)
 ├── tools/          scratch scripts you kept         (starts empty)
-├── candidates/     detected sequences, awaiting review (starts empty; see `chamnan-candidates`)
+├── state/          what the tooling reads back      (starts empty)
+├── threads/        work that spans sessions         (starts empty)
 └── logs/           bounded by log_retention_days    (starts empty)
 ```
 
 Every directory and `config.json` appear on the **first session** in the repository, before you
 run anything — so the places to write exist the moment a skill needs one, and the session that
-creates them says so. `MAP.md` arrives when the index is first built, `STATE.md` during bootstrap,
+creates them says so.
+
+One directory is not in that picture because it is not created then: **`candidates/` appears the
+first time a repeated sequence is detected**, not on the first session. It held the opposite claim
+until 2026-09-12 — drawn in the tree above, under a sentence promising everything in the tree
+arrives immediately — while `state/` and `threads/`, which do arrive immediately, were in no tree
+at all. A reader went looking for a directory that was not there and never saw two that were. `MAP.md` arrives when the index is first built, `STATE.md` during bootstrap,
 the rest when their skills are asked for. The session-start hook skips whatever is absent, so a
 repository that only ever builds an index stays exactly that simple.
 

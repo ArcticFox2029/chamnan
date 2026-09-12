@@ -28302,15 +28302,27 @@ def _build43(seed):
             d.mkdir()
             (d / "SKILL.md").write_text(body, encoding=_UTF43)
 
-    # A snapshot that drifted from the loaded plugin -- the case that is live on this machine.
+    # 🐛 [2026-09-12] A snapshot that drifted from the loaded plugin -- still planted, because it
+    # is a real situation and it is live on this machine, but it is now planted to prove it is NOT
+    # reported. Both sides of it live under the operator's home directory and neither is in the
+    # repository being reported on, and `chamnan-report` opened a stranger's brand-new scratch repo
+    # with "7 skill(s) exist in two places with DIFFERENT contents" because of it (R1 agent 2).
+    # Deleting the plant would have left nothing pinning the new contract; asserting its ABSENCE
+    # pins it, and a regression that starts reporting it again fails here.
+    must_not = set()
     if rnd.random() < 0.6:
         name = rnd.choice(shipped)
         f = snap / "skills" / name / "SKILL.md"
         f.write_text(f.read_text(encoding=_UTF43) + "\ndrifted\n", encoding=_UTF43)
-        want.add(("divergent", name))
+        must_not.add(("divergent", name))
 
     # A workspace file answering to a shipped skill's own name, with different contents.
-    left = [s for s in shipped if ("divergent", s) not in want]
+    # A name already carrying the machine-global drift above must not also get a workspace
+    # file: the group would then legitimately contain a workspace record and be reported,
+    # while `must_not` still claimed the same pair. The generator would be arguing with
+    # itself, and the failure reads exactly like the regression this check is here to catch.
+    left = [s for s in shipped
+            if ("divergent", s) not in want and ("divergent", s) not in must_not]
     if left and rnd.random() < 0.5:
         name = rnd.choice(left)
         (repo / ".chamnan" / "skills" / (name + ".md")).write_text(
@@ -28326,17 +28338,33 @@ def _build43(seed):
             "# Skill: %s\n\n%s\n" % (name, copied), encoding=_UTF43)
         want.add(("restates", name))
 
-    return repo, home, want
+    # A workspace file answering to a shipped skill's own name with the SAME text. Neither
+    # randomised generator planted a `shadowed` before today, so that branch of `overlaps` was
+    # carried by nothing across fifty workspaces (found by acc4 reading the generators, 2026-09-12).
+    left2 = [s for s in shipped
+             if ("divergent", s) not in want and ("divergent", s) not in must_not]
+    if left2 and rnd.random() < 0.5:
+        name = rnd.choice(left2)
+        same = (cache / "skills" / name / "SKILL.md").read_text(encoding=_UTF43)
+        (repo / ".chamnan" / "skills" / (name + ".md")).write_text(same, encoding=_UTF43)
+        want.add(("shadowed", name))
+
+    return repo, home, want, must_not
 
 
-_t_missed43, _t_invented43 = [], []
+_t_missed43, _t_invented43, _t_leaked43 = [], [], []
+_t_planted43 = _rnd43.Counter() if hasattr(_rnd43, "Counter") else None
+_t_kinds_seen43 = set()
 for _t_seed43 in range(50):
-    _t_repo43, _t_home43, _t_want43 = _build43(_t_seed43)
+    _t_repo43, _t_home43, _t_want43, _t_not43 = _build43(_t_seed43)
     _t_got43 = {(o["kind"], o["name"]) for o in _so43.overlaps(_t_repo43, _t_home43)}
+    _t_kinds_seen43 |= {k for k, _ in _t_want43}
     if not _t_want43 <= _t_got43:
         _t_missed43.append("seed %d: %s" % (_t_seed43, sorted(_t_want43 - _t_got43)))
     if not _t_got43 <= _t_want43:
         _t_invented43.append("seed %d: %s" % (_t_seed43, sorted(_t_got43 - _t_want43)))
+    if _t_got43 & _t_not43:
+        _t_leaked43.append("seed %d: %s" % (_t_seed43, sorted(_t_got43 & _t_not43)))
     _sh43.rmtree(_t_repo43.parent, ignore_errors=True)
 
 check("EVERY PLANTED SKILL CONFLICT IS FOUND, ACROSS FIFTY RANDOM WORKSPACES",
@@ -28344,6 +28372,14 @@ check("EVERY PLANTED SKILL CONFLICT IS FOUND, ACROSS FIFTY RANDOM WORKSPACES",
 check("...and nothing that was not planted is ever reported, which a say-yes-to-everything "
       "detector could not survive",
       not _t_invented43, saw="\n".join(_t_invented43[:5]) or None)
+check("A DISAGREEMENT BETWEEN TWO STORES ON THE OPERATOR'S MACHINE IS NOT THIS REPOSITORY'S NEWS",
+      not _t_leaked43,
+      saw="%s — both copies live under the home directory and neither is in the repository the "
+          "report was pointed at" % ("\n".join(_t_leaked43[:5]) or None))
+check("...and the fifty workspaces really planted every kind, so none of the above passes by "
+      "never being exercised: %s" % ", ".join(sorted(_t_kinds_seen43)),
+      _t_kinds_seen43 >= {"divergent", "shadowed", "restates"},
+      saw="only planted %s" % sorted(_t_kinds_seen43))
 
 # A workspace with no plugins at all is the common case for a new install: silent, not crashing.
 _t_bare43 = _Path43(_tmp43.mkdtemp(prefix="skov_bare_"))
@@ -32636,6 +32672,60 @@ check("...and a waiter whose record is no longer `pending` returns instead of fi
       and _t_s89.read(_t_c89)[0].get("status") == "cancelled",
       saw="without this, removing the kill would leave a waiter that never stops")
 _sh89.rmtree(_t_c89, ignore_errors=True)
+
+# ------------- a quoting mistake must cost a sentence, not the appointment
+# 🐛 [2026-09-12] `--runner` was read with `runner.split()` -- whitespace and nothing else -- while
+# `--help` offers the flag as the extension point for "a harness, a router, or any model with no CLI
+# of its own". Such a command almost always carries a quoted argument, and
+# `--runner "a-router --say 'two words'"` became four argv entries with the quote characters
+# attached. Proved end to end on a fixture: the appointment was kept, the child ran, and it exited 2
+# with `unexpected EOF while looking for matching quote` written into the job log -- HOURS later, at
+# the moment the limit had reset, with nobody watching. For this feature that is the whole failure:
+# the person is asleep, which is why they scheduled it.
+#
+# So the parse is `shlex.split`, the way the shell they copied it from would read it, and an
+# unbalanced quote is refused at `set` while they are still looking at the screen.
+_t_q89 = _Path89(_tmp89.mkdtemp(prefix="chamnan-runner-")) / "r"
+_t_q89.mkdir(parents=True, exist_ok=True)
+(_t_q89 / ".chamnan" / "state").mkdir(parents=True)
+_sp89.run(["git", "init", "-q", "."], cwd=str(_t_q89), capture_output=True)
+
+# The fixture has to be one `set` can actually reach, or every assertion below passes on "no
+# workspace here" and proves nothing about quoting at all. This one caught itself doing that.
+_t_rc89, _t_msg89 = 0, ""
+
+
+# The command is invented on purpose. `set` records the runner and never executes it, so what
+# is under test here is the PARSE -- and naming a real interpreter would put `/bin/sh` in a
+# suite that has to pass on Windows, where it does not exist.
+def _t_set89(*args):
+    out = _sp89.run([_sys89.executable, str(_t_CMD89), "set", "9h"] + list(args),
+                    cwd=str(_t_q89), capture_output=True, text=True,
+                    encoding="utf-8", errors="replace", timeout=180)
+    return out.returncode, (out.stdout or "") + (out.stderr or "")
+
+_t_rc89, _t_msg89 = _t_set89("--runner", "a-router --say 'never closed")
+check("AN UNBALANCED QUOTE IN --runner IS REFUSED AT `set`, NOT DISCOVERED WHEN IT FIRES",
+      _t_rc89 != 0 and "Traceback" not in _t_msg89 and "quot" in _t_msg89.lower(),
+      saw="exit %s: %s" % (_t_rc89, _t_msg89.strip()[:120]))
+
+_t_rc89, _t_msg89 = _t_set89("--runner", "   ")
+check("...and a --runner that is only whitespace is refused rather than stored as no command",
+      _t_rc89 != 0 and "Traceback" not in _t_msg89 and "--runner" in _t_msg89,
+      saw="exit %s: %s" % (_t_rc89, _t_msg89.strip()[:120]))
+
+_t_rc89, _t_msg89 = _t_set89("--runner", "a-router --say 'one whole argument'")
+_t_stored89 = []
+try:
+    import json as _t_json89
+    _t_stored89 = _t_json89.loads(
+        (_t_q89 / ".chamnan" / "state" / "scheduled.json").read_text(encoding="utf-8")
+    )["scheduled"][-1]["runner"]
+except Exception:                                       # noqa: BLE001
+    pass
+check("...and a quoted argument survives as ONE argv entry, the way the shell would have passed it",
+      _t_stored89 == ["a-router", "--say", "one whole argument"],
+      saw="stored as %r" % (_t_stored89,))
 # ---- 90_a_posix_idiom_that_means_something_else_on_windows.py
 # ------------- the package ships to Windows and this machine will never run it there
 # 🐛 [2026-09-12] `schedule.alive` asked "does this process exist" with `os.kill(pid, 0)`, which is
@@ -32836,6 +32926,69 @@ _t_unnamed92 = [n for n, seg in _t_callers92
 check("...and names the repository root it found, so the reader does not have to go looking",
       not _t_unnamed92,
       saw="%s — asks `git_toplevel` and does not print what it got" % ", ".join(_t_unnamed92))
+# ---- 93_the_tree_in_the_readme_is_a_promise.py
+# ------------- the tree in the README is a promise about what a first run leaves behind
+# 🐛 [2026-09-12] The documented tree listed `candidates/` and said, directly underneath it, "Every
+# directory and `config.json` appear on the **first session** in the repository, before you run
+# anything". `candidates/` is not in `workspace.ensure`'s mkdir list -- it is created the first time
+# a candidate is written -- and `state/` and `threads/`, which ARE in that list, were in no tree at
+# all. Measured on a fresh repository: `logs memory sessions skills state threads tools`, and no
+# `candidates`. So the picture was wrong in both directions at once (R1 agent 2).
+#
+# This is the first thing a stranger reads about what the tool will do to their repository, and a
+# reader who trusts it goes looking for a directory that is not there. Derived from the mkdir list
+# rather than compared against a second hand-written list, because a second list is the thing that
+# drifts -- which is what this check is about.
+import ast as _ast93
+import re as _re93
+
+_t_src93 = (ROOT / "lib" / "workspace.py").read_text(encoding="utf-8-sig", errors="replace")
+_t_made93 = set()
+for _t_n93 in _ast93.walk(_ast93.parse(_t_src93)):
+    # The one loop that creates the workspace's directories: `for sub in (...)` followed by mkdir.
+    if not isinstance(_t_n93, _ast93.For) or not isinstance(_t_n93.iter, _ast93.Tuple):
+        continue
+    # 🐛 `ast.unparse` is 3.9+, and this package declares older. The suite has a check that forbids
+    # it outright, which is what caught this one. The source lines the node spans answer the same
+    # question and cost nothing.
+    _t_lines93 = _t_src93.split("\n")[_t_n93.lineno - 1:(_t_n93.end_lineno or _t_n93.lineno)]
+    if "mkdir(" not in "\n".join(_t_lines93):
+        continue
+    vals = [e.value for e in _t_n93.iter.elts
+            if isinstance(e, _ast93.Constant) and isinstance(e.value, str)]
+    if vals and all(_re93.fullmatch(r"[a-z_/]*", v) for v in vals):
+        _t_made93 |= {v for v in vals if v}
+
+check("the mkdir sweep found the directories a first run creates: %d" % len(_t_made93),
+      len(_t_made93) >= 6,
+      saw="found %r — the loop was rewritten and this check is now reading nothing" % _t_made93)
+
+_t_readme93 = (ROOT / "README.md").read_text(encoding="utf-8-sig", errors="replace")
+_t_block93 = ""
+_t_m93 = _re93.search(r"### What it creates.*?```\n(.*?)```", _t_readme93, _re93.S)
+if _t_m93:
+    _t_block93 = _t_m93.group(1)
+check("...and the README still has a tree to check it against",
+      bool(_t_block93.strip()),
+      saw="no fenced tree under `### What it creates`")
+
+# The tree draws `memory/decisions` as a child named `decisions`, so both sides are reduced to the
+# directory's own name. Taking top-level names from the code and every name from the picture
+# compared two different things and reported the nested three as invented -- which is the same
+# like-for-unlike error this check exists to catch, made while writing it.
+_t_top93 = {d.rsplit("/", 1)[-1] for d in _t_made93}
+_t_drawn93 = set(_re93.findall(r"(?m)^[│├└─\s]*([a-z_]+)/", _t_block93))
+_t_absent93 = sorted(_t_top93 - _t_drawn93)
+check("EVERY DIRECTORY A FIRST RUN CREATES IS DRAWN IN THE README'S TREE",
+      not _t_absent93,
+      saw="%s — created by `ensure` and in no picture the reader is given"
+          % ", ".join(_t_absent93))
+
+_t_invented93 = sorted(_t_drawn93 - _t_top93)
+check("...and the tree draws nothing a first run does not create",
+      not _t_invented93,
+      saw="%s — drawn as though it appears on the first session, and it does not"
+          % ", ".join(_t_invented93))
 # ============================ end of the folded surgical pool
 
 
