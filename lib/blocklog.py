@@ -112,8 +112,16 @@ COLLAPSE_SHARE = 0.5
 PRESENT_ENOUGH = 0.5
 
 
-def check(root, window=WINDOW):
+def check(root, window=WINDOW, delivery_only=False):
     """What changed about the SHAPE of the last block that a person would want told.
+
+    `delivery_only` keeps the two findings that mean THIS FIRING went wrong — the block was cut
+    mid-build, or it collapsed against its own recent size — and drops the two that describe a
+    standing condition. The distinction is the caller's audience, not the finding's importance.
+    `chamnan-report` is run by a person asking "how is this workspace doing", and "five sections
+    have never once arrived" is exactly what they came for. The session-start hook is not: a
+    standing fact repeated at the top of every block forever is the per-firing cost 1.26 forbids,
+    and the first version of that wiring shipped it for about four minutes (2026-09-12).
 
     A list of sentences, empty when there is nothing to say — the silence-on-no-news convention
     `pointer.py` and `ledger.py` already keep. Judged against the records before it rather than
@@ -179,10 +187,11 @@ def check(root, window=WINDOW):
         if _never and len(prior) >= 5:
             _shown = ", ".join(_never[:3]) + (f", and {len(_never) - 3} more"
                                               if len(_never) > 3 else "")
-            out.append(f"{len(_never)} section(s) have not arrived once in the last "
-                       f"{len(prior) + 1} blocks — {_shown}. Not a regression: they have never "
-                       f"been delivered, so nothing here will report them as lost")
-        if gone:
+            if not delivery_only:
+                out.append(f"{len(_never)} section(s) have not arrived once in the last "
+                           f"{len(prior) + 1} blocks — {_shown}. Not a regression: they have never "
+                           f"been delivered, so nothing here will report them as lost")
+        if gone and not delivery_only:
             out.append("section(s) the last block did not carry, having carried them in at least "
                        "half of the ten before it: " + ", ".join(gone))
     return out

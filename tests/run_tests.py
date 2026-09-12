@@ -33060,6 +33060,7 @@ else:
 # against the index alone. Anything that reaches for a store file fails here rather than in a
 # session six weeks from now.
 import json as _json95
+import os as _os95
 import shutil as _sh95
 import tempfile as _tmp95
 from pathlib import Path as _Path95
@@ -33119,6 +33120,66 @@ _t_behind95 = _rc95.stale_by(_t_ws95, _t_idx95)
 check("a fresh index reports nothing behind, and a new store file makes it report one",
       _t_fresh95 == 0 and _t_behind95 == 1,
       saw="fresh said %r and after one new file it said %r" % (_t_fresh95, _t_behind95))
+
+# --- 5. Four things R2 agent 1 found in this module hours after it shipped, each reproduced
+# before it was believed. They share one shape: a NEW reader of the workspace is a new member of
+# every rule the old readers already follow, and none of the four was about retrieval at all.
+_t_ws95.joinpath("memory", "rules").mkdir(parents=True, exist_ok=True)
+_t_out95 = _t_tmp95 / "outside_secret.txt"
+# A distinctive ORDINARY word, not a secret: a secret would be scrubbed on the way in
+# and this check would then pass because of the scrubber rather than because of the
+# containment it claims to test. That is how its first version passed (2026-09-12).
+_t_out95.write_text("# Outside\n\nzarquonsentinel lives outside the workspace\n",
+                    encoding="utf-8")
+try:
+    _t_link95 = _t_ws95 / "memory" / "rules" / "evil.md"
+    if _t_link95.exists() or _t_link95.is_symlink():
+        _t_link95.unlink()
+    _os95.symlink(str(_t_out95), str(_t_link95))
+    _t_can_link95 = True
+except (OSError, NotImplementedError, AttributeError):
+    _t_can_link95 = False          # Windows without developer mode; the property still holds there
+(_t_ws95 / "memory" / "rules" / "inline.md").write_text(
+    "# A rule with a secret in it\n\nAWS_SECRET_ACCESS_KEY=AKIAZZZZZZZZZZZZZZZZ\n",
+    encoding="utf-8")
+(_t_ws95 / "skills" / "README.md").write_text(
+    "# Skills\n\nThis folder is an index OF the skills, not a skill.\n", encoding="utf-8")
+
+_t_five95 = _rc95.build(_t_ws95)
+_t_blob95 = _json95.dumps(_t_five95, ensure_ascii=False)
+
+if _t_can_link95:
+    check("A SYMLINK INSIDE A STORE POINTING OUT OF THE WORKSPACE IS NOT FOLLOWED",
+          "zarquonsentinel" not in _t_blob95.lower(),
+          saw="the target's content is in the persisted index — `workspace.inside()` exists for "
+              "exactly this and `tools_index.load` already calls it before trusting its file")
+else:
+    skip("  · this platform would not create a symlink — the containment check cannot run here")
+
+# Lowercased as well as literal: the body map stores terms folded to lower case, so asking only for
+# the written form is a question the index can never answer yes to — which is how the first version
+# of this check passed with the scrub deleted.
+check("...and a credential written INSIDE a store is scrubbed before the index is persisted",
+      "akiazzzzzzzzzzzzzzzz" not in _t_blob95.lower() and "REDACTED" in _t_blob95,
+      saw="the index is a file on disk and `mapper.py` scrubs for `MAP.md` on the same grounds")
+
+_t_readmes95 = [e for e in _t_five95["entries"] if e["path"].endswith("README.md")]
+check("...and a store folder's own README is not indexed as an entry in it",
+      not _t_readmes95,
+      saw="%s — a folder's table of contents is the one file in it that never answers "
+          "'what do we already know about X'" % ([e["path"] for e in _t_readmes95],))
+
+for _t_shape95 in ({"entries": "not-a-list"}, {"entries": [1, 2, None, "x"]}, {"entries": None}):
+    try:
+        _rc95.query(_t_shape95, ["anything"], limit=3)
+        _t_crash95 = ""
+    except Exception as _t_e95:                          # noqa: BLE001
+        _t_crash95 = "%s on %r" % (_t_e95.__class__.__name__, _t_shape95)
+    if _t_crash95:
+        break
+check("...and an index of the wrong shape is survived rather than raised through",
+      not _t_crash95,
+      saw="%s — a file on disk is a shape nobody promised" % _t_crash95)
 
 _sh95.rmtree(_t_tmp95, ignore_errors=True)
 

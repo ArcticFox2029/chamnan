@@ -28,7 +28,9 @@ looked for whole, which is slower per term and cannot be wrong in that way.
 import re
 import unicodedata
 
+import redact
 import tools_index
+import workspace as ws
 
 INDEX = "state/store_index.json"
 
@@ -113,12 +115,32 @@ def _non_ascii_lines(text, cap=4000):
 
 def _entry(ws_dir, path, kind, weight):
     """One document, reduced to what a query needs and nothing it does not."""
+    # 🐛 [2026-09-12, R2 agent 1 F5] `rglob` returns whatever is at the path, and a committed
+    # symlink at `.chamnan/memory/rules/x.md` pointing outside the workspace was followed: the
+    # target's content became this entry's title and blurb and its raw bytes were written into the
+    # persisted index. `workspace.inside()` exists for exactly this and its own docstring names the
+    # case; `tools_index.load()` already calls it before trusting `tools/index.json`. A new reader
+    # of the workspace is a new member of that set the day it is written, and this one was not.
+    if not ws.inside(path, ws_dir):
+        return None
+    # 🐛 [R2 agent 1, F1] Each store folder carries its own `README.md` — an index OF the folder,
+    # not an entry in it. Indexed as a rule or a skill, `skills/README.md` ranked first for
+    # "skills index", above every real document. A folder's table of contents is the one file in it
+    # that never answers "what do we already know about X".
+    if path.name == "README.md":
+        return None
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
-    title = _title_of(path, text)
-    blurb = _blurb_of(text, title)
+    # 🐛 [R2 agent 1, Q9] The index persists to disk and nothing scrubbed it, while `mapper.py`
+    # makes the identical call before writing `MAP.md`. A credential written into a rule or a
+    # session note was cached in the clear in `state/store_index.json`. It is gitignored, so this
+    # is a local plaintext cache rather than a supply-chain leak — which is a reason to fix it
+    # quietly, not a reason to leave it.
+    text = redact.scrub(text)
+    title = redact.scrub(_title_of(path, text))
+    blurb = redact.scrub(_blurb_of(text, title))
     counted = {}
     for t in terms(text):
         if len(t) > 2:
@@ -276,8 +298,15 @@ def query(index, words, limit=6):
     if not wanted and not phrases:
         return []
 
+    # 🐛 [R2 agent 1, Q8] `index.get("entries", [])` guards a non-dict index and not a non-list
+    # `entries`, so `{"entries": "not-a-list"}` iterated a STRING and `{"entries": [1, 2, None]}`
+    # reached `.get` on an int — both a raw `AttributeError` traceback and exit 1, past the
+    # command's own "no index yet" sentence. A file on disk is a shape nobody promised.
+    raw = index.get("entries") if isinstance(index, dict) else None
     scored = []
-    for e in index.get("entries", []) if isinstance(index, dict) else []:
+    for e in raw if isinstance(raw, list) else []:
+        if not isinstance(e, dict):
+            continue
         s, why = _hits(e, wanted, phrases)
         if s > 0:
             scored.append((s, e, sorted(set(why))))

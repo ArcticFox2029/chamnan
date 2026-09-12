@@ -593,6 +593,40 @@ def delivery(rec):
     return "fresh", list(entry["start"]) + ([] if entry["stdin"] else [prompt])
 
 
+LOG_HEAD = 24 * 1024        # enough to see how the job started
+LOG_TAIL = 40 * 1024        # and how it ended, which is usually the answer
+
+
+def _trim_log(log):
+    """Bound what the job log KEEPS, and return a slice of it for the status detail.
+
+    A log over the cap is rewritten as its head, a line saying how much was dropped, and its tail.
+    Both ends are kept because they answer different questions: the head says what the job was and
+    whether it started, the tail says how it ended. Nothing in the middle has ever been the answer.
+    """
+    try:
+        size = log.stat().st_size
+        if size <= LOG_HEAD + LOG_TAIL:
+            return log.read_text(encoding="utf-8", errors="replace")
+        with open(log, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(LOG_HEAD)
+            fh.seek(max(0, size - LOG_TAIL))
+            tail = fh.read()
+        kept = ("%s\n\n  ---- %d byte(s) of output dropped: a job log is bounded so that a chatty "
+                "session cannot fill the workspace. The head and the tail are kept. ----\n\n%s"
+                % (head, size - LOG_HEAD - LOG_TAIL, tail))
+        # Atomic, like every other shared write in this package: this file is read by
+        # `chamnan-schedule list` and by whoever is watching a job, and a plain `write_text`
+        # truncates on open — a reader arriving mid-rewrite would get a short log and conclude the
+        # job produced nothing. The suite names this class by file and line, which is how this one
+        # was caught minutes after it was written.
+        import workspace as ws
+        ws.atomic_write_text(log, kept)
+        return kept
+    except OSError:
+        return ""
+
+
 def fire(root, rec, run=None, now=None):
     """Run the job once, record what happened, and return. Never becomes resident.
 
@@ -640,10 +674,26 @@ def fire(root, rec, run=None, now=None):
             # neither way is a job that opens and asks nothing, which looks like success.
             entry = runner_for(rec.get("agent"))
             feed = resume_prompt(rec) if entry["stdin"] else None
-            done = sp.run(argv, cwd=str(root), env=env, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=JOB_TIMEOUT,
-                          input=feed)
-            code, text = done.returncode, (done.stdout or "") + (done.stderr or "")
+            # 🐛 [2026-09-12, R1 agent 1 Q8] `capture_output=True` held the child's ENTIRE output in
+            # this process's memory for up to JOB_TIMEOUT — six hours — and then wrote all of it to
+            # the log. A resumed session that prints steadily is exactly the job this feature is
+            # for: at 1 MB a minute that is a 360 MB string in RAM on somebody's laptop and a 360 MB
+            # file in their workspace, and the report said "no truncation, only bound is the
+            # timeout". It was right and it understated it: the disk was the visible half.
+            #
+            # The file IS the buffer now, so memory is bounded by the pipe rather than by the run,
+            # and what PERSISTS is bounded separately below. A log exists to answer what happened,
+            # and the head and the tail answer that; the megabyte between them is what makes
+            # somebody delete the directory.
+            with open(log, "w", encoding="utf-8", errors="replace") as fh:
+                fh.write("scheduled for %s, fired %s, %d second(s) late\n\n"
+                         % (rec.get("when"), _now_iso(), late))
+                fh.flush()
+                done = sp.run(argv, cwd=str(root), env=env, stdout=fh, stderr=sp.STDOUT,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=JOB_TIMEOUT, input=feed)
+            code = done.returncode
+            text = _trim_log(log)
     except sp.TimeoutExpired:
         # A resumed job that never returns would hold this process open for ever, which is the one
         # thing it promises not to do. The wall is generous because the work is a whole session's
@@ -661,12 +711,15 @@ def fire(root, rec, run=None, now=None):
         update(root, rec.get("id"), status="failed", fired=_now_iso(), late_seconds=late,
                detail="the runner could not be started: %s" % exc.__class__.__name__)
         return 2
-    try:
-        import workspace as ws
-        ws.atomic_write_text(log, "scheduled for %s, fired %s, %d second(s) late\n\n%s"
-                             % (rec.get("when"), _now_iso(), late, text))
-    except OSError:
-        pass
+    if run is not None:
+        # The injected runner returns its output as a string rather than writing the file, so the
+        # header and the body are written here for it — the real path wrote them as it went.
+        try:
+            import workspace as ws
+            ws.atomic_write_text(log, "scheduled for %s, fired %s, %d second(s) late\n\n%s"
+                                 % (rec.get("when"), _now_iso(), late, text))
+        except OSError:
+            pass
     update(root, rec.get("id"), status="fired" if code == 0 else "failed",
            fired=_now_iso(), late_seconds=late, exit_code=code, route=route)
     return code

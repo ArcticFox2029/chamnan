@@ -114,6 +114,16 @@ def main(argv):
               "queries read that file instead of the stores.", file=sys.stderr)
         return 1
 
+    # 🐛 [R2 agent 1, Q8] A malformed index used to crash; guarding `query` against it made it
+    # answer "nothing in the stores matches", which is a different untruth — it reports an EMPTY
+    # corpus when the corpus is fine and the index is not. This file already keeps those apart
+    # everywhere else, and a reader who is told their stores are empty stops looking.
+    if not isinstance(index, dict) or not isinstance(index.get("entries"), list):
+        print("chamnan: the index is not readable — it is not the shape this version writes. "
+              "`chamnan-recall --reindex` builds a new one. The stores themselves are untouched; "
+              "this file is derived and safe to delete.", file=sys.stderr)
+        return 1
+
     behind = recall.stale_by(wsdir, index)
     hits = recall.query(index, words, limit=None if "--all" in argv else 6)
     if not hits:

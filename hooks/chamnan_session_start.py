@@ -2203,6 +2203,29 @@ def main():
     # and were correct; this is the one that runs on every session, and instructions smuggled in
     # Unicode Tag characters inside a committed source comment reached Claude Code's context
     # through it with no rendered width (R12 agent 3, reproduced end to end).
+    # 🎯 [2026-09-12, R2 agent 2] 1.26 item 2: say when the DELIVERY failed, not when there was
+    # nothing to say. `blocklog.check` has produced exactly that sentence since 2026-09-08 — "the
+    # last block stopped early — it was cut, not shortened, so everything after the cut never
+    # reached the session" — and had no caller anywhere in `hooks/`. It was wired into
+    # `chamnan-report`, which a person runs by hand, so the one reader who needed it was the one
+    # who never saw it. That module's own docstring records the same irony about the log it writes:
+    # the numbers were "obvious in a column" and nothing ever looked at the column.
+    #
+    # `delivery_only`, because `check` also answers a standing question — "five sections have never
+    # once arrived" — which belongs to `chamnan-report`, where a person went looking for it. Leading
+    # every block with it forever is precisely the per-firing cost 1.26 forbids, and the first
+    # version of this wiring did exactly that until the output was read.
+    #
+    # It costs nothing on an ordinary firing, because `check` returns an empty list when there is
+    # nothing to say — and on the firing where it says something, the block it is prepended to is
+    # the SHORT one, since that is what being cut means.
+    try:
+        _failed = blocklog.check(root, delivery_only=True)
+    except Exception:      # noqa: BLE001 — a report about a failure must not become one
+        _failed = []
+    if _failed:
+        body = ("_" + " Also: ".join(_failed) + "._\n\n") + body
+
     body = redact.for_a_terminal(body)
     # What this session was handed, as a shape rather than a copy — 188 bytes against the block's
     # ~9,000, bounded by record count, no content stored. Written AFTER `fit.shrink` and after the
