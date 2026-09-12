@@ -32735,6 +32735,17 @@ except Exception:                                       # noqa: BLE001
 check("...and a quoted argument survives as ONE argv entry, the way the shell would have passed it",
       _t_stored89 == ["a-router", "--say", "one whole argument"],
       saw="stored as %r" % (_t_stored89,))
+
+# 🐛 [2026-09-12] Every `set` above spawns a detached waiter, because that is what `set` DOES, and
+# these three asked for 9h. Three per gate run, and nothing ever took them down: 21 were found
+# asleep on this machine hours later, in temp directories whose shells were long gone. A check that
+# leaves processes behind is a check that costs more each time it passes.
+#
+# Cancelled rather than killed, which is also the only honest way to exercise it: `cancel` writes
+# the record and sends no signal at all, so the waiter has to notice by itself at its next tick.
+# Taking the 21 down that way is what proved the design works at more than fixture scale.
+_sp89.run([_sys89.executable, str(_t_CMD89), "cancel", "--all"],
+          cwd=str(_t_q89), capture_output=True, text=True, timeout=60)
 # ---- 90_a_posix_idiom_that_means_something_else_on_windows.py
 # ------------- the package ships to Windows and this machine will never run it there
 # 🐛 [2026-09-12] `schedule.alive` asked "does this process exist" with `os.kill(pid, 0)`, which is
@@ -33203,6 +33214,143 @@ else:
           _t_size95 <= _t_corpus95,
           saw="an index larger than the documents it indexes is not an index — it was 130%% of "
               "this corpus until the substring path stopped keeping every line with an em dash")
+# ---- 96_the_only_binaries_this_package_runs.py
+# ------------- a security claim in the README, with nothing enforcing it
+# 🐛 [2026-09-12] The backlog carries this as "**highest-severity item in the whole backlog** even
+# though it saves no tokens": the README tells anyone auditing chamnan which binaries it executes,
+# and the test guarding that sentence asserted only that the string "git" appeared somewhere in one
+# file. A check that cannot fail is a decoration, and a decoration in front of a security claim is
+# worse than no claim — it is the reason nobody looked again.
+#
+# Derived, across the whole package. Every `subprocess.run`/`Popen`/`call`/`check_output` is found
+# by parsing rather than by grepping (a function named `run` is not a process — two of the five
+# "variable argv" sites in the first sweep of this were `rulecheck.run` and a local helper), and the
+# HEAD of each argv is resolved to what it actually is.
+#
+# The honest population, as of today: `git`, this interpreter, and the scheduler's own runner —
+# which is the vendor CLI or the `--runner` the user typed, and is the feature rather than a
+# violation of it. A fourth entrant fails here, which is the point: it would be a change to a
+# published promise, not an implementation detail.
+import ast as _ast96
+
+_t_files96 = (sorted((ROOT / "lib").rglob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+              + [p for p in sorted((ROOT / "bin").glob("chamnan-*")) if not p.suffix])
+_T_SPAWN96 = {"run", "Popen", "call", "check_call", "check_output"}
+# The module, however it was imported. A call on anything else named `run` is not a process.
+_T_MODULES96 = {"subprocess", "sp", "_sp", "_sp89"}
+# What an argv head may be, and why. `sys.executable` is this interpreter; a name is resolved below.
+_T_ALLOWED_CONST96 = {"git"}
+
+_t_spawns96, _t_unknown96 = [], []
+for _t_f96 in _t_files96:
+    try:
+        _t_src96 = _t_f96.read_text(encoding="utf-8-sig", errors="replace")
+        _t_tree96 = _ast96.parse(_t_src96)
+    except (SyntaxError, ValueError, OSError):
+        continue
+    # One level of indirection, resolved rather than excused. `chamnan-map` builds
+    # `args = [sys.executable, str(hook)]` and passes `args`, which is this interpreter and is
+    # exactly what the README promises — excluding that file by name would have made the check
+    # blind to it instead of able to read it.
+    #
+    # 🐛 Built first as one map per MODULE, and `argv` is a local in two different functions of
+    # `schedule.py`: the name from `spawn` resolved the call in `fire`, and the check reported that
+    # no runtime argv existed anywhere — turning the scheduler's documented exception into a lie in
+    # the opposite direction. Scope is per function, which is the only place a local name means
+    # anything.
+    def _t_scope96(node):
+        """The assignments visible to a call, by the function that encloses it."""
+        out = {}
+        for _a in _ast96.walk(node):
+            if (isinstance(_a, _ast96.Assign) and len(_a.targets) == 1
+                    and isinstance(_a.targets[0], _ast96.Name)):
+                _v = _a.value
+                if isinstance(_v, _ast96.BinOp):        # `[head, …] + extra`
+                    _v = _v.left
+                if isinstance(_v, _ast96.List) and _v.elts:
+                    out[_a.targets[0].id] = _v.elts[0]
+                else:
+                    out.pop(_a.targets[0].id, None)     # reassigned to something unreadable
+        return out
+
+    _t_scopes96 = []
+    for _t_fn96 in _ast96.walk(_t_tree96):
+        if isinstance(_t_fn96, (_ast96.FunctionDef, _ast96.AsyncFunctionDef)):
+            _t_scopes96.append((_t_fn96.lineno, _t_fn96.end_lineno or _t_fn96.lineno,
+                                _t_scope96(_t_fn96)))
+
+    def _t_visible96(lineno):
+        best = None
+        for start, end, names in _t_scopes96:
+            if start <= lineno <= end and (best is None or start > best[0]):
+                best = (start, names)
+        return best[1] if best else {}
+
+    for _t_n96 in _ast96.walk(_t_tree96):
+        if not isinstance(_t_n96, _ast96.Call) or not isinstance(_t_n96.func, _ast96.Attribute):
+            continue
+        if _t_n96.func.attr not in _T_SPAWN96 or not _t_n96.args:
+            continue
+        if getattr(_t_n96.func.value, "id", None) not in _T_MODULES96:
+            continue
+        _t_where96 = "%s:%d" % (_t_f96.relative_to(ROOT).as_posix(), _t_n96.lineno)
+        _t_head96 = _t_n96.args[0]
+        if isinstance(_t_head96, _ast96.List) and _t_head96.elts:
+            _t_head96 = _t_head96.elts[0]
+        elif isinstance(_t_head96, _ast96.Constant):
+            _t_unknown96.append("%s runs a SHELL STRING %r" % (_t_where96, _t_head96.value))
+            continue
+        if isinstance(_t_head96, _ast96.Constant) and isinstance(_t_head96.value, str):
+            _t_spawns96.append((_t_where96, _t_head96.value))
+        elif (isinstance(_t_head96, _ast96.Attribute)
+              and "%s.%s" % (getattr(_t_head96.value, "id", "?"), _t_head96.attr)
+              == "sys.executable"):
+            _t_spawns96.append((_t_where96, "<this interpreter>"))
+        elif isinstance(_t_head96, _ast96.Name):
+            _t_res96 = _t_visible96(_t_n96.lineno).get(_t_head96.id)
+            if (isinstance(_t_res96, _ast96.Attribute)
+                    and "%s.%s" % (getattr(_t_res96.value, "id", "?"), _t_res96.attr)
+                    == "sys.executable"):
+                _t_spawns96.append((_t_where96, "<this interpreter>"))
+            elif isinstance(_t_res96, _ast96.Constant) and isinstance(_t_res96.value, str):
+                _t_spawns96.append((_t_where96, _t_res96.value))
+            else:
+                _t_spawns96.append((_t_where96, "<variable %s>" % _t_head96.id))
+        else:
+            _t_unknown96.append("%s argv head is a %s" % (_t_where96, type(_t_head96).__name__))
+
+check("the spawn sweep found the call sites: %d" % len(_t_spawns96),
+      len(_t_spawns96) >= 15,
+      saw="fewer than fifteen spawns found across lib/, hooks/ and bin/ — the sweep is reading "
+          "nothing and every assertion below would pass on an empty list")
+
+# --- 1. Every literal binary is one the README names.
+_t_other96 = sorted({b for _w, b in _t_spawns96
+                     if not b.startswith("<") and b not in _T_ALLOWED_CONST96})
+check("THE ONLY BINARY THIS PACKAGE NAMES OUTRIGHT IS THE ONE THE README SAYS IT RUNS",
+      not _t_other96,
+      saw="%s — the README tells an auditor this package runs `git` and this interpreter, and that "
+          "sentence is what becomes false" % ", ".join(_t_other96))
+
+# --- 2. Nothing is handed to a shell to parse.
+check("...and nothing is run through a shell, where the argv stops being a list",
+      not _t_unknown96, saw="; ".join(_t_unknown96[:4]))
+
+# --- 3. A variable argv is allowed in exactly one place, and it is the documented one. The
+# scheduler runs what the user scheduled; that is the feature. Anywhere else, a variable argv means
+# the promise cannot be read off the source at all.
+_T_VARIABLE_OK96 = {"lib/schedule.py"}
+_t_loose96 = sorted({w for w, b in _t_spawns96
+                     if b.startswith("<variable") and w.rsplit(":", 1)[0] not in _T_VARIABLE_OK96})
+check("...and an argv built at runtime appears only where the user chose the command",
+      not _t_loose96,
+      saw="%s — the README's promise is checkable only while the argv is visible in the source"
+          % ", ".join(_t_loose96))
+
+# --- 4. And the scheduler really is still in that set, or rule 3 is guarding nothing.
+check("...and the scheduler is still the place that does it, so rule 3 is not vacuous",
+      any(b.startswith("<variable") for _w, b in _t_spawns96),
+      saw="no runtime argv anywhere — the exception above now protects nothing and should go")
 # ============================ end of the folded surgical pool
 
 
