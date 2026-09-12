@@ -16,6 +16,13 @@ Read what it printed. The important line is the **described** percentage.
 
 ## 2. If coverage is under 70%, offer to fix it — do not just report it
 
+**First read `agents` from `.chamnan/config.json` (default `true`).** With `false` the user
+has switched off chamnan dispatching agents of its own: report the coverage, list the files
+from `chamnan-map --undocumented`, and stop there — do not offer the commenter, do not
+dispatch it, and do not write the comments yourself instead. `chamnan-map` already honours
+the switch where it prints this same advice; a skill that dispatches anyway is what makes the
+setting mean nothing.
+
 A low number is not a complaint about the user, it is the single biggest lever on whether any of
 this works. The index is built from each file's opening comment; without them it degrades to a list
 of filenames, which is worth little.

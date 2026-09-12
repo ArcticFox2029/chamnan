@@ -32479,167 +32479,163 @@ check("A BUSY STORE IS REPORTED AS BUSY, NOT AS A TRACEBACK NAMING THE FILE",
           % "; ".join(_t_held89))
 _sh89.rmtree(_t_r89, ignore_errors=True)
 
-# --- 11. THE THREE ROUTES. A session left open IS the session, so the best answer is to type into
-# the one already running rather than to start anything. Which route a record takes is decided from
-# what was stored at `set`, never from what is true at firing time: a pane that closed and a pid
-# that was reused both look fine from outside, and both have to be caught by the pair the record
-# carries. The route is asserted over every transport, not over the one this machine happens to use.
-_t_base89 = {"id": "r", "when": "2026-09-12T01:00:00", "runner": ["claude", "-p"],
-             "resume_from": ".chamnan/STATE.md", "note": ""}
-_t_mine89 = _os89.getpid()
-_t_born89 = _t_s89.process_started(_t_mine89)
-
-check("this process's own birth time is readable, which the routing depends on",
-      bool(_t_born89), saw="no birth time — every record would fall back to `resume` and the pane "
-                           "route would be dead code on this platform")
-
+# --- 11. TWO ROUTES, and the third one is gone on purpose.
+# 🎯 [owner 2026-09-12] A pane route existed — type into the window the session is still open in,
+# which keeps the live context whole. It required running `tmux`, and the README makes a promise a
+# user can check: at runtime this package executes `git` and this interpreter, nothing else. The
+# owner's call was to keep the promise and lose the route, with the better reason: the CLI is the
+# honest boundary. chamnan installs where a CLI lives, so a terminal, tmux, a Linux shell and a
+# Windows command prompt are all reachable and predictable; a purpose-built app or a browser tab is
+# not, because chamnan cannot be installed into it at all. Supporting one multiplexer while
+# implying the rest of that world is covered would be worse than naming the edge.
+#
+# So this asserts what remains AND that the removed one has not crept back — a route that needs a
+# third binary is a change to a published promise, not an implementation detail.
+_t_base89 = {"id": "r", "when": "2026-09-12T08:00:00", "resume_from": ".chamnan/STATE.md",
+             "note": ""}
 _t_routes89 = []
-for _t_tp89 in sorted(_t_s89.PANE_ROUTES):
-    _t_rec89 = dict(_t_base89, transport=_t_tp89, handle="h1",
-                    app_pid=_t_mine89, app_started=_t_born89)
-    _t_route89, _t_argv89 = _t_s89.delivery(_t_rec89)
-    if _t_route89 != "pane" or not _t_argv89 or _t_tp89 not in _t_argv89[0]:
-        _t_routes89.append("%s -> %s %s" % (_t_tp89, _t_route89, _t_argv89[:2]))
-check("EVERY MULTIPLEXER WITH A LIVE PANE IS ANSWERED THROUGH THAT PANE",
-      not _t_routes89,
-      saw="%s — a transport in the table that does not route to its own tool is dead config"
-          % "; ".join(_t_routes89))
+for _t_agent89 in sorted(_t_s89.RUNNERS):
+    _t_r89 = _t_s89.delivery(dict(_t_base89, agent=_t_agent89, session="SID"))[0]
+    _t_f89 = _t_s89.delivery(dict(_t_base89, agent=_t_agent89))[0]
+    if (_t_r89, _t_f89) != ("resume", "fresh"):
+        _t_routes89.append("%s -> %s / %s" % (_t_agent89, _t_r89, _t_f89))
+check("A SESSION THAT SURVIVED IS RESUMED; ONE THAT DID NOT FALLS BACK TO THE WRITTEN RECORD",
+      not _t_routes89, saw="; ".join(_t_routes89))
 
-# ...and the two ways a pane can be gone, which are the whole reason the record stores a pair.
-_t_reused89 = dict(_t_base89, transport="tmux", handle="%9", app_pid=_t_mine89,
-                   app_started="Fri Sep 11 09:00:00 2026", session="abc-123")
-check("...but a pid whose BIRTH TIME disagrees is a different process, and is not typed into",
-      _t_s89.delivery(_t_reused89)[0] == "resume",
-      saw="routed to %s — typing into a reused pid is typing into somebody else's program"
-          % _t_s89.delivery(_t_reused89)[0])
-_t_dead89 = dict(_t_base89, transport="tmux", handle="%9", app_pid=999999,
-                 app_started=_t_born89, session="abc-123")
-check("...and a pid that is gone falls back rather than firing at nothing",
-      _t_s89.delivery(_t_dead89)[0] == "resume", saw=_t_s89.delivery(_t_dead89)[0])
+_t_code89 = _t_code_only89(ROOT / "lib" / "schedule.py")
+check("...and nothing in the scheduler executes a third binary behind the README's back",
+      "tmux" not in _t_code89 and "screen" not in _t_code89 and "wezterm" not in _t_code89,
+      saw="a multiplexer is named in the CODE — the README tells anyone auditing this package that "
+          "it runs git and this interpreter, and that sentence is what would become false")
 
-# A transport with no addressable pane is not given a worse version of the pane route.
-_t_nopane89 = [t for t in ("vscode", "cursor", "ssh", "cli", "windows-terminal")
-               if _t_s89.delivery(dict(_t_base89, transport=t, handle="1", session="s"))[0]
-               != "resume"]
-check("...and a transport with no addressable pane takes the resume route, not a worse pane one",
-      not _t_nopane89, saw=", ".join(_t_nopane89))
+# --- 14. AT-MOST-ONCE, chosen rather than inherited.
+# 🎯 [acc4, 2026-09-12] "Firing once does not guarantee running once": the child can die after the
+# job starts and before the outcome is written, leaving the record `pending` for something else to
+# pick up. Which guarantee this feature wants is a decision, and the decision is at-most-once —
+# because it exists to get AROUND a usage limit, and a job that fires twice spends the quota it was
+# scheduled to wait for. A job that never fires is visible in `list`; one that fires twice looks
+# like success from every angle.
+_t_amo89 = _t_repo89()
+_t_s89.add(_t_amo89, {"id": "amo", "when": "2026-09-12T07:00:00", "status": "pending",
+                      "runner": [_sys89.executable, "-c", ""]})
 
-# The last resort still points at the record, because that is all that survived.
-_t_fresh89 = _t_s89.delivery(dict(_t_base89, transport="cli", handle=""))
-check("...and with neither a pane nor a session, the runner is pointed at the written-down work",
-      _t_fresh89[0] == "fresh" and ".chamnan/STATE.md" in _t_fresh89[1][-1],
-      saw="%s %s" % (_t_fresh89[0], _t_fresh89[1][-1][:60]))
 
-# --- 12. `os.kill(pid, 0)` MEANS TWO DIFFERENT THINGS ON TWO PLATFORMS, and one of them is fatal.
-# 🐛 [2026-09-12] It is the POSIX idiom for "does this process exist". On Windows it is not a
-# question: CPython's own test suite states it — "os.kill on Windows can take an int which gets set
-# as the exit code" — so signal 0 there means TERMINATE WITH EXIT CODE 0. `schedule.alive` used it
-# unguarded, so on Windows `chamnan-schedule list` would have killed the process it was reporting
-# on, and the routing decision would have killed the user's own agent a moment before typing into it.
+def _t_dies89(_argv, _env):
+    raise KeyboardInterrupt("killed mid-flight")
+
+
+try:
+    _t_s89.fire(_t_amo89, _t_s89.read(_t_amo89)[0], run=_t_dies89,
+                now=lambda: _dt89(2026, 9, 12, 7, 0))
+except KeyboardInterrupt:
+    pass
+_t_after89 = _t_s89.read(_t_amo89)[0]
+check("A CHILD KILLED MID-FLIGHT LEAVES A CLAIM, NOT A RECORD SOMETHING ELSE WILL RUN AGAIN",
+      _t_after89.get("status") == "firing",
+      saw="status %r — `pending` here means the next process to look picks the job up and runs it "
+          "a second time" % _t_after89.get("status"))
+check("...and nothing picks up a record that is already claimed",
+      _t_s89.wait_and_fire(_t_amo89, "amo", sleep=lambda _s: None,
+                           now=lambda: _dt89(2026, 9, 12, 8, 0),
+                           run=lambda a, e: (0, "SHOULD NOT RUN")) == 0
+      and _t_s89.read(_t_amo89)[0].get("status") == "firing",
+      saw=repr(_t_s89.read(_t_amo89))[:140])
+check("...and `list` says it is neither waiting nor done, because it is neither",
+      "never reported back" in _t_s89.describe(_t_after89, _dt89(2026, 9, 12, 7, 5)),
+      saw=_t_s89.describe(_t_after89, _dt89(2026, 9, 12, 7, 5))[:110])
+_sh89.rmtree(_t_amo89, ignore_errors=True)
+
+# --- 15. A NAMED RUNNER IS AN INSTRUCTION.
+# 🐛 [2026-09-12] An explicit `--runner` was ignored whenever another route looked better, because
+# that route ran something else entirely. Found by firing a real job end to end for the first time:
+# it was handed `claude -p --model haiku` and did something different with it. Somebody who names
+# the runner has said what they want executed, and quietly substituting is the worst kind of helpful.
+_t_named89 = dict(_t_base89, agent="claude", session="SID",
+                  runner=["claude", "-p", "--model", "haiku"], runner_explicit=True)
+_t_nroute89, _t_nargv89 = _t_s89.delivery(_t_named89)
+check("A RUNNER THE USER NAMED IS THE THING THAT RUNS",
+      "--model" in _t_nargv89 and "haiku" in _t_nargv89,
+      saw="route %s, argv %s — the named command was dropped for one the user did not ask for"
+          % (_t_nroute89, _t_nargv89[:5]))
+check("...while a record with no runner named takes the vendor's own shape",
+      "--model" not in _t_s89.delivery(dict(_t_base89, agent="claude", session="SID"))[1],
+      saw="an unnamed runner inherited flags from somewhere")
+
+# --- 16. EVERY VENDOR IN THE TABLE, asserted from the table rather than from two examples.
+# 🎯 [owner 2026-09-12] "ครอบคลุมทุก llm ที่เราวางไว้". Two vendors, and they disagree on both
+# questions this feature has to answer: claude takes its prompt on ARGV and resumes with a FLAG
+# (`--resume <id>`), codex takes its prompt on STDIN (`-`) and resumes with a SUBCOMMAND
+# (`resume <id>`). Hardcoding either would fire the wrong shape at the other — silently, because
+# both accept a trailing string without complaining.
 #
-# Found with no Windows machine, by reading what the platform branch of CPython does rather than
-# assuming the POSIX idiom carries.
+# Both were run end to end before this was written: claude answered `DONE` and codex answered
+# `CODEX-OK`, each reading the work out of `STATE.md` rather than being told it again.
+_t_vendors89 = sorted(_t_s89.RUNNERS)
+check("the sweep found the vendor table: %s" % _t_vendors89, len(_t_vendors89) >= 2,
+      saw="fewer than two vendors — a table with one entry is a constant with extra steps")
+
+_t_vbase89 = {"id": "v", "when": "2026-09-12T08:00:00", "resume_from": ".chamnan/STATE.md",
+              "note": "", "transport": "cli", "handle": ""}
+_t_vbad89 = []
+for _t_v89 in _t_vendors89:
+    _t_entry89 = _t_s89.RUNNERS[_t_v89]
+    # The prompt reaches the agent exactly once: in the argv for vendors that read it there, and
+    # NOT in the argv for vendors that read stdin — sending both would ask twice.
+    _t_fresh89 = _t_s89.delivery(dict(_t_vbase89, agent=_t_v89))[1]
+    _t_inargv89 = any("Resume the work" in _t_a89 for _t_a89 in _t_fresh89)
+    if _t_entry89["stdin"] and _t_inargv89:
+        _t_vbad89.append("%s: reads stdin but the prompt is in argv too" % _t_v89)
+    if not _t_entry89["stdin"] and not _t_inargv89:
+        _t_vbad89.append("%s: reads argv but the prompt is not there" % _t_v89)
+    # ...and the resume shape is the vendor's own, not one invented here.
+    if _t_entry89["resume"]:
+        _t_res89 = _t_s89.delivery(dict(_t_vbase89, agent=_t_v89, session="SID"))[1]
+        if "SID" not in _t_res89:
+            _t_vbad89.append("%s: resume argv does not carry the session id" % _t_v89)
+        if _t_res89[0] != _t_entry89["start"][0]:
+            _t_vbad89.append("%s: resume runs a different binary than start" % _t_v89)
+check("EVERY VENDOR GETS ITS PROMPT EXACTLY ONCE, THE WAY THAT VENDOR READS IT",
+      not _t_vbad89,
+      saw="; ".join(_t_vbad89))
+
+# An unknown agent is the ordinary case — `host.primary` answers `generic` for a repository with no
+# agent set up, and most hosts chamnan writes context for have no CLI at all. It must resolve to
+# something runnable rather than raising or producing an empty argv.
+_t_unknown89 = [a for a in ("generic", "cursor", "", None, "nothing-like-this")
+                if not _t_s89.runner_for(a).get("start")]
+check("...and an agent with no CLI resolves to a runnable shape rather than nothing",
+      not _t_unknown89, saw=str(_t_unknown89))
+
+# --- 17. CANCELLING SIGNALS NOTHING, because a pid with no birth time beside it is not an identity.
+# 🐛 [R1 agent1, 2026-09-12] `cancel` signalled the waiter's pid — and the record carries a pid for
+# the waiter with NO birth time, while `app_pid` has had one all along for exactly this reason. So
+# cancelling a schedule whose waiter had already exited could terminate whatever inherited that
+# number. Third time this package has met the same lesson: `pgrep -f` matching its own search,
+# `os.kill(pid, 0)` terminating on Windows, and now this.
 #
-# The FIRST version of this check then failed the same way the reports it was written against do:
-# it matched the call and not its context, so it flagged `workspace.py`, where the identical line
-# sits behind an `os.name == "nt"` guard with a full Windows branch above it — correct code, called
-# a defect because one line was read without the block around it. The guard is what makes the idiom
-# safe, so the guard is what this asks about.
-import ast as _ast89
+# Writing the status IS the cancel: the waiter re-reads its own record every tick and returns the
+# moment it stops saying `pending`. Proved by running it — after `cancel` the waiter was still
+# alive, and gone within 25 seconds with nothing sent to it. The kill bought at most twenty seconds
+# and cost the one failure mode this file spends most of its comments avoiding.
+_t_cmdcode89 = _t_code_only89(_t_CMD89)
+check("CANCELLING A SCHEDULE SENDS NO SIGNAL TO ANY PID",
+      "os.kill" not in _t_cmdcode89 and "SIGTERM" not in _t_cmdcode89,
+      saw="the command signals a pid whose identity it cannot confirm — `pid` has no birth time "
+          "recorded beside it, unlike `app_pid`")
 
-
-def _t_guarded89(tree, call):
-    """True when `call` is unreachable on Windows because a branch above it already returned.
-
-    Two shapes, and the second is the one the first draft of this check missed. An `if/else` puts
-    the POSIX code in the `else`. An EARLY RETURN puts it after the `if` entirely — the Windows
-    branch handles the case and returns, so everything below is POSIX by construction. That is how
-    `workspace._pid_is_alive` is written, and reading only the first shape reported correct code as
-    a defect, which is the exact failure mode this whole round is about.
-    """
-    for _t_fn89 in _ast89.walk(tree):
-        if not isinstance(_t_fn89, (_ast89.FunctionDef, _ast89.AsyncFunctionDef)):
-            continue
-        if not any(_t_w89 is call for _t_w89 in _ast89.walk(_t_fn89)):
-            continue
-        for _t_node89 in _t_fn89.body:
-            if not isinstance(_t_node89, _ast89.If):
-                continue
-            _t_test89 = _ast89.dump(_t_node89.test)
-            if '"nt"' not in _t_test89 and "'nt'" not in _t_test89:
-                continue
-            # else-branch shape
-            for _t_inner89 in _t_node89.orelse:
-                if any(_t_w89 is call for _t_w89 in _ast89.walk(_t_inner89)):
-                    return True
-            # early-return shape: the call simply sits after the Windows branch
-            if getattr(call, "lineno", 0) > getattr(_t_node89, "lineno", 0) \
-                    and not any(_t_w89 is call for _t_w89 in _ast89.walk(_t_node89)):
-                return True
-    return False
-
-
-_t_zerokill89 = []
-for _t_f89 in (sorted((ROOT / "lib").rglob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
-               + [p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix]):
-    try:
-        _t_tree89 = _ast89.parse(_t_f89.read_text(encoding="utf-8-sig", errors="replace"))
-    except (SyntaxError, ValueError, OSError):
-        continue
-    for _t_n89 in _ast89.walk(_t_tree89):
-        if not isinstance(_t_n89, _ast89.Call):
-            continue
-        _t_fn89 = _t_n89.func
-        if not (isinstance(_t_fn89, _ast89.Attribute) and _t_fn89.attr == "kill"
-                and getattr(_t_fn89.value, "id", "") == "os"):
-            continue
-        if len(_t_n89.args) < 2:
-            continue
-        _t_sig89 = _t_n89.args[1]
-        if (isinstance(_t_sig89, _ast89.Constant) and _t_sig89.value == 0
-                and not _t_guarded89(_t_tree89, _t_n89)):
-            _t_zerokill89.append("%s:%d" % (_t_f89.name, _t_n89.lineno))
-check("NO UNGUARDED `os.kill(pid, 0)` — IT IS A QUESTION ON POSIX AND A TERMINATION ON WINDOWS",
-      not _t_zerokill89,
-      saw="%s — outside a platform branch, the call that asks whether a process is alive kills it "
-          "on Windows" % ", ".join(_t_zerokill89))
-
-# ...and the sweep really did find the guarded ones, or it is passing because it matched nothing.
-_t_anykill89 = sum(
-    1 for _t_f89 in sorted((ROOT / "lib").rglob("*.py"))
-    for _t_n89 in _ast89.walk(_ast89.parse(_t_f89.read_text(encoding="utf-8", errors="replace")))
-    if isinstance(_t_n89, _ast89.Call) and isinstance(_t_n89.func, _ast89.Attribute)
-    and _t_n89.func.attr == "kill" and getattr(_t_n89.func.value, "id", "") == "os")
-check("...and the sweep reached this package's process calls at all: %d" % _t_anykill89,
-      _t_anykill89 >= 1,
-      saw="no `os.kill` found anywhere — the walk is matching nothing and would pass on any code")
-
-# ...and the liveness answer is still right here, which the fix must not have traded away.
-check("...and the liveness answer is still right on this platform",
-      _t_s89.alive(_os89.getpid()) is True and _t_s89.alive(999999) is False
-      and _t_s89.alive(0) is False and _t_s89.alive("abc") is False,
-      saw="alive(self)=%s alive(999999)=%s" % (_t_s89.alive(_os89.getpid()),
-                                               _t_s89.alive(999999)))
-
-# One definition, not two. The scheduler asks the package's existing answer rather than carrying a
-# second Windows branch — the first fix wrote one, and it was missing `use_last_error`, the
-# ACCESS_DENIED case, and the fact that exit code 259 is legal.
-_t_sched89 = _t_code_only89(ROOT / "lib" / "schedule.py")
-# The property is about LIVENESS specifically, not about touching the Windows API at all: reading a
-# process's BIRTH TIME has no equivalent in `workspace`, so that one does carry its own branch and
-# should. The first version of this check said "no OpenProcess anywhere in the file", which is a
-# broader rule than the reason behind it — and it failed the moment a second, legitimate Windows
-# branch arrived. A check wider than its own justification eventually accuses correct code.
-_t_schedtree89 = _ast89.parse((ROOT / "lib" / "schedule.py").read_text(encoding="utf-8"))
-_t_alivefn89 = next((n for n in _ast89.walk(_t_schedtree89)
-                     if isinstance(n, _ast89.FunctionDef) and n.name == "alive"), None)
-check("the sweep found the liveness function to judge", _t_alivefn89 is not None,
-      saw="`alive` is not defined in schedule.py — this check is measuring nothing")
-_t_alivebody89 = _ast89.dump(_t_alivefn89) if _t_alivefn89 else ""
-check("...and the LIVENESS question is asked through the package's one definition",
-      "_pid_is_alive" in _t_alivebody89,
-      saw="`alive` carries its own platform branch — a second place to get ACCESS_DENIED and the "
-          "legal exit code 259 wrong, both of which the existing one already handles")
+# ...and the mechanism it relies on instead is really there: a waiter whose record stopped saying
+# `pending` must return rather than fire. Asserted behaviourally, since the whole argument for
+# removing the kill is that this already works.
+_t_c89 = _t_repo89()
+_t_s89.add(_t_c89, {"id": "c", "when": "2026-09-12T08:00:00", "status": "cancelled",
+                    "runner": [_sys89.executable, "-c", ""]})
+check("...and a waiter whose record is no longer `pending` returns instead of firing",
+      _t_s89.wait_and_fire(_t_c89, "c", sleep=lambda _s: None,
+                           now=lambda: _dt89(2026, 9, 12, 9, 0),
+                           run=lambda a, e: (0, "SHOULD NOT RUN")) == 0
+      and _t_s89.read(_t_c89)[0].get("status") == "cancelled",
+      saw="without this, removing the kill would leave a waiter that never stops")
+_sh89.rmtree(_t_c89, ignore_errors=True)
 # ---- 90_a_posix_idiom_that_means_something_else_on_windows.py
 # ------------- the package ships to Windows and this machine will never run it there
 # 🐛 [2026-09-12] `schedule.alive` asked "does this process exist" with `os.kill(pid, 0)`, which is
@@ -32729,6 +32725,67 @@ _t_dirfd90 = sum(1 for _t_f90 in _t_files90
 check("...and the sweep really does see the POSIX-only keywords this package uses: %d file(s)"
       % _t_dirfd90, _t_dirfd90 >= 1,
       saw="no file mentions `dir_fd` — either the package stopped using it or this sweep is blind")
+# ---- 91_a_switch_honoured_in_one_place_is_not_honoured.py
+# ------------- a config switch is only as real as the least careful place that reads it
+# 🐛 [2026-09-12] `agents` — "whether chamnan may dispatch its own cheap-model agents" — was
+# read in exactly one of the three places that act on it. `bin/chamnan-map` guarded the
+# advice it prints;
+# `skills/bootstrap/SKILL.md` dispatched the commenter and `skills/remap/SKILL.md` offered it, with
+# no mention of the switch in either. A user who set `agents: false` still had a subagent dispatched
+# over their files, and the setting they had turned off was the one doing it.
+#
+# It surfaced from a research report that concluded the opposite — that `agents`, `report` and
+# `language` are documented but dead code, and should be deleted. That conclusion came from
+# `grep -rn ... --include='*.py'`, and chamnan's commands are Python files with NO `.py` suffix, so
+# the filter skipped `bin/` whole. Deleting the three keys would have removed three working
+# features. The real defect was one level down and the opposite shape: not a key nobody reads, a key
+# that two of its three readers forgot.
+#
+# So this asserts the population. The set is derived — every skill that names the commenter — and
+# not listed here, because a list is the thing that goes stale when a fourth skill is written.
+_t_skills91 = sorted((ROOT / "skills").glob("*/SKILL.md"))
+_t_dispatch91 = [p for p in _t_skills91
+                 if "commenter" in p.read_text(encoding="utf-8-sig", errors="replace")]
+check("the commenter sweep found the skills that dispatch it: %d" % len(_t_dispatch91),
+      len(_t_dispatch91) >= 2,
+      saw="fewer than two skills name the commenter — either they were renamed or this sweep is "
+          "blind, and a blind sweep passes forever")
+
+# --- 1. Every one of them reads the switch that decides whether it may run at all.
+_t_unguarded91 = [p.parent.name for p in _t_dispatch91
+                  if "`agents`" not in p.read_text(encoding="utf-8-sig", errors="replace")]
+check("EVERY SKILL THAT DISPATCHES CHAMNAN'S OWN AGENT READS THE SWITCH THAT FORBIDS IT",
+      not _t_unguarded91,
+      saw="%s — the skill offers or dispatches the commenter without reading `agents`, so the "
+          "switch is off and the agent runs anyway" % ", ".join(_t_unguarded91))
+
+# --- 2. The same set, one level down. The commenter writes English unless it is told otherwise, so
+# a skill that dispatches it and never passes `language` silently ignores that setting too. This is
+# the identical defect on a different key, and it was live in `remap` for the same reason.
+_t_nolang91 = [p.parent.name for p in _t_dispatch91
+               if "`language`" not in p.read_text(encoding="utf-8-sig", errors="replace")]
+check("...and passes `language` to it, because the agent writes English unless it is named",
+      not _t_nolang91,
+      saw="%s — dispatches the commenter without naming `language`, so a repository configured for "
+          "another language gets English comments" % ", ".join(_t_nolang91))
+
+# --- 3. The switch spans two surfaces, and the command half must not drift either. `chamnan-map`
+# prints the same advice the skills act on; if its guard goes, the skills are guarding a setting
+# nothing else respects.
+_t_cmds91 = [p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix]
+_t_mapguard91 = [p.name for p in _t_cmds91
+                 if 'enabled("agents"' in p.read_text(encoding="utf-8-sig", errors="replace")]
+check("...and the command that prints the same advice still asks the same question: %s"
+      % (", ".join(_t_mapguard91) or "none"),
+      len(_t_mapguard91) >= 1,
+      saw="no command in bin/ reads `agents` — the switch now lives only in prose, where nothing "
+          "can enforce it")
+
+# --- 4. The key has to exist to be read. A rename would leave every check above passing on a
+# string nobody uses, which is how a check becomes a decoration.
+check("...and `agents` is still a real key with a default, not a word left in the documentation",
+      "agents" in ws.DEFAULT_CONFIG,
+      saw="`agents` is not in DEFAULT_CONFIG — the checks above are asserting a spelling")
 # ============================ end of the folded surgical pool
 
 

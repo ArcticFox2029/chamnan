@@ -37,7 +37,6 @@ suspend, a hibernate, a timezone change or a clock set backwards are all surviva
 thing a sleeping machine cannot do is run something at the moment it was asleep for.
 """
 import os
-import signal
 import sys
 import uuid
 from pathlib import Path
@@ -78,6 +77,9 @@ def _set(argv, root):
         "id": rid,
         "when": when.isoformat(timespec="seconds"),
         "runner": runner.split() if runner else list(sched.DEFAULT_RUNNER),
+        # Whether the user NAMED it. A named runner is an instruction about what to execute, and the
+        # pane route executes nothing — so naming one has to switch the route, not be ignored by it.
+        "runner_explicit": bool(runner),
         "resume_from": _flag(argv, "--resume-from", ".chamnan/STATE.md"),
         "note": _flag(argv, "--note", ""),
         "label": _flag(argv, "--label", ""),
@@ -153,18 +155,17 @@ def _cancel(argv, root):
               file=sys.stderr)
         return 1
     for r in wanted:
-        # By the pid the process wrote down, never by matching a command line. `pgrep -f <pattern>`
-        # matches the pgrep that is doing the searching, and this project has three incidents from
-        # exactly that, one of them a subagent that hung for 58 minutes.
-        if sched.alive(r.get("pid")):
-            try:
-                # SIGTERM by name, not 15. On Windows `os.kill` does not send a signal at all — it
-                # terminates the process and uses the number as the exit code — and here that is
-                # exactly the intent, so this one call is correct on both platforms. The call that
-                # was NOT correct was asking about liveness the same way; see `schedule.alive`.
-                os.kill(int(r["pid"]), signal.SIGTERM)
-            except (OSError, ValueError):
-                pass
+        # \U0001f41b [2026-09-12] This signalled the waiter's pid, and the record carries a pid for the
+        # waiter with NO birth time beside it — while `app_pid` has had one all along, precisely
+        # because a pid alone is reused. So cancelling a schedule whose waiter had already exited
+        # could terminate whatever inherited that number. This package has now learned the same
+        # lesson three times: `pgrep -f` matching its own search, `os.kill(pid, 0)` terminating on
+        # Windows, and this (R1 agent1, 2026-09-12; acc4 agreed on the fix).
+        #
+        # Nothing is signalled now, because nothing needs to be. Writing the status IS the cancel:
+        # the waiter re-reads its own record every tick and returns the moment that record stops
+        # saying `pending`. The kill was an optimisation worth at most twenty seconds, bought with
+        # the one failure mode this file spends most of its comments avoiding.
         try:
             sched.update(root, r.get("id"), status="cancelled")
         except TimeoutError:

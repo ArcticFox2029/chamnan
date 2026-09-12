@@ -1012,6 +1012,11 @@ From a shell, in the repository:
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
 | `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
+| `chamnan-schedule set 2h31m` | finish this session's work later, when the limit has reset. A quiet process waits, opens the CLI again, points it at `.chamnan/STATE.md`, and exits |
+| `chamnan-schedule set 11:10pm` | the same at a wall-clock time. A time already past today means tomorrow |
+| `chamnan-schedule set 2h31m --note "…"` | an extra instruction for the resumed session |
+| `chamnan-schedule list` | what is pending, when it fires, and whether anything is still waiting for it — a schedule whose process is gone says so rather than looking healthy |
+| `chamnan-schedule cancel <id>` | stop one; `--all` stops every pending one |
 | `chamnan-timeline` | list declared threads — a line of work followed across the sessions it took |
 | `chamnan-timeline new <title>` | DECLARE a thread; nothing else creates one, so a synonym cannot start a second thread for the same subject |
 | `chamnan-timeline add <id> <note> [--files a.py,b.py]` | append an entry to a declared thread, naming what it touched |
@@ -1023,6 +1028,32 @@ From a shell, in the repository:
 | `chamnan-age` | which stored knowledge names a version no environment declares any more |
 | `chamnan-guard` | does anything staged for commit look like a credential — names the file and line, never the value, and never fails the commit (`--strict` does) |
 | `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then Usage (chamnan's own commands and any promoted tool, counts only, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the first two sections, then says so instead of inventing a trend |
+
+### Finishing later, when the limit has reset
+
+The case it is for: the usage limit is about to be hit and the job has to carry on. `chamnan-schedule
+set 2h31m` records the appointment and returns; a detached process waits, opens the CLI again, and
+tells it to continue the work already written down in `.chamnan/STATE.md`.
+
+**It is a schedule, not an auto-renew.** Nothing detects a limit, nothing decides on its own to
+resume, and nothing repeats unless you ask. There is no way to know whether somebody else's session
+wants to wake itself up, so a person names the time.
+
+**It carries the WORK, not a command line** — which is why the record points at `STATE.md` rather
+than at a prompt. Retyping the job at the moment the session is ending is the thing this avoids.
+
+**Nothing is installed.** No LaunchAgent, no crontab, no scheduled task, no daemon: what runs is a
+detached child of your own shell that exits the moment it has fired. Close the terminal and it
+survives; reboot and it does not, and `list` says so instead of pretending.
+
+**On a machine that sleeps it fires late and reports how late.** The appointment is an absolute time,
+not a countdown — a process that counts down only counts the ticks it was awake for.
+
+**CLI only, and that is the honest edge.** chamnan is a plugin that installs beside a CLI, so a
+terminal, tmux, a Linux shell and a Windows command prompt are all reachable. A purpose-built app or
+a browser tab is not, because there is nowhere to install it. `claude` and `codex` are driven
+directly; anything else — an agent framework, a router, your own script — is `--runner "<command>"`,
+and a runner you name is always the thing that runs.
 
 ### Reading an attachment without reading it
 

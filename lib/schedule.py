@@ -200,9 +200,60 @@ def spawn(root, rid, prefix=()):
 # store that arrived inside a cloned repository starts nothing at all — which matters, because the
 # store names a command and a repository is not a trusted author.
 FIELDS = ("id", "when", "runner", "resume_from", "note", "account", "session", "agent", "pool",
-          "transport", "handle", "app_pid", "app_started", "cwd", "pid", "status", "created")
+          # `transport` and `handle` are recorded to REPORT where the schedule came from, not to answer
+    # through — chamnan is a plugin that installs alongside a CLI, so a CLI is what it drives.
+    "transport", "handle", "app_pid", "app_started", "runner_explicit",
+          "cwd", "pid", "status", "created")
 
 DEFAULT_RUNNER = ("claude", "-p")
+
+# How to hand a prompt to each agent this package knows, and how to continue an existing
+# conversation with it. Two vendors, two different answers to both questions, which is exactly why
+# this is a table and not a constant:
+#
+#   claude   prompt on ARGV          resume with `--resume <id>` as a FLAG
+#   codex    prompt on STDIN (`-`)   resume with `resume <id>` as a SUBCOMMAND
+#
+# A scheduler that hardcoded one of them would fire the wrong binary at the wrong agent — and
+# silently, because both accept a trailing string without complaining.
+#
+# 🎯 [owner 2026-09-12] "ครอบคลุมทุก llm ที่เราวางไว้": chamnan writes context for twenty-two hosts,
+# but only some of those have a CLI that can be handed a prompt from a script at all. The honest
+# split is this table for the ones that do, and `--runner` for everything else — an agent framework,
+# a router, an HTTP wrapper somebody writes themselves. Adding a vendor here is four values, and the
+# checks derive their cases from this dict so a new row is covered the day it arrives.
+#
+# `start` is the argv that opens a fresh conversation. `resume` is a function of the session id,
+# returning the argv that continues one; None where the vendor offers no way to. `stdin` says the
+# prompt is written to the process rather than appended to its arguments.
+RUNNERS = {
+    "claude": {
+        "start": ("claude", "-p"),
+        "resume": lambda sid: ("claude", "-p", "--resume", str(sid)),
+        "stdin": False,
+    },
+    "codex": {
+        # `--skip-git-repo-check` because a scheduled job may land in a directory codex has not been
+        # told to trust, and refusing there would be a failure nobody is watching for. `-` is what
+        # makes it read the prompt from stdin; without it codex takes the prompt as an argument and
+        # this would silently be a different command.
+        "start": ("codex", "exec", "--sandbox", "read-only", "--skip-git-repo-check", "-"),
+        "resume": lambda sid: ("codex", "exec", "resume", str(sid), "--sandbox", "read-only",
+                               "--skip-git-repo-check", "-"),
+        "stdin": True,
+    },
+}
+
+
+def runner_for(agent):
+    """The table entry for `agent`, falling back to claude's shape when the agent is unknown.
+
+    Unknown is the ordinary case rather than an error: `host.primary` answers `generic` for a
+    repository with no agent set up, and twenty of the twenty-two hosts chamnan writes context for
+    have no CLI this could drive. The fallback is named so the failure, when it comes, is "claude is
+    not installed" rather than something shaped like a bug in here.
+    """
+    return RUNNERS.get(str(agent or "").lower(), RUNNERS["claude"])
 
 
 # Every transport this can recognise, and the one fact each needs to be answered through.
@@ -383,6 +434,12 @@ def describe(rec, now=None):
         return "%s — unreadable time, nothing will fire" % (rec.get("id") or "?")
     left = due - now
     status = rec.get("status") or "pending"
+    if status == "firing":
+        # Neither waiting nor finished. A record left here means the process was killed between
+        # starting the job and recording what happened, so the job MAY have run — and saying
+        # "fired" or "pending" would each be a guess in one direction.
+        return ("%s — started at %s and never reported back; it may or may not have run. "
+                "`cancel` it to clear." % (rec.get("id"), rec.get("started") or "?"))
     if status != "pending":
         return "%s — %s at %s" % (rec.get("id"), status, due.strftime("%H:%M"))
     watching = alive(rec.get("pid"))
@@ -503,46 +560,37 @@ def ws_cannot_answer():
 
 
 def delivery(rec):
-    """How this record should be answered: `(route, argv)`. Three routes, best first.
+    """How this record should be answered: `(route, argv)`. Two routes, best first.
 
-    \U0001f3af [2026-09-11 owner] The premise is that a session left open IS the session — so the best
-    answer is not to start anything, it is to type into the one already running. Three routes,
-    because no single one works everywhere and the difference is what a user actually has:
+    1. `resume` — the conversation survived even though the process did not, so a new one is told
+       to continue it and the history comes with it.
+    2. `fresh` — nothing survived but what was written down, so the runner is pointed at the record.
 
-    1. `pane` — the session is still open in a multiplexer, so the work continues in it with its
-       whole context intact. Nothing is started, nothing is resumed, nothing is lost. Only possible
-       when the transport has a pane AND the process that owned it is still the same process.
-    2. `resume` — the session is gone but its conversation is not. A new process is started and told
-       to continue that conversation, so the history survives even though the process did not.
-    3. `fresh` — nothing survives but what was written down, so the runner is pointed at the record.
+    \U0001f3af [owner 2026-09-12] There WAS a third route: type into the pane the session is still open
+    in, which keeps the live context whole and is the best answer whenever it applies. It is gone,
+    and the reasoning is worth keeping because it decides the shape of this whole feature.
 
-    The route is decided from what was stored at `set`, never from what is true now: a pane that
-    closed and a pid that was reused both look fine from the outside, and both are caught here by
-    the pair the record carries.
+    It required running `tmux`, and this package's README makes a promise a user can check: at
+    runtime it executes `git` and this interpreter, nothing else. A pane route would have quietly
+    made that false. The owner's call was to keep the promise and lose the route — and their reason
+    is the better one: **the CLI is the honest boundary**. chamnan installs where a CLI lives, so a
+    terminal, tmux, a shell on Linux or a command prompt on Windows are all reachable and all
+    predictable. A purpose-built app or a browser tab is not, because chamnan cannot be installed
+    into it at all. Supporting one multiplexer well while pretending the rest of that world is
+    covered would be worse than saying plainly where the edge is.
     """
-    pid, born = rec.get("app_pid"), rec.get("app_started")
-    handle = rec.get("handle") or ""
-    if rec.get("transport") in PANE_ROUTES and handle and still_the_same(pid, born):
-        return "pane", PANE_ROUTES[rec["transport"]](handle, resume_prompt(rec))
-    if rec.get("session"):
-        return "resume", list(rec.get("runner") or DEFAULT_RUNNER) + [
-            "--resume", str(rec["session"]), resume_prompt(rec)]
-    return "fresh", list(rec.get("runner") or DEFAULT_RUNNER) + [resume_prompt(rec)]
+    entry = runner_for(rec.get("agent"))
+    prompt = resume_prompt(rec)
 
-
-# How to type into a live pane, per multiplexer. A table rather than a chain of `if`s, so a
-# multiplexer added here is answered by arriving. Each entry is given the handle and the text and
-# returns the argv that delivers it.
-#
-# Only multiplexers appear here, and that is the honest limit: VS Code's terminal, a bare shell and
-# an ssh session have no addressable pane, so they take the `resume` route rather than a worse
-# version of this one.
-PANE_ROUTES = {
-    "tmux": lambda h, text: ["tmux", "send-keys", "-t", h, text, "Enter"],
-    "screen": lambda h, text: ["screen", "-S", h, "-X", "stuff", text + "\n"],
-    "wezterm": lambda h, text: ["wezterm", "cli", "send-text", "--pane-id", h, text + "\n"],
-    "zellij": lambda h, text: ["zellij", "action", "write-chars", text + "\n"],
-}
+    # A runner the user named is an instruction about what to execute.
+    if rec.get("runner_explicit"):
+        return "fresh", list(rec.get("runner") or entry["start"]) + [prompt]
+    # The vendor decides how a conversation is continued: claude takes `--resume <id>` as a flag,
+    # codex takes `resume <id>` as a subcommand, and a vendor with no answer takes the fresh route
+    # rather than a flag invented here that it would reject.
+    if rec.get("session") and entry["resume"]:
+        return "resume", list(entry["resume"](rec["session"])) + ([] if entry["stdin"] else [prompt])
+    return "fresh", list(entry["start"]) + ([] if entry["stdin"] else [prompt])
 
 
 def fire(root, rec, run=None, now=None):
@@ -569,12 +617,32 @@ def fire(root, rec, run=None, now=None):
     if rec.get("account"):
         env["CLAUDE_CONFIG_DIR"] = str(rec["account"])
     late = lateness(rec, now() if now else None)
+    # \U0001f3af [acc4, 2026-09-12] "Firing once does not guarantee running once": the child can die
+    # after the job starts and before the outcome is written, leaving the record `pending` for
+    # something else to pick up. That makes the guarantee AT-LEAST-ONCE by accident, and the choice
+    # between the two should be made rather than inherited.
+    #
+    # AT-MOST-ONCE is the right side here, and the reason is what this feature is for. It exists to
+    # get around a usage limit; a job that fires twice spends the quota it was scheduled to wait
+    # for, which is worse than one that does not fire at all — and one that does not fire is VISIBLE
+    # (`list` says so) while one that fires twice looks like success from every angle.
+    #
+    # The claim is written BEFORE the work starts, so a killed child leaves `firing` rather than
+    # `pending`: nothing picks it up, and `list` can say it was interrupted mid-flight, which is a
+    # different fact from "waiting" and from "done".
+    update(root, rec.get("id"), status="firing", started=_now_iso(), route=route)
     try:
         if run is not None:
             code, text = run(argv, env)
         else:
+            # The prompt goes to stdin for vendors that read it there, and is already in `argv`
+            # for the ones that do not. Passing it both ways would send it twice; passing it
+            # neither way is a job that opens and asks nothing, which looks like success.
+            entry = runner_for(rec.get("agent"))
+            feed = resume_prompt(rec) if entry["stdin"] else None
             done = sp.run(argv, cwd=str(root), env=env, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=JOB_TIMEOUT)
+                          encoding="utf-8", errors="replace", timeout=JOB_TIMEOUT,
+                          input=feed)
             code, text = done.returncode, (done.stdout or "") + (done.stderr or "")
     except sp.TimeoutExpired:
         # A resumed job that never returns would hold this process open for ever, which is the one
@@ -613,6 +681,8 @@ def wait_and_fire(root, rid, sleep=time.sleep, now=None, run=None):
     while True:
         rec = next((r for r in read(root) if r.get("id") == rid), None)
         if rec is None or (rec.get("status") or "pending") != "pending":
+            # `firing` included: a record claimed by another process is not this one's to run, which
+            # is the whole point of writing the claim before the work rather than after it.
             return 0
         if due([rec], now() if now else None):
             return fire(root, rec, run=run, now=now)

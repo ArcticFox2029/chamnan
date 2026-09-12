@@ -16,7 +16,12 @@ A stale index is worse than none. It is confidently wrong, and the next session 
 open the file that no longer holds what it says.
 
 If the described-coverage percentage fell, new files arrived without an opening comment. Say which
-ones, and offer the `commenter` agent.
+ones. **Read `agents` from `.chamnan/config.json` (default `true`) first** — with `false`,
+name the files and leave them to the user. Otherwise offer the `chamnan:commenter` agent (the
+plugin-scoped name, so a second installed plugin that also ships a `commenter` cannot be
+picked instead), wait for the go-ahead, and tell it which language to write in from
+`language` (default `en`) — the agent writes English unless named, so bootstrap passes it
+explicitly and this path must too.
 
 `chamnan-map --undocumented` is where the full list comes from — one path per line, all of them.
 The rebuild's own output names at most eight, as examples; a session that treats those eight as the

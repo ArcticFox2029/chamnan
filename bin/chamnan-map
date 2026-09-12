@@ -310,7 +310,9 @@ def install_git_hook(root):
             print("    command -v chamnan-map >/dev/null 2>&1 && chamnan-map >/dev/null 2>&1 || true",
                   file=sys.stderr)
             return 1
-        print("chamnan: not a git repository — nothing to install into", file=sys.stderr)
+        print("chamnan: not a git repository — no pre-commit hook to install. "
+              "Run `chamnan-map` without `--install-git-hook` to build the map here.",
+              file=sys.stderr)
         return 1
     # 🐛 A bare repository has hooks, so this installed one and reported success — into a repository
     # that never commits. A bare repo receives pushes; `pre-commit` cannot fire there, and the map
