@@ -397,6 +397,59 @@ def section(title, body, source=""):
     return text
 
 
+def store_section(root, title, body, source, scan_sources=None):
+    """`section`, refusing source files that still hold both sides of a merge.
+
+    🐛 [2026-09-12] The conflict guard existed for rules, STATE.md and MAP.md, and nowhere at the
+    shared boundary their sibling stores all cross. A conflicted skill description, decision title,
+    milestone, thread or session record could therefore still be rendered first and fenced second,
+    after the marker lines themselves had disappeared but one or both disputed claims remained
+    (R9 agent 3, x-rayed across every repository-backed `section` call).
+
+    A single-file store is refused whole. In a directory store, its renderer has already omitted
+    each conflicted file, so the warning is added beside the clean siblings rather than replacing
+    them. Directory stores are flat by contract, and every candidate still has to pass the
+    workspace containment rule before it is read.
+    """
+    try:
+        paths = []
+        directory_store = False
+        for stored_source in scan_sources or (source,):
+            candidate = Path(root) / stored_source
+            if candidate.is_file():
+                paths.append(candidate)
+            elif candidate.is_dir():
+                directory_store = True
+                paths.extend(path for path in candidate.glob("*.md")
+                             if not ws.is_store_index(path))
+        conflicted = []
+        for path in paths:
+            if not path.is_file() or not ws.inside(path, root):
+                continue
+            try:
+                with path.open("r", encoding="utf-8-sig", errors="replace") as fh:
+                    raw = fh.read(STATE_READ_CEILING)
+            except OSError:
+                continue
+            if memory.unresolved_conflict(raw):
+                conflicted.append(display(path, root))
+    except (OSError, TypeError, ValueError):
+        conflicted = []
+    if conflicted:
+        shown = ", ".join(f"`{mdblock.as_quoted(redact.scrub(p))}`"
+                          for p in conflicted[:4])
+        more = f" and {len(conflicted) - 4} more" if len(conflicted) > 4 else ""
+        if directory_store:
+            warning = (f"**Dropped mid-merge store file: {shown}{more}.** The rest of this "
+                       "section is intact. Resolve the conflict markers and the file comes back.")
+            body = warning + ("\n\n" + body if body.strip() else "")
+        else:
+            body = (f"**This store is mid-merge: {shown}{more}.** Nothing from this section is "
+                    "injected this session, because neither side of an unresolved conflict is what "
+                    "this repository decided. Resolve the conflict markers and it comes back.")
+    return section(title, body, source)
+
+
 def skipped(title, reason):
     """A section deliberately not injected. Recorded so --explain can say what was left out."""
     LEDGER.append({"title": title, "tokens": 0, "source": "", "skipped": reason})
@@ -1115,15 +1168,24 @@ def main():
                 # deletions was missing from the branch most sessions take. One of a pair guarded
                 # and the identical one beside it left, which is this repository's oldest defect
                 # (R5 agent 5).
-                _dead, _named, _dead_ex = dead_entries(root, _mp.read_text(
-                    encoding="utf-8", errors="replace"))
-                if _dead:
-                    _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in _dead_ex)
-                    _more = "…" if _dead > len(_dead_ex) else ""
-                    _lines.append(redact.scrub(
-                        f"_⚠ **{_dead} of {_named} file(s) that index names no longer exist** — "
-                        f"{_shown}{_more}. It is describing a tree that has moved on; rebuild it "
-                        f"with `chamnan-map`._"))
+                _map_text = _mp.read_text(encoding="utf-8", errors="replace")
+                # The full-start path refuses this file below. Resume returns before that path, so
+                # it needs the same content check before deriving a factual dead-file count from
+                # either side of the conflict. The session continues and says why, as malformed
+                # config does; one bad store is not a reason to throw away the whole session.
+                if memory.unresolved_conflict(_map_text):
+                    _lines.append(
+                        "_⚠ `.chamnan/MAP.md` is mid-merge. No index claim is refreshed from it; "
+                        "resolve the conflict markers or rebuild it with `chamnan-map`._")
+                else:
+                    _dead, _named, _dead_ex = dead_entries(root, _map_text)
+                    if _dead:
+                        _shown = ", ".join(f"`{mdblock.as_quoted(e)}`" for e in _dead_ex)
+                        _more = "…" if _dead > len(_dead_ex) else ""
+                        _lines.append(redact.scrub(
+                            f"_⚠ **{_dead} of {_named} file(s) that index names no longer "
+                            f"exist** — {_shown}{_more}. It is describing a tree that has moved "
+                            "on; rebuild it with `chamnan-map`._"))
         except Exception:
             pass
         # 🐛 [2026-09-09] This branch returned without telling blocklog it had run, so every figure
@@ -1291,7 +1353,7 @@ def main():
                 # Said instead of the content, exactly as STATE.md says it: printing both sides
                 # under a warning invites the reader to pick one, which is the failure.
                 if memory.unresolved_conflict(text):
-                    out.append(section(
+                    out.append(store_section(root,
                         "Architecture index",
                         "**`MAP.md` is mid-merge and both sides are still in the file.** No index "
                         "is injected this session, because neither side of an unresolved conflict "
@@ -1378,7 +1440,8 @@ def main():
                 _scrubbed = redact.scrub(index)
                 index_slot = len(out) if carries_an_index(_scrubbed) else None
                 if index_slot is not None:
-                    out.append(section("Architecture index", _scrubbed, display(mp, root)))
+                    out.append(store_section(root, "Architecture index", _scrubbed,
+                                             display(mp, root)))
                 else:
                     # \U0001f41b [2026-09-09] This branch was `else: nothing`. The section was never
                     # appended, so `fit.shrink` never saw it, so the drop notice could not name it
@@ -1651,7 +1714,7 @@ def main():
             # trying to intercept the command after it is written. See README's Limitations.
             constraints = redact.scrub(environments.render_constraints(root))
             if constraints:
-                out.append(section(
+                out.append(store_section(root,
                     "Environment constraints — check these before proposing infrastructure work",
                     constraints + "\n\n_Declared in `.chamnan/environments.md`, and true only as far "
                                   "as its `Checked:` dates go — `chamnan-env check` says which have "
@@ -1659,9 +1722,10 @@ def main():
 
         if cfg.get("memory", True):
             # Rules are standing constraints, so they go in front of the agent before it starts.
-            rules = redact.scrub(memory.rules_text(root))
+            rules = redact.scrub(memory.rules_text(root, refuse_conflicts=True))
             if rules:
-                out.append(section("Rules this repository works under", rules, ".chamnan/memory/rules/"))
+                out.append(store_section(root, "Rules this repository works under", rules,
+                                         ".chamnan/memory/rules/"))
                 # A rule injected once at session start is exactly the instruction that adherence
                 # studies measure decaying — 88% to 71% by the third turn on Multi-IF. Where a rule
                 # carries a mechanical check, the repository is asked directly instead. Silent when
@@ -1671,7 +1735,7 @@ def main():
                 # prints them outside the fence, so it gets the same scrub every section has.
                 # Read the rules ONCE: `run()` and `contradictions()` both want them, and this is
                 # the session's critical path.
-                _titled = memory.rules_with_titles(root)
+                _titled = memory.rules_with_titles(root, refuse_conflicts=True)
                 # 🐛 [2026-09-10] `rulecheck` has a deterministic grammar for "does this document
                 # still describe the repository", and it was wired to `memory/rules/` and NOWHERE
                 # ELSE. `skills/` carries the same trailers, is the store most likely to name a real
@@ -1682,7 +1746,7 @@ def main():
                 #
                 # `contradictions()` stays rules-only: two skills describing different procedures is
                 # what a skill store IS, and a rule contradicting a rule is a defect.
-                _checkable = _titled + memory.skills_with_titles(root)
+                _checkable = _titled + memory.skills_with_titles(root, refuse_conflicts=True)
                 broken = redact.scrub(
                     rulecheck.line(rulecheck.run(root, _checkable),
                                    rulecheck.contradictions(_titled)))
@@ -1692,12 +1756,14 @@ def main():
             # title and nothing else — the same economy skills/ and tools/ use.
             # Scrubbed like every sibling section. A decision's TITLE is a line somebody typed, and a
             # title is exactly where a hostname or a token gets written down in passing.
-            listing = redact.scrub(memory.render_titles(memory.titles(root)))
+            listing = redact.scrub(memory.render_titles(
+                memory.titles(root, refuse_conflicts=True)))
             if listing:
-                out.append(section(
+                out.append(store_section(root,
                     "Recorded decisions and lessons — read the one that matches before assuming",
                     listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
-                              "do not read them all._", ".chamnan/memory/"))
+                              "do not read them all._", ".chamnan/memory/",
+                    (".chamnan/memory/decisions/", ".chamnan/memory/lessons/")))
                 # 🐛 [2026-09-10] The source above read `.chamnan/memory/decisions|lessons/`, which
                 # is not a path -- it is two paths with a pipe between them, and the "left out" line
                 # prints it verbatim. A session that copied it got nothing, and `memory/lessons/`
@@ -1710,14 +1776,15 @@ def main():
             # session in about twenty tokens; the bodies are a grep away when a title looks relevant.
             recent = redact.scrub(milestones.recent_titles(root))
             if recent:
-                out.append(section("Recent milestones", recent, ".chamnan/milestones.md"))
+                out.append(store_section(root, "Recent milestones", recent,
+                                         ".chamnan/milestones.md"))
 
         if cfg.get("timeline", True):
             # OPEN threads only, titles only. A closed thread is history -- still readable, still
             # answering `chamnan-timeline for <path>`, but no longer something to hold in mind before
             # starting. "We have tried to fix this three times" is the line nobody can reconstruct
             # from a git log, and it costs about as much to say as a milestone title.
-            open_threads = redact.scrub(timeline.open_titles(root))
+            open_threads = redact.scrub(timeline.open_titles(root, refuse_conflicts=True))
             # 🐛 [2026-09-08] `slug()` reduces a thread name to lowercase ASCII, so chamnan cannot
             # CREATE two files that differ only by case or normalisation. That was the argument for
             # leaving this store out, and it covers only half the question: `threads()` globs the
@@ -1741,7 +1808,7 @@ def main():
                     f"({names}). They are listed above as separate work and a case-insensitive "
                     f"filesystem keeps only one of them.")
             if open_threads:
-                out.append(section(
+                out.append(store_section(root,
                     "Open threads — lines of work still in flight",
                     open_threads + "\n\n_`chamnan-timeline show <name>` for one thread's history; "
                                    "`chamnan-timeline for <path>` for what has happened to one file._", ".chamnan/threads/"))
@@ -1751,7 +1818,7 @@ def main():
             # the file list is recoverable from git; what the next session cannot work out for itself is
             # what was left and what was in the way. Empty when the last session finished cleanly, which
             # is the right outcome — nothing is injected to say "nothing outstanding".
-            carried = redact.scrub(sessions.carry_forward(root))
+            carried = redact.scrub(sessions.carry_forward(root, refuse_conflicts=True))
             # A written record wins outright. When there is none — measured at 17 of 18 real
             # sessions on this machine — the working tree is asked instead, because an
             # uncommitted change IS where the last session stopped and it costs nobody a
@@ -1790,7 +1857,8 @@ def main():
                     f"back here is decided by modification time, which a clone resets. Rename one "
                     f"before trusting anything above.")
             if carried:
-                out.append(section("Where the last session stopped", carried, ".chamnan/sessions/"))
+                out.append(store_section(root, "Where the last session stopped", carried,
+                                         ".chamnan/sessions/"))
 
         if cfg.get("state", True):
             sp = wsdir / "STATE.md"
@@ -1827,7 +1895,8 @@ def main():
                 # as chamnan's voice rather than the repository's.
                 st = mdblock.demote_headings(st)
                 if st:
-                    out.append(section("Work in flight (from the last session)", st, display(sp, root)))
+                    out.append(store_section(root, "Work in flight (from the last session)", st,
+                                             display(sp, root)))
                     out.append(f"_Keep `{display(sp, root)}` current as you go; it is what survives "
                                f"compaction._\n")
                     if marker:
@@ -1904,8 +1973,9 @@ def main():
                 # Scrubbed like every other section. A tool description is text a person wrote and
                 # this file read off disk; it reached the injection raw only because index.json looked
                 # like chamnan's own data rather than a place somebody could paste a token.
-                out.append(section("This repo's own tools — prefer these over writing a new script",
-                                   redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
+                out.append(store_section(
+                    root, "This repo's own tools — prefer these over writing a new script",
+                    redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
 
         if cfg.get("capture", True):
             # A committed symlink under `skills/` pointing outside the repository put that
@@ -1928,9 +1998,17 @@ def main():
             # mtime, with the filename as tie-break, for the reason `memory.py` gives at its own
             # sort: these files carry no date, and after a clone every mtime is the checkout time,
             # so the order falls back to exactly the previous behaviour where it cannot do better.
-            skills = ([p for p in sorted((wsdir / "skills").glob("*.md"))
-                       if ws.inside(p, root) and not ws.is_store_index(p)]
-                      if (wsdir / "skills").is_dir() else [])
+            skills = []
+            if (wsdir / "skills").is_dir():
+                for p in sorted((wsdir / "skills").glob("*.md")):
+                    if not ws.inside(p, root) or ws.is_store_index(p):
+                        continue
+                    try:
+                        raw_skill = p.read_text(encoding="utf-8-sig", errors="replace")
+                    except OSError:
+                        continue
+                    if not memory.unresolved_conflict(raw_skill):
+                        skills.append(p)
             skills.sort(key=lambda p: (-memory.mtime_or_zero(p), p.name))
             if skills:
                 # Name plus description, never name alone. The point of keeping the bodies out of the
@@ -1968,7 +2046,7 @@ def main():
                         f"- ⚠️ {names} differ only by case or Unicode normalisation. A "
                         f"case-insensitive filesystem keeps ONE of them — check which survives "
                         f"before this workspace is cloned to macOS or Windows.")
-                out.append(section(
+                out.append(store_section(root,
                     "Recorded procedures — read the one that matches before starting that kind of task",
                     # The last of the injected sections to reach the block unscrubbed. A skill's
                     # description is the first real line of a file somebody wrote, and on a real
@@ -1997,7 +2075,7 @@ def main():
                 except OSError:
                     pass
                 if lines:
-                    out.append(section(
+                    out.append(store_section(root,
                         "Repeated last session and never kept",
                         # The lines are headlines lifted from scripts the last session wrote, so this
                         # is repository text like any other, not chamnan's own words.
@@ -2138,7 +2216,8 @@ def main():
                     out.pop(index_slot)
                     index_slot = None      # the slot no longer exists; nothing may index it again
                     break
-                out[index_slot] = section("Architecture index", _folded, str(map_rel))
+                out[index_slot] = store_section(root, "Architecture index", _folded,
+                                                str(map_rel))
 
             # 🐛 [2026-09-09] Resolution was the only thing this ever spent, and resolution is not
             # what sets the size. Measured on this repository at `index_token_budget` 3,000:
@@ -2166,7 +2245,8 @@ def main():
                 _folded = redact.scrub(rollup.collapse(raw, map_rel, step, groot, 0))
                 if not carries_an_index(_folded):
                     break
-                out[index_slot] = section("Architecture index", _folded, str(map_rel))
+                out[index_slot] = store_section(root, "Architecture index", _folded,
+                                                str(map_rel))
 
         # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
         # index has finished being resized and before anything is dropped, so neither step depends on a

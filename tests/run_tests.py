@@ -33351,6 +33351,126 @@ check("...and an argv built at runtime appears only where the user chose the com
 check("...and the scheduler is still the place that does it, so rule 3 is not vacuous",
       any(b.startswith("<variable") for _w, b in _t_spawns96),
       saw="no runtime argv anywhere — the exception above now protects nothing and should go")
+# ---- 97_conflicted_store_is_not_fact.py
+# ------------- every store crosses one last boundary before its text reaches the model
+# 🐛 [2026-09-12] The backlog named STATE.md and rules; the x-ray found twelve repository-backed
+# section sources plus MAP.md's early-resume branch. STATE.md, rules and startup MAP.md had local
+# guards, while a conflicted skill description, decision title, milestone, thread or session record
+# could be rendered without its marker lines and then injected as fact. The set came from every
+# `section` call in the real hook, not from the two examples in the finding (R9 agent 3).
+import importlib.util as _ilu97
+
+_t_hook_path97 = ROOT / "hooks" / "chamnan_session_start.py"
+_t_source97 = _t_hook_path97.read_text(encoding="utf-8")
+_t_tree97 = ast.parse(_t_source97)
+_t_wrapped97 = [n.lineno for n in ast.walk(_t_tree97)
+                if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                and n.func.id == "store_section"]
+check("the sweep found the repository-backed section calls: %d" % len(_t_wrapped97),
+      len(_t_wrapped97) >= 14,
+      saw="fewer than fourteen calls cross the shared guard — the sweep found nothing or a new "
+          "injection path bypasses it")
+
+# A raw `section` with a source still accepts repository text without consulting the store. The two
+# remaining calls are generated prose: one has no source and one says `(generated)` explicitly.
+_t_raw97 = []
+_t_wrapper97 = next((n for n in ast.walk(_t_tree97)
+                     if isinstance(n, ast.FunctionDef) and n.name == "store_section"), None)
+for _t_node97 in ast.walk(_t_tree97):
+    if (not isinstance(_t_node97, ast.Call) or not isinstance(_t_node97.func, ast.Name)
+            or _t_node97.func.id != "section" or len(_t_node97.args) < 3):
+        continue
+    if (_t_wrapper97 is not None
+            and _t_wrapper97.lineno <= _t_node97.lineno <= _t_wrapper97.end_lineno):
+        continue
+    _t_source_arg97 = _t_node97.args[2]
+    if not (isinstance(_t_source_arg97, ast.Constant)
+            and _t_source_arg97.value == "(generated)"):
+        _t_raw97.append(_t_node97.lineno)
+check("EVERY REPOSITORY-BACKED SECTION CROSSES THE CONFLICT GUARD",
+      _t_wrapper97 is not None and not _t_raw97,
+      saw=("the store_section wrapper was not found"
+           if _t_wrapper97 is None
+           else "raw section calls with a source at lines %s" % _t_raw97))
+
+_t_spec97 = _ilu97.spec_from_file_location("_chamnan_start97", _t_hook_path97)
+_t_hook97 = _ilu97.module_from_spec(_t_spec97)
+_t_spec97.loader.exec_module(_t_hook97)
+_t_root97 = Path(tempfile.mkdtemp(prefix="chamnan-conflicted-store-"))
+_t_sources97 = (
+    ".chamnan/MAP.md", ".chamnan/STATE.md", ".chamnan/environments.md",
+    ".chamnan/milestones.md", ".chamnan/memory/rules/", ".chamnan/memory/decisions/",
+    ".chamnan/memory/lessons/", ".chamnan/skills/", ".chamnan/sessions/",
+    ".chamnan/threads/",
+)
+_t_outputs97 = []
+for _t_rel97 in _t_sources97:
+    _t_path97 = _t_root97 / _t_rel97
+    if _t_rel97.endswith("/"):
+        _t_path97 = _t_path97 / "entry.md"
+    _t_path97.parent.mkdir(parents=True, exist_ok=True)
+    _t_path97.write_text("<<<<<<< HEAD\nleft disputed claim\n=======\n"
+                         "right disputed claim\n>>>>>>> branch\n", encoding="utf-8")
+    _t_body97 = ("clean sibling survived" if _t_rel97.endswith("/")
+                 else "left disputed claim\nright disputed claim")
+    _t_outputs97.append(_t_hook97.store_section(
+        _t_root97, "Fixture", _t_body97, _t_rel97))
+
+check("the fixture exercised every x-rayed store source: %d" % len(_t_outputs97),
+      len(_t_outputs97) == len(_t_sources97) and len(_t_outputs97) >= 10,
+      saw="%d outputs for %d sources" % (len(_t_outputs97), len(_t_sources97)))
+check("A CONFLICTED STORE INJECTS NEITHER SIDE AS FACT",
+      all("left disputed claim" not in out and "right disputed claim" not in out
+          for out in _t_outputs97),
+      saw="; ".join(out for out in _t_outputs97
+                    if "left disputed claim" in out or "right disputed claim" in out)[:600])
+check("...and every refused section says what is wrong and how it comes back",
+      all("mid-merge" in out and "Resolve the conflict markers" in out
+          for out in _t_outputs97),
+      saw="a refused section omitted the diagnosis or remedy")
+
+# A directory is a store of independent files, not one all-or-nothing source. This is the exact
+# comparison that exposed the first cut's blast radius: adding one conflicted rule must remove that
+# file alone, while the clean sibling and the section around it survive.
+_t_rules_root97 = Path(tempfile.mkdtemp(prefix="chamnan-conflicted-rule-siblings-"))
+_t_rules97 = _t_rules_root97 / ".chamnan" / "memory" / "rules"
+_t_rules97.mkdir(parents=True, exist_ok=True)
+(_t_rules97 / "clean.md").write_text(
+    "# Clean\n\nThis one is fine and must still arrive.\n", encoding="utf-8")
+(_t_rules97 / "conflicted.md").write_text(
+    "# Conflicted\n\n<<<<<<< HEAD\nleft disputed rule\n=======\n"
+    "right disputed rule\n>>>>>>> branch\n", encoding="utf-8")
+_t_rules_body97 = _t_hook97.memory.rules_text(_t_rules_root97, refuse_conflicts=True)
+_t_rules_out97 = _t_hook97.store_section(
+    _t_rules_root97, "Rules", _t_rules_body97, ".chamnan/memory/rules/")
+check("ONE CONFLICTED RULE DROPS THAT FILE, NOT ITS CLEAN SIBLINGS",
+      "This one is fine and must still arrive." in _t_rules_out97
+      and "left disputed rule" not in _t_rules_out97
+      and "right disputed rule" not in _t_rules_out97,
+      saw=_t_rules_out97)
+check("...and the warning names the dropped file and says the rest stayed intact",
+      ".chamnan/memory/rules/conflicted.md" in _t_rules_out97
+      and "rest of this section is intact" in _t_rules_out97,
+      saw=_t_rules_out97)
+_rmtree(_t_rules_root97, ignore_errors=True)
+
+_t_ok97 = _t_root97 / ".chamnan" / "skills" / "ordinary.md"
+_t_ok97.write_text("# Ordinary\n\nOne uncontested fact.\n", encoding="utf-8")
+_t_ok_out97 = _t_hook97.store_section(
+    _t_root97, "Ordinary", "One uncontested fact.", ".chamnan/skills/ordinary.md")
+check("...while an ordinary store file is injected exactly as before",
+      "One uncontested fact." in _t_ok_out97 and "mid-merge" not in _t_ok_out97,
+      saw=_t_ok_out97)
+
+# The resume shortcut returns before normal section construction. Its MAP read therefore needs the
+# same detector before it derives and injects a dead-file count from the file's disputed sides.
+_t_resume97 = re.search(
+    r"_map_text = _mp\.read_text\(.+?if memory\.unresolved_conflict\(_map_text\):.+?else:",
+    _t_source97, re.S)
+check("MAP.md'S EARLY-RESUME READER ALSO REFUSES A CONFLICT BEFORE DERIVING FACTS",
+      bool(_t_resume97),
+      saw="the resume branch has no conflict guard around the MAP.md text it interprets")
+_rmtree(_t_root97, ignore_errors=True)
 # ============================ end of the folded surgical pool
 
 

@@ -323,12 +323,16 @@ def where_git_says_you_stopped(root, limit=6, name_files=True):
 MAX_CARRIED_RECORDS = 3
 
 
-def _outstanding(path):
+def _outstanding(path, refuse_conflicts=False):
     """(title, body) of what one record leaves unfinished, or None when it leaves nothing."""
     try:
         text = path.read_text(encoding="utf-8-sig", errors="replace")
     except OSError:
         return None
+    if refuse_conflicts:
+        import memory
+        if memory.unresolved_conflict(text):
+            return None
     found = _sections(text)
     parts = []
     for name in CARRIED:
@@ -342,7 +346,7 @@ def _outstanding(path):
     return (title_of(path, text), "\n\n".join(parts)) if parts else None
 
 
-def carry_forward(root):
+def carry_forward(root, refuse_conflicts=False):
     """The part of the newest day's records the next session needs: unfinished work, and blockers.
 
     Returns "" when there is no record, when nothing is outstanding, or when the files cannot be
@@ -368,7 +372,7 @@ def carry_forward(root):
                 if newest and (m := _DATE.match(p.name)) and m.group(1) == newest.group(1)]
     group = (same_day or [found[0]])[:MAX_CARRIED_RECORDS]
 
-    carried = [c for c in (_outstanding(p) for p in group) if c]
+    carried = [c for c in (_outstanding(p, refuse_conflicts) for p in group) if c]
     if not carried:
         return ""
 

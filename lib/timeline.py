@@ -395,7 +395,7 @@ def for_path(root, target):
     return sorted(hits, key=lambda h: h[1], reverse=True)
 
 
-def open_titles(root, count=INJECT_OPEN):
+def open_titles(root, count=INJECT_OPEN, refuse_conflicts=False):
     """The open threads, one line each, newest activity first. Empty string when there are none,
     so the hook injects no heading rather than an empty one."""
     # Each thread file is read from disk exactly once here and handed to status_of/entries_of/
@@ -409,6 +409,10 @@ def open_titles(root, count=INJECT_OPEN):
             text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             text = ""
+        if refuse_conflicts:
+            import memory
+            if memory.unresolved_conflict(text):
+                continue
         texts[path] = text
         if status_of(path, text) != OPEN:
             continue
