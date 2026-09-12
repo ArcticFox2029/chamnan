@@ -518,6 +518,22 @@ def uninstall_git_hook(root):
     that is read, matched or rewritten -- somebody else's hook is not this command's to edit.
     """
     hooks = _hooks_dir(root)
+    # 🐛 [2026-09-12] `_hooks_dir` returns None for two unrelated situations — this is not a git
+    # repository at all, and this is a SUBDIRECTORY of one — and this path reported both as "no
+    # pre-commit hook here to take anything out of". The install path learned to tell them apart on
+    # 2026-09-07 (R7 agent 3); this one, 225 lines below it and branching on the same value, did
+    # not. It is worse here than it was there. Somebody who has decided they do not want this
+    # plugin in their commits was told it was already gone, while chamnan's hook kept rebuilding
+    # the index on every commit from the repository above. Reproduced on a fixture repository with
+    # a workspace in a subdirectory: install names the root, uninstall said there was nothing here
+    # (R1 agent 3, 2026-09-12).
+    if hooks is None:
+        top = ws.git_toplevel(root)
+        if top is not None and Path(top).resolve() != Path(root).resolve():
+            print(f"chamnan: this is a subdirectory of the repository at {top}, not a repository "
+                  f"of its own, so its pre-commit hook is not here to remove.", file=sys.stderr)
+            print(f"  Run this from {top} to remove it there.", file=sys.stderr)
+            return 1
     target = (hooks / "pre-commit") if hooks is not None else None
     if target is None or not target.is_file():
         print("chamnan: no pre-commit hook here to take anything out of", file=sys.stderr)

@@ -32786,6 +32786,56 @@ check("...and the command that prints the same advice still asks the same questi
 check("...and `agents` is still a real key with a default, not a word left in the documentation",
       "agents" in ws.DEFAULT_CONFIG,
       saw="`agents` is not in DEFAULT_CONFIG — the checks above are asserting a spelling")
+# ---- 92_not_here_and_not_yours_are_different_answers.py
+# ------------- "not here" and "not yours" are different answers, and only one of them is true
+# 🐛 [2026-09-12] `git_hooks_dir` returns None for two unrelated situations: this is not a git
+# repository at all, and this is a SUBDIRECTORY of one. The install path learned to tell them apart
+# on 2026-09-07 (R7 agent 3) and prints the repository's real root. The uninstall path, 225 lines
+# below it in the same file and branching on the same predicate, was never given the same branch:
+# it says "no pre-commit hook here to take anything out of" and returns 1.
+#
+# That is worse than the message the earlier fix replaced. Install's bad wording cost a reader a
+# minute; uninstall's tells somebody who has decided they do not want this plugin in their commits
+# that it is already gone, while chamnan's hook keeps rebuilding the index on every commit from the
+# repository above. The command reports success at removing something it never looked at.
+#
+# So this asserts the population: every place that reports a None from that helper to a human has to
+# say WHICH None it got. The set is derived from the callers, not listed, because the next caller is
+# the one that will forget.
+import ast as _ast92
+
+_t_map92 = ROOT / "bin" / "chamnan-map"
+_t_src92 = _t_map92.read_text(encoding="utf-8-sig", errors="replace")
+_t_tree92 = _ast92.parse(_t_src92)
+
+# The population: every function that calls the hooks-dir helper and then prints for a human.
+_t_callers92 = []
+for _t_fn92 in _ast92.walk(_t_tree92):
+    if not isinstance(_t_fn92, (_ast92.FunctionDef, _ast92.AsyncFunctionDef)):
+        continue
+    _t_seg92 = _ast92.get_source_segment(_t_src92, _t_fn92) or ""
+    if "_hooks_dir(" in _t_seg92 and "print(" in _t_seg92:
+        _t_callers92.append((_t_fn92.name, _t_seg92))
+check("the hooks-dir sweep found the commands that report on it: %d"
+      % len(_t_callers92), len(_t_callers92) >= 2,
+      saw="fewer than two callers print about the hooks directory — the helper was renamed or this "
+          "sweep is blind, and a blind sweep passes forever")
+
+# --- 1. Each of them distinguishes the two Nones. `git_toplevel` is the question that separates
+# them: it answers for a subdirectory and does not for a directory outside any repository.
+_t_blind92 = [n for n, seg in _t_callers92 if "git_toplevel" not in seg]
+check("EVERY COMMAND THAT REPORTS A MISSING HOOK SAYS WHETHER THE REPOSITORY IS ELSEWHERE",
+      not _t_blind92,
+      saw="%s — reports the hook as absent without asking `git_toplevel`, so a subdirectory of a "
+          "repository that HAS the hook is told it has none" % ", ".join(_t_blind92))
+
+# --- 2. And names the root it found, rather than saying it generically. A message that says "the
+# repository is elsewhere" without saying where sends the reader looking.
+_t_unnamed92 = [n for n, seg in _t_callers92
+                if "git_toplevel" in seg and "{top}" not in seg]
+check("...and names the repository root it found, so the reader does not have to go looking",
+      not _t_unnamed92,
+      saw="%s — asks `git_toplevel` and does not print what it got" % ", ".join(_t_unnamed92))
 # ============================ end of the folded surgical pool
 
 
