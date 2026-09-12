@@ -53,6 +53,7 @@ chamnan is delivered as a Claude Code plugin and as a plain command-line tool. T
 - `chamnan-map`: build .chamnan/MAP.md from the repository's source, and report what it cost
 - `chamnan-peek`: read the shape of one file instead of the whole thing
 - `chamnan-promote`: turn a one-off script into a tool the repo keeps
+- `chamnan-recall`: what do the stores already say about this, before you start from scratch
 - `chamnan-report`: measure this repo's context cost per turn, before and after the workspace existed
 - `chamnan-schedule`: finish this work later, when the limit has reset
 - `chamnan-timeline`: one line of work followed across the sessions it actually took

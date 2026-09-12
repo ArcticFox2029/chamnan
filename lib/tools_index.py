@@ -25,6 +25,7 @@ same discipline Stage 8's promotion classifier already applies to itself: state 
 its limits, never invent a confidence number to paper over not having one.
 """
 import json
+import pathlib
 from datetime import datetime
 
 import redact
@@ -168,6 +169,24 @@ def _save(root, entries):
     # Checked HERE, at the one place every write goes through, rather than in `register` and
     # `remove` and `record_call` separately — which is the shape of fix this repository has had to
     # un-forget eight times.
+    # 🐛 [2026-09-12] `chamnan-promote._origin_for` learned on 2026-09-04 not to write an absolute
+    # path into this file, because it is tracked and committed and a home directory in it publishes
+    # a username to everyone who clones. The WRITER was fixed and the records already on disk were
+    # not: `session_block_size.py` in this repository still read
+    # `/private/tmp/claude-506/-Users-<name>-…` eight days later, and went into a commit today.
+    #
+    # A fix on the writer only holds for entries written after it. This is the one place every write
+    # passes, which is where the same file says a rule belongs, so the sanitisation is here and old
+    # records are cleaned by the next save rather than waiting for somebody to notice them again.
+    for _e in entries:
+        _o = _e.get("origin", "")
+        if isinstance(_o, str) and _o and (_o.startswith("/") or (len(_o) > 1 and _o[1] == ":")):
+            try:
+                _e["origin"] = (pathlib.Path(_o).resolve()
+                                .relative_to(pathlib.Path(root).resolve()).as_posix())
+            except (OSError, ValueError):
+                _e["origin"] = pathlib.PurePath(_o).name
+
     why = refuses_to_be_overwritten(root)
     if why:
         raise OSError(why)

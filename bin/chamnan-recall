@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""chamnan-recall — what do the stores already say about this, before you start from scratch.
+
+  chamnan-recall thai word boundaries     what is recorded about this
+  chamnan-recall --reindex                rebuild the index after the stores change
+  chamnan-recall --all thai               every hit, not the best six
+
+**This exists because the absence of it was measured, not because it seemed useful.** Four times in
+one day, in the session that wrote the measurement down, the answer was already on disk and the
+session did not reach it — and twice it was MORE confident for having read something next to it. A
+store nobody queries is a store nobody has.
+
+**It points; it does not quote.** The stores here are 55 files and 407 KB — a hundred thousand
+tokens — and the whole point is to name the three worth opening. Every hit says what matched and
+where, so the choice to open one is yours and is informed.
+
+**The index is derived and rebuilt only when asked.** A query reads one file and never walks the
+stores: the rule this ships under is to improve retrieval *without forcing a broad scan before every
+answer*, and a lazy rebuild on first use is that scan wearing a different hat. When the index is
+behind, this says so and names the command — it does not quietly spend your time catching up.
+
+**Matching is lexical, by contract.** chamnan executes only `git` and this interpreter, so there is
+no embedding model here and there will not be one. What that buys is that every hit can say WHY it
+matched, which a distance score cannot.
+"""
+import json
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent / "lib"))
+import mdblock  # noqa: E402
+import recall  # noqa: E402
+import redact  # noqa: E402
+import workspace as ws  # noqa: E402
+
+# Every `bin/` command shadows print with the scrubbing emitter, whether or not its output looks
+# like it could carry a secret. The case-by-case judgement about which commands "only print names"
+# is exactly the judgement that was wrong five findings running. See redact.emit.
+print = redact.emit  # noqa: A001
+
+KNOWN_FLAGS = ("--reindex", "--all")
+KIND_LABEL = {"rule": "rule", "decision": "decision", "lesson": "lesson",
+              "skill": "skill", "thread": "thread", "session": "session", "tool": "tool"}
+
+
+def _write_index(root):
+    """Build and store the index. The only path here that reads the stores."""
+    wsdir = ws.workspace(root)
+    index = recall.build(wsdir)
+    # `ensure_ascii=False`, which is what `tools_index` already writes with: escaping Thai to
+    # `\uXXXX` costs six bytes a character and took this file from 374 KB to 495 KB for nothing.
+    ok = ws.atomic_write_text(wsdir / recall.INDEX,
+                              json.dumps(index, ensure_ascii=False) + "\n")
+    return index, ok
+
+
+def main(argv):
+    # Before help, and before anything is parsed: "which build is this" must be answerable from any
+    # command, including one that would otherwise refuse the arguments beside it.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
+
+    bad = ws.unknown_flags(argv, KNOWN_FLAGS)
+    if bad:
+        print(f"chamnan: unknown option {bad[0]!r} — {', '.join(KNOWN_FLAGS)}", file=sys.stderr)
+        return 2
+
+    root = ws.find_root()
+    wsdir = ws.workspace(root)
+    if not wsdir.is_dir():
+        print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
+              f"creates the workspace and builds the index. (Inside Claude Code, "
+              f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
+        return 1
+    if not ws.enabled("recall", root):
+        print("chamnan: recall is disabled in .chamnan/config.json — the stores are still there, "
+              "this is only the query over them")
+        return 0
+
+    if "--reindex" in argv:
+        index, ok = _write_index(root)
+        if not ok:
+            print(ws.write_failure_text(wsdir / recall.INDEX), file=sys.stderr)
+            return 1
+        print(f"chamnan: indexed {index['count']} entr(ies) from the stores. "
+              f"{len(index['ignored'])} word(s) were too common to carry meaning and are ignored"
+              f"{': ' + ', '.join(index['ignored'][:8]) if index['ignored'] else ''}.")
+        if not [a for a in argv if not a.startswith("-")]:
+            return 0
+
+    words = [a for a in argv if not a.startswith("-")]
+    if not words:
+        print("chamnan: name what you are about to work on — `chamnan-recall <words>`. "
+              "`--reindex` rebuilds the index after the stores change.", file=sys.stderr)
+        return 2
+
+    try:
+        index = json.loads((wsdir / recall.INDEX).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RecursionError):
+        # `RecursionError` beside the other two because `json.loads` raises it rather than
+        # `ValueError` on a document nested past the interpreter's limit, and the package has a
+        # check that every one of its loads survives that — an index is a file on disk like any
+        # other and a truncated or hostile one must not take a command down.
+        #
+        # 🐛 Not "rebuild it quietly". The one thing this command promises is that a query does not
+        # walk the stores, and a first run that silently indexes 55 files is that promise broken on
+        # the one run where a user is deciding whether to trust it.
+        print("chamnan: no index yet — `chamnan-recall --reindex` builds it, once, and then "
+              "queries read that file instead of the stores.", file=sys.stderr)
+        return 1
+
+    behind = recall.stale_by(wsdir, index)
+    hits = recall.query(index, words, limit=None if "--all" in argv else 6)
+    if not hits:
+        print(f"chamnan: nothing in the stores matches {mdblock.as_quoted(' '.join(words), 60)}.")
+        print("  That is an answer: what you are about to do is not recorded, so record it "
+              "afterwards — `/chamnan:capture` for a procedure, `/chamnan:remember` for a rule.")
+    else:
+        print(f"chamnan: {len(hits)} of {index.get('count', 0)} stored entr(ies) match "
+              f"{mdblock.as_quoted(' '.join(words), 60)} — read before you rebuild.\n")
+        for _score, entry, why in hits:
+            line = recall.why_line(entry, why, [w.lower() for w in words], words)
+            print(f"  {KIND_LABEL.get(entry['kind'], entry['kind']):8} "
+                  f"{mdblock.as_quoted(entry['path'], 70)}")
+            if entry.get("blurb"):
+                print(f"           {mdblock.as_quoted(entry['blurb'], 88)}")
+            print(f"           {line}")
+    if behind:
+        # Said AFTER the answer, not instead of it: a stale index still answers, and refusing to
+        # answer until somebody reindexes would be the broad scan this command exists to avoid,
+        # moved one step earlier.
+        print(f"\n  {behind} store file(s) changed since the index was built — "
+              f"`chamnan-recall --reindex` catches it up.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

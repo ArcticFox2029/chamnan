@@ -28,6 +28,7 @@ bin/chamnan-map         text eol=lf
 bin/chamnan-peek        text eol=lf
 bin/chamnan-promote     text eol=lf
 bin/chamnan-report      text eol=lf
+bin/chamnan-recall      text eol=lf
 bin/chamnan-schedule    text eol=lf
 bin/chamnan-timeline    text eol=lf
 

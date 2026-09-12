@@ -1137,8 +1137,16 @@ tools_index.register(ti_root, {"name": "check.sh", "desc": "runs the checks",
 loaded = tools_index.load(ti_root)
 check("register() writes an entry that load() reads back", len(loaded) == 1)
 check("every field round-trips",
-      loaded[0]["name"] == "check.sh" and loaded[0]["desc"] == "runs the checks"
-      and loaded[0]["origin"] == "/tmp/check.sh")
+      loaded[0]["name"] == "check.sh" and loaded[0]["desc"] == "runs the checks")
+# 🐛 [2026-09-12] This used to assert `origin == "/tmp/check.sh"` — an absolute path round-tripping
+# unchanged into a file that is tracked and committed. `chamnan-promote._origin_for` had already
+# learned on 2026-09-04 not to WRITE one, and the test beside it still demanded that a record which
+# arrived with one kept it, so the stale entry in this repository's own registry
+# (`/private/tmp/…/-Users-<name>-…`) was never going to be caught here. `_save` strips it now, at
+# the one place every write passes, and the bare filename is what provenance means to anyone who is
+# not on the machine that promoted it.
+check("...and an absolute origin does NOT round-trip, because this file is committed",
+      loaded[0]["origin"] == "check.sh")
 check("runs defaults to 0 when not given", loaded[0]["runs"] == 0)
 tools_index.register(ti_root, {"name": "second.sh"})
 check("a second register() appends rather than overwriting", len(tools_index.load(ti_root)) == 2)
@@ -21023,6 +21031,7 @@ if _CAN_DENY_WRITE:
         "chamnan-schedule": ["set", "1h"],
         "chamnan-env": ["set", "prod", "--platform", "GKE"],
         "chamnan-promote": ["a-script.sh", "newtool", "--desc", "what it does"],
+        "chamnan-recall": ["--reindex"],
         "chamnan-age": None,
         "chamnan-context": None,
         "chamnan-impact": None,
@@ -32989,6 +32998,150 @@ check("...and the tree draws nothing a first run does not create",
       not _t_invented93,
       saw="%s — drawn as though it appears on the first session, and it does not"
           % ", ".join(_t_invented93))
+# ---- 94_a_committed_file_chamnan_writes_names_a_machine.py
+# ------------- fixing the writer does not fix the records already written
+# 🐛 [2026-09-12] `chamnan-promote._origin_for` learned on 2026-09-04 not to put an absolute path in
+# `tools/index.json`, because that file is tracked and committed and a home directory in it
+# publishes a username to everyone who clones. Eight days later the entry for
+# `session_block_size.py` in this repository still read `/private/tmp/claude-506/-Users-<name>-…`,
+# and it went into a commit that same morning. The record predated the fix and nothing ever went
+# back for it.
+#
+# That is the difference between a rule and its enforcement: the writer was corrected, the DATA was
+# not, and no check asked the question of what is on disk. The sanitisation now lives in
+# `tools_index._save` -- the one place every write passes, which is where that file already says
+# such a rule belongs -- so an old record is cleaned by the next save rather than by somebody
+# noticing it again. This asserts the state, not the code path, because the code path was right for
+# eight days while the file was wrong.
+import json as _json94
+
+_t_idx94 = ROOT.parent.parent / ".chamnan" / "tools" / "index.json"
+if not _t_idx94.is_file():
+    skip("  · no tools/index.json in this workspace — nothing to check")
+else:
+    try:
+        _t_recs94 = _json94.loads(_t_idx94.read_text(encoding="utf-8-sig"))
+    except ValueError:
+        _t_recs94 = []
+    _t_recs94 = [r for r in _t_recs94 if isinstance(r, dict)] if isinstance(_t_recs94, list) else []
+    check("the registry has records to check: %d" % len(_t_recs94), len(_t_recs94) >= 5,
+          saw="fewer than five registered tools — either the registry emptied or this check is "
+              "reading the wrong file, and an empty list passes every assertion below")
+
+    # Absolute on either platform: a POSIX root, or a Windows drive letter. Derived from the shape
+    # of a path rather than from a list of directory names somebody expected to see.
+    def _abs94(v):
+        return isinstance(v, str) and bool(v) and (v.startswith(("/", "\\")) or
+                                                   (len(v) > 1 and v[1] == ":"))
+
+    _t_leaky94 = ["%s -> %s" % (r.get("name", "?"), r.get("origin", ""))
+                  for r in _t_recs94 if _abs94(r.get("origin", ""))]
+    check("NO RECORD IN THE COMMITTED TOOL REGISTRY NAMES A PATH ON THE MACHINE THAT WROTE IT",
+          not _t_leaky94,
+          saw="%s — this file is tracked, so that path is published to everyone who clones"
+              % "; ".join(_t_leaky94[:4]))
+
+    # The same question of every other free-text field that gets written here. `desc` is scrubbed on
+    # the way in; nothing asserted that the scrubbing held for what is already stored.
+    _t_fields94 = ("desc", "added", "last_run", "name")
+    _t_other94 = ["%s.%s -> %s" % (r.get("name", "?"), f, r.get(f))
+                  for r in _t_recs94 for f in _t_fields94 if _abs94(r.get(f, ""))]
+    check("...and no other field in it does either",
+          not _t_other94, saw="; ".join(_t_other94[:4]))
+# ---- 95_a_query_over_the_stores_never_walks_them.py
+# ------------- the promise this command is worth exactly as much as
+# 🎯 [2026-09-12] 1.26 item 1 ships under one build gate, written before the code: improve retrieval
+# of evidence that genuinely exists **without forcing a broad scan before every answer**. A query
+# that quietly walks 55 files the first time it is asked satisfies the letter and breaks the point,
+# and it would be invisible — the answer is the same either way, only slower on a run nobody times.
+#
+# So the contract is asserted the only way it can be: the stores are taken AWAY, and the query has
+# to still work. A fixture builds an index, the store directories are renamed, and a query runs
+# against the index alone. Anything that reaches for a store file fails here rather than in a
+# session six weeks from now.
+import json as _json95
+import shutil as _sh95
+import tempfile as _tmp95
+from pathlib import Path as _Path95
+
+import recall as _rc95
+
+_t_tmp95 = _Path95(_tmp95.mkdtemp(prefix="chamnan-recall-"))
+_t_ws95 = _t_tmp95 / ".chamnan"
+for _sub95 in ("memory/rules", "memory/lessons", "skills", "tools"):
+    (_t_ws95 / _sub95).mkdir(parents=True)
+(_t_ws95 / "memory" / "rules" / "never-split-thai.md").write_text(
+    "# Thai has no word boundaries\n\nA three-character key rewrote หน้าจอ into something else.\n",
+    encoding="utf-8")
+(_t_ws95 / "skills" / "working_the_gate.md").write_text(
+    "# Running the gate\n\nThe full suite is a release gate, not a step in the loop.\n",
+    encoding="utf-8")
+(_t_ws95 / "tools" / "index.json").write_text(
+    _json95.dumps([{"name": "time-the-hook.py", "desc": "median of five, with the exec tax"}]),
+    encoding="utf-8")
+# The file has to exist, not just be registered. `tools_index.real_name` refuses an entry whose
+# file is gone — that predicate was unified across three readers in 2026-09-10 and `recall` is the
+# fourth — so a fixture that registers a name and writes no file indexes nothing and every
+# assertion below would pass on an empty index. It said so, which is what that first check is for.
+(_t_ws95 / "tools" / "time-the-hook.py").write_text("# stub\n", encoding="utf-8")
+
+_t_idx95 = _rc95.build(_t_ws95)
+check("the fixture indexed the stores it was given: %d entr(ies)" % _t_idx95["count"],
+      _t_idx95["count"] >= 3,
+      saw="nothing was indexed, so every assertion below would pass on an empty index")
+
+# --- 1. THE GATE. Take the stores away; the query must be unmoved.
+_sh95.move(str(_t_ws95 / "memory"), str(_t_tmp95 / "memory-gone"))
+_sh95.move(str(_t_ws95 / "skills"), str(_t_tmp95 / "skills-gone"))
+_t_after95 = _rc95.query(_t_idx95, ["thai", "boundaries"], limit=3)
+check("A QUERY ANSWERS WITH THE STORES REMOVED, WHICH IS THE ONLY PROOF IT DOES NOT WALK THEM",
+      bool(_t_after95) and _t_after95[0][1]["path"].endswith("never-split-thai.md"),
+      saw="the query returned %r with the stores moved away — it reads them, and the build gate "
+          "this shipped under forbids that" % ([h[1]["path"] for h in _t_after95],))
+_sh95.move(str(_t_tmp95 / "memory-gone"), str(_t_ws95 / "memory"))
+_sh95.move(str(_t_tmp95 / "skills-gone"), str(_t_ws95 / "skills"))
+
+# --- 2. Thai is looked for whole. Splitting it is how this repository corrupted text twice.
+_t_thai95 = _rc95.query(_t_idx95, ["หน้าจอ"], limit=3)
+check("...and a Thai query matches by substring rather than by anything that splits it",
+      bool(_t_thai95),
+      saw="a Thai term present in the corpus found nothing — the non-ASCII path is not running")
+_t_half95 = _rc95.query(_t_idx95, ["จอ"], limit=3)
+check("...so a FRAGMENT of a Thai word still matches, which is what substring means",
+      bool(_t_half95),
+      saw="`จอ` is inside `หน้าจอ` and found nothing, so the match is not a substring after all")
+
+# --- 3. Staleness is a number this can report without reading a byte of content.
+_t_fresh95 = _rc95.stale_by(_t_ws95, _t_idx95)
+(_t_ws95 / "memory" / "rules" / "added-after.md").write_text("# Added after\n\nnew\n",
+                                                             encoding="utf-8")
+_t_behind95 = _rc95.stale_by(_t_ws95, _t_idx95)
+check("a fresh index reports nothing behind, and a new store file makes it report one",
+      _t_fresh95 == 0 and _t_behind95 == 1,
+      saw="fresh said %r and after one new file it said %r" % (_t_fresh95, _t_behind95))
+
+_sh95.rmtree(_t_tmp95, ignore_errors=True)
+
+# --- 4. The index must not cost more than the thing it indexes. It was 130% of the corpus once,
+# because every line carrying an em dash was kept for a substring path that only needs letters.
+#
+# 🐛 Asserted first against the fixture above, and it failed at 1,316 bytes against 198 — a ratio
+# measured on two tiny files is per-entry JSON overhead and says nothing about the property. It is
+# a claim about a corpus, so it is measured on a corpus: this repository's own workspace, and
+# skipped rather than guessed at where there is not one.
+_t_real95 = ROOT.parent.parent / ".chamnan"
+_t_docs95 = [p for folder, _k, _w in _rc95.KINDS for p in (_t_real95 / folder).rglob("*.md")
+             if (_t_real95 / folder).is_dir()]
+if len(_t_docs95) < 20:
+    skip("  · this workspace has %d store documents — too few to measure a ratio on" % len(_t_docs95))
+else:
+    _t_corpus95 = sum(p.stat().st_size for p in _t_docs95)
+    _t_size95 = len(_json95.dumps(_rc95.build(_t_real95), ensure_ascii=False).encode("utf-8"))
+    check("...and on a real corpus the index stays under it: %d vs %d bytes over %d document(s)"
+          % (_t_size95, _t_corpus95, len(_t_docs95)),
+          _t_size95 <= _t_corpus95,
+          saw="an index larger than the documents it indexes is not an index — it was 130%% of "
+              "this corpus until the substring path stopped keeping every line with an em dash")
 # ============================ end of the folded surgical pool
 
 

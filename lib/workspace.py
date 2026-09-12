@@ -28,6 +28,9 @@ DEFAULT_CONFIG = {
     "capture": True,    # accumulate procedures as skills
     "promote": True,    # throwaway script -> permanent tool
     "report": True,     # before/after measurement
+    # 1.26 item 1. The query over the stores, and nothing else — switching it off leaves every
+    # store exactly where it was and only removes `chamnan-recall`.
+    "recall": True,
     "agents": True,     # cheap models for scan-shaped work
     # Applied by prune_logs(), which every bin/ command calls. Without this the scratch log and
     # anything else written under logs/ would grow for the life of the repo — a workspace that
@@ -1578,6 +1581,11 @@ IGNORE_LINES = [
     "# a 40 KB file that changes on every commit into every diff, and merge it for no reason — the",
     "# answer is a function of the commit, so any clone can recompute it in a second.",
     "state/churn-*.json",
+    "",
+    "# Derived the same way, and for the same reason: `chamnan-recall --reindex` rebuilds it from",
+    "# the stores in about 30 ms. It is ~90% of the size of the documents it indexes and changes",
+    "# every time any of them does, so committing it would put the whole corpus in the diff twice.",
+    "state/store_index.json",
 ]
 
 

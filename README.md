@@ -736,6 +736,7 @@ Every value below was read from `lib/workspace.py`, which is the only place defa
 | `capture` | `true` | `true` / `false` | Listing the procedures recorded in `.chamnan/skills/` at session start, by name and description, so the agent can load one on demand. |
 | `promote` | `true` | `true` / `false` | Noticing a scratch script written for the third time, offering to keep it in `.chamnan/tools/`, and listing kept tools at session start. |
 | `report` | `true` | `true` / `false` | The `chamnan-report` before/after measurement. |
+| `recall` | `true` | `true` / `false` | `chamnan-recall`, the lexical query over the stores. Switching it off removes the query and leaves every store exactly where it was. |
 | `agents` | `true` | `true` / `false` | Whether chamnan may dispatch its own cheap-model agents. With `false`, low coverage is reported and the files are left to you. |
 | `pointer` | `true` | `true` / `false` | The file pointer: before a file is edited, naming the rules and impact edges that govern it. Fires on every tool call, so it is the switch to reach for if the notices are too frequent. |
 | `timeline` | `true` | `true` / `false` | `chamnan-timeline`, and injecting open threads at session start. |
@@ -1014,6 +1015,8 @@ From a shell, in the repository:
 | `chamnan-peek <file> --find PATTERN` | only the parts that match, with their line numbers |
 | `chamnan-peek <file> --budget 800` | raise the output ceiling from its default of 400 tokens |
 | `chamnan-promote <file> <name> --desc "…"` | install a scratch script as a permanent tool in `.chamnan/tools/` |
+| `chamnan-recall <words>` | what the stores already say about this, before you start from scratch. Names the entries worth opening — rules, lessons, decisions, skills, threads, sessions and registered tools — with what matched and where. It points; it never quotes, because the stores here are a hundred thousand tokens and the useful answer is the three files to open |
+| `chamnan-recall --reindex` | rebuild the query index after the stores change. A query reads that one file and never walks the stores, so this is the only command here that does |
 | `chamnan-promote --list` | what this repo already keeps |
 | `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list`. **Measured 2026-09-02: 0 candidates across 2,905 logged commands in four working repositories, and still 0 at half its shipped thresholds. Re-measured 2026-09-07: it fires.** Eight candidates in this repository's own workspace, on a day of unusually repetitive work. The earlier figure was true when it was taken and is left here because the honest reading is that this detector needs a particular shape of day rather than that it does nothing. The scratch-script notice in the same feature is a different mechanism and fires more often. Cost is 1.14 ms per tool call. |
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
