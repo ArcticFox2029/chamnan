@@ -11,6 +11,7 @@ the same block with the harness taken out of the way -- one pipe anything can re
     chamnan-context --model kimi         size it by model family, if you know that instead
     chamnan-context --ceiling 9000       for a harness that truncates, like Claude Code's hook
     chamnan-context --detect             what chamnan thinks this machine is, and nothing else
+    chamnan-context --preview            what can leave, led by what chamnan cannot control
     chamnan-context --write cursor       set that agent up to read it
     chamnan-context --emit gemini        the block in that agent's own wire format
 
@@ -44,6 +45,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / "lib"))
 
 import adapters  # noqa: E402
+import fit  # noqa: E402
 import host  # noqa: E402
 import profiles  # noqa: E402
 import tokens as tokens_mod  # noqa: E402
@@ -120,8 +122,8 @@ def _load_hook():
     return module
 
 
-def build(root, profile, ceiling, agent=None):
-    """The block, as text. Runs the hook's own `main()` rather than reimplementing any of it.
+def _capture_session_start(root, profile, ceiling, agent=None, payload=None, read_only=False):
+    """The real hook's stdout, unchanged, for one SessionStart payload.
 
     The hook reads its root from the working directory and its payload from stdin, so both are
     swapped for the duration and put back in a `finally` -- a command that leaves the process in
@@ -131,6 +133,7 @@ def build(root, profile, ceiling, agent=None):
     was_profile = os.environ.get("CHAMNAN_CONTEXT_PROFILE")
     was_agent = os.environ.get("CHAMNAN_CONTEXT_AGENT")
     was_ceiling = os.environ.get("CHAMNAN_OUTPUT_CEILING")
+    was_read_only = os.environ.get(ws.READ_ONLY_ENV)
     buffer = io.StringIO()
     try:
         if profile:
@@ -139,8 +142,10 @@ def build(root, profile, ceiling, agent=None):
         if agent:
             os.environ["CHAMNAN_CONTEXT_AGENT"] = agent
         os.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling)
+        if read_only:
+            os.environ[ws.READ_ONLY_ENV] = "1"
         os.chdir(str(root))
-        sys.stdin = io.StringIO("{}")
+        sys.stdin = io.StringIO(json.dumps(payload or {}))
         with contextlib.redirect_stdout(buffer):
             _load_hook().main()
     finally:
@@ -148,12 +153,56 @@ def build(root, profile, ceiling, agent=None):
         sys.stdin = was_stdin
         for name, previous in (("CHAMNAN_CONTEXT_PROFILE", was_profile),
                                ("CHAMNAN_CONTEXT_AGENT", was_agent),
-                               ("CHAMNAN_OUTPUT_CEILING", was_ceiling)):
+                               ("CHAMNAN_OUTPUT_CEILING", was_ceiling),
+                               (ws.READ_ONLY_ENV, was_read_only)):
             if previous is None:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = previous
-    return _stabilise_fence(buffer.getvalue().rstrip("\n"))
+    return buffer.getvalue()
+
+
+def build(root, profile, ceiling, agent=None):
+    """The stable block, as text. Runs the hook's own `main()`, then stabilises its fence."""
+    emitted = _capture_session_start(root, profile, ceiling, agent=agent)
+    return _stabilise_fence(emitted.rstrip("\n"))
+
+
+def privacy_preview(root, profile, ceiling, payload=None):
+    """An honest boundary report containing one exact, real SessionStart emission."""
+    payload = payload or {
+        "cwd": str(root),
+        "hook_event_name": "SessionStart",
+        "session_id": "privacy-preview",
+        "source": "startup",
+    }
+    emitted = _capture_session_start(root, profile, ceiling, payload=payload, read_only=True)
+    size = len(emitted.encode("utf-8"))
+    cost = tokens_mod.estimate(emitted)
+    return (
+        "chamnan privacy preview\n\n"
+        "NOT CONTROLLED — chamnan never sees or rewrites these results:\n"
+        "  Read, Grep and Glob — file contents, matched lines and paths\n"
+        "  Bash — stdout/stderr from commands other than bin/chamnan-*\n"
+        "  WebFetch and WebSearch — fetched and searched content\n"
+        "  a subagent's own transcript — its reasoning and tool results\n"
+        "  Their size is unknown and cannot be estimated by chamnan.\n\n"
+        "CONTROLLED BY CHAMNAN:\n"
+        f"  SessionStart: {size:,} bytes / ~{cost:,.0f} tokens, through redact.scrub, "
+        f"against the {ceiling:,}-byte hook ceiling.\n"
+        "  The exact bytes from the real SessionStart renderer are below. The live session's\n"
+        "  fence nonce changes with its session id; no second rendering is used here.\n\n"
+        "----- exact SessionStart bytes begin -----\n"
+        + emitted
+        + "----- exact SessionStart bytes end -----\n\n"
+        "CONTROLLED, BUT NOT YET DETERMINED:\n"
+        "  bulk-read notice, file pointer, scratch watch, agent result and subagent start\n"
+        "  are scrubbed by their real hooks, but their exact bytes depend on the matching event.\n"
+        "  They are not simulated here: four also write local bookkeeping when they run.\n"
+        "  bin/chamnan-* output is scrubbed too, and exists only when a command is run.\n\n"
+        "tools/redactor_recall.py measures coverage on credential-shaped test strings. It is not\n"
+        "measured or claimed for names, hostnames, project codenames, or other ordinary text.\n"
+        "This preview is not a sandbox and is not a preview of host tool results.\n")
 
 
 def _snapshot_note(root, agent):
@@ -226,6 +275,8 @@ def main():
     parser.add_argument("root", nargs="?", default=".")
     parser.add_argument("--json", action="store_true", help="the block plus what was detected")
     parser.add_argument("--detect", action="store_true", help="what was detected, and nothing else")
+    parser.add_argument("--preview", action="store_true",
+                        help="show what can leave, led by what chamnan cannot control")
     parser.add_argument("--write", default=None, choices=adapters.names(),
                         help="set this agent up to read the block")
     parser.add_argument("--written-agents", action="store_true",
@@ -275,6 +326,15 @@ def main():
         profile = profile or guessed
     if args.window is not None:
         profile = profiles.by_window(args.window)
+
+    if args.preview:
+        # A preview is about the hook as the host runs it, so the host ceiling is the default here;
+        # an explicit --ceiling still wins. Written directly because the bytes between the markers
+        # are already the real hook's scrubbed stdout: passing them through `redact.emit` would be
+        # a second transform, and byte-for-byte would stop meaning byte-for-byte.
+        preview_ceiling = fit.CEILING if args.ceiling == NON_BINDING else args.ceiling
+        sys.stdout.write(privacy_preview(root, profile, preview_ceiling))
+        return 0
 
     detected = {
         "os": host.os_family(),

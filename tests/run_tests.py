@@ -33471,6 +33471,109 @@ check("MAP.md'S EARLY-RESUME READER ALSO REFUSES A CONFLICT BEFORE DERIVING FACT
       bool(_t_resume97),
       saw="the resume branch has no conflict guard around the MAP.md text it interprets")
 _rmtree(_t_root97, ignore_errors=True)
+# ---- 98_privacy_preview_shows_the_real_bytes_and_its_boundary.py
+# ---------------- the privacy preview is the real emission, inside an honestly bounded report
+# 🎯 [2026-09-12] 1.26 item 3 promises to show what is about to leave the machine, led by
+# what chamnan cannot control. The dangerous implementation is a second rendering that looks like
+# the SessionStart block but drifts from it, or a complete-looking report that omits the host tool
+# results no plugin hook can rewrite. This drives the real hook and the preview independently and
+# compares the bytes between the preview's markers (R2 agent 3).
+import contextlib as _cl98
+import importlib.machinery as _ilm98
+import importlib.util as _ilu98
+import io as _io98
+import json as _js98
+import os as _os98
+import sys as _sys98
+
+_t_registry98 = _js98.loads(
+    (ROOT / "hooks" / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+_t_emitters98 = []
+for _t_event98, _t_groups98 in _t_registry98.items():
+    if _t_event98 == "SessionEnd":
+        continue
+    for _t_group98 in _t_groups98:
+        for _t_hook98 in _t_group98.get("hooks", []):
+            _t_emitters98.append((_t_event98, _t_hook98.get("command", "")))
+check("the preview sweep found every registered model-facing hook: %d" % len(_t_emitters98),
+      len(_t_emitters98) == 6,
+      saw="%r — a sweep that found nothing would make every coverage claim below vacuous"
+          % (_t_emitters98,))
+
+_t_context_path98 = ROOT / "bin" / "chamnan-context"
+_t_spec98 = _ilu98.spec_from_loader(
+    "chamnan_context_98", _ilm98.SourceFileLoader("chamnan_context_98", str(_t_context_path98)))
+_t_context98 = _ilu98.module_from_spec(_t_spec98)
+_t_spec98.loader.exec_module(_t_context98)
+
+_t_payload98 = {
+    "cwd": str(ROOT),
+    "hook_event_name": "SessionStart",
+    "session_id": "privacy-preview-check",
+    "source": "startup",
+}
+
+
+def _t_real_emission98():
+    """Run the hook without going through chamnan-context's capture helper."""
+    _t_hook_path98 = ROOT / "hooks" / "chamnan_session_start.py"
+    _t_hook_spec98 = _ilu98.spec_from_file_location("chamnan_session_start_98", _t_hook_path98)
+    _t_hook98 = _ilu98.module_from_spec(_t_hook_spec98)
+    _t_hook_spec98.loader.exec_module(_t_hook98)
+    _t_old_cwd98, _t_old_stdin98 = _os98.getcwd(), _sys98.stdin
+    _t_old_ceiling98 = _os98.environ.get("CHAMNAN_OUTPUT_CEILING")
+    _t_old_read_only98 = _os98.environ.get(ws.READ_ONLY_ENV)
+    _t_buffer98 = _io98.StringIO()
+    try:
+        _os98.environ["CHAMNAN_OUTPUT_CEILING"] = str(fit.CEILING)
+        _os98.environ[ws.READ_ONLY_ENV] = "1"
+        _os98.chdir(str(ROOT))
+        _sys98.stdin = _io98.StringIO(_js98.dumps(_t_payload98))
+        with _cl98.redirect_stdout(_t_buffer98):
+            _t_hook98.main()
+    finally:
+        _os98.chdir(_t_old_cwd98)
+        _sys98.stdin = _t_old_stdin98
+        if _t_old_ceiling98 is None:
+            _os98.environ.pop("CHAMNAN_OUTPUT_CEILING", None)
+        else:
+            _os98.environ["CHAMNAN_OUTPUT_CEILING"] = _t_old_ceiling98
+        if _t_old_read_only98 is None:
+            _os98.environ.pop(ws.READ_ONLY_ENV, None)
+        else:
+            _os98.environ[ws.READ_ONLY_ENV] = _t_old_read_only98
+    return _t_buffer98.getvalue()
+
+
+_t_has_preview98 = hasattr(_t_context98, "privacy_preview")
+check("chamnan-context exposes the privacy preview this check is about", _t_has_preview98,
+      saw="no privacy_preview function — the command has no reusable preview surface")
+
+if _t_has_preview98:
+    _t_preview98 = _t_context98.privacy_preview(
+        ROOT, None, fit.CEILING, payload=_t_payload98)
+    _t_begin98 = "----- exact SessionStart bytes begin -----\n"
+    _t_end98 = "----- exact SessionStart bytes end -----"
+    _t_marked98 = _t_begin98 in _t_preview98 and _t_end98 in _t_preview98
+    check("the preview marks the exact byte region rather than asking a reader to infer it",
+          _t_marked98, saw=_t_preview98[:500])
+    _t_shown98 = (_t_preview98.split(_t_begin98, 1)[1].split(_t_end98, 1)[0]
+                  if _t_marked98 else "")
+    _t_real98 = _t_real_emission98()
+    check("THE PREVIEW AND THE REAL SESSIONSTART EMISSION AGREE BYTE-FOR-BYTE",
+          _t_shown98.encode("utf-8") == _t_real98.encode("utf-8"),
+          saw="preview=%d bytes real=%d bytes" %
+              (len(_t_shown98.encode("utf-8")), len(_t_real98.encode("utf-8"))))
+
+    _t_uncontrolled98 = (
+        "Read", "Grep", "Glob", "Bash", "WebFetch", "WebSearch", "subagent's own transcript",
+    )
+    _t_missing98 = [name for name in _t_uncontrolled98 if name not in _t_preview98]
+    check("EVERY UNCONTROLLED PATH IS NAMED", not _t_missing98,
+          saw="missing: %s" % ", ".join(_t_missing98))
+    check("...and the uncontrolled boundary leads the controlled bytes",
+          _t_preview98.index("NOT CONTROLLED") < _t_preview98.index("CONTROLLED"),
+          saw=_t_preview98[:500])
 # ============================ end of the folded surgical pool
 
 
