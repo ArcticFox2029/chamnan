@@ -33896,6 +33896,21 @@ _t_codex99 = {"id": 7, "result": {"rateLimits": {
     "secondary": {"usedPercent": 80, "resetsAt": _t_now99.timestamp() + 5400},
 }}, "unrelated": {"resetsAt": _t_now99.timestamp() + 10}}
 
+# The frozen `_t_now99` above is deliberate: every assertion that passes `now=` alongside a fixture
+# is comparing two fixed points, and a moving clock would make its result depend on the hour the
+# suite ran. The command drive below is the exception -- it goes through `_set`, which reads the
+# REAL clock, so a payload pinned to a past date is correctly refused as carrying "no usable future
+# reset".
+#
+# [2026-09-13] That is exactly what happened. Written on 09-12 with `+1800` seconds, it passed that
+# evening and failed every run from the next morning onward: the check rotted with the calendar
+# rather than with the code. A separate payload built from the real clock keeps the command drive
+# honest without making the pure-function assertions above depend on when they run.
+_t_cmd_codex99 = {"id": 7, "result": {"rateLimits": {
+    "primary": {"usedPercent": 100, "resetsAt": _dt99.now().timestamp() + 1800},
+    "secondary": {"usedPercent": 80, "resetsAt": _dt99.now().timestamp() + 5400},
+}}, "unrelated": {"resetsAt": _dt99.now().timestamp() + 10}}
+
 _t_observed99 = (_sc99.reset_observations(_t_claude99, now=_t_now99)
                  + _sc99.reset_observations(_t_codex99, now=_t_now99))
 check("the reset sweep found both recorded vendor shapes: %d observation(s)" % len(_t_observed99),
@@ -33940,7 +33955,7 @@ _t_cmd99.sched.agent_process = lambda: 0
 _t_root99 = _Path99(_tmp99.mkdtemp(prefix="chamnan-reset99-"))
 (_t_root99 / ".chamnan" / "state").mkdir(parents=True)
 _t_payload_path99 = _t_root99 / "codex-response.json"
-_t_payload_path99.write_text(_js99.dumps(_t_codex99), encoding="utf-8")
+_t_payload_path99.write_text(_js99.dumps(_t_cmd_codex99), encoding="utf-8")
 _t_out99, _t_err99 = _io99.StringIO(), _io99.StringIO()
 with _cl99.redirect_stdout(_t_out99), _cl99.redirect_stderr(_t_err99):
     _t_code99 = _t_cmd99._set(
