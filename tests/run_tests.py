@@ -25955,98 +25955,6 @@ check("...and a report cannot invent its own status adjective",
       _t_bad_status100 == "refused", saw=_t_bad_status100)
 
 shutil.rmtree(_t_root100, ignore_errors=True)
-# ---- 100_untracked_workspace_state_is_named_once.py
-# ----------------------- written here is not durable until the repository carries it somewhere
-# 🎯 [2026-09-12, R2 RQ6] One issue and one discussion independently showed users unsure whether
-# `.chamnan/` belongs in version control, while no runtime surface said when durable workspace files
-# were untracked. Drive the real SessionStart hook in a disposable git repository: the path must be
-# exact, the advice must name only that path, and an unchanged state must not become a standing nag.
-import json as _json100
-import os as _os100
-import subprocess as _sp100
-import sys as _sys100
-import tempfile as _tmp100
-from pathlib import Path as _Path100
-
-import ledger as _ledger100
-import workspace as _ws100
-
-_t_hook100 = ROOT / "hooks" / "chamnan_session_start.py"
-_t_source100 = _t_hook100.read_text(encoding="utf-8")
-_t_sites100 = [line for line in _t_source100.splitlines()
-               if "ledger.persistence_reminder(" in line]
-check("the sweep found the SessionStart persistence surface: %d" % len(_t_sites100),
-      len(_t_sites100) == 2,
-      saw="%r — a sweep that found nothing makes every delivery assertion below vacuous"
-          % _t_sites100)
-
-_t_root100 = _Path100(_tmp100.mkdtemp(prefix="chamnan-persistence-reminder-"))
-_sp100.run(["git", "init", "-q", str(_t_root100)], check=True, capture_output=True, timeout=10)
-_sp100.run(["git", "-C", str(_t_root100), "config", "user.email", "check@example.invalid"],
-           check=True, capture_output=True, timeout=10)
-_sp100.run(["git", "-C", str(_t_root100), "config", "user.name", "Check 100"],
-           check=True, capture_output=True, timeout=10)
-_ws100.ensure(_t_root100)
-_sp100.run(["git", "-C", str(_t_root100), "add", ".chamnan"],
-           check=True, capture_output=True, timeout=10)
-_sp100.run(["git", "-C", str(_t_root100), "commit", "-qm", "fixture"],
-           check=True, capture_output=True, timeout=10)
-
-_t_first_path100 = _t_root100 / ".chamnan" / "memory" / "lessons" / "needs-commit.md"
-_t_first_path100.write_text("# Needs commit\n", encoding="utf-8")
-_t_state100 = _ledger100.persistence(_t_root100)
-check("the fixture produced a non-empty durable population with exactly one untracked member",
-      bool(_t_state100) and len(_t_state100["durable"]) >= 4
-      and _t_state100["untracked"] == [".chamnan/memory/lessons/needs-commit.md"],
-      saw=repr(_t_state100))
-
-_t_payload100 = _json100.dumps({"cwd": str(_t_root100), "session_id": "check-100",
-                                "source": "startup"})
-_t_env100 = dict(_os100.environ)
-_t_first100 = _sp100.run([_sys100.executable, str(_t_hook100)], input=_t_payload100,
-                         capture_output=True, text=True, cwd=str(_t_root100), env=_t_env100,
-                         timeout=60)
-check("THE REAL SESSIONSTART NAMES THE EXACT UNTRACKED PATH AND NARROW GIT ADD",
-      _t_first100.returncode == 0
-      and "`.chamnan/memory/lessons/needs-commit.md`" in _t_first100.stdout
-      and ("git add -- .chamnan/.version "
-           ".chamnan/memory/lessons/needs-commit.md") in _t_first100.stdout,
-      saw="exit=%r stdout=%r stderr=%r" %
-          (_t_first100.returncode, _t_first100.stdout[:700], _t_first100.stderr[:300]))
-_t_reminder_lines100 = [line for line in _t_first100.stdout.splitlines()
-                        if "durable chamnan files are not tracked" in line]
-check("...and the heading-less reminder fits its declared undroppable-content ceiling",
-      len(_t_reminder_lines100) == 1
-      and len(_t_reminder_lines100[0].encode()) <= _ledger100.PERSISTENCE_REMINDER_BYTES
-      and 100 <= _ledger100.PERSISTENCE_REMINDER_BYTES <= 600,
-      saw="lines=%r cap=%r" %
-          (_t_reminder_lines100, _ledger100.PERSISTENCE_REMINDER_BYTES))
-
-_t_second100 = _sp100.run([_sys100.executable, str(_t_hook100)], input=_t_payload100,
-                          capture_output=True, text=True, cwd=str(_t_root100), env=_t_env100,
-                          timeout=60)
-check("AN UNCHANGED UNTRACKED SET IS NOT REPEATED ON THE NEXT SESSIONSTART",
-      "durable chamnan files are not tracked" not in _t_second100.stdout,
-      saw=_t_second100.stdout[:700])
-
-_t_second_path100 = _t_root100 / ".chamnan" / "memory" / "rules" / "another.md"
-_t_second_path100.write_text("# Another\n", encoding="utf-8")
-_t_transcript100 = _t_root100 / "resume.jsonl"
-_t_resume_id100 = "check-100-resume"
-_t_transcript100.write_text("[repo:%s]\n" % _ws100.nonce_for(_t_resume_id100), encoding="utf-8")
-_t_resume_payload100 = _json100.dumps({
-    "cwd": str(_t_root100), "session_id": _t_resume_id100, "source": "resume",
-    "transcript_path": str(_t_transcript100),
-})
-_t_changed100 = _sp100.run([_sys100.executable, str(_t_hook100)], input=_t_resume_payload100,
-                           capture_output=True, text=True, cwd=str(_t_root100), env=_t_env100,
-                           timeout=60)
-check("A CHANGED SET IS NAMED AGAIN ON THE EARLY-RESUME PATH, WITH BOTH CURRENT PATHS",
-      ".chamnan/memory/lessons/needs-commit.md" in _t_changed100.stdout
-      and ".chamnan/memory/rules/another.md" in _t_changed100.stdout,
-      saw=_t_changed100.stdout[:900])
-
-shutil.rmtree(_t_root100, ignore_errors=True)
 # ---- 101_report_exposes_the_persistence_funnel.py
 # ----------------------- a reminder being printed is not evidence that repository state survived
 # 🎯 [2026-09-12, R2 RQ6] The proposed outcome is a funnel — written, tracked, committed, fresh
@@ -26131,6 +26039,735 @@ check("A FRESH CLONE GETS THE COMMITTED COPY, NOT EITHER CURRENT UNCOMMITTED COP
 
 shutil.rmtree(_t_root101, ignore_errors=True)
 shutil.rmtree(_t_clone_parent101, ignore_errors=True)
+# ---- 102_untracked_workspace_state_is_named_once.py
+# ----------------------- written here is not durable until the repository carries it somewhere
+# 🎯 [2026-09-12, R2 RQ6] One issue and one discussion independently showed users unsure whether
+# `.chamnan/` belongs in version control, while no runtime surface said when durable workspace files
+# were untracked. Drive the real SessionStart hook in a disposable git repository: the path must be
+# exact, the advice must name only that path, and an unchanged state must not become a standing nag.
+import json as _json102
+import os as _os102
+import subprocess as _sp102
+import sys as _sys102
+import tempfile as _tmp102
+from pathlib import Path as _Path102
+
+import ledger as _ledger102
+import workspace as _ws102
+
+_t_hook102 = ROOT / "hooks" / "chamnan_session_start.py"
+_t_source102 = _t_hook102.read_text(encoding="utf-8")
+_t_sites102 = [line for line in _t_source102.splitlines()
+               if "ledger.persistence_reminder(" in line]
+check("the sweep found the SessionStart persistence surface: %d" % len(_t_sites102),
+      len(_t_sites102) == 2,
+      saw="%r — a sweep that found nothing makes every delivery assertion below vacuous"
+          % _t_sites102)
+
+_t_root102 = _Path102(_tmp102.mkdtemp(prefix="chamnan-persistence-reminder-"))
+_sp102.run(["git", "init", "-q", str(_t_root102)], check=True, capture_output=True, timeout=10)
+_sp102.run(["git", "-C", str(_t_root102), "config", "user.email", "check@example.invalid"],
+           check=True, capture_output=True, timeout=10)
+_sp102.run(["git", "-C", str(_t_root102), "config", "user.name", "Check 102"],
+           check=True, capture_output=True, timeout=10)
+_ws102.ensure(_t_root102)
+_sp102.run(["git", "-C", str(_t_root102), "add", ".chamnan"],
+           check=True, capture_output=True, timeout=10)
+_sp102.run(["git", "-C", str(_t_root102), "commit", "-qm", "fixture"],
+           check=True, capture_output=True, timeout=10)
+
+_t_first_path102 = _t_root102 / ".chamnan" / "memory" / "lessons" / "needs-commit.md"
+_t_first_path102.write_text("# Needs commit\n", encoding="utf-8")
+_t_state102 = _ledger102.persistence(_t_root102)
+check("the fixture produced a non-empty durable population with exactly one untracked member",
+      bool(_t_state102) and len(_t_state102["durable"]) >= 4
+      and _t_state102["untracked"] == [".chamnan/memory/lessons/needs-commit.md"],
+      saw=repr(_t_state102))
+
+_t_payload102 = _json102.dumps({"cwd": str(_t_root102), "session_id": "check-102",
+                                "source": "startup"})
+_t_env102 = dict(_os102.environ)
+_t_first102 = _sp102.run([_sys102.executable, str(_t_hook102)], input=_t_payload102,
+                         capture_output=True, text=True, cwd=str(_t_root102), env=_t_env102,
+                         timeout=60)
+check("THE REAL SESSIONSTART NAMES THE EXACT UNTRACKED PATH AND NARROW GIT ADD",
+      _t_first102.returncode == 0
+      and "`.chamnan/memory/lessons/needs-commit.md`" in _t_first102.stdout
+      and ("git add -- .chamnan/.version "
+           ".chamnan/memory/lessons/needs-commit.md") in _t_first102.stdout,
+      saw="exit=%r stdout=%r stderr=%r" %
+          (_t_first102.returncode, _t_first102.stdout[:700], _t_first102.stderr[:300]))
+_t_reminder_lines102 = [line for line in _t_first102.stdout.splitlines()
+                        if "durable chamnan files are not tracked" in line]
+check("...and the heading-less reminder fits its declared undroppable-content ceiling",
+      len(_t_reminder_lines102) == 1
+      and len(_t_reminder_lines102[0].encode()) <= _ledger102.PERSISTENCE_REMINDER_BYTES
+      and 100 <= _ledger102.PERSISTENCE_REMINDER_BYTES <= 600,
+      saw="lines=%r cap=%r" %
+          (_t_reminder_lines102, _ledger102.PERSISTENCE_REMINDER_BYTES))
+
+_t_second102 = _sp102.run([_sys102.executable, str(_t_hook102)], input=_t_payload102,
+                          capture_output=True, text=True, cwd=str(_t_root102), env=_t_env102,
+                          timeout=60)
+check("AN UNCHANGED UNTRACKED SET IS NOT REPEATED ON THE NEXT SESSIONSTART",
+      "durable chamnan files are not tracked" not in _t_second102.stdout,
+      saw=_t_second102.stdout[:700])
+
+_t_second_path102 = _t_root102 / ".chamnan" / "memory" / "rules" / "another.md"
+_t_second_path102.write_text("# Another\n", encoding="utf-8")
+_t_transcript102 = _t_root102 / "resume.jsonl"
+_t_resume_id102 = "check-102-resume"
+_t_transcript102.write_text("[repo:%s]\n" % _ws102.nonce_for(_t_resume_id102), encoding="utf-8")
+_t_resume_payload102 = _json102.dumps({
+    "cwd": str(_t_root102), "session_id": _t_resume_id102, "source": "resume",
+    "transcript_path": str(_t_transcript102),
+})
+_t_changed102 = _sp102.run([_sys102.executable, str(_t_hook102)], input=_t_resume_payload102,
+                           capture_output=True, text=True, cwd=str(_t_root102), env=_t_env102,
+                           timeout=60)
+check("A CHANGED SET IS NAMED AGAIN ON THE EARLY-RESUME PATH, WITH BOTH CURRENT PATHS",
+      ".chamnan/memory/lessons/needs-commit.md" in _t_changed102.stdout
+      and ".chamnan/memory/rules/another.md" in _t_changed102.stdout,
+      saw=_t_changed102.stdout[:900])
+
+shutil.rmtree(_t_root102, ignore_errors=True)
+# ---- 103_read_only_posttooluse_does_not_write.py
+# -------------------- read-only timing cannot measure a hook after changing what it measures
+# 🐛 [2026-09-12, R6 Q10] `workflows.record()` appended under `CHAMNAN_READ_ONLY=1` even
+# though its sibling trim rewrite already honoured the switch through `ws.atomic_write_text`.
+# Five timing calls therefore added five rows to the log whose timing they were measuring. This
+# drives both history inputs across fifty cases, forces the trim threshold, and exercises the real
+# PostToolUse hook's other writer branches against a temporary workspace. The opposite direction
+# then proves the ordinary append still exists.
+import importlib.util as _ilu103
+import io as _io103
+import json as _json103
+import os as _os103
+import random as _random103
+import shutil as _shutil103
+import tempfile as _tempfile103
+from pathlib import Path as _Path103
+
+
+def _snapshot103(root):
+    """Relative paths and file bytes; a new empty directory is a mutation too."""
+    found = []
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        found.append(("dir", rel) if path.is_dir() else ("file", rel, path.read_bytes()))
+    return found
+
+
+_random103.seed(20260912)
+_root103 = _Path103(_tempfile103.mkdtemp(prefix="chamnan-read-only103-"))
+_old_read_only103 = _os103.environ.get(ws.READ_ONLY_ENV)
+_old_project_dir103 = _os103.environ.pop("CLAUDE_PROJECT_DIR", None)
+_unchanged103, _returned103 = [], []
+try:
+    _os103.environ[ws.READ_ONLY_ENV] = "1"
+    for _case103 in range(50):
+        _log103 = _root103 / "records" / ("case-%02d.jsonl" % _case103)
+        _log103.parent.mkdir(parents=True, exist_ok=True)
+        _count103 = 420 if _case103 == 0 else _random103.randint(0, 24)
+        _seed103 = [
+            {"at": "2026-09-%02dT10:00:00+07:00" % ((_n103 % 9) + 1),
+             "kind": "command", "sig": "seed-%d" % _n103}
+            for _n103 in range(_count103)
+        ]
+        _before103 = "".join(_json103.dumps(row) + "\n" for row in _seed103).encode()
+        _log103.write_bytes(_before103)
+        _sigs103 = ["fresh-%d" % _n103 for _n103 in range(_random103.randint(1, 7))]
+        _given103 = list(_seed103) if _case103 % 2 else None
+        _got103 = workflows.record(
+            _log103, _sigs103, "2026-09-12T12:00:00+07:00", tool="Bash",
+            history=_given103)
+        _expected103 = list(_seed103) + [
+            {"at": "2026-09-12T12:00:00+07:00", "kind": "command", "sig": sig,
+             "tool": "Bash"}
+            for sig in _sigs103
+        ]
+        if _log103.read_bytes() != _before103:
+            _unchanged103.append("case %d changed %d input byte(s)" %
+                                 (_case103, len(_before103)))
+        if _got103 != _expected103:
+            _returned103.append("case %d returned %d, expected %d" %
+                                (_case103, len(_got103), len(_expected103)))
+
+    check("CHAMNAN_READ_ONLY LEAVES EVERY COMMAND LOG BYTE-FOR-BYTE IDENTICAL",
+          not _unchanged103,
+          saw="\n".join(_unchanged103[:6]) or None)
+    check("...and returns the in-memory history, with every would-be entry present",
+          not _returned103,
+          saw="\n".join(_returned103[:6]) or None)
+
+    _missing103 = _root103 / "absent" / "logs" / "commands.jsonl"
+    _missing_history103 = workflows.record(
+        _missing103, ["pytest"], "2026-09-12T12:01:00+07:00", tool="Bash")
+    check("...and does not create even the parent directory for a new log",
+          not _missing103.parent.exists() and len(_missing_history103) == 1,
+          saw="parent exists=%r, returned=%r" %
+              (_missing103.parent.exists(), _missing_history103))
+
+    _ws103 = _root103 / "hook-workspace"
+    _chamnan103 = _ws103 / ".chamnan"
+    (_chamnan103 / "logs" / "nudge").mkdir(parents=True)
+    (_chamnan103 / "memory" / "rules").mkdir(parents=True)
+    (_chamnan103 / "tools").mkdir(parents=True)
+    _routine103 = ["git status", "pytest", "docker compose"]
+    _rows103 = []
+    for _day103 in (10, 11):
+        for _sig103 in _routine103:
+            _rows103.append({"at": "2026-09-%02dT10:00:00+07:00" % _day103,
+                             "kind": "command", "sig": _sig103})
+    (_chamnan103 / "logs" / "commands.jsonl").write_text(
+        "".join(_json103.dumps(row) + "\n" for row in _rows103), encoding="utf-8")
+    _old_nudge103 = _chamnan103 / "logs" / "nudge" / "old.json"
+    _old_nudge103.write_text('{"calls": 2}', encoding="utf-8")
+    _os103.utime(_old_nudge103, (1, 1))
+    (_chamnan103 / "tools" / "index.json").write_text(
+        '[{"name":"demo","desc":"fixture","runs":2,"interrupted":2}]\n',
+        encoding="utf-8")
+    _memory103 = _chamnan103 / "memory" / "rules" / "fixture.md"
+    _memory103.write_text("# Fixture\n\nNo trailers yet.\n", encoding="utf-8")
+    _scratch103 = _ws103 / "scratch" / "probe.py"
+    _scratch103.parent.mkdir(parents=True)
+    _scratch103.write_text("already written by the host\n", encoding="utf-8")
+
+    _hook_path103 = ROOT / "hooks" / "chamnan_scratch_watch.py"
+    _hook_spec103 = _ilu103.spec_from_file_location("_chamnan_posttool103", _hook_path103)
+    _hook103 = _ilu103.module_from_spec(_hook_spec103)
+    _hook_spec103.loader.exec_module(_hook103)
+
+    def _run_hook103(payload):
+        previous = _hook103.sys.stdin
+        _hook103.sys.stdin = _io103.StringIO(_json103.dumps(payload))
+        try:
+            return _hook103.main()
+        finally:
+            _hook103.sys.stdin = previous
+
+    _before_tree103 = _snapshot103(_ws103)
+    _base_payload103 = {"cwd": str(_ws103), "session_id": "read-only-103",
+                        "transcript_path": "/fixture/parent.jsonl", "tool_response": {}}
+    _run_hook103(dict(_base_payload103, tool_name="Bash", tool_input={
+        "command": "git status && pytest && docker compose up"}))
+    _run_hook103(dict(_base_payload103, tool_name="Bash", tool_input={
+        "command": ".chamnan/tools/demo"}))
+    _run_hook103(dict(_base_payload103, tool_name="Write", tool_input={
+        "file_path": str(_memory103), "content": "# Fixture\n\nNo trailers yet.\n"}))
+    _run_hook103(dict(_base_payload103, tool_name="Write", tool_input={
+        "file_path": str(_scratch103),
+        "content": "alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo"}))
+    _after_tree103 = _snapshot103(_ws103)
+    check("...AND THE REAL POSTTOOLUSE PATH CREATES, REWRITES AND DELETES NOTHING",
+          _after_tree103 == _before_tree103,
+          saw="before=%r\nafter=%r" % (_before_tree103, _after_tree103))
+finally:
+    if _old_read_only103 is None:
+        _os103.environ.pop(ws.READ_ONLY_ENV, None)
+    else:
+        _os103.environ[ws.READ_ONLY_ENV] = _old_read_only103
+    if _old_project_dir103 is not None:
+        _os103.environ["CLAUDE_PROJECT_DIR"] = _old_project_dir103
+
+_ordinary103 = _root103 / "ordinary" / "commands.jsonl"
+_ordinary103.parent.mkdir(parents=True)
+_ordinary103.write_text(
+    '{"at":"2026-09-11T10:00:00+07:00","kind":"command","sig":"old"}\n',
+    encoding="utf-8")
+_ordinary_before103 = workflows.read(_ordinary103)
+_ordinary_history103 = workflows.record(
+    _ordinary103, ["pytest"], "2026-09-12T12:02:00+07:00", tool="Bash")
+_ordinary_after103 = workflows.read(_ordinary103)
+check("WITHOUT THE SWITCH, RECORD STILL APPENDS ONE ORDINARY COMMAND AND RETURNS IT",
+      len(_ordinary_after103) == len(_ordinary_before103) + 1
+      and _ordinary_after103[-1].get("sig") == "pytest"
+      and _ordinary_history103 == _ordinary_after103,
+      saw="before=%r\nafter=%r\nreturned=%r" %
+          (_ordinary_before103, _ordinary_after103, _ordinary_history103))
+
+_shutil103.rmtree(_root103, ignore_errors=True)
+# ---- 104_a_nested_repository_is_not_an_all_clear.py
+# ----------------------- absent from this index is not the same as nothing depends on this file
+# 🐛 [2026-09-13, R3 defect A; R5 triage item 1] `chamnan-impact` told a reader to change a
+# file freely when that file belonged to a nested repository the outer index deliberately excludes.
+# Drive the real commands against a real nested git repository outside this workspace. The opposite
+# direction keeps the useful all-clear alive for an ordinary unreferenced file the outer repo owns.
+import shutil as _shutil104
+import subprocess as _sp104
+import sys as _sys104
+import tempfile as _tempfile104
+from pathlib import Path as _Path104
+
+_t_fixture104 = _Path104(_tempfile104.mkdtemp(prefix="chamnan-impact-nested104-"))
+_t_outer104 = _t_fixture104 / "outer"
+_t_nested104 = _t_outer104 / "vendor" / "nested"
+_t_command104 = ROOT / "bin" / "chamnan-impact"
+_t_map_command104 = ROOT / "bin" / "chamnan-map"
+try:
+    _t_outer104.mkdir(parents=True)
+    _sp104.run(["git", "init", "-q", str(_t_outer104)], check=True,
+               capture_output=True, timeout=10)
+    _t_nested104.mkdir(parents=True)
+    _sp104.run(["git", "init", "-q", str(_t_nested104)], check=True,
+               capture_output=True, timeout=10)
+    (_t_outer104 / "lonely.py").write_text("value = 1\n", encoding="utf-8")
+    (_t_nested104 / "owned.py").write_text("value = 2\n", encoding="utf-8")
+
+    _t_owner104 = _sp104.run(
+        ["git", "-C", str(_t_nested104), "rev-parse", "--show-toplevel"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+    check("the fixture is a real nested repository with its own working-tree root",
+          _t_owner104.returncode == 0
+          and _Path104(_t_owner104.stdout.strip()).resolve() == _t_nested104.resolve(),
+          saw="exit=%r stdout=%r stderr=%r" %
+              (_t_owner104.returncode, _t_owner104.stdout, _t_owner104.stderr))
+
+    _t_map104 = _sp104.run([_sys104.executable, str(_t_map_command104)], cwd=str(_t_outer104),
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           timeout=60)
+    check("the fixture built the outer repository's real index without a traceback",
+          _t_map104.returncode == 0 and "Traceback" not in (_t_map104.stdout + _t_map104.stderr),
+          saw="exit=%r stdout=%r stderr=%r" %
+              (_t_map104.returncode, _t_map104.stdout[:500], _t_map104.stderr[:300]))
+
+    _t_nested_run104 = _sp104.run(
+        [_sys104.executable, str(_t_command104), "vendor/nested/owned.py"],
+        cwd=str(_t_outer104), capture_output=True, text=True, encoding="utf-8",
+        errors="replace", timeout=60)
+    _t_nested_out104 = _t_nested_run104.stdout + _t_nested_run104.stderr
+    check("A FILE OWNED BY A NESTED REPOSITORY IS REFUSED THE OUTER INDEX'S ALL-CLEAR",
+          ("this file belongs to a repository this index does not cover, so `nothing recorded` "
+           "is not an answer — ask from inside that repository instead") in _t_nested_out104
+          and "change it freely" not in _t_nested_out104,
+          saw=_t_nested_out104[:900])
+    check("...and the refusal is a printed answer, not an uncaught exception",
+          "Traceback" not in _t_nested_out104, saw=_t_nested_out104[:900])
+
+    _t_outer_run104 = _sp104.run(
+        [_sys104.executable, str(_t_command104), "lonely.py"], cwd=str(_t_outer104),
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+    _t_outer_out104 = _t_outer_run104.stdout + _t_outer_run104.stderr
+    check("AN ORDINARY UNREFERENCED FILE IN THE OUTER REPOSITORY STILL GETS ITS ALL-CLEAR",
+          ("a file nothing imports and nothing has happened to is the cheap case — change it "
+           "freely") in _t_outer_out104,
+          saw=_t_outer_out104[:900])
+    check("...and the surviving all-clear also comes without a traceback",
+          "Traceback" not in _t_outer_out104, saw=_t_outer_out104[:900])
+finally:
+    _shutil104.rmtree(_t_fixture104, ignore_errors=True)
+# ---- 105_a_release_series_claim_is_covered.py
+# ---------------- a release-series name covers and is covered by each member of that exact series
+# Design revised [2026-09-13]. The bare-major exception already established that a durable series
+# claim must not become a finding merely because the environment names a more precise member. A
+# minor series is the same set: Python 3.9 contains 3.9.6, while 3.10 and 4.0 do not.
+_t_cases105 = (
+    ("3.9.6", "3.9", True),
+    ("3.11.2", "3.11", True),
+    ("3.11", "3.11.2", True),
+    ("3.9.6", "3", True),
+    ("3.9.6", "3.9.6", True),
+    ("3.10.1", "3.9", False),
+    ("3.10", "3.9", False),
+    ("4.0.1", "3.9", False),
+)
+_t_results105 = [
+    (_t_declared105, _t_claimed105, aging._covers(_t_declared105, _t_claimed105), _t_expected105)
+    for _t_declared105, _t_claimed105, _t_expected105 in _t_cases105
+]
+_t_wrong105 = [
+    "declared=%s claimed=%s expected=%s got=%s" %
+    (_t_declared105, _t_claimed105, _t_expected105, _t_actual105)
+    for _t_declared105, _t_claimed105, _t_actual105, _t_expected105 in _t_results105
+    if _t_actual105 is not _t_expected105
+]
+check("THE WHOLE RELEASE-SERIES COVERAGE TABLE AGREES",
+      len(_t_results105) == 8 and not _t_wrong105,
+      saw="; ".join(_t_wrong105) or None)
+# ---- 106_home_evidence_does_not_claim_installation.py
+# --------- HOME evidence proves configuration was found, never that an agent is installed now
+# 🐛 [2026-09-13] `host.py`'s own legend claimed HOME evidence was proof of installation on this
+# machine" — measured false on this machine: `~/.gemini` and `~/.kiro` both exist with neither
+# agent's executable nor application present. A home directory outlives an uninstall, so the most
+# it proves is that configuration was found at some point. The module's own closing paragraph says
+# "anything unverified is recorded as the convention it is, not asserted as fact" — the legend broke
+# that promise for its own third entry.
+#
+# Derived from the source, not named at one file: every prose file chamnan ships (`.py`, `.md`,
+# `.sh`, and the extensionless `bin/` commands) is swept for the shape of the overclaim itself —
+# the shape below rather than one file's exact sentence, with no negation in between. A fix
+# applied to `host.py` alone and repeated in a README or a sibling comment would still be caught.
+import re as _re106
+from pathlib import Path as _Path106
+
+_exts106 = {".py", ".md", ".sh", ".txt"}
+_skip_dirs106 = {".git", "__pycache__", "node_modules"}
+_files106 = [
+    f for f in _Path106(str(ROOT)).rglob("*")
+    if f.is_file()
+    and not any(part in _skip_dirs106 for part in f.parts)
+    and (f.suffix in _exts106 or (f.parent.name == "bin" and f.suffix == ""))
+]
+check("the sweep read a non-trivial population of chamnan's own prose files",
+      len(_files106) > 50, saw=f"{len(_files106)} files")
+check("...and host.py, the file the defect was found in, is part of that population",
+      any(f.name == "host.py" for f in _files106),
+      saw=[str(f) for f in _files106 if "host" in f.name.lower()])
+
+# The defect's shape is the verb of proof (any tense) followed shortly by the word for being set
+# "not" sitting between them. The gap is short on purpose — wide enough for "the agent is" (the
+# real sentence that shipped) and too narrow to reach across an intervening clause like the fixed
+# sentence's "at some point, not that it is", which is the hedge this check exists to require.
+_overclaim106 = _re106.compile(r"(?i)\bproves?\b(?:(?!\bnot\b).){0,25}\binstall")
+
+_hits106 = []
+for _f106 in _files106:
+    try:
+        _text106 = _f106.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for _i106, _line106 in enumerate(_text106.splitlines(), 1):
+        if _overclaim106.search(_line106):
+            _hits106.append(f"{_f106.relative_to(ROOT)}:{_i106}: {_line106.strip()}")
+
+check("NO SHIPPED PROSE FILE TREATS A HOME DIRECTORY AS PROOF OF INSTALLATION",
+      not _hits106, saw="; ".join(_hits106) or None)
+# ---- 107_same_version_content_drift_is_reported.py
+# ------------- an update at the same version string was previously invisible, forever
+# 🐛 [2026-09-13] available_update() skipped comparing content whenever a marketplace offered the
+# SAME version string as the installed copy, so a path install whose marketplace moved without a
+# version bump reported nothing -- and stayed silent on every future session too, because
+# `claude plugin update` also will not refresh a path install while the version string is unchanged
+# (see the function's own docstring). Verified against real directory trees under lib/, bin/,
+# hooks/ -- the shipped subset the fix hashes -- not mocks: a mock here would never reach
+# `_shipped_content_hash` at all, which is the function this defect actually lived in.
+import shutil as _shutil107
+import tempfile as _tempfile107
+from pathlib import Path as _Path107
+
+
+def _mk_plugin107(plugin_dir, name, version, files):
+    """A minimal real plugin tree on disk: a manifest plus whatever shipped files are given."""
+    (plugin_dir / ".claude-plugin").mkdir(parents=True, exist_ok=True)
+    (plugin_dir / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": name, "version": version}), encoding="utf-8")
+    for rel, content in files.items():
+        target = plugin_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+
+
+_t_root107 = _Path107(_tempfile107.mkdtemp(prefix="chamnan-samever107-"))
+try:
+    _fakeplug107 = _t_root107 / "fakeplug"
+    _installed107 = _fakeplug107 / "plugins" / "cache" / "demo" / "demo" / "1.0.0"
+    _market107 = _fakeplug107 / "plugins" / "marketplaces" / "demo"
+    # Real files under the shipped subset, not a single manifest -- the pre-existing "installed
+    # copy is current" test in run_tests.py only ever had a plugin.json on either side, so it could
+    # not have caught this: both sides hash to "" (nothing shipped to hash) and compare equal
+    # regardless of whether the real comparison works.
+    _shared107 = {"lib/core.py": "value = 1\n", "bin/run": "#!/bin/sh\necho hi\n",
+                  "hooks/start.py": "print('start')\n"}
+    _mk_plugin107(_installed107, "demo", "1.0.0", _shared107)
+    _mk_plugin107(_market107, "demo", "1.0.0", _shared107)
+
+    check("SAME VERSION, IDENTICAL SHIPPED FILES: NOTHING IS REPORTED",
+          ws.available_update(_installed107) == "",
+          saw=repr(ws.available_update(_installed107)))
+
+    (_market107 / "lib" / "core.py").write_text("value = 2\n", encoding="utf-8")
+    _t_offered107 = ws.available_update(_installed107)
+    check("SAME VERSION, DIFFERENT SHIPPED FILES: SOMETHING IS REPORTED",
+          bool(_t_offered107), saw=repr(_t_offered107))
+    check("...and what comes back is the RUNNING version, not a fabricated one, so the caller "
+          "(chamnan_session_start.py) can tell a real bump from a same-version content note by "
+          "comparing it against plugin_version() rather than by parsing prose",
+          _t_offered107 == "1.0.0", saw=repr(_t_offered107))
+
+    (_market107 / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "demo", "version": "1.2.0"}), encoding="utf-8")
+    check("A HIGHER VERSION STILL REPORTS, EVEN WITH SHIPPED FILES PRESENT TO HASH",
+          ws.available_update(_installed107) == "1.2.0",
+          saw=repr(ws.available_update(_installed107)))
+
+    (_market107 / ".claude-plugin" / "plugin.json").write_text(
+        json.dumps({"name": "demo", "version": "0.9.0"}), encoding="utf-8")
+    check("A LOWER VERSION, EVEN WITH DIFFERENT SHIPPED FILES, IS NEVER OFFERED",
+          ws.available_update(_installed107) == "",
+          saw=repr(ws.available_update(_installed107)))
+
+    _shutil107.rmtree(_market107)
+    check("A MISSING MARKETPLACE RETURNS EMPTY, NOT AN EXCEPTION",
+          ws.available_update(_installed107) == "",
+          saw=repr(ws.available_update(_installed107)))
+finally:
+    _shutil107.rmtree(_t_root107, ignore_errors=True)
+# ---- 108_a_store_file_opened_is_recorded_without_being_pointed_at.py
+# ------ reading a stored skill directly used to leave no trace the funnel could ever count
+# 🐛 [2026-09-13] `chamnan_file_pointer.py` returned immediately for every path under the
+# workspace itself, before recording anything -- correct for suppressing the pointer BLOCK (a
+# session must never be told about its own file while it is the one reading it), wrong for the
+# EVENT: it meant a session that actually opened the skill it was pointed at was indistinguishable,
+# in every log this plugin keeps, from one that never did. Measured on this machine, 2026-09-13:
+# 280 "offered" records across 24 skills, zero "opened" records, and the zero was structural, not
+# behavioural -- `logs/`, `memory/`, `skills/` and `threads/` all live inside the workspace, so the
+# early return fired on every one of them.
+#
+# Drive the real hook, with a real payload, against a real temporary workspace outside this
+# repository -- a fixture left inside it once made a test walk the whole machine for 1h26m.
+import json as _js108
+import subprocess as _sp108
+import sys as _sys108
+import tempfile as _tempfile108
+from pathlib import Path as _Path108
+
+_hook108 = ROOT / "hooks" / "chamnan_file_pointer.py"
+_root108 = _Path108(_tempfile108.mkdtemp(prefix="chamnan-selfopen108-"))
+try:
+    _repo108 = _root108 / "repo"
+    _ws108 = _repo108 / ".chamnan"
+    (_repo108 / ".git").mkdir(parents=True)
+    (_ws108 / "skills").mkdir(parents=True)
+    (_ws108 / "memory" / "rules").mkdir(parents=True)
+    (_ws108 / "memory" / "decisions").mkdir(parents=True)
+    (_ws108 / "threads").mkdir(parents=True)
+    (_repo108 / "src").mkdir(parents=True)
+
+    (_ws108 / "skills" / "demo_skill.md").write_text(
+        "# Demo skill\n\nBody text.\n", encoding="utf-8")
+    (_ws108 / "memory" / "rules" / "demo_rule.md").write_text(
+        "# Demo rule\n\nBody text.\n", encoding="utf-8")
+    (_ws108 / "threads" / "demo_thread.md").write_text(
+        "# Demo thread\n\nBody text.\n", encoding="utf-8")
+    # Named three times so it outranks the README-shaped index and actually renders — the same
+    # fixture shape run_tests.py already uses for this hook.
+    (_ws108 / "memory" / "decisions" / "token-format.md").write_text(
+        "---\ndescription: why the token is not a JWT\n---\n\n"
+        "`src/token.py` chose an opaque token. token.py stays opaque because token.py\n",
+        encoding="utf-8")
+    (_repo108 / "src" / "token.py").write_text("x = 1\n", encoding="utf-8")
+    (_repo108 / "src" / "unrelated.py").write_text("y = 2\n", encoding="utf-8")
+
+    _outside108 = _root108 / "elsewhere.py"
+    _outside108.write_text("z = 3\n", encoding="utf-8")
+
+    _log108 = _ws108 / "logs" / "pointer.jsonl"
+
+    def _fire108(path, session):
+        return _sp108.run(
+            [_sys108.executable, str(_hook108)],
+            input=_js108.dumps({"hook_event_name": "PreToolUse", "tool_name": "Read",
+                                "session_id": session, "tool_input": {"file_path": str(path)},
+                                "cwd": str(_repo108)}),
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            cwd=str(_repo108), timeout=30).stdout
+
+    _out_skill108 = _fire108(_ws108 / "skills" / "demo_skill.md", "s-skill108")
+    _out_rule108 = _fire108(_ws108 / "memory" / "rules" / "demo_rule.md", "s-rule108")
+    _out_thread108 = _fire108(_ws108 / "threads" / "demo_thread.md", "s-thread108")
+    _out_related108 = _fire108(_repo108 / "src" / "token.py", "s-related108")
+    _out_unrelated108 = _fire108(_repo108 / "src" / "unrelated.py", "s-unrelated108")
+    _out_outside108 = _fire108(_outside108, "s-outside108")
+
+    check("reading a skill file prints no pointer block", _out_skill108 == "",
+          saw=repr(_out_skill108))
+    check("reading a memory/rules file prints no pointer block", _out_rule108 == "",
+          saw=repr(_out_rule108))
+    check("reading a threads file prints no pointer block", _out_thread108 == "",
+          saw=repr(_out_thread108))
+    check("an ordinary file WITH something recorded still renders the block, unchanged",
+          "hookSpecificOutput" in _out_related108 and "not a summary" in _out_related108,
+          saw=repr(_out_related108))
+    check("an ordinary file with nothing recorded still prints nothing, unchanged",
+          _out_unrelated108 == "", saw=repr(_out_unrelated108))
+    check("a path outside the repository entirely still prints nothing, unchanged",
+          _out_outside108 == "", saw=repr(_out_outside108))
+
+    check("THE POINTER LOG EXISTS AFTER THE STORE-FILE READS", _log108.is_file(),
+          saw="no logs/pointer.jsonl was created at all")
+    _recs108 = []
+    if _log108.is_file():
+        for _line108 in _log108.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not _line108.strip():
+                continue
+            try:
+                _recs108.append(_js108.loads(_line108))
+            except ValueError:
+                continue
+    _by_path108 = {}
+    for _r108 in _recs108:
+        _by_path108.setdefault(_r108.get("path"), []).append(_r108)
+
+    check("A SKILL FILE OPENED DIRECTLY IS RECORDED, EVEN THOUGH NOTHING WAS SHOWN",
+          len(_by_path108.get("skills/demo_skill.md", [])) == 1,
+          saw=f"records for that path: {_by_path108.get('skills/demo_skill.md')}")
+    check("...and a memory/rules file is recorded the same way",
+          len(_by_path108.get("memory/rules/demo_rule.md", [])) == 1,
+          saw=f"records for that path: {_by_path108.get('memory/rules/demo_rule.md')}")
+    check("...and so is a threads file",
+          len(_by_path108.get("threads/demo_thread.md", [])) == 1,
+          saw=f"records for that path: {_by_path108.get('threads/demo_thread.md')}")
+
+    _skill_rec108 = (_by_path108.get("skills/demo_skill.md") or [{}])[0]
+    check("THE RECORD IS UNAMBIGUOUSLY AN 'OPENED' EVENT, NOT AN OFFERED ONE",
+          _skill_rec108.get("event") == "opened" and "named" not in _skill_rec108,
+          saw=repr(_skill_rec108))
+    check("...and it carries the session that did the opening",
+          _skill_rec108.get("session") == "s-skill108", saw=repr(_skill_rec108))
+
+    _related_recs108 = _by_path108.get("src/token.py", [])
+    check("THE ORDINARY OFFERED-FILE PATH STILL WRITES ITS OLD SHAPE, UNCHANGED",
+          len(_related_recs108) == 1 and _related_recs108[0].get("event") != "opened"
+          and "memory/decisions/token-format.md" in (_related_recs108[0].get("named") or []),
+          saw=repr(_related_recs108))
+
+    check("THE FILE WITH NOTHING RECORDED ABOUT IT WRITES NO EVENT, AS BEFORE",
+          "src/unrelated.py" not in _by_path108, saw=repr(_by_path108.get("src/unrelated.py")))
+    check("...and neither does the path entirely outside the repository",
+          not any(p and str(_outside108) in p for p in _by_path108),
+          saw=repr(list(_by_path108)))
+
+    # The population, not just the two paths singled out above: nothing besides these two new
+    # opened records and the one ordinary offered record should have appeared.
+    check("EXACTLY THE EXPECTED RECORDS EXIST, NOTHING EXTRA",
+          len(_recs108) == 4, saw=f"{len(_recs108)} record(s): {_recs108}")
+finally:
+    import shutil as _shutil108
+    _shutil108.rmtree(_root108, ignore_errors=True)
+# ---- 109_a_dead_end_is_a_section_not_the_whole_research_file.py
+# --- a curated research store is searchable by section, and the archive beside it stays out
+# 🎯 [2026-09-13] `chamnan-recall` answers "what do we already say about X" from a derived index --
+# and `state/research/chamnan_research_dead_ends.md` (99 refused topics, each with the measurement
+# that refused it) and `chamnan_research_backlog.md` (43 queued topics) were both invisible to it:
+# neither file was among `recall.KINDS`. A session asking "should I research vscode extensions"
+# got 4 of 125 entries and none of them the report that already answered exactly that.
+#
+# Both files are 100-180 KB. Indexed whole, either one would out-score nearly every other document
+# on any query while pointing the reader at nothing more specific than "somewhere in this file" --
+# so `recall.KINDS` now names them by file, and `recall.build()` splits each into one entry per
+# `## ` heading, the same unit both files already use for their own quick index.
+#
+# Built against a temporary workspace, not this repository's real stores: a fixture can put a term
+# in exactly one section and assert exactly which section comes back, which the real corpus cannot
+# promise now that it has been edited by hand many times over.
+import json as _js109
+import shutil as _sh109
+import tempfile as _tf109
+from pathlib import Path as _Path109
+
+import recall as _rc109
+
+_t_tmp109 = _Path109(_tf109.mkdtemp(prefix="chamnan-recall-research-"))
+_t_ws109 = _t_tmp109 / ".chamnan"
+try:
+    (_t_ws109 / "memory" / "rules").mkdir(parents=True)
+    (_t_ws109 / "state" / "research" / "old").mkdir(parents=True)
+
+    # An ordinary store, untouched by this change -- the regression guard for "the existing six
+    # stores are still searched, still ranked as before".
+    (_t_ws109 / "memory" / "rules" / "gorznik-rule.md").write_text(
+        "# Gorznik\n\nGorznik must never happen twice.\n", encoding="utf-8")
+
+    # Two sections in ONE file. `quuxinator` sits only in the second -- the term this check exists
+    # to prove comes back scoped to that section, not to the file as a whole.
+    (_t_ws109 / "state" / "research" / "chamnan_research_dead_ends.md").write_text(
+        "# Dead ends\n\n"
+        "<!-- quick-index: generated, do not edit by hand -->\n"
+        "## Quick Index -- 2 entries\n\n"
+        "- Angle Zebraflorp\n- Angle Wobblehatch\n\n"
+        "<!-- end quick-index -->\n\n"
+        "## Angle Zebraflorp -- a query that returned nothing\n\n"
+        "Zebraflorp was tried on 2026-09-01 and abandoned: it produced nothing worth keeping.\n\n"
+        "## Angle Wobblehatch -- a second angle in the same file\n\n"
+        "Quuxinator lives only here, in the second section, not the first.\n",
+        encoding="utf-8")
+
+    (_t_ws109 / "state" / "research" / "chamnan_research_backlog.md").write_text(
+        "# Research backlog\n\n"
+        "<!-- quick-index: generated, do not edit by hand -->\n"
+        "## Quick Index -- 1 entries\n\n"
+        "- Torquilfrost, queued\n\n"
+        "<!-- end quick-index -->\n\n"
+        "## Torquilfrost, queued for the next round\n\n"
+        "Torquilfrost is queued and not yet tested.\n",
+        encoding="utf-8")
+
+    # The archive these two files exist to replace. A term that lives ONLY here must never surface.
+    (_t_ws109 / "state" / "research" / "old" / "plinthaxis_superseded_report.md").write_text(
+        "# Superseded\n\nPlinthaxis appears only in this archived report and must never surface.\n",
+        encoding="utf-8")
+
+    _t_idx109 = _rc109.build(_t_ws109)
+    check("the fixture indexed the ordinary store plus both research files' sections: "
+          "%d entr(ies)" % _t_idx109["count"],
+          _t_idx109["count"] >= 4,
+          saw="nothing (or too little) was indexed, so every assertion below would pass on an "
+              "empty or near-empty index")
+
+    _t_dead109 = [e for e in _t_idx109["entries"] if e["kind"] == "dead_end"]
+    _t_back109 = [e for e in _t_idx109["entries"] if e["kind"] == "backlog"]
+    check("THE DEAD-ENDS FILE BECAME TWO ENTRIES, ONE PER REAL SECTION -- NOT ONE FOR THE FILE",
+          len(_t_dead109) == 2, saw="%d dead_end entr(ies): %s"
+          % (len(_t_dead109), [e["title"] for e in _t_dead109]))
+    check("...and neither of them is titled after the Quick Index heading",
+          all("quick index" not in e["title"].lower() for e in _t_dead109),
+          saw=[e["title"] for e in _t_dead109])
+    check("...and the backlog file became its one real section",
+          len(_t_back109) == 1, saw=[e["title"] for e in _t_back109])
+
+    # --- row 1: a term that lives only in a dead_ends section
+    _t_hit_zebra109 = _rc109.query(_t_idx109, ["zebraflorp"], limit=3)
+    check("A TERM IN A DEAD-ENDS SECTION IS FOUND AND LABELLED AS A REFUSAL",
+          bool(_t_hit_zebra109) and _t_hit_zebra109[0][1]["kind"] == "dead_end",
+          saw=[(h[1]["kind"], h[1]["title"]) for h in _t_hit_zebra109] or "no hits")
+    check("...naming the section it is actually in",
+          bool(_t_hit_zebra109) and "Zebraflorp" in _t_hit_zebra109[0][1]["title"],
+          saw=_t_hit_zebra109[0][1]["title"] if _t_hit_zebra109 else "no hits")
+
+    # --- row 2: a term that lives only in a backlog section
+    _t_hit_torq109 = _rc109.query(_t_idx109, ["torquilfrost"], limit=3)
+    check("A TERM IN A BACKLOG SECTION IS FOUND AND LABELLED AS QUEUED",
+          bool(_t_hit_torq109) and _t_hit_torq109[0][1]["kind"] == "backlog",
+          saw=[(h[1]["kind"], h[1]["title"]) for h in _t_hit_torq109] or "no hits")
+
+    # --- row 3 (the regression guard): two sections in one file, a term in only the second
+    _t_hit_quux109 = _rc109.query(_t_idx109, ["quuxinator"], limit=3)
+    check("A TERM IN ONLY THE SECOND SECTION OF A FILE RETURNS THAT SECTION, NOT THE FILE",
+          bool(_t_hit_quux109) and "Wobblehatch" in _t_hit_quux109[0][1]["title"]
+          and "Zebraflorp" not in _t_hit_quux109[0][1]["title"],
+          saw=_t_hit_quux109[0][1]["title"] if _t_hit_quux109 else "no hits")
+    check("...and it is a DIFFERENT entry (different path) than the first section",
+          bool(_t_hit_quux109) and bool(_t_hit_zebra109)
+          and _t_hit_quux109[0][1]["path"] != _t_hit_zebra109[0][1]["path"],
+          saw="quuxinator hit %r, zebraflorp hit %r"
+          % (_t_hit_quux109[0][1]["path"] if _t_hit_quux109 else None,
+             _t_hit_zebra109[0][1]["path"] if _t_hit_zebra109 else None))
+
+    # --- row 4: the six existing stores are still searched and still ranked as before
+    _t_hit_gorz109 = _rc109.query(_t_idx109, ["gorznik"], limit=3)
+    check("AN ORDINARY STORE (memory/rules) IS STILL SEARCHED AND RANKED AS A RULE",
+          bool(_t_hit_gorz109) and _t_hit_gorz109[0][1]["kind"] == "rule"
+          and _t_hit_gorz109[0][1]["weight"] == 3.0,
+          saw=_t_hit_gorz109[0][1] if _t_hit_gorz109 else "no hits")
+
+    # --- row 5 (the exclusion this check exists to pin): a term only in state/research/old/
+    _t_hit_plin109 = _rc109.query(_t_idx109, ["plinthaxis"], limit=3)
+    check("A TERM THAT LIVES ONLY IN state/research/old/ IS NOT FOUND -- THE ARCHIVE STAYS OUT",
+          not _t_hit_plin109,
+          saw=[(h[1]["kind"], h[1]["path"]) for h in _t_hit_plin109] or None)
+
+    # --- staleness still notices an edit to one of the two named files, not just to a directory
+    _t_fresh109 = _rc109.stale_by(_t_ws109, _t_idx109)
+    (_t_ws109 / "state" / "research" / "chamnan_research_backlog.md").write_text(
+        "# Research backlog\n\n## Torquilfrost, queued for the next round\n\n"
+        "Torquilfrost is queued and not yet tested. Edited.\n", encoding="utf-8")
+    _t_behind109 = _rc109.stale_by(_t_ws109, _t_idx109)
+    check("EDITING A FILE-NAMED KINDS ENTRY IS DETECTED AS STALE, NOT SILENTLY IGNORED",
+          _t_fresh109 == 0 and _t_behind109 == 1,
+          saw="fresh said %r and after editing the backlog file it said %r"
+          % (_t_fresh109, _t_behind109))
+finally:
+    _sh109.rmtree(_t_tmp109, ignore_errors=True)
 # ---- 10_offer_fatigue.py
 # 🐛 [2026-09-09] The hook-install OFFER fired on every qualifying session forever, three lines
 # below a comment saying a repeated warning "trains the reader to skip the line". The guard for
@@ -26168,6 +26805,632 @@ try:
           "notice_due" not in _warn.split("_offer =")[-1])
 finally:
     shutil.rmtree(_d, ignore_errors=True)
+# ---- 110_a_candidate_removed_mid_command_fails_by_name_not_errno.py
+# ------ a candidate removed between resolve() and the read fails by name, not by raw errno
+# 🐛 [2026-09-13] `candidates.fields_of`, `candidates.read`, and the merge scans inside `upsert` and
+# `_same_habit` all guard their `read_text` of a candidate file against `OSError` -- `set_provenance`,
+# `set_status` (lib/candidates.py) and `_title` (bin/chamnan-candidates) did not. `resolve()` hands a
+# caller a `Path`, computed fresh from a directory listing; if the file is gone by the time one of
+# these three actually reads it -- the background hook's own dedup unlink inside `upsert` (a few
+# lines above `set_provenance` in the same file), or a second `chamnan-candidates` command racing
+# this one -- `set_provenance`/`set_status` raised a raw `[Errno 2] No such file or directory: '...'`
+# and `_title` (called from `list`, `confirm`, `reject` and `promote` alike) had no guard at all,
+# where its own no-heading case already falls back to `path.stem`.
+#
+# Exercised directly on the Path these functions receive. `resolve()`/`entries()` are not asked to
+# find a file that is already gone -- the defect is in what the three functions do with a path
+# ALREADY resolved, not in whether a gone file is listed.
+import importlib.machinery as _im110
+import shutil as _shutil110
+import sys as _sys110
+import tempfile as _tempfile110
+from pathlib import Path as _Path110
+
+_sys110.path.insert(0, str(ROOT / "lib"))
+import candidates as _candidates110
+import workspace as _ws110
+
+_root110 = _Path110(_tempfile110.mkdtemp(prefix="chamnan-cand-toctou-110-"))
+try:
+    (_root110 / ".git").mkdir()
+    _ws110.ensure(_root110)
+
+    _p110, _is_new110 = _candidates110.upsert(
+        _root110, ["git add", "git commit", "git push"], 2, "2026-08-01")
+    check("the fixture candidate file exists before it is removed", _p110.is_file())
+    _p110.unlink()
+    check("...and is gone -- this is the mid-command race, simulated",
+          not _p110.is_file())
+
+    try:
+        _candidates110.set_provenance(_p110, "ai-confirmed")
+        check("set_provenance on a removed candidate raises, not silently no-ops", False)
+    except OSError as _err110:
+        check("SET_PROVENANCE ON A REMOVED CANDIDATE NAMES WHAT HAPPENED, NOT A RAW ERRNO",
+              "Errno" not in str(_err110) and "no longer exists" in str(_err110),
+              saw=str(_err110))
+
+    try:
+        _candidates110.set_status(_p110, "confirmed")
+        check("set_status on a removed candidate raises, not silently no-ops", False)
+    except OSError as _err110b:
+        check("SET_STATUS ON A REMOVED CANDIDATE NAMES WHAT HAPPENED, NOT A RAW ERRNO",
+              "Errno" not in str(_err110b) and "no longer exists" in str(_err110b),
+              saw=str(_err110b))
+
+    _cli110 = _im110.SourceFileLoader(
+        "chamnan_candidates_cli_110", str(ROOT / "bin" / "chamnan-candidates")).load_module()
+    check("_TITLE ON A REMOVED CANDIDATE FALLS BACK TO THE STEM, LIKE ITS OWN NO-HEADING CASE, "
+          "NOT A CRASH",
+          _cli110._title(_p110) == _p110.stem, saw=f"got {_cli110._title(_p110)!r}")
+finally:
+    _shutil110.rmtree(_root110, ignore_errors=True)
+# ---- 111_a_non_english_credential_word_reaches_every_shape.py
+# ---- one non-English credential-word list, asserted against every shape that reads it
+# 🐛 [2026-09-13] R8 wired `_HEADER_BARE`'s non-English credential words into the assignment path
+# by RETYPING them as a second constant, `_R8_NONENGLISH_SECRET_WORDS`, with its own comment saying
+# the two lists "must be kept in sync by hand" — the exact defect the R7/R8 round existed to close,
+# recreated one file below where it was fixed. Closing that out found the two copies had ALREADY
+# drifted: `_HEADER_BARE` alone carried `parola[_ -]?chiave` (Italian "keyword"). Unified into one
+# constant, `_NONENGLISH_SECRET_WORDS`, defined once, read by both `SECRET_WORDS` (the assignment
+# path) and `_HEADER_BARE` (the header-row path).
+#
+# The population is read out of `redact._NONENGLISH_SECRET_WORDS` itself, the same way check 82
+# reads `SECRET_WORDS` for the English words — so a language added later joins this check on the
+# day it is added, rather than waiting for someone to remember to type it in twice: once in the
+# vocabulary and once in a test that enumerates it by hand.
+#
+# A second, quieter bug was found and reverted while closing this out, not left in the file: an
+# ASCII fast path (`scrub()` skipping the non-English branch via `text.isascii()`) split the
+# vocabulary by LANGUAGE, and language is the wrong axis. `passwort`, `parola`, `kata_sandi` and the
+# ASCII-fallback spellings `contrasena`/`haslo`/`sifre`/`matkhau` are non-English AND pure ASCII, so
+# a naive "skip everything non-English on ASCII input" gate ate every one of them. Measured
+# afterwards: the fast path also recovered 0.0% to +1.6% of the CPU it was built to pay back, and
+# was slower than not having it at all on the largest sample. Reverted rather than fixed and kept,
+# on the same trade the module's own "measured and not taken" chunking note above
+# `_SECRET_WORD_ANYWHERE` already makes: complexity that measures out to roughly nothing is not
+# worth the surface it adds for a bug exactly like this one. Asserted here anyway, permanently: the
+# next optimisation that narrows which words `scrub()` actually catches, whatever shape it takes,
+# fails this file the same way.
+import re as _re111
+import redact as _t_rd111
+
+_t_words111 = _t_rd111._NONENGLISH_SECRET_WORDS.split("|")
+_t_val111 = "Zz7qLp2vBnT9wXk3Rf1s"  # synthetic, 20 chars, never a real secret
+
+check("the sweep read the non-English credential words out of the source: %d found"
+      % len(_t_words111),
+      len(_t_words111) >= 15,
+      saw="%s — fewer branches than the vocabulary has means the derivation stopped matching and "
+          "this check is measuring a shrinking set" % _t_words111)
+
+# A population read out of the list itself can only ever see what is STILL there -- it cannot
+# notice a language quietly REMOVED, because the removed word simply stops being part of the
+# population and every check below silently has one fewer thing to check. Proven by running this
+# file's mutation trial: dropping Arabic from `_NONENGLISH_SECRET_WORDS` left every check below
+# green, because Arabic was no longer in `_t_words111` for any of them to test.
+#
+# `_HEADER_LANGS` is the independent anchor that closes that gap: it is a second, small, by-hand
+# claim of which languages this file supports (already the file's own established pattern for
+# stating a claim separately from the implementation that should satisfy it), so a language
+# disappearing from the vocabulary while `_HEADER_LANGS` still claims it is now a real assertion
+# failure rather than a check with nothing left to look at.
+_t_langs111 = {_t_lang111: _t_spellings111
+               for _t_lang111, _t_spellings111 in _t_rd111._HEADER_LANGS.items()
+               if _t_lang111 != "English"}
+check("the claim registry (_HEADER_LANGS) still names at least as many languages as before: %d"
+      % len(_t_langs111),
+      len(_t_langs111) >= 15, saw=sorted(_t_langs111))
+
+_t_missed_claim111 = []
+for _t_lang111, _t_spellings111 in _t_langs111.items():
+    for _t_spelling111 in _t_spellings111:
+        if _t_val111 in _t_rd111.scrub('%s = "%s"' % (_t_spelling111, _t_val111)):
+            _t_missed_claim111.append("%s (%r)" % (_t_lang111, _t_spelling111))
+check("EVERY LANGUAGE _HEADER_LANGS CLAIMS TO SUPPORT IS ACTUALLY CAUGHT, NOT MERELY LISTED",
+      not _t_missed_claim111, saw=", ".join(_t_missed_claim111))
+
+
+def _t_example111(_t_branch111):
+    """One concrete literal that satisfies `branch` -- the first character of every `[...]` class
+    (dropping a trailing `?` on it, since that is the class's own optional-separator marker, not
+    part of the word), everything else in the branch kept literal."""
+    return _re111.sub(r"\[([^\]]+)\]\??", lambda _t_match111: _t_match111.group(1)[0],
+                      _t_branch111)
+
+
+_t_examples111 = {_t_word111: _t_example111(_t_word111) for _t_word111 in _t_words111}
+
+# The script-method population comes from the source, not from a second list in this check. Every
+# vocabulary group must reach the assignment behaviour. This is the assertion the earlier
+# language-keyed fast path lacked: a group still defined but silently excluded from the compiled
+# word pattern is named.
+_t_groups111 = _t_rd111._NONENGLISH_SECRET_WORDS_BY_SCRIPT
+check("the matcher exposes a non-trivial source-derived script population: %d group(s)"
+      % len(_t_groups111),
+      len(_t_groups111) >= 7
+      and set(_t_groups111) <= set(_t_rd111._SECRET_WORDS_BY_SCRIPT),
+      saw="groups=%s, patterns=%s" % (
+          sorted(_t_groups111), sorted(_t_rd111._SECRET_WORDS_BY_SCRIPT)))
+
+_t_group_examples111 = {
+    _t_script111: _t_example111(_t_group_words111.split("|")[0])
+    for _t_script111, _t_group_words111 in _t_groups111.items()
+}
+_t_unreachable_scripts111 = []
+for _t_script111, _t_example_word111 in _t_group_examples111.items():
+    _t_line111 = '%s = "%s"' % (_t_example_word111, _t_val111)
+    if _t_val111 in _t_rd111.scrub(_t_line111):
+        _t_unreachable_scripts111.append(_t_script111)
+check("EVERY SCRIPT GROUP IS REACHABLE THROUGH ITS COMPILED METHOD",
+      not _t_unreachable_scripts111,
+      saw="unreachable script group(s): %s" % ", ".join(_t_unreachable_scripts111))
+
+# Thai, Han/Kana and Hangul do not require a space after a credential word. Derive the set from
+# the source's method table and append one character from each group's own word, so a fourth
+# unspaced group joins this assertion without being named here.
+_t_unspaced111 = _t_rd111._UNSPACED_SCRIPT_SUFFIXES
+_t_missed_compounds111 = []
+for _t_script111, _t_suffix_pattern111 in _t_unspaced111.items():
+    _t_example_word111 = _t_group_examples111[_t_script111]
+    _t_compound111 = _t_example_word111 + _t_example_word111[0]
+    if _t_val111 in _t_rd111.scrub('%s = "%s"' % (_t_compound111, _t_val111)):
+        _t_missed_compounds111.append(_t_script111)
+check("EVERY UNSPACED SCRIPT USES SUBSTRING MATCHING INSIDE A COMPOUND KEY",
+      len(_t_unspaced111) >= 3 and not _t_missed_compounds111,
+      saw="missed unspaced script group(s): %s" % ", ".join(_t_missed_compounds111))
+
+_t_thai_word111 = _t_group_examples111["Thai"]
+_t_thai_compounds111 = (
+    "ตั้ง%s" % _t_thai_word111,
+    "%sใหม่" % _t_thai_word111,
+    "ตั้ง%sใหม่" % _t_thai_word111,
+)
+_t_missed_thai_compounds111 = [
+    _t_word111 for _t_word111 in _t_thai_compounds111
+    if _t_val111 in _t_rd111.scrub('%s = "%s"' % (_t_word111, _t_val111))
+]
+check("THE THREE THAI COMPOUND FORMS ARE REDACTED",
+      not _t_missed_thai_compounds111, saw=_t_missed_thai_compounds111)
+
+# Every word, in all three shapes an assignment actually takes: `key = "value"`, `key: "value"`,
+# and `{"key": "value"}`. This is the shape R7 measured leaking 100% of the time before R8, and the
+# one the fast path could have silently reopened for the ASCII-reachable half of the list.
+_t_missed_eq111 = [_t_branch111 for _t_branch111, _t_example_word111 in _t_examples111.items()
+                    if _t_val111 in _t_rd111.scrub(
+                        '%s = "%s"' % (_t_example_word111, _t_val111))]
+check("EVERY NON-ENGLISH CREDENTIAL WORD IS CAUGHT IN `key = \"value\"`",
+      not _t_missed_eq111,
+      saw="\n".join("%s -> %s" % (_t_branch111, _t_examples111[_t_branch111])
+                    for _t_branch111 in _t_missed_eq111))
+
+_t_missed_colon111 = [_t_branch111
+                       for _t_branch111, _t_example_word111 in _t_examples111.items()
+                       if _t_val111 in _t_rd111.scrub(
+                           '%s: "%s"' % (_t_example_word111, _t_val111))]
+check("...and in `key: \"value\"`",
+      not _t_missed_colon111,
+      saw="\n".join("%s -> %s" % (_t_branch111, _t_examples111[_t_branch111])
+                    for _t_branch111 in _t_missed_colon111))
+
+_t_missed_json111 = [_t_branch111
+                      for _t_branch111, _t_example_word111 in _t_examples111.items()
+                      if _t_val111 in _t_rd111.scrub(
+                          '{"%s": "%s"}' % (_t_example_word111, _t_val111))]
+check("...and in `{\"key\": \"value\"}`",
+      not _t_missed_json111,
+      saw="\n".join("%s -> %s" % (_t_branch111, _t_examples111[_t_branch111])
+                    for _t_branch111 in _t_missed_json111))
+
+# The older caller: a CSV/table header row. `_HEADER_BARE` now reads the SAME constant rather than
+# its own copy, and this is what proves that unifying the two lists did not narrow the one that was
+# already working.
+_t_missed_header111 = [
+    _t_branch111 for _t_branch111, _t_example_word111 in _t_examples111.items()
+    if _t_val111 in _t_rd111.scrub(
+        "name,%s\nadmin,%s" % (_t_example_word111, _t_val111))]
+check("...and every one of them still marks a CSV/table COLUMN as a header, unchanged",
+      not _t_missed_header111,
+      saw="\n".join("%s -> %s" % (_t_branch111, _t_examples111[_t_branch111])
+                    for _t_branch111 in _t_missed_header111))
+
+# The other half of the trade: a word used in an ORDINARY SENTENCE, not as a key, must survive.
+# `{word} is required` is the exact shape R8's own precision measurement used for the English
+# words (COPULA_SECRET's `_is_a_plain_word` guard) -- asserted here across every non-English word
+# too, because the guard tests the VALUE's shape and does not care what script the word beside it
+# is written in, and a script-blind guard is exactly the kind of thing a script-based fast path
+# could quietly have broken.
+_t_eaten_prose111 = [
+    _t_branch111 for _t_branch111, _t_example_word111 in _t_examples111.items()
+    if (_t_rd111.scrub("%s is required" % _t_example_word111)
+        != "%s is required" % _t_example_word111)]
+check("...and none of them turns an ordinary sentence about the word into a redaction",
+      not _t_eaten_prose111,
+      saw="\n".join(
+          "%s -> %r" % (
+              _t_branch111,
+              _t_rd111.scrub("%s is required" % _t_examples111[_t_branch111]))
+          for _t_branch111 in _t_eaten_prose111))
+# ---- 112_a_known_query_still_finds_its_entry_inside_the_display_window.py
+# ---- R9.34 (research round R9, 2026-09-13): is `chamnan-recall`'s display window (`limit=6`) the
+# lever on retrieval quality, and would a bigger one just be free correctness?
+#
+# Measured this session against the REAL, live stores (`.chamnan/state/research/*.md`, 142
+# dead_end/backlog entries): a query built from an entry's own title finds that entry inside the
+# current display window (K=6) 100% of the time, saturating by K=3 -- so the display window is not
+# starving the obvious case. Eighteen realistic PARAPHRASE queries (a user's own words, not the
+# heading text) told a different story: recall@6 was 72.2%, recall@50 only 83.3%, and the two worst
+# misses (one scoring zero, one at rank 113) were unreachable at ANY K. Conclusion, written into
+# `chamnan_research_dead_ends.md`: **K is not the lever.** Raising it recovers a query that shares
+# vocabulary with the right entry but got crowded out by weaker matches elsewhere; it recovers
+# nothing when the query shares no vocabulary with the entry at all. A blind "raise the default"
+# fix would pay real tokens (a wide real-corpus query went 821 -> 1248 -> 2424 tokens at K=6/10/20)
+# for a partial, mechanism-dependent win.
+#
+# This check is the portable regression guard for that mechanism -- built on a SYNTHETIC fixture
+# (never inside Lumin-App) rather than the live stores, so it does not drift as this repo's research
+# files grow, and reproduces both halves: crowding IS recoverable by K, vocabulary mismatch is NOT.
+# Mutation-tested and reverted this session: setting `recall.FIELD_WEIGHT["title"] = 1.0` (equal to
+# body) collapsed the crowding assertion, and this check named exactly that.
+import shutil
+import tempfile
+from pathlib import Path
+
+import recall
+import workspace as ws
+
+DISPLAY_WINDOW = 6      # chamnan-recall's real CLI default (`limit=6`)
+WIDE_WINDOW = 50        # far past any realistic display size
+FLOOR = 0.95            # today's measured floor on this fixture is 100%; leaves headroom
+
+_root112 = Path(tempfile.mkdtemp(prefix="chamnan-r934-112-"))
+try:
+    _repo112 = _root112 / "repo"
+    _research112 = _repo112 / ".chamnan" / "state" / "research"
+    _research112.mkdir(parents=True)
+    (_repo112 / ".git").mkdir()
+
+    FILLER_N = 50
+    CROWD_N = 10
+    _filler_body112 = ("This section discusses ordinary repeated maintenance work across the "
+                        "workspace, touching many shared generic terms about process and result "
+                        "and system and behaviour and outcome and measurement and record and "
+                        "change and effect and cost and benefit and design and review and check "
+                        "and pass and fail and note and detail and cause and reason and signal "
+                        "and evidence and sample and trial and method and step and case and item "
+                        "and query and answer and store and entry and topic and section and body "
+                        "and title and weight and score and rank and window and limit.\n")
+
+    _dead_ends_lines112 = ["# Synthetic dead-end fixture for check 112\n"]
+    for i in range(FILLER_N):
+        _dead_ends_lines112.append(f"## Filler topic {i:03d}\n\n{_filler_body112}\n")
+    for i in range(CROWD_N):
+        _dead_ends_lines112.append(
+            f"## Handling the widget cache for hotwordxyz session {i:02d}\n\n{_filler_body112}\n")
+    (_research112 / "chamnan_research_dead_ends.md").write_text(
+        "\n".join(_dead_ends_lines112), encoding="utf-8")
+
+    _backlog_text112 = (
+        "# Synthetic backlog fixture for check 112\n\n"
+        "## Roundup of small findings\n\n"
+        "Several unrelated notes are grouped under one heading here, which is exactly the real "
+        "shape `chamnan_research_backlog.md` uses for its own \"Selected for testing\" section. "
+        "The one specific fact in this roundup is that hotwordxyz drops idle connections after a "
+        "short timeout, which nothing else in this fixture mentions.\n"
+    )
+    (_research112 / "chamnan_research_backlog.md").write_text(_backlog_text112, encoding="utf-8")
+
+    _wsdir112 = ws.workspace(_repo112)
+    _index112 = recall.build(_wsdir112)
+    _targets112 = [e for e in _index112["entries"] if e["kind"] in ("dead_end", "backlog")]
+
+    check("THE FIXTURE SWEEP IS REAL AND NON-TRIVIAL: %d entr(ies) generated and indexed"
+          % len(_targets112),
+          len(_targets112) >= 50,
+          saw="only %d entries indexed from a fixture meant to hold %d -- the fixture or the "
+              "sectioning contract (`## ` headings under a KINDS file path) changed"
+              % (len(_targets112), FILLER_N + CROWD_N + 1))
+
+    def _rank112(words, path, window):
+        ranked = recall.query(_index112, words, limit=window)
+        for i, (_score, cand, _why) in enumerate(ranked, start=1):
+            if cand["path"] == path:
+                return i
+        return None
+
+    _self_hits112 = []
+    _self_misses112 = []
+    for e in _targets112:
+        words = recall.terms(e["title"])
+        if _rank112(words, e["path"], DISPLAY_WINDOW) is not None:
+            _self_hits112.append(e["path"])
+        else:
+            _self_misses112.append(e["path"])
+    _self_rate112 = len(_self_hits112) / len(_targets112) if _targets112 else 0.0
+
+    check("A QUERY BUILT FROM AN ENTRY'S OWN TITLE FINDS IT INSIDE THE DISPLAY WINDOW (K=%d): "
+          "%.1f%% of %d" % (DISPLAY_WINDOW, 100 * _self_rate112, len(_targets112)),
+          _self_rate112 >= FLOOR,
+          saw="missed: %s" % _self_misses112[:8])
+
+    # A bare `next()` over a source search raises StopIteration when the fixture stops producing
+    # what it expects, and inside the folded suite that is not one failed check -- it ends the whole
+    # run as "NOT VERIFIED, no result", costing every check after it. Default and assert instead.
+    _backlog_path112 = next((e["path"] for e in _targets112 if e["kind"] == "backlog"), None)
+    check("the fixture produced a backlog entry to rank against",
+          _backlog_path112 is not None,
+          saw="kinds=%r" % sorted({e["kind"] for e in _targets112}))
+
+    _crowd_rank_display112 = _rank112(["hotwordxyz"], _backlog_path112, DISPLAY_WINDOW)
+    check("A REAL ANSWER MENTIONED ONLY IN BODY TEXT CAN BE CROWDED OUT OF THE DISPLAY WINDOW "
+          "BY WEAKER TITLE MATCHES ELSEWHERE (this is why recall@6 was 72%% on the real corpus, "
+          "not a fixture defect)",
+          _crowd_rank_display112 is None,
+          saw="expected the backlog entry to rank BELOW K=%d behind the %d crowd entries "
+              "that only mention 'hotwordxyz' in their title; it ranked %r instead -- "
+              "FIELD_WEIGHT may have changed" % (DISPLAY_WINDOW, CROWD_N, _crowd_rank_display112))
+
+    _crowd_rank_wide112 = _rank112(["hotwordxyz"], _backlog_path112, WIDE_WINDOW)
+    check("...BUT RAISING K PAST THE DISPLAY WINDOW DOES RECOVER IT WHEN THE VOCABULARY MATCHES "
+          "(the half of R9.34 where K genuinely helps)",
+          _crowd_rank_wide112 is not None,
+          saw="the backlog entry was not found even at the wide window (K=%d) -- "
+              "'hotwordxyz' may have been stripped as a common body term" % WIDE_WINDOW)
+
+    _nomatch_rank112 = _rank112(["impossibletofindword"], _backlog_path112, WIDE_WINDOW)
+    check("...AND RAISING K RECOVERS NOTHING WHEN THE QUERY SHARES NO VOCABULARY WITH THE ANSWER "
+          "AT ALL (the R9.34 finding: K is not a general fix for a real miss)",
+          _nomatch_rank112 is None,
+          saw="a query with zero shared vocabulary unexpectedly scored a hit at rank %r -- "
+              "recall.query's scoring may no longer require any term overlap"
+              % _nomatch_rank112)
+finally:
+    shutil.rmtree(_root112, ignore_errors=True)
+# ---- 113_command_timing_covers_every_shipped_command.py
+# ---- command startup timing is a derived sweep, not a hand-maintained command list
+# R11.22 (2026-09-13) found that every shipped command pays a substantial startup floor, but the
+# existing timing tool covered only SessionStart functions. The command population comes from the
+# package's `bin/` directory here and in the tool, so adding a fourteenth command makes this check
+# cover it without a second list being updated by hand.
+import re as _re113
+import subprocess as _sp113
+import sys as _sys113
+
+_tool113 = ROOT.parent.parent / ".chamnan" / "tools" / "time-the-pieces.py"
+_commands113 = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*")
+                      if p.is_file() and p.suffix != ".cmd")
+check("the command-timing check derived a non-trivial shipped-command population",
+      len(_commands113) >= 13, saw=f"found {len(_commands113)}: {_commands113}")
+
+_run113 = _sp113.run(
+    [_sys113.executable, str(_tool113), "--commands", "--runs", "1"],
+    cwd=str(ROOT.parent.parent), stdin=_sp113.DEVNULL, capture_output=True,
+    text=True, encoding="utf-8", errors="replace", timeout=60)
+check("the command startup timing mode completes", _run113.returncode == 0,
+      saw=f"exit {_run113.returncode}; stderr={_run113.stderr[:300]!r}")
+
+_rows113 = _re113.findall(r"^\s+(chamnan-[a-z-]+)\s+([0-9.]+) ms", _run113.stdout,
+                          _re113.MULTILINE)
+_timed113 = sorted(name113 for name113, _cpu113 in _rows113)
+_missing113 = sorted(set(_commands113) - set(_timed113))
+_invented113 = sorted(set(_timed113) - set(_commands113))
+check("EVERY SHIPPED COMMAND HAS A CPU TIMING ROW",
+      not _missing113 and not _invented113 and len(_timed113) == len(_commands113),
+      saw=f"missing={_missing113}; invented={_invented113}; rows={_rows113}")
+
+_nonpositive113 = [(name113, cpu113) for name113, cpu113 in _rows113
+                   if float(cpu113) <= 0.0]
+check("...and every row reports measured CPU rather than an empty or elapsed-time placeholder",
+      not _nonpositive113, saw=str(_nonpositive113) if _nonpositive113 else None)
+check("...and the summary names the population and the CPU clock",
+      f"{len(_commands113)} command(s)" in _run113.stdout
+      and "CPU excludes scheduler delay" in _run113.stdout,
+      saw=_run113.stdout[-300:])
+# ---- 114_a_kubernetes_secret_value_is_never_context.py
+# ------------------ a Kubernetes Secret's structure is enough to condemn every value beneath it
+# 🐛 [2026-09-13] R12.36 selected the open R7 corpus defect: a Kubernetes `Secret.data`
+# value under a non-credential key such as `DATABASE_URL` passed through `redact.scrub()` byte for
+# byte. Kubernetes already states that every direct value under `data` or `stringData` is secret;
+# requiring each child key to repeat password/secret/key/token vocabulary loses that fact.
+#
+# The field population comes from the implementation, not a hand-typed pair in this check. Every
+# member is crossed with arbitrary non-credential key names, quote styles, legal key ordering and
+# newline styles; the population assertion makes a renamed/emptied source tuple fail loudly.
+import base64 as _b64114
+
+import redact as _rd114
+
+_t_fields114 = _rd114._KUBERNETES_SECRET_VALUE_FIELDS
+check("the sweep read every Kubernetes Secret value field from the source: %d" % len(_t_fields114),
+      len(_t_fields114) >= 2 and {"data", "stringData"} <= set(_t_fields114),
+      saw=repr(_t_fields114))
+
+_t_keys114 = (
+    "DATABASE_URL", "DSN", "CONNECTION_STRING", "KUBECONFIG",
+    "BROKER_ENDPOINT", "TLS_BUNDLE",
+)
+_t_payload114 = _b64114.b64encode(
+    b"synthetic://demo-user:demo-pass@example.invalid:5432/demo").decode("ascii")
+_t_failures114 = []
+_t_population114 = 0
+for _t_field114 in _t_fields114:
+    for _t_key114 in _t_keys114:
+        for _t_quote114 in ("", "'", '"'):
+            for _t_kind_first114 in (False, True):
+                for _t_newline114 in ("\n", "\r\n"):
+                    _t_population114 += 1
+                    _t_kind114 = "kind: Secret" + _t_newline114
+                    _t_values114 = (
+                        _t_field114 + ":  # every child is sensitive" + _t_newline114
+                        + "  " + _t_key114 + ": " + _t_quote114 + _t_payload114
+                        + _t_quote114 + _t_newline114)
+                    _t_doc114 = (
+                        "apiVersion: v1" + _t_newline114
+                        + (_t_kind114 + _t_values114 if _t_kind_first114
+                           else _t_values114 + _t_kind114)
+                        + "metadata:" + _t_newline114
+                        + "  name: synthetic" + _t_newline114)
+                    _t_got114 = _rd114.scrub(_t_doc114)
+                    if (_t_payload114 in _t_got114
+                            or _t_got114.count(_rd114.PLACEHOLDER) != 1
+                            or _t_key114 not in _t_got114
+                            or _t_got114.count(_t_newline114) != _t_doc114.count(_t_newline114)):
+                        _t_failures114.append(
+                            "%s/%s/quote=%r/kind_first=%s/newline=%r -> %r" % (
+                                _t_field114, _t_key114, _t_quote114, _t_kind_first114,
+                                _t_newline114, _t_got114))
+
+check("the derived sweep exercised a non-trivial cross-product: %d cases" % _t_population114,
+      _t_population114 >= 100, saw=str(_t_population114))
+check("EVERY DIRECT BLOCK-FORM KUBERNETES SECRET VALUE IS REDACTED, WHATEVER ITS KEY NAME",
+      not _t_failures114, saw="\n".join(_t_failures114[:8]))
+
+# Block scalars are one value spread over several physical lines. Leaving their body behind would
+# recreate the exact failure shape: a marker saying the line was handled beside live payload bytes.
+_t_block_failures114 = []
+for _t_field114 in _t_fields114:
+    for _t_indicator114 in ("|", ">-"):
+        _t_block_doc114 = (
+            "kind: Secret\n" + _t_field114 + ":\n  TLS_BUNDLE: " + _t_indicator114
+            + "\n    " + _t_payload114[:24] + "\n    " + _t_payload114[24:] + "\n"
+            + "metadata:\n  name: synthetic\n")
+        _t_block_got114 = _rd114.scrub(_t_block_doc114)
+        if (_t_payload114[:24] in _t_block_got114
+                or _t_payload114[24:] in _t_block_got114
+                or _t_block_got114.count(_rd114.PLACEHOLDER) != 2
+                or ("TLS_BUNDLE: " + _t_indicator114) not in _t_block_got114):
+            _t_block_failures114.append(
+                "%s/%s -> %r" % (_t_field114, _t_indicator114, _t_block_got114))
+check("...AND EVERY LINE OF A BLOCK-SCALAR VALUE IS REDACTED WITHOUT LOSING ITS SHAPE",
+      not _t_block_failures114, saw="\n".join(_t_block_failures114))
+
+# The other half of a structural detector: `data:` is ordinary in ConfigMaps and application YAML,
+# and an indented `spec.data` is not the top-level value field this rule owns.
+_t_decoys114 = []
+for _t_kind114 in ("ConfigMap", "Deployment"):
+    for _t_field114 in _t_fields114:
+        _t_decoys114.append(
+            "apiVersion: v1\nkind: %s\n%s:\n  DATABASE_URL: %s\n" % (
+                _t_kind114, _t_field114, _t_payload114))
+_t_decoys114.append(
+    "apiVersion: example.invalid/v1\nkind: SecretLike\nspec:\n  data:\n"
+    "    DATABASE_URL: %s\n" % _t_payload114)
+_t_eaten_decoys114 = [
+    _t_decoy114 for _t_decoy114 in _t_decoys114
+    if _rd114.scrub(_t_decoy114) != _t_decoy114
+]
+check("THE SAME FIELDS OUTSIDE A KUBERNETES SECRET ARE LEFT EXACTLY ALONE",
+      not _t_eaten_decoys114, saw="\n---\n".join(_t_eaten_decoys114))
+
+_t_multi114 = (
+    "kind: ConfigMap\ndata:\n  DATABASE_URL: " + _t_payload114 + "\n---\n"
+    "data:\n  DATABASE_URL: " + _t_payload114 + "\nkind: Secret\n")
+_t_multi_got114 = _rd114.scrub(_t_multi114)
+check("DOCUMENT BOUNDARIES KEEP A NEIGHBOURING CONFIGMAP VALUE AND REDACT ONLY THE SECRET",
+      _t_multi_got114.count(_t_payload114) == 1
+      and _t_multi_got114.count(_rd114.PLACEHOLDER) == 1,
+      saw=repr(_t_multi_got114))
+# ---- 115_realistic_prose_never_becomes_a_secret.py
+# ---------------- realistic code and prose stay readable without weakening actual secret masking
+# 🐛 [2026-09-13] R12.26 selected the six false redactions measured on R7's external corpus:
+# GraphQL non-null types, Codable/JSON-key labels, non-ASCII prose, SQL COMMENT ON text, Lua local
+# key derivations, and documented field identifiers. Each was ordinary source text replaced by a
+# marker, so this is a correctness defect rather than a policy A/B.
+#
+# Populations come from redact.py's credential words, claimed languages and non-credential key
+# prefixes. The assertions below also require every sweep to reach a non-trivial population.
+import re as _re115
+
+import redact as _rd115
+
+
+def _camel115(_word115):
+    _parts115 = [
+        _part115 for _part115 in _re115.split(r"[^A-Za-z0-9]+", _word115) if _part115
+    ]
+    return _parts115[0] + "".join(_part115.title() for _part115 in _parts115[1:])
+
+
+_credential_words115 = sorted(_rd115._CREDENTIAL_END_WORDS)
+check("the realistic-prose sweep derived a non-trivial credential-word population: %d"
+      % len(_credential_words115), len(_credential_words115) >= 12,
+      saw=repr(_credential_words115))
+
+_type_failures115 = []
+for _word115 in _credential_words115:
+    _line115 = "field_%s: String!" % _word115
+    if _rd115.scrub(_line115) != _line115:
+        _type_failures115.append((_word115, _rd115.scrub(_line115)))
+check("EVERY GRAPHQL NON-NULL TYPE UNDER A CREDENTIAL-SHAPED FIELD STAYS READABLE",
+      not _type_failures115, saw=repr(_type_failures115[:8]))
+
+_label_failures115 = []
+for _word115 in _credential_words115:
+    _snake115 = "stored_%s" % _word115
+    _line115 = 'case %s = "%s"' % (_camel115(_snake115), _snake115)
+    if _rd115.scrub(_line115) != _line115:
+        _label_failures115.append((_word115, _rd115.scrub(_line115)))
+check("EVERY CANONICALLY IDENTICAL CAMEL/SNAKE LABEL PAIR STAYS READABLE",
+      not _label_failures115, saw=repr(_label_failures115[:8]))
+
+_unicode_words115 = sorted({
+    _spelling115
+    for _language115, _spellings115 in _rd115._HEADER_LANGS.items()
+    if _language115 != "English"
+    for _spelling115 in _spellings115
+    if any(not _char115.isascii() for _char115 in _spelling115)
+    and "_" not in _spelling115 and " " not in _spelling115
+})
+check("the prose sweep derived non-ASCII words from every claimed language table: %d"
+      % len(_unicode_words115), len(_unicode_words115) >= 12,
+      saw=repr(_unicode_words115))
+_prose_failures115 = []
+for _word115 in _unicode_words115:
+    _line115 = "/// password: %s." % _word115
+    if _rd115.scrub(_line115) != _line115:
+        _prose_failures115.append((_word115, _rd115.scrub(_line115)))
+check("EVERY ORDINARY NON-ASCII PROSE WORD IN A SOURCE COMMENT STAYS READABLE",
+      not _prose_failures115, saw=repr(_prose_failures115[:8]))
+
+_sql_failures115 = []
+for _word115 in _credential_words115:
+    _sql115 = ("COMMENT ON COLUMN demo.%s_prefix IS\n"
+               "    'DELETE /v1/example safely';" % _word115)
+    if _rd115.scrub(_sql115) != _sql115:
+        _sql_failures115.append((_word115, _rd115.scrub(_sql115)))
+check("EVERY SQL COMMENT ON A CREDENTIAL-SHAPED OBJECT STAYS READABLE",
+      not _sql_failures115, saw=repr(_sql_failures115[:8]))
+
+_prefixes115 = sorted(_rd115._NONCREDENTIAL_KEY_PREFIXES)
+check("the code-identifier sweep read every non-credential prefix from the source: %d"
+      % len(_prefixes115), len(_prefixes115) >= 4, saw=repr(_prefixes115))
+_code_failures115 = []
+for _prefix115 in _prefixes115:
+    for _shape115 in (
+            'local %s_key = "tag:" .. make(value)' % _prefix115,
+            '// %s_key: %s_id.' % (_prefix115, _prefix115)):
+        if _rd115.scrub(_shape115) != _shape115:
+            _code_failures115.append((_shape115, _rd115.scrub(_shape115)))
+check("EVERY DERIVED LOCAL KEY AND DOCUMENTED FIELD IDENTIFIER STAYS READABLE",
+      not _code_failures115, saw=repr(_code_failures115[:8]))
+
+# The inverse matters as much as the false-positive fixes. These near-neighbours carry an actual
+# synthetic credential value and must still be masked; a guard that merely exempts everything
+# would otherwise pass every assertion above.
+_synthetic115 = "Zz7qLp2vBnT9wXk3Rf1s"
+_secrets115 = (
+    'apiKey: "%s"' % _synthetic115,
+    'case accessToken = "%s"' % _synthetic115,
+    '/// password: %s' % _synthetic115,
+    'api_key IS %s' % _synthetic115,
+    'local api_key = "%s" .. suffix' % _synthetic115,
+    '// api_key: %s' % _synthetic115,
+)
+_leaks115 = [
+    _line115 for _line115 in _secrets115 if _synthetic115 in _rd115.scrub(_line115)
+]
+check("ALL SIX NEAR-NEIGHBOUR ACTUAL SECRET VALUES ARE STILL REDACTED",
+      not _leaks115, saw=repr(_leaks115))
 # ---- 11_cut_never_strands_a_table.py
 # 🐛 [2026-09-09] `cut_outside_a_fence` guards against cutting inside a ``` block and nothing else.
 # Found on a real session handoff: a markdown table delivered as its header row and its `|---|`
@@ -30856,6 +32119,55 @@ else:
     check("...and ordinary code is not flagged",
           _t_g70.scan(_t_ordinary70) == {}, saw=repr(_t_g70.scan(_t_ordinary70)))
 
+    # --- MCP configuration changes are capability changes, whatever one launcher calls itself.
+    # Four findings in the 2026-09-12 security sweep had one actionable boundary in common:
+    # mcp-remote, MCP Inspector, Git MCP, and model-induced execution through MCP tools. chamnan
+    # cannot establish that a server implementation is safe, but it can make the capability arriving
+    # in a commit visible before it is shared. Asked over a derived matrix so this is the class, not
+    # three remembered package names.
+    _t_mcp_scan70 = getattr(_t_g70, "scan_mcp_changes", None)
+    check("THE STAGED-DIFF GUARD EXPOSES MCP CAPABILITY CHANGES FOR REVIEW",
+          callable(_t_mcp_scan70),
+          saw="scan_mcp_changes() is absent — staged MCP execution/network capability is silent")
+    if callable(_t_mcp_scan70):
+        _t_mcp_paths70 = (
+            ".mcp.json", ".cursor/mcp.json", ".vscode/mcp.json", "config/mcp.json",
+            ".claude/settings.json", ".gemini/settings.json", "opencode.json", "package.json",
+        )
+        _t_mcp_lines70 = (
+            '"mcpServers": {"docs": {}}',
+            '"mcp_servers": {"docs": {}}',
+            '"command": "npx mcp-remote"',
+            '"command": "npx @modelcontextprotocol/inspector"',
+            '"command": "uvx mcp-server-git"',
+            '"url": "https://tools.example.com/mcp"',
+        )
+        _t_mcp_missed70 = []
+        _t_mcp_seen70 = 0
+        for _t_path70 in _t_mcp_paths70:
+            for _t_line_m70 in _t_mcp_lines70:
+                _t_mcp_seen70 += 1
+                _t_one70 = (
+                    "diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -0,0 +1,1 @@\n+%s\n"
+                    % (_t_path70, _t_path70, _t_path70, _t_path70, _t_line_m70))
+                if _t_mcp_scan70(_t_one70) != {_t_path70: [1]}:
+                    _t_mcp_missed70.append("%s: %s" % (_t_path70, _t_line_m70[:38]))
+        check("...across the derived path-and-signal matrix: 48 capability changes",
+              _t_mcp_seen70 == 48 and not _t_mcp_missed70,
+              saw="; ".join(_t_mcp_missed70[:6]) or None)
+
+        _t_mcp_removed70 = (
+            "diff --git a/.mcp.json b/.mcp.json\n--- a/.mcp.json\n+++ b/.mcp.json\n"
+            "@@ -1,1 +0,0 @@\n-\"command\": \"npx mcp-remote\"\n")
+        check("...but a removed capability is leaving the tree and stays silent",
+              _t_mcp_scan70(_t_mcp_removed70) == {},
+              saw=repr(_t_mcp_scan70(_t_mcp_removed70)))
+        check("...and source code merely discussing MCP is not treated as configuration",
+              _t_mcp_scan70(
+                  "diff --git a/docs.py b/docs.py\n--- a/docs.py\n+++ b/docs.py\n"
+                  "@@ -0,0 +1,1 @@\n+note = 'mcpServers and mcp-remote are documented here'\n") == {},
+              saw="ordinary source prose was flagged — a noisy guard is one users disable")
+
     # --- end to end, through git, because the properties that matter are about the COMMIT.
     _t_repo70 = _Path70(_tmp70.mkdtemp(prefix="chamnan-guard70-"))
     try:
@@ -30902,10 +32214,36 @@ else:
         check("...while `--strict` is the opt-in that does fail", _t_strict70.returncode == 1,
               saw="exit %d" % _t_strict70.returncode)
 
+        # The second finding path reaches the same command boundary, not only the helper above.
+        # Commit the credential fixture first so the MCP result cannot pass on the older warning.
+        _sp70.run(["git", "-C", str(_t_repo70), "commit", "-qm", "credential fixture"],
+                  capture_output=True)
+        _t_mcp_body70 = '{"mcpServers": {"review-me": {"command": "local-tool"}}}\n'
+        (_t_repo70 / ".mcp.json").write_text(_t_mcp_body70, encoding="utf-8")
+        _sp70.run(["git", "-C", str(_t_repo70), "add", "-A"], capture_output=True)
+        _t_mcp_run70 = _sp70.run(
+            [_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70), capture_output=True,
+            text=True, stdin=_sp70.DEVNULL, timeout=60)
+        _t_mcp_said70 = _t_mcp_run70.stdout + _t_mcp_run70.stderr
+        check("AN MCP CAPABILITY CHANGE WARNS END TO END WITHOUT BLOCKING",
+              _t_mcp_run70.returncode == 0 and ".mcp.json" in _t_mcp_said70
+              and "execution/network capability" in _t_mcp_said70,
+              saw="exit %d: %s" % (_t_mcp_run70.returncode, _t_mcp_said70[:160]))
+        check("...and does not print the staged configuration it asks a person to review",
+              "review-me" not in _t_mcp_said70 and "local-tool" not in _t_mcp_said70,
+              saw=repr(_t_mcp_said70[:180]))
+        _t_mcp_strict70 = _sp70.run(
+            [_sys70.executable, str(_t_cmd70), "--strict"], cwd=str(_t_repo70),
+            capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+        check("...and the existing `--strict` choice applies to capability changes too",
+              _t_mcp_strict70.returncode == 1,
+              saw="exit %d" % _t_mcp_strict70.returncode)
+
         # A repository with nothing staged, and a directory that is not a repository at all: both
         # run from a commit hook, and a command that cannot answer must not add a line to somebody
         # else's commit output.
-        _sp70.run(["git", "-C", str(_t_repo70), "commit", "-qm", "i"], capture_output=True)
+        _sp70.run(["git", "-C", str(_t_repo70), "commit", "-qm", "mcp fixture"],
+                  capture_output=True)
         _t_clean70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70),
                                capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
         _t_nogit70 = _Path70(_tmp70.mkdtemp(prefix="chamnan-nogit70-"))
@@ -33898,9 +35236,9 @@ _t_codex99 = {"id": 7, "result": {"rateLimits": {
 
 # The frozen `_t_now99` above is deliberate: every assertion that passes `now=` alongside a fixture
 # is comparing two fixed points, and a moving clock would make its result depend on the hour the
-# suite ran. The command drive below is the exception -- it goes through `_set`, which reads the
-# REAL clock, so a payload pinned to a past date is correctly refused as carrying "no usable future
-# reset".
+# suite ran. The command drive near the bottom of this file is the exception -- it goes through
+# `_set`, which reads the REAL clock, so a payload pinned to a past date is correctly refused as
+# carrying "no usable future reset".
 #
 # [2026-09-13] That is exactly what happened. Written on 09-12 with `+1800` seconds, it passed that
 # evening and failed every run from the next morning onward: the check rotted with the calendar
@@ -34014,162 +35352,6 @@ check("THE THREE FALLBACK SITUATIONS HAVE THREE DIFFERENT MESSAGES",
                                           sorted(_t_fallback_messages99)))
 
 shutil.rmtree(_t_root99, ignore_errors=True)
-# ---- 114_a_kubernetes_secret_value_is_never_context.py
-import base64 as _b64114
-import redact as _rd114
-
-_t_fields114 = _rd114._KUBERNETES_SECRET_VALUE_FIELDS
-check("the sweep read every Kubernetes Secret value field from the source: %d" % len(_t_fields114),
-      len(_t_fields114) >= 2 and {"data", "stringData"} <= set(_t_fields114),
-      saw=repr(_t_fields114))
-_t_keys114 = ("DATABASE_URL", "DSN", "CONNECTION_STRING", "KUBECONFIG",
-              "BROKER_ENDPOINT", "TLS_BUNDLE")
-_t_payload114 = _b64114.b64encode(
-    b"synthetic://demo-user:demo-pass@example.invalid:5432/demo").decode("ascii")
-_t_failures114 = []
-_t_population114 = 0
-for _t_field114 in _t_fields114:
-    for _t_key114 in _t_keys114:
-        for _t_quote114 in ("", "'", '"'):
-            for _t_kind_first114 in (False, True):
-                for _t_newline114 in ("\n", "\r\n"):
-                    _t_population114 += 1
-                    _t_kind114 = "kind: Secret" + _t_newline114
-                    _t_values114 = (
-                        _t_field114 + ":  # every child is sensitive" + _t_newline114
-                        + "  " + _t_key114 + ": " + _t_quote114 + _t_payload114
-                        + _t_quote114 + _t_newline114)
-                    _t_doc114 = (
-                        "apiVersion: v1" + _t_newline114
-                        + (_t_kind114 + _t_values114 if _t_kind_first114
-                           else _t_values114 + _t_kind114)
-                        + "metadata:" + _t_newline114 + "  name: synthetic" + _t_newline114)
-                    _t_got114 = _rd114.scrub(_t_doc114)
-                    if (_t_payload114 in _t_got114
-                            or _t_got114.count(_rd114.PLACEHOLDER) != 1
-                            or _t_key114 not in _t_got114
-                            or _t_got114.count(_t_newline114) != _t_doc114.count(_t_newline114)):
-                        _t_failures114.append(
-                            "%s/%s/quote=%r/kind_first=%s/newline=%r -> %r" % (
-                                _t_field114, _t_key114, _t_quote114, _t_kind_first114,
-                                _t_newline114, _t_got114))
-check("the derived sweep exercised a non-trivial cross-product: %d cases" % _t_population114,
-      _t_population114 >= 100, saw=str(_t_population114))
-check("EVERY DIRECT BLOCK-FORM KUBERNETES SECRET VALUE IS REDACTED, WHATEVER ITS KEY NAME",
-      not _t_failures114, saw="\n".join(_t_failures114[:8]))
-
-_t_block_failures114 = []
-for _t_field114 in _t_fields114:
-    for _t_indicator114 in ("|", ">-"):
-        _t_block_doc114 = (
-            "kind: Secret\n" + _t_field114 + ":\n  TLS_BUNDLE: " + _t_indicator114
-            + "\n    " + _t_payload114[:24] + "\n    " + _t_payload114[24:] + "\n"
-            + "metadata:\n  name: synthetic\n")
-        _t_block_got114 = _rd114.scrub(_t_block_doc114)
-        if (_t_payload114[:24] in _t_block_got114
-                or _t_payload114[24:] in _t_block_got114
-                or _t_block_got114.count(_rd114.PLACEHOLDER) != 2
-                or ("TLS_BUNDLE: " + _t_indicator114) not in _t_block_got114):
-            _t_block_failures114.append(
-                "%s/%s -> %r" % (_t_field114, _t_indicator114, _t_block_got114))
-check("...AND EVERY LINE OF A BLOCK-SCALAR VALUE IS REDACTED WITHOUT LOSING ITS SHAPE",
-      not _t_block_failures114, saw="\n".join(_t_block_failures114))
-
-_t_decoys114 = []
-for _t_kind114 in ("ConfigMap", "Deployment"):
-    for _t_field114 in _t_fields114:
-        _t_decoys114.append("apiVersion: v1\nkind: %s\n%s:\n  DATABASE_URL: %s\n" % (
-            _t_kind114, _t_field114, _t_payload114))
-_t_decoys114.append("apiVersion: example.invalid/v1\nkind: SecretLike\nspec:\n  data:\n"
-                    "    DATABASE_URL: %s\n" % _t_payload114)
-_t_eaten_decoys114 = [
-    _t_decoy114 for _t_decoy114 in _t_decoys114
-    if _rd114.scrub(_t_decoy114) != _t_decoy114
-]
-check("THE SAME FIELDS OUTSIDE A KUBERNETES SECRET ARE LEFT EXACTLY ALONE",
-      not _t_eaten_decoys114, saw="\n---\n".join(_t_eaten_decoys114))
-_t_multi114 = (
-    "kind: ConfigMap\ndata:\n  DATABASE_URL: " + _t_payload114 + "\n---\n"
-    "data:\n  DATABASE_URL: " + _t_payload114 + "\nkind: Secret\n")
-_t_multi_got114 = _rd114.scrub(_t_multi114)
-check("DOCUMENT BOUNDARIES KEEP A NEIGHBOURING CONFIGMAP VALUE AND REDACT ONLY THE SECRET",
-      _t_multi_got114.count(_t_payload114) == 1
-      and _t_multi_got114.count(_rd114.PLACEHOLDER) == 1,
-      saw=repr(_t_multi_got114))
-
-# ---- 115_realistic_prose_never_becomes_a_secret.py
-import re as _re115
-import redact as _rd115
-
-def _camel115(_word115):
-    _parts115 = [_part115 for _part115 in _re115.split(r"[^A-Za-z0-9]+", _word115)
-                 if _part115]
-    return _parts115[0] + "".join(_part115.title() for _part115 in _parts115[1:])
-
-_credential_words115 = sorted(_rd115._CREDENTIAL_END_WORDS)
-check("the realistic-prose sweep derived a non-trivial credential-word population: %d"
-      % len(_credential_words115), len(_credential_words115) >= 12,
-      saw=repr(_credential_words115))
-_type_failures115 = []
-for _word115 in _credential_words115:
-    _line115 = "field_%s: String!" % _word115
-    if _rd115.scrub(_line115) != _line115:
-        _type_failures115.append((_word115, _rd115.scrub(_line115)))
-check("EVERY GRAPHQL NON-NULL TYPE UNDER A CREDENTIAL-SHAPED FIELD STAYS READABLE",
-      not _type_failures115, saw=repr(_type_failures115[:8]))
-_label_failures115 = []
-for _word115 in _credential_words115:
-    _snake115 = "stored_%s" % _word115
-    _line115 = 'case %s = "%s"' % (_camel115(_snake115), _snake115)
-    if _rd115.scrub(_line115) != _line115:
-        _label_failures115.append((_word115, _rd115.scrub(_line115)))
-check("EVERY CANONICALLY IDENTICAL CAMEL/SNAKE LABEL PAIR STAYS READABLE",
-      not _label_failures115, saw=repr(_label_failures115[:8]))
-_unicode_words115 = sorted({
-    _spelling115 for _language115, _spellings115 in _rd115._HEADER_LANGS.items()
-    if _language115 != "English" for _spelling115 in _spellings115
-    if any(not _char115.isascii() for _char115 in _spelling115)
-    and "_" not in _spelling115 and " " not in _spelling115
-})
-check("the prose sweep derived non-ASCII words from every claimed language table: %d"
-      % len(_unicode_words115), len(_unicode_words115) >= 12,
-      saw=repr(_unicode_words115))
-_prose_failures115 = []
-for _word115 in _unicode_words115:
-    _line115 = "/// password: %s." % _word115
-    if _rd115.scrub(_line115) != _line115:
-        _prose_failures115.append((_word115, _rd115.scrub(_line115)))
-check("EVERY ORDINARY NON-ASCII PROSE WORD IN A SOURCE COMMENT STAYS READABLE",
-      not _prose_failures115, saw=repr(_prose_failures115[:8]))
-_sql_failures115 = []
-for _word115 in _credential_words115:
-    _sql115 = ("COMMENT ON COLUMN demo.%s_prefix IS\n"
-               "    'DELETE /v1/example safely';" % _word115)
-    if _rd115.scrub(_sql115) != _sql115:
-        _sql_failures115.append((_word115, _rd115.scrub(_sql115)))
-check("EVERY SQL COMMENT ON A CREDENTIAL-SHAPED OBJECT STAYS READABLE",
-      not _sql_failures115, saw=repr(_sql_failures115[:8]))
-_prefixes115 = sorted(_rd115._NONCREDENTIAL_KEY_PREFIXES)
-check("the code-identifier sweep read every non-credential prefix from the source: %d"
-      % len(_prefixes115), len(_prefixes115) >= 4, saw=repr(_prefixes115))
-_code_failures115 = []
-for _prefix115 in _prefixes115:
-    for _shape115 in ('local %s_key = "tag:" .. make(value)' % _prefix115,
-                      '// %s_key: %s_id.' % (_prefix115, _prefix115)):
-        if _rd115.scrub(_shape115) != _shape115:
-            _code_failures115.append((_shape115, _rd115.scrub(_shape115)))
-check("EVERY DERIVED LOCAL KEY AND DOCUMENTED FIELD IDENTIFIER STAYS READABLE",
-      not _code_failures115, saw=repr(_code_failures115[:8]))
-_synthetic115 = "Zz7qLp2vBnT9wXk3Rf1s"
-_secrets115 = (
-    'apiKey: "%s"' % _synthetic115, 'case accessToken = "%s"' % _synthetic115,
-    '/// password: %s' % _synthetic115, 'api_key IS %s' % _synthetic115,
-    'local api_key = "%s" .. suffix' % _synthetic115, '// api_key: %s' % _synthetic115,
-)
-_leaks115 = [_line115 for _line115 in _secrets115
-             if _synthetic115 in _rd115.scrub(_line115)]
-check("ALL SIX NEAR-NEIGHBOUR ACTUAL SECRET VALUES ARE STILL REDACTED",
-      not _leaks115, saw=repr(_leaks115))
 # ============================ end of the folded surgical pool
 
 

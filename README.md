@@ -516,8 +516,8 @@ on it". It now says the file belongs to a repository it cannot see, and to ask f
 was to make a note more specific than its author meant. A warning that never clears teaches you to
 skip the ones that matter. `3.9` against a declared `3.10` still reports.
 
-The evidence legend said a configuration directory under your home "proves the agent is installed".
-It does not — a home directory outlives an uninstall, measured here on two agents with no runnable
+The evidence legend treated a configuration directory under your home as proof of installation. It
+is not — a home directory outlives an uninstall, measured here on two agents with no runnable
 binary. The detector was already honest; the sentence describing it was not.
 
 The update notice compared version strings only, so a marketplace whose **files** moved while its
@@ -1262,7 +1262,7 @@ corpus of 60 secret shapes and 48 ordinary strings that must survive:
 
 | | |
 |---|---|
-| recall | **99.0%** — 95 of 96 secret and personal-data shapes redacted |
+| recall | **99.0%** — 98 of 99 secret and personal-data shapes redacted |
 | weakest class | **93.8%** — 15 of 16 bare-token shapes, the class with no name or column to go on |
 | precision, on the corpus | **100%** — 0 of 48 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
 | precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |

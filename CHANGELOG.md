@@ -58,8 +58,8 @@ direction. `3.9` against a declared `3.10` still reports, because that is a genu
 ### "Installed" said about an agent that cannot run
 
 chamnan detects which coding agents are present by three strengths of evidence. The weakest is a
-configuration directory under your home. The legend said that "proves the agent is installed on
-this machine".
+configuration directory under your home. The legend treated that directory as proof the agent was
+installed on the machine.
 
 It does not. A home directory outlives an uninstall — measured on a machine with two such
 directories and no runnable binary for either. It now says configuration was found at some point,
