@@ -185,6 +185,14 @@ def main(argv):
             if on_disk and "the code has moved since" in _age.lower():
                 print(f"  the index is behind the code, so this is not an all-clear: a file added "
                       f"since it was built could import this one. Run `chamnan-map`, then ask again")
+            # 🐛 [2026-09-13] A current outer index deliberately excludes nested repositories, so
+            # absence from that index says nothing about a file the nested repository owns. This
+            # is the third unanswered case beside a stale index and a path that is not on disk
+            # (R3, R5 triage).
+            elif (on_disk and ws.find_root(pathlib.Path(root) / target)
+                  != pathlib.Path(root).resolve()):
+                print(f"  this file belongs to a repository this index does not cover, so `nothing "
+                      f"recorded` is not an answer — ask from inside that repository instead")
             elif on_disk:
                 print(f"  a file nothing imports and nothing has happened to is the cheap case — "
                       f"change it freely")
