@@ -8470,12 +8470,21 @@ _rmtree(_tl.parent, ignore_errors=True)
 # deleting the sentence — and that is the most durable claim a lesson can make about a language
 # version. `ledger.py` warns in this codebase that "a count that never changes is what gets tuned
 # out"; a finding that never clears teaches a reader to skim past the one in ten that is real
-# (R11 agent 3). The tested two-against-three case is deliberately untouched.
+# (R11 agent 3).
+#
+# [2026-09-13] The two-against-three case was left standing above, and the owner revised that: the
+# same argument covers it. `3.9` is the NAME of a release series, not a vague patch -- an entry
+# saying a test "runs under the Xcode 3.9 interpreter" is precise about the thing its author meant,
+# and `chamnan-age` was asking them to write `3.9.6`, which is more specific than they meant. That
+# is the harm the paragraph above exists to prevent. Not a defect a release shipped: a design
+# decision reversed, so it carries no bug marker.
 check("A BARE MAJOR VERSION IS NOT A CONTRADICTION", aging._covers("3.11", "3") is True)
 check("...nor when the environment is more precise still", aging._covers("3.11.2", "3") is True)
 check("...while a DIFFERENT major still is", aging._covers("3.11", "2") is False)
-check("...and the vaguer-minor decision this did not change still holds",
-      aging._covers("3.11.2", "3.11") is False)
+check("...and a series name is covered by a member of it",
+      aging._covers("3.11.2", "3.11") is True)
+check("...while a DIFFERENT series is not, which is the signal that had to survive",
+      aging._covers("3.12.1", "3.11") is False)
 check("...and a more precise claim than the environment is still covered",
       aging._covers("3.11", "3.11.2") is True)
 
@@ -9707,8 +9716,9 @@ check("...while real front matter still parses",
 # `python 3.11` declares a series, and a lesson saying `3.11.2` names a member of it.
 check("a declared 3.11 covers a claimed 3.11.2", _ag._covers("3.11", "3.11.2"))
 check("...but not a claimed 3.12", not _ag._covers("3.11", "3.12"))
-check("...and a vaguer claim than the environment is still worth noticing",
-      not _ag._covers("3.11.2", "3.11"))
+check("...and a claim naming the series covers too, either length (2026-09-13)",
+      _ag._covers("3.11.2", "3.11"))
+check("...but a claim naming a DIFFERENT series does not", not _ag._covers("3.11.2", "3.10"))
 
 # The two commonest ways an environment is actually selected are positional, not flags.
 _envr = Path(tempfile.mkdtemp())

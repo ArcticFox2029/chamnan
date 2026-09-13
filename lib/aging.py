@@ -91,18 +91,14 @@ def claims_in(text):
 
 
 def _covers(declared, claimed):
-    """True when a claim is an instance of what the environment declares.
+    """True when the shorter dotted version is a prefix of the longer one.
 
-    Equality alone is right about the direction and wrong about precision. An environment declaring
-    `python 3.11` is declaring a series, and a lesson saying `python 3.11.2` is talking about a
-    member of it -- flagging that as a contradiction is a false positive on exactly the kind of
-    entry the check exists to protect. Prefix on the dotted components, and only in that direction:
-    a claim of `3.11` against a declared `3.11.2` is NOT covered, because the entry is then vaguer
-    than the environment and the vagueness is the thing worth noticing. That decision stands and is
-    not what changed below.
+    Either side may name a release series while the other names one member of it: `3.11` covers
+    `3.11.2` whether the series appears in the environment declaration or in the stored claim. A
+    different component still disagrees, so a claimed `3.9` is not covered by declared `3.10.1`.
 
-    🐛 [2026-09-06] A BARE MAJOR version is a different thing from a vaguer minor one, and it hit
-    the same branch. An environment declaring `python 3.11` and a lesson saying "runs on Python 3,
+    🐛 [2026-09-06] A BARE MAJOR version hit the same branch as a vaguer minor one. An
+    environment declaring `python 3.11` and a lesson saying "runs on Python 3,
     no exotic 3.x-only syntax" produced a finding on every single run, with no way to satisfy it
     short of deleting the sentence or making it more specific than its author meant -- and "Python
     3" is the most DURABLE claim a lesson can make about a language version, true through every
@@ -110,16 +106,14 @@ def _covers(declared, claimed):
     what gets tuned out"; a finding that never clears is that failure mode in the opposite feature,
     and it teaches a reader to skim past the one finding in ten that is real (R11 agent 3).
 
-    So a single-component claim is covered by any declared version on that line. The tested case
-    the paragraph above describes -- two components against three -- is untouched: it is still the
-    entry being vaguer about a MINOR version, which is a real thing to notice.
+    Design revised [2026-09-13]. The same reasoning applies to a minor release-series name: Python
+    `3.9` is the series containing `3.9.6`, not an imprecise patch claim. Requiring the entry to say
+    `3.9.6` would make it more specific than its author meant, so the 09-06 prefix precedent now
+    applies at every component depth.
     """
-    if declared == claimed:
-        return True
     d, c = declared.split("."), claimed.split(".")
-    if len(c) == 1:
-        return d[0] == c[0]
-    return len(c) > len(d) and c[:len(d)] == d
+    shared = min(len(d), len(c))
+    return d[:shared] == c[:shared]
 
 
 def check(root, now=None):
