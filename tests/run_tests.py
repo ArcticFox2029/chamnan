@@ -34014,6 +34014,162 @@ check("THE THREE FALLBACK SITUATIONS HAVE THREE DIFFERENT MESSAGES",
                                           sorted(_t_fallback_messages99)))
 
 shutil.rmtree(_t_root99, ignore_errors=True)
+# ---- 114_a_kubernetes_secret_value_is_never_context.py
+import base64 as _b64114
+import redact as _rd114
+
+_t_fields114 = _rd114._KUBERNETES_SECRET_VALUE_FIELDS
+check("the sweep read every Kubernetes Secret value field from the source: %d" % len(_t_fields114),
+      len(_t_fields114) >= 2 and {"data", "stringData"} <= set(_t_fields114),
+      saw=repr(_t_fields114))
+_t_keys114 = ("DATABASE_URL", "DSN", "CONNECTION_STRING", "KUBECONFIG",
+              "BROKER_ENDPOINT", "TLS_BUNDLE")
+_t_payload114 = _b64114.b64encode(
+    b"synthetic://demo-user:demo-pass@example.invalid:5432/demo").decode("ascii")
+_t_failures114 = []
+_t_population114 = 0
+for _t_field114 in _t_fields114:
+    for _t_key114 in _t_keys114:
+        for _t_quote114 in ("", "'", '"'):
+            for _t_kind_first114 in (False, True):
+                for _t_newline114 in ("\n", "\r\n"):
+                    _t_population114 += 1
+                    _t_kind114 = "kind: Secret" + _t_newline114
+                    _t_values114 = (
+                        _t_field114 + ":  # every child is sensitive" + _t_newline114
+                        + "  " + _t_key114 + ": " + _t_quote114 + _t_payload114
+                        + _t_quote114 + _t_newline114)
+                    _t_doc114 = (
+                        "apiVersion: v1" + _t_newline114
+                        + (_t_kind114 + _t_values114 if _t_kind_first114
+                           else _t_values114 + _t_kind114)
+                        + "metadata:" + _t_newline114 + "  name: synthetic" + _t_newline114)
+                    _t_got114 = _rd114.scrub(_t_doc114)
+                    if (_t_payload114 in _t_got114
+                            or _t_got114.count(_rd114.PLACEHOLDER) != 1
+                            or _t_key114 not in _t_got114
+                            or _t_got114.count(_t_newline114) != _t_doc114.count(_t_newline114)):
+                        _t_failures114.append(
+                            "%s/%s/quote=%r/kind_first=%s/newline=%r -> %r" % (
+                                _t_field114, _t_key114, _t_quote114, _t_kind_first114,
+                                _t_newline114, _t_got114))
+check("the derived sweep exercised a non-trivial cross-product: %d cases" % _t_population114,
+      _t_population114 >= 100, saw=str(_t_population114))
+check("EVERY DIRECT BLOCK-FORM KUBERNETES SECRET VALUE IS REDACTED, WHATEVER ITS KEY NAME",
+      not _t_failures114, saw="\n".join(_t_failures114[:8]))
+
+_t_block_failures114 = []
+for _t_field114 in _t_fields114:
+    for _t_indicator114 in ("|", ">-"):
+        _t_block_doc114 = (
+            "kind: Secret\n" + _t_field114 + ":\n  TLS_BUNDLE: " + _t_indicator114
+            + "\n    " + _t_payload114[:24] + "\n    " + _t_payload114[24:] + "\n"
+            + "metadata:\n  name: synthetic\n")
+        _t_block_got114 = _rd114.scrub(_t_block_doc114)
+        if (_t_payload114[:24] in _t_block_got114
+                or _t_payload114[24:] in _t_block_got114
+                or _t_block_got114.count(_rd114.PLACEHOLDER) != 2
+                or ("TLS_BUNDLE: " + _t_indicator114) not in _t_block_got114):
+            _t_block_failures114.append(
+                "%s/%s -> %r" % (_t_field114, _t_indicator114, _t_block_got114))
+check("...AND EVERY LINE OF A BLOCK-SCALAR VALUE IS REDACTED WITHOUT LOSING ITS SHAPE",
+      not _t_block_failures114, saw="\n".join(_t_block_failures114))
+
+_t_decoys114 = []
+for _t_kind114 in ("ConfigMap", "Deployment"):
+    for _t_field114 in _t_fields114:
+        _t_decoys114.append("apiVersion: v1\nkind: %s\n%s:\n  DATABASE_URL: %s\n" % (
+            _t_kind114, _t_field114, _t_payload114))
+_t_decoys114.append("apiVersion: example.invalid/v1\nkind: SecretLike\nspec:\n  data:\n"
+                    "    DATABASE_URL: %s\n" % _t_payload114)
+_t_eaten_decoys114 = [
+    _t_decoy114 for _t_decoy114 in _t_decoys114
+    if _rd114.scrub(_t_decoy114) != _t_decoy114
+]
+check("THE SAME FIELDS OUTSIDE A KUBERNETES SECRET ARE LEFT EXACTLY ALONE",
+      not _t_eaten_decoys114, saw="\n---\n".join(_t_eaten_decoys114))
+_t_multi114 = (
+    "kind: ConfigMap\ndata:\n  DATABASE_URL: " + _t_payload114 + "\n---\n"
+    "data:\n  DATABASE_URL: " + _t_payload114 + "\nkind: Secret\n")
+_t_multi_got114 = _rd114.scrub(_t_multi114)
+check("DOCUMENT BOUNDARIES KEEP A NEIGHBOURING CONFIGMAP VALUE AND REDACT ONLY THE SECRET",
+      _t_multi_got114.count(_t_payload114) == 1
+      and _t_multi_got114.count(_rd114.PLACEHOLDER) == 1,
+      saw=repr(_t_multi_got114))
+
+# ---- 115_realistic_prose_never_becomes_a_secret.py
+import re as _re115
+import redact as _rd115
+
+def _camel115(_word115):
+    _parts115 = [_part115 for _part115 in _re115.split(r"[^A-Za-z0-9]+", _word115)
+                 if _part115]
+    return _parts115[0] + "".join(_part115.title() for _part115 in _parts115[1:])
+
+_credential_words115 = sorted(_rd115._CREDENTIAL_END_WORDS)
+check("the realistic-prose sweep derived a non-trivial credential-word population: %d"
+      % len(_credential_words115), len(_credential_words115) >= 12,
+      saw=repr(_credential_words115))
+_type_failures115 = []
+for _word115 in _credential_words115:
+    _line115 = "field_%s: String!" % _word115
+    if _rd115.scrub(_line115) != _line115:
+        _type_failures115.append((_word115, _rd115.scrub(_line115)))
+check("EVERY GRAPHQL NON-NULL TYPE UNDER A CREDENTIAL-SHAPED FIELD STAYS READABLE",
+      not _type_failures115, saw=repr(_type_failures115[:8]))
+_label_failures115 = []
+for _word115 in _credential_words115:
+    _snake115 = "stored_%s" % _word115
+    _line115 = 'case %s = "%s"' % (_camel115(_snake115), _snake115)
+    if _rd115.scrub(_line115) != _line115:
+        _label_failures115.append((_word115, _rd115.scrub(_line115)))
+check("EVERY CANONICALLY IDENTICAL CAMEL/SNAKE LABEL PAIR STAYS READABLE",
+      not _label_failures115, saw=repr(_label_failures115[:8]))
+_unicode_words115 = sorted({
+    _spelling115 for _language115, _spellings115 in _rd115._HEADER_LANGS.items()
+    if _language115 != "English" for _spelling115 in _spellings115
+    if any(not _char115.isascii() for _char115 in _spelling115)
+    and "_" not in _spelling115 and " " not in _spelling115
+})
+check("the prose sweep derived non-ASCII words from every claimed language table: %d"
+      % len(_unicode_words115), len(_unicode_words115) >= 12,
+      saw=repr(_unicode_words115))
+_prose_failures115 = []
+for _word115 in _unicode_words115:
+    _line115 = "/// password: %s." % _word115
+    if _rd115.scrub(_line115) != _line115:
+        _prose_failures115.append((_word115, _rd115.scrub(_line115)))
+check("EVERY ORDINARY NON-ASCII PROSE WORD IN A SOURCE COMMENT STAYS READABLE",
+      not _prose_failures115, saw=repr(_prose_failures115[:8]))
+_sql_failures115 = []
+for _word115 in _credential_words115:
+    _sql115 = ("COMMENT ON COLUMN demo.%s_prefix IS\n"
+               "    'DELETE /v1/example safely';" % _word115)
+    if _rd115.scrub(_sql115) != _sql115:
+        _sql_failures115.append((_word115, _rd115.scrub(_sql115)))
+check("EVERY SQL COMMENT ON A CREDENTIAL-SHAPED OBJECT STAYS READABLE",
+      not _sql_failures115, saw=repr(_sql_failures115[:8]))
+_prefixes115 = sorted(_rd115._NONCREDENTIAL_KEY_PREFIXES)
+check("the code-identifier sweep read every non-credential prefix from the source: %d"
+      % len(_prefixes115), len(_prefixes115) >= 4, saw=repr(_prefixes115))
+_code_failures115 = []
+for _prefix115 in _prefixes115:
+    for _shape115 in ('local %s_key = "tag:" .. make(value)' % _prefix115,
+                      '// %s_key: %s_id.' % (_prefix115, _prefix115)):
+        if _rd115.scrub(_shape115) != _shape115:
+            _code_failures115.append((_shape115, _rd115.scrub(_shape115)))
+check("EVERY DERIVED LOCAL KEY AND DOCUMENTED FIELD IDENTIFIER STAYS READABLE",
+      not _code_failures115, saw=repr(_code_failures115[:8]))
+_synthetic115 = "Zz7qLp2vBnT9wXk3Rf1s"
+_secrets115 = (
+    'apiKey: "%s"' % _synthetic115, 'case accessToken = "%s"' % _synthetic115,
+    '/// password: %s' % _synthetic115, 'api_key IS %s' % _synthetic115,
+    'local api_key = "%s" .. suffix' % _synthetic115, '// api_key: %s' % _synthetic115,
+)
+_leaks115 = [_line115 for _line115 in _secrets115
+             if _synthetic115 in _rd115.scrub(_line115)]
+check("ALL SIX NEAR-NEIGHBOUR ACTUAL SECRET VALUES ARE STILL REDACTED",
+      not _leaks115, saw=repr(_leaks115))
 # ============================ end of the folded surgical pool
 
 

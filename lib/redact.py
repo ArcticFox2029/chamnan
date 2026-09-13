@@ -79,7 +79,19 @@ def _is_a_plain_word(value):
     with `(`, and the assignment rules still cover `password = {...}` if one ever did.
     """
     value = value or ""
-    return bool(_PLAIN_WORD.match(value)) or value[:1] in "([{"
+    if bool(_PLAIN_WORD.match(value)) or value[:1] in "([{":
+        return True
+    # 🐛 [2026-09-13] R12.26: the prose guard was ASCII-only, so an ordinary translated word
+    # beside a credential label was treated as the value itself. The R7 external corpus caught
+    # `password: contraseña.`; the same defect applies to every alphabetic script. Keep the old
+    # length and hyphen bounds, but let Python's Unicode alphabet test answer what a letter is.
+    bare = value.rstrip(".,;:!?)]}\u2026\"'`")
+    parts = bare.split("-")
+    return (any(not char.isascii() for char in bare)
+            and 1 <= len(parts) <= 4
+            and all(2 <= len(part) <= 18
+                    and all(unicodedata.category(char)[:1] in ("L", "M") for char in part)
+                    for part in parts))
 
 
 def _is_a_type_annotation(match):
@@ -132,7 +144,7 @@ _DECLARATION_KEYWORD = re.compile(
 _PRIMITIVE_TYPE = re.compile(
     r"^(?:string|str|int|integer|number|num|float|double|decimal|bool|boolean|byte|bytes"
     r"|char|long|short|any|unknown|never|void|null|nil|none|object|date|datetime|uuid|guid"
-    r"|list|dict|map|array|set|tuple|error|time|duration|interface\{\})[;,)\]}]*$", re.I)
+    r"|list|dict|map|array|set|tuple|error|time|duration|interface\{\})!?[;,)\]}]*$", re.I)
 
 # A dotted run of identifier components with at least one capitalised: `P256.Signing.PrivateKey`,
 # `System.Security.Cryptography.RSA`. Swift, C# and Java spell a fully-qualified type this way, and
@@ -1309,6 +1321,48 @@ def _full_key_at(match):
     return text[j:i] + (match.group(1) or "")
 
 
+def _inside_sql_comment_on(match):
+    """True when this apparent `key IS value` is the object named by SQL `COMMENT ON`."""
+    before = match.string[:match.start()]
+    statement = before[before.rfind(";") + 1:]
+    return bool(re.search(r"\bCOMMENT\s+ON\b", statement, re.I | re.S))
+
+
+_NONCREDENTIAL_KEY_PREFIXES = frozenset(("cache", "list", "partition", "idempotency"))
+
+
+def _has_noncredential_key_prefix(match):
+    key = _bare_key(_full_key_at(match))
+    return key.split("_", 1)[0] in _NONCREDENTIAL_KEY_PREFIXES
+
+
+def _is_local_key_derivation(match):
+    """True for a Lua local key assembled from a short label and a following concatenation."""
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    prefix = match.string[line_start:match.start()]
+    line_tail = match.string[match.end():].split("\n", 1)[0]
+    return bool(_has_noncredential_key_prefix(match)
+                and re.search(r"\blocal\s+$", prefix)
+                and re.match(r"\s*\.\.", line_tail))
+
+
+def _is_documented_field_name(match):
+    """True for an identifier named in a source comment, rather than a value assigned in code."""
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    prefix = match.string[line_start:match.start()]
+    value = (match.group(2) or "").strip().strip("\"'").rstrip(".,;:)]}")
+    return (_has_noncredential_key_prefix(match)
+            and bool(re.match(r"\s*(?://|#|--)", prefix))
+            and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*_id", value)))
+
+
+def _is_documented_prose(match):
+    """True when a source comment describes a credential with an ordinary prose word."""
+    line_start = match.string.rfind("\n", 0, match.start()) + 1
+    prefix = match.string[line_start:match.start()]
+    return bool(re.match(r"\s*(?://+|#|--|/\*+|\*)", prefix)) and _is_a_plain_word(match.group(2))
+
+
 # The values people actually leave in place. Short and closed on purpose: every entry is a real
 # default shipped by a real product or a top-of-the-list password, and nothing here is a word
 # a form label or a translation table would hold. `secrets`, `credential` and `token` are
@@ -1344,7 +1398,18 @@ def _value_is_the_key_itself(key_part, value):
     # `isalpha()` on that and answered False — the guard was written, wired into both rules, and
     # still did nothing. Its own test caught it.
     word = value.strip().strip("\"'").strip(",;:)]}\"' ").lower()
-    if not word or not word.isalpha():
+    if not word:
+        return False
+    # 🐛 [2026-09-13] R12.26: Codable/JSON-key enums spell one label twice using the two naming
+    # conventions on either side: `accessToken = "access_token"`. Comparing only alphabetic
+    # words made the underscore disqualify the value before the names were compared. Canonical
+    # alphanumeric equality covers camel/snake/kebab siblings without exempting a different value.
+    canonical_key = re.sub(r"[^a-z0-9]+", "", _bare_key(key_part))
+    canonical_word = re.sub(r"[^a-z0-9]+", "", word)
+    if (canonical_word and canonical_word == canonical_key
+            and word not in _DEFAULT_CREDENTIALS):
+        return True
+    if not word.isalpha():
         return False
     # \U0001f41b [2026-09-09] `db_password = "password"` has a key with another component, so the
     # rule below reads it as a label — and it is the single commonest real weak credential there is.
@@ -1598,6 +1663,104 @@ def _is_only_a_template(value):
     return bool(re.fullmatch(r"\$?\{\{?[^{}]*\}\}?", stripped))
 
 
+# 🐛 [2026-09-13] A Kubernetes Secret says what its values are structurally, but every
+# credential rule above asks the KEY to say it again. `data.DATABASE_URL`, `data.DSN`,
+# `data.CONNECTION_STRING` and `data.KUBECONFIG` therefore carried their base64 payloads through
+# untouched: none of those names contains password/secret/key/token/cred. R7 found the first in an
+# external 800-file corpus; R12.36 selected it because a known Secret value surviving `scrub` is a
+# defect, not a masking-policy experiment.
+#
+# Parse only the small YAML fact needed here: a top-level `kind: Secret`, then the block-form direct
+# mapping under either Kubernetes value field. This is deliberately not a general YAML parser. The
+# document boundary and indentation checks keep a ConfigMap, a nested example and an ordinary
+# `data:` mapping out; the field tuple is shared with check 114, which exercises every member.
+_KUBERNETES_SECRET_VALUE_FIELDS = ("data", "stringData")
+_YAML_DOCUMENT_BOUNDARY = re.compile(r"^(?:---|\.\.\.)(?:[ \t]+#.*)?[ \t]*$")
+_KUBERNETES_SECRET_KIND = re.compile(
+    r"^kind[ \t]*:[ \t]*(['\"]?)Secret\1[ \t]*(?:#.*)?$")
+_KUBERNETES_SECRET_FIELD = re.compile(
+    r"^(?:" + "|".join(_KUBERNETES_SECRET_VALUE_FIELDS) + r")[ \t]*:[ \t]*(?:#.*)?$")
+_YAML_MAPPING_VALUE = re.compile(
+    r"^([ \t]+(?:['\"][^'\"\n]+['\"]|[^:#\n][^:\n]*?)[ \t]*:[ \t]*)(.*?)(\r?\n?)$")
+
+
+def _redacted_yaml_scalar(value):
+    """A YAML scalar replaced while its quote style and trailing comment remain readable."""
+    if not value.strip() or value.lstrip().startswith("#"):
+        return None
+    leading = value[:len(value) - len(value.lstrip())]
+    trailing = value[len(value.rstrip()):]
+    body = value.strip()
+    if body[:1] in "'\"":
+        quote = body[0]
+        close = body.rfind(quote)
+        if close > 0 and (not body[close + 1:].strip()
+                          or body[close + 1:].lstrip().startswith("#")):
+            return leading + quote + PLACEHOLDER + quote + body[close + 1:] + trailing
+    comment = re.search(r"[ \t]+#", body)
+    suffix = body[comment.start():] if comment else ""
+    return leading + PLACEHOLDER + suffix + trailing
+
+
+def _redact_kubernetes_secret_data(text):
+    """Redact block-form `data`/`stringData` values in a YAML Kubernetes Secret."""
+    lines = text.splitlines(keepends=True)
+    if not lines:
+        return text
+    starts = [0]
+    for n, line in enumerate(lines):
+        if n and _YAML_DOCUMENT_BOUNDARY.match(line.rstrip("\r\n")):
+            starts.append(n)
+    starts.append(len(lines))
+    out = list(lines)
+    for first, end in zip(starts, starts[1:]):
+        bodies = [line.rstrip("\r\n") for line in lines[first:end]]
+        if not any(_KUBERNETES_SECRET_KIND.match(body) for body in bodies):
+            continue
+        i = first
+        while i < end:
+            body = lines[i].rstrip("\r\n")
+            if not _KUBERNETES_SECRET_FIELD.match(body):
+                i += 1
+                continue
+            i += 1
+            while i < end:
+                child = lines[i]
+                child_body = child.rstrip("\r\n")
+                if not child_body.strip() or child_body.lstrip().startswith("#"):
+                    i += 1
+                    continue
+                indent = len(child_body) - len(child_body.lstrip(" \t"))
+                if indent == 0:
+                    break
+                match = _YAML_MAPPING_VALUE.match(child)
+                if not match:
+                    i += 1
+                    continue
+                replacement = _redacted_yaml_scalar(match.group(2))
+                if replacement is None:
+                    i += 1
+                    continue
+                block_scalar = match.group(2).lstrip().startswith(("|", ">"))
+                out[i] = (match.group(1) + match.group(2) + match.group(3) if block_scalar
+                          else match.group(1) + replacement + match.group(3))
+                i += 1
+                if block_scalar:
+                    while i < end:
+                        continuation = lines[i]
+                        continuation_body = continuation.rstrip("\r\n")
+                        continuation_indent = (
+                            len(continuation_body) - len(continuation_body.lstrip(" \t")))
+                        if continuation_body.strip() and continuation_indent <= indent:
+                            break
+                        if continuation_body.strip():
+                            newline = continuation[len(continuation.rstrip("\r\n")):]
+                            out[i] = continuation_body[:continuation_indent] + PLACEHOLDER + newline
+                        i += 1
+            continue
+    return "".join(out)
+
+
 # \U0001f41b [2026-09-09] `SECRET_WORDS` is a plain ASCII alternation, so ONE non-Latin look-alike
 # in a key turned every rule anchored on it off at once — assignment, bare, call, YAML, rocket,
 # flag and list together. Reproduced: Cyrillic U+0430 for the `a` in `password` and the value left
@@ -1654,6 +1817,7 @@ def scrub(text, windowed=True):
     """
     if not text:
         return text
+    text = _redact_kubernetes_secret_data(text)
     for pattern in PATTERNS + LATE_PREFIXES:
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
         # as an Authorization header while the credential goes. Groupless patterns replace whole.
@@ -1692,7 +1856,8 @@ def scrub(text, windowed=True):
     # left intact, against six of six real credentials replaced.
     text = COPULA_SECRET.sub(
         lambda m: m.group(0)
-        if (_is_a_plain_word(m.group(2))
+        if (_inside_sql_comment_on(m)
+            or _is_a_plain_word(m.group(2))
             or PLACEHOLDER in m.group(2)
             or m.group(2).lower().rstrip(".,;:") in SCHEME_WORDS
             or _is_only_a_template(m.group(2))
@@ -1764,6 +1929,9 @@ def scrub(text, windowed=True):
         or (m.group(1).rstrip().endswith(":")
             and (_is_a_type_annotation(m) or _declares_a_type(m)))
         or _value_is_the_key_itself(_full_key_at(m), m.group(2))
+        or _is_local_key_derivation(m)
+        or _is_documented_field_name(m)
+        or _is_documented_prose(m)
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
         else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
         + " " * 0, chunk)
