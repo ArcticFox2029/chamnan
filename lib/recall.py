@@ -36,6 +36,19 @@ INDEX = "state/store_index.json"
 
 # What a store IS, in the order a reader should see them. A rule outranks a lesson outranks a
 # session note, because a rule is a standing constraint and a session note is one day's context.
+#
+# The last two entries name a specific FILE rather than a folder -- see `paths_for()` just below
+# for what that changes. `state/research/` also holds five uncurated round logs, a generated
+# INDEX/STATE_OF_THE_RESEARCH pair, and a 459-file `old/` archive; only these two curated files are
+# meant to answer "should I research X", so they are addressed by name rather than swept in with
+# everything beside them.
+#
+# Weighed by how directly each answers that question. A dead end is the strongest possible
+# answer -- someone already asked and measured why not, which reads as closer to a settled
+# DECISION than an open one, so it sits just under `rule` and just over `decision`/`lesson`. A
+# backlog entry answers the weaker "is this already queued": the question stays open, so it sits
+# between `thread` (one day's open context) and `skill` (a followed procedure) rather than beside
+# either of the settled kinds above it.
 KINDS = (
     ("memory/rules", "rule", 3.0),
     ("memory/decisions", "decision", 2.5),
@@ -43,6 +56,8 @@ KINDS = (
     ("skills", "skill", 2.0),
     ("threads", "thread", 1.5),
     ("sessions", "session", 1.0),
+    ("state/research/chamnan_research_dead_ends.md", "dead_end", 2.75),
+    ("state/research/chamnan_research_backlog.md", "backlog", 1.75),
 )
 
 # Where a match is worth more. A term in the title is the document being ABOUT that thing; a term
@@ -50,6 +65,14 @@ KINDS = (
 FIELD_WEIGHT = {"title": 6.0, "blurb": 3.0, "body": 1.0}
 
 MAX_BODY_TERMS = 400        # per document, by frequency: the tail of a long skill is noise
+# Sections, not per-document: measured on this repository's own two research files, a section
+# averages ~140 unique terms and rarely exceeds 400 -- so `MAX_BODY_TERMS` applied per section
+# barely trims anything, and 99 short sections then cost nearly as much JSON as their 13,800
+# uncapped unique terms combined, instead of the ~400-term compression the constant above exists
+# to give a single document. `MAX_SECTION_BODY_TERMS` gives each section the same kind of haircut,
+# sized to what a SECTION actually needs rather than a whole file: measured to keep the index
+# comfortably under both the corpus it indexes and roughly half again its pre-sectioning size.
+MAX_SECTION_BODY_TERMS = 60
 SNIPPET = 90
 
 _WORD = re.compile(r"[a-z0-9][a-z0-9_.-]*")
@@ -111,6 +134,83 @@ def _needs_substring(line):
 def _non_ascii_lines(text, cap=4000):
     """Only the lines a substring query could ever need."""
     return "\n".join(ln for ln in text.split("\n") if _needs_substring(ln))[:cap]
+
+
+def paths_for(ws_dir, folder):
+    """The store file(s) one `KINDS` entry resolves to.
+
+    Most entries name a directory and mean "every `.md` file under it". A `KINDS` entry can also
+    name one file directly -- `state/research/`'s two curated stores are why this exists -- and
+    that file is returned on its own, not swept together with whatever else sits beside it.
+    """
+    base = ws_dir / folder
+    if base.is_dir():
+        return sorted(base.rglob("*.md"))
+    if base.is_file():
+        return [base]
+    return []
+
+
+_SECTION_HEADING = re.compile(r"^## (.+)$", re.MULTILINE)
+
+
+def _sectioned_entries(ws_dir, path, kind, weight):
+    """One entry per `## ` heading in `path`, instead of one entry for the whole file.
+
+    Built for the two curated files in `state/research/`: each is well over 100 KB, so indexed
+    whole either one would out-score nearly every other document on any query while telling the
+    reader nothing about WHERE in the file the answer sits. Both files already carry their own
+    `## `-heading quick index for exactly that reason -- the file's own evidence that the section,
+    not the document, is the unit a reader wants -- so this reuses that unit rather than inventing
+    another.
+    """
+    if not ws.inside(path, ws_dir):
+        return []
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return []
+    text = redact.scrub(text)
+    heads = list(_SECTION_HEADING.finditer(text))
+    mtime = path.stat().st_mtime_ns
+    rel = path.relative_to(ws_dir).as_posix()
+    out = []
+    for i, m in enumerate(heads):
+        heading = m.group(1).strip()
+        # The file's own table of contents, not a section of content: indexed as an entry it would
+        # repeat every other heading's title inside one document, which then out-ranks the very
+        # section it points at on any query that names more than one angle.
+        if heading.lower().startswith("quick index"):
+            continue
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        body_text = text[m.end():end]
+        blurb = redact.scrub(_blurb_of(body_text, heading))
+        counted = {}
+        for t in terms(body_text):
+            if len(t) > 2:
+                counted[t] = counted.get(t, 0) + 1
+        body = dict(sorted(counted.items(), key=lambda kv: -kv[1])[:MAX_SECTION_BODY_TERMS])
+        out.append({
+            # `#N` rather than the heading text: a fragment carrying the full heading would store
+            # it twice (once here, once in `title`) for every one of ~140 sections across the two
+            # files, which is the kind of per-entry cost this index cannot absorb without breaking
+            # the "stays under the corpus" property tests hold it to.
+            "path": f"{rel}#{i + 1}",
+            "kind": kind,
+            "weight": weight,
+            "title": heading,
+            "blurb": blurb,
+            "body": body,
+            "text": _non_ascii_lines(body_text),
+            "mtime": mtime,
+        })
+    return out
+
+
+def _file_entries(ws_dir, path, kind, weight):
+    """`_entry()`, wrapped to return a list -- so `build()` can treat it like `_sectioned_entries`."""
+    e = _entry(ws_dir, path, kind, weight)
+    return [e] if e else []
 
 
 def _entry(ws_dir, path, kind, weight):
@@ -200,12 +300,13 @@ def build(ws):
     """Walk the stores once and return the index. The only function here that reads them."""
     entries, newest = [], 0
     for folder, kind, weight in KINDS:
-        base = ws / folder
-        if not base.is_dir():
-            continue
-        for path in sorted(base.rglob("*.md")):
-            e = _entry(ws, path, kind, weight)
-            if e:
+        # A `KINDS` entry naming one file directly (not a directory) is split into sections --
+        # see `paths_for()` and `_sectioned_entries()`.
+        sectioned = not (ws / folder).is_dir()
+        for path in paths_for(ws, folder):
+            new = _sectioned_entries(ws, path, kind, weight) if sectioned \
+                else _file_entries(ws, path, kind, weight)
+            for e in new:
                 entries.append(e)
                 newest = max(newest, e["mtime"])
     entries += _tool_entries(ws)
@@ -240,10 +341,7 @@ def stale_by(ws, index):
     newest = index.get("newest", 0) if isinstance(index, dict) else 0
     behind = 0
     for folder, _kind, _w in KINDS:
-        base = ws / folder
-        if not base.is_dir():
-            continue
-        for path in base.rglob("*.md"):
+        for path in paths_for(ws, folder):
             try:
                 if path.stat().st_mtime_ns > newest:
                     behind += 1

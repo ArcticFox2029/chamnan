@@ -1683,8 +1683,9 @@ IGNORE_LINES = [
     "state/churn-*.json",
     "",
     "# Derived the same way, and for the same reason: `chamnan-recall --reindex` rebuilds it from",
-    "# the stores in about 30 ms. It is ~90% of the size of the documents it indexes and changes",
-    "# every time any of them does, so committing it would put the whole corpus in the diff twice.",
+    "# the stores in about 30 ms. It is ~75% of the size of the documents it indexes (was ~90%",
+    "# before the two research stores were split into per-section entries) and changes every time",
+    "# any of them does, so committing it would put the whole corpus in the diff twice.",
     "state/store_index.json",
 ]
 

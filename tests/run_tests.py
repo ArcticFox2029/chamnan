@@ -33492,8 +33492,11 @@ _sh95.rmtree(_t_tmp95, ignore_errors=True)
 # a claim about a corpus, so it is measured on a corpus: this repository's own workspace, and
 # skipped rather than guessed at where there is not one.
 _t_real95 = ROOT.parent.parent / ".chamnan"
-_t_docs95 = [p for folder, _k, _w in _rc95.KINDS for p in (_t_real95 / folder).rglob("*.md")
-             if (_t_real95 / folder).is_dir()]
+# `paths_for()`, not a bare `.rglob()`: two `KINDS` entries now name a single file rather than a
+# directory (`recall.paths_for`'s own docstring says which), and a bare `.rglob()` guarded by
+# `.is_dir()` would silently drop both from this corpus while `build()` below still indexes them —
+# understating the corpus and risking a false FAIL on the ratio check just underneath.
+_t_docs95 = [p for folder, _k, _w in _rc95.KINDS for p in _rc95.paths_for(_t_real95, folder)]
 if len(_t_docs95) < 20:
     skip("  · this workspace has %d store documents — too few to measure a ratio on" % len(_t_docs95))
 else:
