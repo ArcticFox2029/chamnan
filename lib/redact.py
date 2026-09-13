@@ -295,9 +295,52 @@ LATE_PREFIXES = [
     re.compile(r"(?<![A-Za-z0-9_-])dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9_-]{20,}"),
 ]
 
+# [R8 2026-09-13, closed out] The non-English credential words the ASSIGNMENT path
+# (`key = "value"`, `key: value`, `{"key": "value"}`) needs, and the same words `_HEADER_BARE`
+# (below, ~line 2190) needs for CSV/table header-row detection -- R7 measured these words work for
+# a header row but not for an assignment, same word different syntax, one path fixed on 2026-09-09
+# and the sibling never touched. Defined here, ahead of `SECRET_WORDS`, and `_HEADER_BARE` reads
+# THIS constant instead of retyping it: Python executes a module top to bottom, so a name already
+# bound here is in scope by the time `_HEADER_BARE` is built, however many lines later that is --
+# there was never an ordering problem, only an unnoticed option to share. There is now exactly one
+# non-English credential-word list in this file; reconciling the two copies surfaced a real drift
+# between them, kept rather than dropped: `_HEADER_BARE` alone had `parola[_ -]?chiave` (Italian
+# for "keyword"), folded into `_HEADER_BARE`'s own definition below since it is a header-only term.
+#
+# Arabic and Hindi, added 2026-09-13 to close the two languages R7 and R8 both measured at 0/6
+# recall on the assignment path (and 0/0 everywhere else, since neither language had a word typed
+# in anywhere in the file). `كلمة المرور` is the standard modern Arabic for "password" -- the term
+# Arabic-locale Google, Facebook and Windows all use -- and it is two words, unlike every other
+# entry here. `पासवर्ड` is the Hindi transliteration of "password", the spelling real Hindi-locale
+# software actually shows on a login screen, not the rarer, more formal `कूटशब्द`.
+#
+# The two-word Arabic case needs nothing special from `re` beyond the separator handling already
+# used for French below. Arabic reads right-to-left on screen, but Unicode stores and `re` matches
+# CODEPOINTS in logical (typed) order, not visual order, so `كلمة` (word) still precedes `المرور`
+# (passing/transit) in the string exactly as it was typed -- no bidi-aware regex logic is needed to
+# match it left-to-right the normal way. What the two words DO need is a separator class: a
+# compound identifier would join them with `_` or `-`, and a JSON/YAML string key would join them
+# with an ordinary space, so both are accepted here the same way `mot[_ -]?de[_ -]?passe` already
+# accepts either for French.
+_NONENGLISH_SECRET_WORDS_BY_SCRIPT = {
+    "Latin": (
+        r"contrase[ñn]a|clave|senha|palavra[_ -]?passe|mot[_ -]?de[_ -]?passe|motdepasse"
+        r"|kennwort|passwort|geheimnis|parola|segreto|wachtwoord|geheim"
+        r"|has[lł]o|[şs]ifre|m[aậ]t[_ -]?kh[aẩ]u|matkhau|kata[_ -]?sandi"
+    ),
+    "Thai": r"รหัสผ่าน|รหัส",
+    "CJK": r"密码|密碼|口令|秘密|パスワード|暗証番号",
+    "Hangul": r"비밀번호|암호",
+    "Cyrillic": r"пароль|секрет|ключ",
+    "Arabic": r"كلمة[_ -]?المرور",
+    "Devanagari": r"पासवर्ड",
+}
+_NONENGLISH_SECRET_WORDS = "|".join(_NONENGLISH_SECRET_WORDS_BY_SCRIPT.values())
+
+
 # The names that mean "a credential lives here". Written once and shared by the assignment
 # patterns below, which had drifted -- one had gained spellings the other had not.
-SECRET_WORDS = (
+_LATIN_SECRET_WORDS = (
     # Each one a whole COMPONENT of the name, with a plural allowed. These were bare substrings
     # while `key` and `auth` beside them were carefully bounded -- the same bug, left in the words
     # nobody re-read. Measured: `self.tokenizer_config = AutoTokenizer.from_pretrained(model_name)`
@@ -471,7 +514,55 @@ SECRET_WORDS = (
     # said so.
     r"|(?<![A-Za-z])(?:apikey|secretkey|authtoken|accesstoken"
     r"|sessiontoken|refreshtoken)s?(?![A-Za-z])"
+    # Latin-script translations belong on the ASCII route too. Language is not a character set:
+    # `passwort`, `parola`, `kata_sandi`, and the unaccented alternatives in the classes below are
+    # non-English and pure ASCII. Grouping them with the Latin script is what keeps that route from
+    # silently reopening the leak the vocabulary closed.
+    r"|(?:" + _NONENGLISH_SECRET_WORDS_BY_SCRIPT["Latin"] + r")(?![A-Za-z])"
 )
+
+# The vocabulary is grouped by the script its words occupy, never by language. The full public
+# constant remains available for callers and checks. Unspaced scripts get their own key-suffix
+# method: ordinary Thai, Han/Kana and Hangul compounds do not insert a separator after the
+# credential word. Spaced scripts keep the existing boundary behaviour that protects
+# `passwordless` and `password_hash_algorithm`.
+_UNSPACED_SCRIPT_SUFFIXES = {
+    "Thai": r"[\u0e00-\u0e7f]*",
+    "CJK": r"[\u3040-\u30ff\u31f0-\u31ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]*",
+    "Hangul": r"[\u1100-\u11ff\u3130-\u318f\uac00-\ud7af]*",
+}
+_SPACED_SCRIPT_BOUNDARIES = {
+    "Cyrillic": r"(?![\u0400-\u052f\u2de0-\u2dff\ua640-\ua69f])",
+    "Arabic": r"(?![\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff])",
+    "Devanagari": r"(?![\u0900-\u097f\ua8e0-\ua8ff])",
+}
+_SECRET_WORDS_BY_SCRIPT = {
+    "Latin": _LATIN_SECRET_WORDS,
+    **{name: words for name, words in _NONENGLISH_SECRET_WORDS_BY_SCRIPT.items()
+       if name != "Latin"},
+}
+
+def _secret_words_for_scripts(scripts):
+    """The credential-word pattern for `scripts`, with each script's own boundary method."""
+    parts = []
+    for script in scripts:
+        words = _SECRET_WORDS_BY_SCRIPT[script]
+        suffix = _UNSPACED_SCRIPT_SUFFIXES.get(
+            script, _SPACED_SCRIPT_BOUNDARIES.get(script, ""))
+        parts.append(r"(?:" + words + r")" + suffix)
+    return "|".join(parts) or r"(?!)"
+
+
+# 🐛 [2026-09-13] The earlier dead-end note blamed `text.isascii()` for an O(n) scan. That was
+# false: CPython stores the ASCII state in the string header, and 60-character and 120,000-character
+# measurements were both about 0.1 microseconds. The cost is the large Latin alternation, not script
+# detection. A one-pass source-script router was implemented and measured after profiling the whole
+# function: median CPU recovered 4.2% on ASCII and 4.5% on Thai-heavy configuration, but made mixed-
+# script input 3.8% slower. Pure Thai prose gained 84%, but one ordinary Latin-valued assignment
+# activates the Latin route and removes that advantage. Runtime dispatch was therefore reverted as
+# complexity inside the noise. The script grouping remains because it gives unspaced scripts their
+# correct substring method, while spaced scripts retain a right boundary.
+SECRET_WORDS = _secret_words_for_scripts(tuple(_SECRET_WORDS_BY_SCRIPT))
 
 # A compiled regular expression is not a credential, whatever it is called. `TOKEN_RE`,
 # `TOKEN_LEAK_RE` and `SECRET_PATTERN` are the names a scanner gives its own patterns — including
@@ -2187,13 +2278,14 @@ _HEADER_BARE = (
     # `ansible_ssh_pass` column cannot be taken back.
     r"password|passwd|pwd|passphrase|secret|token|api[_ -]?key|apikey|key|auth"
     r"|[A-Za-z0-9]+[_ -]pass"
-    # Spanish, Portuguese, French, German, Italian, Dutch, Polish, Turkish, Vietnamese, Indonesian
-    r"|contrase[ñn]a|clave|senha|palavra[_ -]?passe|mot[_ -]?de[_ -]?passe|motdepasse"
-    r"|kennwort|passwort|geheimnis|parola|segreto|wachtwoord|geheim"
-    r"|has[lł]o|[şs]ifre|parola[_ -]?chiave|m[aậ]t[_ -]?kh[aẩ]u|matkhau|kata[_ -]?sandi"
-    # Thai, Chinese, Japanese, Korean, Russian
-    r"|รหัสผ่าน|รหัส|密码|密碼|口令|秘密|パスワード|暗証番号|비밀번호|암호"
-    r"|пароль|секрет|ключ"
+    # The same non-English credential words the assignment path uses (`_NONENGLISH_SECRET_WORDS`,
+    # defined once, near `SECRET_WORDS`, above) -- this used to be a second, hand-typed copy of the
+    # same list, and reconciling the two found they had already drifted: this header-only line kept
+    # `parola[_ -]?chiave` (Italian "keyword"), which is a header-naming convention rather than a
+    # translation of "password" and so stays a header-only addition rather than joining the shared
+    # list.
+    r"|" + _NONENGLISH_SECRET_WORDS +
+    r"|parola[_ -]?chiave"
     r"|credential|credentials|cred|creds|storepass|keypass"
     r"|private[_ -]?key|access[_ -]?key|secret[_ -]?key"
     r"|card|card[_ -]?number|pan|iban|cpf|aadhaar|aadhar|uidai|uid"
@@ -2243,6 +2335,8 @@ _HEADER_LANGS = {
     "Japanese": ("パスワード", "暗証番号"),
     "Korean": ("비밀번호", "암호"),
     "Russian": ("пароль", "секрет", "ключ"),
+    "Arabic": ("كلمة المرور", "كلمة_المرور"),
+    "Hindi": ("पासवर्ड",),
 }
 
 _HEADER_WORD = re.compile(
