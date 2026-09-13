@@ -17,8 +17,9 @@ Evidence comes in three strengths, and they are not interchangeable:
             `CLAUDE_CODE_ENTRYPOINT`); NOT verified for any other agent, so nothing else claims it.
   REPO      a file or directory in the repository that the agent reads. Proves the repository is
             set up for that agent, not that it is running.
-  HOME      a config directory under the user's home. Proves the agent is installed on this
-            machine, which is the weakest of the three and the easiest to be stale.
+  HOME      a config directory under the user's home. Proves configuration was found for that
+            agent at some point, not that it is installed or runnable now — a home directory
+            outlives an uninstall. The weakest of the three and the easiest to be stale.
 
 Anything unverified is recorded as the convention it is, not asserted as fact. Where a signal
 could not be measured on a real installation, the comment beside it says so.
