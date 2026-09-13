@@ -1282,11 +1282,25 @@ def main():
         # case that mostly does not occur.
         offered = ws.available_update(HERE.parent)
         if offered:
-            out.append(f"\n**chamnan {offered} is available** — this session is running "
-                       f"{ws.plugin_version(HERE.parent)}. Nothing has been changed. To take it, say so "
-                       f"and I will run `claude plugin update chamnan`; it applies on the next session. "
-                       f"Once one repository is on the new version, every other repository brings its "
-                       f"own workspace up to date by itself the next time it is opened.\n")
+            _running_now = ws.plugin_version(HERE.parent)
+            if offered == _running_now:
+                # available_update() returns the RUNNING version, unchanged, for the case where the
+                # marketplace offers the same version string but different files (see its docstring,
+                # "A THIRD case"). Phrased as an observation, not a claim of an update: this also
+                # fires when the user has edited their OWN installed copy, which nothing on local
+                # disk can tell apart from the marketplace having moved — so it says only what was
+                # measured, never asserts which side changed.
+                out.append(f"\n**The chamnan marketplace copy differs from the one installed, both "
+                           f"at version {offered}.** `claude plugin update` will not refresh a path "
+                           f"install while the version string is unchanged, so if the marketplace is "
+                           f"the one that moved, this is the only signal of it. If instead the "
+                           f"installed copy was edited directly, this is expected and can be ignored.\n")
+            else:
+                out.append(f"\n**chamnan {offered} is available** — this session is running "
+                           f"{_running_now}. Nothing has been changed. To take it, say so "
+                           f"and I will run `claude plugin update chamnan`; it applies on the next session. "
+                           f"Once one repository is on the new version, every other repository brings its "
+                           f"own workspace up to date by itself the next time it is opened.\n")
 
         newer = ws.reconcile_version(root, ws.plugin_version(HERE.parent))
         if newer:

@@ -1391,7 +1391,7 @@ def reconcile_version(root, running):
 
 
 def available_update(plugin_root):
-    """A newer version of this plugin already sitting in the marketplace on disk, or "".
+    """A newer build of this plugin already sitting in the marketplace on disk, or "".
 
     No network, and there will not be one: repository-local with no calls out is what the product
     is, and a session-start version ping to a server would contradict that for every user, not just
@@ -1410,6 +1410,22 @@ def available_update(plugin_root):
     not refresh it while the version string is unchanged, so the user's only signal that they are
     behind is this line. Both conventions are read, and a stale clone left over from a source that
     has since changed is simply one more candidate that reports nothing.
+
+    A THIRD case, closed 2026-09-13: the marketplace can offer the exact same version string while
+    its files differ from the installed copy. That is not a hypothetical — it is the common shape of
+    a path install, because nothing bumps the version number when a developer edits their own
+    marketplace checkout. Comparing version strings alone reports nothing here, which is worse than
+    the git-checkout case above: there, at least the version number eventually moves and the notice
+    appears. At an unchanged version it never would, silently, forever. So when — and only when — the
+    version is equal, the shipped code (`_shipped_content_hash`) is compared by content; the return
+    value is still the (identical) version string, and the caller tells the two cases apart by
+    comparing what came back against `plugin_version(plugin_root)`.
+
+    This can also fire on a false premise: a user who edits their OWN installed copy directly makes
+    it differ from the marketplace at the same version too, and nothing on local disk can say which
+    side actually moved. That is why the caller's wording (see `chamnan_session_start.py`) reports
+    what was observed — the two copies differ — rather than asserting an update is waiting; it stays
+    true either way, without needing to guess a direction this function cannot see.
     """
     try:
         root = Path(plugin_root).resolve()
@@ -1418,7 +1434,9 @@ def available_update(plugin_root):
             return ""
         name = json.loads((root / ".claude-plugin" / "plugin.json")
                           .read_text(encoding="utf-8-sig")).get("name", "")
-        best = ""
+        best = ""              # a real version bump found in the marketplace
+        same_version_note = "" # same version string, but the shipped files differ
+        own_hash = None        # computed at most once per call, and only if actually needed
         for ancestor in root.parents:
             if ancestor.name != "plugins":
                 continue
@@ -1433,18 +1451,100 @@ def available_update(plugin_root):
                     if name and data.get("name") != name:
                         continue
                     offered = str(data.get("version", ""))
-                    if not offered or _as_tuple(offered) <= _as_tuple(running):
+                    if not offered:
                         continue
-                    # The highest on offer, not the first found. With two registered sources for the
-                    # same plugin — the usual shape of a path install that was once a git one — the
-                    # order they happen to be read in must not decide which version is reported.
-                    if not best or _as_tuple(offered) > _as_tuple(best):
-                        best = offered
+                    offered_t, running_t = _as_tuple(offered), _as_tuple(running)
+                    if offered_t < running_t:
+                        continue
+                    if offered_t > running_t:
+                        # The highest on offer, not the first found. With two registered sources for
+                        # the same plugin — the usual shape of a path install that was once a git one
+                        # — the order they happen to be read in must not decide what is reported.
+                        if not best or _as_tuple(offered) > _as_tuple(best):
+                            best = offered
+                        continue
+                    # offered_t == running_t. A real version bump always outranks a same-version
+                    # content note, and only one note is ever needed, so once either is in hand the
+                    # (bounded but non-trivial) hashing below is skipped entirely.
+                    if best or same_version_note:
+                        continue
+                    if own_hash is None:
+                        own_hash = _shipped_content_hash(root) or ""
+                    if not own_hash:
+                        continue
+                    market_hash = _shipped_content_hash(manifest.parent.parent)
+                    if market_hash and market_hash != own_hash:
+                        same_version_note = running
             break
-        return best
+        return best or same_version_note
     except (OSError, ValueError, TypeError, RecursionError):
         pass
     return ""
+
+
+# The shipped subset of a plugin tree: the code chamnan actually executes. Everything else a
+# directory can hold — logs/, state/, tests/, tools/, docs/, a .git/ checkout under a development
+# tree — is session-local or maintainer-only noise that has nothing to do with what runs, and
+# hashing it would make an idle repository (which touches logs/ and state/ on every session) report
+# a "difference" that is not a code change at all. `adapters/` is named separately because some
+# plugin layouts keep it beside `lib/` rather than inside it; chamnan's own layout nests it under
+# `lib/`, where walking `lib/` already reaches it.
+_SHIPPED_SUBDIRS = ("lib", "bin", "hooks", "adapters")
+_HASH_SKIP_DIRS = {"__pycache__", ".git"}
+# A real chamnan install measures at ~100 files and a few MB across these directories (measured
+# 2026-09-13, this repository's own installed copy). The ceiling is set an order of magnitude above
+# that so an ordinary install is never bailed on, and low enough that a runaway tree — a symlink
+# cycle, build output copied in by mistake — is abandoned well before it could cost real time in a
+# session hook, which is a budget here, not a free surface.
+_HASH_MAX_FILES = 4000
+_HASH_MAX_BYTES = 64 * 1024 * 1024
+
+
+def _shipped_content_hash(plugin_root):
+    """A hash of the shipped code under plugin_root (see _SHIPPED_SUBDIRS), or "".
+
+    "" covers three different situations on purpose, and all three are meant to make the caller skip
+    reporting rather than guess: nothing shipped is present to hash, the tree could not be read, or
+    the tree exceeded the bound above. Never raises — every error this walk can hit (a permission
+    failure, a symlink loop, a file that vanishes between listing and reading) is read as "cannot
+    compare", not as "identical" or "different"; this runs from a session hook, where an unhandled
+    exception here has previously cost the whole session block its output (see running_version in
+    installs.py for the same failure shape).
+    """
+    try:
+        root = Path(plugin_root)
+        files = []
+        for sub in _SHIPPED_SUBDIRS:
+            base = root / sub
+            if not base.is_dir():
+                continue
+            for dirpath, dirnames, filenames in os.walk(base):
+                dirnames[:] = [d for d in dirnames if d not in _HASH_SKIP_DIRS]
+                for fname in filenames:
+                    fpath = Path(dirpath) / fname
+                    if fpath.is_symlink():
+                        continue
+                    files.append(fpath)
+                    if len(files) > _HASH_MAX_FILES:
+                        return ""
+        if not files:
+            return ""
+        # Sorted so the digest depends on which files are there and what they contain, never on the
+        # order the filesystem happened to list them in.
+        files.sort(key=lambda p: p.relative_to(root).as_posix())
+        digest = hashlib.sha256()
+        total_bytes = 0
+        for fpath in files:
+            data = fpath.read_bytes()
+            total_bytes += len(data)
+            if total_bytes > _HASH_MAX_BYTES:
+                return ""
+            digest.update(fpath.relative_to(root).as_posix().encode("utf-8", "surrogateescape"))
+            digest.update(b"\0")
+            digest.update(hashlib.sha256(data).digest())
+        return digest.hexdigest()
+    except (OSError, ValueError, RecursionError):
+        return ""
 
 
 # A marketplace registered from a local path is never copied under `plugins/marketplaces/`, so
