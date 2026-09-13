@@ -19,6 +19,98 @@ already reports the last released number while running newer code.
 
 ---
 
+## What's new in 1.26.0
+
+**Four commands were telling you things that were not true.** Each is fixed, and each is pinned by
+a check that was broken on purpose first to prove it can fail.
+
+### A file five modules import, reported as safe to change
+
+`chamnan-impact <file>` answers "what breaks if I touch this". For a file belonging to a repository
+nested inside your own — a vendored checkout, a submodule, a plugin you are developing in place —
+it said:
+
+```
+a file nothing imports and nothing has happened to is the cheap case — change it freely
+```
+
+The index deliberately does not cover a nested repository, and the command was reading that absence
+as "nothing depends on it". Those are different answers, and only one of them is honest. It now
+says the file belongs to a repository the index does not cover, and to ask from inside that
+repository instead.
+
+The same branch already refused the all-clear for a stale index and for a path not on disk. This
+was the third case with the identical shape and no guard.
+
+### A stale-knowledge warning that could never be satisfied
+
+`chamnan-age` reports stored knowledge naming a version no environment declares any more. It
+reported `python 3.9` as undeclared on a machine whose environment declares `3.9.6`.
+
+`3.9` is the name of a release series, not a vague patch number. A note saying a test "runs under
+the 3.9 interpreter" is precise about what its author meant, and the only way to satisfy the
+warning was to rewrite it as `3.9.6` — more specific than the author intended. A warning that never
+clears teaches you to skip the one in ten that is real.
+
+A claim whose dotted components are a prefix of the declared version is now covered, in either
+direction. `3.9` against a declared `3.10` still reports, because that is a genuinely stale claim.
+
+### "Installed" said about an agent that cannot run
+
+chamnan detects which coding agents are present by three strengths of evidence. The weakest is a
+configuration directory under your home. The legend said that "proves the agent is installed on
+this machine".
+
+It does not. A home directory outlives an uninstall — measured on a machine with two such
+directories and no runnable binary for either. It now says configuration was found at some point,
+and not that anything is installed or runnable now.
+
+The detector itself was already honest and is unchanged; it reports evidence `home`. Only the
+sentence describing it overclaimed.
+
+### An update that was invisible because the version string had not moved
+
+`chamnan-report` and the session banner tell you when a newer copy is waiting on disk. They
+compared version strings only, so a marketplace whose **files** changed while its version stayed
+the same reported nothing, and you were told you were current.
+
+This is the case that most needs the notice: `claude plugin update` will not refresh a path install
+while the version string is unchanged, so this line is the only signal you would get.
+
+It now compares the content of the shipped code — `lib/`, `bin/`, `hooks/`, `adapters/` — but only
+when the two versions are equal, so a real version bump costs nothing extra. Bounded, and it
+reports nothing rather than guessing on a tree it could not measure.
+
+Nothing on local disk can tell "the marketplace moved" apart from "you edited your own copy", so
+the notice says only what was measured and names both readings.
+
+### A candidate file removed mid-command
+
+`chamnan-candidates confirm 3` resolves a candidate by position, then reads it. If the file was
+removed in between — by the background hook's own dedup, or by a second command racing it — you got
+a raw `[Errno 2]`, or an uncaught traceback. Three readers lacked the guard that ten of their
+siblings in the same module already had.
+
+### chamnan-recall now searches what the project already refused
+
+`chamnan-recall <question>` answers "what do we already say about this". It searched rules,
+decisions, lessons, skills, threads and sessions — and not the two files written specifically to
+stop work being repeated: the refused-topics list and the research backlog.
+
+So the tool built to prevent repeated work could not see the record of what had already been
+decided. Both are now indexed by section rather than as whole files, so a match names the heading
+that answers you rather than the file it sits in. A refusal ranks just under a standing rule,
+because a refusal carries the measurement that produced it.
+
+### Also
+
+- A session reading one of chamnan's own skills is now recorded. It never was, which meant chamnan
+  could not see the event its own discovery numbers describe.
+- `chamnan-guard` names newly staged MCP server configuration, so a commit that grants a tool
+  execution or network capability is visible at review time. Advisory by default; `--strict` fails.
+- Two latent defects surfaced while fixing the above: a staleness scan and a corpus check both
+  silently skipped stores named by file rather than by folder.
+
 ## What's new in 1.25.1
 
 **A plugin can be installed more than once on the same machine, and the copy that answers is not

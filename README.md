@@ -119,7 +119,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.25.1](#whats-new-in-1251) · [Commands](#commands)
+[What's new in 1.26.0](#whats-new-in-1260) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -502,6 +502,39 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
+## What's new in 1.26.0
+
+**Four commands were telling you things that were not true.**
+
+`chamnan-impact` told you a file was safe to change freely when it belonged to a repository nested
+inside your own — a vendored checkout, a submodule, a plugin developed in place. The index does not
+cover a nested repository on purpose, and the command was reading that absence as "nothing depends
+on it". It now says the file belongs to a repository it cannot see, and to ask from inside that one.
+
+`chamnan-age` reported `python 3.9` as a version no environment declares, on a machine declaring
+`3.9.6`. A release-series name is a claim, not vagueness, and the only way to satisfy the warning
+was to make a note more specific than its author meant. A warning that never clears teaches you to
+skip the ones that matter. `3.9` against a declared `3.10` still reports.
+
+The evidence legend said a configuration directory under your home "proves the agent is installed".
+It does not — a home directory outlives an uninstall, measured here on two agents with no runnable
+binary. The detector was already honest; the sentence describing it was not.
+
+The update notice compared version strings only, so a marketplace whose **files** moved while its
+version stayed put reported nothing. That is the case that most needs the notice, because
+`claude plugin update` will not refresh a path install while the version is unchanged. It now
+compares the shipped code's content, and only when the versions are equal, so a real bump costs
+nothing extra.
+
+**`chamnan-recall` can now see what the project already refused.** It searched rules, decisions,
+lessons, skills, threads and sessions — and not the two files written specifically to stop work
+being repeated. The tool built to prevent repeated work could not read the record of what had
+already been decided. Both are now indexed by section, so a match names the heading that answers
+you.
+
+**`chamnan-guard` names newly staged MCP server configuration**, so a commit granting a tool
+execution or network capability is visible at review time. Advisory by default; `--strict` fails.
+
 ## What's new in 1.25.1
 
 **A plugin can be installed more than once on the same machine, and the copy that answers is not
