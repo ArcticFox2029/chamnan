@@ -396,10 +396,23 @@ def resolve(root, ident):
 def set_provenance(path, provenance):
     """Rewrite ONLY the `**Provenance:**` line of an existing candidate file, in place, leaving
     every other field untouched. Raises ValueError on an unknown provenance, same as `render()` --
-    a reviewer confirming or rejecting a candidate is still bound by the closed enum."""
+    a reviewer confirming or rejecting a candidate is still bound by the closed enum.
+
+    🐛 [2026-09-13] `read()`, `fields_of()` and the merge scans in `upsert`/`_same_habit` all guard
+    this same `read_text` against `OSError` -- this one and `set_status` beside it did not, so a
+    candidate resolved by number (`chamnan-candidates confirm 3`) and then removed by the
+    background hook's own dedup unlink (`upsert`, a few lines above) or by a second command in
+    another terminal surfaced a raw `[Errno 2] No such file or directory: '<path>'` instead of a
+    message naming what actually happened. Same store, same TOCTOU window `resolve()`'s own
+    docstring already names; guarded to match the siblings that already handle it.
+    """
     if provenance not in PROVENANCE:
         raise ValueError(f"unknown provenance: {provenance!r}")
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        raise OSError(f"{path.name} no longer exists -- it may have already been reviewed "
+                      f"by another command") from None
     new_line = f"**Provenance:** {provenance}"
     if _FIELD.search(text) and "provenance" in _fields(text):
         text = re.sub(r"^\*\*Provenance:\*\*.*$", new_line, text, count=1, flags=re.M)
@@ -409,10 +422,16 @@ def set_provenance(path, provenance):
 
 
 def set_status(path, status):
-    """Rewrite only `Status:`; provenance and the observation it describes stay untouched."""
+    """Rewrite only `Status:`; provenance and the observation it describes stay untouched.
+
+    Same guard as `set_provenance` beside it, same reason -- see its docstring."""
     if status not in STATUS:
         raise ValueError(f"unknown status: {status!r}")
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        raise OSError(f"{path.name} no longer exists -- it may have already been reviewed "
+                      f"by another command") from None
     new_line = f"**Status:** {status}"
     if "status" in _fields(text):
         text = re.sub(r"^\*\*Status:\*\*.*$", new_line, text, count=1, flags=re.M)

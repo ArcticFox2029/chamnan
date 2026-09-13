@@ -61,7 +61,16 @@ CONFIRMED_PROVENANCE = ("ai-confirmed", "user")
 
 
 def _title(path):
-    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    # 🐛 [2026-09-13] `candidates.fields_of` reads the same file the same way and already guards
+    # this against OSError, returning a degraded value rather than raising -- this copy did not,
+    # so a candidate removed between `resolve()` and here (the background hook's own dedup unlink,
+    # or a second `chamnan-candidates` command racing this one) crashed `list`, `confirm`, `reject`
+    # and `promote` alike with a raw errno instead of the fallback title the function already has
+    # for a file with no `# ` heading. `path.stem` is that same fallback, not a new one.
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return path.stem
     for line in text.splitlines():
         if line.startswith("# "):
             return line[2:].strip()
