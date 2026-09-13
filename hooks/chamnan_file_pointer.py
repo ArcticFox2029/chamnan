@@ -66,6 +66,14 @@ def main():
     except (OSError, ValueError):
         return 0            # outside the repository — nothing here can be about it
     if rel.startswith(wsdir.name + "/"):
+        # Rendering stays suppressed -- pointing at chamnan's own files while chamnan is the thing
+        # talking is noise. But a read of one of its own STORE files (skills/memory/threads) is
+        # exactly the event the pointer funnel needs and could not see: every other reader of this
+        # file returned here before recording anything, so a session that opened what it was
+        # pointed at looked identical to one that never did. See pointer.note_opened.
+        inner = rel[len(wsdir.name) + 1:]
+        if inner.split("/", 1)[0] in ("skills", "memory", "threads"):
+            pointer.note_opened(wsdir, payload.get("session_id") or "", inner)
         return 0
 
     session_id = payload.get("session_id") or ""

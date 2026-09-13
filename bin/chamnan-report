@@ -999,6 +999,14 @@ def _read_pointer_log(root):
                 continue
             if not isinstance(rec, dict):
                 continue
+            # [2026-09-13] `pointer.jsonl` carries two event classes now. `note_opened` appends a
+            # record when a session READS one of chamnan's own store files, and counting those as
+            # firings would inflate "fired N time(s)" by the successes -- the metric would climb
+            # fastest exactly when the pointer was working, which is the opposite of what it reads
+            # as. Selected by the field rather than by the absence of `named`: three offered
+            # records already carry an empty `named` for unrelated reasons.
+            if rec.get("event") == "opened":
+                continue
             fired += 1
             for path in rec.get("named") or []:
                 named.setdefault(path, set()).add(rec.get("session"))

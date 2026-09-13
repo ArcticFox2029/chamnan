@@ -387,6 +387,25 @@ def note(wsdir, session_id, rel_path, hits, ms):
     ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
 
 
+def note_opened(wsdir, session_id, rel_path):
+    """Record that a session opened one of chamnan's own STORE files directly.
+
+    Called from the hook's early return for a path under the workspace itself -- exactly where
+    `note()` above can never fire, because a pointer is never rendered for chamnan's own files.
+    Without this, a session that actually opened the skill it was pointed at looked identical, in
+    every log this plugin keeps, to one that never did.
+
+    `rel_path` is relative to the WORKSPACE (`skills/x.md`, `memory/rules/x.md`), the same shape
+    `related()` already returns as `named` above, so a later reader can join the two directly
+    rather than reconcile two path conventions.
+
+    `"event": "opened"` is what tells this apart from an offered record. It cannot be inferred from
+    an empty `named` list -- three existing records already carry one for unrelated reasons.
+    """
+    rec = {"t": int(time.time()), "session": session_id, "path": rel_path, "event": "opened"}
+    ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
+
+
 # 🐛 [2026-09-09] `workspace.SELF_PRUNING_LOGS` exempts this file from the 7-day sweep, and
 # its own comment states the contract: "A log that bounds itself by record must say so here, or the
 # directory sweep bounds it by date instead." This file was on that list and nothing bounded it —
