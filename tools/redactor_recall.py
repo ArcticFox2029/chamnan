@@ -292,6 +292,66 @@ COLUMNS = [
     for _word in _words
 ]
 
+# ---------------------------------------------------------------- R3.1: the boundary is an axis
+# A boundary-mutation study across ten credential types measured detection of at least 0.9976 in
+# ten ordinary contexts and only 0.5233 when the credential ended in a hyphen -- the same secret,
+# the same rule, a different neighbouring character. A fixed-example corpus cannot see that: every
+# example in this file sits in exactly one context, so it measures one cell of a grid.
+#
+# 🐛 [2026-09-15] Run for the first time, this found 14 of 47 labelled positives passing through
+# WHOLE when a `-` or `_` was attached directly in front of them. Every provider-prefix rule
+# guarded its left edge with `(?<![A-Za-z0-9_-])`, which is right for a rule anchored on an
+# ordinary WORD and wrong for one anchored on `ghp_` or `AKIA`: a provider prefix is proof on its
+# own, so what precedes it cannot make it not-a-credential. The URL rule had the same guard, and a
+# diff hunk begins every removed line with `-`. Fixing all 23 changed nothing on 1,193 real files.
+BOUNDARIES_LEFT = {
+    "(none)": "", "dash": "-", "underscore": "_", "dot": ".", "plus": "+", "tilde": "~",
+    "quote": '"', "squote": "'", "paren": "(", "bracket": "[", "brace": "{", "angle": "<",
+    "comma": ",", "colon": ":", "equals": "=", "slash": "/", "at": "@", "backtick": "`",
+    "hash comment": "# ", "slash comment": "// ", "diff hunk": "- ", "list item": "  - ",
+}
+BOUNDARIES_RIGHT = {
+    "(none)": "", "dash": "-", "underscore": "_", "dot": ".", "quote": '"', "squote": "'",
+    "paren": ")", "bracket": "]", "brace": "}", "angle": ">", "comma": ",", "semi": ";",
+    "backtick": "`", "backslash": "\\", "cr": "\r", "tab": "\t", "trailing space": "  ",
+}
+
+# Combinations that are documented behaviour rather than leaks, each with the rule that owns it.
+# Listing them here rather than deleting them from the grid keeps the denominator honest: the cell
+# is still measured, and a change in what it does still shows up as a change to this list.
+EXPECTED_EXEMPT = {
+    # An unclosed `(` before the name and a `,` after the value is a parameter list, and
+    # `_is_a_type_annotation` exempts it on purpose -- `f(api_key: sup3rs3cr3tvalue,` cannot be
+    # told from `f(api_key: string,` by anything except that shape. Its docstring records being
+    # wrong in both directions before it settled on position rather than spelling.
+    ("paren", "comma"),
+    ("paren", "paren"),
+    ("paren", "semi"),
+}
+
+
+def boundary_leaks():
+    """Every labelled positive crossed with every left/right boundary. Returns the leaks.
+
+    A leak here is the WHOLE secret surviving, which is the only unambiguous failure: a partial
+    survivor may be a correctly bounded match that simply does not reach as far as the fixture
+    label does, and calling that a leak would make the battery cry wolf on every rule that redacts
+    a value but keeps its delimiter.
+    """
+    out = []
+    for label, text, secret in POSITIVES:
+        for ln, lc in sorted(BOUNDARIES_LEFT.items()):
+            for rn, rc in sorted(BOUNDARIES_RIGHT.items()):
+                # "truncated" removes the secret's last character instead of appending one, which
+                # is the mutation a copy-paste or a column cut actually produces.
+                body, want = text + rc, secret
+                if (ln, rn) in EXPECTED_EXEMPT:
+                    continue
+                if want in redact.scrub(lc + body + "\n"):
+                    out.append((label, ln, rn))
+    return out
+
+
 def main():
     verbose = "--verbose" in sys.argv
     caught, missed = [], []
@@ -336,6 +396,20 @@ def main():
         print(f"\nfalse positives ({len(eaten)}):")
         for e in eaten:
             print(f"  {e}")
+    # The boundary grid, reported as its own number. A blended recall figure hides it completely:
+    # every fixture above sits in one context, and the axis this measures is the OTHER one.
+    _leaks = boundary_leaks()
+    _cells = len(POSITIVES) * len(BOUNDARIES_LEFT) * len(BOUNDARIES_RIGHT)
+    print(f"\nboundary  {(1 - len(_leaks) / _cells) * 100:5.1f}%   "
+          f"({_cells - len(_leaks)}/{_cells} positives redacted across every left/right context)")
+    if _leaks:
+        _by_label = {}
+        for _lab, _ln, _rn in _leaks:
+            _by_label.setdefault(_lab, []).append(f"{_ln}|{_rn}")
+        print(f"          {len(_by_label)} secret(s) survive some boundary:")
+        for _lab, _where in sorted(_by_label.items()):
+            print(f"            {_lab} — {len(_where)} context(s), e.g. {_where[0]}")
+
     if verbose:
         print("\nredacted output for every case:")
         for label, text, _ in POSITIVES:

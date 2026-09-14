@@ -243,13 +243,13 @@ AUTH_SCHEME_SECRET = _lazy(lambda: re.compile(
 
 PATTERNS = [
     # Provider tokens with unambiguous prefixes — no false positives worth worrying about.
-    re.compile(r"(?<![A-Za-z0-9_-])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9])sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9])(?:gh[pousr]_|github_pat_)[A-Za-z0-9_]{16,}"),
     # 🐛 [2026-09-08] `xoxe-` and `xoxe.` are Slack's rotation-era refresh and access
     # tokens, introduced 2021, and neither matched `xox[baprs]-` -- so a rotated token
     # leaked in full with the word "token" on the same line (R2 agent 2).
-    re.compile(r"(?<![A-Za-z0-9_-])xox[baprse]-[A-Za-z0-9-]{10,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])xoxe\.xox[bp]-[A-Za-z0-9.-]{10,}"),
+    re.compile(r"(?<![A-Za-z0-9])xox[baprse]-[A-Za-z0-9-]{10,}"),
+    re.compile(r"(?<![A-Za-z0-9])xoxe\.xox[bp]-[A-Za-z0-9.-]{10,}"),
     # \U0001f41b [2026-09-09] Six vendor prefixes that this module NAMES in `_CREDENTIAL_PREFIX` and
     # never enforced anywhere. Measured with each vendor's documented body length and charset,
     # computed rather than typed: a Google OAuth token, a DigitalOcean personal token, a Shopify
@@ -268,10 +268,10 @@ PATTERNS = [
     #
     # Dots are in the body for the two that need them — `ya29.` and `SG.` — and nowhere else.
     re.compile(r"(?<![A-Za-z0-9_.-])ya29\.[A-Za-z0-9_.\-]{20,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])dop_v1_[A-Za-z0-9]{32,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])shp(?:at|ca|pa|ss)_[A-Za-z0-9]{24,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])dckr_pat_[A-Za-z0-9_-]{24,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])phc_[A-Za-z0-9]{32,}"),
+    re.compile(r"(?<![A-Za-z0-9])dop_v1_[A-Za-z0-9]{32,}"),
+    re.compile(r"(?<![A-Za-z0-9])shp(?:at|ca|pa|ss)_[A-Za-z0-9]{24,}"),
+    re.compile(r"(?<![A-Za-z0-9])dckr_pat_[A-Za-z0-9_-]{24,}"),
+    re.compile(r"(?<![A-Za-z0-9])phc_[A-Za-z0-9]{32,}"),
     re.compile(r"(?<![A-Za-z0-9_.-])SG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}"),
     # 🐛 `AKIA` alone. AWS issues access key IDs under four prefixes and the commonest one in CI is
     # `ASIA` — the temporary credential every assumed role hands out — which sailed straight through
@@ -282,14 +282,19 @@ PATTERNS = [
     # they are not credentials, and redacting them would cost the index real information for nothing.
     # Two comparable tools redact them anyway; that is the precision half of this module's trade
     # being spent without being noticed.
-    re.compile(r"(?<![A-Za-z0-9_-])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}\b"),
-    re.compile(r"(?<![A-Za-z0-9_-])AIza[0-9A-Za-z_-]{30,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])glpat-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])npm_[A-Za-z0-9]{30,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])GOCSPX-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])hf_[A-Za-z0-9]{30,}"),
+    # 🐛 [2026-09-15] `\b` was the right edge, and `_` is a word character, so `AKIA…EXAMPLE_v2`
+    # and `AWS_KEY_AKIA…EXAMPLE_backup` carried a complete, valid 20-character key ID through
+    # untouched. A key ID is exactly 20 characters of its own alphabet: what may not follow it is
+    # MORE of that alphabet, which would make it a longer token — not an underscore, which makes it
+    # a suffixed name around the same key. (R3.1 boundary mutation, found by the right-edge grid.)
+    re.compile(r"(?<![A-Za-z0-9])(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}(?![0-9A-Z])"),
+    re.compile(r"(?<![A-Za-z0-9])AIza[0-9A-Za-z_-]{30,}"),
+    re.compile(r"(?<![A-Za-z0-9])(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9])glpat-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9])npm_[A-Za-z0-9]{30,}"),
+    re.compile(r"(?<![A-Za-z0-9])SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9])GOCSPX-[A-Za-z0-9_-]{16,}"),
+    re.compile(r"(?<![A-Za-z0-9])hf_[A-Za-z0-9]{30,}"),
     # An Authorization header names its scheme and then hands over the credential. Matching this
     # explicitly is not a nicety: the bare-assignment rule below sees "Authorization:" as a secret
     # assignment, captures the word "Bearer" as the value, and replaces THAT -- leaving the token
@@ -304,7 +309,7 @@ PATTERNS = [
     # floor stays on the first two segments, which is what stops `a.b.c` prose from matching; the
     # signature may now be empty, and a trailing dot is required so a two-segment string still is
     # not a token. (R3 agent 2.)
-    re.compile(r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
+    re.compile(r"(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"
                r"(?![A-Za-z0-9_-])"),
     # Private key and certificate blocks.
     # "BLOCK" is not decoration: a PGP secret key is delimited "PRIVATE KEY BLOCK-----", so a
@@ -324,8 +329,8 @@ PATTERNS = [
 # Prefixes added after the original list was written, and two shapes where the secret is not a
 # value at all but a path segment — no `key=` and no `user:pass@` for the other patterns to find.
 LATE_PREFIXES = [
-    re.compile(r"(?<![A-Za-z0-9_-])xapp-[A-Za-z0-9-]{10,}"),                      # Slack app-level, not xox[baprs]-
-    re.compile(r"(?<![A-Za-z0-9_-])pypi-[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9])xapp-[A-Za-z0-9-]{10,}"),                      # Slack app-level, not xox[baprs]-
+    re.compile(r"(?<![A-Za-z0-9])pypi-[A-Za-z0-9_-]{20,}"),
     re.compile(r"https://hooks\.slack\.com/services/[A-Za-z0-9/]{20,}"),
     re.compile(r"https://discord(?:app)?\.com/api/webhooks/\d+/[A-Za-z0-9_-]{20,}"),
     # A signed URL carries its credential in the query string, where no `key=` and no `user:pass@`
@@ -344,9 +349,9 @@ LATE_PREFIXES = [
     # age's is the interesting one: it is the private half of an age keypair, the whole point of
     # which is that it never leaves the machine, and its fixed `AGE-SECRET-KEY-1` prefix makes it
     # the least ambiguous credential shape in this list. R8 agent 9.
-    re.compile(r"(?<![A-Za-z0-9_-])AGE-SECRET-KEY-1[0-9A-Za-z]{50,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])pscale_(?:pw|tkn|oauth)_[A-Za-z0-9_.-]{20,}"),
-    re.compile(r"(?<![A-Za-z0-9_-])dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9_-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9])AGE-SECRET-KEY-1[0-9A-Za-z]{50,}"),
+    re.compile(r"(?<![A-Za-z0-9])pscale_(?:pw|tkn|oauth)_[A-Za-z0-9_.-]{20,}"),
+    re.compile(r"(?<![A-Za-z0-9])dp\.(?:pt|st|ct|sa|scim|audit)\.[A-Za-z0-9_-]{20,}"),
 ]
 
 # [R8 2026-09-13, closed out] The non-English credential words the ASSIGNMENT path
@@ -719,7 +724,12 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
     #
     # The scheme now admits one nested layer, because `jdbc:postgresql://` and `jdbc:mysql://` are
     # how every JVM connection string is written and the single-scheme form never matched them.
-    r"(?<![A-Za-z0-9_-])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
+    # 🐛 [2026-09-15] The guard excluded `-` and `_`, and a diff hunk begins every removed line
+    # with `-`. A removed connection string in a pasted diff therefore went through whole,
+    # which is the shape a session record or a bug report is most likely to carry one in.
+    # Relaxing it costs nothing: this rule fires only when a `:password@host` follows, so a plain
+    # URL is still untouched no matter what precedes the scheme. (R3.1 boundary mutation.)
+    r"(?<![A-Za-z0-9])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
     r":([^\s/]{3,})@(?=[^\s/@]+)"))
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 # 🐛 [2026-09-06] What sits immediately after the separator is not always the value. Three shapes
