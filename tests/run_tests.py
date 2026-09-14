@@ -27186,7 +27186,46 @@ try:
               % _nomatch_rank112)
 finally:
     shutil.rmtree(_root112, ignore_errors=True)
+# ---- 113_command_timing_covers_every_shipped_command.py
+# ---- command startup timing is a derived sweep, not a hand-maintained command list
+# R11.22 (2026-09-13) found that every shipped command pays a substantial startup floor, but the
+# existing timing tool covered only SessionStart functions. The command population comes from the
+# package's `bin/` directory here and in the tool, so adding a fourteenth command makes this check
+# cover it without a second list being updated by hand.
+import re as _re113
+import subprocess as _sp113
+import sys as _sys113
 
+_tool113 = ROOT.parent.parent / ".chamnan" / "tools" / "time-the-pieces.py"
+_commands113 = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*")
+                      if p.is_file() and p.suffix != ".cmd")
+check("the command-timing check derived a non-trivial shipped-command population",
+      len(_commands113) >= 13, saw=f"found {len(_commands113)}: {_commands113}")
+
+_run113 = _sp113.run(
+    [_sys113.executable, str(_tool113), "--commands", "--runs", "1"],
+    cwd=str(ROOT.parent.parent), stdin=_sp113.DEVNULL, capture_output=True,
+    text=True, encoding="utf-8", errors="replace", timeout=60)
+check("the command startup timing mode completes", _run113.returncode == 0,
+      saw=f"exit {_run113.returncode}; stderr={_run113.stderr[:300]!r}")
+
+_rows113 = _re113.findall(r"^\s+(chamnan-[a-z-]+)\s+([0-9.]+) ms", _run113.stdout,
+                          _re113.MULTILINE)
+_timed113 = sorted(name113 for name113, _cpu113 in _rows113)
+_missing113 = sorted(set(_commands113) - set(_timed113))
+_invented113 = sorted(set(_timed113) - set(_commands113))
+check("EVERY SHIPPED COMMAND HAS A CPU TIMING ROW",
+      not _missing113 and not _invented113 and len(_timed113) == len(_commands113),
+      saw=f"missing={_missing113}; invented={_invented113}; rows={_rows113}")
+
+_nonpositive113 = [(name113, cpu113) for name113, cpu113 in _rows113
+                   if float(cpu113) <= 0.0]
+check("...and every row reports measured CPU rather than an empty or elapsed-time placeholder",
+      not _nonpositive113, saw=str(_nonpositive113) if _nonpositive113 else None)
+check("...and the summary names the population and the CPU clock",
+      f"{len(_commands113)} command(s)" in _run113.stdout
+      and "CPU excludes scheduler delay" in _run113.stdout,
+      saw=_run113.stdout[-300:])
 # ---- 114_a_kubernetes_secret_value_is_never_context.py
 # ------------------ a Kubernetes Secret's structure is enough to condemn every value beneath it
 # 🐛 [2026-09-13] R12.36 selected the open R7 corpus defect: a Kubernetes `Secret.data`
@@ -27392,6 +27431,83 @@ _leaks115 = [
 ]
 check("ALL SIX NEAR-NEIGHBOUR ACTUAL SECRET VALUES ARE STILL REDACTED",
       not _leaks115, saw=repr(_leaks115))
+# ---- 116_a_guard_that_lives_only_in_the_folded_copy_is_not_a_guard.py
+# ------------------ a fix hand-applied to the folded suite is erased by the next fold, silently
+# 🐛 [2026-09-14] `tests/run_tests.py` is partly GENERATED: `fold_and_verify.sh` pastes every file
+# in `.chamnan/tools/checks/` into it verbatim. Seven blocks carried an `owner_workspace()` guard —
+# the helper that skips a block reading the owner's workspace rather than the shipped package — and
+# all seven carried it in the FOLDED COPY ONLY. The pool files never had it.
+#
+# Why they never had it: `smoke_the_folded_checks.py` did not define `owner_workspace`, so a pool
+# file using it died in the smoke run with a NameError. The workaround was to fold without the
+# guard and hand-add it to `run_tests.py` afterwards. That worked exactly until the next fold, which
+# overwrote all seven at once. 1.25.1 shipped green on five CI legs; the release after it failed on
+# all five, and the only difference was a fold nobody thought of as an edit.
+#
+# The shape generalises past guards: ANY hand-edit inside the folded section is undone by the next
+# fold, with no diff, no warning and no failing check. So this asserts the round trip rather than
+# any one guard — the pool is the source, and the suite must be what the pool produces.
+#
+# This block reads the pool, which does not ship, so it guards itself with the same helper whose
+# loss it is recording.
+import re as _re116
+
+_t_ws116 = owner_workspace("the fold round-trip check")
+if _t_ws116 is not None:
+    _t_pool116 = _t_ws116 / "tools" / "checks"
+    _t_suite116 = ROOT / "tests" / "run_tests.py"
+    # Built at runtime, never quoted. This file is itself folded INTO the section it measures, so a
+    # literal here would be a second copy of the marker sitting inside that section — and
+    # `str.index` on the closing one would find this file's copy rather than the real end, cutting
+    # the section short and reporting every block after it as drifted. The repository has recorded
+    # this shape before: a check that quotes the string it looks for matches itself.
+    _t_BAR116 = "# " + "=" * 28
+    _t_MARK116 = _t_BAR116 + " folded in from the surgical pool"
+    _t_END116 = _t_BAR116 + " end of the folded surgical pool"
+
+    _t_src116 = _t_suite116.read_text(encoding="utf-8")
+    check("the suite still carries both fold markers, so the folded section has edges",
+          _t_MARK116 in _t_src116 and _t_END116 in _t_src116)
+
+    if _t_MARK116 in _t_src116 and _t_END116 in _t_src116:
+        _t_folded116 = _t_src116[_t_src116.index(_t_MARK116):_t_src116.index(_t_END116)]
+        # `fold` skips a pool file whose first check title already appears BEFORE the marker: that
+        # block is in the suite on its own merits and pasting it again would duplicate it. Those are
+        # the files this cannot speak for, and it says how many rather than counting them as pass.
+        _t_before116 = _t_src116[:_t_src116.index(_t_MARK116)]
+        _t_drift116, _t_unfolded116 = [], 0
+        for _t_f116 in sorted(_t_pool116.glob("*.py")):
+            _t_body116 = _t_f116.read_text(encoding="utf-8-sig", errors="replace").rstrip()
+            _t_m116 = _re116.search(r'check\("([^"]{20,})"', _t_body116)
+            _t_title116 = _t_m116.group(1) if _t_m116 else _t_body116.splitlines()[0]
+            if _t_title116 in _t_before116:
+                _t_unfolded116 += 1
+                continue
+            if _t_body116 not in _t_folded116:
+                _t_drift116.append(_t_f116.name)
+
+        if _t_drift116:
+            print("      pool file(s) whose text is not what the suite carries: "
+                  + ", ".join(_t_drift116[:6]))
+        check("EVERY POOL FILE IS IN THE SUITE VERBATIM, SO NO FIX LIVES ONLY IN THE GENERATED COPY",
+              _t_drift116 == [],
+              saw="%d of %d pool file(s) differ — run .chamnan/tools/fold_and_verify.sh, and if the "
+                  "suite is the one that is right, copy the change back into the pool file first"
+                  % (len(_t_drift116), len(list(_t_pool116.glob("*.py")))))
+        # Without this the assertion above passes on an empty pool, or on a fold marker that has
+        # drifted to enclose nothing — "nothing differed" is not the same as "anything was compared".
+        check("...and the round trip actually compared a population, rather than nothing",
+              len(list(_t_pool116.glob("*.py"))) - _t_unfolded116 >= 50)
+
+    # And the reason the workaround existed at all: the smoke harness must define every name a
+    # guarded pool file needs, or the next author hits the same NameError and reaches for the same
+    # hand-edit. Asserted by name, because that is what was missing.
+    _t_smoke116 = _t_ws116 / "tools" / "smoke_the_folded_checks.py"
+    _t_ssrc116 = _t_smoke116.read_text(encoding="utf-8", errors="replace") if _t_smoke116.is_file() else ""
+    _t_missing116 = [_t_n116 for _t_n116 in ("def owner_workspace", "def _rmtree", "def check", "def skip")
+                     if _t_n116 not in _t_ssrc116]
+    check("the smoke harness defines the helpers a pool file may use, so none has to be hand-added",
+          _t_missing116 == [], saw="missing: %s" % (_t_missing116,))
 # ---- 11_cut_never_strands_a_table.py
 # 🐛 [2026-09-09] `cut_outside_a_fence` guards against cutting inside a ``` block and nothing else.
 # Found on a real session handoff: a markdown table delivered as its header row and its `|---|`
@@ -29257,10 +29373,17 @@ check("...and each rule that differs from fnmatch is the one git actually applie
 # tree clean at 194 files. A session seeing the first number without the second would have rewritten
 # a hundred internal notes to fix nothing, destroying the specificity those notes exist for.
 _t_git36 = shutil.which("git")
+# 🐛 [2026-09-14] The `owner_workspace` guard below was present in this block when 1.25.1 went
+# green on all five CI legs, and it was present in the FOLDED suite only — never here, in the pool
+# file the fold reads from. So the next `fold_and_verify.sh` run overwrote it, and it took the
+# guards out of all SEVEN blocks that had one at once. The suite then failed in any bare checkout
+# and passed on this machine, which is the exact failure mode the helper's own docstring describes.
+# A guard that lives only in generated output is not a guard. It lives here now.
+_t_ws36 = owner_workspace("the publication-guard checks") if _t_git36 else None
 if not _t_git36:
     skip("  · no git on this machine — the guard-scope check is skipped, not passed")
-else:
-    _t_guard = ROOT.parent.parent / ".chamnan" / "tools" / "publication-guard.py"
+elif _t_ws36 is not None:
+    _t_guard = _t_ws36 / "tools" / "publication-guard.py"
     check("the publication guard is installed where the release gate looks for it",
           _t_guard.is_file() or (_t_guard.parent / "publication_guard.py").is_file(),
           saw=str(_t_guard))
@@ -29296,38 +29419,40 @@ else:
 # this checked that a function NAME appeared in the source, and renaming the function away left the
 # call site behind — so the check passed over a guard that no longer had the function at all. A
 # check that can pass when the thing is gone is not a check.
-_t_spec36 = importlib.util.spec_from_file_location(
-    "_chamnan_guard", str(ROOT.parent.parent / ".chamnan" / "tools" / "publication-guard.py"))
-_t_guard_mod = importlib.util.module_from_spec(_t_spec36)
-try:
-    _t_spec36.loader.exec_module(_t_guard_mod)
-    _t_loaded = True
-except Exception as _e:
-    _t_loaded = False
-check("the publication guard imports as a module, so its behaviour can be asked directly",
-      _t_loaded, saw=None if _t_loaded else "it does not import")
-
-if _t_loaded and hasattr(_t_guard_mod, "check_the_list_has_not_shrunk"):
-    _t_home = Path(tempfile.mkdtemp(prefix="chamnan-hw-"))
-    _t_was = _t_guard_mod.HIGH_WATER
+_t_ws36b = owner_workspace("the publication-guard behaviour checks")
+if _t_ws36b is not None:
+    _t_spec36 = importlib.util.spec_from_file_location(
+        "_chamnan_guard", str(_t_ws36b / "tools" / "publication-guard.py"))
+    _t_guard_mod = importlib.util.module_from_spec(_t_spec36)
     try:
-        _t_guard_mod.HIGH_WATER = _t_home / "seen.json"
-        # Seven terms, then five: the drop has to be reported, and the report has to name both.
-        _t_first = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e", "f", "g"])
-        _t_after = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e"])
-        check("a denylist that gets shorter is reported, naming what it used to hold",
-              _t_first is None and _t_after and "7" in _t_after and "5" in _t_after,
-              saw=f"first={_t_first!r} after={_t_after!r}")
-        # ...and growing it says nothing, or the warning becomes noise and stops being read.
-        _t_grown = _t_guard_mod.check_the_list_has_not_shrunk(["a"] * 12)
-        check("...and adding terms is silent, so the warning stays worth reading",
-              _t_grown is None, saw=repr(_t_grown))
-    finally:
-        _t_guard_mod.HIGH_WATER = _t_was
-        shutil.rmtree(_t_home, ignore_errors=True)
-else:
-    check("the guard has a high-water mark for its own denylist",
-          False, saw="check_the_list_has_not_shrunk is not defined in the guard")
+        _t_spec36.loader.exec_module(_t_guard_mod)
+        _t_loaded = True
+    except Exception as _e:
+        _t_loaded = False
+    check("the publication guard imports as a module, so its behaviour can be asked directly",
+          _t_loaded, saw=None if _t_loaded else "it does not import")
+
+    if _t_loaded and hasattr(_t_guard_mod, "check_the_list_has_not_shrunk"):
+        _t_home = Path(tempfile.mkdtemp(prefix="chamnan-hw-"))
+        _t_was = _t_guard_mod.HIGH_WATER
+        try:
+            _t_guard_mod.HIGH_WATER = _t_home / "seen.json"
+            # Seven terms, then five: the drop has to be reported, and the report has to name both.
+            _t_first = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e", "f", "g"])
+            _t_after = _t_guard_mod.check_the_list_has_not_shrunk(["a", "b", "c", "d", "e"])
+            check("a denylist that gets shorter is reported, naming what it used to hold",
+                  _t_first is None and _t_after and "7" in _t_after and "5" in _t_after,
+                  saw=f"first={_t_first!r} after={_t_after!r}")
+            # ...and growing it says nothing, or the warning becomes noise and stops being read.
+            _t_grown = _t_guard_mod.check_the_list_has_not_shrunk(["a"] * 12)
+            check("...and adding terms is silent, so the warning stays worth reading",
+                  _t_grown is None, saw=repr(_t_grown))
+        finally:
+            _t_guard_mod.HIGH_WATER = _t_was
+            shutil.rmtree(_t_home, ignore_errors=True)
+    else:
+        check("the guard has a high-water mark for its own denylist",
+              False, saw="check_the_list_has_not_shrunk is not defined in the guard")
 # ---- 37_two_different_sequences_get_two_candidate_files.py
 # ------------------------------------------- the second habit overwrote the first, silently
 # 🐛 [2026-09-10] `candidates.slug` truncated at 60 characters with no collision check, so two
@@ -29430,51 +29555,59 @@ finally:
 # `match_call` answers a different question — which registered tool a command INVOKES — by literal
 # path substring, so it cannot see a script somebody is about to write instead (R7 agent 2,
 # findings 1 and 2, reached from the other end).
-_t_root38 = ROOT.parent.parent
+# 🐛 [2026-09-14] The `owner_workspace` guard below was present in this block when 1.25.1 went
+# green on all five CI legs, and it was present in the FOLDED suite only — never here, in the pool
+# file the fold reads from. So the next `fold_and_verify.sh` run overwrote it, and it took the
+# guards out of all SEVEN blocks that had one at once. The suite then failed in any bare checkout
+# and passed on this machine, which is the exact failure mode the helper's own docstring describes.
+# A guard that lives only in generated output is not a guard. It lives here now.
+_t_ws38 = owner_workspace("the repeat-detector checks")
+if _t_ws38 is not None:
+    _t_root38 = _t_ws38.parent
 
-# It has to FIND the obvious ones. These are real registered tools and real descriptions of what
-# they do, phrased the way somebody would describe the script they were about to write.
-_t_should_find = [
-    ("move a finished research report into old and record the filing marker", "archive_report"),
-    ("find duplicated runs of lines in a file to catch a folded check pasted twice", "duplicate_runs"),
-]
-_t_missed38 = []
-for _t_text, _t_want in _t_should_find:
-    _t_got = tools_index.likely_already_done(_t_root38, _t_text)
-    if not _t_got or _t_want not in _t_got[0]:
-        _t_missed38.append(f"{_t_text[:46]}… -> {_t_got[0] if _t_got else None}, wanted {_t_want}")
-check("the repeat detector can name a registered tool that already does the job",
-      not _t_missed38, saw="\n".join(_t_missed38) or None)
+    # It has to FIND the obvious ones. These are real registered tools and real descriptions of what
+    # they do, phrased the way somebody would describe the script they were about to write.
+    _t_should_find = [
+        ("move a finished research report into old and record the filing marker", "archive_report"),
+        ("find duplicated runs of lines in a file to catch a folded check pasted twice", "duplicate_runs"),
+    ]
+    _t_missed38 = []
+    for _t_text, _t_want in _t_should_find:
+        _t_got = tools_index.likely_already_done(_t_root38, _t_text)
+        if not _t_got or _t_want not in _t_got[0]:
+            _t_missed38.append(f"{_t_text[:46]}… -> {_t_got[0] if _t_got else None}, wanted {_t_want}")
+    check("the repeat detector can name a registered tool that already does the job",
+          not _t_missed38, saw="\n".join(_t_missed38) or None)
 
-# Naming the WRONG tool is worse than naming none — it sends somebody to read something unrelated
-# and teaches them to ignore the line. `match_call`'s own docstring argues for that direction and
-# this follows it: unrelated work must return nothing at all.
-_t_false38 = []
-for _t_text in ("compute the fibonacci sequence and draw a mandelbrot set in colour",
-                "reverse a linked list and balance a red black tree",
-                "render a christmas tree in ascii art with blinking lights",
-                "solve a sudoku grid by constraint propagation"):
-    _t_got = tools_index.likely_already_done(_t_root38, _t_text)
-    if _t_got:
-        _t_false38.append(f"{_t_text[:44]}… -> {_t_got[0]}")
-check("...and unrelated work is not matched to a tool at all",
-      not _t_false38, saw="\n".join(_t_false38) or None)
+    # Naming the WRONG tool is worse than naming none — it sends somebody to read something unrelated
+    # and teaches them to ignore the line. `match_call`'s own docstring argues for that direction and
+    # this follows it: unrelated work must return nothing at all.
+    _t_false38 = []
+    for _t_text in ("compute the fibonacci sequence and draw a mandelbrot set in colour",
+                    "reverse a linked list and balance a red black tree",
+                    "render a christmas tree in ascii art with blinking lights",
+                    "solve a sudoku grid by constraint propagation"):
+        _t_got = tools_index.likely_already_done(_t_root38, _t_text)
+        if _t_got:
+            _t_false38.append(f"{_t_text[:44]}… -> {_t_got[0]}")
+    check("...and unrelated work is not matched to a tool at all",
+          not _t_false38, saw="\n".join(_t_false38) or None)
 
-# Too little to go on is not a match. A one-word script description cannot identify anything, and
-# guessing from it is how the false positives above would start.
-_t_thin = [_t for _t in ("", "x", "run it", "check", "python3 -c")
-           if tools_index.likely_already_done(_t_root38, _t)]
-check("...and a description too thin to identify anything returns nothing",
-      not _t_thin, saw=", ".join(repr(t) for t in _t_thin) or None)
+    # Too little to go on is not a match. A one-word script description cannot identify anything, and
+    # guessing from it is how the false positives above would start.
+    _t_thin = [_t for _t in ("", "x", "run it", "check", "python3 -c")
+               if tools_index.likely_already_done(_t_root38, _t)]
+    check("...and a description too thin to identify anything returns nothing",
+          not _t_thin, saw=", ".join(repr(t) for t in _t_thin) or None)
 
-# The hook has to actually consult it, and has to survive it failing — a nudge that crashes a
-# PostToolUse hook costs the session every later tool call.
-_t_watch38 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8-sig",
-                                                                    errors="replace")
-check("the hook consults the index before telling anyone to write another script",
-      "likely_already_done" in _t_watch38, saw=None)
-check("...and it degrades to the old message rather than failing the tool call",
-      "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
+    # The hook has to actually consult it, and has to survive it failing — a nudge that crashes a
+    # PostToolUse hook costs the session every later tool call.
+    _t_watch38 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf-8-sig",
+                                                                        errors="replace")
+    check("the hook consults the index before telling anyone to write another script",
+          "likely_already_done" in _t_watch38, saw=None)
+    check("...and it degrades to the old message rather than failing the tool call",
+          "except Exception" in _t_watch38 and "Nothing registered in" in _t_watch38)
 # ---- 39_a_pin_buys_share_not_only_order.py
 # ------------------------------------------- a pin that reached the title and stopped there
 # 🐛 [2026-09-10] Pinning sorted a rule to the front and guaranteed it survived the final cut, and
@@ -29637,52 +29770,60 @@ check("...and the bounds stay generous rather than becoming a second opinion abo
 # fable outright, which covers every cross-account dispatch. `dispatch_model_audit.py` looks BACK
 # over what actually ran, which is the only thing that can catch a dispatch nobody routed through
 # the wrapper — and on this machine it found 22 to look at across 1,035 dispatches.
-_t_audit41 = ROOT.parent.parent / ".chamnan" / "tools" / "dispatch_model_audit.py"
-check("the dispatch auditor is installed",
-      _t_audit41.is_file(), saw=str(_t_audit41))
+# 🐛 [2026-09-14] The `owner_workspace` guard below was present in this block when 1.25.1 went
+# green on all five CI legs, and it was present in the FOLDED suite only — never here, in the pool
+# file the fold reads from. So the next `fold_and_verify.sh` run overwrote it, and it took the
+# guards out of all SEVEN blocks that had one at once. The suite then failed in any bare checkout
+# and passed on this machine, which is the exact failure mode the helper's own docstring describes.
+# A guard that lives only in generated output is not a guard. It lives here now.
+_t_ws41 = owner_workspace("the dispatch-auditor checks")
+if _t_ws41 is not None:
+    _t_audit41 = _t_ws41 / "tools" / "dispatch_model_audit.py"
+    check("the dispatch auditor is installed",
+          _t_audit41.is_file(), saw=str(_t_audit41))
 
-_t_src41 = _t_audit41.read_text(encoding="utf-8-sig", errors="replace") if _t_audit41.is_file() else ""
+    _t_src41 = _t_audit41.read_text(encoding="utf-8-sig", errors="replace") if _t_audit41.is_file() else ""
 
-# The wrapper's refusal, asserted behaviourally rather than by reading its source: a research
-# dispatch on an expensive model must be refused before it costs anything.
-# `os.name != "nt"` rather than `shutil.which("bash")`: the dispatcher is a shell script and this
-# block runs one, which is POSIX-only. The suite has a check that every POSIX-only construct sits
-# behind a platform gate it recognises — `_POSIX`, `os.name` or `sys.platform` — and a `which`
-# lookup is not one of them. It caught this the first time this file was folded in, which is the
-# fold doing its job: a check that ships with the plugin is held to the same bar as the plugin.
-_t_disp41 = ROOT.parent.parent / ".chamnan" / "tools" / "dispatch_research.sh"
-if os.name != "nt" and _t_disp41.is_file() and shutil.which("bash"):
-    _t_allowed = []
-    for _t_model in ("opus", "claude-opus-5", "fable", "mythos"):
-        _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x",
-                               _t_model], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace")
-        # Refused for the model, not merely for the missing brief: exit 3 is the model refusal.
-        if _t_r.returncode != 3:
-            _t_allowed.append(f"{_t_model}: exit {_t_r.returncode}, {_t_r.stdout.strip()[:50]}")
-    check("a research dispatch on an expensive model is refused before it costs anything",
-          not _t_allowed, saw="\n".join(_t_allowed) or None)
+    # The wrapper's refusal, asserted behaviourally rather than by reading its source: a research
+    # dispatch on an expensive model must be refused before it costs anything.
+    # `os.name != "nt"` rather than `shutil.which("bash")`: the dispatcher is a shell script and this
+    # block runs one, which is POSIX-only. The suite has a check that every POSIX-only construct sits
+    # behind a platform gate it recognises — `_POSIX`, `os.name` or `sys.platform` — and a `which`
+    # lookup is not one of them. It caught this the first time this file was folded in, which is the
+    # fold doing its job: a check that ships with the plugin is held to the same bar as the plugin.
+    _t_disp41 = _t_ws41 / "tools" / "dispatch_research.sh"
+    if os.name != "nt" and _t_disp41.is_file() and shutil.which("bash"):
+        _t_allowed = []
+        for _t_model in ("opus", "claude-opus-5", "fable", "mythos"):
+            _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x",
+                                   _t_model], capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace")
+            # Refused for the model, not merely for the missing brief: exit 3 is the model refusal.
+            if _t_r.returncode != 3:
+                _t_allowed.append(f"{_t_model}: exit {_t_r.returncode}, {_t_r.stdout.strip()[:50]}")
+        check("a research dispatch on an expensive model is refused before it costs anything",
+              not _t_allowed, saw="\n".join(_t_allowed) or None)
 
-    # ...and sonnet is NOT refused, or the wrapper has simply stopped working.
-    _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x", "sonnet"],
-                          capture_output=True, text=True, encoding="utf-8", errors="replace")
-    check("...and sonnet is still allowed, so the refusal is about the model and not about everything",
-          _t_r.returncode != 3, saw=f"exit {_t_r.returncode}: {_t_r.stdout.strip()[:60]}")
-else:
-    skip("  · no dispatcher or no bash — the refusal check is skipped, not passed")
+        # ...and sonnet is NOT refused, or the wrapper has simply stopped working.
+        _t_r = subprocess.run(["bash", str(_t_disp41), "acc1", "/nonexistent-brief", "/tmp/x", "sonnet"],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+        check("...and sonnet is still allowed, so the refusal is about the model and not about everything",
+              _t_r.returncode != 3, saw=f"exit {_t_r.returncode}: {_t_r.stdout.strip()[:60]}")
+    else:
+        skip("  · no dispatcher or no bash — the refusal check is skipped, not passed")
 
-# The auditor must recover a model the sidecar does not carry. That is the half that makes it useful:
-# the field is present on some dispatches and not others, measured at 58%, and the transcript names
-# the model on every assistant turn.
-check("the auditor falls back to the transcript when the sidecar has no model",
-      "transcript" in _t_src41 and "message" in _t_src41 and "model" in _t_src41)
+    # The auditor must recover a model the sidecar does not carry. That is the half that makes it useful:
+    # the field is present on some dispatches and not others, measured at 58%, and the transcript names
+    # the model on every assistant turn.
+    check("the auditor falls back to the transcript when the sidecar has no model",
+          "transcript" in _t_src41 and "message" in _t_src41 and "model" in _t_src41)
 
-# And it must know where the records actually live. The first version globbed one directory level
-# and reported "no subagent records" over fifteen real files — the quietest way for an audit to be
-# useless, and the reason this check exists at all.
-check("...and it looks where the records are, rather than reporting nothing and passing",
-      "*/*/subagents/*.meta.json" in _t_src41,
-      saw="the glob does not reach projects/<project>/<session>/subagents/")
+    # And it must know where the records actually live. The first version globbed one directory level
+    # and reported "no subagent records" over fifteen real files — the quietest way for an audit to be
+    # useless, and the reason this check exists at all.
+    check("...and it looks where the records are, rather than reporting nothing and passing",
+          "*/*/subagents/*.meta.json" in _t_src41,
+          saw="the glob does not reach projects/<project>/<session>/subagents/")
 # ---- 42_every_subprocess_this_package_starts_is_bounded.py
 # ------------------------------------------- fourteen of fifteen, and the fifteenth waits forever
 # 🐛 [2026-09-10] Every `subprocess.run` in this package passes `timeout=` except one:
@@ -30605,39 +30746,47 @@ import re as _re54
 # Both directions: a file with no entry is unfindable, and an entry naming a file that no longer
 # exists sends a reader to nothing. The second is the dangling-pointer shape this workspace has now
 # recorded three times in three different stores.
-_t_sk54 = ROOT.parent.parent / ".chamnan" / "skills"
-_t_readme54 = _t_sk54 / "README.md"
+# 🐛 [2026-09-14] The `owner_workspace` guard below was present in this block when 1.25.1 went
+# green on all five CI legs, and it was present in the FOLDED suite only — never here, in the pool
+# file the fold reads from. So the next `fold_and_verify.sh` run overwrote it, and it took the
+# guards out of all SEVEN blocks that had one at once. The suite then failed in any bare checkout
+# and passed on this machine, which is the exact failure mode the helper's own docstring describes.
+# A guard that lives only in generated output is not a guard. It lives here now.
+_t_ws54 = owner_workspace("the skills-index checks")
+if _t_ws54 is not None:
+    _t_sk54 = _t_ws54 / "skills"
+    _t_readme54 = _t_sk54 / "README.md"
 
-if not _t_readme54.is_file():
-    skip("  · no .chamnan/skills/README.md here — the index check is skipped, not passed")
-else:
-    _t_text54 = _t_readme54.read_text(encoding="utf-8", errors="replace")
-    _t_files54 = sorted(p.name for p in _t_sk54.glob("*.md") if p.name.upper() != "README.MD")
+    if not _t_readme54.is_file():
+        skip("  · no .chamnan/skills/README.md here — the index check is skipped, not passed")
+    else:
+        _t_text54 = _t_readme54.read_text(encoding="utf-8", errors="replace")
+        _t_files54 = sorted(p.name for p in _t_sk54.glob("*.md") if p.name.upper() != "README.MD")
 
-    check("there are skill files to index, so this is not passing on an empty directory",
-          len(_t_files54) >= 3, saw="%d file(s)" % (len(_t_files54),))
+        check("there are skill files to index, so this is not passing on an empty directory",
+              len(_t_files54) >= 3, saw="%d file(s)" % (len(_t_files54),))
 
-    _t_unlisted54 = [f for f in _t_files54 if f not in _t_text54]
-    check("THE SKILLS INDEX NAMES EVERY SKILL FILE THAT EXISTS",
-          not _t_unlisted54, saw="\n".join(_t_unlisted54) or None)
+        _t_unlisted54 = [f for f in _t_files54 if f not in _t_text54]
+        check("THE SKILLS INDEX NAMES EVERY SKILL FILE THAT EXISTS",
+              not _t_unlisted54, saw="\n".join(_t_unlisted54) or None)
 
-    # An entry pointing at a file that is gone. `(name.md)` is the link form the index uses.
-    _t_named54 = sorted(set(_re54.findall(r"\(([A-Za-z0-9_.-]+\.md)\)", _t_text54)))
-    _t_dangling54 = [n for n in _t_named54 if n.upper() != "README.MD"
-                     and not (_t_sk54 / n).is_file()]
-    check("...and every entry in it points at a file that is still there",
-          not _t_dangling54, saw=", ".join(_t_dangling54) or None)
+        # An entry pointing at a file that is gone. `(name.md)` is the link form the index uses.
+        _t_named54 = sorted(set(_re54.findall(r"\(([A-Za-z0-9_.-]+\.md)\)", _t_text54)))
+        _t_dangling54 = [n for n in _t_named54 if n.upper() != "README.MD"
+                         and not (_t_sk54 / n).is_file()]
+        check("...and every entry in it points at a file that is still there",
+              not _t_dangling54, saw=", ".join(_t_dangling54) or None)
 
-    # A skill the block's own STATE.md points at must be findable through the index too, or the
-    # two disagree about what exists — which is exactly how this was found.
-    _t_state54 = ROOT.parent.parent / ".chamnan" / "STATE.md"
-    if _t_state54.is_file():
-        _t_st54 = _t_state54.read_text(encoding="utf-8", errors="replace")
-        _t_pointed54 = sorted({m for m in _re54.findall(
-            r"\.chamnan/skills/([A-Za-z0-9_.-]+\.md)", _t_st54)})
-        _t_orphan54 = [n for n in _t_pointed54 if n not in _t_text54]
-        check("...and every skill STATE.md points a session at is listed in that index",
-              not _t_orphan54, saw=", ".join(_t_orphan54) or None)
+        # A skill the block's own STATE.md points at must be findable through the index too, or the
+        # two disagree about what exists — which is exactly how this was found.
+        _t_state54 = _t_ws54 / "STATE.md"
+        if _t_state54.is_file():
+            _t_st54 = _t_state54.read_text(encoding="utf-8", errors="replace")
+            _t_pointed54 = sorted({m for m in _re54.findall(
+                r"\.chamnan/skills/([A-Za-z0-9_.-]+\.md)", _t_st54)})
+            _t_orphan54 = [n for n in _t_pointed54 if n not in _t_text54]
+            check("...and every skill STATE.md points a session at is listed in that index",
+                  not _t_orphan54, saw=", ".join(_t_orphan54) or None)
 # ---- 55_every_hook_runs_the_way_the_host_actually_spawns_it.py
 # ------------------- fifteen call sites test the hook, and none of them the way it is really run
 # 🐛 [2026-09-10] Claude Code's hooks reference: a command hook runs in EXEC form when `args` is
@@ -32265,63 +32414,71 @@ _t_repo71 = ROOT.parent.parent
 # --- 1. Every reader that evaluates trailers reads every store that HAS them. Derived from the
 # stores on disk rather than from a list here: a third store growing a trailer joins this population
 # the day it does.
-_t_stores71 = {}
-for _t_name71, _t_dir71 in (("rules", ".chamnan/memory/rules"),
-                            ("skills", ".chamnan/skills"),
-                            ("decisions", ".chamnan/memory/decisions"),
-                            ("lessons", ".chamnan/memory/lessons")):
-    _t_d71 = _t_repo71 / _t_dir71
-    if not _t_d71.is_dir():
-        continue
-    _t_n71 = sum(1 for _f in _t_d71.glob("*.md")
-                 if "**Check:**" in _f.read_text(encoding="utf-8", errors="replace"))
-    if _t_n71:
-        _t_stores71[_t_name71] = _t_n71
+# 🐛 [2026-09-14] The `owner_workspace` guard below was present in this block when 1.25.1 went
+# green on all five CI legs, and it was present in the FOLDED suite only — never here, in the pool
+# file the fold reads from. So the next `fold_and_verify.sh` run overwrote it, and it took the
+# guards out of all SEVEN blocks that had one at once. The suite then failed in any bare checkout
+# and passed on this machine, which is the exact failure mode the helper's own docstring describes.
+# A guard that lives only in generated output is not a guard. It lives here now.
+_t_ws71 = owner_workspace("the check-trailer sweep")
+if _t_ws71 is not None:
+    _t_stores71 = {}
+    for _t_name71, _t_dir71 in (("rules", ".chamnan/memory/rules"),
+                                ("skills", ".chamnan/skills"),
+                                ("decisions", ".chamnan/memory/decisions"),
+                                ("lessons", ".chamnan/memory/lessons")):
+        _t_d71 = _t_repo71 / _t_dir71
+        if not _t_d71.is_dir():
+            continue
+        _t_n71 = sum(1 for _f in _t_d71.glob("*.md")
+                     if "**Check:**" in _f.read_text(encoding="utf-8", errors="replace"))
+        if _t_n71:
+            _t_stores71[_t_name71] = _t_n71
 
-_t_hook71 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
-_t_rep71 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
-_t_unread71 = []
-for _t_store71 in sorted(_t_stores71):
-    _t_fn71 = "%s_with_titles" % _t_store71
-    for _t_label71, _t_src71 in (("the session block", _t_hook71), ("chamnan-report", _t_rep71)):
-        if _t_fn71 not in _t_src71:
-            _t_unread71.append(f"{_t_store71} ({_t_label71})")
+    _t_hook71 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+    _t_rep71 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+    _t_unread71 = []
+    for _t_store71 in sorted(_t_stores71):
+        _t_fn71 = "%s_with_titles" % _t_store71
+        for _t_label71, _t_src71 in (("the session block", _t_hook71), ("chamnan-report", _t_rep71)):
+            if _t_fn71 not in _t_src71:
+                _t_unread71.append(f"{_t_store71} ({_t_label71})")
 
-check(f"the sweep found the stores that carry trailers: {_t_stores71}",
-      bool(_t_stores71),
-      saw="no store on disk carries a `**Check:**` trailer — this check is measuring nothing")
-check("EVERY STORE THAT CARRIES CHECK TRAILERS IS READ BY EVERY READER THAT EVALUATES THEM",
-      not _t_unread71,
-      saw="%s — a trailer in a store nobody feeds to `rulecheck` is a claim that has never once "
-          "been tested, and nothing says so" % (", ".join(_t_unread71),))
+    check(f"the sweep found the stores that carry trailers: {_t_stores71}",
+          bool(_t_stores71),
+          saw="no store on disk carries a `**Check:**` trailer — this check is measuring nothing")
+    check("EVERY STORE THAT CARRIES CHECK TRAILERS IS READ BY EVERY READER THAT EVALUATES THEM",
+          not _t_unread71,
+          saw="%s — a trailer in a store nobody feeds to `rulecheck` is a claim that has never once "
+              "been tested, and nothing says so" % (", ".join(_t_unread71),))
 
-# --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
-# file, so the check reports `unverifiable` forever — indistinguishable, to anyone skimming, from a
-# check that simply has nothing to look at yet. Six of eight were in that state and had been since
-# they were written.
-_t_dead71 = []
-for _t_title71, _t_text71 in (_mem71.rules_with_titles(_t_repo71)
-                              + _mem71.skills_with_titles(_t_repo71)):
-    for _t_mode71, _t_pat71, _t_glob71, _t_every71 in _rc71.parse(_t_text71):
-        _t_target71 = _t_repo71 / _t_glob71
-        if _t_target71.is_dir():
-            _t_dead71.append(f"{_t_title71[:40]}: `{_t_glob71}` is a directory")
+    # --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
+    # file, so the check reports `unverifiable` forever — indistinguishable, to anyone skimming, from a
+    # check that simply has nothing to look at yet. Six of eight were in that state and had been since
+    # they were written.
+    _t_dead71 = []
+    for _t_title71, _t_text71 in (_mem71.rules_with_titles(_t_repo71)
+                                  + _mem71.skills_with_titles(_t_repo71)):
+        for _t_mode71, _t_pat71, _t_glob71, _t_every71 in _rc71.parse(_t_text71):
+            _t_target71 = _t_repo71 / _t_glob71
+            if _t_target71.is_dir():
+                _t_dead71.append(f"{_t_title71[:40]}: `{_t_glob71}` is a directory")
 
-check("...and no trailer names a DIRECTORY where the grammar wants a file glob",
-      not _t_dead71,
-      saw="%s — matches no file, so it reports `unverifiable` for ever and reads as 'nothing to "
-          "check yet' rather than as a broken claim" % ("; ".join(_t_dead71[:5]),))
+    check("...and no trailer names a DIRECTORY where the grammar wants a file glob",
+          not _t_dead71,
+          saw="%s — matches no file, so it reports `unverifiable` for ever and reads as 'nothing to "
+              "check yet' rather than as a broken claim" % ("; ".join(_t_dead71[:5]),))
 
-# --- 3. The trailers that exist actually pass right now. A grammar wired to a store whose every
-# claim is broken is worse than not wiring it: the line it prints becomes noise people skip.
-_t_results71 = _rc71.run(_t_repo71, _mem71.skills_with_titles(_t_repo71))
-_t_bad71 = [(t, s, d) for t, s, d in _t_results71 if s not in ("holds",)]
-check(f"...and this repository's own skill trailers hold: {len(_t_results71)} evaluated",
-      _t_results71 and not _t_bad71,
-      saw="%d evaluated, %s" % (len(_t_results71),
-                                "; ".join(f"{t[:30]} {s}: {d[:60]}" for t, s, d in _t_bad71[:4])
-                                or "none ran at all"))
-_sys71.path.remove(str(ROOT / "lib"))
+    # --- 3. The trailers that exist actually pass right now. A grammar wired to a store whose every
+    # claim is broken is worse than not wiring it: the line it prints becomes noise people skip.
+    _t_results71 = _rc71.run(_t_repo71, _mem71.skills_with_titles(_t_repo71))
+    _t_bad71 = [(t, s, d) for t, s, d in _t_results71 if s not in ("holds",)]
+    check(f"...and this repository's own skill trailers hold: {len(_t_results71)} evaluated",
+          _t_results71 and not _t_bad71,
+          saw="%d evaluated, %s" % (len(_t_results71),
+                                    "; ".join(f"{t[:30]} {s}: {d[:60]}" for t, s, d in _t_bad71[:4])
+                                    or "none ran at all"))
+    _sys71.path.remove(str(ROOT / "lib"))
 # ---- 72_the_calibration_measures_the_artefacts_its_own_table_quotes.py
 # ------------- a published table of numbers, and the script built to reproduce it measured none of it
 # 🐛 [2026-09-10] `lib/tokens.py`'s docstring is the published justification for its per-script
@@ -32374,16 +32531,26 @@ else:
           saw="%s quoted in tokens.py's own justification and absent from the script built to "
               "reproduce it" % (", ".join(_t_gap72),))
 
-    # ...and the rows resolve against a real repository rather than merely being declared.
-    _t_live72 = _t_c72.artefact_samples(ROOT.parent.parent)
-    check(f"...and they resolve here: {sorted(_t_live72)}",
-          len(_t_live72) >= 4,
-          saw="%d row(s) resolved — a declaration that reads nothing measures nothing"
-              % len(_t_live72))
-    check("...with the two halves of MAP.md kept apart, which is how the table quotes them",
-          "## Full Detail" not in _t_live72.get("map_quick_index", "")
-          and _t_live72.get("map_full_detail", "x")[:14] == "## Full Detail",
-          saw="quick index leaked into full detail, so both rows measure the same thing")
+    # ...and the rows resolve against a real repository rather than merely being declared. That
+    # needs a repository with a workspace in it: in a clone, `artefact_samples` finds one synthetic
+    # row and the count assertion below fails for the environment rather than for the code.
+    # 🐛 [2026-09-14] The `owner_workspace` guard below was present in this block when 1.25.1 went
+    # green on all five CI legs, and it was present in the FOLDED suite only — never here, in the pool
+    # file the fold reads from. So the next `fold_and_verify.sh` run overwrote it, and it took the
+    # guards out of all SEVEN blocks that had one at once. The suite then failed in any bare checkout
+    # and passed on this machine, which is the exact failure mode the helper's own docstring describes.
+    # A guard that lives only in generated output is not a guard. It lives here now.
+    _t_ws72 = owner_workspace("the calibration's live-artefact rows")
+    if _t_ws72 is not None:
+        _t_live72 = _t_c72.artefact_samples(_t_ws72.parent)
+        check(f"...and they resolve here: {sorted(_t_live72)}",
+              len(_t_live72) >= 4,
+              saw="%d row(s) resolved — a declaration that reads nothing measures nothing"
+                  % len(_t_live72))
+        check("...with the two halves of MAP.md kept apart, which is how the table quotes them",
+              "## Full Detail" not in _t_live72.get("map_quick_index", "")
+              and _t_live72.get("map_full_detail", "x")[:14] == "## Full Detail",
+              saw="quick index leaked into full detail, so both rows measure the same thing")
 
     # A missing artefact must be SKIPPED, never substituted. A row measured against a stand-in
     # prints a number under a name that says "your MAP.md", which is worse than an absent row.
@@ -32998,63 +33165,70 @@ check("...and an ordinary case is not truncated for nothing",
 # So a name is only a claim when the sentence around it is not disclaiming it.
 import re as _re80
 
-_ws80 = ROOT.parents[1] / ".chamnan"
-_repo80 = ROOT.parents[1]
+# 🐛 [2026-09-14] This reached at `ROOT.parents[1]` with no guard, which is the owner's workspace
+# and sits ABOVE any clone. In a bare checkout there are no carried records at all, so the sweep
+# found nothing, `_claims80` was 0, and the "a green above means something" floor failed on every CI
+# leg — the very defect that assertion exists to catch, reported against the wrong tree. The
+# `owner_workspace` helper was written for exactly this and had no callers; 81 and this are its
+# first two.
+_ws80 = owner_workspace("carried-record file-claim sweep")
+if _ws80 is not None:
+    _repo80 = _ws80.parent
 
-# Every markdown file in the repository, by basename. A claim resolves if a file of that name exists
-# ANYWHERE — these records name files across the whole tree, and the point is existence, not path.
-_index80 = set()
-for _p80 in _repo80.rglob("*"):
-    if _p80.is_file() and ".git/" not in str(_p80):
-        _index80.add(_p80.name)
+    # Every markdown file in the repository, by basename. A claim resolves if a file of that name exists
+    # ANYWHERE — these records name files across the whole tree, and the point is existence, not path.
+    _index80 = set()
+    for _p80 in _repo80.rglob("*"):
+        if _p80.is_file() and ".git/" not in str(_p80):
+            _index80.add(_p80.name)
 
-# The records chamnan actually carries into a session, plus the queue document that rotted.
-_carried80 = []
-for _d80, _pat80 in ((_ws80, "STATE.md"), (_ws80 / "memory", "**/*.md"),
-                     (_ws80 / "skills", "*.md"), (_ws80 / "state" / "research", "README.md")):
-    _carried80 += sorted(_d80.glob(_pat80)) if _d80.is_dir() else []
+    # The records chamnan actually carries into a session, plus the queue document that rotted.
+    _carried80 = []
+    for _d80, _pat80 in ((_ws80, "STATE.md"), (_ws80 / "memory", "**/*.md"),
+                         (_ws80 / "skills", "*.md"), (_ws80 / "state" / "research", "README.md")):
+        _carried80 += sorted(_d80.glob(_pat80)) if _d80.is_dir() else []
 
-# Backticked, and MARKDOWN ONLY. Widening this to `.json`/`.py` was tried and reverted the same
-# minute: it reports `model3.json`, `storageState.json` and `session_start.py`, which are a Live2D
-# format, a Playwright convention and a hook's generic name — references to a KIND of file, not
-# claims that a particular one is on disk. A record naming another record is the relation that
-# rotted here, and it is the one this reads.
-_NAME80 = _re80.compile(r"`([A-Za-z0-9][A-Za-z0-9_./-]*\.md)`")
-# A template names no file, and never did.
-_TEMPLATE80 = _re80.compile(r"YYYY|MM-DD|^<|\{")
-# The sentence is recording that the thing is gone or has moved. English and Thai, because these
-# records are written in both: `ลบ` is "delete" and `เดิม` is "formerly", and both Thai instances
-# that this check would otherwise have mis-reported carry one of them on the same line.
-_PROVENANCE80 = _re80.compile(
-    r"moved out of|move[d]? into|deleted|removed|no longer|used to|was renamed|before deleting"
-    r"|ลบ|เดิม", _re80.I)
+    # Backticked, and MARKDOWN ONLY. Widening this to `.json`/`.py` was tried and reverted the same
+    # minute: it reports `model3.json`, `storageState.json` and `session_start.py`, which are a Live2D
+    # format, a Playwright convention and a hook's generic name — references to a KIND of file, not
+    # claims that a particular one is on disk. A record naming another record is the relation that
+    # rotted here, and it is the one this reads.
+    _NAME80 = _re80.compile(r"`([A-Za-z0-9][A-Za-z0-9_./-]*\.md)`")
+    # A template names no file, and never did.
+    _TEMPLATE80 = _re80.compile(r"YYYY|MM-DD|^<|\{")
+    # The sentence is recording that the thing is gone or has moved. English and Thai, because these
+    # records are written in both: `ลบ` is "delete" and `เดิม` is "formerly", and both Thai instances
+    # that this check would otherwise have mis-reported carry one of them on the same line.
+    _PROVENANCE80 = _re80.compile(
+        r"moved out of|move[d]? into|deleted|removed|no longer|used to|was renamed|before deleting"
+        r"|ลบ|เดิม", _re80.I)
 
-_claims80, _stale80 = 0, []
-for _f80 in _carried80:
-    for _ln80 in _f80.read_text(encoding="utf-8").splitlines():
-        _hits80 = _NAME80.findall(_ln80)
-        if not _hits80:
-            continue
-        _disclaimed80 = bool(_PROVENANCE80.search(_ln80))
-        for _n80 in _hits80:
-            _base80 = _n80.rsplit("/", 1)[-1]
-            if _TEMPLATE80.search(_base80):
+    _claims80, _stale80 = 0, []
+    for _f80 in _carried80:
+        for _ln80 in _f80.read_text(encoding="utf-8").splitlines():
+            _hits80 = _NAME80.findall(_ln80)
+            if not _hits80:
                 continue
-            _claims80 += 1
-            if _disclaimed80:
-                continue
-            if _base80 not in _index80:
-                _stale80.append(f"{_f80.relative_to(_ws80)} -> {_n80}")
+            _disclaimed80 = bool(_PROVENANCE80.search(_ln80))
+            for _n80 in _hits80:
+                _base80 = _n80.rsplit("/", 1)[-1]
+                if _TEMPLATE80.search(_base80):
+                    continue
+                _claims80 += 1
+                if _disclaimed80:
+                    continue
+                if _base80 not in _index80:
+                    _stale80.append(f"{_f80.relative_to(_ws80)} -> {_n80}")
 
-if _stale80:
-    print("      carried records naming a file that is not in the repository: "
-          + "; ".join(_stale80[:6]))
-check("A CARRIED RECORD NAMES NO FILE THAT DOES NOT EXIST, UNLESS IT SAYS IT IS GONE",
-      _stale80 == [])
-# Without this the check above passes on a finder that has stopped finding, which is the same
-# "nothing was reported" that is not the same as "nothing is wrong".
-check("...and the sweep still finds file claims to resolve, so a green above means something",
-      _claims80 >= 60)
+    if _stale80:
+        print("      carried records naming a file that is not in the repository: "
+              + "; ".join(_stale80[:6]))
+    check("A CARRIED RECORD NAMES NO FILE THAT DOES NOT EXIST, UNLESS IT SAYS IT IS GONE",
+          _stale80 == [])
+    # Without this the check above passes on a finder that has stopped finding, which is the same
+    # "nothing was reported" that is not the same as "nothing is wrong".
+    check("...and the sweep still finds file claims to resolve, so a green above means something",
+          _claims80 >= 60)
 # ---- 81_state_md_does_not_crowd_the_rest_of_the_block_out.py
 # ------------------- STATE.md is ranked first and never cut, so its size is spent by everyone else
 # 🐛 [2026-09-11] R14, measured over 288 real firings: the block is at its ceiling on 286 of them,
@@ -33087,8 +33261,13 @@ import sys as _sys81
 _sys81.path.insert(0, str(ROOT / "lib"))
 import fit as _fit81
 
-_state81 = ROOT.parents[1] / ".chamnan" / "STATE.md"
-_bytes81 = len(_state81.read_bytes()) if _state81.is_file() else 0
+# 🐛 [2026-09-14] Written reaching straight at `ROOT.parents[1]`, which is the owner's workspace
+# and is one directory ABOVE anything a clone contains. A bare checkout has no such file, so
+# `_bytes81` was 0, `0 < 0` was False, and this failed on every CI leg while passing here. That is
+# the sixteenth block to make the mistake this file's own `owner_workspace` helper was written to
+# end — and the helper had no callers at all. It has one now.
+_ws81 = owner_workspace("STATE.md share-of-block check")
+_state81 = (_ws81 / "STATE.md") if _ws81 else None
 
 # 35%, not the 45% it reached. Set above today's size with real headroom, because the failure this
 # guards is ACCUMULATION of reference material, and a bound so tight it fires on genuinely open work
@@ -33096,9 +33275,11 @@ _bytes81 = len(_state81.read_bytes()) if _state81.is_file() else 0
 _SHARE81 = 0.35
 _cap81 = int(_fit81.CEILING * _SHARE81)
 
-check("STATE.MD DOES NOT TAKE MORE THAN A THIRD OF THE BLOCK IT IS NEVER CUT FROM",
-      0 < _bytes81 <= _cap81,
-      saw=f"{_bytes81} bytes against a {_cap81} cap ({_SHARE81:.0%} of {_fit81.CEILING})")
+if _state81 is not None and _state81.is_file():
+    _bytes81 = len(_state81.read_bytes())
+    check("STATE.MD DOES NOT TAKE MORE THAN A THIRD OF THE BLOCK IT IS NEVER CUT FROM",
+          0 < _bytes81 <= _cap81,
+          saw=f"{_bytes81} bytes against a {_cap81} cap ({_SHARE81:.0%} of {_fit81.CEILING})")
 # A cap read from a constant that has quietly become something else is not a cap. If the ceiling is
 # ever redefined, this fails rather than silently widening.
 check("...and the cap is still derived from a ceiling that looks like a block budget",
