@@ -21,6 +21,43 @@ already reports the last released number while running newer code.
 
 ## What's new in 1.26.0
 
+### New: `chamnan-schedule` — finish this work later, when the limit has reset
+
+You are most of the way through something and the usage limit is about to stop you. Name the time
+and chamnan comes back to it.
+
+```bash
+chamnan-schedule set 2h31m                 # resume this session's work in 2h31m
+chamnan-schedule set 11:10pm               # or at a wall-clock time
+chamnan-schedule set --reset-json resp.json  # or read the reset out of a rate-limit response
+chamnan-schedule list                      # what is pending
+chamnan-schedule cancel <id>               # or --all
+```
+
+**It carries the work, not a command line.** "Finish what you were doing" is not something a command
+line can say, and retyping the job at the moment the session is ending is the thing this exists to
+avoid. The record points at where the work is already written down — `.chamnan/STATE.md` by default,
+`--resume-from` for anywhere else — and the resumed session is told to carry on from there. A
+schedule is worth exactly what that record is worth.
+
+**A schedule, never an auto-renew.** Nothing notices that a limit was hit, nothing decides on its own
+that work should resume, and nothing repeats unless you ask. There is no way to know whether someone
+else's session wants to wake itself up, so a person names the time and chamnan keeps the appointment.
+
+**It writes nothing outside your repository.** No LaunchAgent, no crontab, no registry task. What
+runs is a detached child of your own shell that exits as soon as it has fired. `--caffeinate` will
+hold a Mac awake until then, and it is opt-in, because keeping a laptop awake for hours is your call.
+
+`--runner` is the extension point: give it any command and that runs instead of the default CLI, so
+a harness, a router, or a model with no CLI of its own can be the thing that resumes.
+
+Knowing what to fire *at* is the hard half, and it cannot be answered after the fact — somebody
+running several pools or a router in front of many models leaves no trace of which one a session
+used. So it is recorded at `set` time: the agent, the config directory in force right then, the
+transport, and the process, identified by when it was born rather than by elapsed time. A birth time
+needs no tolerance, and this machine sleeps after a minute idle, which is exactly what distorts an
+elapsed figure.
+
 **Four commands were telling you things that were not true.** All four are fixed, and each one now
 has a test that fails if the wrong answer ever comes back.
 

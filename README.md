@@ -504,6 +504,18 @@ The plugin is active for that session only. It creates the empty `.chamnan/` sca
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 ## What's new in 1.26.0
 
+**A new command: `chamnan-schedule`.** You are most of the way through something and the usage limit
+is about to stop you. `chamnan-schedule set 2h31m` — or a wall-clock time, or the reset read straight
+out of a rate-limit response with `--reset-json` — and chamnan comes back to it.
+
+It carries the *work*, not a command line. "Finish what you were doing" is not something a command
+line can say, so the record points at where the work is already written down (`.chamnan/STATE.md` by
+default) and the resumed session carries on from there. It is a schedule and never an auto-renew:
+nothing notices a limit, nothing decides on its own to resume, nothing repeats unless you ask. And it
+writes nothing outside your repository — no LaunchAgent, no crontab, no registry task, just a
+detached child of your own shell that exits once it has fired. `--runner` lets any harness, router or
+CLI-less model be the thing that resumes.
+
 **Four commands were telling you things that were not true.**
 
 `chamnan-impact` told you a file was safe to change freely when it belonged to a repository nested

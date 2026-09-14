@@ -361,7 +361,7 @@ footer{padding:2.5rem 0 4rem;color:var(--faint);font-size:.85rem}
         <tbody id="pre"></tbody>
       </table>
     </div>
-    <p class="note" data-i18n="drift">Measured 2026-09-08. These repositories are worked on daily, so
+    <p class="note" data-i18n="drift">Measured 2026-09-14. These repositories are worked on daily, so
       re-running one today will not match to the byte — the shape holds, the digits move.</p>
     <p class="note" data-i18n="notePre">Source is the bytes of indexable files fetched. Injected is what the SessionStart
       hook writes into the agent's context, after the index is rolled up to its token budget — not
@@ -463,7 +463,7 @@ const LANGS = {en:"English", th:"ไทย", zh:"中文", ja:"日本語", es:"Es
 const T = {
   en: {
     running: "running chamnan {v}",
-    drift: "Measured 2026-09-08. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
+    drift: "Measured 2026-09-14. These repositories are worked on daily, so re-running one today will not match to the byte — the shape holds, the digits move. That is what a measured table looks like; a table that never changed would mean nobody was measuring.",
     missed: "{n} file(s) could not be downloaded and are not in these numbers — the source figure is that much low.",
     oversize: "{n} file(s) over 2 MB were skipped without downloading them, because chamnan does not index a file that size either.",
     escaping: "{n} path(s) in the listing did not stay inside the repository once normalised and were refused before being fetched. A repository can carry one; this page will not write it.",
@@ -557,7 +557,7 @@ const T = {
 
   th: {
     running: "กำลังใช้ chamnan {v}",
-    drift: "วัดเมื่อ 2026-09-08 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
+    drift: "วัดเมื่อ 2026-09-14 repository เหล่านี้มีคนทำงานทุกวัน วัดใหม่วันนี้จะไม่ตรงถึงระดับไบต์ — รูปแบบยังเหมือนเดิม แต่ตัวเลขขยับ ตารางที่วัดจริงเป็นแบบนี้ ถ้าตัวเลขไม่เคยเปลี่ยนเลยแปลว่าไม่มีใครวัดจริง",
     missed: "มี {n} ไฟล์ที่ดาวน์โหลดไม่สำเร็จ และไม่ได้อยู่ในตัวเลขนี้ — ค่าซอร์สจึงต่ำกว่าจริงเท่านั้น",
     oversize: "ข้าม {n} ไฟล์ที่ใหญ่เกิน 2 MB โดยไม่ดาวน์โหลด เพราะ chamnan ก็ไม่ index ไฟล์ขนาดนั้นเหมือนกัน",
     escaping: "{n} path ใน listing ออกนอกขอบเขต repository หลัง normalise จึงถูกปฏิเสธก่อนดาวน์โหลด repository สร้างแบบนี้ได้ แต่หน้านี้จะไม่เขียนลงไป",
@@ -651,7 +651,7 @@ const T = {
 
   zh: {
     running: "正在运行 chamnan {v}",
-    drift: "测量于 2026-09-08。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
+    drift: "测量于 2026-09-14。这些仓库每天都有人在改，所以今天重跑不会逐字节吻合——规律不变，数字会动。真实测量的表格就是这样；一张从不变化的表说明没人在测。",
     missed: "有 {n} 个文件下载失败，未计入这些数字——源码数值因此偏低。",
     oversize: "跳过了 {n} 个超过 2 MB 的文件且未下载，因为 chamnan 本身也不索引这种大小的文件。",
     escaping: "listing 中有 {n} 个路径规范化后不在仓库内，已在下载前拒绝。仓库可以包含这种路径，但本页不会写入。",
@@ -745,7 +745,7 @@ const T = {
 
   ja: {
     running: "chamnan {v} で実行中",
-    drift: "2026-09-08 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
+    drift: "2026-09-14 計測。これらのリポジトリは日々更新されるので、今日測り直せばバイト単位では一致しません——傾向は変わらず、数字は動きます。実測の表とはそういうものです。一度も変わらない表は、誰も測っていないという意味になります。",
     missed: "{n} 件のファイルを取得できず、この数字には含まれていません——ソースの値はその分だけ低く出ています。",
     oversize: "2 MB を超える {n} 件は、ダウンロードせずにスキップしました。chamnan もその大きさのファイルは索引しないためです。",
     escaping: "listing 内の {n} 件は正規化するとリポジトリの外に出るため、取得前に拒否しました。リポジトリはそうした経路を持てますが、このページは書き込みません。",
@@ -839,7 +839,7 @@ const T = {
 
   es: {
     running: "ejecutando chamnan {v}",
-    drift: "Medido el 2026-09-08. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
+    drift: "Medido el 2026-09-14. En estos repositorios se trabaja a diario, así que volver a medir hoy no coincidirá byte a byte: la forma se mantiene, las cifras se mueven. Así es una tabla medida; una que nunca cambiara significaría que nadie está midiendo.",
     missed: "{n} archivo(s) no se pudieron descargar y no están en estas cifras: el valor de fuente queda así de bajo.",
     oversize: "Se omitieron {n} archivo(s) de más de 2 MB sin descargarlos, porque chamnan tampoco indexa un archivo de ese tamaño.",
     escaping: "{n} ruta(s) del listado no permanecían dentro del repositorio tras normalizarlas y se rechazaron antes de descargarlas. Un repositorio puede llevar una; esta página no la escribirá.",
@@ -1001,7 +1001,7 @@ const PRE = [
   ["rails/rails","Ruby",1550,6537,243],
   ["django/django","Python",2209,6245,362],
   ["torvalds/linux","C",3028,6603,470],
-  ["tokio-rs/tokio","Rust",3476,6441,553],
+  ["tokio-rs/tokio","Rust",3481,6441,553],
   ["vuejs/core","TypeScript",3782,6250,620],
 ];
 const kb = n => n >= 1024 ? (n/1024).toFixed(n >= 10240 ? 0 : 1) + " KB" : n + " B";
