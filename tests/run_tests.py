@@ -27793,6 +27793,90 @@ _fenced = "text\n```\ncode line\n```\nafter\n"
 check("...and the fence guard still holds", mdblock.cut_outside_a_fence(_fenced, 12) <= 5)
 check("...and a cut at or past the end still returns the whole text",
       mdblock.cut_outside_a_fence(_fenced, len(_fenced)) == len(_fenced))
+# ---- 120_a_scan_that_could_not_read_a_directory_says_so.py
+# ------------------ a population derived by glob is empty for two reasons and reports only one
+# 🐛 [2026-09-14] R6.8 says Python 3.13 began suppressing every `OSError` from `Path.glob`, including
+# `PermissionError`, where earlier versions suppressed many but not all. Checked directly rather
+# than taken from the write-up, and the finding is WORSE than reported: on 3.9 and on 3.12 an
+# unreadable subtree is already skipped in silence. It is not a 3.13 regression; it is the behaviour
+# throughout the range this project supports.
+#
+# 98 blocks in this suite derive a population with `glob`, `rglob` or `iterdir`. 51 assert the
+# population is non-empty; 47 do not. For those 47, "nothing matched" and "I could not look" are the
+# same observation, and the second one passes. That is `absence-of-FAIL-is-not-success` with the
+# platform supplying the silence.
+#
+# The answer is NOT 47 hand-edited guards. Forty-seven edits to assertions is a large, low-signal
+# change where each one can be got subtly wrong, and they drift apart afterwards. The hazard is
+# narrower than the symptom: a directory the suite scans has become unreadable. One probe covers
+# every block at once and cannot fall out of step.
+import os as _os120
+
+# Derived from what the suite and the package actually scan, rather than listed: a directory added
+# later is covered without anybody remembering this check exists.
+_t_roots120 = [ROOT / _n120 for _n120 in ("lib", "bin", "hooks", "adapters", "skills",
+                                          "commands", "tests", "agents", "site")]
+_t_ws120 = owner_workspace("the workspace scan-readability probe")
+if _t_ws120 is not None:
+    _t_roots120 += [_t_ws120 / _n120 for _n120 in ("memory", "skills", "state", "tools", "logs")]
+
+_t_unreadable120, _t_scanned120 = [], 0
+for _t_root120 in _t_roots120:
+    if not _t_root120.is_dir():
+        continue
+    # `os.walk` with an `onerror` that RECORDS is the whole point: its default is to swallow, which
+    # is the same silence being guarded against. `Path.rglob` offers no such hook, which is why the
+    # probe cannot be written with the thing it is checking.
+    def _t_note120(err, _acc=_t_unreadable120):
+        _acc.append(f"{getattr(err, 'filename', '?')}: {type(err).__name__}")
+
+    for _t_dir120, _t_subs120, _t_files120 in _os120.walk(_t_root120, onerror=_t_note120):
+        _t_scanned120 += 1
+
+check(f"the readability probe walked something: {_t_scanned120} director(ies)",
+      _t_scanned120 >= 10,
+      saw="fewer than ten directories walked — the roots above have been renamed or moved, and a "
+          "probe that walks nothing reports every tree as readable")
+
+if _t_unreadable120:
+    print("      directories a scan cannot read, which a glob would report as simply empty:")
+    for _u120 in _t_unreadable120[:6]:
+        print(f"        {_u120}")
+check("EVERY DIRECTORY THIS SUITE SCANS CAN ACTUALLY BE READ",
+      _t_unreadable120 == [],
+      saw="%d unreadable: %s — `Path.glob` skips these in silence on every supported interpreter, "
+          "so any check deriving a population from them passes on an empty set"
+          % (len(_t_unreadable120), _t_unreadable120[:3]))
+
+# And the premise, asserted rather than trusted: if a future interpreter starts RAISING instead of
+# skipping, this whole block becomes unnecessary and should be deleted rather than left as noise.
+import tempfile as _tf120
+
+_t_tmp120 = None
+try:
+    _t_tmp120 = Path(_tf120.mkdtemp(prefix="chamnan-scanprobe-"))
+    _t_locked120 = _t_tmp120 / "locked"
+    _t_locked120.mkdir()
+    (_t_locked120 / "hidden.py").write_text("x = 1", encoding="utf-8")
+    (_t_tmp120 / "seen.py").write_text("y = 2", encoding="utf-8")
+    _os120.chmod(_t_locked120, 0o000)
+    try:
+        _t_got120 = sorted(p.name for p in _t_tmp120.rglob("*.py"))
+        _t_silent120 = (_t_got120 == ["seen.py"])
+    except PermissionError:
+        _t_silent120 = False
+    finally:
+        _os120.chmod(_t_locked120, 0o700)
+    if _os120.geteuid() == 0:
+        skip("  [SKIP] the glob-silence premise — running as root, which can read the locked "
+             "directory and makes the probe meaningless")
+    else:
+        check("...and the premise still holds: glob hides an unreadable subtree rather than raising",
+              _t_silent120,
+              saw="this interpreter RAISED instead of skipping — if that is now the behaviour "
+                  "everywhere, this block has no job and should be deleted, not muted")
+finally:
+    _rmtree(_t_tmp120, ignore_errors=True)
 # ---- 12_carry_share_is_equal.py
 # 🐛 [2026-09-09] `carry_forward` splits its budget EQUALLY between the parts of a handoff, so the
 # smaller part keeps a larger share of itself — which is the outcome wanted, because a summary that
