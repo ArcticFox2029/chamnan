@@ -91,6 +91,26 @@ removed in between — by the background hook's own dedup, or by a second comman
 a raw `[Errno 2]`, or an uncaught traceback. Three readers lacked the guard that ten of their
 siblings in the same module already had.
 
+### Re-run it yourself
+
+```bash
+git clone https://github.com/ArcticFox2029/chamnan && cd chamnan
+python3 tools/verify_release.py
+```
+
+**5,129 of 5,133 checks passed** on this machine, 0 failing, 0 tracebacks. Three blocks are skipped
+on macOS and say why in their own output — they need a filesystem or a host this machine is not.
+
+The redactor's own figure, which you can reproduce without cloning anything:
+
+```bash
+python3 .chamnan/tools/redactor_recall.py
+```
+
+**98 of 99 secret and personal-data shapes redacted.** The one that is not caught is named in the
+output, with the reason: it carries no prefix and no keyword, so only entropy would find it, and
+entropy eats commit hashes.
+
 ### A password in your language was not a password
 
 The redactor stops a credential reaching the model. It stopped an English one.
