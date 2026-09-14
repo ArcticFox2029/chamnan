@@ -98,8 +98,12 @@ git clone https://github.com/ArcticFox2029/chamnan && cd chamnan
 python3 tools/verify_release.py
 ```
 
-**5,130 of 5,133 checks passed** on this machine, 0 failing, 0 tracebacks. Three blocks are skipped
-on macOS and say why in their own output — they need a filesystem or a host this machine is not.
+**5,081 checks. 5,081 passed. 0 failed.**
+
+That is what those two commands print on a fresh clone, so it is what you will see too.
+
+A few checks say they were skipped instead of run. They need a developer setup a clone does not
+have, and each one prints its own reason on the line.
 
 **98 of 99 secret and personal-data shapes are redacted.** The one that is not caught is named in
 the verifier's own output, with the reason: it carries no prefix and no keyword, so only entropy
@@ -127,6 +131,30 @@ are still left alone.
 
 A Kubernetes Secret's base64 `data:` value under a key name with no credential word in it also
 passed. That is closed.
+
+### A variable named after the secret it holds
+
+A variable called `secret`, assigned the word *secret*, printed its value. So did `credential`,
+`apikey`, `passphrase`, `auth`, `cred`, `keypass`, `storepass`, `passwd` and `secretkey`. Only
+`password` was caught.
+
+The rule that decides these reads the letter case of the key. An ALL-CAPS `CREDENTIAL` assigned its
+own lowercase name is the enum idiom and is left alone; a lowercase `credential` assigned the same
+word is a variable holding a value somebody did not choose. That rule was unreachable. An exemption added earlier — for the
+`accessToken = "access_token"` shape, where a key and value are one name spelled by two conventions
+— answered "this is a label" for every key whose value repeats it, and it runs first. `password`
+escaped only because it is on the list of default credentials that the exemption steps around.
+
+When the two spellings are identical there is no convention gap to explain, so that exemption now
+defers to the case rule instead of answering. Both `accessToken` shapes still work and are pinned.
+
+A bare `key` or `token` is still left alone deliberately: in source it is far more often a map key
+or a lexer token than a credential, and the credential spellings all carry a second component —
+`api_key`, `access_token`. The check states that, so a change there has to be deliberate.
+
+The check that caught the first of these asserted one example. Its replacement derives the whole
+credential vocabulary from the module and asserts every word in it, so a word added later is
+covered on the day it is added.
 
 ### And six places it was destroying text that was not a secret
 
@@ -160,6 +188,14 @@ because a refusal carries the measurement that produced it.
   execution or network capability is visible at review time. Advisory by default; `--strict` fails.
 - Two latent defects surfaced while fixing the above: a staleness scan and a corpus check both
   silently skipped stores named by file rather than by folder.
+- **The suite failed in a fresh clone and passed for us.** Seven of its blocks read a development
+  workspace that a clone does not contain, and each carried a guard that skipped it — in the
+  generated copy of the suite only. Part of that file is assembled from smaller ones, so the next
+  time it was assembled all seven guards went at once, and anyone following the "re-run it
+  yourself" instructions above got failures that were about their directory layout rather than
+  about the code. The guards now live in the source the assembler reads, and a new check asserts
+  that the assembled file is what its sources produce, so a fix cannot survive in the generated
+  copy alone again.
 
 ## What's new in 1.25.1
 
@@ -2015,7 +2051,7 @@ review down. `.gitattributes` gets `linguist-generated=true`, appended once, nev
 that already exists, skipped outside a git repository. What makes collapsing it honest rather than
 negligent is that `chamnan-map` is **byte-identical across consecutive runs**.
 
-### And the evidence trail, in this README — [Evidence](#evidence)
+### And the evidence trail, in this README — [Evidence](README.md#evidence)
 
 Every number this project quotes, where it came from, and what it changed. Published results are kept
 in separate columns from what was measured here. **Findings that argue against chamnan are in the same

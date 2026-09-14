@@ -543,8 +543,26 @@ being repeated. The tool built to prevent repeated work could not read the recor
 already been decided. Both are now indexed by section, so a match names the heading that answers
 you.
 
+**A variable named after the secret it holds printed its value.** A variable called `secret`,
+assigned the word *secret*, was not redacted, and nor were `credential`, `apikey`, `passphrase`,
+`auth`, `cred`, `keypass`, `storepass`, `passwd` or `secretkey`. Only `password` was caught: the
+rule that tells an enum member from a weak credential reads the key's letter case, and an exemption
+written
+for a different shape was answering first for every word but that one. It now defers to the case
+rule when the key and value are spelled identically. A bare `key` or `token` is still left alone on
+purpose — in source those are far more often a map key or a lexer token, and the credential
+spellings carry a second component. The check derives the whole credential vocabulary from the
+module instead of naming one example, so a word added later is covered the day it is added.
+
 **`chamnan-guard` names newly staged MCP server configuration**, so a commit granting a tool
 execution or network capability is visible at review time. Advisory by default; `--strict` fails.
+
+**The suite failed in a fresh clone and passed for us.** Seven blocks read a development workspace a
+clone does not contain, and each carried a guard that skipped it — in the generated copy of the
+suite only. Part of that file is assembled from smaller ones, so the next assembly took all seven
+guards at once, and anyone re-running the verification below saw failures about their directory
+layout rather than about the code. The guards now live where the assembler reads them, and a new
+check asserts the assembled file is what its sources produce.
 
 ## Bootstrap does not rewrite your code
 
