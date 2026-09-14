@@ -147,19 +147,35 @@ def _glob_covers(glob, rel):
     return re.fullmatch(joined, rel) is not None
 
 
-def _governs(text, rel_path):
-    """Does a rule's Check trailer claim authority over this path?
+# Trailers parsed once per record body rather than once per opened file. `related` runs inside every
+# Read, and it asks this of every record that missed the text tiers — so the parse was repeating
+# across the whole store on every tool call. Measured on this workspace: parsing is 19x the cost of
+# the glob match it exists to feed, and the record's text is the same text every time.
+_TRAILER_CACHE = {}
 
-    Tier 2 on purpose — below both text-match tiers. A rule that names the file in prose is talking
-    about that file; a rule whose glob happens to cover it is talking about a category. The first is
-    the better pointer when both exist.
+
+def _trailers(text):
+    key = (len(text), hash(text))
+    got = _TRAILER_CACHE.get(key)
+    if got is None:
+        try:
+            import rulecheck
+        except ImportError:
+            return ()
+        got = tuple(rulecheck.parse(text))
+        _TRAILER_CACHE[key] = got
+    return got
+
+
+def _governs(text, rel_path):
+    """Does a record's Check trailer claim authority over this path?
+
+    Tier 2 on purpose — below both text-match tiers. A record that names the file in prose is
+    talking about that file; one whose glob happens to cover it is talking about a category. The
+    first is the better pointer when both exist.
     """
-    try:
-        import rulecheck
-    except ImportError:
-        return False
     rel = str(rel_path).replace("\\", "/")
-    for _mode, _pattern, glob, _per_file in rulecheck.parse(text):
+    for _mode, _pattern, glob, _per_file in _trailers(text):
         # Matched the way rulecheck RESOLVES it, not the way fnmatch reads it. fnmatch's `*`
         # crosses `/`; Path.glob's does not, and rulecheck -- the module that actually runs the
         # check -- uses Path.glob. So `src/*.py` had the pointer telling a session that
