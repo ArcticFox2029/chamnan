@@ -2243,7 +2243,58 @@ def _redact_encoded_secrets(text):
     return _B64_RUN.sub(_one, text)
 
 
-def scrub(text, windowed=True):
+_CONFUSABLE_PRESENT = _lazy(lambda: re.compile(
+    "[" + "".join(re.escape(chr(_c)) for _c in sorted(_CONFUSABLE_FOLD)) + "]"))
+
+
+def _unmask_disguised_secret_words(text):
+    """`text` with ONLY the credential words a look-alike letter is hiding rewritten in Latin.
+
+    R13.4. OpenAI's Codex CLI has an open, acknowledged issue of exactly this shape: Cyrillic U+0430
+    standing in for Latin `a` walks past exec-policy string matching. Here it walked past
+    every rule in this file, because every rule anchors on the credential NAME and the name no
+    longer spelt anything: a credential line whose `a` is Cyrillic came out untouched while the
+    ASCII control line beside it redacted. The disguised spelling is NOT written out here, and
+    that is not squeamishness: a live example makes this file the one document in any corpus
+    that trips the expensive branch below, which is the same trap as a check matching its own
+    source, and it cost an hour chasing a 10% slowdown that existed only because this
+    docstring was inside the measurement.
+
+    `fold_confusables` has existed for this since R10 and its docstring refused the obvious
+    wiring, correctly and with a number: folding the whole document as a PRE-PASS means carrying
+    placeholders back into the original by sequence match, which took this package's own files
+    from milliseconds to over two minutes.
+
+    🐛 [2026-09-15] That number refused the stitch-back, and it was then read as refusing the
+    feature. Re-derived: the fold is one codepoint to one codepoint, so OFFSETS ARE PRESERVED, and
+    what the docstring actually asked for is this -- find the spans in the folded view, cut them
+    out of the original, no stitching and no diff. Measured over 1,187 real files: the gate costs
+    0.032 ms/file, 94 files contain any confusable codepoint at all, and **none of them reveals a
+    credential word that the original hides**, so the expensive branch is not reached by real text.
+
+    Deliberately minimal. Only the WORD's own span is rewritten, never the value and never a
+    character anywhere else, and only where the folded view finds a name the original does not --
+    so `пароль`, which the Cyrillic vocabulary already reads, is left exactly as it was written.
+    """
+    if not _CONFUSABLE_PRESENT.search(text):
+        return text
+    folded = fold_confusables(text)
+    known = {(h.start(), h.end()) for h in _secret_word_hits(text)}
+    extra = [h for h in _secret_word_hits(folded) if (h.start(), h.end()) not in known]
+    if not extra:
+        return text
+    out, pos = [], 0
+    for hit in extra:
+        if hit.start() < pos:
+            continue
+        out.append(text[pos:hit.start()])
+        out.append(folded[hit.start():hit.end()])
+        pos = hit.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def scrub(text, windowed=True, *, _unmask=True):
     """Every string that leaves chamnan for a written file goes through this.
 
     `windowed=False` runs every rule over the whole document, which is what this did before the
@@ -2254,6 +2305,17 @@ def scrub(text, windowed=True):
     """
     if not text:
         return text
+    # A look-alike letter in the credential NAME hides it from every rule below, because every
+    # rule below anchors on that name. Rewriting the name is a change to the reader's text, so it
+    # is made only when it BUYS something: both results are compared and the disguised spelling is
+    # kept unless unmasking it actually redacts more. `_unmask=False` is how that second run asks
+    # for the plain pipeline, and is the only thing that stops this recursing. (R13.4.)
+    if _unmask:
+        _unmasked = _unmask_disguised_secret_words(text)
+        if _unmasked is not text:
+            _with = scrub(_unmasked, windowed, _unmask=False)
+            _without = scrub(text, windowed, _unmask=False)
+            return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
     text = _redact_kubernetes_secret_data(text)
     for pattern in PATTERNS + LATE_PREFIXES:
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable

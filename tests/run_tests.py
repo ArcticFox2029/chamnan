@@ -29547,6 +29547,114 @@ try:
 finally:
     shutil.rmtree(_t_dir138, ignore_errors=True)
     _t_mapper138.reset_skips()
+# ---- 139_a_look_alike_letter_does_not_hide_a_credential_name.py
+# ------------------ a look-alike letter must not change the verdict on a credential name
+# R13.4, measured 2026-09-15. OpenAI's Codex CLI has an open, acknowledged issue of exactly this
+# shape: a Cyrillic look-alike standing in for a Latin letter walks past exec-policy string
+# matching. Here it walked past every rule in `redact.py`, because every rule anchors on the
+# credential NAME and a disguised name spells nothing.
+#
+# `fold_confusables` had existed for this since R10 and its own docstring refused the obvious
+# wiring, correctly and with a number: folding the whole document as a PRE-PASS means carrying
+# placeholders back into the original by sequence match, which took this package's own files from
+# milliseconds to over two minutes.
+#
+# 🐛 [2026-09-15] That number refused the STITCH-BACK and was then read as refusing the feature.
+# The docstring had already written down what to do instead -- the fold is one codepoint to one
+# codepoint, so offsets are preserved: find the spans in the folded view, cut them out of the
+# original. Re-derived over 1,187 real files, the honest cost is +3.7%, and the branch past the
+# gate is reached by none of them.
+#
+# Two things this block pins that took the longest to learn:
+#
+#   * The gate is "does this text contain ANY confusable codepoint". A narrower gate -- only a
+#     look-alike ADJACENT to a Latin letter -- is 2.5x cheaper and UNSOUND: five of the derived
+#     stems (`auth`, `has`, `key`, `kh`, `pass`) can be written with no Latin letter left at all,
+#     so `кеу_id` would walk straight past it. That is asserted below rather than remembered.
+#   * The measurement said +10% until the live disguised example was removed from redact.py's own
+#     docstring, which made that file the one document in the corpus tripping the branch. A check
+#     that matches its own source, one layer out, and it cost an hour.
+import importlib as _importlib139
+
+_t_redact139 = _importlib139.import_module("redact")
+
+_t_fold139 = _t_redact139._CONFUSABLE_FOLD
+_t_reverse139 = {}
+for _t_k139, _t_v139 in _t_fold139.items():
+    _t_reverse139.setdefault(str(_t_v139).lower(), chr(_t_k139))
+
+
+def _t_disguise139(word):
+    """The word with every letter that HAS a look-alike replaced by it."""
+    return "".join(_t_reverse139.get(_c139, _c139) for _c139 in word)
+
+
+# The invariant, over the real vocabulary rather than over three examples: a disguised name gets
+# the SAME verdict as its plain spelling, whatever that verdict is. Names the rules reject stay
+# rejected; names they accept stay accepted. Nothing here asserts which.
+_t_stems139 = _t_redact139.secret_word_stems() or []
+check(f"the stem population is derived and non-empty: {len(_t_stems139)} stem(s)",
+      len(_t_stems139) >= 20, saw=sorted(_t_stems139)[:8])
+
+_t_value139 = "hunter2SUPERSECRETVALUE"
+_t_disagree139 = []
+for _t_stem139 in sorted(_t_stems139):
+    if not _t_stem139.isalpha():
+        continue
+    for _t_shape139 in ("{}_id = {}", "{} = {}", "{}: {}"):
+        _t_plain139 = _t_shape139.format(_t_stem139, _t_value139)
+        _t_hidden139 = _t_shape139.format(_t_disguise139(_t_stem139), _t_value139)
+        if _t_disguise139(_t_stem139) == _t_stem139:
+            continue                       # nothing in this stem has a look-alike
+        _t_a139 = _t_value139 not in _t_redact139.scrub(_t_plain139)
+        _t_b139 = _t_value139 not in _t_redact139.scrub(_t_hidden139)
+        if _t_a139 != _t_b139:
+            _t_disagree139.append(f"{_t_plain139!r} redacted={_t_a139} but "
+                                  f"{_t_hidden139!r} redacted={_t_b139}")
+check(f"a disguised credential name gets the same verdict as its plain spelling "
+      f"({len(_t_stems139)} stems x 3 shapes)",
+      not _t_disagree139,
+      saw=f"{_t_disagree139[:6]} -- a look-alike letter decided whether a rule fired, which is the "
+          f"whole of the Codex CLI issue this is taken from.")
+
+# The gate's breadth, asserted from the data that decides it rather than from the choice made.
+_t_coverable139 = {str(_t_v139).lower() for _t_v139 in _t_fold139.values()}
+_t_fully139 = sorted(_t_s139 for _t_s139 in _t_stems139
+                     if _t_s139.isalpha()
+                     and all(_c139 in _t_coverable139 for _c139 in _t_s139.lower()))
+check(f"the gate must not require a Latin neighbour: {len(_t_fully139)} stem(s) can be written "
+      f"entirely in look-alikes",
+      bool(_t_fully139),
+      saw=f"none found -- if that ever becomes true, the cheaper adjacency gate becomes sound and "
+          f"is worth 2.5x. Today it is not: {_t_fully139}")
+for _t_s139 in _t_fully139[:3]:
+    _t_doc139 = f"{_t_disguise139(_t_s139)}_id = {_t_value139}"
+    _t_plain_doc139 = f"{_t_s139}_id = {_t_value139}"
+    check(f"a fully-disguised {_t_s139!r} is judged as {_t_s139!r} is",
+          (_t_value139 not in _t_redact139.scrub(_t_doc139))
+          == (_t_value139 not in _t_redact139.scrub(_t_plain_doc139)),
+          saw=f"{_t_redact139.scrub(_t_doc139)!r} vs {_t_redact139.scrub(_t_plain_doc139)!r}")
+
+# Precision: a script that is not disguising anything is left exactly as written. `пароль` is in
+# the Cyrillic vocabulary already, so the fold must not touch it.
+for _t_ru139 in ("пароль от двери лежит на столе",
+                 f"пароль {_t_value139}"):
+    _t_out139 = _t_redact139.scrub(_t_ru139)
+    check(f"Cyrillic written as Cyrillic is untouched by the fold: {_t_ru139[:18]!r}",
+          _t_out139.startswith("пароль"),
+          saw=repr(_t_out139))
+
+# And the file must not carry a live disguised example, or it becomes the corpus's only positive.
+_t_src139 = __import__("pathlib").Path(_t_redact139.__file__).read_text(encoding="utf-8")
+_t_self139 = [ln for ln in _t_src139.split("\n")
+              if _t_redact139._CONFUSABLE_PRESENT.search(ln)
+              and _t_redact139._secret_word_hits(_t_redact139.fold_confusables(ln))
+              and not _t_redact139._secret_word_hits(ln)]
+check("redact.py carries no live disguised credential word of its own",
+      not _t_self139,
+      saw=f"{_t_self139[:2]} -- a live example makes this file the one document in any corpus that "
+          f"trips the expensive branch, and the measurement that follows is then about the file "
+          f"rather than about the change.")
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
