@@ -526,6 +526,17 @@ version stayed put reported nothing. That is the case that most needs the notice
 compares the shipped code's content, and only when the versions are equal, so a real bump costs
 nothing extra.
 
+**A password in your language was not a password.** The redactor caught `password = "..."` and
+missed the Thai, Chinese, Japanese, Korean, Arabic, Hindi, Spanish, French and German spellings —
+3 of 30 cases, now **30 of 30**. The vocabulary was already in the file, added for CSV headers and
+never wired to the assignment patterns. It is now grouped by **script** rather than language, since
+German and Indonesian are non-English and plain ASCII, and each script gets the rule that fits:
+Thai, Chinese, Japanese and Korean allow a keyword joined to the next word, which is ordinary
+writing there; Latin and the rest keep boundaries, so `passwordless` is still left alone. A
+Kubernetes Secret's base64 value under a non-credential key name is closed too, along with six
+places the redactor was destroying text that was not a secret. Recall moved from 95 of 96 to
+**98 of 99**.
+
 **`chamnan-recall` can now see what the project already refused.** It searched rules, decisions,
 lessons, skills, threads and sessions — and not the two files written specifically to stop work
 being repeated. The tool built to prevent repeated work could not read the record of what had

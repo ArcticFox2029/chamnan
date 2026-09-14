@@ -91,6 +91,42 @@ removed in between — by the background hook's own dedup, or by a second comman
 a raw `[Errno 2]`, or an uncaught traceback. Three readers lacked the guard that ten of their
 siblings in the same module already had.
 
+### A password in your language was not a password
+
+The redactor stops a credential reaching the model. It stopped an English one.
+
+Measured against a corpus of 800 files in eight writing systems: a credential introduced by a
+**translated keyword** passed through untouched. `password = "..."` was caught; the Thai, Chinese,
+Japanese, Korean, Arabic, Hindi, Spanish, French and German spellings of the same word were not.
+Three of thirty cases caught. It is now thirty of thirty.
+
+The vocabulary was already in the file. It had been added for reading CSV header rows and was never
+connected to the patterns that read an assignment — same words, one path covered, the identical
+path beside it missed.
+
+The fix groups the vocabulary by **script**, not by language, because they are not the same thing:
+German, Italian, Dutch and Indonesian are not English and are plain ASCII. Each script then gets the
+rule that fits it. Thai, Chinese, Japanese and Korean do not put spaces between words, so a keyword
+joined to the next word is ordinary writing there and is now caught — `รหัสผ่านใหม่` used to pass.
+Latin, Cyrillic, Arabic and Devanagari keep word boundaries, so `passwordless` and ordinary prose
+are still left alone.
+
+A Kubernetes Secret's base64 `data:` value under a key name with no credential word in it also
+passed. That is closed.
+
+### And six places it was destroying text that was not a secret
+
+Found in the same corpus run. A GraphQL type annotation could be mangled file-wide; Swift and Dart
+`Codable` raw values, a SQL `COMMENT ON ... IS`, a Lua cache key and a Protobuf field name were all
+being rewritten. One of them is worth naming: the guard meant to protect non-ASCII prose was itself
+ASCII-only, so it failed on `contraseña`.
+
+All six are fixed, and the check that pins them also asserts that six near-neighbour real secrets
+are still redacted — because the easy way to stop over-redacting is to start under-redacting.
+
+The published recall figure moved with the work, from 95 of 96 to **98 of 99**. It is measured by a
+tool you can run yourself.
+
 ### chamnan-recall now searches what the project already refused
 
 `chamnan-recall <question>` answers "what do we already say about this". It searched rules,
