@@ -244,6 +244,131 @@ def files(root):
     return [base / rel for rel in _entries(root)[0]]
 
 
+def _unreadable_ancestor(path, base):
+    """True when `path` cannot be seen because a directory above it cannot be entered.
+
+    A missing file and a file behind a closed door both fail `exists()`, and only one of them is
+    missing. Walks up to `base` and stops at the first ancestor that does exist: if entering or
+    reading THAT is refused, the file below it was never looked at.
+    """
+    import os
+
+    try:
+        parent = path.parent
+        while True:
+            if parent.exists():
+                return not os.access(parent, os.R_OK | os.X_OK)
+            if parent == base or parent == parent.parent:
+                return False
+            parent = parent.parent
+    except OSError:
+        return False
+
+
+def index_census(root):
+    """What git's INDEX knows that a filesystem walk cannot see. `{}` when git cannot answer.
+
+    Eight findings from R14 are one finding in eight registers: **the walk that builds the map
+    derives its population from the disk, and the index is a different population.** Git documents
+    every one of the ways they part company —
+
+      * `core.symlinks=false` checks a tracked symlink out as an ordinary small text file holding
+        its target path, with mode 120000 preserved in the index (R14.9)
+      * a submodule is a gitlink at mode 160000 and may have no worktree path at all (R14.10)
+      * sparse checkout keeps a path in the index and deliberately removes it from disk, and
+        `git ls-files` still lists it (R14.5)
+      * `core.ignoreCase` and macOS `core.precomposeUnicode` both let two index spellings land on
+        one directory entry (R14.7, R14.8)
+
+    — and one `git ls-files --stage -z` answers all of them. Eight separate edits to one function
+    would be `the-set-not-the-member` chosen on purpose, so this is a census rather than four
+    special cases, and it REPORTS rather than repairs: which of them is a problem depends on a
+    checkout this process cannot see.
+
+    Measured before it was added: 27-32 ms on repositories of 229 and 866 tracked paths, against
+    the 269 ms `chamnan-map --help` already spends before it does anything.
+
+    `-z` because a path may contain a newline, and `--stage` because the MODE is what separates a
+    symlink checked out as a file from a file.
+    """
+    import subprocess
+    import unicodedata
+    from collections import Counter
+
+    try:
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z"],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", stdin=subprocess.DEVNULL, timeout=20)
+    except (OSError, ValueError, subprocess.SubprocessError, NotImplementedError):
+        return {}
+    if out.returncode != 0:
+        return {}
+
+    base = Path(root)
+    tracked, absent, symlink_as_file, gitlinks = [], [], [], []
+    unreadable = []
+    for record in out.stdout.split("\0"):
+        if not record:
+            continue
+        meta, _, rel = record.partition("	")
+        parts = meta.split()
+        if len(parts) < 3 or not rel:
+            continue
+        mode = parts[0]
+        tracked.append(rel)
+        if mode == "160000":
+            # A gitlink names a commit, not a file. It is absent from the walk by definition and
+            # must not be counted as a missing file.
+            gitlinks.append(rel)
+            continue
+        here = base / rel
+        try:
+            exists = here.exists()
+            is_link = here.is_symlink()
+        except PermissionError:
+            # `Path.exists()` RAISES here rather than returning False: on this interpreter it only
+            # swallows the not-found errors, and "the directory above refuses to be entered" is a
+            # different one. The old handler caught it with every other OSError and `continue`d, so
+            # the file left the census in silence -- not merely misreported, absent from the count
+            # a reader compares against git's. Fall through: the branch below asks the right
+            # question and answers it.
+            exists, is_link = False, False
+        except OSError:
+            continue
+        if not exists:
+            # 🐛 [2026-09-15] Everything the walk could not see was reported as "tracked but not on
+            # disk", and a file inside an unreadable DIRECTORY reaches this branch too -- `exists()`
+            # is False because the parent cannot be traversed, not because the file is gone. So a
+            # chmod-000 directory sent the reader hunting for deleted files that were never
+            # deleted. "We looked and it is not there" and "we could not look" are different
+            # answers, and reporting the second as the first is the failure this census exists to
+            # prevent, committed by the census itself. (R12.6/R12.8/R12.9: ripgrep's own open
+            # issue is that 0 results from an unreadable directory reads as 0 matches, and
+            # Borgmon keeps "did we even manage to look" as a variable of its own.)
+            if _unreadable_ancestor(here, base):
+                unreadable.append(rel)
+            else:
+                absent.append(rel)
+        elif mode == "120000" and not is_link:
+            # Mode says symlink, the disk says ordinary file: `core.symlinks=false`. Its content is
+            # a path, and running source heuristics over it describes the wrong thing.
+            symlink_as_file.append(rel)
+
+    # Two spellings the index can hold and one directory entry cannot. Counted as GROUPS, because
+    # the number a reader needs is how many names are in conflict, not how many files.
+    def _groups(key):
+        seen = Counter(key(x) for x in tracked)
+        return sorted(x for x in tracked if seen[key(x)] > 1)
+
+    return {"tracked": len(tracked),
+            "absent": sorted(absent),
+            "unreadable": sorted(unreadable),
+            "symlink_as_file": sorted(symlink_as_file),
+            "submodules": sorted(gitlinks),
+            "case_collisions": _groups(str.casefold),
+            "nfc_collisions": _groups(lambda s: unicodedata.normalize("NFC", s))}
+
+
 def vcs_dirs(root):
     """Every VCS_DIRS marker found, including inside otherwise-skipped trees — see _walk."""
     base = Path(root)

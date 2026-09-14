@@ -1115,6 +1115,51 @@ def main(argv):
     if mapper.SKIPPED_BINARY:
         print(f"  not indexed, binary content behind a source extension: "
               f"{len(mapper.SKIPPED_BINARY)} file(s)")
+    # 🐛 [2026-09-14] Every notice above reports something the WALK saw and declined. None of them
+    # can report what the walk never saw, and git's index routinely knows paths the disk does not:
+    # a tracked file deleted but not yet committed, a sparse checkout, a submodule that is a commit
+    # rather than a directory, a symlink checked out as a plain file under `core.symlinks=false`,
+    # or two index spellings that a case-folding or NFC-folding filesystem collapses into one.
+    #
+    # R14 raised those as eight separate items. `tree.index_census` answers all eight with one
+    # `git ls-files --stage -z` — 27-32 ms measured on 229 and 866 tracked paths — because eight
+    # edits to one population is `the-set-not-the-member` chosen deliberately.
+    #
+    # Reported, never repaired: which of these is a problem depends on a checkout this process
+    # cannot see, and a sparse checkout is somebody's deliberate configuration. What is NOT
+    # defensible is an index that claims complete coverage while sixteen tracked paths are missing,
+    # which is what this repository looked like the afternoon the census was written.
+    _census = tree.index_census(root)
+    if _census:
+        _gaps = []
+        if _census["absent"]:
+            _gaps.append(f"{len(_census['absent'])} tracked but not on disk "
+                         f"({mdblock.as_quoted(_census['absent'][0], 44)}"
+                         + (f" +{len(_census['absent'])-1} more" if len(_census["absent"]) > 1 else "")
+                         + ")")
+        # Named separately from "not on disk", and first, because it is the only one of these a
+        # reader can act on immediately and the only one where the map's coverage figure is a
+        # guess: the files are there, and nothing read them. (R12.6/R12.8/R12.9.)
+        if _census.get("unreadable"):
+            _gaps.append(f"{len(_census['unreadable'])} tracked but UNREADABLE — a directory "
+                         f"above them cannot be entered "
+                         f"({mdblock.as_quoted(_census['unreadable'][0], 44)}"
+                         + (f" +{len(_census['unreadable'])-1} more"
+                            if len(_census["unreadable"]) > 1 else "")
+                         + ")")
+        if _census["symlink_as_file"]:
+            _gaps.append(f"{len(_census['symlink_as_file'])} symlink(s) checked out as plain "
+                         f"files (core.symlinks=false)")
+        if _census["submodules"]:
+            _gaps.append(f"{len(_census['submodules'])} submodule(s), tracked as a commit")
+        if _census["case_collisions"]:
+            _gaps.append(f"{len(_census['case_collisions'])} path(s) differing only by case")
+        if _census["nfc_collisions"]:
+            _gaps.append(f"{len(_census['nfc_collisions'])} path(s) differing only by unicode "
+                         f"normalisation")
+        if _gaps:
+            print(f"  git's index knows {_census['tracked']:,} path(s); this index walked the "
+                  f"disk — " + "; ".join(_gaps))
     if getattr(tree, "UNREADABLE", None):
         _unread = sorted(tree.UNREADABLE)
         _unmore = len(_unread) - 4

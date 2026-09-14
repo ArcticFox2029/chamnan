@@ -29044,6 +29044,85 @@ check("the three prunes are independent of one another",
                                     for _b133 in _t_loops133[0].body),
       saw=f"{len(_t_loops133)} loop(s) over the three prunes; a shared `try` around them means a "
           f"failure in the first stops the retention policy the other two enforce.")
+# ---- 134_we_looked_and_it_is_gone_is_not_we_could_not_look.py
+# ------------------ "we looked and it is gone" is a different answer from "we could not look"
+# R12.6, R12.8 and R12.9, measured 2026-09-15 — three findings that are one finding.
+#
+# ripgrep, the engine chamnan's own search is built on, has an open years-old issue (#863) on
+# exactly this shape: a user got zero results from a permission-restricted directory and the tool
+# said "No matches". Google's SRE book tells the same story from the other side — its DNS system
+# once accepted an empty configuration file and served it — and Borgmon's answer is to keep
+# "synthetic" variables per target whose only job is to record whether the collection itself
+# succeeded, separate from what it collected.
+#
+# R12.8 proposed a size-drop threshold on the map. It was measured and REFUSED on its own NO
+# condition: on a 25-file tree, deleting eight files and making the same eight unreadable both
+# reported exactly eight, so magnitude cannot tell them apart. What can is the CAUSE, and chamnan
+# already keeps the right instrument for it — `index_census` asks git's index what should be there
+# and compares that against what the walk saw.
+#
+# 🐛 [2026-09-15] The census then threw the distinction away. Everything the walk could not see was
+# reported as "tracked but not on disk", and a file inside an unreadable directory lands in that
+# branch too: `Path.exists()` is False because the parent cannot be traversed, not because the file
+# is gone. So a chmod-000 directory sent the reader hunting for deletions that never happened —
+# the census committing, about itself, the exact confusion it exists to prevent.
+import os as _os134
+import importlib as _importlib134
+
+_t_tree134 = _importlib134.import_module("tree")
+
+_t_dir134 = Path(tempfile.mkdtemp(prefix="chamnan-census-unreadable-"))
+try:
+    _t_repo134 = _t_dir134 / "proj"
+    (_t_repo134 / "open").mkdir(parents=True)
+    (_t_repo134 / "shut").mkdir(parents=True)
+    (_t_repo134 / "open" / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    (_t_repo134 / "shut" / "b.py").write_text("def b():\n    return 2\n", encoding="utf-8")
+    _t_env134 = dict(_os134.environ, GIT_CONFIG_GLOBAL=str(_t_dir134 / "nogit"),
+                     GIT_CONFIG_SYSTEM=str(_t_dir134 / "nogit"))
+    for _t_cmd134 in (["init", "-q"], ["add", "-A"],
+                      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(_t_repo134)] + _t_cmd134,
+                       capture_output=True, env=_t_env134, stdin=subprocess.DEVNULL)
+
+    # Arm A: the file is really gone.
+    (_t_repo134 / "open" / "a.py").unlink()
+    _t_gone134 = _t_tree134.index_census(_t_repo134)
+    check("a deleted tracked file is reported as absent",
+          "open/a.py" in _t_gone134.get("absent", [])
+          and "open/a.py" not in _t_gone134.get("unreadable", []),
+          saw={k: v for k, v in _t_gone134.items() if k in ("absent", "unreadable")})
+
+    # Arm B: the file is there and the door is shut. Skipped where the process can walk through a
+    # closed door anyway, because then the case under test does not exist on this machine.
+    (_t_repo134 / "open" / "a.py").write_text("def a():\n    return 1\n", encoding="utf-8")
+    _os134.chmod(_t_repo134 / "shut", 0o000)
+    _t_blocked134 = not _os134.access(_t_repo134 / "shut", _os134.R_OK | _os134.X_OK)
+    try:
+        if not _t_blocked134:
+            print("  · this process can enter a 0o000 directory (root?) — the case under test "
+                  "cannot be produced here; the absent arm above still ran")
+        else:
+            _t_shut134 = _t_tree134.index_census(_t_repo134)
+            check("a tracked file behind an unreadable directory is NOT reported as deleted",
+                  "shut/b.py" not in _t_shut134.get("absent", []),
+                  saw=f"reported absent: {_t_shut134.get('absent')} — the file is on disk; a "
+                      f"directory above it cannot be entered. Calling that a deletion sends the "
+                      f"reader looking for a file nobody removed.")
+            check("...it is reported as unreadable instead, which names what to fix",
+                  "shut/b.py" in _t_shut134.get("unreadable", []),
+                  saw=f"unreadable: {_t_shut134.get('unreadable')}")
+            # The magnitude is the same in both arms; only the cause differs. That is why the
+            # threshold R12.8 proposed cannot work and this can.
+            check("the two arms are the same SIZE and different KINDS — which is why a "
+                  "size threshold cannot separate them",
+                  len(_t_gone134.get("absent", [])) == len(_t_shut134.get("unreadable", [])) == 1,
+                  saw=f"deleted arm absent={_t_gone134.get('absent')}, "
+                      f"closed arm unreadable={_t_shut134.get('unreadable')}")
+    finally:
+        _os134.chmod(_t_repo134 / "shut", 0o755)
+finally:
+    shutil.rmtree(_t_dir134, ignore_errors=True)
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
