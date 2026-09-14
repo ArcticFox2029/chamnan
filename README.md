@@ -557,12 +557,9 @@ module instead of naming one example, so a word added later is covered the day i
 **`chamnan-guard` names newly staged MCP server configuration**, so a commit granting a tool
 execution or network capability is visible at review time. Advisory by default; `--strict` fails.
 
-**The suite failed in a fresh clone and passed for us.** Seven blocks read a development workspace a
-clone does not contain, and each carried a guard that skipped it — in the generated copy of the
-suite only. Part of that file is assembled from smaller ones, so the next assembly took all seven
-guards at once, and anyone re-running the verification below saw failures about their directory
-layout rather than about the code. The guards now live where the assembler reads them, and a new
-check asserts the assembled file is what its sources produce.
+**21 research findings reached the code in this release, 722 in total.** Each is a place in the
+shipped source where a defect a research round found was fixed, linked to the commit that fixed it.
+`INDEX_CITED_IN_CODE.md` ships with the release and lists all of them.
 
 ## Bootstrap does not rewrite your code
 

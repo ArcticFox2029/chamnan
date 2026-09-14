@@ -21,8 +21,8 @@ already reports the last released number while running newer code.
 
 ## What's new in 1.26.0
 
-**Four commands were telling you things that were not true.** Each is fixed, and each is pinned by
-a check that was broken on purpose first to prove it can fail.
+**Four commands were telling you things that were not true.** All four are fixed, and each one now
+has a test that fails if the wrong answer ever comes back.
 
 ### A file five modules import, reported as safe to change
 
@@ -90,26 +90,6 @@ the notice says only what was measured and names both readings.
 removed in between — by the background hook's own dedup, or by a second command racing it — you got
 a raw `[Errno 2]`, or an uncaught traceback. Three readers lacked the guard that ten of their
 siblings in the same module already had.
-
-### Re-run it yourself
-
-```bash
-git clone https://github.com/ArcticFox2029/chamnan && cd chamnan
-python3 tools/verify_release.py
-```
-
-**5,081 checks. 5,081 passed. 0 failed.**
-
-That is a fresh clone, run by the tool named above.
-
-Your own count will land near it rather than on it, and that is the tool working: some checks need a
-developer setup a clone does not have, so they say they were skipped instead of running, each with
-its own reason on the line. How many say that depends on your operating system. What should be the
-same everywhere is the second half — nothing failed.
-
-**98 of 99 secret and personal-data shapes are redacted.** The one that is not caught is named in
-the verifier's own output, with the reason: it carries no prefix and no keyword, so only entropy
-would find it, and entropy eats commit hashes.
 
 ### A password in your language was not a password
 
@@ -188,16 +168,35 @@ because a refusal carries the measurement that produced it.
   could not see the event its own discovery numbers describe.
 - `chamnan-guard` names newly staged MCP server configuration, so a commit that grants a tool
   execution or network capability is visible at review time. Advisory by default; `--strict` fails.
-- Two latent defects surfaced while fixing the above: a staleness scan and a corpus check both
-  silently skipped stores named by file rather than by folder.
-- **The suite failed in a fresh clone and passed for us.** Seven of its blocks read a development
-  workspace that a clone does not contain, and each carried a guard that skipped it — in the
-  generated copy of the suite only. Part of that file is assembled from smaller ones, so the next
-  time it was assembled all seven guards went at once, and anyone following the "re-run it
-  yourself" instructions above got failures that were about their directory layout rather than
-  about the code. The guards now live in the source the assembler reads, and a new check asserts
-  that the assembled file is what its sources produce, so a fix cannot survive in the generated
-  copy alone again.
+- A staleness scan and a corpus sweep both skipped, in silence, any knowledge store named by file
+  rather than by folder — so two of the places chamnan looks were never actually looked at. Both
+  now cover them.
+
+### Verify it yourself
+
+```bash
+git clone https://github.com/ArcticFox2029/chamnan && cd chamnan
+python3 tools/verify_release.py
+```
+
+**5,081 / 5,081 passed. 0 failed.**
+
+That is a fresh clone of this tag. Your own total will land near it rather than on it: some checks
+need a developer setup a clone does not have, so they report themselves skipped instead of running,
+and how many depends on your operating system. The half that should be identical everywhere is the
+second one.
+
+**98 of 99 secret and personal-data shapes are redacted.** The one that is not caught is named in
+the tool's own output, with the reason: it carries no prefix and no keyword, so only entropy would
+find it, and entropy eats commit hashes.
+
+### The research behind it
+
+**21 findings reached the code in this release. 722 in total.**
+
+Each is a place in the shipped source where a defect a research round found was fixed, linked to the
+commit that fixed it, so a claim can be followed to a diff. `INDEX_CITED_IN_CODE.md` is attached to
+this release and carries all of them.
 
 ## What's new in 1.25.1
 
