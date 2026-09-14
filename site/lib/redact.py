@@ -886,9 +886,15 @@ ROCKET_SECRET = _lazy(lambda: re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*['\"]?\s*=>\s*)(['\"])([^'\"]{4,})\2", re.I))
 # A YAML block scalar puts `|` or `>-` where the value would be and the value on the next line, so
 # there was nothing on the key's own line to capture. Helm values.yaml is full of them.
-_YAML_BLOCK_OPENER = re.compile(r":\s*[|>][-+]?[ \t]*\n")
+# 🐛 [2026-09-15] The header was `[|>][-+]?` -- the chomping indicator only. YAML also allows an
+# explicit INDENTATION indicator, `|2` / `>3`, and either order with chomping (`|2-`, `|-2`). That
+# is not an exotic corner: it is how a Kubernetes manifest or an Ansible task writes a block whose
+# first line is itself indented. `password: |2` carried its value out in the clear while
+# `password: |` did not. Both the gate and the rule spell this header, and both had to learn it --
+# a gate that skips is as silent as a rule that misses. (R3.3 multiline structured scalars.)
+_YAML_BLOCK_OPENER = re.compile(r":\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n")
 YAML_BLOCK_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>][-+]?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I))
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*:\s*[|>](?:[1-9][-+]?|[-+][1-9]?)?[ \t]*\n)((?:[ \t]+\S.*\n?)+)", re.I))
 # Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
 # `.pgpass`'s colon-delimited final field. `_netrc` — the Windows spelling — and `.pgpass` are in
 # neither refusal list, so peek opens both.

@@ -28895,6 +28895,73 @@ check(f"every unspaced script is exercised by the parallel corpus above: "
       _t_unspaced131 <= _t_covered131,
       saw=f"not exercised: {sorted(_t_unspaced131 - _t_covered131)} -- a script with a same-script "
           f"suffix multiplies any over-broad word across its whole language, so it needs a row.")
+# ---- 132_a_yaml_block_header_is_more_than_its_chomping_indicator.py
+# ------------------ every spelling of a YAML block-scalar header reaches the rule
+# R3.3, measured 2026-09-15. `detect-secrets` ships YAML "line proxies" that turn a folded or block
+# scalar into one logical value before scanning, because scanning the physical lines separately
+# misses a value that only exists once the scalar is reconstructed. chamnan already reconstructs:
+# `YAML_BLOCK_SECRET` takes the header line and every indented line under it as one match, and a
+# 60-line, 1.6 KB block redacts whole even though a window is 512 bytes.
+#
+# 🐛 [2026-09-15] What it did not do was recognise every header. The spelling was `[|>][-+]?` --
+# the CHOMPING indicator only -- and YAML also allows an explicit INDENTATION indicator, `|2` or
+# `>3`, in either order with chomping: `|2-` and `|-2` are both legal. That is not an exotic
+# corner; it is how a Kubernetes manifest or an Ansible task writes a block whose own first line is
+# indented. `password: |2` carried its value out in the clear while `password: |` did not.
+#
+# It was in TWO places -- the cheap gate `_YAML_BLOCK_OPENER` that decides whether to run the rule
+# at all, and the rule itself -- and a gate that skips is exactly as silent as a rule that misses.
+# The block below asserts both, and derives the header alphabet from the YAML spec rather than from
+# whichever spellings happened to be tested.
+import importlib as _importlib132
+import itertools as _itertools132
+
+_t_redact132 = _importlib132.import_module("redact")
+_t_secret132 = "Hunter2SuperSecretValue"
+
+# The YAML 1.2 block header: `|` or `>`, then an indentation indicator (1-9) and a chomping
+# indicator (+ or -), each optional, in either order. Generated, not listed.
+_t_headers132 = []
+for _t_style132 in ("|", ">"):
+    for _t_indent132 in ("", "2", "9"):
+        for _t_chomp132 in ("", "-", "+"):
+            _t_headers132.append(_t_style132 + _t_indent132 + _t_chomp132)
+            if _t_indent132 and _t_chomp132:
+                _t_headers132.append(_t_style132 + _t_chomp132 + _t_indent132)
+
+_t_missed132 = []
+_t_ungated132 = []
+for _t_h132 in _t_headers132:
+    _t_doc132 = f"password: {_t_h132}\n  {_t_secret132}\n"
+    if _t_secret132 in _t_redact132.scrub(_t_doc132):
+        _t_missed132.append(_t_h132)
+    # The gate must admit every header the rule can read, or the rule never runs on it.
+    if not _t_redact132._YAML_BLOCK_OPENER.search(_t_doc132):
+        _t_ungated132.append(_t_h132)
+
+check(f"every legal block-scalar header redacts its value "
+      f"({len(_t_headers132)} generated spellings)",
+      not _t_missed132,
+      saw=f"carried the value out in the clear: {_t_missed132}")
+check("the cheap opener gate admits every header the rule can read",
+      not _t_ungated132,
+      saw=f"{_t_ungated132} -- `_YAML_BLOCK_OPENER` decides whether `YAML_BLOCK_SECRET` runs at "
+          f"all, so a header the gate does not know is a header the rule never sees.")
+
+# Reconstruction, which is R3.3's actual subject: the scalar is one logical value however many
+# physical lines it occupies, and a body longer than one window must still go whole.
+_t_body132 = "\n".join(f"  {_t_secret132}{_t_i132}" for _t_i132 in range(60))
+_t_long132 = f"password: |2\n{_t_body132}\n"
+check(f"a {len(_t_long132)}-byte block scalar over 60 lines is redacted whole, "
+      f"past the {_t_redact132._WINDOW}-byte window",
+      _t_secret132 not in _t_redact132.scrub(_t_long132),
+      saw=f"{_t_redact132.scrub(_t_long132).count(_t_secret132)} line(s) still carry it")
+
+# And the precision side: a block scalar that is not a credential keeps its body.
+_t_clean132 = "description: |2\n  This release notes the migration path and nothing secret.\n"
+check("a block scalar under an ordinary name is left alone",
+      _t_redact132.scrub(_t_clean132) == _t_clean132,
+      saw=_t_redact132.scrub(_t_clean132))
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
