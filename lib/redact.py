@@ -16,6 +16,8 @@ recoverable; an unusable map means the tool gets uninstalled and nothing is prot
 """
 import os
 import re
+import binascii as _binascii
+from base64 import b64decode as _b64decode
 import unicodedata
 from pathlib import Path
 
@@ -767,7 +769,7 @@ _BETWEEN_NAME_AND_VALUE = (
 _TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*"
 
 ASSIGNED_SECRET = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE
     + r"|" + _TYPE_BEFORE_ASSIGN + r"))(['\"])([^'\"]{6,})\2", re.I))
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
@@ -796,7 +798,7 @@ _BETWEEN_NAME_AND_VALUE_SPACED = (
 # QUOTED rule and nowhere else, so the identical line with the quotes left off passed through whole.
 # The disease this repository keeps producing, in the one module where it leaks credentials.
 ASSIGNED_SECRET_BARE = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*['\"]?\s*" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE_SPACED
+    r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE_SPACED
     + r"|" + _TYPE_BEFORE_ASSIGN + r"))"
     # `(` is excluded from the value class. Without it, `AWS_SECRET = base64.b64decode("QUtJQ...")`
     # had `base64.b64decode(` captured AS the secret and replaced, leaving the real payload beside
@@ -901,7 +903,7 @@ FLAG_SECRET = _lazy(lambda: re.compile(
 PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)" + _ENDS_THE_LINE, re.M)
 
 ASSIGNED_SECRET_CALL = _lazy(lambda: re.compile(
-    r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*" + _KV_SEP + r"\s*)"
+    r"((?:" + SECRET_WORDS + r")[\w-]*\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*)"
     r"(?!<REDACTED>)([A-Za-z_][\w.]*\s*\(.*)$", re.I | re.M))
 
 # Never opened by the scanner at all, whatever else matches. .gitignore is not relied on: it is
@@ -1790,7 +1792,33 @@ _MAX_WINDOW = 200_000
 # matching too much only makes a window larger — slower, never wrong — and matching too little
 # leaks. It is deliberately more permissive than any rule it protects: every separator any of them
 # accepts, plus `=>`, and `\s*` throughout.
-_OPENS_A_QUOTED_VALUE = re.compile(r"""[\w-]*\s*['"]?\s*(?:=>|""" + _KV_SEP + r""")\s*(['"])""")
+# 🐛 [2026-09-14] `\s*['"]?\s*` is two adjacent `\s*` with an OPTIONAL token between them, so a
+# run of whitespace can be split between them in exponentially many ways and the engine tries them
+# all before failing. The `(a*)*` family, reached without a nested quantifier anywhere in sight —
+# which is exactly what R16-3 warned about, citing Stack Exchange's 34-minute outage of 2016:
+# about 20,000 consecutive whitespace characters and a trim regex with no nested quantifier at all.
+#
+# Measured on `password` + N spaces + one rejecting character, this pattern ALONE:
+#
+#       500 spaces       415.7 ms
+#     1,500 spaces    10,229.5 ms
+#     4,000 spaces   187,562.2 ms      — three minutes, on four kilobytes
+#
+# The whole pipeline reached 17.8 s on 20 KB of that shape while every other shape stayed flat at
+# about 2 ms/KB. `chamnan-map` runs on repositories this project did not write, from a hook, so one
+# file with a long trailing run was a hang with nothing said.
+#
+# The rewrite removes the ambiguity rather than the permissiveness: `\s*(?:['"]\s*)?` accepts the
+# identical language — spaces, then optionally a quote and more spaces — with exactly one way to
+# split the whitespace, because the group cannot be entered without consuming a quote.
+#
+# **Proved equivalent before it shipped, not argued:** identical match spans on 851/851 real files
+# and on 600/600 generated shapes built to exercise this very ambiguity. 597x faster at 4,000
+# spaces. The comment below still holds — this regex decides how far a window REACHES, matching too
+# much is slower and never wrong, matching too little leaks — and the rewrite changes neither
+# direction.
+_OPENS_A_QUOTED_VALUE = re.compile(
+    r"""[\w-]*\s*(?:['"]\s*)?(?:=>|""" + _KV_SEP + r""")\s*(['"])""")
 
 
 def _windows_around_secret_words(text):
@@ -2094,6 +2122,56 @@ def fold_confusables(text):
     return text.translate(_CONFUSABLE_FOLD)
 
 
+# 🐛 [2026-09-14] A credential written base64 reached `MAP.md` intact. Reproduced end to end: a file
+# whose OPENING COMMENT reads `# staging creds, kept encoded: <blob>` is summarised into the index,
+# the index is committed, and `base64 -d` on that line returns
+# `aws_secret_access_key=AKIA…`. The same secret written plainly, and the same secret written with
+# `\u0022` quote escapes, are both caught — the escaped form still spells the credential NAME in
+# readable text, and every rule in this file anchors on that name. Base64 removes the name.
+#
+# R13.3, from Truffle Security's account of building TruffleHog: a scanner that reads only the
+# literal bytes misses base64, escaped-unicode and UTF-16 alike, which is why their detectors decode
+# first. GitHub's own scanner misses base64'd AWS keys for the same reason.
+#
+# **This rule decides nothing about what base64 is dangerous.** It decodes, and asks the rules that
+# already exist: if the plaintext would have been redacted, the blob is redacted. A hash, a UUID, a
+# key fingerprint or an embedded image decodes to bytes that are not text and is skipped at the
+# first gate, so the judgement this file already makes is the only judgement made.
+#
+# Measured before shipping, over 883 real files in three trees: **698 base64-shaped runs, 0
+# redacted, 0 false positives.** The cost is 0.3 s over those files, and the gate is `validate=True`
+# plus a printable-ratio test, both of which reject almost everything before a decode is attempted.
+#
+# The blob is replaced whole. Replacing the decoded text would mean re-encoding, and an encoding
+# this module chose is not the one the file had.
+_B64_RUN = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{32,}={0,2}(?![A-Za-z0-9+/=])")
+_B64_PRINTABLE_SHARE = 0.9
+
+
+def _redact_encoded_secrets(text):
+    """Redact a base64 run whose PLAINTEXT this module would have redacted, and nothing else."""
+    if "=" not in text and not _B64_RUN.search(text):
+        return text
+
+    def _one(m):
+        blob = m.group(0)
+        try:
+            raw = _b64decode(blob + "=" * (-len(blob) % 4), validate=True)
+        except (ValueError, _binascii.Error):
+            return blob
+        if not raw:
+            return blob
+        printable = sum(32 <= c < 127 or c in (9, 10, 13) for c in raw)
+        if printable / len(raw) < _B64_PRINTABLE_SHARE:
+            return blob                   # not text: a digest, a key, an image. Never touched.
+        # The recursion is bounded by construction: the decoded text is handed to the rules, not
+        # back to this function, so a blob encoding a blob is decoded exactly once.
+        plain = raw.decode("utf-8", "replace")
+        return PLACEHOLDER if PLACEHOLDER in scrub(plain, windowed=False) else blob
+
+    return _B64_RUN.sub(_one, text)
+
+
 def scrub(text, windowed=True):
     """Every string that leaves chamnan for a written file goes through this.
 
@@ -2142,7 +2220,20 @@ def scrub(text, windowed=True):
     # api key is rotated monthly`, `the private key is generated on first run`, `the access token
     # is refreshed automatically`, `the session token is short-lived by design` -- twelve of twelve
     # left intact, against six of six real credentials replaced.
-    text = COPULA_SECRET.sub(
+    # 🐛 [2026-09-15] This was the last rule anchored on a secret word that still swept the WHOLE
+    # document, and SECRET_WORDS carries three `[A-Za-z0-9]+[_-]` runs whose `+` backtracks at every
+    # start position of an unbroken alphanumeric run. On a document ending in one, that is O(n^2):
+    # 16 KiB of digits took longer than the 8-second ceiling the CPU-curve harness allows, against
+    # 0.2 s for the same size of ordinary prose. R16-2 asked for the whole-pipeline curve precisely
+    # because no per-pattern microbenchmark shows this — every OTHER secret-word rule was already
+    # inside a window, so the cost only appears when `scrub` is measured end to end.
+    #
+    # Windowing is the module's own answer and it is not a narrowing here: the match must BEGIN with
+    # a SECRET_WORDS hit, so it cannot start outside a window; and `\S{6,}` cannot cross a newline
+    # while every window is extended to a line ending, so it cannot end outside one either. Position
+    # in the sequence is unchanged — this restricts WHERE the rule runs, not WHEN. `windowed=False`
+    # still scans everything, and the suite holds the two against each other on a boundary corpus.
+    _copula = lambda chunk: COPULA_SECRET.sub(
         lambda m: m.group(0)
         if (_inside_sql_comment_on(m)
             or _is_a_plain_word(m.group(2))
@@ -2150,7 +2241,9 @@ def scrub(text, windowed=True):
             or m.group(2).lower().rstrip(".,;:") in SCHEME_WORDS
             or _is_only_a_template(m.group(2))
             or _names_a_mechanism(m.group(1), m.group(2)))
-        else f"{m.group(1)}{PLACEHOLDER}", text)
+        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+    text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
+                              [_copula])
     # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
     # pattern cannot match a document that does not contain those two characters. The word list in
     # front of it is large, so the engine walks the whole document looking for a hit that is
@@ -2253,6 +2346,9 @@ def scrub(text, windowed=True):
     # The personal-data layer, after the credential rules: a card number inside a connection string
     # has already gone, and what is left for this to find is a bare number in prose or a fixture.
     text = _redact_personal_data(text)
+    # After every rule above, so the decoded plaintext is judged by the whole pipeline rather than
+    # by whatever half of it had run by this point.
+    text = _redact_encoded_secrets(text)
     # Before the three rules below, and on the whole text rather than inside a window: an unclosed
     # value's continuation can sit any distance from the name that opened it, and the rules below
     # would otherwise consume the opening quote and leave that continuation behind.
@@ -2796,11 +2892,11 @@ _HEADER_LANGS = {
 }
 
 _HEADER_WORD = _lazy(lambda: re.compile(
-    r"""^\s*["']?\s*(?:"""
+    r"""^\s*(?:["']\s*)?(?:"""
     + _HEADER_BARE
     + r"""|[\w-]*[_-](?:""" + _HEADER_TAIL + r"""|key|token)s?"""
     + r"""|(?-i:[a-z0-9]+(?:Password|Passwd|Passphrase|Secret|Token|Key|Credential)s?)"""
-    + r""")\s*["']?\s*$""", re.I))
+    + r""")\s*(?:["']\s*)?$""", re.I))
 
 
 def _split_row(line, delim):

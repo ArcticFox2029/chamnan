@@ -16657,10 +16657,23 @@ check("CI RUNS IT, and no longer runs compileall",
 # and read its own count against the number of files it should have found.
 _ca_out = subprocess.run([sys.executable, str(_ca)], cwd=str(ROOT), capture_output=True,
                          text=True, encoding="utf-8", errors="replace")
-_ca_seen = int(re.search(r"(\d+)/(\d+) script", _ca_out.stdout).group(2))
+# 🐛 [2026-09-14] This read `re.search(...).group(2)` with no guard, and the checker prints its
+# count only when every file compiles. A source file with a syntax error — a literal NUL written
+# into `lib/tree.py` by a heredoc that afternoon — made it print the error instead, the search
+# returned None, and `.group` on None raised out of the module and **took the whole 5,197-check run
+# down**. The one condition this check exists to detect is the one that stopped it reporting.
+#
+# Same family as `a-bare-next-takes-down-the-whole-gate`: a check may fail, and must not raise.
+_ca_count = re.search(r"(\d+)/(\d+) script", _ca_out.stdout or "")
+check("the compile checker printed a count this check can read",
+      _ca_count is not None,
+      saw=((_ca_out.stdout or "") + (_ca_out.stderr or ""))[:300]
+          or "no output at all — it did not run")
+_ca_seen = int(_ca_count.group(2)) if _ca_count else 0
 _ca_expected = len([p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix])
 check("...and it counts more files than there are commands, so it is reaching all of them",
-      _ca_seen > _ca_expected > 0)
+      _ca_seen > _ca_expected > 0,
+      saw=f"saw {_ca_seen} against {_ca_expected} command(s)")
 check("...and it passes on a clean tree", _ca_out.returncode == 0)
 
 # And it must FAIL on a broken file, which is the whole point. Written into a temp copy of lib/
@@ -27334,17 +27347,39 @@ for _t_kind114 in ("ConfigMap", "Deployment"):
 _t_decoys114.append(
     "apiVersion: example.invalid/v1\nkind: SecretLike\nspec:\n  data:\n"
     "    DATABASE_URL: %s\n" % _t_payload114)
+# 🐛 [2026-09-14] This asserted that `scrub` leaves the decoys untouched, which is a claim about
+# the WHOLE pipeline while the block's subject is one rule. On the day the redactor learned to
+# decode base64 and re-ask its own rules, the assertion failed — and the rule it names was not the
+# one that fired. Proved by turning the decode pass off: with it disabled the ConfigMap decoy comes
+# back byte-identical, so `_redact_kubernetes_secret_data` still does not over-reach, which is what
+# this block exists to hold.
+#
+# What DOES fire is the base64 pass, and it fires for a reason worth stating rather than silencing:
+# the payload decodes to `scheme://user:pass@host`, a ConfigMap is not secret storage, and putting
+# a credential there is exactly the mistake a redactor should catch. The code was right and the
+# test's wording was broader than its own intent, so the test moved.
+#
+# The assertion is now what the comment above it always meant: **the Kubernetes-Secret rule does
+# not reach outside a Kubernetes Secret.** Asked of that rule directly, so no future pass anywhere
+# else in the pipeline can make this block fail for something it is not about.
 _t_eaten_decoys114 = [
     _t_decoy114 for _t_decoy114 in _t_decoys114
-    if _rd114.scrub(_t_decoy114) != _t_decoy114
+    if _rd114._redact_kubernetes_secret_data(_t_decoy114) != _t_decoy114
 ]
-check("THE SAME FIELDS OUTSIDE A KUBERNETES SECRET ARE LEFT EXACTLY ALONE",
+check("THE KUBERNETES-SECRET RULE NEVER REACHES OUTSIDE A KUBERNETES SECRET",
       not _t_eaten_decoys114, saw="\n---\n".join(_t_eaten_decoys114))
+# And the decoys must still be things the rule COULD have eaten, or the line above passes on a
+# population that was never at risk.
+check(f"the decoy population is real: {len(_t_decoys114)} non-Secret document(s) carrying the "
+      f"same fields",
+      len(_t_decoys114) >= 4, saw=f"{len(_t_decoys114)} decoys")
 
 _t_multi114 = (
     "kind: ConfigMap\ndata:\n  DATABASE_URL: " + _t_payload114 + "\n---\n"
     "data:\n  DATABASE_URL: " + _t_payload114 + "\nkind: Secret\n")
-_t_multi_got114 = _rd114.scrub(_t_multi114)
+# Same correction, same reason: ask the rule, not the pipeline. The ConfigMap half of this
+# document also carries a base64 credential, and the decode pass redacts it on purpose.
+_t_multi_got114 = _rd114._redact_kubernetes_secret_data(_t_multi114)
 check("DOCUMENT BOUNDARIES KEEP A NEIGHBOURING CONFIGMAP VALUE AND REDACT ONLY THE SECRET",
       _t_multi_got114.count(_t_payload114) == 1
       and _t_multi_got114.count(_rd114.PLACEHOLDER) == 1,
@@ -28360,6 +28395,306 @@ _t_src125 = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8", errors="r
 check("chamnan-map is the command that says it, beside its other git-state reporting",
       "unrebuildable_workspace_files" in _t_src125 and "workspace_is_tracked" in _t_src125,
       saw="the notice is not in chamnan-map — if it moved, move this assertion with it")
+# ---- 126_the_default_ceiling_and_its_bound_are_one_number.py
+# ------------------ the default a workspace gets and the most it may ask for are one number
+# 🐛 [2026-09-14] `DEFAULT_CONFIG["output_byte_ceiling"]` shipped at 9,000 while
+# `_UPPER_BOUND["output_byte_ceiling"]` — the most a config may legally ask for, sized against the
+# host's own positional cut at roughly 10,000 — had been 9,500 since it was written.
+#
+# Two numbers for one limit, and the default was the smaller. Every workspace that never edited its
+# config gave back 500 bytes it was entitled to, silently and for as long as it stood. On this
+# repository that was **two whole sections**: 5 delivered at 9,000 against 7 at 9,500, and one of
+# the two — the tool index — had been delivered **zero times in 390 recorded blocks**, because it
+# sits at position 1 in `fit.DROP_ORDER` and needs about 1,386 bytes that were never available.
+#
+# The bound is the considered number: it carries the comment explaining the host's cut and the
+# reproduction of a 31,916-byte block whose fence closed at byte 31,822. The default was just
+# older. So the assertion is not "the default is 9,500" — a future measurement may move both — it
+# is that **they do not drift apart again**.
+import importlib as _il126
+
+_t_ws126 = _il126.import_module("workspace")
+
+_t_default126 = _t_ws126.DEFAULT_CONFIG.get("output_byte_ceiling")
+_t_bound126 = _t_ws126._UPPER_BOUND.get("output_byte_ceiling")
+
+check(f"the shipped default names a ceiling at all: {_t_default126!r}",
+      isinstance(_t_default126, int) and _t_default126 > 0,
+      saw=f"DEFAULT_CONFIG has {_t_default126!r}")
+check(f"and the bound does too: {_t_bound126!r}",
+      isinstance(_t_bound126, int) and _t_bound126 > 0,
+      saw=f"_UPPER_BOUND has {_t_bound126!r}")
+
+# The whole finding, as one assertion. A default BELOW its own bound is a workspace being given
+# less than it is allowed, for no stated reason; a default ABOVE it is refused by `_in_range` and
+# falls back, which is worse — the user raises the number and the block gets SMALLER.
+check(f"the default a workspace gets IS the most it may ask for: "
+      f"default={_t_default126}, bound={_t_bound126}",
+      _t_default126 == _t_bound126,
+      saw="a default under its bound hands back bytes nobody said to hand back; a default over it "
+          "is rejected by _in_range and falls back to something smaller, so raising the number "
+          "shrinks the block. Move them together or state why they differ.")
+
+# And the bound must still refuse what it was written to refuse, or the line above could be
+# satisfied by raising both past the host's cut.
+check("...and the bound still refuses a ceiling that would defeat the host's own cut",
+      not _t_ws126._in_range("output_byte_ceiling", 900_000),
+      saw="the host truncates over ~10,000 bytes positionally, without saying so")
+check(f"...while accepting the default it now hands out: {_t_default126}",
+      _t_ws126._in_range("output_byte_ceiling", _t_default126),
+      saw=f"_in_range refuses {_t_default126}, which is the value every new workspace receives")
+# ---- 127_a_credential_written_in_base64_is_still_a_credential.py
+# ------------------ a credential written in base64 reached the committed index intact
+# 🐛 [2026-09-14] Reproduced end to end before it was fixed: a file whose OPENING COMMENT reads
+# `# staging creds, kept encoded: <blob>` is summarised into `MAP.md`, `MAP.md` is committed, and
+# `base64 -d` on that line returns `aws_secret_access_key=AKIA…`. The same secret written plainly
+# is caught, and so is the same secret written with `"` quote escapes -- the escaped form
+# still spells the credential NAME in readable text, and every rule in this file anchors on a name.
+# Base64 removes the name, so nothing anchored.
+#
+# R13.3, from Truffle Security's account of TruffleHog: a scanner reading only literal bytes misses
+# base64, escaped-unicode and UTF-16 alike. GitHub's own scanner misses base64'd AWS keys the same
+# way -- a plain search for the base64 prefix of `AKIA` returns thousands of hits on GitHub itself.
+#
+# What this block pins is the DISCRIMINATOR, because that is the part that could quietly go wrong.
+# The rule decides nothing about which base64 is dangerous: it decodes and asks the rules that
+# already exist. So the two failure directions are a leak (a credential survives encoding) and
+# damage (a digest, a UUID or an embedded asset is destroyed in the index this tool exists to
+# write), and both are asserted.
+import base64 as _b64_127
+
+_t_redact127 = __import__("redact")
+
+# Built at runtime rather than written out: this file is folded into the suite it scans, and a
+# literal credential in a check is found by the redactor's own self-scan.
+_t_secret127 = "AKIA" + "IOSFODNN7EXAMPLE"
+_t_name127 = "aws_secret" + "_access_key"
+_t_plain127 = f"{_t_name127}={_t_secret127}"
+_t_blob127 = _b64_127.b64encode(_t_plain127.encode()).decode()
+
+check("the plaintext control is redacted, or this block proves nothing about encoding",
+      _t_redact127.PLACEHOLDER in _t_redact127.scrub(_t_plain127 + "\n"),
+      saw=_t_redact127.scrub(_t_plain127 + "\n"))
+check("...and the SAME credential in base64 is redacted too",
+      _t_redact127.PLACEHOLDER in _t_redact127.scrub(f"# creds, encoded: {_t_blob127}\n"),
+      saw=_t_redact127.scrub(f"# creds, encoded: {_t_blob127}\n"))
+check("...and the blob itself is gone, not merely flagged",
+      _t_blob127[:28] not in _t_redact127.scrub(f"# creds, encoded: {_t_blob127}\n"),
+      saw="the run survived; `base64 -d` on the index would return the credential")
+
+# The damage direction. Every one of these is base64-SHAPED and none is a credential; destroying
+# any of them corrupts the index. Derived shapes rather than copied strings, so a future reader can
+# see why each is here.
+import hashlib as _hl127
+import uuid as _uuid127
+
+_t_safe127 = {
+    "a hex sha256 digest": _hl127.sha256(b"chamnan").hexdigest(),
+    "a base64 sha256 digest": _b64_127.b64encode(_hl127.sha256(b"chamnan").digest()).decode(),
+    "a uuid": str(_uuid127.UUID(int=0x5eed5eed5eed5eed5eed5eed5eed5eed)),
+    "a long dotted import path": "com/example/deeply/nested/package/name/ClassNameHere",
+    "base64 of NON-text bytes": _b64_127.b64encode(bytes(range(64))).decode(),
+    "base64 of ordinary prose": _b64_127.b64encode(
+        b"the quick brown fox jumps over the lazy dog and keeps going").decode(),
+}
+_t_damaged127 = []
+for _t_what127, _t_val127 in _t_safe127.items():
+    if _t_val127 not in _t_redact127.scrub(f"# note: {_t_val127}\n"):
+        _t_damaged127.append(f"{_t_what127}: {_t_val127[:40]}")
+check(f"and nothing base64-SHAPED is touched: {len(_t_safe127)} shapes",
+      not _t_damaged127, saw="\n".join(_t_damaged127))
+
+# The gate that keeps it cheap. Anything that is not text is refused before a rule ever runs, and
+# that is what made the measured false-positive count zero over 698 real base64-shaped runs.
+check("a run that decodes to non-text is refused before any rule is consulted",
+      _t_redact127._redact_encoded_secrets(_b64_127.b64encode(bytes(range(64))).decode())
+      == _b64_127.b64encode(bytes(range(64))).decode(),
+      saw="a digest or an embedded asset reached the rule stage, which is the expensive path")
+
+# And the population it is asserted over is real rather than invented.
+_t_corpus127 = []
+for _t_dir127 in ("lib", "bin", "hooks"):
+    _t_d127 = ROOT / _t_dir127
+    if not _t_d127.is_dir():
+        continue
+    for _t_f127 in sorted(_t_d127.rglob("*")):
+        if _t_f127.is_file() and _t_f127.suffix in (".py", ".md", ".sh"):
+            try:
+                _t_corpus127.append(_t_f127.read_text(encoding="utf-8", errors="replace")[:20_000])
+            except OSError:
+                continue
+check(f"the no-damage claim is made over real files: {len(_t_corpus127)}",
+      len(_t_corpus127) >= 30, saw=f"{len(_t_corpus127)} files")
+_t_changed127 = sum(1 for _t_t127 in _t_corpus127
+                    if _t_redact127._redact_encoded_secrets(_t_t127) != _t_t127)
+check(f"...and the encoded-secret pass changes none of them: {_t_changed127} changed",
+      _t_changed127 == 0,
+      saw="a real source file was altered by the base64 pass; that is index damage, not redaction")
+# ---- 128_the_index_knows_paths_the_walk_never_sees.py
+# ------------------ git's index is a different population from a filesystem walk
+# R14, eight findings that are one finding in eight registers: **the walk that builds the map
+# derives its population from the disk, and the index is a different population.** Git documents
+# every way they part company — `core.symlinks=false` checks a tracked symlink out as a plain file
+# with mode 120000 still in the index; a submodule is a gitlink at 160000 with possibly no worktree
+# path at all; sparse checkout keeps a path in the index and removes it from disk while
+# `git ls-files` still lists it; `core.ignoreCase` and macOS `core.precomposeUnicode` each let two
+# index spellings land on one directory entry.
+#
+# Eight separate edits to one population would be `the-set-not-the-member` chosen on purpose, so
+# one `git ls-files --stage -z` answers all eight. Measured before it shipped: 27-32 ms on
+# repositories of 229 and 866 tracked paths, against the 269 ms `chamnan-map --help` already spends.
+#
+# It REPORTS and never repairs: a sparse checkout is somebody's deliberate configuration, and this
+# process cannot see which of these is a problem. What is not defensible is an index claiming
+# complete coverage while tracked paths are missing — which is what this repository looked like on
+# the afternoon the census was written, with sixteen research reports deleted and not yet committed.
+import subprocess as _sp128
+import tempfile as _tmp128
+
+_t_tree128 = __import__("tree")
+
+if not shutil.which("git"):
+    skip("  · no git on this machine — the index census cannot be exercised")
+else:
+    # 1. It fails safe. A directory git cannot answer for returns {} rather than a partial answer,
+    #    because "I could not look" and "nothing is wrong" must not be the same value.
+    _t_nogit128 = Path(_tmp128.mkdtemp(prefix="chamnan-census-nogit-"))
+    try:
+        check("a directory git cannot speak for yields {} rather than a partial census",
+              _t_tree128.index_census(_t_nogit128) == {},
+              saw=repr(_t_tree128.index_census(_t_nogit128))[:200])
+    finally:
+        shutil.rmtree(_t_nogit128, ignore_errors=True)
+
+    # 2. A fixture repository carrying the shapes the round names. Built here because the tree this
+    #    runs in only ever shows some of them, and a check that can only see one answer proves less.
+    _t_fix128 = Path(_tmp128.mkdtemp(prefix="chamnan-census-"))
+    try:
+        for _t_cmd128 in (["init", "-q"], ["config", "user.email", "t@example.invalid"],
+                          ["config", "user.name", "t"]):
+            _sp128.run(["git", "-C", str(_t_fix128)] + _t_cmd128, check=True,
+                       capture_output=True, stdin=_sp128.DEVNULL)
+        (_t_fix128 / "kept.py").write_text("# a file that stays\nx = 1\n", encoding="utf-8")
+        (_t_fix128 / "gone.py").write_text("# a file about to be deleted\ny = 2\n", encoding="utf-8")
+        _sp128.run(["git", "-C", str(_t_fix128), "add", "--", "kept.py", "gone.py"], check=True,
+                   capture_output=True, stdin=_sp128.DEVNULL)
+        _sp128.run(["git", "-C", str(_t_fix128), "commit", "-qm", "two files"], check=True,
+                   capture_output=True, stdin=_sp128.DEVNULL)
+
+        _t_clean128 = _t_tree128.index_census(_t_fix128)
+        check(f"a clean checkout reports its tracked count and no gaps: "
+              f"{_t_clean128.get('tracked')} tracked",
+              _t_clean128.get("tracked") == 2 and not _t_clean128.get("absent"),
+              saw=repr(_t_clean128)[:220])
+
+        # 3. The live case: a tracked path removed from disk and not yet committed. The walk cannot
+        #    see it; the index still does.
+        (_t_fix128 / "gone.py").unlink()
+        _t_after128 = _t_tree128.index_census(_t_fix128)
+        check("a tracked file deleted from disk is reported as tracked-but-absent",
+              _t_after128.get("absent") == ["gone.py"],
+              saw=f"absent={_t_after128.get('absent')!r} — the walk cannot see this and the map "
+                  f"would claim complete coverage without it")
+        check("...and the file that is still there is NOT reported",
+              "kept.py" not in (_t_after128.get("absent") or []),
+              saw=repr(_t_after128.get("absent")))
+
+        # 4. A submodule is a commit, not a missing file, and counting it as absent would be a
+        #    false report on every repository that has one.
+        _sp128.run(["git", "-C", str(_t_fix128), "update-index", "--add", "--cacheinfo",
+                    "160000,0000000000000000000000000000000000000001,vendor/dep"],
+                   check=True, capture_output=True, stdin=_sp128.DEVNULL)
+        _t_sub128 = _t_tree128.index_census(_t_fix128)
+        check("a submodule gitlink is counted as a submodule, never as a missing file",
+              _t_sub128.get("submodules") == ["vendor/dep"]
+              and "vendor/dep" not in (_t_sub128.get("absent") or []),
+              saw=f"submodules={_t_sub128.get('submodules')!r} absent={_t_sub128.get('absent')!r}")
+    finally:
+        shutil.rmtree(_t_fix128, ignore_errors=True)
+
+# 5. And the command that surfaces it still calls it. If the report moves, move this with it.
+_t_src128 = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8", errors="replace")
+check("chamnan-map asks for the census and prints what the walk could not see",
+      "index_census" in _t_src128 and "git's index knows" in _t_src128,
+      saw="the census is computed and never reported, or the report moved")
+# ---- 129_a_late_failure_document_cannot_make_scrub_quadratic.py
+# ------------------ a document that fails LATE cannot make scrub() quadratic
+# R16-2 and R16-3, measured 2026-09-15. Cloudflare lost its global proxy for 27 minutes on
+# 2019-07-02 to one WAF rule, and its own post-mortem names as a contributing cause a test suite
+# unable to identify excessive CPU. Stack Exchange lost 34 minutes in 2016 to a trim regex with no
+# nested quantifier anywhere in it -- about 20,000 consecutive whitespace characters and one
+# rejecting suffix, which made an unanchored search restart from every position.
+#
+# Both shapes were live in this module, and NEITHER was visible per pattern:
+#
+#   * `\s*['"]?\s*` -- two adjacent `\s*` with an optional token between -- stood in
+#     ASSIGNED_SECRET, ASSIGNED_SECRET_BARE, ASSIGNED_SECRET_CALL and _HEADER_WORD after the
+#     identical construct had been fixed in _OPENS_A_QUOTED_VALUE. The-set-not-the-member, inside
+#     the fix for it. A secret word followed by 64 KiB of spaces took 81.6 seconds.
+#   * COPULA_SECRET was the last SECRET_WORDS-anchored rule still sweeping the WHOLE document,
+#     and SECRET_WORDS carries `[A-Za-z0-9]+[_-]` runs whose `+` backtracks at every start
+#     position of an unbroken alphanumeric run. 16 KiB of digits never returned.
+#
+# So this block measures the SHAPE of the curve, not a wall-clock budget: a machine under load
+# makes every number bigger, and the ratio between two sizes on the same machine is what says
+# quadratic. The bound is R16-2's own (3.5 per doubling, where linear is 2).
+import time as _t129
+import importlib as _importlib129
+
+_t_redact129 = _importlib129.import_module("redact")
+
+# A long run of matching characters, then ONE character nothing can accept. Derived from the
+# families R16-3 named, not from the two that happened to fail -- a fix that lands on the measured
+# member and leaves the others is the defect this file exists to catch.
+_t_families129 = {
+    "spaces": ("password", " "),
+    "digits": ("aws ", "9"),
+    "dashes": ("secret ", "-"),
+    "identifiers": ("api_key ", "a"),
+    "quotes": ("token ", "'"),
+}
+
+
+def _t_ms129(lead, filler, n):
+    doc = lead + filler * n + "\x00\n"
+    _t0129 = _t129.process_time()
+    _t_redact129.scrub(doc)
+    return (_t129.process_time() - _t0129) * 1000.0
+
+
+for _t_name129, (_t_lead129, _t_fill129) in sorted(_t_families129.items()):
+    # 4 KiB and 16 KiB: four times the input. Linear is x4, quadratic is x16. R16-2's bound is
+    # x3.5 per DOUBLING, so two doublings allow 3.5 * 3.5 = 12.25.
+    _t_small129 = _t_ms129(_t_lead129, _t_fill129, 4096)
+    _t_big129 = _t_ms129(_t_lead129, _t_fill129, 16384)
+    _t_ratio129 = _t_big129 / max(_t_small129, 0.05)
+    check(f"late failure on {_t_name129!r} grows no worse than linearly: "
+          f"{_t_small129:.1f} ms at 4 KiB, {_t_big129:.1f} ms at 16 KiB (x{_t_ratio129:.1f})",
+          _t_ratio129 <= 12.25,
+          saw=f"four times the input cost {_t_ratio129:.1f} times the CPU, over the 12.25 that two "
+              f"doublings of R16-2's x3.5 bound allow. Linear would be about x4. Find the pattern "
+              f"with `python3 .chamnan/tools/redact_cpu_curve.py`, which names it.")
+
+# The construct itself, asserted over the whole module rather than over the patterns that were
+# measured. `\s*<optional token>\s*` is the `(a*)*` family reached without a nested quantifier: a
+# run of whitespace can be split between the two `\s*` in exponentially many ways, and the engine
+# tries them all before it fails. The replacement `\s*(?:['"]\s*)?` accepts the same language with
+# no split to try, and was proved byte-identical on 1,193 real files.
+_t_src129 = __import__("pathlib").Path(_t_redact129.__file__).read_text()
+_t_ambiguous129 = __import__("re").compile(
+    r"\\s\*(?:\[[^\]]*\]|\((?:\?:)?[^()]*\))\?\\s\*")
+_t_found129 = []
+for _t_m129 in _t_ambiguous129.finditer(_t_src129):
+    _t_line129 = _t_src129.count("\n", 0, _t_m129.start()) + 1
+    # A comment recording the fix quotes the construct on purpose; only live pattern text counts.
+    _t_text129 = _t_src129.splitlines()[_t_line129 - 1].lstrip()
+    if _t_text129.startswith("#"):
+        continue
+    _t_found129.append(f"{_t_line129}: {_t_m129.group(0)}")
+check("no live pattern still splits a whitespace run between two adjacent `\\s*`",
+      not _t_found129,
+      saw=f"{_t_found129} -- write it as `\\s*(?:<token>\\s*)?`, which accepts the same language "
+          f"with only one way to match it.")
 # ---- 12_carry_share_is_equal.py
 # 🐛 [2026-09-09] `carry_forward` splits its budget EQUALLY between the parts of a handoff, so the
 # smaller part keeps a larger share of itself — which is the outcome wanted, because a summary that
