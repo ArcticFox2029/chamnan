@@ -100,10 +100,12 @@ python3 tools/verify_release.py
 
 **5,081 checks. 5,081 passed. 0 failed.**
 
-That is what those two commands print on a fresh clone, so it is what you will see too.
+That is a fresh clone, run by the tool named above.
 
-A few checks say they were skipped instead of run. They need a developer setup a clone does not
-have, and each one prints its own reason on the line.
+Your own count will land near it rather than on it, and that is the tool working: some checks need a
+developer setup a clone does not have, so they say they were skipped instead of running, each with
+its own reason on the line. How many say that depends on your operating system. What should be the
+same everywhere is the second half — nothing failed.
 
 **98 of 99 secret and personal-data shapes are redacted.** The one that is not caught is named in
 the verifier's own output, with the reason: it carries no prefix and no keyword, so only entropy
