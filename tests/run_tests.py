@@ -28962,6 +28962,88 @@ _t_clean132 = "description: |2\n  This release notes the migration path and noth
 check("a block scalar under an ordinary name is left alone",
       _t_redact132.scrub(_t_clean132) == _t_clean132,
       saw=_t_redact132.scrub(_t_clean132))
+# ---- 133_a_swallowed_failure_takes_only_its_own_job_down.py
+# ------------------ one swallowed failure must not cancel the jobs beside it
+# R12.1, measured 2026-09-15. Yuan et al. sampled 198 real-world failures across Cassandra, HBase,
+# HDFS, MapReduce and Redis: 92% of the CATASTROPHIC ones came from incorrect handling of non-fatal
+# errors the software had already signalled, and 58% of those were reachable by simple testing of
+# the handler itself. The sweep this block encodes was run over all of chamnan (280 source files,
+# 78 flagged handlers) and the triage was mostly reassuring: 76 of 78 are empty handlers, which
+# answers R12.2 in passing -- de Pádua's finding that empty handlers are RARE does not hold here,
+# Yuan's shape does -- and nearly every one carries a comment or docstring saying why silence is
+# correct there (`prune_logs` promises best-effort; `_save_ages` must not stop a session starting
+# on a read-only checkout).
+#
+# 🐛 [2026-09-15] Exactly one was not defensible, and it was not defensible for a reason the
+# comment above it did not address. `prune_logs`, `prune_orphaned_temps` and `prune_sessions`
+# shared ONE `try`, so a failure in the first silently cancelled the other two -- permanently,
+# because nothing retries and nothing reports. Being silent about a failure is a policy this
+# workspace has chosen deliberately; one subsystem's failure disabling two unrelated ones is not
+# that policy, it is the bug that policy hides.
+#
+# The assertion derives its own population: any `try` whose body is nothing but independent calls
+# and whose handler swallows. That is the shape, stated once, rather than the one site that had it.
+import ast as _ast133
+import pathlib as _pl133
+
+_t_roots133 = [ROOT / "lib", ROOT / "bin", ROOT / "hooks"]
+_t_offenders133 = []
+_t_files133 = 0
+for _t_r133 in _t_roots133:
+    for _t_p133 in sorted(_t_r133.rglob("*")):
+        if not _t_p133.is_file():
+            continue
+        if _t_p133.suffix != ".py" and not _t_p133.read_bytes()[:2].startswith(b"#!"):
+            continue
+        try:
+            _t_src133 = _t_p133.read_text(encoding="utf-8")
+            _t_tree133 = _ast133.parse(_t_src133)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        _t_files133 += 1
+        for _t_n133 in _ast133.walk(_t_tree133):
+            if not isinstance(_t_n133, _ast133.Try):
+                continue
+            _t_swallows133 = any(
+                all(isinstance(_b133, _ast133.Pass) for _b133 in _h133.body)
+                for _h133 in _t_n133.handlers)
+            if not _t_swallows133:
+                continue
+            # Independent statements, not one expression split over lines: every statement in the
+            # body is a call on its own, so none of them needs the one before it to have run.
+            _t_calls133 = [_b133 for _b133 in _t_n133.body
+                           if isinstance(_b133, _ast133.Expr)
+                           and isinstance(_b133.value, _ast133.Call)]
+            if len(_t_calls133) >= 2 and len(_t_calls133) == len(_t_n133.body):
+                _t_names133 = [getattr(_c133.value.func, "attr",
+                                       getattr(_c133.value.func, "id", "?"))
+                               for _c133 in _t_calls133]
+                _t_offenders133.append(
+                    f"{_t_p133.name}:{_t_n133.lineno} guards {len(_t_calls133)} independent "
+                    f"call(s) behind one swallow: {', '.join(_t_names133)}")
+
+check(f"no swallowed `try` cancels work beside it ({_t_files133} source file(s) swept)",
+      not _t_offenders133,
+      saw=f"{_t_offenders133} -- give each call its own handler, or loop over them. Silence about "
+          f"a failure can be a deliberate policy; one job's failure disabling the jobs next to it "
+          f"is what that silence would then hide.")
+
+# The one site that had it, asserted as behaviour rather than as text: each prune is reached even
+# when the one before it raises.
+_t_hook133 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_t_tree133 = _ast133.parse(_t_hook133)
+_t_loops133 = [
+    _t_n133 for _t_n133 in _ast133.walk(_t_tree133)
+    if isinstance(_t_n133, _ast133.For)
+    and isinstance(_t_n133.iter, _ast133.Tuple)
+    and {getattr(_e133, "attr", "") for _e133 in _t_n133.iter.elts}
+        == {"prune_logs", "prune_orphaned_temps", "prune_sessions"}
+]
+check("the three prunes are independent of one another",
+      len(_t_loops133) == 1 and all(isinstance(_b133, _ast133.Try)
+                                    for _b133 in _t_loops133[0].body),
+      saw=f"{len(_t_loops133)} loop(s) over the three prunes; a shared `try` around them means a "
+          f"failure in the first stops the retention policy the other two enforce.")
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,

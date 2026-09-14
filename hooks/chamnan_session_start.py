@@ -1059,12 +1059,19 @@ def main():
             _expiring = ws.expiring_logs(root)
         except Exception:
             _expiring = []
-        try:
-            ws.prune_logs(root)
-            ws.prune_orphaned_temps(root)
-            ws.prune_sessions(root)
-        except Exception:
-            pass
+        # 🐛 [2026-09-15] These three shared one `try`, so a failure in the first silently
+        # cancelled the other two -- for ever, since nothing retries and nothing reports. The
+        # comment above justifies being SILENT about a failure, which is right and stays; it does
+        # not justify one subsystem's failure disabling two unrelated ones. Yuan et al. measured
+        # 92% of catastrophic failures in five distributed systems coming from incorrect handling
+        # of non-fatal errors the software had ALREADY signalled, and this is that shape at its
+        # smallest: three independent jobs, one shared failure mode. Swept the whole package for
+        # the pattern and this was the only instance. (R12.1.)
+        for _prune in (ws.prune_logs, ws.prune_orphaned_temps, ws.prune_sessions):
+            try:
+                _prune(root)
+            except Exception:
+                pass
     if first_session:
         # 🐛 [2026-08-28, owner: a teammate installed the plugin, opened a new project in VS Code,
         # and got nothing at all] The workspace used to be created only by chamnan-map,
