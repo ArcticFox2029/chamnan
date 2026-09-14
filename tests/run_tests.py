@@ -28784,6 +28784,16 @@ check("the recall tool exposes the boundary battery this block gates on",
       hasattr(_t_rr130, "boundary_leaks") and hasattr(_t_rr130, "BOUNDARIES_LEFT"),
       saw=sorted(n for n in dir(_t_rr130) if n.isupper() or n.startswith("boundary")))
 
+# R5.6: a derived sweep whose population is empty asserts nothing while looking green. The
+# battery below is 47 x 22 x 17; if the corpus or either boundary table were ever emptied, "no
+# credential leaks" would pass on having tested none.
+_t_cells130 = (len(_t_rr130.POSITIVES) * len(_t_rr130.BOUNDARIES_LEFT)
+               * len(_t_rr130.BOUNDARIES_RIGHT))
+check(f"the boundary grid is populated before anything is concluded from it: {_t_cells130} cell(s)",
+      _t_cells130 >= 1000 and len(_t_rr130.POSITIVES) >= 40,
+      saw=f"{len(_t_rr130.POSITIVES)} positives x {len(_t_rr130.BOUNDARIES_LEFT)} left x "
+          f"{len(_t_rr130.BOUNDARIES_RIGHT)} right")
+
 _t_leaks130 = _t_rr130.boundary_leaks()
 
 # The population a boundary leak is measured AGAINST is derived, not written down: a fixture that
@@ -29022,6 +29032,12 @@ for _t_r133 in _t_roots133:
                     f"{_t_p133.name}:{_t_n133.lineno} guards {len(_t_calls133)} independent "
                     f"call(s) behind one swallow: {', '.join(_t_names133)}")
 
+# R5.6: the sweep below concludes from what it walked, so what it walked is asserted first. An
+# empty walk -- a moved directory, a changed suffix rule -- would report "no offenders" having
+# opened nothing.
+check(f"the sweep actually walked this package: {_t_files133} source file(s)",
+      _t_files133 >= 60,
+      saw=f"{_t_files133} file(s) under {[str(_r133) for _r133 in _t_roots133]}")
 check(f"no swallowed `try` cancels work beside it ({_t_files133} source file(s) swept)",
       not _t_offenders133,
       saw=f"{_t_offenders133} -- give each call its own handler, or loop over them. Silence about "
@@ -29204,6 +29220,12 @@ for _t_r135 in _t_roots135:
                 if not any(_k135.arg == "encoding" for _k135 in _t_n135.keywords):
                     _t_unencoded135.append(f"{_t_at135}  {_t_src135.splitlines()[_t_n135.lineno-1].strip()[:70]}")
 
+# R5.6: everything below concludes from a walk, so the walk is asserted first. "No unencoded
+# reads" is true of a directory nobody opened.
+check(f"the portability sweep walked this package: {_t_files135} file(s), "
+      f"{_t_text_calls135} text-mode call(s)",
+      _t_files135 >= 60 and _t_text_calls135 >= 100,
+      saw=f"{_t_files135} file(s), {_t_text_calls135} text call(s)")
 check(f"every text-mode read or write names its encoding "
       f"({_t_text_calls135} call(s) across {_t_files135} file(s))",
       not _t_unencoded135,
@@ -29372,6 +29394,81 @@ _t_out136 = _t_redact136.scrub(_t_case136)
 check("the object literal that found this keeps its brace and its comma",
       _t_out136.rstrip().endswith("},"),
       saw=repr(_t_out136))
+# ---- 137_no_check_leaves_state_behind_for_the_next_one.py
+# ------------------ nothing a check does to the process outlives the check
+# R5.9, measured 2026-09-15. iDFlakies found 422 flaky tests across 683 projects and 50.5% of them
+# were ORDER-DEPENDENT: they pass alone and fail after something else ran, or the reverse. A suite
+# that only ever runs in one order cannot see them, and this one has been bitten — a probe left a
+# scratch copy of a module in `sys.modules` and an unrelated later check reported a false failure.
+#
+# Reversing the order is the textbook detector and is not available here: the suite is one
+# generated file whose blocks share a preamble and run top to bottom. What IS available is the
+# invariant underneath, asserted at the end where every earlier block has already run. An AST
+# heuristic was tried first and immediately produced a false positive — it read check 98's
+# `os.chdir` as unrestored when the `finally` three lines below restores it — which is the
+# argument for measuring the state rather than reading the code that changes it.
+#
+# This block is numbered to fold LAST on purpose. Everything it inspects is process state, so its
+# value comes entirely from what has already happened above it.
+import os as _os137
+import sys as _sys137
+
+# 1. Every chamnan module a later block would import by name must still be the real one. This is
+#    the failure that actually happened: a scratch module loaded under a name that shadows a real
+#    one, left in place, and inherited by everything after it.
+_t_lib137 = (ROOT / "lib").resolve()
+_t_real137 = {_p137.stem for _p137 in _t_lib137.glob("*.py")} - {"__init__"}
+_t_shadowed137 = []
+for _t_name137 in sorted(_t_real137):
+    _t_mod137 = _sys137.modules.get(_t_name137)
+    if _t_mod137 is None:
+        continue
+    _t_file137 = getattr(_t_mod137, "__file__", None)
+    if not _t_file137:
+        continue
+    try:
+        _t_resolved137 = Path(_t_file137).resolve()
+    except (OSError, ValueError):
+        continue
+    if _t_resolved137.parent != _t_lib137:
+        _t_shadowed137.append(f"{_t_name137} -> {_t_resolved137}")
+# R5.6: the module names are derived from lib/, and an empty derivation would make the shadow
+# check below pass on having looked at nothing.
+check(f"the module-name population came from somewhere: {len(_t_real137)} name(s)",
+      len(_t_real137) >= 20,
+      saw=f"{sorted(_t_real137)[:10]} from {_t_lib137}")
+check(f"no chamnan module has been replaced by a scratch copy "
+      f"({len(_t_real137)} module name(s) checked)",
+      not _t_shadowed137,
+      saw=f"{_t_shadowed137} -- a helper that swaps a module into sys.modules must swap it back, "
+          f"or every block after it imports the substitute and fails for a reason it cannot see.")
+
+# 2. The working directory. A block that chdir's without restoring makes every relative path in
+#    every later block resolve somewhere else, and the failure surfaces far from its cause.
+check("the working directory is still a real directory this suite can resolve paths from",
+      Path.cwd().is_dir() and (ROOT / "lib").is_dir(),
+      saw=f"cwd={Path.cwd()} — ROOT/lib reachable: {(ROOT / 'lib').is_dir()}")
+
+# 3. The environment variables this package reads. Any one left set by an earlier block silently
+#    reconfigures every block after it. Derived from the package's own source, not listed here, so
+#    a new switch is covered the day it is added.
+_t_env_names137 = set()
+for _t_p137 in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
+    try:
+        _t_src137 = _t_p137.read_text(encoding="utf-8")
+    except OSError:
+        continue
+    for _t_m137 in __import__("re").finditer(r'["\'](CHAMNAN_[A-Z0-9_]+)["\']', _t_src137):
+        _t_env_names137.add(_t_m137.group(1))
+_t_leaked137 = sorted(_t_n137 for _t_n137 in _t_env_names137 if _t_n137 in _os137.environ)
+# One is set by the harness on purpose for the whole run; anything else is a leak from a block.
+_t_expected137 = {_t_n137 for _t_n137 in _t_leaked137
+                  if _t_n137 in ("CHAMNAN_LIVE_WORKSPACE", "CHAMNAN_TEST_MODE")}
+check(f"no chamnan environment switch was left set by an earlier block "
+      f"({len(_t_env_names137)} switch name(s) found in the source)",
+      not (set(_t_leaked137) - _t_expected137),
+      saw=f"still set: {sorted(set(_t_leaked137) - _t_expected137)} -- each one reconfigures every "
+          f"block after the one that set it. Restore it in a `finally`, the way check 98 does.")
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
