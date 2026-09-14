@@ -48,7 +48,7 @@ chamnan is delivered as a Claude Code plugin and as a plain command-line tool. T
 - `chamnan-candidates`: review what the workflow detector has found, quickly
 - `chamnan-context`: this repository's context block on stdout, for any tool on any OS
 - `chamnan-env`: the constraints nobody writes down and everybody re-learns
-- `chamnan-guard`: does anything staged for commit look like a credential?
+- `chamnan-guard`: does anything staged for commit look like a secret or new MCP capability?
 - `chamnan-impact`: what breaks if I change this file, and what happened last time it changed
 - `chamnan-map`: build .chamnan/MAP.md from the repository's source, and report what it cost
 - `chamnan-peek`: read the shape of one file instead of the whole thing

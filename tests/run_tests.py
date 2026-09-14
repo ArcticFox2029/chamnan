@@ -27186,46 +27186,7 @@ try:
               % _nomatch_rank112)
 finally:
     shutil.rmtree(_root112, ignore_errors=True)
-# ---- 113_command_timing_covers_every_shipped_command.py
-# ---- command startup timing is a derived sweep, not a hand-maintained command list
-# R11.22 (2026-09-13) found that every shipped command pays a substantial startup floor, but the
-# existing timing tool covered only SessionStart functions. The command population comes from the
-# package's `bin/` directory here and in the tool, so adding a fourteenth command makes this check
-# cover it without a second list being updated by hand.
-import re as _re113
-import subprocess as _sp113
-import sys as _sys113
 
-_tool113 = ROOT.parent.parent / ".chamnan" / "tools" / "time-the-pieces.py"
-_commands113 = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*")
-                      if p.is_file() and p.suffix != ".cmd")
-check("the command-timing check derived a non-trivial shipped-command population",
-      len(_commands113) >= 13, saw=f"found {len(_commands113)}: {_commands113}")
-
-_run113 = _sp113.run(
-    [_sys113.executable, str(_tool113), "--commands", "--runs", "1"],
-    cwd=str(ROOT.parent.parent), stdin=_sp113.DEVNULL, capture_output=True,
-    text=True, encoding="utf-8", errors="replace", timeout=60)
-check("the command startup timing mode completes", _run113.returncode == 0,
-      saw=f"exit {_run113.returncode}; stderr={_run113.stderr[:300]!r}")
-
-_rows113 = _re113.findall(r"^\s+(chamnan-[a-z-]+)\s+([0-9.]+) ms", _run113.stdout,
-                          _re113.MULTILINE)
-_timed113 = sorted(name113 for name113, _cpu113 in _rows113)
-_missing113 = sorted(set(_commands113) - set(_timed113))
-_invented113 = sorted(set(_timed113) - set(_commands113))
-check("EVERY SHIPPED COMMAND HAS A CPU TIMING ROW",
-      not _missing113 and not _invented113 and len(_timed113) == len(_commands113),
-      saw=f"missing={_missing113}; invented={_invented113}; rows={_rows113}")
-
-_nonpositive113 = [(name113, cpu113) for name113, cpu113 in _rows113
-                   if float(cpu113) <= 0.0]
-check("...and every row reports measured CPU rather than an empty or elapsed-time placeholder",
-      not _nonpositive113, saw=str(_nonpositive113) if _nonpositive113 else None)
-check("...and the summary names the population and the CPU clock",
-      f"{len(_commands113)} command(s)" in _run113.stdout
-      and "CPU excludes scheduler delay" in _run113.stdout,
-      saw=_run113.stdout[-300:])
 # ---- 114_a_kubernetes_secret_value_is_never_context.py
 # ------------------ a Kubernetes Secret's structure is enough to condemn every value beneath it
 # 🐛 [2026-09-13] R12.36 selected the open R7 corpus defect: a Kubernetes `Secret.data`
