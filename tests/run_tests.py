@@ -27684,6 +27684,72 @@ if _t_ws118 is not None:
     check("...and the call site does not test a label, which is how it was gated before",
           all("label" not in _l118 for _l118 in _t_call118),
           saw="%s" % (_t_call118,))
+# ---- 119_no_block_seeds_a_generator_its_neighbours_share.py
+# ------------------- six blocks seeded one generator, and each overwrote the seed the last one set
+# 🐛 [2026-09-14] Block 18 failed on Windows CI and passed on macOS. The cause was
+# `_t_rnd3 = __import__("random")` — the MODULE, so `.seed()` seeded the single generator the whole
+# process shares. What a block draws then depends on which blocks ran before it, and WHICH blocks
+# run differs by platform: Windows skips 38-40 of them against 22 here. The fixture was not the
+# fixture anyone had measured.
+#
+# It was fixed alone. A sweep of the suite the same afternoon found SIX blocks holding the module
+# and five still doing it, each seeding over the one before. That is this repository's most frequent
+# defect, and this time the first fix created the sweep that found the rest.
+#
+# iDFlakies, 422 flaky tests over 683 projects: 50.5% are order-dependent. This is that class
+# exactly, and the suite runs in one fixed order, so nothing here would have surfaced it — CI did,
+# on the one platform whose skip list differs, during a release.
+#
+# The check reads the SUITE, because that is the artefact that runs. A pool file is only its source.
+import ast as _ast119
+import re as _re119
+
+_t_src119 = (ROOT / "tests" / "run_tests.py").read_text(encoding="utf-8")
+
+# `__import__("random")` yields the module; `.Random(...)` off it yields a private generator. The
+# first is the defect, the second is the fix, and a plain `import random` at the top would be the
+# defect too — matched by what the name is BOUND to, not by the spelling of the import.
+_t_tree119 = _ast119.parse(_t_src119)
+_t_module_holders119 = []
+for _n119 in _ast119.walk(_t_tree119):
+    if not isinstance(_n119, _ast119.Assign) or len(_n119.targets) != 1:
+        continue
+    _t_tgt119 = _n119.targets[0]
+    if not isinstance(_t_tgt119, _ast119.Name):
+        continue
+    _t_val119 = _n119.value
+    # `__import__("random")` bare — an Attribute wrapping it is `.Random(...)` and is fine.
+    if (isinstance(_t_val119, _ast119.Call)
+            and isinstance(_t_val119.func, _ast119.Name)
+            and _t_val119.func.id == "__import__"
+            and _t_val119.args
+            and isinstance(_t_val119.args[0], _ast119.Constant)
+            and _t_val119.args[0].value == "random"):
+        _t_module_holders119.append((_t_tgt119.id, _n119.lineno))
+
+# A name bound to the module is only a problem if something seeds or draws from it, because that is
+# what reaches across blocks. A holder that never calls is inert and is not reported.
+_t_shared119 = []
+for _t_name119, _t_line119 in _t_module_holders119:
+    if _re119.search(r"(?<![\w.])%s\.(?:seed|shuffle|choice|randint|random|sample)\(" % _re119.escape(_t_name119),
+                     _t_src119):
+        _t_shared119.append(f"{_t_name119} at line {_t_line119}")
+
+if _t_shared119:
+    print("      names bound to the random MODULE and then seeded or drawn from: "
+          + ", ".join(_t_shared119[:6]))
+check("NO BLOCK SEEDS OR DRAWS FROM A GENERATOR ITS NEIGHBOURS SHARE",
+      _t_shared119 == [],
+      saw="%d name(s): %s — each seeding overwrites the last, so what a block draws depends on "
+          "which blocks ran before it, and that differs by platform"
+          % (len(_t_shared119), _t_shared119[:4]))
+
+# The guard's own guard: a sweep that finds no generators at all would pass while measuring nothing.
+_t_private119 = _re119.findall(r"__import__\(\"random\"\)\.Random\(", _t_src119)
+check(f"...and the sweep found generators to judge: {len(_t_private119)} private one(s)",
+      len(_t_private119) >= 5,
+      saw="fewer than five private generators in the suite — either they have been renamed or the "
+          "blocks that used them are gone, and this check is no longer looking at anything")
 # ---- 11_cut_never_strands_a_table.py
 # 🐛 [2026-09-09] `cut_outside_a_fence` guards against cutting inside a ``` block and nothing else.
 # Found on a real session handoff: a markdown table delivered as its header row and its `|---|`
@@ -28087,8 +28153,13 @@ check("...and a prose section with no list at all is still deliverable",
 # which was false). Measured on 61 real startup firings in one day: 26 delivered the index, 1 named
 # it in the notice, 34 showed it in NEITHER — the largest section in the block, at 8,632–8,938 bytes
 # against a 9,000 ceiling, so nothing had any reason to drop it (R7 agent 7, new finding 1).
-_t_rnd2 = __import__("random")
-_t_rnd2.seed(20260910)
+# 🐛 [2026-09-14] `__import__("random")` is the MODULE, so `.seed()` below seeded the one
+# generator the whole suite shares — and every other block that seeds it overwrites this one. What
+# a block draws then depends on which blocks ran before it, which differs by platform: Windows
+# skips 38-40 blocks against 22 on macOS. Block 18 failed on CI for exactly this and was fixed
+# alone; a sweep of the suite found six blocks holding the module and five still doing it. A
+# private generator cannot be moved by anybody else.
+_t_rnd2 = __import__("random").Random(20260910)
 
 _t_SRC2 = {"Architecture index": ".chamnan/MAP.md", "Work in flight": ".chamnan/STATE.md"}
 
@@ -28788,8 +28859,13 @@ check("no module still asks the platform whether to fold case",
 # we never wrote a test for", and `lib/blocklog.py` came top of the list: five defect markers added
 # since v1.24.0 and zero checks written anywhere near it. A fix with nothing behind it is a claim.
 # These are the five, each asserted at the shape the fix changed.
-_t_r25 = __import__("random")
-_t_r25.seed(20260914)
+# 🐛 [2026-09-14] `__import__("random")` is the MODULE, so `.seed()` below seeded the one
+# generator the whole suite shares — and every other block that seeds it overwrites this one. What
+# a block draws then depends on which blocks ran before it, which differs by platform: Windows
+# skips 38-40 blocks against 22 on macOS. Block 18 failed on CI for exactly this and was fixed
+# alone; a sweep of the suite found six blocks holding the module and five still doing it. A
+# private generator cannot be moved by anybody else.
+_t_r25 = __import__("random").Random(20260914)
 
 
 def _t_block(n_sections=3, pad=200):
@@ -29062,8 +29138,13 @@ check("...and a number with no label near it is left alone",
 #
 # Measured on a fixture before the fix: two entries, the old one at 3 runs, the new one at 0
 # (R10 agent 3, finding 1).
-_t_r28 = __import__("random")
-_t_r28.seed(20260915)
+# 🐛 [2026-09-14] `__import__("random")` is the MODULE, so `.seed()` below seeded the one
+# generator the whole suite shares — and every other block that seeds it overwrites this one. What
+# a block draws then depends on which blocks ran before it, which differs by platform: Windows
+# skips 38-40 blocks against 22 on macOS. Block 18 failed on CI for exactly this and was fixed
+# alone; a sweep of the suite found six blocks holding the module and five still doing it. A
+# private generator cannot be moved by anybody else.
+_t_r28 = __import__("random").Random(20260915)
 
 
 def _t_ws28():
@@ -29676,8 +29757,13 @@ if _t_ws36b is not None:
 # name already holds; here the sequence IS the key — `path_for` is a lookup and `upsert` finds an
 # existing entry by name — so the same sequence must produce the same name every time, from the
 # sequence alone.
-_t_r37 = __import__("random")
-_t_r37.seed(20260916)
+# 🐛 [2026-09-14] `__import__("random")` is the MODULE, so `.seed()` below seeded the one
+# generator the whole suite shares — and every other block that seeds it overwrites this one. What
+# a block draws then depends on which blocks ran before it, which differs by platform: Windows
+# skips 38-40 blocks against 22 on macOS. Block 18 failed on CI for exactly this and was fixed
+# alone; a sweep of the suite found six blocks holding the module and five still doing it. A
+# private generator cannot be moved by anybody else.
+_t_r37 = __import__("random").Random(20260916)
 _t_PROV = "ai-inferred"
 
 
@@ -29830,8 +29916,13 @@ if _t_ws38 is not None:
 # liked and starve the other nine, and this store is 21x over its budget — there is no slack to hand
 # out. Double share for a pin, one for the rest, so the cost is spread across the rules nobody
 # marked rather than falling on one of them.
-_t_r39 = __import__("random")
-_t_r39.seed(20260917)
+# 🐛 [2026-09-14] `__import__("random")` is the MODULE, so `.seed()` below seeded the one
+# generator the whole suite shares — and every other block that seeds it overwrites this one. What
+# a block draws then depends on which blocks ran before it, which differs by platform: Windows
+# skips 38-40 blocks against 22 on macOS. Block 18 failed on CI for exactly this and was fixed
+# alone; a sweep of the suite found six blocks holding the module and five still doing it. A
+# private generator cannot be moved by anybody else.
+_t_r39 = __import__("random").Random(20260917)
 _t_PIN39 = "\U0001F4CC"
 
 
