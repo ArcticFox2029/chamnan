@@ -284,6 +284,17 @@ def main():
         # `_clip` already apply -- this was the third cutter in the set and the one without it.
         text = mdblock.whole_graphemes(
             text.encode("utf-8")[:MAX_BYTES].decode("utf-8", "ignore").rstrip()) + " …"
+    # \U0001f41b [2026-09-14] `"delivered"` records that THIS HOOK PRODUCED the text, and it is the
+    # strongest claim this process can make. It is not evidence that a subagent received it, and the
+    # word reads as if it were: 168 firings sit in the log under it, and the open question about
+    # this feature is exactly whether the host hands the output on. R12 agent 6 looked for that
+    # evidence across 297 real subagent transcripts, three accounts and three weeks, and found none
+    # -- while invoking this hook directly returns correct output, which was never in doubt.
+    #
+    # The value is NOT renamed: 168 records already carry it, and two vocabularies in one log is
+    # worse than one imprecise word with a note beside it. Nothing reads this field and treats it as
+    # proof -- only the retention list names the file -- so this is a future reader's trap, and the
+    # smallest fix that answers it is this sentence. Read `delivered` as `emitted`.
     _record_a_firing(root, _agent_type, len(text.encode()), "delivered")
     # \U0001f41b [2026-09-07] The `print` shadow at the top of this file DOES apply
     # `for_a_terminal` -- but to the argument it is given, which here is the finished JSON string.

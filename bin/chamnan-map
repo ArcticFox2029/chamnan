@@ -1062,6 +1062,25 @@ def main(argv):
     if ws.LAST_IGNORE_RULES_ADDED:
         print("  added to .chamnan/.gitignore: "
               + ", ".join(mdblock.as_quoted(r, 40) for r in ws.LAST_IGNORE_RULES_ADDED))
+    # \U0001f41b [2026-09-14] Nothing at runtime ever said this directory is meant to be COMMITTED.
+    # chamnan maintains `.chamnan/.gitignore`, stages `MAP.md` from the git hook, and reports both —
+    # so a user watching it work sees a tool that is on top of their git state, and concludes there
+    # is nothing left for them to do. Then they clone on another machine and the workspace is gone:
+    # every memory rule, every recorded decision, every skill they wrote. The one thing chamnan
+    # cannot rebuild is the only thing nobody was told to keep. Raised as open-for-the-owner on
+    # 2026-09-12 and decided 2026-09-14.
+    #
+    # Said HERE rather than at session start, because the git hook runs this command while the user
+    # is committing — the one moment the advice is a thing to do rather than a thing to remember.
+    #
+    # Silent unless there is something to lose, which is this repository's rule for every notice it
+    # prints: an agent with nothing to work on stays silent. The population is derived from what a
+    # rebuild cannot reproduce — memory and skills a person wrote — never from `MAP.md`, which is
+    # regenerated from the tree, or the logs, which are gitignored on purpose.
+    _keepable = ws.unrebuildable_workspace_files(root)
+    if _keepable and ws.git_can_speak_for(root) and not ws.workspace_is_tracked(root):
+        print(f"  .chamnan/ is not committed, and {len(_keepable)} file(s) in it cannot be rebuilt "
+              f"— memory and skills are written, not derived. `git add -- .chamnan`")
     # Said out loud because the silence was the indefensible half of the defect this reports.
     # coveragepy's index was built without `coverage/` -- the shipped library, 29% of the repo --
     # and the run said nothing at all, so the only visible number was a coverage bar computed over

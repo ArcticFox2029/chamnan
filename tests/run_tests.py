@@ -10163,13 +10163,13 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # defaults. The README's list went from ten paths to eleven in the same commit, which is the event
 # this check exists to force.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 21)
+      _gitcalls == 22)
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-one call sites serve twelve read-only paths"
+      and "Twenty-two call sites serve thirteen read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -28191,6 +28191,175 @@ for _t_f123, _t_t123 in _t_corpus123:
         _t_ending_diffs123.append(f"{_t_f123}: {_t_first123[:150]}")
 check(f"CRLF and LF produce the same redaction on all {len(_t_corpus123)} files",
       not _t_ending_diffs123, saw="\n".join(_t_ending_diffs123[:5]))
+# ---- 124_a_read_only_git_command_must_not_reach_the_network.py
+# ------------------ a read-only git command must not reach the network, and the engine cannot be swapped
+# Two assertions that look unrelated and are the same shape: a property of the whole set of calls,
+# derived from the source, so that adding a twenty-third git call or a sixty-first pattern is
+# covered without anybody remembering this block exists.
+#
+# 1. R14.6 — git's partial-clone design makes ordinary object lookup fall back to a `git fetch`
+#    subprocess for a missing promised blob, and that fetch may require authentication. So a
+#    `git diff` from a SessionStart hook can open a network round trip and an auth prompt on
+#    somebody else's machine while they wait for a session. `GIT_NO_LAZY_FETCH=1` is git's
+#    documented opt-out and `lib/workspace.py` sets it once at import, which every entry point
+#    reaches.
+#
+# 2. R16-4 — the periodic proposal to put `re2` or Rust's `regex` under this redactor is refused on
+#    features, not on speed: both engines buy their linear-time guarantee by REJECTING lookaround
+#    and backreferences, and this module is built on them. The number is asserted rather than
+#    written in prose so the next proposal has to argue with a count that is current.
+import re as _re124
+
+_t_ws124 = __import__("workspace")
+_t_redact124 = __import__("redact")
+
+# --- 1. the environment variable, and that it is set where everything inherits it ----------------
+import os as _os124
+
+check("importing workspace sets GIT_NO_LAZY_FETCH, so no git call of ours can lazily fetch",
+      _os124.environ.get("GIT_NO_LAZY_FETCH") == "1",
+      saw=f"GIT_NO_LAZY_FETCH={_os124.environ.get('GIT_NO_LAZY_FETCH')!r} — "
+          f"workspace.py sets it at import; if this is None the line was removed or the module "
+          f"was not imported before this block")
+
+# Derived, not listed: every `["git", ...]` argv in the shipped tree, split by whether the
+# subcommand can demand blob content. A new content-demanding call is covered by the env var above;
+# this half exists to keep the COUNT honest in the comment that explains it.
+_t_content124 = ("diff", "show", "blame", "cat-file", "grep")
+_t_sites124, _t_demanding124 = 0, []
+for _t_dir124 in ("lib", "hooks", "bin"):
+    _t_d124 = ROOT / _t_dir124
+    if not _t_d124.is_dir():
+        continue
+    for _t_f124 in sorted(_t_d124.iterdir()):
+        if not _t_f124.is_file() or _t_f124.suffix in (".cmd", ".pyc"):
+            continue
+        try:
+            _t_t124 = _t_f124.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for _t_m124 in _re124.finditer(r'\[\s*"git"\s*,(.{0,180})', _t_t124, _re124.S):
+            _t_sites124 += 1
+            _t_args124 = _t_m124.group(1)
+            _t_sub124 = [s for s in _re124.findall(r'"([a-z][a-z-]+)"', _t_args124)
+                         if s not in ("-C", "--")]
+            _t_head124 = _t_sub124[0] if _t_sub124 else ""
+            if _t_head124 in _t_content124 or (_t_head124 == "log" and "--name-only" in _t_args124):
+                _t_demanding124.append(f"{_t_f124.name}: git {_t_head124}")
+
+check(f"the git-call population is non-empty: {_t_sites124} invocation(s) found",
+      _t_sites124 >= 10, saw=f"{_t_sites124} — a scan that finds none proves nothing")
+check(f"and some of them demand blob content, which is why the opt-out matters: "
+      f"{len(_t_demanding124)}",
+      len(_t_demanding124) >= 1, saw="\n".join(_t_demanding124))
+
+# --- 2. the feature inventory that refuses an engine swap ----------------------------------------
+_t_pats124 = {}
+for _t_n124 in dir(_t_redact124):
+    _t_o124 = getattr(_t_redact124, _t_n124)
+    _t_p124 = None
+    if isinstance(_t_o124, _re124.Pattern):
+        _t_p124 = _t_o124.pattern
+    elif isinstance(_t_o124, _t_redact124._Lazy):
+        try:
+            _t_p124 = _t_o124._compiled().pattern
+        except Exception:
+            _t_p124 = None
+    if _t_p124:
+        _t_pats124[_t_n124] = _t_p124
+
+check(f"the redactor's pattern registry is readable: {len(_t_pats124)} compiled pattern(s)",
+      len(_t_pats124) >= 40, saw=f"{len(_t_pats124)} — too few to be the real registry")
+
+_t_la124 = [n for n, p in _t_pats124.items() if _re124.search(r"\(\?=|\(\?!", p)]
+_t_lb124 = [n for n, p in _t_pats124.items() if _re124.search(r"\(\?<=|\(\?<!", p)]
+_t_br124 = [n for n, p in _t_pats124.items() if _re124.search(r"\\[1-9]|\(\?P=", p)]
+_t_unportable124 = set(_t_la124) | set(_t_lb124) | set(_t_br124)
+
+# The assertion is not a fixed number -- the registry grows. It is that a LARGE SHARE of it depends
+# on features a linear-time engine rejects, which is the fact the refusal rests on. If this ever
+# drops below a third, the refusal is worth re-deriving rather than quoted.
+check(f"most of the redactor cannot move to a linear-time engine: "
+      f"{len(_t_unportable124)} of {len(_t_pats124)} patterns use lookahead ({len(_t_la124)}), "
+      f"lookbehind ({len(_t_lb124)}) or a backreference ({len(_t_br124)})",
+      len(_t_unportable124) >= len(_t_pats124) // 3,
+      saw=f"only {len(_t_unportable124)} of {len(_t_pats124)} — the engine-swap refusal in the "
+          f"dead-ends list rests on this share and should be re-derived before it is quoted again")
+# ---- 125_nothing_told_anyone_to_commit_the_workspace.py
+# ------------------ the one thing chamnan cannot rebuild is the one thing nobody was told to keep
+# 🐛 [2026-09-14] chamnan maintains `.chamnan/.gitignore`, stages `MAP.md` from the git hook, and
+# reports both out loud. A user watching that concludes the tool is on top of their git state and
+# there is nothing left for them to do. Then they clone on another machine and the workspace is
+# gone — every memory rule, every recorded decision, every skill they wrote. Raised as
+# open-for-the-owner on 2026-09-12 and decided on 2026-09-14.
+#
+# What this block pins is not the sentence. It is the three properties that decide whether the
+# sentence appears, because a notice that fires when it should not is how a warning teaches people
+# to skip warnings — a failure this repository has recorded in its own `chamnan-age` output.
+# \U0001f41b [2026-09-14] The first version of this block wrote `pathlib.Path(...)`. The suite binds
+# `Path`, `shutil` and `tempfile`, and NOT `pathlib`, so it raised NameError -- and a raise here does
+# not fail one block, it takes the whole 5,000-check run down with it. Use the names the preamble
+# already provides; `suite_slice` on this block would have caught it in one second.
+import subprocess as _sp125
+import tempfile as _tmp125
+
+_t_ws125 = __import__("workspace")
+
+if not shutil.which("git"):
+    skip("  · no git on this machine — the workspace-tracking notice cannot be exercised")
+else:
+    # A fixture repository, built here rather than asserted about the developer's own tree: this
+    # check has to see BOTH answers, and the tree it runs in only ever gives one.
+    _t_dir125 = Path(_tmp125.mkdtemp(prefix="chamnan-commit-notice-"))
+    try:
+        _sp125.run(["git", "init", "-q", str(_t_dir125)], check=True,
+                   stdin=_sp125.DEVNULL, capture_output=True)
+        _t_fires125 = lambda d: (bool(_t_ws125.unrebuildable_workspace_files(d))
+                                 and _t_ws125.git_can_speak_for(d)
+                                 and not _t_ws125.workspace_is_tracked(d))
+
+        # 1. An EMPTY workspace has nothing to lose, and says nothing. "An agent with nothing to
+        #    work on stays silent" is this repository's rule and it applies to notices too.
+        (_t_dir125 / ".chamnan").mkdir()
+        check("a workspace with nothing unrebuildable in it prints no commit notice",
+              not _t_fires125(_t_dir125),
+              saw=f"unrebuildable={_t_ws125.unrebuildable_workspace_files(_t_dir125)}")
+
+        # 2. A workspace holding something a person WROTE, untracked: this is the whole case.
+        (_t_dir125 / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+        (_t_dir125 / ".chamnan" / "memory" / "rules" / "a.md").write_text(
+            "# a rule somebody wrote\n", encoding="utf-8")
+        (_t_dir125 / ".chamnan" / "skills").mkdir()
+        (_t_dir125 / ".chamnan" / "skills" / "s.md").write_text("# a skill\n", encoding="utf-8")
+        _t_lose125 = _t_ws125.unrebuildable_workspace_files(_t_dir125)
+        check(f"a memory rule and a skill are both counted as unrebuildable: {len(_t_lose125)}",
+              len(_t_lose125) == 2, saw=[p.name for p in _t_lose125])
+        check("an untracked workspace with written material DOES get the notice",
+              _t_fires125(_t_dir125), saw="the notice would not fire, which is the defect itself")
+
+        # 3. Once it is tracked the notice stops. A warning that never clears teaches people to
+        #    skip the ones that matter — the same sentence chamnan-age's own fix is written under.
+        _sp125.run(["git", "-C", str(_t_dir125), "add", ".chamnan"], check=True,
+                   stdin=_sp125.DEVNULL, capture_output=True)
+        check("...and stops the moment the workspace is tracked",
+              not _t_fires125(_t_dir125),
+              saw=f"tracked={_t_ws125.workspace_is_tracked(_t_dir125)}")
+
+        # 4. `MAP.md` is regenerated from the tree and must NEVER be what keeps the notice alive:
+        #    a derived file is not a reason to commit anything.
+        (_t_dir125 / ".chamnan" / "MAP.md").write_text("# derived\n", encoding="utf-8")
+        check("MAP.md is not counted as unrebuildable — it is regenerated from the tree",
+              all(p.name != "MAP.md" for p in
+                  _t_ws125.unrebuildable_workspace_files(_t_dir125)),
+              saw=[p.name for p in _t_ws125.unrebuildable_workspace_files(_t_dir125)])
+    finally:
+        shutil.rmtree(_t_dir125, ignore_errors=True)
+
+# 5. And the sentence itself is where the user meets git, not somewhere they have to go looking.
+_t_src125 = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8", errors="replace")
+check("chamnan-map is the command that says it, beside its other git-state reporting",
+      "unrebuildable_workspace_files" in _t_src125 and "workspace_is_tracked" in _t_src125,
+      saw="the notice is not in chamnan-map — if it moved, move this assertion with it")
 # ---- 12_carry_share_is_equal.py
 # 🐛 [2026-09-09] `carry_forward` splits its budget EQUALLY between the parts of a handoff, so the
 # smaller part keeps a larger share of itself — which is the outcome wanted, because a summary that
@@ -30828,6 +30997,54 @@ if _t_rr44.is_file():
                 if (_t_m44.group(1), _t_m44.group(2)) != (_t_hit44, _t_all44):
                     _t_stale44.append(f"{_t_doc44}: says {_t_m44.group(0)}, tool measures "
                                       f"{_t_hit44} of {_t_all44}")
+
+            # 🐛 [2026-09-14] The three patterns above assert the DECOY count in two
+            # spellings and the recall pair in one, and never assert the SECRET-corpus size at all
+            # -- which is the number that went stale. Five places drifted for three days across
+            # README.md and SECURITY.md and not one matched: a number joined to `secret` by a
+            # hyphen is not `<n>-string decoy corpus`; a number introducing `secret shapes` is not
+            # `<n> ordinary strings`; a recall pair inside brackets is not `<n> of <n> secret`,
+            # because nothing follows the closing bracket. The commit that corrected the table row
+            # left every one of them, and SECURITY.md -- the document whose whole job is "trust
+            # this before you commit anything" -- published a three-day-old pair.
+            # The-set-not-the-member, inside the check written to stop exactly this.
+            #
+            # No digits in this comment, for the reason the header gives: this file is folded into
+            # the suite it scans, so an example carrying a stale figure is found by its own check.
+            # Not hypothetical -- the first version of this paragraph listed all five and the fold
+            # reported the comment itself as drift.
+            #
+            # Two changes. The corpus size is asserted wherever a number introduces one of the
+            # nouns this project uses for it, kept apart from the decoy count, which is a different
+            # number wearing a similar noun. And each guarded document must YIELD at least one
+            # claim: a reword that escapes every pattern FAILS here rather than passing silently,
+            # which is the failure mode above.
+            _t_claims44 = 0
+            for _t_m44 in _re44.finditer(
+                    r"(\d+)[- ]secret\b(?![ -]key)|(\d+) secret(?:s)? (?:shapes|and personal-data)",
+                    _t_txt44):
+                _t_claims44 += 1
+                _t_n44 = _t_m44.group(1) or _t_m44.group(2)
+                if _t_n44 != _t_all44:
+                    _t_stale44.append(f"{_t_doc44}: {_t_m44.group(0)!r} states the corpus size, "
+                                      f"tool measures {_t_all44}")
+            # The recall PAIR wherever it sits beside the word, brackets included -- the spelling
+            # that slipped. A sentence recording a MOVE from one pair to another carries no
+            # "recall" within reach of the bracket, so a dated fact is left alone.
+            for _t_m44 in _re44.finditer(r"recall[^.\n]{0,40}?\((\d+) of (\d+)\)", _t_txt44):
+                _t_claims44 += 1
+                if (_t_m44.group(1), _t_m44.group(2)) != (_t_hit44, _t_all44):
+                    _t_stale44.append(f"{_t_doc44}: states recall ({_t_m44.group(1)} of "
+                                      f"{_t_m44.group(2)}), tool measures {_t_hit44} of {_t_all44}")
+            # A document stating no claim at all has been reworded past every pattern or has lost
+            # the figures. Both are what this block exists to catch. The suite file is exempt: it
+            # carries this check's own prose, not a published claim.
+            if _t_doc44 != "tests/run_tests.py":
+                check(f"{_t_doc44} still states the corpus in a shape this check can read: "
+                      f"{_t_claims44} claim(s)",
+                      _t_claims44 >= 1,
+                      saw=f"no corpus-size or recall-pair claim found in {_t_doc44} — reworded "
+                          f"past every pattern, or the figures are gone")
         check("EVERY PUBLISHED REDACTOR NUMBER IS THE ONE THE TOOL ACTUALLY MEASURES",
               not _t_stale44, saw="\n".join(sorted(set(_t_stale44))) or None)
 
