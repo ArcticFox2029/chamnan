@@ -28073,8 +28073,13 @@ check("...and the hook hands that list to shrink",
 # Measured on this repository's real store after the cut: the section fell 2,372 -> 2,305 bytes AND
 # the number of rules arriving with a body rose from 3 to 5 of 10 — the freed bytes go back into
 # rule text, because the cut that follows is a fixed budget rather than a fixed list.
-_t_rnd3 = __import__("random")
-_t_rnd3.seed(20260911)
+# 🐛 [2026-09-14] `__import__("random")` is the MODULE, so `.seed()` here seeded the one generator
+# the whole suite shares. Every other block that draws from `random` between this line and the last
+# check below moved the sequence — and WHICH blocks run differs by platform: Windows skips 38-40 of
+# them against 22 on macOS. So the titles built below were different text on Windows than here, and
+# the fixture was not the fixture anyone had measured. A private generator cannot be moved by
+# anybody else.
+_t_rnd3 = __import__("random").Random(20260911)
 
 _t_WORDS = ("never", "always", "deploy", "database", "review", "before", "release", "branch",
             "secret", "workspace", "session", "budget", "rule", "commit", "index")
@@ -28092,6 +28097,24 @@ def _t_rules_ws(n, title_words):
             f"# {_t}\n\nThe body of this rule, which is long enough that the share cannot hold it. "
             + "detail " * 90 + "\n", encoding="utf-8")
     return _d, _titles
+
+
+def _t_rules_fixed_ws(n, title_words):
+    """The same store, with every title built from ONE repeated word.
+
+    The random builder above is right for the duplication sweep — it wants many different titles.
+    The byte-budget A/B at the foot of this block wants the opposite: only the title LENGTH may
+    differ between its two stores, or it is measuring the dictionary.
+    """
+    _d = Path(tempfile.mkdtemp(prefix="chamnan-ptr-"))
+    _s = _d / ".chamnan" / "memory" / "rules"
+    _s.mkdir(parents=True)
+    for _i in range(n):
+        _t = " ".join(["rule"] * title_words) + f" {_i}"
+        (_s / f"rule-{_i}.md").write_text(
+            f"# {_t}\n\nThe body of this rule, which is long enough that the share cannot hold it. "
+            + "detail " * 90 + "\n", encoding="utf-8")
+    return _d
 
 
 # 50 stores, over the range of title lengths where the duplication actually costs something.
@@ -28131,8 +28154,18 @@ check("...and it still names the file, which is the half the reader does not alr
 
 # The point of the cut is that the bytes go back into rule bodies. On a store where the budget
 # genuinely binds, a longer title must not cost a rule its body.
-_t_root_short, _ = _t_rules_ws(8, 3)
-_t_root_long, _ = _t_rules_ws(8, 14)
+# 🐛 [2026-09-14] and this A/B says it isolates title LENGTH, while drawing its words at random from
+# a list whose members run 4 to 9 characters. At fourteen words a title varies by ~50 bytes on the
+# draw alone, across eight files — so the thing being compared was partly word-length luck. Measured
+# over 400 draws: the gap is 0 in 212, 1 in 180, and **2 or 3 in 8 of them**. The assertion allows a
+# gap of 1, so this block failed about one run in fifty, for the fixture rather than for the code.
+# CI found it on Windows; that is where the shifted sequence happened to land on one of the eight.
+#
+# One repeated word instead. Title length in WORDS then maps to a fixed number of BYTES, which is
+# what the sentence above claims to be varying — and the gap becomes 0 on every draw, so the
+# tolerance of 1 is now headroom rather than the thing holding the check up.
+_t_root_short = _t_rules_fixed_ws(8, 3)
+_t_root_long = _t_rules_fixed_ws(8, 14)
 try:
     _t_fit_short = memory_mod.rules_pressure(_t_root_short)[0]
     _t_fit_long = memory_mod.rules_pressure(_t_root_long)[0]
@@ -31830,7 +31863,15 @@ try:
             _t_refused66.append(_t_name66)      # an adapter that declines is not a failure here
             continue
         if _t_out66:
-            _t_wrote66.append(str(_Path66(_t_out66).relative_to(_t_root66)))
+            # 🐛 [2026-09-14] `str()` here, against a ledger whose keys the product builds with
+            # `.as_posix()` — `lib/adapters/__init__.py:570`, where the comment beside it already
+            # says why: the key is compared against an adapter's `TARGET`, which is written with
+            # forward slashes. On Windows this produced `.agents\rules\chamnan.md` against a
+            # recorded `.agents/rules/chamnan.md`, so the set difference was EVERY adapter and the
+            # check reported that nothing is recorded at all. Green on Linux and macOS, red on both
+            # Windows legs. The rule was known and written down one level down in the code being
+            # tested; the test simply did not follow it.
+            _t_wrote66.append(_Path66(_t_out66).relative_to(_t_root66).as_posix())
 
     _t_ledger66 = _ad66.written_artefacts(_t_root66)
     _t_unrecorded66 = sorted(set(_t_wrote66) - set(_t_ledger66))
