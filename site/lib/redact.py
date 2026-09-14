@@ -419,7 +419,22 @@ _NONENGLISH_SECRET_WORDS_SPELLED = {
         r"|kennwort|passwort|geheimnis|parola|segreto|wachtwoord|geheim"
         r"|has[lł]o|[şs]ifre|m[aậ]t[_ -]?kh[aẩ]u|matkhau|kata[_ -]?sandi"
     ),
-    "Thai": r"รหัสผ่าน|รหัส",
+    # 🐛 [2026-09-15] `รหัส` on its own was here, and it is the ordinary Thai word for CODE, not
+    # for password. English settles this by policy and the policy is visible: `code` is not in
+    # `_LATIN_SECRET_WORDS`, so `product_code: SKU-8842` is untouched. Thai had the opposite, and
+    # because an unspaced script takes a same-script SUFFIX (see `_UNSPACED_SCRIPT_SUFFIXES`, and
+    # it is right to), that one word made every Thai compound beginning with "code" a credential
+    # name: `รหัสสินค้า` (product code), `รหัสอ้างอิง` (order reference), `รหัสนักศึกษา` (student
+    # id), `รหัสพนักงาน` (employee id) all had their values replaced in the map. The suffix rule
+    # multiplies the vocabulary across a whole language, so a word that is one degree too broad in
+    # a spaced script is many degrees too broad in an unspaced one.
+    #
+    # The compounds below are the ones that actually name a credential, and the suffix rule still
+    # reaches their inflections: `รหัสเข้า` covers `รหัสเข้าระบบ` and `รหัสเข้าใช้งาน`. What is
+    # given up is bare `รหัส <value>`, which is exactly what English gives up with bare `code`.
+    # R3.5, which asked whether a no-space script needs dictionary boundaries: it does not need
+    # ICU here -- it needs its vocabulary held to the same standard as every other language's.
+    "Thai": r"รหัสผ่าน|รหัสลับ|รหัสเข้า",
     "CJK": r"密码|密碼|口令|秘密|パスワード|暗証番号",
     "Hangul": r"비밀번호|암호",
     "Cyrillic": r"пароль|секрет|ключ",
@@ -2892,7 +2907,10 @@ _HEADER_LANGS = {
     "Turkish": ("şifre", "sifre"),
     "Vietnamese": ("mật_khẩu", "matkhau"),
     "Indonesian": ("kata_sandi",),
-    "Thai": ("รหัสผ่าน", "รหัส"),
+    # `รหัส` alone is the Thai for CODE, and English's row above is the policy: `code` is not a
+    # password column header, so a column named `รหัส` is a product or reference code far more
+    # often than a credential. Same correction as the vocabulary table. (R3.5.)
+    "Thai": ("รหัสผ่าน", "รหัสลับ"),
     "Chinese": ("密码", "密碼", "口令"),
     "Japanese": ("パスワード", "暗証番号"),
     "Korean": ("비밀번호", "암호"),

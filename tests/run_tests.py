@@ -28832,6 +28832,69 @@ for _t_suffix130, _t_want130 in ((("_backup"), True), (("foo"), True),
           f"{'redacted' if _t_want130 else 'left alone'}",
           (_t_akia130 not in _t_out130) is _t_want130,
           saw=_t_out130)
+# ---- 131_a_language_does_not_get_a_wider_vocabulary_than_english.py
+# ------------------ no language gets a wider credential vocabulary than English does
+# R3.5, measured 2026-09-15. Unicode states that Thai, Lao, Chinese and Japanese need dictionary
+# lookup for reliable word boundaries, and ICU ships segmentation for exactly those. chamnan cannot
+# take that dependency and does not need to: `_UNSPACED_SCRIPT_SUFFIXES` already gives each
+# unspaced script a same-script suffix, which is the correct analogue of English's `password[\w-]*`
+# and makes `รหัสผ่านใหม่` and `秘密基地` behave like `password_new` and `secret_base`.
+#
+# What the suffix rule also does is MULTIPLY the vocabulary. In a spaced script one word that is a
+# degree too broad costs you that word; in an unspaced script it costs you every compound that
+# begins with it.
+#
+# 🐛 [2026-09-15] `รหัส` was in the Thai vocabulary, and it is the ordinary Thai word for CODE, not
+# for password. English settles the same question the other way and its policy is visible in the
+# behaviour: `code` is not a credential word, so `product_code: SKU-8842` is untouched. Thai had
+# the opposite, and through the suffix rule it made `รหัสสินค้า` (product code), `รหัสอ้างอิง`
+# (order reference), `รหัสนักศึกษา` (student id) and `รหัสพนักงาน` (employee id) all credential
+# names -- so a Thai repository's map had its product catalogue replaced by <REDACTED>.
+#
+# The assertion below is not "these words are right". It is that the SAME MEANING gets the SAME
+# VERDICT whatever script it is written in, which is a property no vocabulary edit can satisfy by
+# accident and which fails loudly when one language quietly grows a word the others do not have.
+import importlib as _importlib131
+
+_t_redact131 = _importlib131.import_module("redact")
+_t_VALUE131 = "Hunter2SuperSecretValue"
+_t_IDENT131 = "SKU-8842X"
+
+# Same meaning, one row per script the vocabulary claims to cover. `credential` must be redacted;
+# `identifier` must not -- it is an ordinary business code, which is what every one of these
+# languages uses the same root for.
+_t_parallel131 = [
+    # script      credential label        ordinary-identifier label
+    ("Latin-en",  "password",             "product_code"),
+    ("Latin-de",  "passwort",             "produkt_code"),
+    ("Thai",      "รหัสผ่าน",                "รหัสสินค้า"),
+    ("Thai-2",    "รหัสลับ",                 "รหัสอ้างอิง"),
+    ("CJK-zh",    "密码",                  "产品编号"),
+    ("CJK-ja",    "パスワード",              "商品番号"),
+    ("Hangul",    "비밀번호",               "제품번호"),
+    ("Cyrillic",  "пароль",               "артикул"),
+]
+for _t_script131, _t_cred131, _t_ident131 in _t_parallel131:
+    _t_cred_doc131 = f"{_t_cred131} {_t_VALUE131}"
+    check(f"{_t_script131}: a credential label redacts its value",
+          _t_VALUE131 not in _t_redact131.scrub(_t_cred_doc131),
+          saw=_t_redact131.scrub(_t_cred_doc131))
+    _t_id_doc131 = f"{_t_ident131} {_t_IDENT131}"
+    check(f"{_t_script131}: an ordinary identifier label keeps its value",
+          _t_IDENT131 in _t_redact131.scrub(_t_id_doc131),
+          saw=f"{_t_redact131.scrub(_t_id_doc131)!r} -- this label means product/reference code, "
+              f"not password. English does not treat `code` as a credential word, and an unspaced "
+              f"script that does loses every compound beginning with it.")
+
+# The population, derived: every unspaced script takes a same-script suffix, and that is what makes
+# a too-broad word expensive. If a script gains a suffix rule, it must appear above.
+_t_unspaced131 = set(_t_redact131._UNSPACED_SCRIPT_SUFFIXES)
+_t_covered131 = {_t_row131[0].split("-")[0] for _t_row131 in _t_parallel131}
+check(f"every unspaced script is exercised by the parallel corpus above: "
+      f"{sorted(_t_unspaced131)}",
+      _t_unspaced131 <= _t_covered131,
+      saw=f"not exercised: {sorted(_t_unspaced131 - _t_covered131)} -- a script with a same-script "
+          f"suffix multiplies any over-broad word across its whole language, so it needs a row.")
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
