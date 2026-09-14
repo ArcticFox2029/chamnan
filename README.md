@@ -520,6 +520,13 @@ The evidence legend treated a configuration directory under your home as proof o
 is not — a home directory outlives an uninstall, measured here on two agents with no runnable
 binary. The detector was already honest; the sentence describing it was not.
 
+**"I updated chamnan, and the hooks are still the old ones"** has two causes and this release closes
+the second. One: the copy that answered was not the copy you updated — a host keeps one install per
+scope, `claude plugin update` reports success on `user`, and a `project` install keeps running a
+release behind with its own hooks, commands, agents and skills. That was fixed in 1.25.1, which
+names the install that actually answers at session start. Two, below: the version string did not
+move, so nothing refreshed.
+
 The update notice compared version strings only, so a marketplace whose **files** moved while its
 version stayed put reported nothing. That is the case that most needs the notice, because
 `claude plugin update` will not refresh a path install while the version is unchanged. It now

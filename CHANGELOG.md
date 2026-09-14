@@ -68,7 +68,21 @@ and not that anything is installed or runnable now.
 The detector itself was already honest and is unchanged; it reports evidence `home`. Only the
 sentence describing it overclaimed.
 
-### An update that was invisible because the version string had not moved
+### "I updated chamnan, and the hooks are still the old ones"
+
+Two different faults produce that one sentence, and this release closes the second of them. If you
+have hit it, check both.
+
+**One: the copy that answered was not the copy you updated.** A host keeps a separate install per
+scope, and the narrowest one wins. `claude plugin update chamnan@chamnan` updates `user`, prints
+that it succeeded, and leaves a `project` install untouched — and it is the `project` one that runs.
+Its hooks, its `bin/` commands, its agents and its skills all stay a release behind while the update
+reports success. That was fixed in 1.25.1, which added a session-start notice naming the install
+that actually answers and the `-s` flag that updates it.
+
+**Two: the version string did not move, so nothing refreshed.** That is the rest of this section.
+
+#### An update that was invisible because the version string had not moved
 
 `chamnan-report` and the session banner tell you when a newer copy is waiting on disk. They
 compared version strings only, so a marketplace whose **files** changed while its version stayed
