@@ -136,6 +136,46 @@ def _is_a_plain_word(value):
                     for part in parts))
 
 
+_ONLY_STRUCTURE = re.compile(r"[}\]\s,;]*")
+
+
+def _structure_the_value_did_not_open(match, value):
+    """The trailing part of `value` that CLOSES a bracket opened before the name, or "".
+
+    🐛 [2026-09-15] Found by R5.3's idempotence relation over a real corpus -- `scrub(scrub(x)) !=
+    scrub(x)` on one file of 1,187, because the first pass left something the second could still
+    read. The cause: the rules whose value is one unbroken run of non-space take that run to the
+    end of the line, and inside an object literal the run includes the `}` that closes the object.
+
+        body: {kind: 'certificate_of_origin', storage_key: storageKeyOfUpload},
+        body: {kind: 'certificate_of_origin', storage_key: <REDACTED>
+
+    The brace and the comma are gone, so the line no longer parses and a reader cannot see what
+    shape it had -- the damage this module names elsewhere as the thing it must not do to the index
+    it exists to write. The QUOTED rule never had it, because a quote is a boundary the pattern
+    already respects; the four rules whose value is a bare run had it together, which is why this
+    is a helper rather than an edit at the one site that surfaced.
+
+    Deliberately conservative in the leak direction: the tail is given back ONLY when everything
+    from that point on is closers, commas, semicolons and space. `password=abc}def` still goes
+    whole, because `}def` may be the rest of a credential rather than the rest of a line.
+    """
+    prefix = match.string[match.string.rfind("\n", 0, match.start()) + 1:match.start()]
+    if not (prefix.count("{") > prefix.count("}") or prefix.count("[") > prefix.count("]")):
+        return ""
+    depth = 0
+    for i, ch in enumerate(value):
+        if ch in "{[":
+            depth += 1
+        elif ch in "}]":
+            if depth:
+                depth -= 1
+                continue
+            tail = value[i:]
+            return tail if _ONLY_STRUCTURE.fullmatch(tail) else ""
+    return ""
+
+
 def _is_a_type_annotation(match):
     """True when what follows `password:` is a TYPE in a parameter list, not a value.
 
@@ -2272,7 +2312,8 @@ def scrub(text, windowed=True):
             or m.group(2).lower().rstrip(".,;:") in SCHEME_WORDS
             or _is_only_a_template(m.group(2))
             or _names_a_mechanism(m.group(1), m.group(2)))
-        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+        else f"{m.group(1)}{PLACEHOLDER}"
+             f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
     text = _apply_in_windows(text, _windows_around_secret_words(text) if windowed else None,
                               [_copula])
     # `=>` is not optional in ROCKET_SECRET — it is the operator the rule exists to read, and the
@@ -2308,7 +2349,8 @@ def scrub(text, windowed=True):
         if m.group(2).startswith("-") else m.group(0)
         if _names_a_mechanism(m.group(1), m.group(2)) or not _looks_like_a_credential_name(m.group(1), m.group(2))
         or PLACEHOLDER in m.group(2) or (_is_a_plain_word(m.group(2)) and not _is_a_default_credential(m.group(2)))
-        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+        else f"{m.group(1)}{PLACEHOLDER}"
+             f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
     _flag = lambda chunk: FLAG_SECRET.sub(
         lambda m: m.group(0) if PLACEHOLDER in m.group(2)
         # The next FLAG is not this flag's value. `tool --password --verbose` means the password
@@ -2319,7 +2361,8 @@ def scrub(text, windowed=True):
         # and `-storepass:file x.txt` name a path the reader may need; redacting it hides which
         # file to go and protect.
         or m.group(1).rstrip().endswith("-file") or "/" in m.group(2) or m.group(2).endswith(".txt")
-        else f"{m.group(1)}{PLACEHOLDER}", chunk)
+        else f"{m.group(1)}{PLACEHOLDER}"
+             f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
     _assigned = lambda chunk: ASSIGNED_SECRET.sub(
         lambda m: m.group(0)
         if _names_a_mechanism(m.group(1), m.group(3)) or not _looks_like_a_credential_name(m.group(1), m.group(3))
@@ -2345,8 +2388,14 @@ def scrub(text, windowed=True):
         or _is_documented_field_name(m)
         or _is_documented_prose(m)
         or _is_a_template_under_a_weak_name(m.group(1), m.group(2))
-        else f"{m.group(1)}{_redact_literals_in(m.group(2)) or PLACEHOLDER}"
-        + " " * 0, chunk)
+        # The tail is appended only when the whole value became a PLACEHOLDER. When
+        # `_redact_literals_in` rewrites the value instead, what it returns already CONTAINS that
+        # tail -- appending it again duplicated the bracket, which the same idempotence relation
+        # that found the original bug caught in the fix for it within the hour.
+        else f"{m.group(1)}{_redact_literals_in(m.group(2))}"
+        if _redact_literals_in(m.group(2))
+        else f"{m.group(1)}{PLACEHOLDER}"
+             f"{_structure_the_value_did_not_open(m, m.group(2))}", chunk)
 
     # The five rules above are the whole of what SECRET_WORDS-anchored scanning costs, and on the
     # real map most of the document cannot match any of them. Windows are computed twice because

@@ -29123,6 +29123,255 @@ try:
         _os134.chmod(_t_repo134 / "shut", 0o755)
 finally:
     shutil.rmtree(_t_dir134, ignore_errors=True)
+# ---- 135_a_name_this_package_writes_is_a_name_windows_accepts.py
+# ------------------ the portability rules this package already keeps, kept
+# R6.2, R6.5, R6.6, R6.9 and R6.10, measured 2026-09-15 — and every one of them came back clean.
+# That is the result, and it is why this block exists: five separate Windows and locale traps, all
+# currently avoided, none of them enforced by anything. A portability rule that is true by habit is
+# one edit away from being false, and the edit will be made on a mac where nothing goes wrong.
+#
+# What was measured, and what it found:
+#
+#   R6.5  PEP 597 measured 489 of 4,000 top PyPI packages carrying non-ASCII READMEs and 82 source
+#         installs failing in non-UTF-8 locales because no encoding was given. All 143 text-mode
+#         `open`/`read_text`/`write_text` calls here name one. Zero gaps.
+#   R6.9  Python documents `os.rename` as raising on Windows where it silently replaces on Unix.
+#         Zero `os.rename` calls; every overwrite is already `os.replace`.
+#   R6.10 From Python 3.13 `os.path.isabs()` answers differently on Windows for a path beginning
+#         with exactly one slash. Zero calls, so the version split is unreachable.
+#   R6.6  `NamedTemporaryFile` cannot be reopened by name on Windows before 3.12. Zero uses.
+#   R6.2  Windows reserves nine punctuation characters, `CON`/`PRN`/`AUX`/`NUL`, `COM1`-`COM9` and
+#         `LPT1`-`LPT9`, and rejects a trailing dot or space. All three title-to-filename slugs
+#         already prefix the device names, replace every reserved character, strip the trailing
+#         dot or space, and fall back to a hash for a name that slugs to nothing.
+#
+# Two notes on how the populations are derived, both of them mistakes made while writing this.
+# `path.open("rb")` puts the mode in the FIRST argument and `open(path, "rb")` in the second, so a
+# scanner that only looks at the second reports every binary read in the package as an encoding
+# bug. And `os.open` is the file-descriptor call: it takes no encoding and never could.
+import ast as _ast135
+import inspect as _inspect135
+import importlib as _importlib135
+
+_t_roots135 = [ROOT / "lib", ROOT / "bin", ROOT / "hooks", ROOT / "tools"]
+
+
+def _t_mode_of135(node):
+    """The mode string, wherever this call form happens to put it."""
+    for _k135 in node.keywords:
+        if _k135.arg == "mode" and isinstance(_k135.value, _ast135.Constant):
+            return str(_k135.value.value)
+    _idx135 = 0 if isinstance(node.func, _ast135.Attribute) else 1
+    if len(node.args) > _idx135 and isinstance(node.args[_idx135], _ast135.Constant):
+        return str(node.args[_idx135].value)
+    return ""
+
+
+_t_unencoded135, _t_rename135, _t_isabs135, _t_tmpfile135 = [], [], [], []
+_t_text_calls135 = _t_files135 = 0
+for _t_r135 in _t_roots135:
+    for _t_p135 in sorted(_t_r135.rglob("*")):
+        if not _t_p135.is_file():
+            continue
+        if _t_p135.suffix != ".py" and not _t_p135.read_bytes()[:2].startswith(b"#!"):
+            continue
+        try:
+            _t_src135 = _t_p135.read_text(encoding="utf-8")
+            _t_tree135 = _ast135.parse(_t_src135)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        _t_files135 += 1
+        for _t_n135 in _ast135.walk(_t_tree135):
+            if not isinstance(_t_n135, _ast135.Call):
+                continue
+            _t_fn135 = getattr(_t_n135.func, "attr", None) or getattr(_t_n135.func, "id", None)
+            _t_at135 = f"{_t_p135.name}:{_t_n135.lineno}"
+            if _t_fn135 == "rename":
+                _t_rename135.append(_t_at135)
+            elif _t_fn135 == "isabs":
+                _t_isabs135.append(_t_at135)
+            elif _t_fn135 == "NamedTemporaryFile":
+                _t_tmpfile135.append(_t_at135)
+            elif _t_fn135 in ("read_text", "write_text", "open"):
+                # `os.open` returns a descriptor and takes no encoding; zip and tar members are
+                # bytes. Neither is a text call and neither can name an encoding.
+                _t_recv135 = getattr(getattr(_t_n135.func, "value", None), "id", "")
+                if _t_recv135 in ("os", "zf", "tf", "zipfile", "tarfile"):
+                    continue
+                if "b" in _t_mode_of135(_t_n135):
+                    continue
+                _t_text_calls135 += 1
+                if not any(_k135.arg == "encoding" for _k135 in _t_n135.keywords):
+                    _t_unencoded135.append(f"{_t_at135}  {_t_src135.splitlines()[_t_n135.lineno-1].strip()[:70]}")
+
+check(f"every text-mode read or write names its encoding "
+      f"({_t_text_calls135} call(s) across {_t_files135} file(s))",
+      not _t_unencoded135,
+      saw=f"{_t_unencoded135} -- without one, the file is decoded with the machine's locale "
+          f"encoding, which is cp1252 on a default Windows and cp932 on a Japanese one. PEP 597 "
+          f"measured 82 of 4,000 top packages failing installation for exactly this.")
+check("no `os.rename`: Windows raises where Unix silently replaces",
+      not _t_rename135,
+      saw=f"{_t_rename135} -- say which you mean: `os.replace` to overwrite, or catch "
+          f"FileExistsError to refuse. `os.rename` means one thing here and another there.")
+check("no `os.path.isabs`: its Windows answer changed inside the supported range",
+      not _t_isabs135,
+      saw=f"{_t_isabs135} -- from Python 3.13 a path beginning with exactly one slash is no "
+          f"longer absolute on Windows. Use PureWindowsPath, or decide explicitly.")
+check("no `NamedTemporaryFile`: it cannot be reopened by name on Windows before 3.12",
+      not _t_tmpfile135,
+      saw=f"{_t_tmpfile135} -- use mkdtemp and a named file inside it.")
+
+# R6.2, as behaviour. The population is derived: every module-level `slug(title)` in lib/, so a
+# fourth one added later is tested by existing. `candidates.slug(sequence)` is deliberately not in
+# it -- it slugs a sequence of tool names, not a title, and never becomes a filename on its own.
+_t_slugs135 = {}
+for _t_p135 in sorted((ROOT / "lib").glob("*.py")):
+    try:
+        _t_mod135 = _importlib135.import_module(_t_p135.stem)
+    except Exception:
+        continue
+    _t_fn135 = getattr(_t_mod135, "slug", None)
+    if not callable(_t_fn135):
+        continue
+    try:
+        _t_params135 = list(_inspect135.signature(_t_fn135).parameters)
+    except (TypeError, ValueError):
+        continue
+    if _t_params135 == ["title"]:
+        _t_slugs135[f"{_t_p135.stem}.slug"] = _t_fn135
+
+check(f"the title-to-filename slugs are found by derivation, not by name: "
+      f"{sorted(_t_slugs135)}",
+      len(_t_slugs135) >= 3,
+      saw=f"found {sorted(_t_slugs135)} -- if a module's slug was renamed or its parameter "
+          f"changed, the corpus below silently stopped covering it.")
+
+_t_RESERVED135 = ({"CON", "PRN", "AUX", "NUL"}
+                  | {f"COM{_i135}" for _i135 in range(1, 10)}
+                  | {f"LPT{_i135}" for _i135 in range(1, 10)})
+_t_FORBIDDEN135 = '<>:"/\\|?*'
+_t_hostile135 = (sorted(_t_RESERVED135) + [_c135.lower() for _c135 in sorted(_t_RESERVED135)]
+                 + [f"a{_ch135}b" for _ch135 in _t_FORBIDDEN135]
+                 + ["trailing dot.", "trailing space ", "....", "   ", "", "a\tb", "a\nb",
+                    "café", "รหัสผ่าน", "CON.txt", "nul.md"])
+_t_rejected135 = []
+for _t_name135, _t_fn135 in sorted(_t_slugs135.items()):
+    for _t_case135 in _t_hostile135:
+        try:
+            _t_out135 = _t_fn135(_t_case135)
+        except Exception as _exc135:                      # noqa: BLE001 — any raise is a failure
+            _t_rejected135.append(f"{_t_name135}({_t_case135!r}) raised {type(_exc135).__name__}")
+            continue
+        _t_why135 = None
+        if not isinstance(_t_out135, str) or not _t_out135.strip():
+            _t_why135 = "empty"
+        elif _t_out135.split(".")[0].upper() in _t_RESERVED135:
+            _t_why135 = "a reserved device name"
+        elif _t_out135.endswith((".", " ")):
+            _t_why135 = "a trailing dot or space"
+        elif any(_ch135 in _t_out135 for _ch135 in _t_FORBIDDEN135):
+            _t_why135 = "a reserved character"
+        elif any(ord(_ch135) < 32 for _ch135 in _t_out135):
+            _t_why135 = "a control character"
+        if _t_why135:
+            _t_rejected135.append(f"{_t_name135}({_t_case135!r}) -> {_t_out135!r}: {_t_why135}")
+
+check(f"no slug produces a name Windows would reject or redirect to a device "
+      f"({len(_t_slugs135)} slug(s) x {len(_t_hostile135)} hostile titles)",
+      not _t_rejected135,
+      saw=f"{_t_rejected135[:8]} -- Windows' own naming contract reserves these, and a store "
+          f"whose filename is `CON.md` does not fail to be created: it is written to the console "
+          f"device and silently lost.")
+# ---- 136_scrubbing_twice_says_the_first_pass_finished.py
+# ------------------ metamorphic relations: what must hold when there is no oracle per output
+# R5.3, measured 2026-09-15. When individual outputs have no practical oracle -- and "is this the
+# right redaction of this file" has none -- metamorphic relations are the substitute: properties
+# that must hold between two runs, whatever the right answer is. An in-use study wrote 19 relations,
+# uncovered 8 previously unknown issues and killed 29 of 44 injected bugs.
+#
+# Two relations, run over the real corpus at the time: `scrub(scrub(x)) == scrub(x)` and
+# `windowed == unwindowed`. 1,187 files, and the first found one violation -- which no labelled
+# fixture had, because the shape is one nobody would think to write down:
+#
+#     body: {kind: 'certificate_of_origin', storage_key: storageKeyOfUpload},
+#     body: {kind: 'certificate_of_origin', storage_key: <REDACTED>
+#
+# 🐛 [2026-09-15] The rules whose value is one unbroken run of non-space take that run to the end
+# of the line, and inside an object literal the run includes the `}` that CLOSES the object. The
+# brace and the comma were eaten, so the line no longer parsed and a reader could not see what
+# shape it had had. Idempotence detects it because the damaged line is still readable by the same
+# rules on a second pass -- a first pass that finished would leave nothing for a second to do.
+#
+# Four rules shared the value shape and so shared the bug; `_structure_the_value_did_not_open` is
+# one helper for all four rather than an edit at the site that surfaced. And the relation earned
+# its keep twice in one hour: the first version of that fix appended the structural tail even when
+# `_redact_literals_in` had already returned it, DUPLICATING the bracket, and idempotence caught
+# that too.
+import importlib as _importlib136
+
+_t_redact136 = _importlib136.import_module("redact")
+
+# Generated rather than listed: every container shape crossed with every value shape. A relation is
+# only worth having if the corpus it runs on is wider than the fixtures somebody wrote by hand.
+_t_containers136 = [
+    ("{", "}"), ("[", "]"), ("{", "},"), ("[", "],"), ("{", "}},"), ("{", "} }"),
+]
+_t_names136 = ["password", "api_key", "storage_key", "secret", "token", "รหัสผ่าน"]
+_t_values136 = [
+    "someIdentifierName", "hunter2SuperSecret", "'quotedSecretValue'", '"dquotedSecret"',
+    "${TEMPLATED_VALUE}", "getSecret()", "abc}def}ghi", "<REDACTED>",
+]
+_t_docs136 = []
+for _t_o136, _t_c136 in _t_containers136:
+    for _t_n136 in _t_names136:
+        for _t_v136 in _t_values136:
+            _t_docs136.append(f"  config = {_t_o136}{_t_n136}: {_t_v136}{_t_c136}\n")
+            _t_docs136.append(f"  config = {_t_o136}kind: 'x', {_t_n136}: {_t_v136}{_t_c136}\n")
+# Plus the shapes with no container at all, where the value legitimately owns every character.
+for _t_n136 in _t_names136:
+    for _t_v136 in _t_values136:
+        _t_docs136.append(f"{_t_n136.upper()}={_t_v136}\n")
+        _t_docs136.append(f"{_t_n136}: {_t_v136}\n")
+
+_t_not_idem136, _t_window136, _t_structure136 = [], [], []
+for _t_d136 in _t_docs136:
+    _t_once136 = _t_redact136.scrub(_t_d136)
+    if _t_redact136.scrub(_t_once136) != _t_once136:
+        _t_not_idem136.append((_t_d136, _t_once136, _t_redact136.scrub(_t_once136)))
+    if _t_redact136.scrub(_t_d136, windowed=False) != _t_once136:
+        _t_window136.append((_t_d136, _t_once136))
+    # Structure, stated as narrowly as the helper actually promises. A value may legitimately
+    # take a bracket WITH it -- `${TEMPLATED_VALUE}` is one token and goes whole -- and when the
+    # tail is not purely structural (`abc}def}ghi`) the whole run goes, deliberately, because
+    # `}def}ghi` may be the rest of a credential rather than the rest of a line. What must always
+    # survive is a container closed by a tail of nothing but closers, commas and space.
+    _t_bal136 = lambda s: (s.count("{") - s.count("}"), s.count("[") - s.count("]"))
+    _t_value136 = _t_d136.rstrip("\n").split(": ", 1)[-1].split("=", 1)[-1]
+    _t_plain136 = not any(_ch136 in _t_value136[:-3] for _ch136 in "{}[]")
+    if _t_plain136 and _t_bal136(_t_once136) != _t_bal136(_t_d136):
+        _t_structure136.append((_t_d136, _t_once136))
+
+check(f"scrub(scrub(x)) == scrub(x) over {len(_t_docs136)} generated shapes",
+      not _t_not_idem136,
+      saw=f"{_t_not_idem136[:3]} -- a second pass finding more means the first left something it "
+          f"could still read, which is either an unfinished redaction or a first pass that damaged "
+          f"the line into a new match.")
+check(f"windowed == unwindowed over the same {len(_t_docs136)} shapes",
+      not _t_window136,
+      saw=f"{_t_window136[:3]} -- the module calls the unwindowed pass the DEFINITION of a "
+          f"correct result, so a difference is the optimisation being wrong.")
+check("a container closed by a purely structural tail keeps that tail",
+      not _t_structure136,
+      saw=f"{_t_structure136[:3]} -- eating the `}}` that closes an object literal destroys the "
+          f"shape a reader needs, in the index this package exists to write.")
+
+# The specific shape that started it, kept as the regression case it became.
+_t_case136 = "      body: {kind: 'certificate_of_origin', storage_key: storageKeyOfUpload},\n"
+_t_out136 = _t_redact136.scrub(_t_case136)
+check("the object literal that found this keeps its brace and its comma",
+      _t_out136.rstrip().endswith("},"),
+      saw=repr(_t_out136))
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,
