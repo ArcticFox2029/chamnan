@@ -167,6 +167,8 @@ def _nudge_read(wsdir, session_id):
 
 
 def _nudge_write(wsdir, session_id, entry):
+    if ws.read_only():
+        return
     p = _nudge_path(wsdir, session_id)
     try:
         # Shared `.tmp` name, same bug as pointer.py and chamnan-map had. See ws.atomic_write_text.
@@ -247,6 +249,11 @@ def notice_workflow(payload, wsdir, root):
         return False
     sequence, count = found
 
+    # `record` returns the would-be history in read-only mode, so detection still exercises the
+    # measured path. A qualifying sequence must not turn that in-memory result into a candidate
+    # write, though (R6 Q10).
+    if ws.read_only():
+        return False
     candidate_path, _is_new = candidates.upsert(root, sequence, count, now[:10],
                                                 provenance="ai-inferred")
 
@@ -307,6 +314,8 @@ def _stamp_memory_entry(payload, root):
     confirmed by a human. Promoting it to `ai-confirmed` is a human decision (Stage 7, 1.5.1), not
     something a hook can honestly do for itself.
     """
+    if ws.read_only():
+        return
     if (payload.get("tool_name") or "") not in ("Write", "Edit"):
         return
     file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
@@ -370,6 +379,8 @@ def _track_tool_health(payload, root):
     command = str((payload.get("tool_input") or {}).get("command") or "")
     name = tools_index.match_call(root, command)
     if name is None:
+        return False
+    if ws.read_only():
         return False
     response = payload.get("tool_response") or {}
     interrupted = bool(response.get("interrupted"))
@@ -521,6 +532,8 @@ def _record_edit(payload, root, wsdir):
     source file would otherwise learn that every file in the repository is followed by STATE.md,
     which is true and useless.
     """
+    if ws.read_only():
+        return
     if (payload.get("tool_name") or "") not in ("Write", "Edit"):
         return
     file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
@@ -670,6 +683,10 @@ def main():
     tool_name = payload.get("tool_name") or ""
     file_path = str((payload.get("tool_input") or {}).get("file_path") or "")
 
+    # The fingerprinting path above still runs for timing, but its mkdir, lockfile and rewrite are
+    # one write population and read-only mode permits none of them (R6 Q10).
+    if ws.read_only():
+        return 0
     log = wsdir / "logs" / "scratch.jsonl"
     log.parent.mkdir(parents=True, exist_ok=True)
 

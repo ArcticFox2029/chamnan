@@ -358,6 +358,14 @@ def record(log_path, sigs, when, tool=None, interrupted=False, history=None):
             entry["interrupted"] = True
         fresh.append(entry)
 
+    # 🐛 [2026-09-12] CHAMNAN_READ_ONLY guarded the trim rewrite through
+    # `ws.atomic_write_text` and not the append or even this function's parent `mkdir`. The Q4
+    # PostToolUse timing run therefore added five records to the log it was measuring. Return the
+    # same in-memory history the caller uses for detection, while touching none of the three write
+    # paths below (R6 Q10).
+    if ws.read_only():
+        return (list(history) + fresh) if history is not None else read(log_path) + fresh
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
     if fresh:
         # Append, do not rewrite. This runs from a PostToolUse hook on every single Bash call, and

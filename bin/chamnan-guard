@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""chamnan-guard — does anything staged for commit look like a credential?
+"""chamnan-guard — does anything staged for commit look like a secret or new MCP capability?
 
-  chamnan-guard          scan the staged diff, name the files, never fail the commit
+  chamnan-guard          scan the staged diff, name the risks, never fail the commit
   chamnan-guard --strict exit 1 instead, for a hook somebody opted into
 
 `lib/redact.py` exists to keep a secret out of everything that reaches the MODEL — the SessionStart
@@ -19,9 +19,10 @@ somebody who has read that sentence and wants the gate anyway.
 would copy the secret into a terminal, a CI log and an agent's transcript — three more places it
 now exists — which is the thing this command is for.
 
-Only ADDED lines are read. A removed line is a secret leaving the tree, and a context line is
-already committed: flagging either is noise that trains people to ignore the real one.
+Only ADDED lines are read. A removed line is a risk leaving the tree, and a context line is already
+committed: flagging either is noise that trains people to ignore the real one.
 """
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -44,6 +45,21 @@ KNOWN_FLAGS = ("--strict",)
 # a generated lockfile) turning a commit into a wait. Past this, the scan says what it skipped
 # rather than pretending it looked.
 MAX_DIFF_BYTES = 4_000_000
+
+# An MCP server entry is executable/network capability, not ordinary configuration. Four items in
+# the 2026-09-12 security sweep named different incidents with the same commit-time boundary:
+# mcp-remote, MCP Inspector, Git MCP, and model-induced execution through MCP tools. The guard does
+# not claim a named package or endpoint is vulnerable -- versions move, and this command does no
+# network lookup. It makes a newly staged capability visible for command, version and access review.
+#
+# Dedicated filenames are the strong signal: every added line matters. Mixed settings files need a
+# content signal too, or changing an unrelated editor preference becomes permanent guard noise.
+_MCP_CONFIG_NAMES = frozenset((".mcp.json", "mcp.json", "mcp.jsonc"))
+_CONFIG_SUFFIXES = (".json", ".jsonc", ".yaml", ".yml", ".toml")
+_MCP_SIGNAL = re.compile(
+    r"(?:\bmcp[_-]?servers?\b|\bmcp[_-](?:remote|inspector|server|git)\b|"
+    r"@modelcontextprotocol/|(?:https?://|wss?://)[^\s\"']*/mcp(?:\b|/))",
+    re.I)
 
 
 def _staged_diff(root):
@@ -107,6 +123,25 @@ def scan(diff):
     return found
 
 
+def scan_mcp_changes(diff):
+    """`{path: [line numbers]}` for staged lines that add or alter MCP capability.
+
+    This is deliberately a review signal, not a vulnerability verdict. A dedicated MCP file is
+    executable configuration whatever spelling its server uses; in a mixed JSON/YAML/TOML file,
+    the line must carry an MCP key, a known launcher shape, or an MCP endpoint. Source and prose
+    files are outside the set, so documenting an incident does not make every commit noisy.
+    """
+    found = {}
+    for path, lineno, text in _added_lines(diff):
+        normal = str(path).replace("\\", "/").casefold()
+        name = normal.rsplit("/", 1)[-1]
+        dedicated = name in _MCP_CONFIG_NAMES
+        config = normal.endswith(_CONFIG_SUFFIXES)
+        if dedicated or (config and _MCP_SIGNAL.search(text)):
+            found.setdefault(path, []).append(lineno)
+    return found
+
+
 def main(argv):
     if ws.wants_version(argv):
         print(ws.version_line())
@@ -134,30 +169,42 @@ def main(argv):
         return 0
 
     found = scan(diff)
-    if not found:
+    mcp_found = scan_mcp_changes(diff)
+    if not found and not mcp_found:
         return 0
 
-    _n = sum(len(v) for v in found.values())
-    # This sentence deliberately does not end on a colon. A secret-ish word followed by one reads to
-    # chamnan's own redactor as a key introducing a value, so the line was rewritten by it and this
-    # file became a NEW hit in the self-scan over the tree chamnan ships — a check that exists to
-    # notice precisely that. A false positive on its own source is worth rewording rather than a
-    # line added to the accepted baseline.
-    #
-    # The shape is described here and not quoted, for the reason this repository already records:
-    # a comment that spells out the pattern it removed is matched by the sweep looking for it.
-    print(f"chamnan-guard: {_n} staged line{'s' if _n != 1 else ''} in {len(found)} file"
-          f"{'s' if len(found) != 1 else ''} look like a leaked secret", file=sys.stderr)
-    for _p in sorted(found)[:6]:
-        _lines = found[_p]
-        _shown = ", ".join(str(n) for n in _lines[:6]) + (" …" if len(_lines) > 6 else "")
-        # The path is repository-authored text on its way to a terminal, like every other value
-        # these commands print.
-        print(f"    {mdblock.as_quoted(_p, 70)}  line {_shown}", file=sys.stderr)
-    if len(found) > 6:
-        print(f"    +{len(found) - 6} more file(s)", file=sys.stderr)
-    print("  Nothing is printed from those lines on purpose — reading them out would copy the "
-          "secret into this terminal and its transcript.", file=sys.stderr)
+    if found:
+        _n = sum(len(v) for v in found.values())
+        # This sentence deliberately does not end on a colon. A secret-ish word followed by one
+        # reads to chamnan's own redactor as a key introducing a value, so the line was rewritten by
+        # it and this file became a NEW hit in the self-scan over the tree chamnan ships.
+        print(f"chamnan-guard: {_n} staged line{'s' if _n != 1 else ''} in {len(found)} file"
+              f"{'s' if len(found) != 1 else ''} look like a leaked secret", file=sys.stderr)
+        for _p in sorted(found)[:6]:
+            _lines = found[_p]
+            _shown = ", ".join(str(n) for n in _lines[:6]) + (" …" if len(_lines) > 6 else "")
+            # The path is repository-authored text on its way to a terminal, like every other value
+            # these commands print.
+            print(f"    {mdblock.as_quoted(_p, 70)}  line {_shown}", file=sys.stderr)
+        if len(found) > 6:
+            print(f"    +{len(found) - 6} more file(s)", file=sys.stderr)
+        print("  Nothing is printed from those lines on purpose — reading them out would copy the "
+              "secret into this terminal and its transcript.", file=sys.stderr)
+
+    if mcp_found:
+        _n = sum(len(v) for v in mcp_found.values())
+        print(f"chamnan-guard: {_n} staged line{'s' if _n != 1 else ''} in "
+              f"{len(mcp_found)} file{'s' if len(mcp_found) != 1 else ''} add or change MCP "
+              "execution/network capability", file=sys.stderr)
+        for _p in sorted(mcp_found)[:6]:
+            _lines = mcp_found[_p]
+            _shown = ", ".join(str(n) for n in _lines[:6]) + (" …" if len(_lines) > 6 else "")
+            print(f"    {mdblock.as_quoted(_p, 70)}  line {_shown}", file=sys.stderr)
+        if len(mcp_found) > 6:
+            print(f"    +{len(mcp_found) - 6} more file(s)", file=sys.stderr)
+        print("  Review the server command, pinned version, endpoint and granted access. The added "
+              "configuration is not printed.", file=sys.stderr)
+
     print("  This is a WARNING and the commit proceeds. `chamnan-guard --strict` fails instead.",
           file=sys.stderr)
     return 1 if strict else 0
