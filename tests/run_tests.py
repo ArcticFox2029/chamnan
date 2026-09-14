@@ -27599,6 +27599,91 @@ for _k117, _v117 in (("accessToken", "access_token"), ("refreshToken", "refresh_
     _enum117 = '%s = "%s"' % (_k117, _v117)
     check(f"...and the two-convention enum `{_k117}` is still read as a label, not a credential",
           _rd117.scrub(_enum117) == _enum117, saw=_rd117.scrub(_enum117))
+# ---- 118_the_glob_tier_reads_every_store_that_can_carry_a_glob.py
+# ----------------- a tier gated to one store, in a workspace where that store carries none of them
+# 🐛 [2026-09-14] `pointer.related` surfaces a record whose `**Check:**` glob covers the file being
+# opened — the one delivery the research is unambiguous about, a short single-purpose message at the
+# decision point rather than a block re-injected on a timer. It was gated `label == "rule"`.
+#
+# Every trailer in this workspace is in a SKILL or a lesson. Rules carry none. So the tier had never
+# fired: `_governs` answered True for a hook the lesson's glob covers, and `related` dropped it on
+# the way out. Careful code — it carries its own recorded fix about `Path.glob` versus `fnmatch`
+# semantics, made because the two disagreed and the wrong one was the one talking to the model — and
+# it had never once run.
+#
+# `rulecheck.parse` has always read any record and `chamnan-report` has always evaluated them all.
+# One store of six was wired to the reader, which is this repository's most frequent defect.
+#
+# The check derives the population from the source rather than listing stores here, so a seventh
+# store joins it the day it is added to `SOURCES`.
+import sys as _sys118
+
+_sys118.path.insert(0, str(ROOT / "lib"))
+import pointer as _pt118
+import rulecheck as _rc118
+
+_t_ws118 = owner_workspace("the pointer's glob-tier coverage")
+if _t_ws118 is not None:
+    # Which stores actually hold a trailer right now, derived rather than assumed.
+    _t_carry118 = {}
+    for _sub118, _label118 in _pt118.SOURCES:
+        _t_d118 = _t_ws118 / _sub118
+        if not _t_d118.is_dir():
+            continue
+        for _f118 in sorted(_t_d118.glob("*.md")):
+            _t_txt118 = _f118.read_text(encoding="utf-8", errors="replace")
+            if list(_rc118.parse(_t_txt118)):
+                _t_carry118.setdefault(_label118, []).append(_f118)
+
+    check(f"the sweep found stores carrying a Check trailer: {sorted(_t_carry118)}",
+          bool(_t_carry118),
+          saw="no record in any store carries a trailer — this check is measuring nothing, and the "
+              "tier it guards cannot be exercised either")
+
+    # The property: for every trailer that exists, a file its glob COVERS but its prose does not
+    # NAME must still surface the record. That is the only case the tier exists for; where the prose
+    # names the file, tier 1 already covers it and the glob adds nothing.
+    _t_unreached118 = []
+    for _label118, _files118 in sorted(_t_carry118.items()):
+        for _f118 in _files118:
+            _t_txt118 = _f118.read_text(encoding="utf-8", errors="replace")
+            for _m118, _p118, _glob118, _pf118 in _rc118.parse(_t_txt118):
+                # Only a glob that names a CATEGORY can be tested this way; one naming a single file
+                # is indistinguishable from a prose mention and is skipped rather than counted.
+                if "*" not in _glob118:
+                    continue
+                _t_dir118 = _t_ws118.parent / _glob118.split("*")[0].rstrip("/")
+                if not _t_dir118.is_dir():
+                    continue
+                for _cand118 in sorted(_t_dir118.glob("*")):
+                    if not _cand118.is_file():
+                        continue
+                    _t_rel118 = _cand118.relative_to(_t_ws118.parent).as_posix()
+                    if _cand118.name in _t_txt118:
+                        continue                      # tier 1 would carry it; not this tier's case
+                    if not _pt118._governs(_t_txt118, _t_rel118):
+                        continue                      # the glob does not cover it
+                    _t_hits118 = _pt118.related(_t_ws118, _t_rel118)
+                    if not any(_f118.name == Path(_h118[1]).name for _h118 in _t_hits118):
+                        _t_unreached118.append(f"{_label118}/{_f118.name} does not reach {_t_rel118}")
+                    break                             # one witness per trailer is enough
+
+    if _t_unreached118:
+        print("      records whose glob covers a file the pointer will not surface it for:")
+        for _u118 in _t_unreached118[:5]:
+            print(f"        {_u118}")
+    check("A RECORD WHOSE GLOB COVERS THE OPENED FILE IS SURFACED, WHATEVER STORE IT LIVES IN",
+          _t_unreached118 == [],
+          saw="%d trailer(s) govern a file the pointer drops — the tier is gated to a store rather "
+              "than reading the glob it was given" % (len(_t_unreached118),))
+
+    # And the gate itself, asserted where it would come back: the tier must not name a store.
+    _t_src118 = (ROOT / "lib" / "pointer.py").read_text(encoding="utf-8")
+    _t_call118 = [_l118 for _l118 in _t_src118.splitlines()
+                  if "_governs(" in _l118 and "def " not in _l118]
+    check("...and the call site does not test a label, which is how it was gated before",
+          all("label" not in _l118 for _l118 in _t_call118),
+          saw="%s" % (_t_call118,))
 # ---- 11_cut_never_strands_a_table.py
 # 🐛 [2026-09-09] `cut_outside_a_fence` guards against cutting inside a ``` block and nothing else.
 # Found on a real session handoff: a markdown table delivered as its header row and its `|---|`
@@ -32567,30 +32652,39 @@ if _t_ws71 is not None:
         if _t_n71:
             _t_stores71[_t_name71] = _t_n71
 
-    _t_hook71 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
-    _t_rep71 = (ROOT / "bin" / "chamnan-report").read_text(encoding="utf-8")
+    # \U0001f41b [2026-09-14] This used to grep each reader's SOURCE for `<store>_with_titles`,
+    # which asserts an implementation rather than the property. The moment both readers were
+    # rewired to one derived population the grep stopped finding the names and the check failed on
+    # code that had just been made correct. A check that fails when the thing it guards improves is
+    # measuring the wrong noun.
+    #
+    # So: build the population the readers actually hand to `rulecheck`, and assert every store
+    # that carries a trailer is represented in it. Run, not read.
+    _t_offered71 = _mem71.checkable_with_titles(_t_repo71)
+    _t_offered_text71 = "\n".join(_t_body71 for _t_title71, _t_body71 in _t_offered71)
     _t_unread71 = []
-    for _t_store71 in sorted(_t_stores71):
-        _t_fn71 = "%s_with_titles" % _t_store71
-        for _t_label71, _t_src71 in (("the session block", _t_hook71), ("chamnan-report", _t_rep71)):
-            if _t_fn71 not in _t_src71:
-                _t_unread71.append(f"{_t_store71} ({_t_label71})")
+    for _t_store71, _t_dir71 in (("rules", ".chamnan/memory/rules"),
+                                 ("skills", ".chamnan/skills"),
+                                 ("decisions", ".chamnan/memory/decisions"),
+                                 ("lessons", ".chamnan/memory/lessons")):
+        if _t_store71 not in _t_stores71:
+            continue
+        # A witness from that store: the first record in it that carries a trailer.
+        _t_witness71 = next((_f for _f in sorted((_t_repo71 / _t_dir71).glob("*.md"))
+                             if "**Check:**" in _f.read_text(encoding="utf-8", errors="replace")),
+                            None)
+        if _t_witness71 is None:
+            continue
+        _t_head71 = _t_witness71.read_text(encoding="utf-8", errors="replace").strip().splitlines()[0]
+        if _t_head71 not in _t_offered_text71:
+            _t_unread71.append(f"{_t_store71} ({_t_witness71.name})")
 
-    check(f"the sweep found the stores that carry trailers: {_t_stores71}",
-          bool(_t_stores71),
-          saw="no store on disk carries a `**Check:**` trailer — this check is measuring nothing")
-    check("EVERY STORE THAT CARRIES CHECK TRAILERS IS READ BY EVERY READER THAT EVALUATES THEM",
-          not _t_unread71,
-          saw="%s — a trailer in a store nobody feeds to `rulecheck` is a claim that has never once "
-              "been tested, and nothing says so" % (", ".join(_t_unread71),))
-
-    # --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
+# --- 2. And no trailer names something that cannot match. A GLOB that is a directory matches no
     # file, so the check reports `unverifiable` forever — indistinguishable, to anyone skimming, from a
     # check that simply has nothing to look at yet. Six of eight were in that state and had been since
     # they were written.
     _t_dead71 = []
-    for _t_title71, _t_text71 in (_mem71.rules_with_titles(_t_repo71)
-                                  + _mem71.skills_with_titles(_t_repo71)):
+    for _t_title71, _t_text71 in _t_offered71:
         for _t_mode71, _t_pat71, _t_glob71, _t_every71 in _rc71.parse(_t_text71):
             _t_target71 = _t_repo71 / _t_glob71
             if _t_target71.is_dir():
@@ -32603,9 +32697,9 @@ if _t_ws71 is not None:
 
     # --- 3. The trailers that exist actually pass right now. A grammar wired to a store whose every
     # claim is broken is worse than not wiring it: the line it prints becomes noise people skip.
-    _t_results71 = _rc71.run(_t_repo71, _mem71.skills_with_titles(_t_repo71))
+    _t_results71 = _rc71.run(_t_repo71, _t_offered71)
     _t_bad71 = [(t, s, d) for t, s, d in _t_results71 if s not in ("holds",)]
-    check(f"...and this repository's own skill trailers hold: {len(_t_results71)} evaluated",
+    check(f"...and every trailer this repository carries holds: {len(_t_results71)} evaluated",
           _t_results71 and not _t_bad71,
           saw="%d evaluated, %s" % (len(_t_results71),
                                     "; ".join(f"{t[:30]} {s}: {d[:60]}" for t, s, d in _t_bad71[:4])

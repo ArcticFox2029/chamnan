@@ -677,6 +677,32 @@ def rules_with_titles(root, refuse_conflicts=False):
     return out
 
 
+def checkable_with_titles(root, refuse_conflicts=False):
+    """[(title, raw text)] for every record in every store that can carry a `**Check:**` trailer.
+
+    \U0001f41b [2026-09-14] Both readers that evaluate trailers spelled the population by hand as
+    `rules_with_titles(root) + skills_with_titles(root)`. `rulecheck.parse` has never cared which
+    store a record came from, so the first trailer written into a LESSON was parsed, was valid, and
+    was evaluated by nobody. The suite's own store-coverage check caught it within a minute of that
+    trailer being added, which is what a check derived from the stores on disk is for.
+
+    Derived rather than listed, so a store added to the workspace joins on the day it exists. The
+    categories are the ones `entries()` knows; `skills` is not under `memory/` and is appended.
+    """
+    out = []
+    for category in ("rules", "decisions", "lessons"):
+        for path in entries(root, category):
+            try:
+                body = path.read_text(encoding="utf-8-sig", errors="replace").strip()
+            except OSError:
+                continue
+            if refuse_conflicts and unresolved_conflict(body):
+                continue
+            if body:
+                out.append((title_of(path, body), body))
+    return out + skills_with_titles(root, refuse_conflicts=refuse_conflicts)
+
+
 def _flatten(body):
     """Demote an entry's own headings before it is injected.
 

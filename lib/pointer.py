@@ -238,7 +238,14 @@ def related(wsdir, rel_path, max_hits=MAX_HITS):
                 # single-purpose message delivered right before the decision point does. A rule that
                 # governs the file about to be edited, surfaced at the moment it is about to be
                 # edited, is exactly that message — and the glob is already written down.
-                if label == "rule" and _governs(text, rel_path):
+                # \U0001f41b [2026-09-14] This read `label == "rule"`, and every Check trailer in
+                # the workspace it was written for lives in a SKILL or a lesson — rules carry none.
+                # So the tier below never fired once: `_governs` returned True for a hook the
+                # lesson's glob covers, and `related` dropped it on the way out. The comment above
+                # says "a rule's trailer" because rules were the first store to get the grammar,
+                # but `rulecheck.parse` has always read any record and `chamnan-report` has always
+                # evaluated them all. One store of six was wired to the reader.
+                if _governs(text, rel_path):
                     found.append(((2, 0, rank, f.name), label, f, text))
     found.sort(key=lambda x: x[0])
     return [(label, str(f.relative_to(wsdir).as_posix()), _title(text, f.stem.replace("-", " ")))

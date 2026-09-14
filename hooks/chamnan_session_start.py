@@ -1776,7 +1776,9 @@ def main():
                 #
                 # `contradictions()` stays rules-only: two skills describing different procedures is
                 # what a skill store IS, and a rule contradicting a rule is a defect.
-                _checkable = _titled + memory.skills_with_titles(root, refuse_conflicts=True)
+                # Every store that can carry a trailer, derived. `_titled` stays the rules
+                # alone because `contradictions()` below is a rules-only comparison.
+                _checkable = memory.checkable_with_titles(root, refuse_conflicts=True)
                 broken = redact.scrub(
                     rulecheck.line(rulecheck.run(root, _checkable),
                                    rulecheck.contradictions(_titled)))
