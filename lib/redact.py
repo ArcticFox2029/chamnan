@@ -1406,8 +1406,24 @@ def _value_is_the_key_itself(key_part, value):
     # alphanumeric equality covers camel/snake/kebab siblings without exempting a different value.
     canonical_key = re.sub(r"[^a-z0-9]+", "", _bare_key(key_part))
     canonical_word = re.sub(r"[^a-z0-9]+", "", word)
+    # 🐛 [2026-09-14] This branch answered "label" for EVERY key whose value repeats it, and it runs
+    # before the case rule at the bottom of this function — so the bottom rule, whose whole job is
+    # to separate `SECRET = "secret"` (the enum idiom) from `secret = "secret"` (a credential
+    # somebody did not choose), was unreachable for every word except `password`. `password` only
+    # escaped because it is in `_DEFAULT_CREDENTIALS` and this branch steps around that list.
+    # `secret`, `token`, `key`, `credential`, `apikey`, `auth`, `cred` and `passphrase` all leaked
+    # their value byte for byte. The fix that closed `password = "password"` landed on one member of
+    # a set of twelve — this repository's most frequent defect, recorded nineteen times.
+    #
+    # The narrow thing this branch is FOR is the two-naming-convention enum: `accessToken =
+    # "access_token"`, where key and value are the same name SPELLED DIFFERENTLY. That is why it
+    # compares canonically. When the two spellings are identical there is no convention gap to
+    # explain, and the question is exactly the one the bottom of this function answers from case —
+    # so defer to it rather than answering here.
+    _same_spelling = _bare_key(key_part) == word
     if (canonical_word and canonical_word == canonical_key
-            and word not in _DEFAULT_CREDENTIALS):
+            and word not in _DEFAULT_CREDENTIALS
+            and not _same_spelling):
         return True
     if not word.isalpha():
         return False

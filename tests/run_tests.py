@@ -27196,36 +27196,49 @@ import re as _re113
 import subprocess as _sp113
 import sys as _sys113
 
-_tool113 = ROOT.parent.parent / ".chamnan" / "tools" / "time-the-pieces.py"
+# 🐛 [2026-09-14] Everything below the population check runs `.chamnan/tools/time-the-pieces.py`,
+# which is a tool of the DEVELOPMENT workspace and is not part of the package. In a bare checkout
+# the subprocess exited non-zero and three assertions failed for the environment rather than for
+# the code. Removing the block from `tests/run_tests.py` by hand did not hold either: the file
+# stayed in the pool and the next fold pasted it straight back — the same generated-copy trap
+# that cost seven guards the same day, running in the opposite direction.
+#
+# The population itself is derived from `bin/`, which DOES ship, so that one check stays out in
+# the open where every checkout runs it.
+
 _commands113 = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*")
                       if p.is_file() and p.suffix != ".cmd")
 check("the command-timing check derived a non-trivial shipped-command population",
       len(_commands113) >= 13, saw=f"found {len(_commands113)}: {_commands113}")
 
-_run113 = _sp113.run(
-    [_sys113.executable, str(_tool113), "--commands", "--runs", "1"],
-    cwd=str(ROOT.parent.parent), stdin=_sp113.DEVNULL, capture_output=True,
-    text=True, encoding="utf-8", errors="replace", timeout=60)
-check("the command startup timing mode completes", _run113.returncode == 0,
-      saw=f"exit {_run113.returncode}; stderr={_run113.stderr[:300]!r}")
+_t_ws113 = owner_workspace("the command startup timing sweep")
+if _t_ws113 is not None:
+    _tool113 = _t_ws113 / "tools" / "time-the-pieces.py"
 
-_rows113 = _re113.findall(r"^\s+(chamnan-[a-z-]+)\s+([0-9.]+) ms", _run113.stdout,
-                          _re113.MULTILINE)
-_timed113 = sorted(name113 for name113, _cpu113 in _rows113)
-_missing113 = sorted(set(_commands113) - set(_timed113))
-_invented113 = sorted(set(_timed113) - set(_commands113))
-check("EVERY SHIPPED COMMAND HAS A CPU TIMING ROW",
-      not _missing113 and not _invented113 and len(_timed113) == len(_commands113),
-      saw=f"missing={_missing113}; invented={_invented113}; rows={_rows113}")
+    _run113 = _sp113.run(
+        [_sys113.executable, str(_tool113), "--commands", "--runs", "1"],
+        cwd=str(_t_ws113.parent), stdin=_sp113.DEVNULL, capture_output=True,
+        text=True, encoding="utf-8", errors="replace", timeout=60)
+    check("the command startup timing mode completes", _run113.returncode == 0,
+          saw=f"exit {_run113.returncode}; stderr={_run113.stderr[:300]!r}")
 
-_nonpositive113 = [(name113, cpu113) for name113, cpu113 in _rows113
-                   if float(cpu113) <= 0.0]
-check("...and every row reports measured CPU rather than an empty or elapsed-time placeholder",
-      not _nonpositive113, saw=str(_nonpositive113) if _nonpositive113 else None)
-check("...and the summary names the population and the CPU clock",
-      f"{len(_commands113)} command(s)" in _run113.stdout
-      and "CPU excludes scheduler delay" in _run113.stdout,
-      saw=_run113.stdout[-300:])
+    _rows113 = _re113.findall(r"^\s+(chamnan-[a-z-]+)\s+([0-9.]+) ms", _run113.stdout,
+                              _re113.MULTILINE)
+    _timed113 = sorted(name113 for name113, _cpu113 in _rows113)
+    _missing113 = sorted(set(_commands113) - set(_timed113))
+    _invented113 = sorted(set(_timed113) - set(_commands113))
+    check("EVERY SHIPPED COMMAND HAS A CPU TIMING ROW",
+          not _missing113 and not _invented113 and len(_timed113) == len(_commands113),
+          saw=f"missing={_missing113}; invented={_invented113}; rows={_rows113}")
+
+    _nonpositive113 = [(name113, cpu113) for name113, cpu113 in _rows113
+                       if float(cpu113) <= 0.0]
+    check("...and every row reports measured CPU rather than an empty or elapsed-time placeholder",
+          not _nonpositive113, saw=str(_nonpositive113) if _nonpositive113 else None)
+    check("...and the summary names the population and the CPU clock",
+          f"{len(_commands113)} command(s)" in _run113.stdout
+          and "CPU excludes scheduler delay" in _run113.stdout,
+          saw=_run113.stdout[-300:])
 # ---- 114_a_kubernetes_secret_value_is_never_context.py
 # ------------------ a Kubernetes Secret's structure is enough to condemn every value beneath it
 # 🐛 [2026-09-13] R12.36 selected the open R7 corpus defect: a Kubernetes `Secret.data`
@@ -27508,6 +27521,84 @@ if _t_ws116 is not None:
                      if _t_n116 not in _t_ssrc116]
     check("the smoke harness defines the helpers a pool file may use, so none has to be hand-added",
           _t_missing116 == [], saw="missing: %s" % (_t_missing116,))
+# ---- 117_a_key_that_names_itself_is_decided_by_case_for_every_word.py
+# ------------- the self-naming exemption was closed for `password` and left open for eleven others
+# 🐛 [2026-09-14] `_value_is_the_key_itself` decides whether `word = "word"` is a form label or a
+# password nobody chose, and the bottom of that function answers it from CASE: an ALL-CAPS key is
+# the enum idiom (`class Kind: CREDENTIAL = "credential"`), a lowercase one is a variable holding a
+# value. That rule was unreachable for every credential word except `password`.
+#
+# An earlier branch, added for the Codable enum shape `accessToken = "access_token"`, returned
+# "label" for ANY key whose value repeats it canonically, and it runs first. `password` escaped only
+# because that branch steps around `_DEFAULT_CREDENTIALS`, and `password` is in that list. Nothing
+# else is. So `secret = "secret"`, `credential = "credential"`, `apikey = "apikey"`,
+# `passphrase = "passphrase"`, `auth = "auth"`, `cred = "cred"`, `keypass`, `storepass`, `passwd`
+# and `secretkey` all printed their value byte for byte.
+#
+# The fix that closed `password` landed on one member of a set of twelve. That is this repository's
+# most frequent defect — nineteen recorded instances — and the check that caught the first one
+# asserted a MEMBER: a single table row reading `secret = "secret"`. This one asserts the
+# POPULATION, derived from `_CREDENTIAL_END_WORDS` in the module rather than typed here, so a
+# thirteenth word joins it on the day it is added.
+import sys as _sys117
+
+_sys117.path.insert(0, str(ROOT / "lib"))
+import redact as _rd117
+
+# Which words the assignment rules reach at all. Probed rather than assumed: `key` and `token` are
+# deliberately NOT reachable standing alone — a bare `token` in source is far more often a lexer
+# token than a credential, and the module records that decision with its precision numbers. A check
+# that demanded they redact would be demanding a regression.
+_PROBE117 = "Tr0ub4dor3-xK9mQ7"
+_reach117 = sorted(w for w in _rd117._CREDENTIAL_END_WORDS
+                   if _rd117.scrub('%s = "%s"' % (w, _PROBE117)) != '%s = "%s"' % (w, _PROBE117))
+check(f"the self-naming sweep derived the words the assignment rules actually reach: {_reach117}",
+      len(_reach117) >= 10,
+      saw="fewer than ten reachable credential words — the probe has stopped probing, and every "
+          "assertion below it would then pass by finding nothing")
+
+# `pwd` is the one reachable word whose KEY is not strong enough on its own: `pwd = "abc"` is kept
+# too, because `pwd` is `print working directory` about as often as it is a password, and the module
+# leans on the VALUE for it. So its self-naming case is kept for the same reason its other weak
+# values are, and it is named here rather than quietly dropped — with the population asserted below
+# so this cannot become a place to park a word that has started leaking.
+_BY_VALUE117 = {"pwd"}
+check("...and the by-value exception is still the single word it was measured to be",
+      _BY_VALUE117 == {"pwd"} and all(
+          _rd117.scrub('%s = "abc"' % w) == '%s = "abc"' % w for w in _BY_VALUE117),
+      saw=f"{sorted(_BY_VALUE117)} — an entry here must be a word the module keeps for a WEAK "
+          f"value generally, not one that has merely stopped being redacted")
+
+_leaks117, _noisy117 = [], []
+for _w117 in _reach117:
+    if _w117 in _BY_VALUE117:
+        continue
+    _lower117 = '%s = "%s"' % (_w117, _w117)
+    _upper117 = '%s = "%s"' % (_w117.upper(), _w117)
+    if _rd117.scrub(_lower117) == _lower117:
+        _leaks117.append(_w117)
+    # The ALL-CAPS direction is only asserted for words that are NOT known default credentials.
+    # `PASSWORD = "password"` and `PASSWD = "passwd"` are redacted on purpose: the value is on the
+    # list of passwords people actually leave in place, and there recall beats the enum idiom.
+    if _w117 not in _rd117._DEFAULT_CREDENTIALS and _rd117.scrub(_upper117) != _upper117:
+        _noisy117.append(_w117)
+
+if _leaks117:
+    print("      lowercase self-naming keys that printed their value: " + ", ".join(_leaks117))
+check("EVERY REACHABLE CREDENTIAL WORD IS REDACTED WHEN A LOWERCASE KEY NAMES ITSELF",
+      _leaks117 == [],
+      saw=f"leaked: {_leaks117} — the case rule at the end of `_value_is_the_key_itself` is being "
+          f"short-circuited for these, which is how `password` was fixed alone")
+check("...and the ALL-CAPS enum idiom is still left alone, so the fix did not buy recall with noise",
+      _noisy117 == [],
+      saw=f"redacted an enum member: {_noisy117}")
+
+# The shape that the early branch exists for must keep working — it is the reason the branch cannot
+# simply be deleted, and deleting it is the obvious wrong fix for everything above.
+for _k117, _v117 in (("accessToken", "access_token"), ("refreshToken", "refresh_token")):
+    _enum117 = '%s = "%s"' % (_k117, _v117)
+    check(f"...and the two-convention enum `{_k117}` is still read as a label, not a credential",
+          _rd117.scrub(_enum117) == _enum117, saw=_rd117.scrub(_enum117))
 # ---- 11_cut_never_strands_a_table.py
 # 🐛 [2026-09-09] `cut_outside_a_fence` guards against cutting inside a ``` block and nothing else.
 # Found on a real session handoff: a markdown table delivered as its header row and its `|---|`
