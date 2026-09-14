@@ -374,7 +374,39 @@ LATE_PREFIXES = [
 # compound identifier would join them with `_` or `-`, and a JSON/YAML string key would join them
 # with an ordinary space, so both are accepted here the same way `mot[_ -]?de[_ -]?passe` already
 # accepts either for French.
-_NONENGLISH_SECRET_WORDS_BY_SCRIPT = {
+def _nfd_tolerant(fragment):
+    """Make every composed letter in a regex fragment match its decomposed spelling too.
+
+    Two shapes, because a group is not legal inside a character class:
+
+    * a literal letter outside a class becomes `(?:composed|decomposed)`
+    * a class that CONTAINS a decomposable letter gains a trailing combining-mark run, so
+      `contrase[ñn]a` reads `n` followed by U+0303 as the `ñ` it is
+
+    Regex metacharacters are never alphabetic, so `isalpha()` is exactly the right sieve and no
+    separator, quantifier or group in the table above can be touched by this.
+    """
+    out, i, n = [], 0, len(fragment)
+    while i < n:
+        ch = fragment[i]
+        if ch == "[":
+            end = fragment.index("]", i + 1)
+            cls = fragment[i:end + 1]
+            out.append(cls)
+            if any(len(unicodedata.normalize("NFD", c)) > 1 for c in cls):
+                out.append(r"[\u0300-\u036f]*")
+            i = end + 1
+            continue
+        decomposed = unicodedata.normalize("NFD", ch)
+        if len(decomposed) > 1 and ch.isalpha():
+            out.append("(?:" + re.escape(ch) + "|" + re.escape(decomposed) + ")")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+_NONENGLISH_SECRET_WORDS_SPELLED = {
     "Latin": (
         r"contrase[ñn]a|clave|senha|palavra[_ -]?passe|mot[_ -]?de[_ -]?passe|motdepasse"
         r"|kennwort|passwort|geheimnis|parola|segreto|wachtwoord|geheim"
@@ -387,7 +419,38 @@ _NONENGLISH_SECRET_WORDS_BY_SCRIPT = {
     "Arabic": r"كلمة[_ -]?المرور",
     "Devanagari": r"पासवर्ड",
 }
+# 🐛 [2026-09-14] Every word above is spelled in its COMPOSED form, and a regex literal compares
+# code points. Unicode's own normalization FAQ states that canonical-equivalent strings "should
+# always compare as equal", which raw code-point comparison does not do -- so the identical visible
+# text in decomposed form went straight through. Measured over the six words whose NFD differs from
+# what is written above, all six leaked:
+#
+#     contraseña  şifre  mật khẩu  パスワード  비밀번호  암호      NFC redacted, NFD did not
+#
+# This is not a corner case on macOS: HFS+ and APFS store filenames decomposed, Korean and Japanese
+# text arrives decomposed from several real sources, and a `ñ` typed with a dead key on some
+# keyboard layouts is decomposed at the source. Found by R13 (Unicode Consortium, Normalization
+# FAQ); the round reported Spanish, and deriving the population from this table found five more.
+#
+# The fix is on the PATTERN side, never on the text. `scrub` returns the caller's document with
+# values replaced, and normalising the document would rewrite bytes the caller did not ask us to
+# touch -- a redactor may remove a secret, not re-encode a file.
+
+
+# Derived, never spelled twice. `SECRET_WORDS` is assembled from this dict at line ~640 and the
+# header rule reads its "Latin" entry directly at ~622; transforming the join alone left both of
+# those matching the composed form only, which is the-set-not-the-member inside the fix for it.
+_NONENGLISH_SECRET_WORDS_BY_SCRIPT = {
+    _script: _nfd_tolerant(_fragment)
+    for _script, _fragment in _NONENGLISH_SECRET_WORDS_SPELLED.items()
+}
 _NONENGLISH_SECRET_WORDS = "|".join(_NONENGLISH_SECRET_WORDS_BY_SCRIPT.values())
+# The same vocabulary as a flat list of the spellings a person actually types, which is what a
+# check asserting "this word reaches that rule" needs. Derived here so no reader builds it by
+# de-regexing the compiled form, which is what check 111 was doing when the words gained their
+# NFD alternatives and stopped being de-regexable.
+_NONENGLISH_SECRET_WORDS_SPELLED_WORDS = [
+    _w for _frag in _NONENGLISH_SECRET_WORDS_SPELLED.values() for _w in _frag.split("|")]
 
 
 # The names that mean "a credential lives here". Written once and shared by the assignment
@@ -802,8 +865,29 @@ YAML_BLOCK_SECRET = _lazy(lambda: re.compile(
 # Space-separated forms with no `[:=]` at all: Dockerfile's legacy `ENV KEY VALUE`, `.netrc`, and
 # `.pgpass`'s colon-delimited final field. `_netrc` — the Windows spelling — and `.pgpass` are in
 # neither refusal list, so peek opens both.
+# 🐛 [2026-09-14] `$` under `re.M` matches before a `\n` and NOT before a `\r`, so this rule --
+# whose whole precision story is that the value is the LAST thing on the line -- stopped firing on
+# any line that ended CRLF. `core.autocrlf=true` is git's Windows default, which means the
+# repository can be LF while the developer's working tree is CRLF, and this module reads the tree:
+#
+#     password Hx7Kq2ZmT4bNvR9w\n      ->  password <REDACTED>
+#     password Hx7Kq2ZmT4bNvR9w\r\n    ->  password Hx7Kq2ZmT4bNvR9w     <- shipped in full
+#
+# A trailing space did the same thing, and an editor leaves those behind constantly. Found by a
+# boundary-mutation battery (R3.1), which is the technique this defect exists to justify: none of
+# the fixed examples in this suite carried a trailing space or a CR, so none of them could see it.
+#
+# A LOOKAHEAD, not a wider capture: the trailing run must not be consumed, or the substitution
+# deletes the whitespace it matched and rewrites lines it was only supposed to inspect.
+# A shell line continuation is still the end of the line as far as a reader is concerned:
+# `mysql --user root \` then `  password hunter2 \` puts the value last on its own line with a
+# backslash after it. Measured before widening: over 847 real files the wider anchor redacts
+# exactly ZERO additional lines, so it costs no precision here, and the callback's own
+# `_is_a_plain_word` guard still refuses `password combination \`.
+_ENDS_THE_LINE = r"(?=[ \t\r]*\\?[ \t\r]*$)"
 SPACED_SECRET = _lazy(lambda: re.compile(
-    r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})$", re.I | re.M))
+    r"((?:^|[ \t])[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(\S{6,})" + _ENDS_THE_LINE,
+    re.I | re.M))
 # A command-line FLAG and its value: `-storepass hunter2`, `--password hunter2`. SPACED_SECRET
 # cannot reach these because it anchors the value at end-of-line, and that anchor is not negotiable
 # — it is what stops the weakest rule in this file from eating prose, which it has done before.
@@ -814,7 +898,7 @@ SPACED_SECRET = _lazy(lambda: re.compile(
 # creds.txt` (a PATH, not a secret) still has to be handled by the value shape rather than by luck.
 FLAG_SECRET = _lazy(lambda: re.compile(
     r"((?:^|[ \t])--?[\w-]*(?:" + SECRET_WORDS + r")[\w-]*[ \t]+)(?!-)([^\s]{4,})", re.I | re.M))
-PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)$", re.M)
+PGPASS_LINE = re.compile(r"^([^:\s]+:\d+:[^:]*:[^:]+:)(\S+)" + _ENDS_THE_LINE, re.M)
 
 ASSIGNED_SECRET_CALL = _lazy(lambda: re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*\s*['\"]?\s*" + _KV_SEP + r"\s*)"
@@ -1532,14 +1616,162 @@ def _value_is_the_key_itself(key_part, value):
 # document on that same file. What the corrected number changes is where a future round should
 # look, which is here rather than at the regexes downstream.
 #
-# Measured and NOT taken: the 51.9 ms this scan costs is the scan itself -- the per-hit work is
-# 0.2 ms of it -- and a cheap literal pre-filter over the same text ("pass", "pwd", "secret",
-# "cred", "token", "key", "auth", which every branch below requires one of) runs in 8.2 ms, so
-# chunking the document and running this only over chunks that contain one would save about 44 ms.
-# It is not built. Chunk boundaries must not split a match, the case-sensitive branches below make
-# the pre-filter's own casing load-bearing, and this module's own rule settles it: a redactor that
-# is slow is a cost, and one that is nearly right is a leak.
+# 🐛 [2026-09-14] The paragraph that stood here refused a literal pre-filter over this scan, and
+# the refusal was right about its own proposal and wrong about the idea. What it proposed was a
+# HAND-WRITTEN stem list -- "pass", "pwd", "secret", "cred", "token", "key", "auth" -- and against
+# that, "a redactor that is nearly right is a leak" settles it: the list is an enumeration of a set
+# that grows every time somebody adds a word below, which is this repository's most recorded
+# defect sitting in the file whose job is not to miss things.
+#
+# The stems are not written by hand any more. `_secret_word_stems` PARSES `SECRET_WORDS` and, for
+# every top-level alternative, derives a set of literals that alternative cannot match without --
+# so adding a word below extends the stem set by itself and cannot be forgotten. A branch it
+# cannot cover disables the whole fast path rather than narrowing it (check 121 fails instead).
+#
+# The old note's own numbers were also measured off `.search()`, which stops at the first hit.
+# What this module actually runs is `finditer` over the whole document, three times per `scrub`:
+#
+#     MAP.md 365 KB     311.4 ms -> 113.0 ms    2.8x     identical hits
+#     run_tests.py      344.6 ms -> 110.5 ms    3.1x     identical hits
+#     README.md         142.7 ms -> 49.3 ms     2.9x     identical hits
+#     lib/redact.py     156.3 ms -> 91.2 ms     1.7x     identical hits
+#
+# Why the gain is there at all: every branch of SECRET_WORDS opens with a lookbehind or a
+# character class, so `re` can extract no literal prefix and tries the whole alternation at every
+# position. This is the coarse-to-fine contract gitleaks and TruffleHog both ship -- one cheap
+# literal pass over the text, the expensive rule only where it hit.
 _SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
+
+
+def _branch_cover(seq, sp):
+    """Literals that EVERY match of this parsed branch must contain, or None if there are none.
+
+    `None` is the honest answer and the safe one: it turns the fast path off entirely rather than
+    letting a branch through a filter that cannot see it.
+    """
+    best, run = None, []
+
+    def flush():
+        nonlocal best
+        if run:
+            word = "".join(run)
+            if best is None or len(word) > len(min(best, key=len)):
+                best = {word.lower()}
+            del run[:]
+
+    for op, av in seq:
+        if op is sp.LITERAL:
+            run.append(chr(av))
+            continue
+        flush()
+        sub = None
+        if op is sp.SUBPATTERN:
+            sub = _branch_cover(av[3], sp)
+        elif op is sp.BRANCH:
+            parts = [_branch_cover(b, sp) for b in av[1]]
+            # Every alternative needs its own stem, and their union covers the branch. One
+            # alternative without a stem makes the whole branch uncoverable.
+            sub = None if any(part is None for part in parts) else set().union(*parts)
+        elif op in (sp.MAX_REPEAT, sp.MIN_REPEAT) and av[0] >= 1:
+            sub = _branch_cover(av[2], sp)
+        elif op in (sp.ASSERT, sp.ASSERT_NOT, sp.AT):
+            continue                      # a lookaround consumes nothing, so it requires nothing
+        if sub and (best is None or len(min(sub, key=len)) > len(min(best, key=len))):
+            best = sub
+    flush()
+    return best
+
+
+def _top_level_branches(seq, sp):
+    items = list(seq)
+    if len(items) == 1 and items[0][0] is sp.SUBPATTERN:
+        return _top_level_branches(items[0][1][3], sp)
+    if len(items) == 1 and items[0][0] is sp.BRANCH:
+        out = []
+        for b in items[0][1][1]:
+            out.extend(_top_level_branches(b, sp))
+        return out
+    return [items]
+
+
+def secret_word_stems():
+    """The minimal literal set every SECRET_WORDS match contains one of -- or None.
+
+    Returned as a sorted list so a check can assert the population rather than a count, and so the
+    same derivation is available to a test without importing the private parser itself.
+    """
+    try:
+        try:
+            from re import _parser as sp          # 3.11+
+        except ImportError:
+            import sre_parse as sp                # 3.8-3.10
+        stems = set()
+        for branch in _top_level_branches(sp.parse(SECRET_WORDS, re.I), sp):
+            cover = _branch_cover(branch, sp)
+            if cover is None:
+                return None                        # one blind branch disables the whole filter
+            stems |= cover
+    except Exception:
+        # A private parser is allowed to change shape under us. Losing the fast path costs time;
+        # guessing at it would cost a leak.
+        return None
+    # A stem containing another stem can never be the only one present, so it is dead weight.
+    return sorted(s for s in stems if not any(other != s and other in s for other in stems))
+
+
+def _make_stem_filter():
+    stems = secret_word_stems()
+    if not stems:
+        return None
+    return re.compile("|".join(sorted(map(re.escape, stems), key=len, reverse=True)), re.I)
+
+
+# Deliberately NOT `_lazy`: that helper caches in `_real` and treats `None` as "not built yet", so
+# a derivation that legitimately returns None would be re-parsed on every single call -- the
+# fallback path would be slower than the scan it falls back to. The sentinel says "asked already".
+_UNBUILT = object()
+_STEM_FILTER = _UNBUILT
+# The stem sits inside the match, never necessarily at its start: `[A-Za-z0-9]+[_-]tokens?` can
+# begin an unbounded identifier earlier, and `mot de passe` reaches back over separators. So a
+# window grows through the whole identifier run around the hit and then by a fixed margin, which
+# is the same lookback the windows downstream already use.
+_STEM_MARGIN = 64
+
+
+def _secret_word_hits(text):
+    """Every `_SECRET_WORD_ANYWHERE` match in `text`, in order -- coarse-to-fine where possible.
+
+    Identical output to `_SECRET_WORD_ANYWHERE.finditer(text)` by construction and by check 121,
+    which holds the two against each other over every file in the installed tree.
+    """
+    global _STEM_FILTER
+    if _STEM_FILTER is _UNBUILT:
+        _STEM_FILTER = _make_stem_filter()
+    lit = _STEM_FILTER
+    if lit is None:
+        return list(_SECRET_WORD_ANYWHERE.finditer(text))
+    n = len(text)
+    spans = []
+    for m in lit.finditer(text):
+        lo, hi = m.start(), m.end()
+        while lo > 0 and (text[lo - 1].isalnum() or text[lo - 1] in "_-"):
+            lo -= 1
+        while hi < n and (text[hi].isalnum() or text[hi] in "_-"):
+            hi += 1
+        lo, hi = max(0, lo - _STEM_MARGIN), min(n, hi + _STEM_MARGIN)
+        if spans and lo <= spans[-1][1]:
+            spans[-1][1] = max(spans[-1][1], hi)
+        else:
+            spans.append([lo, hi])
+    out, seen = [], set()
+    for lo, hi in spans:
+        # `pos`/`endpos` rather than a slice: a lookbehind still sees the characters before `lo`,
+        # so a window boundary cannot manufacture a match that the whole-document scan refuses.
+        for hit in _SECRET_WORD_ANYWHERE.finditer(text, lo, hi):
+            if hit.start() not in seen:
+                seen.add(hit.start())
+                out.append(hit)
+    return out
 _WINDOW = 512
 _WINDOW_LOOKBACK = 64
 # Past this, windowing has stopped being an optimisation and is only a chance to be wrong.
@@ -1567,7 +1799,7 @@ def _windows_around_secret_words(text):
     Every boundary sits on a line ending, so a `^` or `$` inside a window means what it would have
     meant in the whole document. Returning None is always safe: it means scan everything.
     """
-    hits = list(_SECRET_WORD_ANYWHERE.finditer(text))
+    hits = _secret_word_hits(text)
     if not hits:
         return []
     spans = []
@@ -1679,7 +1911,7 @@ _RESUMES_AFTER_A_VALUE = _lazy(lambda: re.compile(
 def _close_unterminated_quoted_secrets(text):
     """Redact from an unclosed quote that follows a credential name to where the value must end."""
     out, pos = [], 0
-    for hit in _SECRET_WORD_ANYWHERE.finditer(text):
+    for hit in _secret_word_hits(text):
         if hit.start() < pos:
             continue
         opener = _OPENS_A_QUOTED_VALUE.match(text, hit.end())

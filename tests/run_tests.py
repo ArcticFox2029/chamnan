@@ -26895,7 +26895,13 @@ finally:
 import re as _re111
 import redact as _t_rd111
 
-_t_words111 = _t_rd111._NONENGLISH_SECRET_WORDS.split("|")
+# 🐛 [2026-09-14] Read from the SPELLED table, not the compiled one. Since the words became
+# NFD-tolerant, `_NONENGLISH_SECRET_WORDS` carries `(?:パ|パ)スワー(?:ド|ド)` and
+# `contrase[\u00f1n][\u0300-\u036f]*a` -- correct as a pattern, and not a word anybody types.
+# `_t_example111` below de-regexes character classes and nothing else, so it turned those into
+# `contrase\u00f1\*a` and handed a nonsense string to every assertion in this block. The SPELLED
+# table is the one a person edits and is exactly what this check means by "a real word".
+_t_words111 = _t_rd111._NONENGLISH_SECRET_WORDS_SPELLED_WORDS
 _t_val111 = "Zz7qLp2vBnT9wXk3Rf1s"  # synthetic, 20 chars, never a real secret
 
 check("the sweep read the non-English credential words out of the source: %d found"
@@ -26945,7 +26951,7 @@ _t_examples111 = {_t_word111: _t_example111(_t_word111) for _t_word111 in _t_wor
 # vocabulary group must reach the assignment behaviour. This is the assertion the earlier
 # language-keyed fast path lacked: a group still defined but silently excluded from the compiled
 # word pattern is named.
-_t_groups111 = _t_rd111._NONENGLISH_SECRET_WORDS_BY_SCRIPT
+_t_groups111 = _t_rd111._NONENGLISH_SECRET_WORDS_SPELLED
 check("the matcher exposes a non-trivial source-derived script population: %d group(s)"
       % len(_t_groups111),
       len(_t_groups111) >= 7
@@ -27882,6 +27888,309 @@ try:
                   "everywhere, this block has no job and should be deleted, not muted")
 finally:
     _rmtree(_t_tmp120, ignore_errors=True)
+# ---- 121_the_prefilter_stems_are_derived_from_the_pattern_they_filter.py
+# ------------------ the coarse pre-filter's stems are derived from the pattern, not written beside it
+# R10.6 and R10.7: gitleaks builds one keyword trie over every configured rule, and every TruffleHog
+# detector exposes `Keywords()` "for efficiently pre-filtering chunks". Both ship the same contract --
+# one cheap literal pass over the text, the expensive rule only where it hit. `lib/redact.py` now
+# runs that contract under `SECRET_WORDS` itself, which is where its cost actually was: three
+# `finditer` passes per `scrub`, 48% of the module's time, because every branch of that pattern opens
+# with a lookbehind or a character class and `re` can extract no literal prefix from it.
+#
+# The idea was refused once before, in a comment that stood in `redact.py` for a release, and the
+# refusal was right about what it was refusing: a HAND-WRITTEN stem list. `"pass", "pwd", "secret",
+# "cred", "token", "key", "auth"` is an enumeration of a set that grows every time somebody adds a
+# word to `_LATIN_SECRET_WORDS` or `_NONENGLISH_SECRET_WORDS_BY_SCRIPT` -- the-set-not-the-member,
+# in the file whose job is not to miss things, where the cost of missing is a leaked credential.
+#
+# So this block asserts the property that makes the fast path safe, and it is not "the stems are
+# correct today". It is that the stems are DERIVED: `secret_word_stems()` parses `SECRET_WORDS` and
+# returns, for every top-level alternative, literals that alternative cannot match without. A branch
+# it cannot cover makes it return None, and None turns the fast path off rather than narrowing it.
+import importlib as _importlib121
+
+_t_redact121 = _importlib121.import_module("redact")
+
+# 1. The derivation reaches every branch. None here is not a failure of the redactor -- the module
+#    falls back to the whole-document scan and stays correct -- but it IS a silent loss of the
+#    optimisation, and a silent loss is the kind nobody notices for a year.
+_t_stems121 = _t_redact121.secret_word_stems()
+check("every SECRET_WORDS branch yields a mandatory literal (else the fast path is off)",
+      _t_stems121 is not None,
+      saw="secret_word_stems() returned None: a top-level alternative can match with no fixed "
+          "literal in it, so no literal pre-filter can see it. The scan falls back to the whole "
+          "document. Find the branch, or accept the fallback deliberately.")
+check(f"the derived stem set is not empty: {len(_t_stems121 or [])} stems",
+      bool(_t_stems121), saw=repr(_t_stems121))
+
+# 2. No stem is redundant, which is what keeps the coarse pass cheap. A stem containing another can
+#    never be the only one present in a match, so it is pure scanning cost.
+_t_redundant121 = [_s121 for _s121 in (_t_stems121 or [])
+                   if any(_o121 != _s121 and _o121 in _s121 for _o121 in _t_stems121)]
+check("no derived stem contains another (a contained stem is dead scanning cost)",
+      not _t_redundant121, saw=_t_redundant121)
+
+# 3. The property users are actually protected by: over a population derived from the tree rather
+#    than listed here, the two-stage scan finds EXACTLY what the whole-document scan finds. Not a
+#    similar count -- the same spans, in the same order, with the same text.
+_t_roots121 = [ROOT / _n121 for _n121 in ("lib", "bin", "hooks", "adapters", "commands",
+                                          "skills", "agents", "tests")]
+_t_ws121 = ROOT.parent.parent / ".chamnan"
+if (_t_ws121 / "tools").is_dir():
+    # The workspace carries the prose corpora -- MAP.md, the research files, the memory rules --
+    # and prose is where the non-English branches and the `mot de passe` separator forms live.
+    # A checkout without it still runs this block against the package's own files.
+    _t_roots121 += [_t_ws121 / _n121 for _n121 in ("memory", "skills", "state", "tools")]
+
+_t_corpus121 = []
+for _t_root121 in _t_roots121:
+    if not _t_root121.is_dir():
+        continue
+    for _t_f121 in sorted(_t_root121.rglob("*")):
+        if not _t_f121.is_file() or _t_f121.suffix not in (".py", ".md", ".sh", ".json", ".yml",
+                                                           ".yaml", ".js", ".txt"):
+            continue
+        try:
+            _t_text121 = _t_f121.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _t_text121:
+            _t_corpus121.append((_t_f121, _t_text121[:200_000]))
+
+# A population that came back empty reads as "nothing wrong" and is the failure this suite has
+# recorded most often. It is asserted before anything is concluded from it.
+check(f"the pre-filter corpus is non-empty: {len(_t_corpus121)} file(s)",
+      len(_t_corpus121) >= 100, saw=f"{len(_t_corpus121)} files under {len(_t_roots121)} roots")
+
+_t_spans121 = lambda _ms121: [(_m121.start(), _m121.end(), _m121.group(0)) for _m121 in _ms121]
+_t_mismatched121, _t_withhits121 = [], 0
+for _t_f121, _t_text121 in _t_corpus121:
+    _t_slow121 = _t_spans121(_t_redact121._SECRET_WORD_ANYWHERE.finditer(_t_text121))
+    _t_fast121 = _t_spans121(_t_redact121._secret_word_hits(_t_text121))
+    if _t_slow121:
+        _t_withhits121 += 1
+    if _t_slow121 != _t_fast121:
+        _t_missed121 = [_x121 for _x121 in _t_slow121 if _x121 not in _t_fast121]
+        _t_mismatched121.append(f"{_t_f121}: pre-filter missed {_t_missed121[:3]}")
+
+# The corpus has to actually exercise the pattern, or "no mismatches" is a statement about a corpus
+# with no secret words in it.
+check(f"the corpus exercises SECRET_WORDS: {_t_withhits121} file(s) contain a match",
+      _t_withhits121 >= 20, saw=f"{_t_withhits121} of {len(_t_corpus121)} files matched")
+check(f"two-stage scan == whole-document scan on all {len(_t_corpus121)} files",
+      not _t_mismatched121, saw="\n".join(_t_mismatched121[:5]))
+
+# 4. And the fallback is a real fallback: with the filter forced off, the module still works and
+#    still agrees. This is the path a future Python's private parser change would drop us onto, so
+#    it is exercised rather than assumed.
+_t_saved121 = _t_redact121._STEM_FILTER
+try:
+    _t_redact121._STEM_FILTER = None
+    _t_probe121 = _t_corpus121[len(_t_corpus121) // 2][1]
+    _t_fallback121 = _t_spans121(_t_redact121._secret_word_hits(_t_probe121))
+finally:
+    _t_redact121._STEM_FILTER = _t_saved121
+check("with the stem filter off, the scan still returns the whole-document result",
+      _t_fallback121 == _t_spans121(_t_redact121._SECRET_WORD_ANYWHERE.finditer(_t_probe121)),
+      saw=f"{len(_t_fallback121)} spans on the fallback path")
+# ---- 122_the_redactor_has_no_oracle_so_it_is_given_two.py
+# ------------------ the redactor has no oracle, so it is held against itself
+# R6.2: metamorphic testing is the standard answer for a function with no independent oracle -- you
+# cannot write down the correct output of `scrub` for an arbitrary document, but you CAN write down
+# relations any correct output must satisfy. Two of them are cheap and both are real failure modes
+# this module has already produced once each in its history.
+#
+# This is the instrument, not a sample. Every other redactor check in this suite names the input it
+# expects a verdict on, so each one covers exactly the shape somebody thought of. These two derive
+# their corpus from the tree and would catch a rule that nobody has written a fixture for.
+_t_redact122 = __import__("redact")
+
+_t_roots122 = [ROOT / _n122 for _n122 in ("lib", "bin", "hooks", "adapters", "commands", "tests")]
+_t_ws122 = ROOT.parent.parent / ".chamnan"
+if (_t_ws122 / "tools").is_dir():
+    _t_roots122 += [_t_ws122 / _n122 for _n122 in ("memory", "skills", "state", "tools")]
+
+_t_corpus122 = []
+for _t_root122 in _t_roots122:
+    if not _t_root122.is_dir():
+        continue
+    for _t_f122 in sorted(_t_root122.rglob("*")):
+        if not _t_f122.is_file() or _t_f122.suffix not in (".py", ".md", ".sh", ".json", ".txt"):
+            continue
+        try:
+            _t_t122 = _t_f122.read_text(encoding="utf-8")[:40_000]
+        except (OSError, UnicodeDecodeError):
+            continue
+        if _t_t122.strip():
+            _t_corpus122.append((_t_f122, _t_t122))
+
+check(f"the metamorphic corpus is non-empty: {len(_t_corpus122)} file(s)",
+      len(_t_corpus122) >= 100, saw=f"{len(_t_corpus122)} files under {len(_t_roots122)} roots")
+
+# RELATION 1 -- idempotence. A document that has been scrubbed is a document, and scrubbing it again
+# must change nothing. A violation means some rule is reading the module's own PLACEHOLDER as fresh
+# material, which is how `'password' => '<REDACTED>',` once collapsed to `'password' =<REDACTED>`:
+# the second pass ate the marker and the syntax around it. That bug was found by hand, on one input.
+_t_notidem122 = []
+for _t_f122, _t_t122 in _t_corpus122:
+    _t_once122 = _t_redact122.scrub(_t_t122)
+    if _t_redact122.scrub(_t_once122) != _t_once122:
+        _t_notidem122.append(str(_t_f122))
+check(f"scrub(scrub(x)) == scrub(x) on all {len(_t_corpus122)} files",
+      not _t_notidem122, saw="\n".join(_t_notidem122[:5]))
+
+# RELATION 2 -- composition. Concatenating two documents must not reveal anything either of them hid
+# alone. A violation means a verdict depends on text far away: a window that reached across the
+# join, or a lookbehind that saw a different character and changed its mind. The windowing
+# optimisation and the two-stage pre-filter in front of SECRET_WORDS are both exactly the kind of
+# machinery that can break this, and neither has any other test of it.
+#
+# Compared by MEMBERSHIP, never by line index and never by whitespace token. Both of the obvious
+# formulations were written first and both were wrong, which is worth recording because the next
+# person will reach for them too:
+#
+#   * by token -- a redacted value merges with the PLACEHOLDER beside it, so `"Authorization:"`
+#     stops being a token while the text is unchanged. One false finding on this corpus.
+#   * by line INDEX -- `scrub` does not preserve line count. Measured: it removes exactly one line
+#     in 4 of 120 real files, because `_close_unterminated_quoted_secrets` legitimately swallows a
+#     line break when a quote opened on one line and the value runs past it. Zipping the two line
+#     lists then compares line N against line N+1 and reports three findings, all of them the
+#     misalignment and none of them a leak.
+#
+# A line the part redacted must not appear ANYWHERE in the join. That is the property, and it does
+# not care where either document put it.
+_t_pairs122 = []
+for _t_i122 in range(0, min(len(_t_corpus122), 120) - 1, 2):
+    _t_pairs122.append((_t_corpus122[_t_i122], _t_corpus122[_t_i122 + 1]))
+check(f"the composition relation has pairs to test: {len(_t_pairs122)}",
+      len(_t_pairs122) >= 20, saw=f"{len(_t_pairs122)} pairs")
+
+_t_revealed122 = []
+for (_t_fa122, _t_a122), (_t_fb122, _t_b122) in _t_pairs122:
+    _t_joined122 = set(_t_redact122.scrub(_t_a122 + "\n" + _t_b122).splitlines())
+    for _t_part122, _t_name122 in ((_t_a122, _t_fa122), (_t_b122, _t_fb122)):
+        # A line the part no longer contains after scrubbing is a line that held something.
+        _t_kept122 = set(_t_redact122.scrub(_t_part122).splitlines())
+        for _t_o122 in _t_part122.splitlines():
+            if (len(_t_o122.strip()) >= 16 and _t_o122 not in _t_kept122
+                    and _t_o122 in _t_joined122):
+                _t_revealed122.append(f"{_t_name122}: {_t_o122.strip()[:90]}")
+                break
+check(f"a join hides everything the parts hid, over {len(_t_pairs122)} pairs",
+      not _t_revealed122, saw="\n".join(_t_revealed122[:5]))
+# ---- 123_the_same_text_spelled_differently_gets_the_same_verdict.py
+# ------------------ the same visible text, spelled differently, must get the same verdict
+# Two ways a document can carry identical text in different bytes, and the redactor gave a different
+# answer to each. Both were real leaks, both were found on 2026-09-14, and neither was reachable by
+# any fixture in this suite because every fixture was typed once, in one normalisation, with one
+# line ending.
+#
+#   1. LINE ENDINGS. `$` under `re.M` matches before a `\n` and not before a `\r`, so on a file
+#      written on Windows -- which is every file in a working tree checked out with git's default
+#      `core.autocrlf=true` -- `password <value>` shipped in full while the identical LF file
+#      redacted it. A trailing space did the same.
+#
+#   2. UNICODE NORMALISATION. The non-English credential words are spelled composed. Unicode's own
+#      normalisation FAQ says canonical-equivalent strings should compare equal; a regex literal
+#      compares code points and does not. All six decomposable words leaked in NFD form
+#      (R13, Unicode Consortium, Normalization FAQ).
+#
+# The assertion is the RELATION, not a list of examples: re-spell the text, demand the same verdict.
+# A rule added tomorrow with the same anchor is covered without anybody remembering this block.
+import unicodedata as _ud123
+
+_t_redact123 = __import__("redact")
+
+# --- relation 1: normalisation -------------------------------------------------------------------
+# Population derived from the table the module actually spells its words in, so a word added there
+# is tested here by itself. The regex classes are collapsed to one representative spelling each;
+# that is the only hand step, and the count below fails loudly if the table shape changes.
+_t_classes123 = {"[_ -]?": " ", "[ñn]": "ñ", "[lł]": "ł", "[şs]": "ş", "[aậ]": "ậ", "[aẩ]": "ẩ"}
+_t_words123 = []
+for _t_frag123 in _t_redact123._NONENGLISH_SECRET_WORDS_SPELLED.values():
+    for _t_w123 in _t_frag123.split("|"):
+        for _t_k123, _t_v123 in _t_classes123.items():
+            _t_w123 = _t_w123.replace(_t_k123, _t_v123)
+        if "[" not in _t_w123 and "(" not in _t_w123:
+            _t_words123.append(_t_w123)
+_t_words123.append("password")
+
+check(f"the non-English credential words were derived from the table: {len(_t_words123)}",
+      len(_t_words123) >= 20,
+      saw=f"{len(_t_words123)} words: {_t_words123[:8]}")
+# Without this the block passes on a table whose spellings all happen to be pure ASCII.
+_t_decomposable123 = [_t_w123 for _t_w123 in _t_words123
+                      if _ud123.normalize("NFD", _t_w123) != _t_w123]
+check(f"at least one word actually decomposes, or the relation proves nothing: "
+      f"{len(_t_decomposable123)}",
+      len(_t_decomposable123) >= 4, saw=_t_decomposable123)
+
+_t_nfd_leaks123 = []
+for _t_w123 in _t_words123:
+    _t_line123 = _t_w123 + ": hunter2SECRETOvalue\n"
+    _t_nfc_hit123 = _t_redact123.PLACEHOLDER in _t_redact123.scrub(_t_line123)
+    _t_nfd_hit123 = _t_redact123.PLACEHOLDER in _t_redact123.scrub(
+        _ud123.normalize("NFD", _t_line123))
+    if _t_nfc_hit123 != _t_nfd_hit123:
+        _t_nfd_leaks123.append(f"{_t_w123!r}: NFC={_t_nfc_hit123} NFD={_t_nfd_hit123}")
+check(f"every credential word decides the same in NFC and NFD ({len(_t_words123)} words)",
+      not _t_nfd_leaks123, saw="\n".join(_t_nfd_leaks123[:6]))
+
+# --- relation 2: line endings --------------------------------------------------------------------
+# The constructed case first, because it is the one that shipped a credential and it must never come
+# back quietly. Built at runtime so this file does not itself contain a credential-shaped literal
+# that the redactor's own self-scan would flag.
+_t_val123 = "Hx7Kq" + "2ZmT4bNvR9w"
+for _t_name123 in ("password", "api_key", "DB_PASSWORD"):
+    _t_line123 = _t_name123 + " " + _t_val123
+    for _t_label123, _t_doc123 in (
+            ("LF", _t_line123 + "\n"),
+            ("CRLF", _t_line123 + "\r\n"),
+            ("trailing space", _t_line123 + "   \n"),
+            ("trailing tab", _t_line123 + "\t\n"),
+            ("line continuation", _t_line123 + " \\\n"),
+            ("at end of file", _t_line123)):
+        check(f"{_t_name123} + a bare value is redacted with {_t_label123}",
+              _t_val123 not in _t_redact123.scrub(_t_doc123),
+              saw=repr(_t_redact123.scrub(_t_doc123)))
+
+# And then the relation over real text, which covers the rules nobody thought to name above.
+_t_roots123 = [ROOT / _n123 for _n123 in ("lib", "bin", "hooks", "commands", "tests")]
+_t_ws123 = ROOT.parent.parent / ".chamnan"
+if (_t_ws123 / "tools").is_dir():
+    _t_roots123 += [_t_ws123 / _n123 for _n123 in ("memory", "skills", "tools")]
+_t_corpus123 = []
+for _t_root123 in _t_roots123:
+    if not _t_root123.is_dir():
+        continue
+    for _t_f123 in sorted(_t_root123.rglob("*")):
+        if not _t_f123.is_file() or _t_f123.suffix not in (".py", ".md", ".sh"):
+            continue
+        try:
+            _t_t123 = _t_f123.read_text(encoding="utf-8")[:12_000]
+        except (OSError, UnicodeDecodeError):
+            continue
+        # Only files the rules can actually fire on, and only LF originals -- re-spelling a file
+        # that is already CRLF proves nothing about the translation.
+        if _t_t123.strip() and "\r" not in _t_t123 and _t_redact123._secret_word_hits(_t_t123):
+            _t_corpus123.append((_t_f123, _t_t123))
+        if len(_t_corpus123) >= 150:
+            break
+
+check(f"the line-ending corpus is non-empty and exercises the rules: {len(_t_corpus123)} file(s)",
+      len(_t_corpus123) >= 30, saw=f"{len(_t_corpus123)} files under {len(_t_roots123)} roots")
+
+_t_ending_diffs123 = []
+for _t_f123, _t_t123 in _t_corpus123:
+    _t_lf123 = _t_redact123.scrub(_t_t123)
+    _t_crlf123 = _t_redact123.scrub(_t_t123.replace("\n", "\r\n")).replace("\r\n", "\n")
+    if _t_lf123 != _t_crlf123:
+        _t_first123 = next((f"{x!r} vs {y!r}" for x, y in
+                            zip(_t_lf123.splitlines(), _t_crlf123.splitlines()) if x != y),
+                           "(lengths differ)")
+        _t_ending_diffs123.append(f"{_t_f123}: {_t_first123[:150]}")
+check(f"CRLF and LF produce the same redaction on all {len(_t_corpus123)} files",
+      not _t_ending_diffs123, saw="\n".join(_t_ending_diffs123[:5]))
 # ---- 12_carry_share_is_equal.py
 # 🐛 [2026-09-09] `carry_forward` splits its budget EQUALLY between the parts of a handoff, so the
 # smaller part keeps a larger share of itself — which is the outcome wanted, because a summary that
