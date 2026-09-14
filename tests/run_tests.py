@@ -27816,8 +27816,13 @@ import os as _os120
 # later is covered without anybody remembering this check exists.
 _t_roots120 = [ROOT / _n120 for _n120 in ("lib", "bin", "hooks", "adapters", "skills",
                                           "commands", "tests", "agents", "site")]
-_t_ws120 = owner_workspace("the workspace scan-readability probe")
-if _t_ws120 is not None:
+# \U0001f41b Written as `owner_workspace("the workspace scan-readability probe")`, which prints
+# "[SKIP] the workspace scan-readability probe" in a checkout — and the probe does NOT skip there.
+# It walks the package roots above and asserts all three properties; only the extra workspace roots
+# are absent. A line saying a check did not run, printed by a check that ran, is the same lie this
+# block exists to catch, one level up. The workspace roots are added silently when they are there.
+_t_ws120 = ROOT.parent.parent / ".chamnan"
+if (_t_ws120 / "tools").is_dir():
     _t_roots120 += [_t_ws120 / _n120 for _n120 in ("memory", "skills", "state", "tools", "logs")]
 
 _t_unreadable120, _t_scanned120 = [], 0
