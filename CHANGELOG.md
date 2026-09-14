@@ -98,25 +98,19 @@ git clone https://github.com/ArcticFox2029/chamnan && cd chamnan
 python3 tools/verify_release.py
 ```
 
-**5,129 of 5,133 checks passed** on this machine, 0 failing, 0 tracebacks. Three blocks are skipped
+**5,130 of 5,133 checks passed** on this machine, 0 failing, 0 tracebacks. Three blocks are skipped
 on macOS and say why in their own output — they need a filesystem or a host this machine is not.
 
-The redactor's own figure, which you can reproduce without cloning anything:
-
-```bash
-python3 .chamnan/tools/redactor_recall.py
-```
-
-**98 of 99 secret and personal-data shapes redacted.** The one that is not caught is named in the
-output, with the reason: it carries no prefix and no keyword, so only entropy would find it, and
-entropy eats commit hashes.
+**98 of 99 secret and personal-data shapes are redacted.** The one that is not caught is named in
+the verifier's own output, with the reason: it carries no prefix and no keyword, so only entropy
+would find it, and entropy eats commit hashes.
 
 ### A password in your language was not a password
 
 The redactor stops a credential reaching the model. It stopped an English one.
 
 Measured against a corpus of 800 files in eight writing systems: a credential introduced by a
-**translated keyword** passed through untouched. `password = "..."` was caught; the Thai, Chinese,
+**translated keyword** passed through untouched. The English spelling was caught; the Thai, Chinese,
 Japanese, Korean, Arabic, Hindi, Spanish, French and German spellings of the same word were not.
 Three of thirty cases caught. It is now thirty of thirty.
 
