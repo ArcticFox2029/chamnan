@@ -244,6 +244,44 @@ def files(root):
     return [base / rel for rel in _entries(root)[0]]
 
 
+def declared_worktree_encodings(root, paths):
+    """`{relative path: encoding}` for any of `paths` git says is stored re-encoded. `{}` if none.
+
+    🐛 [2026-09-15] A file declared `working-tree-encoding=UTF-16LE-BOM` is UTF-8 in the index and
+    UTF-16 on disk, and git converts on checkout. The walk reads the disk, sees a NUL every other
+    byte, and reports the file as "binary despite a source suffix" -- which is honest about the
+    bytes and wrong about the cause. A reader told a `.py` file is binary looks for a build
+    artefact; nobody thinks to open `.gitattributes`. Measured on a 76-byte indexed file that is
+    154 bytes on disk. (R14.2.)
+
+    Asked once, at REPORT time, for the handful of paths that were already skipped -- so a tree
+    with no such file pays nothing, and a tree with one gets the cause instead of the symptom.
+    `-z` throughout because a path may contain a newline, and `--stdin` because the list is ours.
+    """
+    import subprocess
+
+    rels = [str(p) for p in paths]
+    if not rels:
+        return {}
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "check-attr", "-z", "--stdin", "working-tree-encoding"],
+            input="\0".join(rels) + "\0", capture_output=True, text=True,
+            encoding="utf-8", errors="replace", stdin=None, timeout=20)
+    except (OSError, ValueError, subprocess.SubprocessError, NotImplementedError):
+        return {}
+    if out.returncode != 0:
+        return {}
+    # `-z` emits a flat NUL-separated run of path, attribute, value triples.
+    fields = out.stdout.split("\0")
+    found = {}
+    for i in range(0, len(fields) - 2, 3):
+        path, _attr, value = fields[i], fields[i + 1], fields[i + 2]
+        if value and value not in ("unspecified", "unset"):
+            found[path] = value
+    return found
+
+
 def _unreadable_ancestor(path, base):
     """True when `path` cannot be seen because a directory above it cannot be entered.
 

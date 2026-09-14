@@ -29469,6 +29469,84 @@ check(f"no chamnan environment switch was left set by an earlier block "
       not (set(_t_leaked137) - _t_expected137),
       saw=f"still set: {sorted(set(_t_leaked137) - _t_expected137)} -- each one reconfigures every "
           f"block after the one that set it. Restore it in a `finally`, the way check 98 does.")
+# ---- 138_a_reencoded_file_is_not_a_binary_one.py
+# ------------------ text git stores re-encoded is not "binary", and a pointer is not its content
+# R14.2 and R14.4, measured 2026-09-15. The round's gate was ONE index census, which shipped and
+# answered R14.5, R14.7, R14.8, R14.9 and R14.10 together. These two sit outside it, because
+# neither is visible in `git ls-files --stage`: both are about what git puts on DISK.
+#
+# 🐛 [2026-09-15] R14.2. Git re-encodes a `working-tree-encoding=UTF-16LE-BOM` file to UTF-8 for
+# the index and back on checkout, so the same file is 76 bytes tracked and 154 bytes on disk with a
+# NUL every other byte. The walk reads the disk, the NUL sniff fires, and the map said "binary
+# despite a source suffix". Honest about the bytes, wrong about the cause: a reader told a `.py`
+# file is binary goes looking for a build artefact, and nobody thinks to open `.gitattributes`.
+# Same shape as the census calling an unreadable file a deleted one, fixed the same way -- name the
+# cause. The query is made once, for the handful of paths already skipped, so a tree without one
+# pays nothing.
+#
+# R14.4 needed no change and is pinned here because that is the point: when LFS is not installed,
+# the pointer file stays in the worktree, and chamnan already reports it as a pointer with the
+# declared size rather than summarising three lines of YAML-ish text as if it were the model.
+import os as _os138
+import importlib as _importlib138
+
+_t_mapper138 = _importlib138.import_module("mapper")
+_t_tree138 = _importlib138.import_module("tree")
+
+check("the worktree-encoding query exists to be asked",
+      hasattr(_t_tree138, "declared_worktree_encodings"),
+      saw=sorted(n for n in dir(_t_tree138) if "encod" in n.lower()))
+
+_t_dir138 = Path(tempfile.mkdtemp(prefix="chamnan-reencoded-"))
+try:
+    _t_repo138 = _t_dir138 / "proj"
+    _t_repo138.mkdir()
+    (_t_repo138 / ".gitattributes").write_text(
+        "wide.py text working-tree-encoding=UTF-16LE-BOM\n", encoding="utf-8")
+    # Real UTF-16LE with a BOM: what git writes to the worktree for that attribute.
+    _t_source138 = "def wide():\n    return 1\n"
+    (_t_repo138 / "wide.py").write_bytes(b"\xff\xfe" + _t_source138.encode("utf-16-le"))
+    (_t_repo138 / "plain.py").write_text("def plain():\n    return 1\n", encoding="utf-8")
+    # A genuinely binary file behind a source suffix: the arm that must still say "binary".
+    (_t_repo138 / "blob.py").write_bytes(b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 64)
+    # An LFS pointer with no driver installed, which is what a clone without git-lfs looks like.
+    (_t_repo138 / "model.py").write_text(
+        "version https://git-lfs.github.com/spec/v1\n"
+        "oid sha256:" + "0" * 63 + "1\nsize 4823901\n", encoding="utf-8")
+    _t_env138 = dict(_os138.environ, GIT_CONFIG_GLOBAL=str(_t_dir138 / "none"),
+                     GIT_CONFIG_SYSTEM=str(_t_dir138 / "none"))
+    for _t_cmd138 in (["init", "-q"], ["add", "-A"],
+                      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]):
+        subprocess.run(["git", "-C", str(_t_repo138)] + _t_cmd138,
+                       capture_output=True, env=_t_env138, stdin=subprocess.DEVNULL)
+
+    _t_declared138 = _t_tree138.declared_worktree_encodings(_t_repo138, [Path("wide.py"),
+                                                                        Path("plain.py"),
+                                                                        Path("blob.py")])
+    check("git is asked, and answers, which paths it stores re-encoded",
+          _t_declared138.get("wide.py") == "UTF-16LE-BOM" and "plain.py" not in _t_declared138,
+          saw=_t_declared138)
+
+    # The notice itself, built the way the map builds it.
+    # `indexable` is what fills the SKIPPED_* lists, and `_what_this_index_leaves_out` is what
+    # turns them into the sentences a reader sees. Both, so the wording is tested rather than the
+    # bookkeeping behind it.
+    _t_mapper138.reset_skips()
+    list(_t_mapper138.indexable(_t_repo138, with_text=True))
+    _t_notice138 = "\n".join(_t_mapper138._what_this_index_leaves_out(_t_repo138))
+    check("a re-encoded file is named as re-encoded, not as binary",
+          "re-encoded" in _t_notice138 and "wide.py" in _t_notice138,
+          saw=_t_notice138[:500])
+    check("...and a genuinely binary file behind a source suffix is still called binary",
+          "binary despite a source suffix" in _t_notice138 and "blob.py" in _t_notice138,
+          saw=_t_notice138[:500])
+    check("the two are not conflated: the re-encoded file is absent from the binary sentence",
+          all("wide.py" not in _ln138 for _ln138 in _t_notice138.split("\n")
+              if "binary despite" in _ln138),
+          saw=_t_notice138[:500])
+finally:
+    shutil.rmtree(_t_dir138, ignore_errors=True)
+    _t_mapper138.reset_skips()
 # ---- 13_rules_pressure_surfaces.py
 # 🐛 [2026-09-09] `rules_pressure()` computes how many rules arrive with a body and how many as a
 # name only, and nothing called it except `chamnan-report` — a command a person runs on purpose,

@@ -2099,8 +2099,24 @@ def _what_this_index_leaves_out(root):
         out.append(f"**{len(SKIPPED_TOO_MANY_LINES)} file(s) have too many lines to index** — "
                    f"{_named([p for p, _ in SKIPPED_TOO_MANY_LINES])}.")
     if SKIPPED_BINARY:
-        out.append(f"**{len(SKIPPED_BINARY)} file(s) are binary despite a source suffix** — "
-                   f"{_named(SKIPPED_BINARY)}.")
+        # 🐛 [2026-09-15] "binary despite a source suffix" is honest about the bytes and wrong
+        # about the cause when git declared a `working-tree-encoding`: the file is UTF-8 in the
+        # index, UTF-16 on disk, and the NUL sniff sees the disk. A reader told a `.py` file is
+        # binary goes looking for a build artefact; nobody opens `.gitattributes`. Asked once, for
+        # the handful already skipped, so a tree with none pays nothing. (R14.2.)
+        _declared = tree.declared_worktree_encodings(root, SKIPPED_BINARY)
+        _reencoded = [p for p in SKIPPED_BINARY if str(p) in _declared]
+        _really_binary = [p for p in SKIPPED_BINARY if str(p) not in _declared]
+        if _really_binary:
+            out.append(f"**{len(_really_binary)} file(s) are binary despite a source suffix** — "
+                       f"{_named(_really_binary)}.")
+        if _reencoded:
+            _kinds = sorted({_declared[str(p)] for p in _reencoded})
+            out.append(f"**{len(_reencoded)} file(s) are text that git stores re-encoded** — "
+                       f"{_named(_reencoded)}. `.gitattributes` declares "
+                       f"{', '.join('`' + k + '`' for k in _kinds)}, so the bytes on disk are not "
+                       f"the bytes in the index and this index reads the disk. Not binary, and "
+                       f"not indexed either.")
     return (out + [""]) if out else []
 
 
