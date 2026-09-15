@@ -3,6 +3,8 @@
 
   chamnan-guard          scan the staged diff, name the risks, never fail the commit
   chamnan-guard --strict exit 1 instead, for a hook somebody opted into
+  chamnan-guard --history  the other question: is anything ALREADY committed. A one-off audit over
+                           the last 500 commits, grouped by file, worst first — not a hook
 
 `lib/redact.py` exists to keep a secret out of everything that reaches the MODEL — the SessionStart
 block, `MAP.md`, the file each agent reads. It had never been pointed at the other direction a
@@ -38,7 +40,7 @@ import workspace as ws  # noqa: E402
 # keep out of a terminal.
 print = redact.emit  # noqa: A001
 
-KNOWN_FLAGS = ("--strict",)
+KNOWN_FLAGS = ("--strict", "--history")
 
 # A commit is in the foreground of somebody's workflow. The redactor was measured at 32 ms on an
 # 18 KB diff, so the cap is not about the scan — it is about a pathological diff (a vendored blob,
@@ -300,6 +302,56 @@ def scan_mcp_changes(diff):
     return found
 
 
+# ------------------------------------------------------ what is already committed, which the
+# staged diff can never see
+#
+# 🎯 R20.3. Everything above answers "is this about to go in". A person adopting chamnan on a
+# repository that already has history has a different first question, and nothing here could answer
+# it: `bin/` holds thirteen commands and none of them reads `git log`.
+#
+# The scanner is not duplicated. `_added_lines` and `scan` take any unified diff, and `git log -p`
+# produces one — so this is the same redactor over a different input, which is the only version
+# worth having: two scanners would disagree the first time either was corrected.
+HISTORY_DEFAULT_COMMITS = 500
+
+
+def _history_diff(root, limit):
+    """`git log -p` over the last `limit` commits, or None when git cannot answer."""
+    if not ws.git_can_speak_for(root):
+        return None
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "log", "-p", "--no-color", "--no-ext-diff", "-U0",
+             "--no-merges", "-n", str(int(limit))],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.DEVNULL, timeout=300)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def scan_history(diff):
+    """`{(commit, path): [line numbers]}` for added lines in history the redactor would rewrite.
+
+    A line number alone is useless here — the file has moved on, and the only way to look at what
+    was committed is `git show <commit>`. So the commit travels with the finding.
+    """
+    found, commit = {}, "?"
+    chunk = []
+    for raw in (diff or "").splitlines(True):
+        if raw.startswith("commit ") and len(raw.split()) == 2:
+            for path, lineno, text in _added_lines("".join(chunk)):
+                if text.strip() and redact.scrub(text) != text:
+                    found.setdefault((commit, path), []).append(lineno)
+            commit, chunk = raw.split()[1][:12], []
+            continue
+        chunk.append(raw)
+    for path, lineno, text in _added_lines("".join(chunk)):
+        if text.strip() and redact.scrub(text) != text:
+            found.setdefault((commit, path), []).append(lineno)
+    return found
+
+
 def main(argv):
     if ws.wants_version(argv):
         print(ws.version_line())
@@ -314,6 +366,59 @@ def main(argv):
 
     strict = "--strict" in argv
     root = ws.find_root()
+
+    if "--history" in argv:
+        # A one-off audit, not a commit hook: this is the question somebody asks on the day they
+        # adopt chamnan on a repository that already has a past.
+        hist = _history_diff(root, HISTORY_DEFAULT_COMMITS)
+        if hist is None:
+            print("chamnan: not a git repository, or git cannot answer here.", file=sys.stderr)
+            return 1
+        hits = scan_history(hist)
+        if not hits:
+            print(f"chamnan: nothing credential-shaped in the last "
+                  f"{HISTORY_DEFAULT_COMMITS} commit(s).")
+            print("  That is the redactor's recall on this history, not a guarantee — see the "
+                  "recall and touch-rate figures in the README for what it can and cannot find.")
+            return 0
+        # 🐛 The first version listed every (commit, path) pair. On this repository that is 431
+        # lines across 79 commits, and almost all of it is the redactor's OWN specimen credentials
+        # in `lib/redact.py` and `tests/run_tests.py` — a first run that hands somebody 431 alarms
+        # has told them nothing, and they will not read the second screen.
+        #
+        # Grouped by FILE instead, worst first. A file that carries fixtures shows up once, at the
+        # top, where it can be recognised and dismissed in one line — and a file that carries one
+        # real secret is no longer buried under it.
+        _lines = sum(len(v) for v in hits.values())
+        _by_path = {}
+        for (commit, path), nums in hits.items():
+            _p = _by_path.setdefault(path, {"lines": 0, "commits": set(), "first": commit})
+            _p["lines"] += len(nums)
+            _p["commits"].add(commit)
+        print(f"chamnan: {_lines} line(s) in {len(_by_path)} file(s) across "
+              f"{len({c for c, _ in hits})} commit(s) look credential-shaped in history.\n",
+              file=sys.stderr)
+        _worst = sorted(_by_path.items(), key=lambda kv: -kv[1]["lines"])
+        for _path, _info in _worst[:15]:
+            print(f"  {_info['lines']:>4} line(s)  {len(_info['commits']):>3} commit(s)  {_path}",
+                  file=sys.stderr)
+            print(f"           git log -p -- {_path}   # then `git show <commit>` for one of them",
+                  file=sys.stderr)
+        if len(_worst) > 15:
+            print(f"  +{len(_worst) - 15} more file(s)", file=sys.stderr)
+        print("\n  A file full of test fixtures or a changelog quoting an example will sit at the "
+              "top of this list.", file=sys.stderr)
+        print("  That is expected, and it is why this groups by file: the one that matters is the "
+              "one you do not recognise.", file=sys.stderr)
+        # 🎯 The order of these two sentences is the finding, not decoration. GitHub's own guidance
+        # is to ROTATE first, because rewriting history does not remove the blob from forks, from
+        # clones, or from anyone's cache — and a person who rewrites and stops there believes they
+        # are finished.
+        print("\n  Rotate anything real here FIRST. Rewriting history does not remove it from "
+              "forks,", file=sys.stderr)
+        print("  clones or caches, so the rewrite is the second step and never the whole fix.",
+              file=sys.stderr)
+        return 1
 
     # 🐛 [2026-09-15] R6.7. On Windows, CreateProcess searches the current directory before PATH, so
     # a repository carrying `git.exe` at its root gets that binary run by anything here that spawns

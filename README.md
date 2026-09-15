@@ -1028,6 +1028,7 @@ From a shell, in the repository:
 | `chamnan-env check` | which environment entries nobody has confirmed lately |
 | `chamnan-age` | which stored knowledge names a version no environment declares any more |
 | `chamnan-guard` | does anything staged for commit look like a credential — names the file and line, never the value, and never fails the commit (`--strict` does) |
+| `chamnan-guard --history` | the question the staged diff can never answer: is anything ALREADY committed. A one-off audit over the last 500 commits, grouped by file and worst first, so a fixture file is dismissed in one line and the file you do not recognise is not buried under it. It says rotate before rewrite, because rewriting history leaves the blob in every fork, clone and cache |
 | `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then Usage (chamnan's own commands and any promoted tool, counts only, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the first two sections, then says so instead of inventing a trend |
 
 ### Finishing later, when the limit has reset
