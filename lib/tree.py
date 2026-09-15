@@ -26,7 +26,6 @@ incremental index is ever built, this is the layer it should sit on, not a repla
 import os
 from contextlib import contextmanager
 from pathlib import Path
-import workspace  # for git_exe(): argv[0] must never be a bare name, see R6.7
 
 # What the walk is allowed to prune: the INTERSECTION of what every scanner already skipped, not
 # the union. Pruning wider would silently change what those scanners see — measured: pruning with
@@ -270,7 +269,7 @@ def declared_worktree_encodings(root, paths):
         return {}
     try:
         out = subprocess.run(
-            [workspace.git_exe(), "-C", str(root), "check-attr", "-z", "--stdin", "working-tree-encoding"],
+            ["git", "-C", str(root), "check-attr", "-z", "--stdin", "working-tree-encoding"],
             input="\0".join(rels) + "\0", capture_output=True, text=True,
             encoding="utf-8", errors="replace", stdin=None, timeout=20)
     except _ws_failures():
@@ -392,7 +391,7 @@ def index_census(root):
     if not _ws.git_can_speak_for(root):
         return {}
     try:
-        out = subprocess.run([workspace.git_exe(), "-C", str(root), "ls-files", "--stage", "-z"],
+        out = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z"],
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", stdin=subprocess.DEVNULL, timeout=20)
     except _ws_failures():

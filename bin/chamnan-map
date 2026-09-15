@@ -296,7 +296,7 @@ def _is_bare(root):
     if not ws.git_owns(root):
         return False
     try:
-        out = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-parse", "--is-bare-repository"],
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-bare-repository"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=5)
     except (OSError, subprocess.SubprocessError):
@@ -316,7 +316,7 @@ def _is_generated_hooks_dir(root, hooks):
     if not hooks.is_dir() or not ws.git_owns(root):
         return False
     try:
-        r = subprocess.run([workspace.git_exe(), "-C", str(root), "check-ignore", "-q", "--", str(hooks)],
+        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(hooks)],
                            capture_output=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return False

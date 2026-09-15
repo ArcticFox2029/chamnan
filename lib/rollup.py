@@ -149,7 +149,7 @@ def _head(root):
     if not _git_can_speak_for(root):
         return ""
     try:
-        out = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-parse", "HEAD"],
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                              stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5)
     except ws.git_cannot_answer():
         return ""
@@ -207,7 +207,7 @@ def _commits_between(root, old_head, head):
     if not _git_can_speak_for(root):
         return None
     try:
-        r = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-list", "--count", f"{old_head}..{head}"],
+        r = subprocess.run(["git", "-C", str(root), "rev-list", "--count", f"{old_head}..{head}"],
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=30)
         return int(r.stdout.strip()) if r.returncode == 0 and r.stdout.strip().isdigit() else None
@@ -293,7 +293,7 @@ def _churn(root, window=CHURN_WINDOW):
             # `รายงาน.py` comes back as `"\340\270\243..."` and the lookup against the index's real
             # path never matches -- every such file is credited zero churn, silently. That is the
             # whole ranking, disabled, for any repository whose filenames are not ASCII.
-            [workspace.git_exe(), "-C", str(root), "-c", "core.quotePath=false",
+            ["git", "-C", str(root), "-c", "core.quotePath=false",
              # 🐛 `--no-merges` is not tidiness, it is the difference between a 600-commit window and a
              # 300-commit one. git does not diff a merge commit by default, so a merge contributes a
              # header and zero file-status lines — and on a project that merges pull requests with

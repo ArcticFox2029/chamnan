@@ -269,7 +269,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
                  if code != "!!" and name != _ws_rel and not name.startswith(_ws_rel + "/")]
         if not lines:
             return ""          # a clean tree has nothing to carry forward, which is the good case
-        br = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
+        br = subprocess.run(["git", "-C", str(root), "rev-parse", "--abbrev-ref", "HEAD"],
                             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
                             timeout=5)
         branch = br.stdout.strip() if br.returncode == 0 else ""
@@ -283,7 +283,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
         # come back to it. Best-effort: if that call fails too, the line simply says nothing about
         # where you are, which is better than saying something false.
         if branch == "HEAD":
-            sha = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-parse", "--short", "HEAD"],
+            sha = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"],
                                  stdin=subprocess.DEVNULL, capture_output=True, text=True,
                                  encoding="utf-8", errors="replace", timeout=5)
             short = sha.stdout.strip() if sha.returncode == 0 else ""

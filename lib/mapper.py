@@ -297,7 +297,7 @@ def _tracked_ambiguous(root):
     if not ws.git_can_speak_for(root):
         return _TRACKED_AMBIGUOUS.setdefault(key, found)
     try:
-        done = subprocess.run([workspace.git_exe(), "-C", key, "ls-files", "-z"],
+        done = subprocess.run(["git", "-C", key, "ls-files", "-z"],
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
         if done.returncode == 0:
             for raw in done.stdout.split(b"\0"):
@@ -2142,7 +2142,7 @@ def _built_from(root):
     if not ws.git_can_speak_for(root):
         return ""
     try:
-        out = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-parse", "--short=12", "HEAD"],
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--short=12", "HEAD"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=5)
     except ws.git_cannot_answer():

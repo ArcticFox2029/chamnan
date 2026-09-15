@@ -74,7 +74,7 @@ def _staged_diff(root):
         return None
     try:
         out = subprocess.run(
-            [workspace.git_exe(), "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
+            ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -314,6 +314,25 @@ def main(argv):
 
     strict = "--strict" in argv
     root = ws.find_root()
+
+    # 🐛 [2026-09-15] R6.7. On Windows, CreateProcess searches the current directory before PATH, so
+    # a repository carrying `git.exe` at its root gets that binary run by anything here that spawns
+    # git. `workspace` sets `NoDefaultCurrentDirectoryInExePath` at import, which closes it — except
+    # on Windows before 10 1809, where the switch is not honoured and NOTHING IN THE PROCESS CAN
+    # OBSERVE THAT. So the case the switch is for is also detected directly.
+    #
+    # It refuses rather than routing around it: nobody puts a `git.exe` in a repository root by
+    # accident, and a tool that quietly picked the right binary would leave the next tool on that
+    # machine to find the wrong one. Empty on every platform that does not search the current
+    # directory, which is every platform but one.
+    _planted = ws.a_program_is_lying_in_wait(root)
+    if _planted:
+        print(f"chamnan: refusing to run — {', '.join(_planted)} in {root}.", file=sys.stderr)
+        print("  Windows searches the current directory before PATH, so this file would run "
+              "instead of the real program.", file=sys.stderr)
+        print("  Nothing here put it there. Remove it, or check where it came from, before "
+              "running any tool in this repository.", file=sys.stderr)
+        return 2
     diff = _staged_diff(root)
     if diff is None:
         # Not a git repository, or git is not installed. Silence: this runs from a commit hook, and
