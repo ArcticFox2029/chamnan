@@ -17,6 +17,64 @@ import os
 import sys
 from pathlib import Path
 
+# \U0001f41b [2026-09-15] R6.7. On Windows, CreateProcess searches the CURRENT DIRECTORY before PATH,
+# and the current directory is the repository the user just opened. This package runs
+# `subprocess.run(["git", ...])` twenty-six times, so a cloned repository carrying `git.exe` at its
+# root would have that binary executed by the SessionStart hook — arbitrary code from cloning, which
+# is the class this package exists to warn people about.
+#
+# Microsoft's documented switch removes the current directory from that search, and children inherit
+# it, so one line covers every call site including the ones written later.
+#
+# **The alternative was worse, and it took two other models to settle it.** Resolving `git` to an
+# absolute path with `shutil.which` also closes this — and it opens what check 150 already forbids:
+# from Python 3.12 `which` changed on Windows, so the same PATH can select a DIFFERENT executable on
+# two supported interpreters with no error. Asked to choose, an independent Mistral and an
+# independent Gemini both picked this one, unprompted and for the same reason: it fixes the hole at
+# the OS rather than adding a resolution whose answer depends on the interpreter. It also leaves
+# argv as a visible literal, which is what makes checks 96 and 124 able to read the promise off the
+# source at all.
+#
+# `setdefault`, not assignment: a caller who has deliberately set it keeps their value, and on
+# every non-Windows platform this is an unread variable costing nothing.
+if sys.platform == "win32":
+    os.environ.setdefault("NoDefaultCurrentDirectoryInExePath", "1")
+
+
+# The second layer, because the first one can be silently absent. `NoDefaultCurrentDirectoryInExePath`
+# is not honoured before Windows 10 1809, and nothing in the process can observe whether it took
+# effect — so on the versions where it does nothing, the hole is exactly as open as before and no
+# error says so.
+#
+# This is the case the switch is FOR, detected directly: a file named like the program, sitting in
+# the directory that CreateProcess would search first. One `exists()` per name, on Windows only,
+# answered from the repository root the caller already has.
+#
+# It REFUSES rather than working around it. A plausible `git.exe` in a repository root is not a
+# configuration mistake to route around — nobody puts one there by accident — and a tool that
+# quietly picked the right binary would leave the next tool on that machine to find the wrong one.
+_WINDOWS_PROGRAM_SUFFIXES = (".exe", ".com", ".bat", ".cmd")
+
+
+def a_program_is_lying_in_wait(root, names=("git",)):
+    """Names in `root` that Windows would run instead of the program on PATH. Empty elsewhere.
+
+    Returns a list so the caller can name every one of them; an empty list on any platform that
+    does not search the current directory, which is every platform except Windows.
+    """
+    if sys.platform != "win32":
+        return []
+    found = []
+    for name in names:
+        for suffix in _WINDOWS_PROGRAM_SUFFIXES:
+            candidate = Path(root) / (name + suffix)
+            try:
+                if candidate.is_file():
+                    found.append(candidate.name)
+            except OSError:
+                continue
+    return found
+
 # A read-only git command can reach the NETWORK, and one of ours runs inside a hook.
 #
 # Git's partial-clone design makes ordinary object lookup fall back to a `git fetch` subprocess when

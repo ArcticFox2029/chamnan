@@ -28362,6 +28362,11 @@ for _t_dir124 in ("lib", "hooks", "bin"):
             _t_t124 = _t_f124.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
+        # This matches the literal on purpose. R6.7 briefly replaced every one of these with a
+        # resolved absolute path, and this file's own non-empty guard caught the scan finding ZERO,
+        # which is what that guard is for. The fix that shipped instead keeps argv a visible literal
+        # and removes the current directory from Windows' search at the OS level, so the promise
+        # this check reads off the source stays readable. See check 160.
         for _t_m124 in _re124.finditer(r'\[\s*"git"\s*,(.{0,180})', _t_t124, _re124.S):
             _t_sites124 += 1
             _t_args124 = _t_m124.group(1)
@@ -31683,6 +31688,99 @@ check("...and there is a mirror to check, so that is not a pass over an empty di
 # So there is no assertion here, on purpose. A guard that fires on formatting teaches people to
 # ignore it, and this file's other two checks are the ones that catch a real difference. Recorded
 # rather than deleted so the next round does not re-derive "three wordings" from the same regex.
+# ---- 159_a_relative_path_is_never_built_by_string_surgery.py
+# ------------------ R6.1: a path shown relative to the root must survive a backslash separator
+# Found without a Windows machine, by asking which lines would behave differently if `os.sep` were
+# `\` — the question a Windows runner would answer, asked of the source instead.
+#
+# `bin/chamnan-map` had two: `path.replace(str(root) + "/", "")`. On Windows `str(root)` is
+# `C:\Users\x\repo` and the path is `C:\Users\x\repo\lib\redact.py`, with no forward slash between
+# them, so the replace never fires and the ABSOLUTE path is what comes out. Ugly in a message, and
+# worse downstream: `rollup` and `assets` both group by `rel.split("/")[0]`, which on that string
+# sees one component instead of a directory, so the grouping collapses silently.
+#
+# Ten other sites already spelled it `relative_to(root).as_posix()`. These two were the outliers.
+#
+# The population is DERIVED, not listed: any file under lib/, hooks/ or bin/ that strips a root by
+# string surgery fails, including one written next week. That is the point — this repository's most
+# common defect is a rule applied to one member of a set and forgotten in the others, and a check
+# that names the two known sites would have caught neither of the next two.
+import re as _re159
+from pathlib import Path as _P159
+import importlib as _im159
+
+_PKG159 = _P159(_im159.import_module("redact").__file__).resolve().parent.parent
+
+# `x.replace(str(root) + "/", "")` and its spellings: any literal separator glued to a stringified
+# path and used to cut a prefix. A raw string, an f-string and concatenation all land here.
+_SURGERY159 = _re159.compile(
+    r"""\.replace\(\s*                       # .replace(
+        (?:str\(\s*\w+\s*\)|f?["'][^"']*\{\w+\}[^"']*["'])   # str(root)  or  f"{root}..."
+        \s*\+?\s*["'][/\\]["']""",           # + "/"   or the separator inside the f-string
+    _re159.X)
+
+_files159 = sorted(
+    list((_PKG159 / "lib").rglob("*.py"))
+    + list((_PKG159 / "hooks").glob("*.py"))
+    + [p for p in (_PKG159 / "bin").iterdir() if p.is_file() and not p.name.startswith(".")])
+
+_hits159, _read159 = [], 0
+for _f159 in _files159:
+    if "site/lib" in _f159.as_posix():
+        continue
+    try:
+        _t159 = _f159.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    _read159 += 1
+    # \U0001f41b A comment describing the defect is not the defect, and the first version skipped
+    # only `#` lines. It then matched the DOCSTRING of the very fix it protects — which quotes the
+    # bad line on purpose, as every fix in this repository does. The recorded "a check that reads
+    # its own source matches itself" trap, in a costume: a docstring is not a comment.
+    #
+    # The fences are built from chr() rather than written, so this file cannot match itself either.
+    _FENCES159 = (chr(34) * 3, chr(39) * 3)
+    _fence159 = None
+    for _n159, _ln159 in enumerate(_t159.split("\n"), 1):
+        _body159 = _ln159
+        if _fence159:
+            if _fence159 in _ln159:
+                _fence159 = None
+            continue
+        for _q159 in _FENCES159:
+            if _ln159.count(_q159) == 1:
+                _fence159 = _q159
+                _body159 = _ln159.split(_q159)[0]
+                break
+        if _ln159.lstrip().startswith("#"):
+            continue
+        if _SURGERY159.search(_body159):
+            _hits159.append("%s:%d  %s" % (_f159.relative_to(_PKG159).as_posix(), _n159,
+                                           _ln159.strip()[:80]))
+
+for _x159 in _hits159:
+    print("      DETAIL  %s" % _x159)
+print("      DETAIL  %d source file(s) swept for root-stripping by string surgery" % _read159)
+
+check("NO ROOT-RELATIVE PATH IS BUILT BY GLUING A SEPARATOR TO THE ROOT",
+      not _hits159,
+      saw="use `Path(p).relative_to(root).as_posix()`, which every other site already does — "
+          "a literal `/` never matches a Windows path and the absolute path comes out instead")
+check("...and the sweep read the package, so that is not a pass over nothing",
+      _read159 >= 40, saw="only %d file(s) swept" % _read159)
+
+# The convention this points at has to actually exist, or the advice above is wrong. Counted rather
+# than asserted at one site, for the same reason as everything else here.
+_conv159 = 0
+for _f159 in _files159:
+    try:
+        _conv159 += len(_re159.findall(r"relative_to\([^)]*\)\.as_posix\(\)",
+                                       _f159.read_text(encoding="utf-8", errors="replace")))
+    except OSError:
+        pass
+print("      DETAIL  sites already using relative_to(...).as_posix(): %d" % _conv159)
+check("...and the spelling it points at is the one the package actually uses",
+      _conv159 >= 10, saw="%d site(s)" % _conv159)
 # ---- 15_a_pin_is_read_by_every_store.py
 # ------------------------------------------- the pin reached the stores one at a time
 # 🐛 [2026-09-09] 📌 has meant "the owner says this must not be cut" since `state.py` was written,
@@ -31813,6 +31911,340 @@ for _t_f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("
         _t_own.append(_t_f.name)
 check("the pin has one spelling: no store reads the marker itself, they all ask state.pinned",
       not _t_own, saw=", ".join(_t_own) or None)
+# ---- 160_the_current_directory_is_not_a_place_to_find_a_program.py
+# ------------------ R6.7: Windows searches the CURRENT DIRECTORY for a program before it searches PATH
+# `subprocess` on Windows goes through CreateProcess, whose default order reaches the current
+# directory before PATH — and the current directory is the repository the user just opened. This
+# package runs `subprocess.run(["git", ...])` twenty-six times, so a cloned repository carrying
+# `git.exe` at its root would have that binary executed by the SessionStart hook. Arbitrary code
+# from cloning, which is the class this package exists to warn people about.
+#
+# Closed by one line in `workspace`: Microsoft's `NoDefaultCurrentDirectoryInExePath`, which removes
+# the current directory from that search and is inherited by children.
+#
+# \U0001f41b The first fix resolved `git` to an absolute path with `shutil.which` instead. It closed
+# the same hole and opened the one CHECK 150 already forbids: from Python 3.12 `which` changed on
+# Windows, so the same PATH can select a different executable on two supported interpreters with no
+# error. Two Windows rules written the same day, each right about its own risk. An independent
+# Mistral and an independent Gemini were both asked to choose and both picked the switch, for the
+# reason that decided it: fix the hole at the OS rather than add a resolution whose answer depends
+# on the interpreter. Recorded here because the losing option looks more thorough and is not.
+import ast as _ast160
+import os as _os160
+from pathlib import Path as _P160
+import importlib as _im160
+
+_ws160 = _im160.import_module("workspace")
+_PKG160 = _P160(_ws160.__file__).resolve().parent.parent
+_SWITCH160 = "NoDefault" + "CurrentDirectoryInExePath"
+
+_src160 = (_PKG160 / "lib" / "workspace.py").read_text(encoding="utf-8", errors="replace")
+print("      DETAIL  platform here is %r, so the switch is set only where it means something"
+      % __import__("sys").platform)
+
+check("THE CURRENT DIRECTORY IS REMOVED FROM WINDOWS' PROGRAM SEARCH",
+      _SWITCH160 in _src160,
+      saw="workspace no longer sets %s — on Windows a repository carrying git.exe at its root "
+          "would be executed by any command that spawns git" % _SWITCH160)
+
+# setdefault, not assignment: a caller who set it deliberately keeps their value, and a hard
+# assignment in a library that other people's tools import is a different kind of rude.
+_guard160 = _src160[max(0, _src160.find(_SWITCH160) - 200):_src160.find(_SWITCH160) + 120]
+check("...and it is set with setdefault, so a caller who chose a value keeps it",
+      "setdefault" in _guard160, saw=_guard160[-120:])
+check("...and only on Windows, where it is the only place it means anything",
+      "win32" in _guard160, saw=_guard160[-120:])
+
+# It has to be set by the time anything spawns. Asserted by IMPORTING workspace and looking, which
+# is the same order a real session takes.
+if __import__("sys").platform == "win32":
+    check("...and importing workspace is enough to have set it, before any spawn",
+          _os160.environ.get(_SWITCH160) == "1", saw=repr(_os160.environ.get(_SWITCH160)))
+else:
+    print("      DETAIL  the runtime half of this check needs Windows; the source half ran")
+
+# And the reason the switch is the fix rather than a resolved path: argv must stay a visible
+# literal, which is what lets checks 96 and 124 read the promise off the source at all.
+_bare160 = _src160.count('["git",')
+print("      DETAIL  workspace alone spells argv[0] as a literal %d time(s)" % _bare160)
+check("...and argv[0] is still a literal, so the spawn sweeps can still read it",
+      _bare160 >= 5, saw="%d literal git argv(s) in workspace.py" % _bare160)
+
+# --- the second layer, because the first one can be silently absent ---------------------------
+# `NoDefaultCurrentDirectoryInExePath` is not honoured before Windows 10 1809, and nothing in the
+# process can observe whether it took effect. Two independent reviewers (an outside Mistral and an
+# outside Gemini) both raised exactly that, after both had chosen the switch when asked to pick
+# between the two options twenty minutes earlier — which is its own lesson and is recorded in the
+# research log, not here. The hole they named is real whatever the reason it was named.
+_detect160 = getattr(_ws160, "a_program_is_lying_in_wait", None)
+check("...and the case the switch is FOR is also detected directly",
+      callable(_detect160),
+      saw="workspace has no a_program_is_lying_in_wait — on a Windows version that ignores the "
+          "switch, the hole is as open as before and nothing says so")
+
+if callable(_detect160):
+    import tempfile as _tmp160
+    _d160 = _P160(_tmp160.mkdtemp())
+    (_d160 / "git.exe").write_bytes(b"MZ")
+    _clean160 = _P160(_tmp160.mkdtemp())
+    # The platform is forced, because the property under test is what it does ON WINDOWS and this
+    # is not Windows. Restored immediately: a probe that leaves a module patched makes an unrelated
+    # check fail later, and this repository has that receipt.
+    _was160 = _ws160.sys.platform
+    try:
+        _ws160.sys.platform = "win32"
+        _found160 = _detect160(_d160)
+        _none160 = _detect160(_clean160)
+    finally:
+        _ws160.sys.platform = _was160
+    print("      DETAIL  planted -> %r, clean -> %r" % (_found160, _none160))
+    check("...and it names the planted program rather than only saying something is wrong",
+          _found160 == ["git.exe"], saw=repr(_found160))
+    check("...and a clean directory is not accused", _none160 == [], saw=repr(_none160))
+    check("...and it stays silent on a platform that does not search the current directory",
+          _detect160(_d160) == [], saw="it fired off Windows, where the risk does not exist")
+
+# The guard is where it refuses, and a detection nobody acts on is a comment.
+_guard160 = (_PKG160 / "bin" / "chamnan-guard").read_text(encoding="utf-8", errors="replace")
+check("...and chamnan-guard REFUSES on it rather than reporting it",
+      "a_program_is_lying_in_wait" in _guard160 and "return 2" in _guard160,
+      saw="the detector exists but nothing acts on it")
+# ---- 161_every_command_answers_the_same_three_questions.py
+# ------------------ R20.5.1: the CLI contract, asserted over the commands rather than shared
+# R20.5 (acc4, 2026-09-15) proposed one `workspace.cli_prelude(argv)` because thirteen commands
+# repeat the version/help/unknown-flag branches. Measured first, as this repository keeps having to
+# relearn: **merge when the duplication is DIVERGING; assert when it is not.**
+#
+# It is not diverging where it matters. All thirteen answer `--version` with the same string at
+# exit 0, all thirteen describe themselves for `--help` at exit 0, and all thirteen refuse an
+# unknown flag at exit 2. What differs is the WORDING of the refusal — three spellings, because
+# `chamnan-context` uses argparse and two others have their own message — and a guard that fired on
+# wording would be a guard people learn to ignore.
+#
+# Two numbers in the finding were also wrong, which is why it is measured here rather than quoted:
+# `bin/` holds 26 files, not 13, because half are `.cmd` shims for Windows that delegate and could
+# not contain the helpers; and the hand-rolled JSONL readers it counted are 0 today.
+#
+# This asserts BEHAVIOUR over a derived population, so the fourteenth command is covered on the day
+# it is written, and the merge stays possible: nothing here asks how the answer is produced.
+import subprocess as _sp161
+import sys as _sys161
+from pathlib import Path as _P161
+import importlib as _im161
+
+_PKG161 = _P161(_im161.import_module("redact").__file__).resolve().parent.parent
+# The commands are the extensionless executables. `.cmd` is the Windows shim for the same file and
+# answers by delegating, so running it here would measure the shim, not the command.
+_CMDS161 = sorted(p for p in (_PKG161 / "bin").iterdir()
+                  if p.is_file() and not p.suffix and not p.name.startswith("."))
+
+
+def _run161(cmd, flag):
+    try:
+        r = _sp161.run([_sys161.executable, str(cmd), flag], capture_output=True, text=True,
+                       timeout=60, cwd=str(_PKG161))
+    except (OSError, _sp161.SubprocessError) as exc:
+        return None, "%s: %s" % (type(exc).__name__, exc)
+    return r.returncode, (r.stdout or r.stderr or "").strip()
+
+
+_ver161, _help161, _bad161 = [], [], []
+for _c161 in _CMDS161:
+    _rc, _out = _run161(_c161, "--version")
+    if _rc != 0 or "chamnan" not in _out.lower():
+        _ver161.append("%s: exit %s, %r" % (_c161.name, _rc, _out[:60]))
+    _rc, _out = _run161(_c161, "--help")
+    if _rc != 0 or len(_out) < 20:
+        _help161.append("%s: exit %s, %r" % (_c161.name, _rc, _out[:60]))
+    # 🐛 The flag is spelled here rather than taken from a list, so no command can be excused by a
+    # name that happens to be real. A refusal must be BOTH non-zero and said out loud: an exit code
+    # nobody prints is a silent failure, and a message with exit 0 is worse — a script wrapping the
+    # command sees success.
+    _rc, _out = _run161(_c161, "--nosuchflag-" + "161")
+    if _rc in (0, None) or not _out:
+        _bad161.append("%s: exit %s, %r" % (_c161.name, _rc, _out[:60]))
+
+for _x161 in _ver161 + _help161 + _bad161:
+    print("      DETAIL  %s" % _x161)
+print("      DETAIL  %d command(s) asked three questions each" % len(_CMDS161))
+
+check("EVERY COMMAND ANSWERS --version WITH THE PACKAGE NAME AND EXITS 0",
+      not _ver161, saw="; ".join(_ver161))
+check("...and every command describes itself for --help and exits 0",
+      not _help161, saw="; ".join(_help161))
+check("...and every command REFUSES an unknown flag out loud and exits non-zero",
+      not _bad161,
+      saw="an exit code nobody prints is a silent failure, and a message with exit 0 is worse — "
+          "a script wrapping the command reads it as success")
+check("...and the population is the commands, not a list someone maintained",
+      len(_CMDS161) >= 10, saw="%d command(s) found in bin/" % len(_CMDS161))
+
+# One version string, not thirteen. The reason this is here and not in the release checklist: a
+# command that reports a stale version is how an installed copy lies about what it is running.
+_seen161 = {}
+for _c161 in _CMDS161:
+    _rc, _out = _run161(_c161, "--version")
+    _seen161.setdefault((_out or "").split("\n")[0].split("  ")[0], []).append(_c161.name)
+for _k161, _v161 in _seen161.items():
+    print("      DETAIL  %2d command(s) report %r" % (len(_v161), _k161[:40]))
+check("...and they all report the SAME version, so no command can lie about the build",
+      len(_seen161) == 1, saw="%d different version strings" % len(_seen161))
+# ---- 162_the_readme_cites_nothing_that_does_not_ship.py
+# ------------------ a path the README names must be a path a reader can open in a clone
+# 🐛 [2026-09-06] The README credited its recall and precision figures to `tools/redactor_recall.py`
+# and that file was not in the published repository — it lived only in the workspace chamnan is
+# developed in. Two numbers a reader is asked to trust, attributed to a tool they cannot run.
+#
+# 🐛 [2026-09-15] It happened again while ADDING a figure to the same table: the new row cited
+# `.chamnan/tools/redactor_selfscan.py`, which is a tool in this development workspace and not part
+# of the package either. Caught by hand, one minute after writing it, which is not a system.
+#
+# Twice is a population. The check derives it: every in-repository path the README names in backticks
+# must exist, so the third one fails before it is committed rather than after it is published.
+#
+# The distinction that makes this checkable rather than noisy: chamnan CREATES a `.chamnan/`
+# workspace in the user's repository, so `tools/index.json` and friends are real paths that
+# correctly do not exist HERE. A citation is exempted only when its own sentence says so — the
+# sentence has to carry the word, which is also what makes it readable to the person it is for.
+import re as _re162
+from pathlib import Path as _P162
+import importlib as _im162
+
+_PKG162 = _P162(_im162.import_module("redact").__file__).resolve().parent.parent
+_README162 = (_PKG162 / "README.md").read_text(encoding="utf-8", errors="replace")
+
+# Only the directories the package actually ships. `tools/` is included on purpose: it is where the
+# first of these two bugs lived, and excluding it would exclude the case that bit.
+_DIRS162 = ("lib", "hooks", "bin", "tests", "tools", "site", "install", "docs", "skills", "agents")
+_CITE162 = _re162.compile(r"`((?:%s)/[\w./+-]+)`" % "|".join(_DIRS162))
+
+_lines162 = _README162.split("\n")
+_missing162, _cited162, _exempt162 = [], set(), 0
+for _n162, _ln162 in enumerate(_lines162, 1):
+    for _m162 in _CITE162.finditer(_ln162):
+        _path162 = _m162.group(1)
+        _cited162.add(_path162)
+        if (_PKG162 / _path162).exists():
+            continue
+        # The sentence must say it is talking about the workspace chamnan creates, not this tree.
+        if _re162.search(r"\.chamnan|workspace|this repository has no", _ln162, _re162.I):
+            _exempt162 += 1
+            continue
+        _missing162.append("%s:%d  %s" % ("README.md", _n162, _path162))
+
+for _x162 in _missing162:
+    print("      DETAIL  cited but absent from the package: %s" % _x162)
+print("      DETAIL  %d in-repository path(s) cited, %d exempted as workspace paths by their own sentence"
+      % (len(_cited162), _exempt162))
+
+check("EVERY IN-REPOSITORY PATH THE README NAMES EXISTS IN THE PACKAGE",
+      not _missing162,
+      saw="a reader in a clean clone cannot open it — either ship the file, or say in the same "
+          "sentence that it is a path inside the `.chamnan/` workspace chamnan creates")
+check("...and the sweep found citations to check, so that is not a pass over nothing",
+      len(_cited162) >= 5, saw="%d path(s) cited" % len(_cited162))
+
+# The two figures that started this: a number attributed to a tool is only as good as the tool
+# being reachable. Asserted directly rather than left to the sweep, because these are the ones a
+# reader is asked to TRUST rather than merely to find.
+for _tool162 in ("tools/redactor_recall.py",):
+    check("...and %s, which the README's redaction figures are credited to, ships" % _tool162,
+          (_PKG162 / _tool162).is_file(),
+          saw="the figure and the tool that produces it must travel together")
+# ---- 163_a_secret_already_committed_is_findable.py
+# ------------------ R20.3: the staged diff cannot answer "is it already in"
+# Everything chamnan-guard did answered "is this about to go in". Somebody adopting chamnan on a
+# repository that already has a past has a different first question, and none of the thirteen
+# commands could answer it — nothing read `git log`.
+#
+# The scanner is NOT duplicated. `_added_lines` and `scan` take any unified diff and `git log -p`
+# produces one, so `--history` is the same redactor over a different input. Two scanners would
+# disagree the first time either was corrected, and this repository has that receipt.
+#
+# Driven end to end against a real repository built here, because the thing under test is whether a
+# person gets a usable answer — not whether a function returns a dict. Both directions are asserted:
+# a planted secret is found and the command fails, and a clean history is not accused.
+import subprocess as _sp163
+import sys as _sys163
+import tempfile as _tmp163
+from pathlib import Path as _P163
+import importlib as _im163
+
+_PKG163 = _P163(_im163.import_module("redact").__file__).resolve().parent.parent
+_GUARD163 = _PKG163 / "bin" / "chamnan-guard"
+
+# The shape that leaks, not a real key: an assignment whose value mixes classes and carries no
+# dictionary word. Built here rather than imported so this file does not depend on a fixture it
+# would then have to keep in step.
+_SECRET163 = "AKIA" + "IOSFODNN7" + "EXAMPLE"
+
+
+def _repo163(with_secret):
+    d = _P163(_tmp163.mkdtemp(prefix="chamnan-hist163-"))
+    run = lambda *a: _sp163.run(list(a), cwd=str(d), capture_output=True, text=True, timeout=60)
+    run("git", "init", "-q", ".")
+    run("git", "config", "user.email", "check@example.invalid")
+    run("git", "config", "user.name", "Check 163")
+    (d / ".chamnan").mkdir(exist_ok=True)
+    (d / "app.py").write_text("def main():\n    return 1\n", encoding="utf-8")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "first")
+    # The second commit is the one under test, and it is COMMITTED — not staged. A staged-diff scan
+    # sees nothing here by construction, which is the whole point of the flag.
+    if with_secret:
+        (d / "deploy.sh").write_text('AWS_SECRET_ACCESS_KEY="%s"\n' % _SECRET163, encoding="utf-8")
+    else:
+        (d / "deploy.sh").write_text('echo "deploying, nothing to see"\n', encoding="utf-8")
+    run("git", "add", "-A")
+    run("git", "commit", "-qm", "second")
+    return d
+
+
+def _guard163(d, *flags):
+    r = _sp163.run([_sys163.executable, str(_GUARD163), *flags],
+                   cwd=str(d), capture_output=True, text=True, timeout=300)
+    return r.returncode, (r.stdout or "") + (r.stderr or "")
+
+_dirty163 = _repo163(True)
+_clean163 = _repo163(False)
+
+# 1. The staged scan is blind to it, which is why the flag had to exist.
+_rc_staged163, _out_staged163 = _guard163(_dirty163)
+print("      DETAIL  staged scan of a repo whose SECRET IS ALREADY COMMITTED: exit %s"
+      % _rc_staged163)
+check("THE STAGED SCAN CANNOT SEE A SECRET THAT IS ALREADY COMMITTED",
+      "deploy.sh" not in _out_staged163,
+      saw="if the staged path already found it, this check is measuring the wrong thing")
+
+# 2. The history scan finds it, names the file, and fails.
+_rc163, _out163 = _guard163(_dirty163, "--history")
+print("      DETAIL  --history on the planted repo: exit %s, names deploy.sh: %s"
+      % (_rc163, "deploy.sh" in _out163))
+check("...and --history FINDS IT, names the file, and exits non-zero",
+      _rc163 != 0 and "deploy.sh" in _out163, saw=_out163[:200])
+
+# 🐛 Never the value. The whole promise of this command is that it reports a location, so a check
+# that only asserted "it found something" would pass on a tool that printed the key.
+check("...and it never prints the value it found",
+      _SECRET163 not in _out163,
+      saw="the command printed the credential it was reporting — the one thing it must not do")
+
+# 3. Rotation before rewrite. GitHub's own guidance, and the ORDER is the finding: a rewrite leaves
+# the blob in every fork, clone and cache, so somebody who rewrites and stops believes they are done.
+check("...and it says to rotate, not only to rewrite",
+      "otate" in _out163 and ("fork" in _out163 or "clone" in _out163),
+      saw="rewriting history is the second step and never the whole fix")
+
+# 4. A clean history is not accused. Without this the check above passes on a tool that always fails.
+_rc_ok163, _out_ok163 = _guard163(_clean163, "--history")
+print("      DETAIL  --history on the clean repo: exit %s" % _rc_ok163)
+check("...and a clean history exits 0 rather than crying wolf",
+      _rc_ok163 == 0, saw=_out_ok163[:200])
+
+# 5. Grouped by file, because 431 raw (commit, path) pairs on this package's own history was the
+# first version and it tells a reader nothing they will act on.
+check("...and the report groups by FILE, so a fixture file is one line and not two hundred",
+      "line(s)" in _out163 and "file(s)" in _out163, saw=_out163[:200])
 # ---- 16_a_cut_section_never_ships_framing_only.py
 # ------------------------------------------- a section cut to its own signposts is worse than absent
 # 🐛 [2026-09-09] `_only_the_opening_block` refused a fragment only when it was a subsequence of the
