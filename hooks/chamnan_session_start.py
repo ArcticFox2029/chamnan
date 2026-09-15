@@ -2472,6 +2472,39 @@ def main():
         _opens = _pointer.opens_by_store(root)
     except Exception:
         _opens = {}
+    # 🎯 [2026-09-12, R2 agent 2] 1.26 item 2: say when the DELIVERY failed, not when there was
+    # nothing to say. `blocklog.check` has produced exactly that sentence since 2026-09-08 — "the
+    # last block stopped early — it was cut, not shortened, so everything after the cut never
+    # reached the session" — and had no caller anywhere in `hooks/`. It was wired into
+    # `chamnan-report`, which a person runs by hand, so the one reader who needed it was the one
+    # who never saw it. That module's own docstring records the same irony about the log it writes:
+    # the numbers were "obvious in a column" and nothing ever looked at the column.
+    #
+    # `delivery_only`, because `check` also answers a standing question — "five sections have never
+    # once arrived" — which belongs to `chamnan-report`, where a person went looking for it. Leading
+    # every block with it forever is precisely the per-firing cost 1.26 forbids, and the first
+    # version of this wiring did exactly that until the output was read.
+    #
+    # 🐛 [2026-09-16] This used to run AFTER `fit.shrink` and prepend the warning to the already-
+    # finished body, on the assumption that "on the firing where it says something, the block it is
+    # prepended to is the SHORT one, since that is what being cut means." It is not: `shrink` fills
+    # to the ceiling regardless of how much room the sections it kept actually needed, so a body
+    # already sitting AT the ceiling gained bytes nothing downstream re-checked. Measured on a real
+    # firing: 9,447 bytes returned by `shrink`, +119 bytes prepended after it, 9,566 emitted against
+    # a 9,500 ceiling — 27 of the last 84 firings landed over the ceiling this way. The host then
+    # truncates the overage, which is exactly what `blocklog.check` detects, so the warning re-armed
+    # itself the next session instead of ever clearing. Reading the log HERE, before `fit.shrink`,
+    # is safe: `record()` near the end of this function is what WRITES to it, so a read this early
+    # in the same call only ever sees prior firings. Folding the line into `header` — the same way
+    # `why` above is folded in rather than appended after — means `shrink` counts it against the
+    # ceiling like everything else and can drop a section to make room, instead of a warning about a
+    # cut being the reason a block gets cut.
+    try:
+        _failed = blocklog.check(root, delivery_only=True)
+    except Exception:      # noqa: BLE001 — a report about a failure must not become one
+        _failed = []
+    if _failed:
+        header = ("_" + " Also: ".join(_failed) + "._\n\n") + header
     body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built,
                                 briefs=briefs, usage=_opens)
     if "--explain" in sys.argv:
@@ -2490,29 +2523,6 @@ def main():
     # and were correct; this is the one that runs on every session, and instructions smuggled in
     # Unicode Tag characters inside a committed source comment reached Claude Code's context
     # through it with no rendered width (R12 agent 3, reproduced end to end).
-    # 🎯 [2026-09-12, R2 agent 2] 1.26 item 2: say when the DELIVERY failed, not when there was
-    # nothing to say. `blocklog.check` has produced exactly that sentence since 2026-09-08 — "the
-    # last block stopped early — it was cut, not shortened, so everything after the cut never
-    # reached the session" — and had no caller anywhere in `hooks/`. It was wired into
-    # `chamnan-report`, which a person runs by hand, so the one reader who needed it was the one
-    # who never saw it. That module's own docstring records the same irony about the log it writes:
-    # the numbers were "obvious in a column" and nothing ever looked at the column.
-    #
-    # `delivery_only`, because `check` also answers a standing question — "five sections have never
-    # once arrived" — which belongs to `chamnan-report`, where a person went looking for it. Leading
-    # every block with it forever is precisely the per-firing cost 1.26 forbids, and the first
-    # version of this wiring did exactly that until the output was read.
-    #
-    # It costs nothing on an ordinary firing, because `check` returns an empty list when there is
-    # nothing to say — and on the firing where it says something, the block it is prepended to is
-    # the SHORT one, since that is what being cut means.
-    try:
-        _failed = blocklog.check(root, delivery_only=True)
-    except Exception:      # noqa: BLE001 — a report about a failure must not become one
-        _failed = []
-    if _failed:
-        body = ("_" + " Also: ".join(_failed) + "._\n\n") + body
-
     body = redact.for_a_terminal(body)
     # What this session was handed, as a shape rather than a copy — 188 bytes against the block's
     # ~9,000, bounded by record count, no content stored. Written AFTER `fit.shrink` and after the
