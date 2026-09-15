@@ -1892,13 +1892,40 @@ _OPENS_A_QUOTED_VALUE = re.compile(
     r"""[\w-]*\s*(?:['"]\s*)?(?:=>|""" + _KV_SEP + r""")\s*(['"])""")
 
 
+_QUALIFIED_PHRASE_ANYWHERE = _lazy(lambda: re.compile(_QUALIFIED_SECRET_PHRASE, re.I))
+
+
+def _window_anchor_hits(text):
+    """Every name a WINDOWED rule can anchor on, in order — not only `SECRET_WORDS`.
+
+    🐛 [2026-09-15] `COPULA_SECRET` was moved inside the windows on 2026-09-15 to stop it sweeping
+    the whole document, and it anchors on `SECRET_WORDS` **or** `_QUALIFIED_SECRET_PHRASE`. The
+    window builder scanned only the first, so `the staging API key is <token>` opened no window and
+    the rule that would have read it never ran there. Three prose cases in the suite went from
+    redacted to clear, which is how it was caught.
+
+    The-set-not-the-member, in the shape that is hardest to see: the two populations had been equal
+    for every rule that was windowed BEFORE, so nothing had ever distinguished "the names the
+    windows cover" from "the names the rules read". They are different sets, and this function is
+    the one place that says so. A rule that is windowed must anchor on something this returns.
+
+    Widening a window is safe by construction -- `_windows_around_secret_words`' own comment says
+    matching too much only makes a window larger, slower and never wrong -- so the merge is by
+    position with no attempt to deduplicate overlapping anchors.
+    """
+    hits = list(_secret_word_hits(text))
+    hits.extend(_QUALIFIED_PHRASE_ANYWHERE.finditer(text))
+    hits.sort(key=lambda m: m.start())
+    return hits
+
+
 def _windows_around_secret_words(text):
     """Merged [start, end) spans covering every SECRET_WORDS occurrence — or None for "all of it".
 
     Every boundary sits on a line ending, so a `^` or `$` inside a window means what it would have
     meant in the whole document. Returning None is always safe: it means scan everything.
     """
-    hits = _secret_word_hits(text)
+    hits = _window_anchor_hits(text)
     if not hits:
         return []
     spans = []

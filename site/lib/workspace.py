@@ -78,9 +78,37 @@ DEFAULT_CONFIG = {
     # budgets above have already had their say. The two are not the same measurement and cannot
     # substitute for each other: the host truncates a hook's stdout over 10,000 bytes to its first
     # 2,048 plus a path on disk, and that cut is positional, so a block can be comfortably inside
-    # every token budget and still lose its whole second half. 9,000 leaves margin under a limit
-    # that is not ours to change. Set 0 to switch the ceiling off and take the host's cut instead.
-    "output_byte_ceiling": 9000,
+    # every token budget and still lose its whole second half. Set 0 to switch the ceiling off and
+    # take the host's cut instead.
+    #
+    # 🐛 [2026-09-14] This shipped at 9,000 while `_UPPER_BOUND` — the most a config may ask for,
+    # sized against the host's own positional cut — has been 9,500 since it was written. Two
+    # numbers for the same limit, and the default was the smaller of them, so every workspace that
+    # never touched its config gave back 500 bytes it was allowed to use.
+    #
+    # Measured on this repository before changing it: at 9,000 the block delivers **5 sections**
+    # and at 9,500 it delivers **7**, for 483 more bytes — about 216 tokens.
+    #
+    # 🐛 [2026-09-15] That prediction named the wrong two sections, and the correction is the more
+    # interesting number. Measured over all 400 recorded firings, split by the ceiling in force:
+    # what 9,500 actually buys is `Recorded decisions and lessons` **15% → 100%** and `Where the
+    # last session stopped` **34% → 100%** — 14 of 25 memory entries and the last session's own
+    # stopping point, arriving every time instead of one session in six. `Recent milestones` went
+    # slightly DOWN (60% → 53%), and `This repo's own tools` gained nothing: it is still dropped
+    # **100% of the time**, as it has been in all 400 firings at either ceiling. It sits at
+    # position 1 in `fit.DROP_ORDER` and costs roughly 1,386 bytes, which has never once been
+    # available. The raise is worth more than was claimed for it, for different reasons than were
+    # claimed — and a number inside the comment that justifies a shipped default is exactly what
+    # check 44 exists to stop being wrong, one layer out.
+    #
+    # **This is a CAP and not a target, which is the reason it is safe to raise.** A block is built
+    # from what the workspace actually holds and then shrunk to fit; raising the cap charges nobody
+    # who does not reach it. Measured the same afternoon: chamnan's own repository emits 4,180
+    # bytes against the identical ceiling, and a workspace with two files emits about 1,300.
+    #
+    # The owner's wording, 2026-09-14: *"ตั้งเป็นค่ามาตรฐานไปก่อน 9500 แต่คุมว่าเฉพาะใช้งานจริง ไม่ใช่ค่าตายตัว
+    # ใครใช้ไม่ถึงก็คิดตามจริง"*.
+    "output_byte_ceiling": 9500,
     # The rules section's own budget, in characters. It had none until 2026-09-09 and was fixed at
     # 1,500 from a day when this repository had one rule; the two sections beside it in the block
     # have had a dial all along.

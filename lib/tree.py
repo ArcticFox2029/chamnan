@@ -263,12 +263,16 @@ def declared_worktree_encodings(root, paths):
     rels = [str(p) for p in paths]
     if not rels:
         return {}
+    import workspace as _ws
+
+    if not _ws.git_can_speak_for(root):
+        return {}
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "check-attr", "-z", "--stdin", "working-tree-encoding"],
             input="\0".join(rels) + "\0", capture_output=True, text=True,
             encoding="utf-8", errors="replace", stdin=None, timeout=20)
-    except (OSError, ValueError, subprocess.SubprocessError, NotImplementedError):
+    except _ws_failures():
         return {}
     if out.returncode != 0:
         return {}
@@ -280,6 +284,19 @@ def declared_worktree_encodings(root, paths):
         if value and value not in ("unspecified", "unset"):
             found[path] = value
     return found
+
+
+def _ws_failures():
+    """`workspace.git_cannot_answer()`, reached the way this file already reaches workspace.
+
+    Imported inside the function because `tree` is imported BY `workspace`; a module-level import
+    would be circular. The point is that the tuple is not restated here -- a handler naming some
+    members of a set and missing the identical one beside it is the defect `git_cannot_answer`
+    was written to end, and restating it in a second file re-opens exactly that.
+    """
+    import workspace as _ws
+
+    return _ws.git_cannot_answer()
 
 
 def _unreadable_ancestor(path, base):
@@ -333,11 +350,22 @@ def index_census(root):
     import unicodedata
     from collections import Counter
 
+    # Asked FIRST, like every other path-scoped read in this package: without it, a `root` that is
+    # not part of a repository gets answered by whatever repository sits above it, and the census
+    # then compares this tree's disk against somebody else's index.
+    import workspace as _ws
+
+    # `git_can_speak_for` and not `git_owns`: a `.chamnan/` deliberately placed in a subproject of
+    # a monorepo is a supported layout and `git_owns` answers False for it. Named here rather than
+    # behind a helper, because this is the guard the git-escalation audit reads and a reader looking
+    # for it should find it at the call it protects.
+    if not _ws.git_can_speak_for(root):
+        return {}
     try:
         out = subprocess.run(["git", "-C", str(root), "ls-files", "--stage", "-z"],
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", stdin=subprocess.DEVNULL, timeout=20)
-    except (OSError, ValueError, subprocess.SubprocessError, NotImplementedError):
+    except _ws_failures():
         return {}
     if out.returncode != 0:
         return {}

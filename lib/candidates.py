@@ -335,6 +335,24 @@ def _same_habit(root, sequence):
         if any(longer[i:i + len(shorter)] == shorter
                for i in range(len(longer) - len(shorter) + 1)):
             return other, list(got)
+        # 🐛 [2026-09-15] The three tests above — equal, a rotation, one sitting contiguously
+        # inside the other — miss the case a real command log actually produces: the same commands
+        # in the same habit at a different MULTIPLICITY. Measured on this repository's own queue:
+        # **eight candidate files carrying twenty-five observations between them, over three
+        # distinct sets of verbs.** `python3, python3, git add, git commit` and
+        # `python3, -s, python3, python3, -s, git add, git commit` are one routine written twice,
+        # and neither is a rotation or a substring of the other, so each waited alone and none
+        # ever reached the count that would make it worth capturing. The detector was splitting the
+        # evidence for a habit across files and then finding no habit.
+        #
+        # The SET is the habit. `_rotations` and the containment test stay, because they carry the
+        # stronger claim (same order, same offsets) and they are what the merge message reads
+        # from; this is the weaker claim underneath, and it only ever merges things that use the
+        # same commands. A different routine that happens to use the same verbs merges with it,
+        # which is the intended trade: this store is a hint queue, and two hints about `python3`
+        # and `git commit` are one hint.
+        if set(got) == set(want):
+            return other, list(got)
     return None
 
 

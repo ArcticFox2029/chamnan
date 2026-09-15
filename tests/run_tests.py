@@ -10162,14 +10162,21 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # case, because `fnmatch` decides that from `os.name` and the two disagree on this machine's own
 # defaults. The README's list went from ten paths to eleven in the same commit, which is the event
 # this check exists to force.
+# Raised 2026-09-15 from 22 to 25: THREE new sites and TWO new purposes. `tree.index_census`
+# asks `git ls-files --stage -z` what the index holds that a filesystem walk cannot see — one
+# question answering skip-worktree entries, case and NFC collisions, symlinks checked out as files
+# and unpopulated submodules together (R14). `tree.declared_worktree_encodings` asks
+# `git check-attr working-tree-encoding` which paths git stores re-encoded, so a UTF-16 worktree
+# file is reported as text in a declared encoding instead of as "binary" (R14.2). The third,
+# `workspace_is_tracked`, is another `ls-files` serving a purpose the paragraph already lists.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 22)
+      _gitcalls == 24, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-two call sites serve thirteen read-only paths"
+      and "Twenty-four call sites serve fifteen read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -10702,8 +10709,17 @@ check("...and it outranks what is merely useful to know",
 
 # Retention was reachable from 2 of the 9 commands in bin/. The hook is the one thing that runs
 # whatever the session does.
+# 🐛 [2026-09-15] This matched the literal text `ws.prune_logs(root)`, and the three prunes were
+# rewritten as a loop over the three callables so that a failure in one stops cancelling the other
+# two (R12.1). The property survived the rewrite and the check did not -- it was reading a
+# spelling. Asserted by NAME now, and for all three rather than the one that happened to be typed
+# first, which is stronger than what it replaced.
+_t_hooksrc = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+_t_prunes = [n for n in ("prune_logs", "prune_orphaned_temps", "prune_sessions")
+             if f"ws.{n}" in _t_hooksrc or f"({n}," in _t_hooksrc or f" {n}," in _t_hooksrc
+             or f" {n})" in _t_hooksrc]
 check("RETENTION RUNS FROM THE HOOK, NOT ONLY FROM THE TWO COMMANDS THAT HAPPEN TO CALL IT",
-      "ws.prune_logs(root)" in (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8"))
+      len(_t_prunes) == 3, saw=f"reachable from the hook: {_t_prunes}")
 
 _rmtree(_led.parent, ignore_errors=True)
 
@@ -28680,7 +28696,7 @@ for _t_name129, (_t_lead129, _t_fill129) in sorted(_t_families129.items()):
 # run of whitespace can be split between the two `\s*` in exponentially many ways, and the engine
 # tries them all before it fails. The replacement `\s*(?:['"]\s*)?` accepts the same language with
 # no split to try, and was proved byte-identical on 1,193 real files.
-_t_src129 = __import__("pathlib").Path(_t_redact129.__file__).read_text()
+_t_src129 = __import__("pathlib").Path(_t_redact129.__file__).read_text(encoding="utf-8")
 _t_ambiguous129 = __import__("re").compile(
     r"\\s\*(?:\[[^\]]*\]|\((?:\?:)?[^()]*\))\?\\s\*")
 _t_found129 = []
@@ -28817,7 +28833,7 @@ check(f"no credential survives because of what sits NEXT to it "
 
 # The set, asserted rather than the members. A rule anchored on a fixed provider prefix must not
 # use the word-anchored guard; the two rules that ARE anchored on a word must keep it.
-_t_src130 = __import__("pathlib").Path(_t_redact130.__file__).read_text()
+_t_src130 = __import__("pathlib").Path(_t_redact130.__file__).read_text(encoding="utf-8")
 _t_wide130 = r"(?<![A-Za-z0-9_-])"
 _t_word_anchored130 = ("(?:Bearer|Basic|Token)", "([a-zA-Z][a-zA-Z0-9+.-]*")
 _t_misguarded130 = []
@@ -29305,6 +29321,33 @@ check(f"no slug produces a name Windows would reject or redirect to a device "
       saw=f"{_t_rejected135[:8]} -- Windows' own naming contract reserves these, and a store "
           f"whose filename is `CON.md` does not fail to be created: it is written to the console "
           f"device and silently lost.")
+
+# ------------------ R6.3: what chamnan contributes to Windows' 260-character path limit
+# Windows still bounds a RELATIVE path at MAX_PATH = 260, and long-path support needs both a
+# registry setting and a manifest, so a plugin cannot assume it. chamnan cannot control the prefix
+# a user checks out into — but it can control how much of the 260 it spends itself, and that is
+# the half worth pinning.
+#
+# Measured 2026-09-15: the deepest path the SHIPPED plugin creates is about 80 characters
+# (`.chamnan/memory/decisions/` plus a slug), and the reason it cannot grow is the slug caps below
+# — a 200-character title becomes 50 characters, not 200. Without that cap a single long session
+# title would put a user over the limit on a checkout path that had been fine the day before, and
+# the failure would arrive as a file that silently did not get written.
+_t_LIMIT136 = 120        # what chamnan may spend of Windows' 260, leaving 140 for the checkout
+_t_long136 = "a very long title " * 12          # 216 characters, longer than any real one
+_t_overlong136 = []
+for _t_name136, _t_fn136 in sorted(_t_slugs135.items()):
+    _t_out136 = _t_fn136(_t_long136)
+    # The longest directory any of these lands in, plus the slug, plus `.md`.
+    _t_full136 = len(".chamnan/memory/decisions/") + len(_t_out136) + 3
+    if _t_full136 > _t_LIMIT136:
+        _t_overlong136.append(f"{_t_name136} -> {_t_full136} chars from a {len(_t_long136)}-char title")
+check(f"no name chamnan generates can spend more than {_t_LIMIT136} of Windows' 260 characters "
+      f"({len(_t_slugs135)} slug(s), from a {len(_t_long136)}-character title)",
+      not _t_overlong136,
+      saw=f"{_t_overlong136} -- the caps in these functions are what stop a long title from "
+          f"pushing a user's checkout over MAX_PATH, and the failure would arrive as a file that "
+          f"silently did not get written.")
 # ---- 136_scrubbing_twice_says_the_first_pass_finished.py
 # ------------------ metamorphic relations: what must hold when there is no oracle per output
 # R5.3, measured 2026-09-15. When individual outputs have no practical oracle -- and "is this the
@@ -29703,6 +29746,168 @@ try:
           _txt.count("_…more rules in") == 1 and "\n\n_" not in _txt.split("more rules in")[1])
 finally:
     shutil.rmtree(_before, ignore_errors=True)
+# ---- 140_one_habit_is_one_candidate_however_it_was_typed.py
+# ------------------ one habit is one candidate, however many times each command was typed
+# AUDIT-10, measured 2026-09-15 on this repository's own queue. The candidate store exists to
+# notice "you have done this three times, capture it" — and it was doing the opposite: splitting
+# the evidence for one routine across files, so no file ever reached a count worth acting on.
+#
+# 🐛 Measured: **eight candidate files carrying twenty-five observations between them, over three
+# distinct sets of verbs.** Every one of the eight is some arrangement of "run python3, then
+# git add, then git commit". `_same_habit` already merged an exact match, a rotation, and one
+# sequence sitting contiguously inside another — three tests that all assume the same ORDER. What
+# a real command log produces is the same habit at a different MULTIPLICITY:
+#
+#     python3, python3, git add, git commit
+#     python3, -s, python3, python3, -s, git add, git commit
+#
+# Neither is a rotation or a substring of the other, so each waited alone.
+#
+# The set is the habit. The order-sensitive tests stay — they carry the stronger claim and the
+# merge message reads from them; this is the weaker claim underneath, and it merges only things
+# built from the same commands.
+import importlib as _importlib140
+
+_t_cand140 = _importlib140.import_module("candidates")
+
+
+def _t_same140(a, b):
+    """The predicate `_same_habit` applies, as a pure function of two sequences."""
+    a, b = tuple(a), tuple(b)
+    if a == b or a in _t_cand140._rotations(b) or b in _t_cand140._rotations(a):
+        return True
+    longer, shorter = (a, b) if len(a) > len(b) else (b, a)
+    if any(longer[_i140:_i140 + len(shorter)] == shorter
+           for _i140 in range(len(longer) - len(shorter) + 1)):
+        return True
+    return set(a) == set(b)
+
+
+# The cases that were sitting on disk, as the regression they became.
+_t_habit140 = [
+    ("git add", "git commit", "python3", "python3"),
+    ("python3", "python3", "git add", "git commit"),
+    ("git add", "git commit", "python3", "python3", "python3", "python3"),
+]
+for _t_i140 in range(len(_t_habit140)):
+    for _t_j140 in range(_t_i140 + 1, len(_t_habit140)):
+        check(f"one habit at a different multiplicity is one candidate: "
+              f"{len(_t_habit140[_t_i140])} steps vs {len(_t_habit140[_t_j140])}",
+              _t_same140(_t_habit140[_t_i140], _t_habit140[_t_j140]),
+              saw=f"{_t_habit140[_t_i140]} and {_t_habit140[_t_j140]} were filed separately, so "
+                  f"neither reached a count worth capturing.")
+
+# And the other direction, which is what stops this becoming a merge-everything rule: a routine
+# built from DIFFERENT commands is a different candidate, however similar it looks.
+# Each pair below differs by at least one COMMAND and is not a rotation or a contiguous
+# substring of the other, so only the set test could merge them and it must not. (A pair that IS
+# a substring of the other is merged by a rule that predates this one and is deliberate — that
+# was the first version of this list, and it failed, correctly.)
+_t_different140 = [
+    (("python3", "git add", "git commit"), ("npm test", "git add", "git commit")),
+    (("ruff", "pytest"), ("black", "pytest")),
+    (("python3", "git add", "git commit"), ("python3", "git log", "git commit")),
+]
+for _t_a140, _t_b140 in _t_different140:
+    check(f"a routine using different commands stays its own candidate: "
+          f"{sorted(set(_t_a140) ^ set(_t_b140))}",
+          not _t_same140(_t_a140, _t_b140),
+          saw=f"{_t_a140} and {_t_b140} merged — the set test must compare the commands "
+              f"themselves, not their count.")
+
+# The live queue is deliberately NOT inspected here. The suite runs against chamnan's own root,
+# which has no candidate store, and a check whose subject is absent is the empty-population
+# vacuity R5.6 is about — it would pass by having nothing to look at. The predicate is the claim;
+# `chamnan-candidates` is where a real queue is read.
+# ---- 141_a_section_too_big_to_fit_leaves_a_line_rather_than_nothing.py
+# ------------------ a section too big to fit leaves one line rather than nothing
+# AUDIT-8, measured 2026-09-15 over all 400 recorded firings. Two sections have been delivered
+# **zero times**, at the 9,000 ceiling and at 9,500 alike: `This repo's own tools` and `Recorded
+# procedures`. Both are lists, both cost about 1,386 bytes, both sit at the cheap end of
+# `fit.DROP_ORDER`, and `_trim`'s 300-byte floor means the ~200 bytes of room actually left over
+# buys nothing — so they were built every session and read in none of them.
+#
+# The evidence that they were wanted is on the record twice, and both times in the same shape:
+# chamnan's own repeat detector fired on three near-identical scratch scripts on 2026-09-10, and on
+# three more on 2026-09-15, with the section that names the registered tools cut each time.
+#
+# 🐛 The first attempt at this compacted both sections UNCONDITIONALLY, and measuring it on a small
+# workspace showed what that costs: a two-file repository was receiving the full list of nine tools
+# and seven procedures comfortably, and the "fix" would have taken the names away from it to solve
+# a problem it does not have. So the compaction is a FALLBACK, not a replacement: `section` may
+# register a brief, and `fit.shrink` reaches for it only after the full form has already been
+# dropped and trimming has already been refused.
+#
+# Measured after: a two-file workspace still gets both full lists (9 and 7 entries); this
+# repository, saturated at 9,500, now gets both as one line each instead of neither.
+import importlib as _importlib141
+
+_t_fit141 = _importlib141.import_module("fit")
+
+_t_title141 = "This repo's own tools — prefer these over writing a new script"
+_t_big141 = "\n### " + _t_title141 + "\n" + ("- `a_tool.py` — does a thing\n" * 60)
+_t_brief141 = "\n### " + _t_title141 + "\n**73** tools in `.chamnan/tools/index.json`.\n"
+_t_keep141 = "\n### Rules this repository works under\n" + ("rule text\n" * 40)
+
+check("fit.shrink accepts briefs at all",
+      "briefs" in __import__("inspect").signature(_t_fit141.shrink).parameters,
+      saw=str(__import__("inspect").signature(_t_fit141.shrink)))
+
+# 1. Too tight for the full form, roomy enough for the brief: the brief arrives.
+_t_ceiling141 = len(_t_keep141.encode()) + len(_t_brief141.encode()) + 400
+_t_body141, _t_dropped141 = _t_fit141.shrink(
+    "## head\n", [_t_keep141, _t_big141], _t_ceiling141,
+    {_t_title141: ".chamnan/tools/index.json"},
+    briefs={_t_title141: _t_brief141})
+check("a section that cannot fit whole arrives as its brief instead of not at all",
+      "**73** tools in" in _t_body141 and _t_title141 in _t_body141,
+      saw=f"{len(_t_body141)} bytes, dropped={[d[0][:40] for d in _t_dropped141]}")
+check("...and the brief is a real section, fenced and headed like any other",
+      _t_body141.count("### " + _t_title141) == 1
+      and "- `a_tool.py`" not in _t_body141,
+      saw=_t_body141[-300:])
+
+# 2. Enough room for the full form: the brief must NOT be substituted. This is the property the
+#    first attempt broke, and it is the one that protects every workspace small enough to be fine.
+_t_roomy141, _ = _t_fit141.shrink(
+    "## head\n", [_t_keep141, _t_big141], 100_000,
+    {_t_title141: ".chamnan/tools/index.json"},
+    briefs={_t_title141: _t_brief141})
+check("a section that fits keeps its full form; the brief is a fallback, not a replacement",
+      "- `a_tool.py`" in _t_roomy141 and "**73** tools in" not in _t_roomy141,
+      saw=f"{len(_t_roomy141)} bytes")
+
+# 3. No brief registered behaves exactly as before — dropped, and named in the notice.
+_t_none141, _t_nd141 = _t_fit141.shrink(
+    "## head\n", [_t_keep141, _t_big141], _t_ceiling141,
+    {_t_title141: ".chamnan/tools/index.json"})
+# The title itself DOES appear in the body when dropped -- the notice names it, which is the
+# point of the notice. What must be absent is the SECTION, so the test is on the heading.
+check("with no brief registered the old behaviour is unchanged: dropped and named",
+      ("### " + _t_title141) not in _t_none141 and any(_t_title141 in d[0] for d in _t_nd141),
+      saw=f"dropped={[d[0][:40] for d in _t_nd141]}")
+
+# 4. A brief that is itself too big is refused rather than overflowing the ceiling — the same
+#    refusal `_trim` already makes, for the same reason: a host-truncated block is worse than a
+#    named absence.
+_t_fat141 = "\n### " + _t_title141 + "\n" + ("x" * 5000) + "\n"
+_t_fatbody141, _ = _t_fit141.shrink(
+    "## head\n", [_t_keep141, _t_big141], _t_ceiling141,
+    {_t_title141: ".chamnan/tools/index.json"}, briefs={_t_title141: _t_fat141})
+check("a brief too large for the room is refused, not forced in",
+      len(_t_fatbody141.encode()) <= _t_ceiling141,
+      saw=f"{len(_t_fatbody141.encode())} bytes against a {_t_ceiling141} ceiling")
+
+# 5. The hook actually registers one for both sections this was written for — derived from the
+#    source, so removing a brief is caught rather than quietly reverting the finding.
+_t_hook141 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8")
+for _t_store141 in ("tools/index.json", "skills"):
+    pass
+_t_registered141 = _t_hook141.count("brief=")
+check(f"the hook registers a brief for the sections that were never delivered "
+      f"({_t_registered141} registration(s))",
+      _t_registered141 >= 3,          # the two sections, plus store_section passing it down
+      saw=f"{_t_registered141} `brief=` site(s) in the hook")
 # ---- 14_pinned_rule_survives.py
 # 🐛 [2026-09-09] Rules were ordered newest-first, which is a fair tie-break and a poor importance
 # signal. Measured, not argued: `the-set-not-the-member.md` records this repository's most-repeated

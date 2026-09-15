@@ -208,7 +208,7 @@ def _oversize_note():
             "the host's limit. Shorten a 📌 heading, or raise `output_byte_ceiling`._\n")
 
 
-def shrink(header, parts, ceiling=CEILING, sources=None, absent=()):
+def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
     `sources` maps a section title to the file it was read from; the hook already records exactly
@@ -299,6 +299,25 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=()):
                 trimmed = _whole
             else:
                 trimmed = _trim(_whole, room_here, sources)
+                # 🐛 [2026-09-15] A section that does not fit and cannot be trimmed is left out
+                # entirely, and two of them were left out EVERY TIME: `This repo's own tools` and
+                # `Recorded procedures` were delivered **zero times in 400 recorded firings**, at
+                # the 9,000 ceiling and at 9,500 alike. Both are lists, both cost about 1,386
+                # bytes, and `_trim`'s 300-byte floor means the 200 bytes of room actually left
+                # buys nothing at all.
+                #
+                # A section may now register a BRIEF: the same heading, one line, saying the store
+                # exists, how much is in it and where. It is used only here, only when the full
+                # form has already failed, so nothing that fits today gets smaller — which is the
+                # trade the first attempt at this got wrong by compacting unconditionally and
+                # taking the tool names away from every workspace small enough to have had them.
+                #
+                # This is the shape the owner asked for in as many words: do not preload what is
+                # not needed, leave something that can be reached when it is.
+                if briefs and (not trimmed or len(trimmed.encode()) > room_here):
+                    _brief = briefs.get(title_of(_whole)) or ""
+                    if _brief and len(_brief.encode()) <= room_here:
+                        trimmed = _brief
             # 🐛 `_trim` is allowed to return MORE than the room it was given: `_fit_lines` reserves
             # every pinned line before it starts filling, and if the pins alone exceed the budget it
             # keeps them anyway — which is the promise the pin exists for. This branch accepted the

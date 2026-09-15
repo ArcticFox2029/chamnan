@@ -359,7 +359,14 @@ def display(path, root):
 _FENCE_SHAPED = re.compile(r"\[(/?)repo:[0-9a-fA-F]{6}\]")
 
 
-def section(title, body, source=""):
+def section(title, body, source="", brief=""):
+    """The section, and optionally a one-line form of it for when the full one will not fit.
+
+    `brief` is rendered identically -- same heading, same fence, same escaping -- so whatever
+    `fit.shrink` substitutes is a real section and not a fragment. It is never emitted here: this
+    function always returns the full form, and the brief travels in the ledger for `shrink` to
+    reach for only after the full form has already been dropped. (AUDIT-8.)
+    """
     if not body.strip():
         return ""
     # 🐛 [2026-09-06] This escaped exactly ONE string: the literal close mark of the session in
@@ -385,6 +392,10 @@ def section(title, body, source=""):
     # they were ASCII is wrong on a repository whose STATE.md is half Thai, and the error would
     # hide inside the remainder line where nobody would see it.
     row = {"title": title, "tokens": tokens.estimate(text), "source": source, "fenced": True}
+    if brief.strip():
+        _bf = mdblock.close_dangling_fence(
+            _FENCE_SHAPED.sub(lambda m: f"[{m.group(1)}repo:escaped]", brief.rstrip()))
+        row["brief"] = f"\n### {title}\n{OPEN_MARK}\n{_bf}\n{CLOSE_MARK}\n"
     # Replace rather than append. A section can legitimately be rendered more than once — the index
     # is re-rendered at lower resolution when the block is over its byte ceiling — and a second row
     # for the same title would count it twice in every number --explain prints.
@@ -397,7 +408,7 @@ def section(title, body, source=""):
     return text
 
 
-def store_section(root, title, body, source, scan_sources=None):
+def store_section(root, title, body, source, scan_sources=None, brief=""):
     """`section`, refusing source files that still hold both sides of a merge.
 
     🐛 [2026-09-12] The conflict guard existed for rules, STATE.md and MAP.md, and nowhere at the
@@ -447,7 +458,7 @@ def store_section(root, title, body, source, scan_sources=None):
             body = (f"**This store is mid-merge: {shown}{more}.** Nothing from this section is "
                     "injected this session, because neither side of an unresolved conflict is what "
                     "this repository decided. Resolve the conflict markers and it comes back.")
-    return section(title, body, source)
+    return section(title, body, source, brief=brief)
 
 
 def skipped(title, reason):
@@ -1241,6 +1252,7 @@ def main():
     header = "## chamnan\n"
     ceiling = cfg.get("output_byte_ceiling", fit.CEILING)
     sources = {}
+    briefs = {}          # title -> the one-line form, for when the full one will not fit
     # 🐛 One unreadable path under `.chamnan/` used to take the WHOLE injection with it. Four of
     # the five hooks died with PermissionError — stdout empty, exit 1 — and a hook's stderr never
     # reaches the transcript, so the session simply began with no index, no rules and no handoff,
@@ -2013,9 +2025,17 @@ def main():
                 # Scrubbed like every other section. A tool description is text a person wrote and
                 # this file read off disk; it reached the injection raw only because index.json looked
                 # like chamnan's own data rather than a place somebody could paste a token.
+                # 🐛 [2026-09-15] This section was delivered ZERO times in 400 recorded firings,
+                # at the 9,000 ceiling and at 9,500 alike: about 1,386 bytes at rank 1, dropped
+                # before anything else and never small enough to be restored. The evidence that it
+                # was wanted is on the record twice — chamnan's own repeat detector fired on three
+                # near-identical scratch scripts on 2026-09-10 and on three more on 2026-09-15,
+                # both times with this section cut. A brief is what arrives when the list cannot.
                 out.append(store_section(
                     root, "This repo's own tools — prefer these over writing a new script",
-                    redact.scrub("\n".join(lines)), ".chamnan/tools/index.json"))
+                    redact.scrub("\n".join(lines)), ".chamnan/tools/index.json",
+                    brief=f"**{len(tools)}** tools in `{display(wsdir/'tools', root)}/index.json`; "
+                          f"`chamnan-promote` adds one."))
 
         if cfg.get("capture", True):
             # A committed symlink under `skills/` pointing outside the repository put that
@@ -2095,7 +2115,15 @@ def main():
                     # to be the one exception.
                     redact.scrub("\n".join(lines)) +
                     f"\n\nFull text in `{display(wsdir/'skills', root)}/`. Load one when it applies; "
-                    f"do not read them all.", ".chamnan/skills/"))
+                    f"do not read them all.", ".chamnan/skills/",
+                    # Same finding, same number, and the one line that is NOT inventory comes with
+                    # it: a case or normalisation collision reports damage rather than contents,
+                    # fires only on a case-sensitive checkout, and is the last moment before a
+                    # clone to macOS or Windows silently keeps one of two procedures.
+                    brief=(f"**{len(skills)}** in `{display(wsdir/'skills', root)}/` — read the one "
+                           f"that matches before starting that kind of task, not all of them."
+                           + ("\n" + "\n".join(l for l in lines if "⚠️" in l)
+                              if any("⚠️" in l for l in lines) else ""))))
 
         if cfg.get("promote", True):
             # Written by chamnan_session_end.py, which cannot speak for itself: SessionEnd is not one of the
@@ -2303,10 +2331,12 @@ def main():
         header = "## chamnan\n" + (why + "\n" if why else "")
 
         sources = {e["title"]: e.get("source", "") for e in LEDGER}
+        briefs = {e["title"]: e["brief"] for e in LEDGER if e.get("brief")}
     except Exception as _exc:
         out.append("\n_chamnan: this block stopped early — " + type(_exc).__name__
                    + ". What is above is complete; what is missing could not be read._\n")
-    body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built)
+    body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built,
+                                briefs=briefs)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
     # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page
