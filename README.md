@@ -1012,7 +1012,7 @@ From a shell, in the repository:
 | `chamnan-candidates` | list detected sequences waiting for review — same as `chamnan-candidates list`. **Measured 2026-09-02: 0 candidates across 2,905 logged commands in four working repositories, and still 0 at half its shipped thresholds. Re-measured 2026-09-07: it fires.** Eight candidates in this repository's own workspace, on a day of unusually repetitive work. The earlier figure was true when it was taken and is left here because the honest reading is that this detector needs a particular shape of day rather than that it does nothing. The scratch-script notice in the same feature is a different mechanism and fires more often. Cost is 1.14 ms per tool call. |
 | `chamnan-candidates confirm/reject/edit <id>` | mark a candidate worth keeping, discard it, or print its file path |
 | `chamnan-candidates promote <id> [tool\|skill]` | with no destination, suggest one and write nothing; `tool <name>` installs an executable skeleton; `skill` prints the sequence for `/chamnan:capture` |
-| `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from `tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
+| `chamnan-candidates demote <tool-name>` | undo a promotion — removes it from the workspace's `.chamnan/tools/index.json`, deletes the file, and writes a fresh candidate from its description so it goes through review again |
 | `chamnan-schedule set 2h31m` | finish this session's work later, when the limit has reset. A quiet process waits, opens the CLI again, points it at `.chamnan/STATE.md`, and exits |
 | `chamnan-schedule set 11:10pm` | the same at a wall-clock time. A time already past today means tomorrow |
 | `chamnan-schedule set 2h31m --note "…"` | an extra instruction for the resumed session |
@@ -1224,10 +1224,16 @@ corpus of 99 secret shapes and 48 ordinary strings that must survive:
 | weakest class | **93.8%** — 15 of 16 bare-token shapes, the class with no name or column to go on |
 | precision, on the corpus | **100%** — 0 of 48 ordinary strings damaged. Eight of those decoys were added on 2026-09-02 after the redactor was run over four cloned repositories and found to be destroying ordinary prose in the committed `MAP.md` — `Basic Authentication` and `acquiring default credentials failed.` among them. The figure was 100% before that too, because the corpus held identifiers and config lines and no sentences. It is the same number against a corpus that can now fail. |
 | precision, through the paths chamnan actually uses | **0 false positives** on a 257-file application |
+| touch rate on its own shipped tree | **37 lines of 64,406 — 1 in 1,741** (2026-09-15). Every one is a known pattern already hand-audited into `tests/redactor_selfscan_baseline.txt`, and the tree holds no secrets, so none of the 37 is a catch. This is the rate over everything that passes through, which the recall figure above is not. Re-derive it by running the redactor over every tracked file in a clone — the sweep `tests/run_tests.py` performs on every gate run, which is why a new one shows up as a failing check rather than as a number nobody re-ran. |
 | `scrub()` applied to whole source files | **69 lines damaged**, down from 144 |
 
-Read those honestly, and mind which is which — the third row is what a user experiences, the fourth
-is a property of one function measured on input it is never given.
+Read those honestly, and mind which is which — the third and fourth rows are what a user
+experiences, the fifth is a property of one function measured on input it is never given.
+
+The gap those rows exist to close is a named one: a figure measured on one content class does not
+transfer to another (Pendlebury et al., *TESSERACT*, USENIX Security 2019, call it spatial bias).
+The recall figure is measured on credentials; the touch rate is measured on the prose, code and
+config this package actually writes. Both are here because neither answers the other's question.
 
 **100% on a 48-string decoy corpus is "no known false positive", not "no false positives"** — so
 here is the measurement on a real 257-file application, taken twice, because the two numbers answer
