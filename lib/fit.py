@@ -192,12 +192,25 @@ def reorder(parts):
     is followed by "Full detail lives in MAP.md", and by the staleness warning when there is one --
     and moving the heading away from its own footnotes would be worse than any ordering gain.
     """
-    lead, blocks = [], []
+    # 🎯 [2026-09-15] A bare line carrying the warning mark, sitting AHEAD of every heading, is the
+    # most expensive line in the block: the prompt cache is prefix-based, so a notice that appears
+    # the moment a file is written and disappears when the map is rebuilt invalidates everything
+    # behind it, several times in an ordinary session. Measured at 4.4% of the block surviving a
+    # mid-session file write, against 95.4% of its bytes being unchanged.
+    #
+    # Moved HERE rather than at each site that writes one. There are eleven of those and a twelfth
+    # will be added by somebody who has not read this; ordering is a property of the emission, and
+    # this function is where emission order is decided. A notice that FOLLOWS a section is left
+    # alone — it is that section's footnote, it moves with it, and a section whose content changed
+    # has already paid for the reprocess.
+    lead, tail, blocks = [], [], []
     for part in parts:
         if title_of(part):
             blocks.append([part])
         elif blocks:
             blocks[-1].append(part)
+        elif part.lstrip().startswith("_⚠"):
+            tail.append(part)          # about the moment: after everything read from files
         else:
             lead.append(part)          # framing, ledger line, skills line: always first
 
@@ -212,7 +225,7 @@ def reorder(parts):
         return (1, 0)
 
     ordered = sorted(range(len(blocks)), key=lambda i: (rank(blocks[i]), i))
-    return lead + [part for i in ordered for part in blocks[i]]
+    return lead + [part for i in ordered for part in blocks[i]] + tail
 
 
 def _followers(order, i):

@@ -545,7 +545,7 @@ def print_inventory(root):
                     _rb_steps.append(f"{_rb_i} of {len(_rb_sizes)} would need {_rb_run:,}c")
             _short.append(
                 "What raising it would cost: " + "; ".join(_rb_steps)
-                + f". The whole session block is capped at {fit.CEILING:,} bytes — rules, the "
+                + f". The whole session block is capped at {_configured_ceiling(root):,} bytes — rules, the "
                   f"architecture index, work in flight and everything else together — so a budget "
                   f"much past half of that cannot be spent whatever it is set to.")
         except Exception:      # noqa: BLE001 — a report line must not take the command down
@@ -824,7 +824,19 @@ def print_block_trend(root):
     sizes = [r.get("bytes", 0) for r in records if isinstance(r.get("bytes"), int)]
     if not sizes:
         return
-    now, ceiling = sizes[-1], fit.CEILING
+    # 🐛 [2026-09-15] `fit.CEILING` is the SHIPPED DEFAULT, 9,000, and this repository runs at the
+    # 9,500 its config asks for — so the one line a person reads to answer "how close am I" said
+    # "9,493 bytes of 9,000 (105% of the ceiling)" about a block that was comfortably inside its
+    # own. The persistence section forty lines up already reads the config; this did not, and
+    # neither did the sentence in the rules-pressure paragraph. One rule, three places, honoured in
+    # one of them.
+    #
+    # The recorded ceiling is better than either: `blocklog` writes the value each block was
+    # actually built against, so a config changed since then cannot make an old measurement lie.
+    _recorded = records[-1].get("ceiling")
+    if not isinstance(_recorded, int) or _recorded <= 0:
+        _recorded = _configured_ceiling(root)
+    now, ceiling = sizes[-1], _recorded
     print("\nWhat each session was handed")
     share = now * 100 // max(ceiling, 1)
     print(f"  last block          {now:,} bytes of {ceiling:,}  ({share}% of the ceiling)")
@@ -1092,6 +1104,21 @@ def print_pointer(fired, named, opened, root=None):
 
 
 KNOWN_FLAGS = ()
+
+
+def _configured_ceiling(root):
+    """The ceiling this workspace actually runs at, not the one the package ships with.
+
+    Three places asked this question and one of them read the config. `fit.CEILING` is the default
+    a workspace gets before anybody changes it, and quoting it at somebody who has changed it turns
+    every percentage in this report into a wrong number in the confident direction.
+    """
+    try:
+        value = ws.load_config(root).get("output_byte_ceiling",
+                                         ws.DEFAULT_CONFIG["output_byte_ceiling"])
+        return value if isinstance(value, int) and value > 0 else fit.CEILING
+    except Exception:                        # noqa: BLE001 — a report must not fail on a bad config
+        return fit.CEILING
 
 
 def main(argv):

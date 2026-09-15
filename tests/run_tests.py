@@ -6765,10 +6765,50 @@ check("two consecutive injections differ only in the fence nonce", _norm[0] == _
 check("...and the nonce really does differ between them", _runs[0] != _runs[1])
 check("no live clock leaks into the block",
       not re.search(r"\b\d{2}:\d{2}:\d{2}\b", _runs[0]))
-check("the framing describes the nonce accurately — per injection, not per session",
-      "every time this block is injected" in _runs[0])
+# 🐛 [2026-09-15] This pinned the sentence "generated fresh every time this block is injected",
+# and that sentence has been FALSE since 2026-09-10, when the marker was derived from the session
+# id precisely so a session's firings would be byte-identical. The check kept it in place: the
+# fixture above feeds the hook an EMPTY payload, so `nonce_for(None)` takes its documented fallback
+# to a random marker, and the check then described the fallback as the contract.
+#
+# That is the same error, twice in one day, from two directions: a measurement taken with an
+# incomplete payload reports the property of the fallback path, not of the system. Claude Code
+# always sends `session_id`.
+#
+# What the framing has to be is TRUE, because a reader uses it to decide whether the fence can be
+# forged. The marker is a dummy secret — printed in full, protecting nothing by itself, and doing
+# its whole job by being unguessable to a file written before the session existed.
+check("the framing describes the marker accurately — a dummy secret, one per session",
+      "dummy secret" in _runs[0] and "different in every session" in _runs[0],
+      saw=_runs[0][:200])
 check("...and the run actually produced a block to check, rather than passing on emptiness",
       len(_runs[0]) > 1000)
+
+# And the contract itself, which nothing tested: the same session twice is byte-identical INCLUDING
+# the marker, two different sessions are not, and a host that sends no id still gets a random one.
+# The first of those is what the prompt cache is bought with; the second is what makes the fence
+# unforgeable; the third is the fallback, which is allowed to exist but is not the contract.
+_sid_out = []
+os.chdir(str(_noncerepo))
+try:
+    for _sid in ("session-aaa", "session-aaa", "session-bbb"):
+        _buf = _io.StringIO()
+        _stdin_before = sys.stdin
+        sys.stdin = _io.StringIO(json.dumps({"hook_event_name": "SessionStart",
+                                             "source": "startup", "session_id": _sid}))
+        try:
+            with _ctx.redirect_stdout(_buf):
+                importlib.reload(_ss2)
+                _ss2.main()
+        finally:
+            sys.stdin = _stdin_before
+        _sid_out.append(_buf.getvalue())
+finally:
+    os.chdir(_cwd_before)
+check("TWO FIRINGS OF ONE SESSION ARE BYTE-IDENTICAL, WHICH IS WHAT THE PROMPT CACHE IS BOUGHT WITH",
+      _sid_out[0] == _sid_out[1] and len(_sid_out[0]) > 500)
+check("...and a different session gets a different marker, which is what makes it unforgeable",
+      _sid_out[2] != _sid_out[0])
 _rmtree(_noncerepo, ignore_errors=True)
 
 # ----------------------------- the repo fence, attacked rather than admired
@@ -30851,6 +30891,217 @@ try:
           "Rule 8" in memory_mod.rules_text(_d))      # newest still leads
 finally:
     shutil.rmtree(_d, ignore_errors=True)
+# ---- 150_the_windows_answers_reachable_without_windows.py
+# ------------------ three items banked for want of a Windows runner, answered without one
+# R6.1, R6.3 and R6.7 were banked on 2026-09-13 as "not refused; not reachable from here" — all
+# three said they needed a real Windows runner, or pyfakefs, which is a dependency this package
+# does not take. Re-read on 2026-09-15, two of the three do not need either, and the evidence for
+# that is in the findings' own citations: `PureWindowsPath` exists precisely so Windows path logic
+# can be exercised on a host that is not Windows, and a path LENGTH is arithmetic.
+#
+# What genuinely still needs native Windows is behaviour that needs a syscall — file locking,
+# process launch, a real `PATHEXT` resolution. Those go to CI. What does not need it is asserted
+# here, today, which is three items that had been sitting behind a machine nobody has.
+import ast as _ast150
+import os as _os150
+from pathlib import PureWindowsPath as _PW150
+
+_PY150 = [p for d in ("lib", "hooks", "bin") for p in (ROOT / d).rglob("*")
+          if p.is_file() and (p.suffix == ".py" or (d == "bin" and p.suffix == ""))]
+
+# ------------------ R6.7 · `shutil.which` changed on Windows in 3.12 and says nothing about it
+# From 3.12 `PATHEXT` applies even when the command already carries a directory or an extension,
+# extensionless files can be found, and current-directory prepending became conditional. The same
+# fake PATH can therefore SELECT A DIFFERENT EXECUTABLE on two supported interpreters with no
+# error — which matters only to a caller that uses the RETURNED PATH.
+#
+# chamnan has two call sites and both ask "is it there", never "which one". That is what makes the
+# change unreachable, and it is a property of the call sites rather than of the platform, so it can
+# be pinned here. A third site that used the path would be a real Windows exposure and this fails.
+_which_bad150 = []
+for _p in _PY150:
+    try:
+        _tree = _ast150.parse(_p.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, SyntaxError):
+        continue
+    _parents = {}
+    for _n in _ast150.walk(_tree):
+        for _c in _ast150.iter_child_nodes(_n):
+            _parents[_c] = _n
+    for _n in _ast150.walk(_tree):
+        if not (isinstance(_n, _ast150.Call) and isinstance(_n.func, _ast150.Attribute)
+                and _n.func.attr == "which"):
+            continue
+        _up = _parents.get(_n)
+        # Used as a truth value: `is None`, `is not None`, `if which(...)`, `bool(...)`.
+        _ok = (isinstance(_up, _ast150.Compare)
+               and any(isinstance(o, (_ast150.Is, _ast150.IsNot)) for o in _up.ops)) \
+            or isinstance(_up, (_ast150.If, _ast150.BoolOp, _ast150.UnaryOp, _ast150.IfExp))
+        if not _ok:
+            _which_bad150.append(f"{_p.relative_to(ROOT)}:{_n.lineno}")
+
+for _b in _which_bad150:
+    print(f"      DETAIL  shutil.which result used as a path: {_b}")
+check("R6.7 · NO `shutil.which` RESULT IS USED AS A PATH, so 3.12's PATHEXT change cannot reach us",
+      not _which_bad150)
+# And the population is not empty, or the check above passes by having nothing to look at.
+_which_seen150 = sum(_p.read_text(encoding="utf-8", errors="replace").count("shutil.which(")
+                     for _p in _PY150)
+check("...and there were call sites to check, so that is not a vacuous pass",
+      _which_seen150 >= 2, saw=f"{_which_seen150} call site(s)")
+
+# ------------------ R6.3 · MAX_PATH is 260, and a relative path stays bounded by it
+# The finding asks for a release lane whose checkout prefix eats most of 260 characters. That lane
+# needs Windows. What does NOT need Windows is the half that decides whether the lane could ever
+# pass: how long the paths chamnan CREATES are, measured from the workspace root. If the longest
+# thing this package generates leaves no room for a realistic prefix, no runner is going to help.
+_created150 = sorted({str(p.relative_to(ROOT)).replace("/", "\\")
+                      for p in (ROOT / "lib").rglob("*") if p.is_file()}
+                     | {".chamnan\\" + n for n in
+                        ("state\\research\\chamnan_research_backlog.md",
+                         "tools\\checks\\150_the_windows_answers_reachable_without_windows.py",
+                         "memory\\rules\\acc4-is-the-consultant-and-the-brief-is-the-difference.md",
+                         "logs\\block_shape.jsonl", "state\\install_notice_seen.json")},
+                     key=len)
+_longest150 = _created150[-1] if _created150 else ""
+# A Windows checkout under `C:\Users\<name>\Documents\<repo>\` is about 40 characters. The lane the
+# finding describes uses 220-240. Both are stated so the number that fails is legible.
+check("R6.3 · the longest path chamnan creates leaves room for an ordinary Windows checkout",
+      len(_longest150) + 40 < 260,
+      saw=f"{len(_longest150)} chars: {_longest150[:80]}")
+check("...and the figure is reported, because a bound nobody can see is a bound nobody maintains",
+      bool(_longest150))
+print(f"      DETAIL  longest generated path: {len(_longest150)} chars, "
+      f"{260 - len(_longest150)} left for a prefix")
+
+# ------------------ R6.1 · a Windows filesystem model, without pyfakefs and without Windows
+# The item asks for pyfakefs's `OSType.WINDOWS`. chamnan takes no test dependencies, and it does
+# not need this one: every property the item lists for the PURE half — separators, drive handling,
+# rooted-without-drive, UNC — is what `PureWindowsPath` is documented to provide on any host.
+# What it cannot model is a syscall, and nothing below claims to.
+_cases150 = (
+    ("C:\\repo\\file.py", True,  "a drive-absolute path"),
+    ("\\\\server\\share\\f", True,  "a UNC path"),
+    ("C:file.py",         False, "drive-relative — a drive with no root"),
+    ("\\foo",             False, "rooted with no drive: True before 3.13, False after"),
+    ("/foo",              False, "the same shape with the other separator"),
+    ("repo\\file.py",     False, "an ordinary relative path"),
+)
+_bad150 = [f"{_s!r} ({_why}) -> {_PW150(_s).is_absolute()}"
+           for _s, _want, _why in _cases150 if _PW150(_s).is_absolute() != _want]
+for _b in _bad150:
+    print(f"      DETAIL  {_b}")
+check("R6.1 · Windows path classification is exercised on this host, with no Windows and no new dependency",
+      not _bad150)
+# 🎯 The one that made the item worth banking: `\foo` answered True on Windows before 3.13 and
+# False after, with no exception to announce it. `PureWindowsPath` gives the CURRENT answer on
+# every host, so a decision built on it is the same decision everywhere — which is the whole reason
+# check 135 forbids `os.path.isabs` outright rather than wrapping it.
+check("...and `os.path.isabs`, whose answer changed inside the supported range, is still absent",
+      not any("os.path.isabs" in _p.read_text(encoding="utf-8", errors="replace")
+              for _p in _PY150))
+
+# Separators are the other half of the pure model, and the one a POSIX host gets wrong silently.
+check("...and a Windows path's parts are split on the separator Windows uses",
+      _PW150("C:\\a\\b\\c.py").parts == ("C:\\", "a", "b", "c.py")
+      and _PW150("C:/a/b/c.py").parts == ("C:\\", "a", "b", "c.py"))
+# ---- 151_a_session_that_writes_a_file_keeps_its_cached_prefix.py
+# ------------------ the block is positioned against the prompt's cache breakpoint, not the prompt
+# The owner decided this on 2026-09-15, and asked for it to hold without being re-tuned: the block
+# must be placed so the prompt cache keeps working, permanently, as the workspace grows.
+#
+# The cache is strictly prefix-based. Everything after the first changed byte is reprocessed at full
+# price, so what matters is not how MUCH of the block changed but HOW EARLY. Measured before this:
+# two firings of one session, with a file written between them, shared 95.4% of their bytes and
+# could cache 4.4% of them — because the staleness warning that a file write produces was inserted
+# at the FRONT, at character ~60.
+#
+# The rule, which needs no number and no tuning: **everything chamnan says about the MOMENT goes
+# after everything it reads from FILES.** File-derived text changes when the repository changes,
+# which is when a reprocess is honest. A notice about what is stale right now changes on its own
+# schedule and belongs where it costs only itself.
+#
+# 🐛 And a correction worth keeping, because it nearly became a fix for nothing: the first
+# measurement of this said 4.4% for an ORDINARY firing and blamed the fence marker. It was taken
+# with a payload carrying no `session_id`, which sends `nonce_for` down its documented fallback to a
+# random marker. Claude Code always sends one. An incomplete payload makes the code take a fallback
+# path, and what is then measured is the property of the fallback — the same mistake AUDIT-6 made
+# when 91% of transcripts "mentioning" a directory turned out to be 3% opening a file in it.
+import json as _j151
+import shutil as _sh151
+import subprocess as _sp151
+import tempfile as _tf151
+from pathlib import Path as _P151
+
+_hook151 = ROOT / "hooks" / "chamnan_session_start.py"
+
+
+def _fire151(root, sid, source="startup"):
+    payload = {"hook_event_name": "SessionStart", "source": source,
+               "session_id": sid, "cwd": str(root)}
+    r = _sp151.run([sys.executable, str(_hook151)], input=_j151.dumps(payload),
+                   capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=180)
+    return r.stdout
+
+
+def _ws151():
+    d = _P151(_tf151.mkdtemp(prefix="chamnan-cache-"))
+    (d / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+    (d / ".chamnan" / "logs").mkdir(parents=True)
+    (d / "src").mkdir()
+    (d / "src" / "app.py").write_text("# an application\n", encoding="utf-8")
+    (d / ".chamnan" / "memory" / "rules" / "a-rule.md").write_text(
+        "**Never write to prod**\n\nThe production database is read-only from here.\n",
+        encoding="utf-8")
+    (d / ".chamnan" / "MAP.md").write_text(
+        "# Map\n\n## Quick Index\n\n- **`src/app.py`** (1L, 0fn) — an application\n", encoding="utf-8")
+    return d
+
+
+_d151 = _ws151()
+try:
+    _sid151 = "cache-proof-0001"
+    _a151 = _fire151(_d151, _sid151)
+    # A file written mid-session is the ordinary case, not an edge one: it is what every edit does,
+    # and it is what used to produce a staleness warning at the front of the block.
+    (_d151 / "src" / "second.py").write_text("# another\n", encoding="utf-8")
+    _b151 = _fire151(_d151, _sid151, source="resume")
+
+    _i151 = next((k for k in range(min(len(_a151), len(_b151))) if _a151[k] != _b151[k]),
+                 min(len(_a151), len(_b151)))
+    _share151 = _i151 / max(len(_a151), 1) * 100
+    print(f"      DETAIL  after a mid-session file write, the first difference is at "
+          f"{_i151:,} of {len(_a151):,} chars = {_share151:.1f}% of the prefix survives")
+
+    check("A FILE WRITTEN MID-SESSION DOES NOT INVALIDATE THE BLOCK'S CACHED PREFIX",
+          _share151 >= 90,
+          saw=repr(_a151[max(0, _i151 - 70):_i151 + 40]) if _share151 < 90 else None)
+
+    # Two firings of the SAME session with nothing changed must be byte-identical. This is the
+    # property the fence's own comment claims, and the one that made a per-invocation marker a
+    # ten-times cost multiplier when it was last broken.
+    _c151 = _fire151(_d151, _sid151, source="compact")
+    _d2151 = _fire151(_d151, _sid151, source="compact")
+    check("...and two firings with nothing changed are byte-identical",
+          _c151 == _d2151 and bool(_c151.strip()))
+
+    # A different session gets a different marker. That is the security property, and it is the
+    # reason the block is not cacheable ACROSS sessions — which costs nothing, because a new
+    # session is not reusing the old prefix anyway.
+    _e151 = _fire151(_d151, "a-completely-different-session")
+    check("...and a different session gets a different fence, which is what makes it unforgeable",
+          _e151 != _c151)
+
+    # The rule stated as a property of the output rather than of the code: no line that begins with
+    # the warning mark may appear before the first section heading.
+    _head151 = _c151.split("### ")[0]
+    _early151 = [l[:70] for l in _head151.splitlines() if l.strip().startswith("_⚠")]
+    for _l in _early151:
+        print(f"      DETAIL  volatile notice in the header: {_l}")
+    check("...and nothing chamnan says about the MOMENT is emitted before what it read from FILES",
+          not _early151)
+finally:
+    _sh151.rmtree(_d151, ignore_errors=True)
 # ---- 15_a_pin_is_read_by_every_store.py
 # ------------------------------------------- the pin reached the stores one at a time
 # 🐛 [2026-09-09] 📌 has meant "the owner says this must not be cut" since `state.py` was written,
@@ -36083,8 +36334,20 @@ check("...and does NOT recommend a number, which would answer a judgement questi
 # that let an earlier check in this pool pass against the defect it was written for.
 _t_span75 = _t_rep75[_t_rep75.find("What raising it would cost"):]
 _t_span75 = _t_span75[:_t_span75.find("except Exception")] if "except Exception" in _t_span75 else _t_span75
-check("...and the block ceiling THIS line quotes comes from `fit.CEILING`, not from a literal",
-      "What raising it would cost" in _t_rep75 and "fit.CEILING" in _t_span75,
+# 🐛 [2026-09-15] This named ONE derivation, `fit.CEILING`, and the line now uses a better one:
+# `fit.CEILING` is the value the package SHIPS with, and this report was quoting it at workspaces
+# running at something else — "9,493 bytes of 9,000 (105% of the ceiling)" about a block inside its
+# own limit. Naming the spelling rather than the property made the correct fix fail the check.
+#
+# What the check is for is that the number is DERIVED — a literal stops being true the day the real
+# ceiling moves, which is the whole claim this line rests on. Both derivations satisfy that; a
+# digit on that line satisfies neither.
+import re as _re75
+
+_t_call75 = ("fit.CEILING" in _t_span75) or ("_configured_ceiling(" in _t_span75)
+_t_lit75 = bool(_re75.search(r"capped at \{?\s*[0-9][0-9,_]{2,}", _t_span75))
+check("...and the block ceiling THIS line quotes is DERIVED, not a literal",
+      "What raising it would cost" in _t_rep75 and _t_call75 and not _t_lit75,
       saw="a hardcoded ceiling stops being true the day the real one changes, and this line's whole "
           "claim rests on it")
 

@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1260), and every one of these is on the
+[README](README.md#whats-new-in-1270), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -16,6 +16,270 @@ the version number and a new empty one starts.
 Nothing under **Unreleased** carries a version number, on purpose. Numbering it would put a version
 in this file that no tag matches — and on the machine chamnan is developed on, the installed plugin
 already reports the last released number while running newer code.
+
+---
+
+## What's new in 1.27.0
+
+### The theme of this release: things that were failing where nobody could see
+
+1.26.0 was about what chamnan *does*. 1.27.0 is almost entirely about what it was quietly getting
+wrong — a redactor that let eight different shapes of credential through, four tree walks that
+returned "nothing here" when the truth was "I could not look", and a session block that had been
+dropping two of its nine sections on 96.8% of every session since it was written.
+
+None of these announced themselves. Every one was found by pointing an outside finding at our own
+code, and every one now has a check that fails on the build before it.
+
+---
+
+### The redactor — eight ways a secret was leaving in the clear
+
+This is the largest cluster in the release, and they are all the same defect wearing different
+clothes: **a rule was applied to one member of a set and forgotten in the identical ones beside
+it.** Nine of the fixes below are that shape.
+
+### A credential's neighbours were deciding whether it counted as one
+
+Twenty-three provider patterns guarded themselves with `(?<![A-Za-z0-9_-])`, which reads as "not
+preceded by a word character" and actually means "…and not preceded by a hyphen or an underscore
+either". A credential assigned to an upper-case name was redacted and the same credential one
+hyphen further along was not — the same secret, one punctuation mark apart, and a diff hunk starts
+every removed line with a hyphen. All twenty-three are now `(?<![A-Za-z0-9])`.
+
+The AWS key-ID rule had the mirror image of it on the trailing edge: `[0-9A-Z]{16}\b` stops at a
+word boundary, so a key followed by another capital letter did not match.
+
+### A Cyrillic letter in the credential name walked past every rule in the file
+
+`раssword` with a Cyrillic `а` is not `password` to any regex in this module, and it is
+indistinguishable from `password` on screen. chamnan now unmasks confusable characters, scrubs
+both spellings, and keeps whichever redacts more — so the disguised form cannot be used to smuggle
+a value past a reader who can see nothing wrong with it.
+
+### Thai had a wider credential vocabulary than English
+
+The Thai list was `รหัสผ่าน|รหัส`, and `รหัส` alone means "code" — it fired on order numbers and
+product codes while missing `รหัสลับ` and `รหัสเข้า`, which are what people actually write. Thai
+also has no spaces, so every false positive in it takes its neighbours with it.
+
+### `password: |2` is a YAML block scalar too
+
+`[|>][-+]?` matched `|`, `|-` and `|+` and not `|2`, `|-2` or `|2-` — the explicit-indentation
+forms, which are in the YAML spec and in real configuration files. The header pattern and the
+secret pattern both had it, and both were fixed; fixing one would have left the other.
+
+### The redactor was eating the brace that closed the object it stood in
+
+A secret at the end of a JSON object took the closing `}` with it, so the document the block
+carried no longer parsed. The same class of over-reach was fixed in six other places.
+
+### It leaked on every CRLF line
+
+A file checked out on Windows ends its lines with `\r\n`, and `$`-anchored rules stopped at the
+`\r`. Every rule in the module was affected; the scan that proved it is 48% of the module's test
+surface.
+
+### Two quadratics, neither visible one pattern at a time
+
+Two patterns backtracked quadratically on inputs that occur in ordinary files. Neither shows up
+when you test a pattern by itself, which is why they survived every review.
+
+### And it now compiles when something needs it, not at import
+
+61 patterns were compiled on every hook firing whether or not any of them would be used.
+
+---
+
+### Four silent tree walks, and a census that could not tell "gone" from "not yours"
+
+`os.walk` swallows a permission error by default and simply yields nothing for that directory. Four
+walks in this package did exactly that — the map, the ledger, the workspace sweep and the
+session-start scan — so a repository with one root-owned directory was reported as *empty* rather
+than as *unreadable*, with nothing said anywhere.
+
+The index census had the same hole from the other side: a file behind a closed door counted as a
+deleted file, so chamnan would report a map as stale when the map was fine and the permissions were
+not. `absent` and `unreadable` are now different answers.
+
+**A fix for silent failures that failed silently.** The first version of this added
+`onerror=tree.note_unreadable(...)` to a module that imports `tree` only inside other functions.
+The resulting `NameError` landed in an enclosing blanket `except` and the function returned
+"nothing is dead" — the exact failure class the change was written to end. It was caught by a check
+that holds two independent code paths to the same answer, and that check is in this release.
+
+### A failure in one prune was cancelling two unrelated jobs
+
+Three retention sweeps ran under one `try`. When the first raised, the second and third never ran,
+and nothing said so. Each has its own guard now.
+
+### A worktree that eats what it learns
+
+A workspace inside a linked git worktree writes its state where the next session will not look for
+it. chamnan now says so once, rather than losing the work quietly.
+
+---
+
+### The architecture map
+
+- **A file git stores re-encoded is text, and the map called it binary.** A repository that
+  declares `*.py text eol=lf` was having its own source classified as unreadable.
+- **The glob tier was gated to one store**, so trailers in every other store were never matched —
+  and no trailer has ever lived in the store it was gated to.
+- **A record's trailer is parsed once**, not once per file opened.
+
+---
+
+### New: `chamnan-guard` now reads what a change does to your dependencies
+
+A dependency can arrive from somewhere other than the registry it appears to come from, under a
+name written to be read as a different one, carrying code that runs because it was installed rather
+than because anything imported it. `chamnan-guard` already reviewed a staged commit for leaked
+secrets and for new MCP capability; it now reads the same diff for those three things.
+
+What it looks at, in the files that can actually decide where a dependency comes from — `.npmrc`,
+`pip.conf`, `Gemfile`, `package.json`, `Cargo.toml`, `composer.json`, `go.mod`, the lock files
+beside them:
+
+- **the registry was redirected** — a `registry=`, `index-url`, `replace-with` or `source` line
+  pointing somewhere other than the twelve official hosts across npm, PyPI, RubyGems, crates.io,
+  Go and Packagist;
+- **the name is not the name it reads as** — `requеsts` with a Cyrillic `е`, `lοdash` with a Greek
+  `ο`. Folded against the look-alike alphabet, which needs no list of real package names and works
+  for every ecosystem at once;
+- **something now runs on install** — `preinstall`, `postinstall`, `prepare`, composer's
+  `post-install-cmd`, a `cmdclass` in `setup.py`;
+- **and what that script does** — a line that fetches and pipes to a shell, decodes a blob and
+  runs it, or spawns one. `"build": "tsc -b"` is not that, and stays silent;
+- **nothing can verify what arrives** — a lock file that added resolved URLs and not one digest;
+- **it comes from no registry at all** — a `git+`, `file:` or path dependency.
+
+**It warns; it does not block.** Somebody adding a private registry on purpose is doing their job,
+and is told once, at the commit that adds it. `chamnan-guard --strict` is where a project says the
+commit should fail instead. This reduces a mistake by the person or the model driving the tool —
+it is not a scanner and it does not decide what may run.
+
+**The half it is judged on is the silent half.** Nine of the twenty-nine cases in the suite exist
+only to pin that correct configuration says nothing: an official registry, a project's own build
+script, a binary target path, a pinned requirement, an ordinary build step. Every one of them was
+a false positive at some point while it was being written. Measured over real history before it
+shipped: **0 of 2,917 commits across three repositories would have raised a line.**
+
+### The session block — every store now arrives, and the order follows the work
+
+This is the part that has been re-opened the most times, and the reason is worth stating plainly:
+**every previous attempt was a NUMBER.** Raise the output ceiling. Lower the rules budget. Re-rank
+the drop order. Each worked on the store sizes of the day it was measured and failed the next time
+a store grew.
+
+Measured over all 400 recorded firings on the development repository before this release:
+
+| section | dropped on |
+|---|---|
+| This repo's own tools | **96.8%** |
+| Recorded procedures (skills) | **96.8%** |
+| Recorded decisions and lessons | 78.5% |
+| Where the last session stopped | 58.8% |
+| Recent milestones | 37.0% |
+
+Blocks truncated by the host in those 400 firings: **0 of 392.** The ceiling was never the
+constraint. The material is three to four times the ceiling at 9,000 and at 9,500 alike, so a
+larger budget only moved where the same cut landed — and a fixed global drop order meant a
+workspace whose skills are the point never received its skills, on any session, ever.
+
+### What changed
+
+**A dropped section leaves its names, not its title.** A section that will not fit registers a
+*brief* — the names in the store, one line. Names are what cannot be guessed; the prose around
+them is what does not fit. A brief too big for the room is cut at a name boundary and says how
+many it left out, never mid-name and never through its fence.
+
+**The room is reserved before anything is packed, not offered afterwards.** Briefs used to get
+whatever nothing else wanted, which on a workspace of any size is nothing. A share is now held
+back first — and derived, not chosen: it is what the waiting stores ask for, one floor each, so it
+scales with how many stores exist and never with how much is in them. A workspace that fits
+reserves nothing and is bit-for-bit unaffected.
+
+**What the reserve does not use goes back.** Leftover room upgrades a brief to the full section
+where it fits, and lengthens the name list where it does not.
+
+**The drop order follows what the workspace opens.** `pointer.note_opened` had been recording which
+store each session reached for since it was written, and nothing had ever read a record.
+Measured the first time anything did, on the development repository: `skills` and `memory` are what
+get opened, `tools` is counted from its own register at 179 entries — and `skills` sits near the
+cheap end of the hand-written order, so the store this repository actually uses was the first thing
+it was told to lose. Usage now permutes those stores among their own slots. Every section the log
+cannot speak for keeps its rank exactly, and a fresh install, where every count is zero, behaves
+exactly as before.
+
+**Result on the development repository: 5 of 9 sections delivered, then 9 of 9, and 13 of 16 rules
+then 16 of 16 — at 4,161 tokens against 4,189 before.** More arrives, for less.
+
+Two defects turned up in finishing it, both introduced by the fix itself and both the same shape as
+what it was fixing. The line saying what the budget cost was appended **after** the body had been
+measured, and took the block to 10,264 bytes — straight past the host's own cut, which is the single
+thing this module exists to prevent. And once every section had a brief, nothing was dropped whole
+any more, so that line stopped being written at all: somebody who had pinned more than the block can
+carry was told nothing, and the block simply looked thinner for no stated reason. A message about
+what the budget cost has to be inside the budget, or it only prints when nobody needed it. Tools and skills arrive together for the first time in 400 recorded firings.
+Held under growth: with the stores at 2×, 5×, 20× and 100× their present size, every store still
+delivers names and the block stays inside its ceiling.
+
+### Rules: primary loads, secondary loads enough to be called on
+
+Three arithmetic faults meant the rules section did neither, and all three were invisible because
+the section honestly reported what was missing:
+
+- the weighted shares were never required to **add up** to the budget — sixteen rules at a
+  120-character floor plus double for two pinned ones comes to 2,124 against a 2,000 cap, and the
+  whole-budget cut took the overflow out of the last three rules;
+- each trimmed rule appended its `…the rest is in <file>` pointer **after** its share, putting
+  sixteen tails of about fifty characters outside the budget the shares were sized against;
+- the joins between rules were never subtracted either, so a 1,998-of-2,000 allocation still
+  landed over.
+
+And when none of it fit, every rule received one equal slice — so a pinned rule and an ordinary one
+were indistinguishable in the one place the distinction exists to show.
+
+Allocation now fits **by construction**: every rule is given its own floor first (its heading and
+the path to the rest, which is the smallest thing that can still be recognised and followed), a
+pinned rule is then asked for in full, and only what is left is shared out. Verified on a fixture
+of fourteen rules against a 2,000-character budget: **14 of 14 arrive, both pinned rules arrive
+whole, the twelve others arrive as a heading and a pointer, and the section uses 1,702 of 2,000.**
+
+---
+
+### Known, and not fixed in this release
+
+- **A pinned rule too long to load is still not loaded.** The mechanism is in and proven; on the
+  development repository the two pinned rule files are 3,894 and 3,701 characters, which is 3,390
+  tokens — 81% of the whole 9,500-byte block for two rules. That is a content decision for whoever
+  owns the rules, not a code defect: a rule that must be in front of the agent every session has to
+  be short enough to be.
+- **Nothing yet audits a dependency's origin outside a staged diff.** `chamnan-guard` answers the
+  question at the commit that changes it; a repository that already carries a redirected registry
+  from before this release is not told until something touches that file.
+
+---
+
+### Verify it yourself
+
+```bash
+python3 tests/run_tests.py                   # the full gate
+```
+
+`chamnan-report` also stopped quoting the wrong ceiling. It compared the last block against
+`fit.CEILING` — the value the package ships with — rather than the one the workspace runs at, so a
+block comfortably inside its own limit was reported as "9,493 bytes of 9,000 (105% of the ceiling)".
+The recorded ceiling each block was built against is used now, so a config changed since then cannot
+make an old measurement lie.
+
+Every fix above has a check that fails on the build before it. Three of them are worth running
+directly, because they are the ones that encode a guarantee rather than a case:
+
+- `NO STORE IS STARVED AS THE STORES GROW` — 2×, 5×, 20× and 100× the present store sizes
+- `EVERY RULE ARRIVES` — no allocation that does not add up
+- `THE STAT PATH AND THE WALK PATH GIVE THE SAME ANSWER` — the census, two ways
 
 ---
 

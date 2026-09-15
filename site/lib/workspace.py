@@ -2549,7 +2549,13 @@ def wants_version(argv):
 
 
 def nonce_for(session_id):
-    """A fence marker constant for one session and unguessable from inside the repository.
+    """A DUMMY SECRET: a fence marker, constant for one session, unguessable from inside the repo.
+
+    Called a dummy secret rather than a nonce because that is what it has to behave like. It keeps
+    nothing safe by itself and it is printed in full in every block — its whole job is that a file
+    in the repository cannot GUESS it, so that file cannot close the fence early and continue in
+    the voice of the system. A reader who thinks of it as a formatting detail will eventually make
+    it predictable; a reader who thinks of it as a secret will not.
 
     🐛 `secrets.token_hex` used to be called at import, which made the marker per INVOCATION rather
     than per session — the thing its own comment said it was. The hook re-runs on every resume and

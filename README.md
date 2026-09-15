@@ -119,7 +119,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.26.0](#whats-new-in-1260) · [Commands](#commands)
+[What's new in 1.27.0](#whats-new-in-1270) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -502,83 +502,45 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
-## What's new in 1.26.0
 
-**A new command: `chamnan-schedule`.** You are most of the way through something and the usage limit
-is about to stop you. `chamnan-schedule set 2h31m` — or a wall-clock time, or the reset read straight
-out of a rate-limit response with `--reset-json` — and chamnan comes back to it.
+## What's new in 1.27.0
 
-It carries the *work*, not a command line. "Finish what you were doing" is not something a command
-line can say, so the record points at where the work is already written down (`.chamnan/STATE.md` by
-default) and the resumed session carries on from there. It is a schedule and never an auto-renew:
-nothing notices a limit, nothing decides on its own to resume, nothing repeats unless you ask. And it
-writes nothing outside your repository — no LaunchAgent, no crontab, no registry task, just a
-detached child of your own shell that exits once it has fired. `--runner` lets any harness, router or
-CLI-less model be the thing that resumes.
+**Every store now reaches the session, and the order follows what your workspace opens.** The
+injected block had been losing the same sections since it was written — measured over 400 recorded
+firings on the repository chamnan is developed in, the tools list and the procedures list were
+dropped on 96.8% of them, recorded decisions on 78.5%, the session handoff on 58.8%.
 
-**Four commands were telling you things that were not true.**
+The ceiling was never the constraint: none of those blocks was truncated by the host, at either
+setting. A section that will not fit now leaves its **names** — names are what cannot be guessed,
+the prose around them is what does not fit — and the room for that is reserved before anything is
+packed, sized by how many stores exist rather than by how much is in them. A workspace small enough
+for everything to fit reserves nothing and is unaffected.
 
-`chamnan-impact` told you a file was safe to change freely when it belonged to a repository nested
-inside your own — a vendored checkout, a submodule, a plugin developed in place. The index does not
-cover a nested repository on purpose, and the command was reading that absence as "nothing depends
-on it". It now says the file belongs to a repository it cannot see, and to ask from inside that one.
+The drop order follows what your workspace has actually been seen to open, which chamnan had been
+recording all along and never read. A fresh install, where every count is zero, behaves exactly as
+before.
 
-`chamnan-age` reported `python 3.9` as a version no environment declares, on a machine declaring
-`3.9.6`. A release-series name is a claim, not vagueness, and the only way to satisfy the warning
-was to make a note more specific than its author meant. A warning that never clears teaches you to
-skip the ones that matter. `3.9` against a declared `3.10` still reports.
+Rules split the way they were always meant to: a pinned rule is loaded, every other rule loads far
+enough to be recognised and fetched when it applies, and the budget rises to whatever naming all of
+them costs — because a rule the session never sees cannot be called on. Result here: 9 of 9 sections
+and 16 of 16 rules, for slightly fewer tokens than 5 of 9 and 13 of 16 cost before.
 
-The evidence legend treated a configuration directory under your home as proof of installation. It
-is not — a home directory outlives an uninstall, measured here on two agents with no runnable
-binary. The detector was already honest; the sentence describing it was not.
+**`chamnan-guard` now reads what a change does to your dependencies.** A dependency can arrive from
+somewhere other than the registry it appears to come from, under a name written to be read as a
+different one, carrying code that runs because it was installed rather than because anything
+imported it. On a staged commit, offline, with no list of known-bad names, chamnan-guard reports a
+redirected registry, a name written with look-alike characters, a new install-time script and what
+that script does, a lock file with no digest to check what arrives, and a dependency no registry
+hosts. It warns; `--strict` is where a project says the commit should fail instead. Measured before
+shipping: 0 of 2,917 real commits would have raised a line.
 
-**"I updated chamnan, and the hooks are still the old ones"** has two causes and this release closes
-the second. One: the copy that answered was not the copy you updated — a host keeps one install per
-scope, `claude plugin update` reports success on `user`, and a `project` install keeps running a
-release behind with its own hooks, commands, agents and skills. That was fixed in 1.25.1, which
-names the install that actually answers at session start. Two, below: the version string did not
-move, so nothing refreshed.
+**And the redactor stopped leaking in eight more shapes** — a credential behind a `-` or `_`, a name
+written with a Cyrillic letter, Thai's own word for "code" being treated as English's, YAML's
+explicit-indentation block scalars, CRLF line endings, and two patterns that backtracked
+quadratically on ordinary input. Four silent tree walks now say when they could not read a
+directory instead of reporting it empty.
 
-The update notice compared version strings only, so a marketplace whose **files** moved while its
-version stayed put reported nothing. That is the case that most needs the notice, because
-`claude plugin update` will not refresh a path install while the version is unchanged. It now
-compares the shipped code's content, and only when the versions are equal, so a real bump costs
-nothing extra.
-
-**A password in your language was not a password.** The redactor caught the English spelling and
-missed the Thai, Chinese, Japanese, Korean, Arabic, Hindi, Spanish, French and German ones —
-3 of 30 cases, now **30 of 30**. The vocabulary was already in the file, added for CSV headers and
-never wired to the assignment patterns. It is now grouped by **script** rather than language, since
-German and Indonesian are non-English and plain ASCII, and each script gets the rule that fits:
-Thai, Chinese, Japanese and Korean allow a keyword joined to the next word, which is ordinary
-writing there; Latin and the rest keep boundaries, so `passwordless` is still left alone. A
-Kubernetes Secret's base64 value under a non-credential key name is closed too, along with six
-places the redactor was destroying text that was not a secret. Recall moved from 95 of 96 to
-**98 of 99**.
-
-**`chamnan-recall` can now see what the project already refused.** It searched rules, decisions,
-lessons, skills, threads and sessions — and not the two files written specifically to stop work
-being repeated. The tool built to prevent repeated work could not read the record of what had
-already been decided. Both are now indexed by section, so a match names the heading that answers
-you.
-
-**A variable named after the secret it holds printed its value.** A variable called `secret`,
-assigned the word *secret*, was not redacted, and nor were `credential`, `apikey`, `passphrase`,
-`auth`, `cred`, `keypass`, `storepass`, `passwd` or `secretkey`. Only `password` was caught: the
-rule that tells an enum member from a weak credential reads the key's letter case, and an exemption
-written
-for a different shape was answering first for every word but that one. It now defers to the case
-rule when the key and value are spelled identically. A bare `key` or `token` is still left alone on
-purpose — in source those are far more often a map key or a lexer token, and the credential
-spellings carry a second component. The check derives the whole credential vocabulary from the
-module instead of naming one example, so a word added later is covered the day it is added.
-
-**`chamnan-guard` names newly staged MCP server configuration**, so a commit granting a tool
-execution or network capability is visible at review time. Advisory by default; `--strict` fails.
-
-**21 research findings reached the code in this release, 802 in total.** Each is a place in the
-shipped source where a defect a research round found was fixed, linked to the commit that fixed it.
-`INDEX_CITED_IN_CODE.md` ships with the release and lists all of them.
+Full notes for every version are in [CHANGELOG.md](CHANGELOG.md).
 
 ## Bootstrap does not rewrite your code
 
