@@ -46,6 +46,28 @@ import redact  # noqa: E402
 print = redact.emit  # noqa: A001
 
 
+def _under_root(path, root):
+    """A path shown relative to the workspace root, the way every other module spells it.
+
+    🐛 [2026-09-15] R6.1. These two call sites did `path.replace(str(root) + "/", "")`, and on
+    Windows that never matches: `str(root)` is `C:\\Users\\x\\repo` and the path is
+    `C:\\Users\\x\\repo\\lib\\redact.py`, with no forward slash between them. The line would have
+    printed the ABSOLUTE path — and worse than being ugly, this is the shape that makes a later
+    `rel.split("/")[0]` see one component instead of a directory, which is how the whole grouping
+    silently collapses on a platform nobody here runs.
+    
+    Ten other sites already use `relative_to(root).as_posix()`. These two were the outliers, and the
+    fix is to stop being one rather than to add a third spelling.
+
+    A path outside the root keeps its own text: `relative_to` raises there, and a traceback while
+    REPORTING a parse warning would hide the warning it was reporting.
+    """
+    try:
+        return Path(path).relative_to(root).as_posix()
+    except (ValueError, TypeError, OSError):
+        return str(path)
+
+
 def coverage(files):
     """Counts only files that could carry a summary — see mapper.scan's `describable`.
 
@@ -274,7 +296,7 @@ def _is_bare(root):
     if not ws.git_owns(root):
         return False
     try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-bare-repository"],
+        out = subprocess.run([workspace.git_exe(), "-C", str(root), "rev-parse", "--is-bare-repository"],
                              capture_output=True, text=True, encoding="utf-8", errors="replace",
                              timeout=5)
     except (OSError, subprocess.SubprocessError):
@@ -294,7 +316,7 @@ def _is_generated_hooks_dir(root, hooks):
     if not hooks.is_dir() or not ws.git_owns(root):
         return False
     try:
-        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(hooks)],
+        r = subprocess.run([workspace.git_exe(), "-C", str(root), "check-ignore", "-q", "--", str(hooks)],
                            capture_output=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -1331,7 +1353,7 @@ def main(argv):
         print(f"\n  {len(mapper.SKIPPED_UNPARSEABLE)} file(s) could not be parsed at all, so they "
               f"are indexed by name only:")
         for path, why in mapper.SKIPPED_UNPARSEABLE[:4]:
-            rel = path.replace(str(root) + "/", "")
+            rel = _under_root(path, root)
             print(f"    {rel} — {why}" if why else f"    {rel}")
         _upmore = len(mapper.SKIPPED_UNPARSEABLE) - 4
         if _upmore > 0:
@@ -1343,7 +1365,7 @@ def main(argv):
     if mapper.PARSE_WARNINGS:
         print(f"\n  {len(mapper.PARSE_WARNINGS)} file(s) raised a parse warning while being read:")
         for path, count, msg in mapper.PARSE_WARNINGS[:4]:
-            rel = path.replace(str(root) + "/", "")
+            rel = _under_root(path, root)
             print(f"    {rel} — {msg}")
         _pwmore = len(mapper.PARSE_WARNINGS) - 4
         if _pwmore > 0:

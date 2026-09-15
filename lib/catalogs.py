@@ -590,7 +590,7 @@ def _is_ignored(root, path):
             # caller's current shape -- a future caller passing a repository-controlled relative
             # name would otherwise get `unknown option` from git, and this function's degrade path
             # answers "not ignored" for anything git refuses to answer.
-            r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", "--", str(path)],
+            r = subprocess.run([workspace.git_exe(), "-C", str(root), "check-ignore", "-q", "--", str(path)],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, timeout=10)
             if r.returncode in (0, 1):

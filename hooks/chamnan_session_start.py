@@ -570,13 +570,13 @@ def _map_is_current_by_git(root, map_path):
         # Both argv lists are single literals on purpose: a guard in the suite reads every
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
-        diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet", stamped, "--",
+        diff = subprocess.run([workspace.git_exe(), "-C", str(root), "diff", "--quiet", stamped, "--",
                                ".", ":(exclude).chamnan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=5)
         if diff.returncode != 0:
             return False      # 1 = something changed; 128 = unknown stamp or no git
-        untracked = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--",
+        untracked = subprocess.run([workspace.git_exe(), "-C", str(root), "status", "--porcelain", "--",
                                     ".", ":(exclude).chamnan"],
                                    capture_output=True, text=True, encoding="utf-8",
                                    errors="replace", timeout=5)

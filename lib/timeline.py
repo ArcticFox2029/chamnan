@@ -342,7 +342,7 @@ def historical_names(root, target):
         out = subprocess.run(
             # core.quotePath=false for the same reason rollup._churn sets it: git C-quotes any
             # non-ASCII path by default, and the quoted form matches nothing.
-            ["git", "-C", str(repo), "-c", "core.quotePath=false",
+            [workspace.git_exe(), "-C", str(repo), "-c", "core.quotePath=false",
              "log", "--follow", "--name-only", "--pretty=format:", "-n", "200", "--", target],
             stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=10)

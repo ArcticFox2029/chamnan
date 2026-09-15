@@ -2461,7 +2461,7 @@ def git_hooks_dir(root):
         return None
     sp = _subprocess()           # deferred, like every other git call in this module
     try:
-        out = sp.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
+        out = sp.run([git_exe(), "-C", str(root), "rev-parse", "--git-path", "hooks"],
                      capture_output=True, text=True, encoding="utf-8",
                      errors="replace", timeout=10)
         if out.returncode == 0 and out.stdout.strip():
@@ -2801,11 +2801,48 @@ def git_is_installed():
         # So this is a cheap `which` again, and "too old" is recorded by the first real `git -C`
         # that comes back saying it does not know the option. Detection where the evidence already
         # is, rather than a question asked in advance.
-        _GIT_ON_PATH = shutil.which("git") is not None
+        _GIT_ON_PATH = git_exe() != "git"
     return _GIT_ON_PATH
 
 
 _GIT_ON_PATH = None
+_GIT_EXE = None
+
+
+def git_exe():
+    """The absolute path to `git`, found WITHOUT looking in the current directory.
+
+    🐛 [2026-09-15] R6.7, and it is a security defect rather than a portability one.
+    `shutil.which` on Windows inserts `os.curdir` at position 0 of the search path — stdlib
+    `shutil.py`, "if curdir not in path: path.insert(0, curdir)" — and `subprocess` on Windows goes
+    through CreateProcess, whose default order also searches the current directory before PATH.
+
+    This package runs `subprocess.run([git_exe(), ...])` twenty-five times across ten files, and the
+    current directory is the repository the user just opened. So on Windows, a repository carrying
+    `git.exe` at its root executes that binary the moment any chamnan command or the SessionStart
+    hook runs — arbitrary code from cloning, which is the exact class this package exists to warn
+    people about.
+
+    Resolving once to an absolute path closes it at every call site at the same time, including the
+    ones written later. The cwd is removed from the search rather than trusted: on Windows by
+    dropping it from PATH before asking, which is the one thing `shutil.which` will not do itself.
+
+    Falls back to the bare name when git is genuinely absent, so a machine without git behaves
+    exactly as it did before rather than raising somewhere new.
+    """
+    global _GIT_EXE
+    if _GIT_EXE is None:
+        import shutil
+        path = os.environ.get("PATH", os.defpath)
+        if sys.platform == "win32":
+            here = os.path.abspath(os.curdir)
+            keep = [d for d in path.split(os.pathsep)
+                    if d and os.path.abspath(d) != here and d != os.curdir]
+            path = os.pathsep.join(keep)
+        found = shutil.which("git", path=path)
+        _GIT_EXE = found or "git"
+    return _GIT_EXE
+
 
 
 def git_toplevel(root):
@@ -2816,7 +2853,7 @@ def git_toplevel(root):
     — and a message that does not tell them apart sends the reader to check the wrong thing.
     """
     try:
-        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        out = _subprocess().run([git_exe(), "-C", str(root), "rev-parse", "--show-toplevel"],
                                 stdin=_subprocess().DEVNULL, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=10)
         return (out.stdout.strip() or None) if out.returncode == 0 else None
@@ -2855,7 +2892,7 @@ def git_status(root):
     if git_can_speak_for(root):
         try:
             out = _subprocess().run(
-                ["git", "-C", str(root), "-c", "core.quotePath=false", "status",
+                [git_exe(), "-C", str(root), "-c", "core.quotePath=false", "status",
                  "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching", "--",
                  "."],
                 stdin=_subprocess().DEVNULL, capture_output=True, timeout=5)
@@ -2904,7 +2941,7 @@ def git_folds_case(root):
                                # import block: the hooks that run on every tool call pay for imports
                                # they mostly do not reach.
     try:
-        r = subprocess.run(["git", "-C", str(root), "config", "--get", "core.ignorecase"],
+        r = subprocess.run([git_exe(), "-C", str(root), "config", "--get", "core.ignorecase"],
                            capture_output=True, text=True, encoding="utf-8", errors="replace",
                            timeout=5)
     except git_cannot_answer():
@@ -2964,7 +3001,7 @@ def workspace_is_tracked(root):
     # at load whether or not it ever asks git anything.
     import subprocess
     try:
-        out = subprocess.run(["git", "-C", str(root), "ls-files", "--", WORKSPACE_DIRNAME],
+        out = subprocess.run([git_exe(), "-C", str(root), "ls-files", "--", WORKSPACE_DIRNAME],
                              capture_output=True, text=True, encoding="utf-8",
                              errors="replace", stdin=subprocess.DEVNULL, timeout=10)
     except git_cannot_answer():
@@ -3007,7 +3044,7 @@ def git_can_speak_for(root):
         return _GIT_SPEAKS[key]
     answer = False
     try:
-        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        out = _subprocess().run([git_exe(), "-C", str(root), "rev-parse", "--show-toplevel"],
                                 stdin=_subprocess().DEVNULL, capture_output=True, text=True,
                                 encoding="utf-8", errors="replace", timeout=10)
         # A git too old for `-C` fails on the OPTION, not on the directory — "unknown option"
@@ -3041,7 +3078,7 @@ def git_owns(root):
         return _GIT_OWNS[key]
     answer = False
     try:
-        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+        out = _subprocess().run([git_exe(), "-C", str(root), "rev-parse", "--show-toplevel"],
                                 capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", timeout=10)
         if out.returncode == 0 and out.stdout.strip():
@@ -3055,11 +3092,11 @@ def git_owns(root):
             # False for a bare repository that git itself resolves, silently. `--git-dir` is as old
             # as git and gives the same answer once resolved against `root` (R13 agent 1).
             bare = _subprocess().run(
-                ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
+                [git_exe(), "-C", str(root), "rev-parse", "--absolute-git-dir"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             if bare.returncode != 0 and "unknown option" in (bare.stderr or "").lower():
                 bare = _subprocess().run(
-                    ["git", "-C", str(root), "rev-parse", "--git-dir"],
+                    [git_exe(), "-C", str(root), "rev-parse", "--git-dir"],
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             if bare.returncode == 0 and bare.stdout.strip():
                 found = Path(bare.stdout.strip())

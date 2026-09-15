@@ -74,7 +74,7 @@ def _staged_diff(root):
         return None
     try:
         out = subprocess.run(
-            ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
+            [workspace.git_exe(), "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=30)
     except (OSError, subprocess.SubprocessError):
