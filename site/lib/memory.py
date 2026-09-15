@@ -58,6 +58,18 @@ CATEGORIES = ("decisions", "incidents", "lessons", "rules")
 DEFAULT_RULES_CHARS = 1500
 MAX_RULES_CHARS = DEFAULT_RULES_CHARS
 
+# The rules section may grow past its configured budget to whatever NAMING every rule costs, and
+# no further. This is the stop on that growth, not an operating point: a store of a hundred rules
+# would otherwise claim the whole injected block. Above it the section names what it can and lists
+# the rest, which is what it did before the floor existed.
+#
+# The old reason for a hard cap -- "rules must not swamp a session" -- was written when a large
+# rules section silently killed the sections under it. That is no longer how the block behaves:
+# `fit.shrink` reserves a floor for every store before anything is packed, so a bigger rules
+# section costs its neighbours their PROSE and never their existence. The guard is here for the
+# runaway case alone.
+RULES_RUNAWAY_SHARE = 0.5
+
 
 def rules_budget(root=None):
     """The rules section's character budget: `rules_char_budget` in config, else the default."""
@@ -527,13 +539,127 @@ def rules_text(root, refuse_conflicts=False):
     # other nine, and this store's whole problem is that it is 21x over its budget — there is no
     # slack to hand out. Double share for a pin, one for everything else, so the cost is spread
     # across the rules nobody marked instead of falling on one of them.
+    # 🐛 [2026-09-15] The shares did not have to add up to the budget, and with sixteen rules they
+    # did not: a 120-character floor each plus double for the two pinned ones comes to 2,124
+    # against a 2,000 cap, so the whole-budget cut below removed the overflow by dropping the last
+    # three rules outright. Thirteen of sixteen arrived, every session, and the notice named the
+    # three missing ones -- which is the honest form of a guarantee that was never made.
+    #
+    # The owner's own description of what these two kinds of rule are for, 2026-09-15: *"กฏ แบ่ง
+    # เป็น กฏหลัก กฏรอง กฏรองไม่ต้องโหลดทุกอย่าง ให้มันโหลดแค่ข้อมูลบางส่วน เพื่อรอเรียกใช้งาน"* --
+    # a primary rule is loaded, a secondary rule is loaded far enough to be recognised and then
+    # fetched when it applies. A secondary rule that does not arrive at all cannot be recognised,
+    # so it is the one outcome the split does not allow.
+    #
+    # Allocated so the total fits BY CONSTRUCTION rather than by cutting afterwards: every rule is
+    # given its own floor first -- its heading and the path to the rest, which is the smallest
+    # thing that can still be recognised and followed -- and only what is left over is shared out,
+    # double weight to a pin. A rule shorter than its share takes what it needs and hands the rest
+    # back. Nothing can then push a rule off the end, because nothing was over the end.
     _weights = [PIN_SHARE if state.pinned(b) else 1 for b in out]
-    _unit = cap // max(sum(_weights), 1)
-    _shares = [max(_unit * w, SHARE_FLOOR) for w in _weights] if _unit >= SHARE_FLOOR // 2 \
-        else [share] * len(out)
+    # The floor is DERIVED from the rule it serves -- a long title needs more room to survive as a
+    # title than a short one -- rather than one constant that fits whichever rule it was measured
+    # on. `SHARE_FLOOR` stays the point below which a share stops being a rule and becomes a stub.
+    # 🐛 Each trimmed rule appends "…the rest is in `<file>`." AFTER its share, so sixteen rules
+    # put sixteen tails of about fifty characters outside the budget the shares were sized to --
+    # 800 characters over a 2,000 cap, and the whole-budget cut took the overflow out of the last
+    # rules again. The tail is part of what the rule costs, so it is paid out of the rule's share.
+    # 🐛 The separators were never subtracted from the budget the shares were sized against, so a
+    # perfectly-fitting allocation landed 2×(n−1) characters over and the whole-budget cut took
+    # the overflow out of the last rules. Three of sixteen, every session, with the shares adding
+    # up to 1,998 of a 2,000 cap. The joins are part of what the section costs.
+    _tails = [len("\n\n_…rest: `%s`._" % _f) for _t, _f in titles]
+    _floors = [min(len(_o), max(SHARE_FLOOR, len(_t) + _tl + 16))
+               for _o, (_t, _f), _tl in zip(out, titles, _tails)]
+    # 🎯 [2026-09-15] The budget is raised to whatever NAMING EVERY RULE costs, when that is more
+    # than the configured number. Being named is the floor of what a secondary rule is for -- a
+    # rule the session never sees cannot be called on when it applies -- so a budget below that
+    # is not a smaller section, it is a silent one.
+    #
+    # Derived, and it moves by itself: sixteen rules here need 2,800 characters and the config said
+    # 2,000, which delivered twelve and named four in the tail. At 2,800 all sixteen arrive AND the
+    # section is SMALLER (2,304 against 2,577), because a section that fits stops paying for the
+    # footer that lists what did not. Add four rules next month and it moves again, with nobody
+    # re-tuning anything -- which is the whole reason this is computed here and not written down.
+    #
+    # Bounded so it cannot run away: a store of a hundred rules would otherwise claim the entire
+    # injected block. Half the output ceiling is a RUNAWAY GUARD, not an operating point -- above
+    # it the section goes back to naming what it can and listing the rest, which is the behaviour
+    # directly below.
+    _needed = sum(_floors) + sum(_tails) + 2 * max(len(out) - 1, 0) + 200
+    try:
+        import workspace as _ws_cap
+        _guard = int(int(_ws_cap.load_config(root).get(
+            "output_byte_ceiling",
+            _ws_cap.DEFAULT_CONFIG["output_byte_ceiling"])) * RULES_RUNAWAY_SHARE)
+    except Exception:
+        _guard = cap
+    cap = max(cap, min(_needed, max(_guard, cap)))
+    _avail = max(cap - 2 * max(len(out) - 1, 0), 1)
+    # A PRIMARY rule is loaded, not sampled: it is asked for in full first, and only what is left
+    # after that is shared out. This is the owner's split in one line -- 📌 is the whole text,
+    # everything else is enough to be recognised and fetched. A pin that cannot fit falls back to
+    # weighting below rather than starving its neighbours, because the section's other promise is
+    # that every rule arrives.
+    _pins = [_i for _i, _b in enumerate(out) if state.pinned(_b)]
+    _pin_cost = sum(len(out[_i]) - _floors[_i] for _i in _pins)
+    _spare = _avail - (sum(_floors) + sum(_tl for _tl in _tails))
+    if _spare >= _pin_cost > 0:
+        _rest = [_i for _i in range(len(out)) if _i not in _pins]
+        _left = _spare - _pin_cost
+        _shares = list(_floors)
+        for _i in _pins:
+            _shares[_i] = len(out[_i])
+        for _i in _rest:
+            _shares[_i] = min(len(out[_i]), _floors[_i] + _left // max(len(_rest), 1))
+    elif _spare >= 0:
+        _tw = max(sum(_weights), 1)
+        _shares = [min(len(_o), _f + max(0, _spare) * _w // _tw)
+                   for _o, _f, _w in zip(out, _floors, _weights)]
+    else:
+        # 🐛 Not even the floors fit -- and on this repository that is the ORDINARY case, not the
+        # edge one: sixteen rules total 51,937 characters against a 2,000 budget, so every rule
+        # arrives as a heading and a path and nothing else. The first form of this branch handed
+        # out one equal slice, which meant a 📌 rule and an ordinary one were indistinguishable in
+        # the only place the distinction is supposed to show.
+        #
+        # A pin still buys more room here, because "more room" is the whole of what a pin means
+        # when there is not enough for anyone. Every rule keeps a slice it can be recognised from;
+        # what is above that goes to the pins. Sixteen stubs the reader can act on beats nine
+        # rules and seven silences, and the tail below says how many did not arrive whole.
+        # 🐛 [2026-09-15] "every rule arrives" is only reachable while n × floor fits the budget.
+        # Forty-three rules against a 1,500-character cap cannot all be recognised -- the floors
+        # alone come to 4,730 -- and giving each one a share below its floor produces
+        # forty-three fragments that say nothing, in more characters than the notice.
+        #
+        # So above that point rules ARE dropped, which is what the "more rules in … Not shown
+        # above" tail has always been for. What changes is WHICH: the whole-budget cut used to
+        # take them off the end, which is filename alphabet, so a verbose `a-*.md` could starve
+        # `c-prod.md` -- "Never write to prod" -- out of the injection entirely. Pins are kept
+        # first now, and inside each group the existing order decides.
+        # The "more rules … Not shown above" tail is written after this and is part of what the
+        # section costs. Sized at 1,702 against a 1,700 allowance once, which is a budget that
+        # forgot its own footer.
+        _avail = max(_avail - 200, 1)
+        _order = sorted(range(len(out)), key=lambda _i: (0 if _weights[_i] > 1 else 1, _i))
+        _shares = [0] * len(out)
+        _spent = 0
+        for _i in _order:
+            # The floor already includes the rule's pointer -- `_cut_clean` is given
+            # `share - len(tail)` and the tail is added back -- so counting `_tails` again here
+            # bought about a third fewer rules than the budget could carry.
+            _cost = _floors[_i] + 2
+            if _spent + _cost > _avail:
+                continue                  # named in the tail below, not cut mid-sentence here
+            _shares[_i] = _floors[_i]
+            _spent += _cost
     if len(out) > 1 and (_total > cap or any(len(o) > s for o, s in zip(out, _shares))):
         trimmed = []
         for body, (title, fname), share in zip(out, titles, _shares):
+            # A share of zero is a rule there was no room to recognise. It is left out here and
+            # named in the tail, which is the one place it can still be acted on.
+            if share <= 0:
+                continue
             if len(body) <= share:
                 trimmed.append(body)
             else:
@@ -551,11 +677,29 @@ def rules_text(root, refuse_conflicts=False):
                 # the part they are looking at. Nothing is lost by cutting the half that is on
                 # screen, and the sentence is unambiguous because it sits inside the rule it
                 # belongs to.
-                trimmed.append(_cut_clean(body, share) +
-                               f"\n\n_…the rest is in "
-                               f"`.chamnan/memory/rules/{mdblock.as_quoted(fname)}`._")
+                # 🐛 [2026-09-15] `.chamnan/memory/rules/` is 22 characters and it was repeated on
+                # every trimmed rule -- sixteen rules paid 352 characters to say the same directory
+                # sixteen times, out of a 2,000 budget that could not fit all sixteen titles. The
+                # section's own tail already names the directory once. What the reader does not
+                # have is WHICH FILE, which is the finding that put a filename here in the first
+                # place (R5 agent 2), and that is exactly what is left.
+                _tail = f"\n\n_…rest: `{mdblock.as_quoted(fname)}`._"
+                # Out of the share, not on top of it -- see the tails comment above.
+                trimmed.append(_cut_clean(body, max(SHARE_FLOOR // 2, share - len(_tail))) + _tail)
+        # 🐛 [2026-09-15] Shortening the per-rule pointer to a bare filename saved 352 characters
+        # and took the DIRECTORY with it. A reader given `never-write-to-prod.md` and no path is a
+        # reader who cannot open it -- and the section's footer, which does name the directory, is
+        # written only when a rule was held back. On the ordinary path, where everything fits, the
+        # filename pointed nowhere. Said once, here, for the price the old form paid sixteen times.
+        if any("…rest:" in _t for _t in trimmed):
+            trimmed.append("_Rule files are in `.chamnan/memory/rules/`._")
         joined = "\n\n".join(trimmed)
-        if len(joined) <= cap:
+        # 🐛 [2026-09-15] This returned as soon as the text FIT, and a rule can now be left out
+        # while the text fits comfortably -- there was no room to recognise it, so it was never
+        # rendered. The section then looked complete and was not, which is the one outcome every
+        # other part of this file exists to prevent. Only take the early exit when nothing was
+        # held back; otherwise fall through to the tail, which is where a held-back rule is named.
+        if len(joined) <= cap and all(_sh > 0 for _sh in _shares):
             return joined
     # 🐛 Two things went wrong at this cut, and both were silent.
     #

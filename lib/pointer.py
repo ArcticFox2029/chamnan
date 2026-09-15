@@ -410,6 +410,65 @@ def note(wsdir, session_id, rel_path, hits, ms):
     ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
 
 
+def opens_by_store(root):
+    """{store name: how many times a session has opened a file in it}, from this log.
+
+    `note_opened` has been writing these records since it was added and nothing has ever read one.
+    That is the whole gap this closes: chamnan could say which store a session went to and used a
+    ranking written by hand instead. Measured here the day it was first read, over 175 records:
+    `skills` 8, `memory` 3, and nothing else at all -- while `skills` sits near the cheap end of
+    `fit.DROP_ORDER` and is therefore the first thing this repository is told to lose.
+
+    Counts, not recency, and no decay: a store opened once a month is still a store this workspace
+    uses, and the log bounds itself at `KEEP` records so old evidence ages out by volume anyway.
+
+    Never raises. A missing or half-written log means "no evidence", which is the same answer a
+    fresh install gives, and the ordering falls back to `DROP_ORDER` exactly as before.
+    """
+    out, seen = {}, {}
+    try:
+        path = ws.workspace(root) / EVENT_LOG
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except (ValueError, RecursionError):
+                    # A torn last line is not a reason to lose the rest, and a record nested past
+                    # the interpreter's limit is a torn line by another name — this log is written
+                    # by a hook and read by one, so neither end may raise.
+                    continue
+                if not isinstance(rec, dict) or rec.get("event") != "opened":
+                    continue
+                rel = str(rec.get("path") or "").replace("\\", "/")
+                store = rel.split("/", 1)[0]
+                if store:
+                    seen.setdefault(store, set()).add(rel)
+    except (OSError, ValueError, RecursionError):
+        return {}
+    out = {k: len(v) for k, v in seen.items()}
+    # 🐛 [2026-09-15] `tools` counted zero here while `state/tool_usage.json` held 179 entries, and
+    # the ordering therefore treated the most-used store in the workspace as the least-used one.
+    # A tool is RUN, not opened, so it never reaches this log -- the evidence for it has always
+    # been kept somewhere else, and reading one of the two records and calling the answer "usage"
+    # is how a store that is used constantly gets ranked as a store nobody touches.
+    #
+    # Counted in the same unit as the rest: DISTINCT members of the store with any use on record,
+    # so eight opens of one skill do not outweigh eight different ones, and a store is compared by
+    # how much of it is live rather than by how often somebody reached for the same file.
+    try:
+        reg = ws.workspace(root) / "state" / "tool_usage.json"
+        with open(reg, encoding="utf-8") as fh:
+            used = json.load(fh)
+        if isinstance(used, dict) and used:
+            out["tools"] = len(used)
+    except (OSError, ValueError, RecursionError):
+        pass                      # no register is no evidence, which is a valid answer
+    return out
+
+
 def note_opened(wsdir, session_id, rel_path):
     """Record that a session opened one of chamnan's own STORE files directly.
 

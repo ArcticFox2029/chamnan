@@ -833,6 +833,74 @@ def _quick_index_names(map_text):
 DEAD_WALK_ABOVE = 2000
 
 
+_BULLET = re.compile(r"^\s*(?:[-*+]|\d+\.)\s+")
+
+
+def names_line(listing, lead):
+    """`lead` followed by the listing's own entries on ONE line, comma separated.
+
+    A store whose section is already titles-one-per-line has no shorter honest form than the same
+    titles with the newlines taken out -- and the newlines are what it cannot afford. Measured on
+    this repository: `Recorded decisions and lessons` is 14 titles, 640 bytes as a line against
+    the multi-line section that never fits, and it was dropped on 78.5% of 400 recorded firings.
+
+    Returned as ONE line on purpose: `fit._fit_brief` shortens a brief by dropping names off the
+    end of a comma list, and it can only do that if the names are on a line together.
+    """
+    names = []
+    for raw in (listing or "").splitlines():
+        line = _BULLET.sub("", raw).strip()
+        # Stop at the first line that is not an entry -- the trailing "read one when it is
+        # relevant" sentence is navigation, and `notice()` already says where the store is.
+        if not line or line.startswith("_"):
+            continue
+        names.append(line.split(" — ")[0].split(" – ")[0].strip())
+    if not names:
+        return ""
+    return lead + "\n" + ", ".join(names)
+
+
+def index_brief(text, where):
+    """The Quick Index reduced to its directory names on one line, for when it will not fit.
+
+    🐛 [2026-09-15] `Architecture index` was the one section in the block with no brief, so it was
+    the one section that could still vanish outright -- and it did, the first time the packing
+    shifted under it. It had been fought over before for the same reason: delivery fell from 100%
+    to 41% over 126 firings in September and the restore pass was rewritten to stop it.
+    The section is prose only in its framing; a rolled-up index IS a list of directories, which is
+    the one shape that can lose its tail and still say something true.
+
+    `where` is the file to go to for the rest, because a name without a path is a reader with
+    nowhere to go -- the finding that made every other store name its file rather than its folder.
+    """
+    rows = [l for l in (text or "").splitlines() if l.lstrip().startswith("- ")]
+    if not rows:
+        return ""
+    return names_line("\n".join(rows),
+                      "Directories in the architecture index — grep `## \\`path\\`` in "
+                      "`%s` for any one of them:" % where)
+
+
+def session_brief(text, where):
+    """The handoff reduced to the headings it carries, for when the prose will not fit.
+
+    🐛 [2026-09-15] Eight of the nine sections gained a brief and this one did not, so it was the
+    one still dropped whole on a saturated workspace — 58.8% of 400 recorded firings. It was left
+    out deliberately at first: a handoff is prose, and cutting a sentence in half is the outcome
+    the fence exists to prevent. What was missed is that a session record is not only prose. Its
+    headings say what KIND of thing is waiting — remaining work, what to do next, what is blocked —
+    and a session that knows a `Blocked` heading exists opens the file. One that is told nothing
+    does not know there is a file.
+    """
+    heads = [l.lstrip("#").strip() for l in (text or "").splitlines()
+             if l.lstrip().startswith("#") and l.lstrip("#").strip()]
+    if heads:
+        return names_line("\n".join("- " + h for h in heads),
+                          "The last session left these headings — the rest is in `%s`:" % where)
+    first = next((l.strip() for l in (text or "").splitlines() if l.strip()), "")
+    return ("The last session left a record in `%s`: %s" % (where, first[:120])) if first else ""
+
+
 def dead_entries(root, map_text):
     """How many paths the Quick Index names that are no longer on disk, and a few by name.
 
@@ -1497,7 +1565,8 @@ def main():
                 index_slot = len(out) if carries_an_index(_scrubbed) else None
                 if index_slot is not None:
                     out.append(store_section(root, "Architecture index", _scrubbed,
-                                             display(mp, root)))
+                                             display(mp, root),
+                                             brief=index_brief(_scrubbed, display(mp, root))))
                 else:
                     # \U0001f41b [2026-09-09] This branch was `else: nothing`. The section was never
                     # appended, so `fit.shrink` never saw it, so the drop notice could not name it
@@ -1774,7 +1843,14 @@ def main():
                     "Environment constraints — check these before proposing infrastructure work",
                     constraints + "\n\n_Declared in `.chamnan/environments.md`, and true only as far "
                                   "as its `Checked:` dates go — `chamnan-env check` says which have "
-                                  "gone cold._", ".chamnan/environments.md"))
+                                  "gone cold._", ".chamnan/environments.md",
+                    # The constraints are one line each and the point of the section is that the
+                    # agent sees them BEFORE it writes the command — so losing it whole is the one
+                    # outcome that costs something a later grep cannot buy back. `constraints` is
+                    # already scrubbed two lines up, and `names_line` only removes newlines.
+                    brief=names_line(constraints,
+                                     "Environment constraints — the rest is in "
+                                     "`.chamnan/environments.md`:")))
 
         if cfg.get("memory", True):
             # Rules are standing constraints, so they go in front of the agent before it starts.
@@ -1821,7 +1897,12 @@ def main():
                     "Recorded decisions and lessons — read the one that matches before assuming",
                     listing + "\n\n_Read a file from `.chamnan/memory/` when its title is relevant; "
                               "do not read them all._", ".chamnan/memory/",
-                    (".chamnan/memory/decisions/", ".chamnan/memory/lessons/")))
+                    (".chamnan/memory/decisions/", ".chamnan/memory/lessons/"),
+                    # Dropped on 78.5% of 400 recorded firings, leaving its title in the notice and
+                    # nothing else. The titles ARE the section -- a session decides from a title
+                    # whether a file is worth opening -- so the brief is the same titles on one line.
+                    brief=names_line(listing, "Recorded decisions and lessons in "
+                                              "`.chamnan/memory/` — open one when its title fits:")))
                 # 🐛 [2026-09-10] The source above read `.chamnan/memory/decisions|lessons/`, which
                 # is not a path -- it is two paths with a pipe between them, and the "left out" line
                 # prints it verbatim. A session that copied it got nothing, and `memory/lessons/`
@@ -1835,7 +1916,10 @@ def main():
             recent = redact.scrub(milestones.recent_titles(root))
             if recent:
                 out.append(store_section(root, "Recent milestones", recent,
-                                         ".chamnan/milestones.md"))
+                                         ".chamnan/milestones.md",
+                                         brief=names_line(
+                                             recent, "Recent milestones in "
+                                                     "`.chamnan/milestones.md`:")))
 
         if cfg.get("timeline", True):
             # OPEN threads only, titles only. A closed thread is history -- still readable, still
@@ -1917,7 +2001,14 @@ def main():
                     f"before trusting anything above.")
             if carried:
                 out.append(store_section(root, "Where the last session stopped", carried,
-                                         ".chamnan/sessions/"))
+                                         ".chamnan/sessions/",
+                    # The last section in the block with no brief, and therefore the last one that
+                    # could still vanish outright. A handoff is prose and cannot be cut mid-
+                    # sentence — but its HEADINGS are a list, and "Remaining / Do next / Blocked"
+                    # is the part a session needs to know exists before it decides whether to open
+                    # the file. `session_brief` falls back to the first line when the record has no
+                    # headings at all, because a record with none is still a record.
+                    brief=session_brief(carried, ".chamnan/sessions/")))
 
         if cfg.get("state", True):
             sp = wsdir / "STATE.md"
@@ -2041,8 +2132,19 @@ def main():
                 out.append(store_section(
                     root, "This repo's own tools — prefer these over writing a new script",
                     redact.scrub("\n".join(lines)), ".chamnan/tools/index.json",
-                    brief=f"**{len(tools)}** tools in `{display(wsdir/'tools', root)}/index.json`; "
-                          f"`chamnan-promote` adds one."))
+                    # The brief is NAMES, not a count. A count tells a session that tools exist,
+                    # which it could already guess; a name is the thing that stops it writing
+                    # `redact_cpu_curve.py` a second time. Ranked as the full list is, so the cut
+                    # `fit._fit_brief` makes when even this will not fit takes the least-used ones.
+                    brief=(f"**{len(tools)}** tools already written — check here before writing a "
+                           f"script; full index in `{display(wsdir/'tools', root)}/index.json`.\n"
+                           # 🐛 [2026-09-15] Scrubbed, like the section this stands in for two
+                           # lines up. A tool NAME is a string somebody typed into index.json, and
+                           # the brief was the one path out of this file that skipped the redactor
+                           # — the full list has been scrubbed since the section was written, and
+                           # the short form beside it was not. The gate caught it the same hour.
+                           + redact.scrub(", ".join(f"`{mdblock.as_quoted(t['name'])}`"
+                                                    for t in ranked)))))
 
         if cfg.get("capture", True):
             # A committed symlink under `skills/` pointing outside the repository put that
@@ -2130,7 +2232,14 @@ def main():
                     brief=(f"**{len(skills)}** in `{display(wsdir/'skills', root)}/` — read the one "
                            f"that matches before starting that kind of task, not all of them."
                            + ("\n" + "\n".join(l for l in lines if "⚠️" in l)
-                              if any("⚠️" in l for l in lines) else ""))))
+                              if any("⚠️" in l for l in lines) else "")
+                           # Same reasoning as the tools brief: which procedures exist is the part
+                           # a session cannot guess, and it is one name each.
+                           # Scrubbed for the same reason as the tools brief beside it: a skill
+                           # filename is a name somebody chose, and every other path out of this
+                           # file passes the redactor.
+                           + "\n" + redact.scrub(", ".join(f"`{mdblock.as_quoted(_sn.name)}`"
+                                                           for _sn in skills)))))
 
         if cfg.get("promote", True):
             # Written by chamnan_session_end.py, which cannot speak for itself: SessionEnd is not one of the
@@ -2292,7 +2401,8 @@ def main():
                     index_slot = None      # the slot no longer exists; nothing may index it again
                     break
                 out[index_slot] = store_section(root, "Architecture index", _folded,
-                                                str(map_rel))
+                                                str(map_rel),
+                                                brief=index_brief(_folded, str(map_rel)))
 
             # 🐛 [2026-09-09] Resolution was the only thing this ever spent, and resolution is not
             # what sets the size. Measured on this repository at `index_token_budget` 3,000:
@@ -2321,7 +2431,8 @@ def main():
                 if not carries_an_index(_folded):
                     break
                 out[index_slot] = store_section(root, "Architecture index", _folded,
-                                                str(map_rel))
+                                                str(map_rel),
+                                                brief=index_brief(_folded, str(map_rel)))
 
         # Constraints first, data in the middle, the handoff last — see fit.EMIT_ORDER. Done after the
         # index has finished being resized and before anything is dropped, so neither step depends on a
@@ -2342,8 +2453,16 @@ def main():
     except Exception as _exc:
         out.append("\n_chamnan: this block stopped early — " + type(_exc).__name__
                    + ". What is above is complete; what is missing could not be read._\n")
+    # What this workspace has actually been seen to open, so the drop order follows the work
+    # rather than a list written once. Guarded like every other read here: no evidence is a valid
+    # answer and means "behave exactly as a fresh install does".
+    try:
+        import pointer as _pointer        # local, as every other lib import in this file is
+        _opens = _pointer.opens_by_store(root)
+    except Exception:
+        _opens = {}
     body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built,
-                                briefs=briefs)
+                                briefs=briefs, usage=_opens)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
     # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page
