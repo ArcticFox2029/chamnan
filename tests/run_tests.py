@@ -31219,6 +31219,26 @@ _CASES153 = (
      "ledger would key `.cursor\\rules\\chamnan.mdc` and every reader", False),
     ("a config filename after the word key", "a `read:` key in `.aider.conf.yml`", False),
     ("a dotted filename", "the api key `settings.local.json` is read first", False),
+    # 🐛 [2026-09-15] R20.1. The window was one to four whitespace characters, so the value
+    # had to sit immediately after the secret word. An ordinary clause between the two let a real
+    # high-entropy credential out, and that is the sentence a person is MORE likely to write than
+    # the terse one that was already caught.
+    ("a clause between the word and the value",
+     "the break-glass password, which ops rotate quarterly, is `%s`" % _V153, True),
+    ("a verb that is not a copula", "set the passphrase to '%s' before running it" % _V153, True),
+    ("words between the word and the value", "the vault secret for staging is `%s` today" % _V153, True),
+    ("a clause and then a colon",
+     "password for the jump host, rotated monthly: `%s`" % _V153, True),
+    # And the precision the widened window had to buy, each one found in chamnan's own tree:
+    ("a product name after the word token",
+     'the first token alone was not the family: "Qwen3-Coder" normalised', False),
+    ("a code fragment carrying an equals sign",
+     "breaking a coverage tie on token count picks `per_dir=0`, which names every", False),
+    ("...but trailing equals is base64 padding and must still go",
+     "the api key is `QUtJQUlPU0ZPRE5ON0VYQU1QTEU=`", True),
+    ("a colon with no space before it is an assignment, not prose",
+     "the password:field `not_a_secret_value` in the schema", False),
+
     # 🐛 [2026-09-15] The gate found these in chamnan's OWN tree the day the rule shipped:
     # prose about code is full of calls and dotted names, and a call is letters plus punctuation
     # that is not a word character -- which is the whole of the shape test above.
@@ -31581,6 +31601,88 @@ for _t in _thin157:
     print("      DETAIL  registered but missing %s: %s" % (", ".join(_REQUIRED157), _t))
 check("...and every registered adapter declares what the package reads off it",
       not _thin157)
+# ---- 158_the_sets_that_are_identical_today_must_stay_identical.py
+# ------------------ two populations that agree today, asserted so the next member cannot differ
+# R20.5 (acc4, 2026-09-15) proposed merging both: one shared hook-output emitter, and generating
+# `site/lib` at build time instead of committing it. Both were measured before being judged, which
+# is the rule this repository keeps having to relearn -- **merge when the duplication is DIVERGING;
+# assert when it is not** -- and both turned out to agree exactly.
+#
+# So the cheap answer is the one that catches the member that does not exist yet: the SIXTH hook,
+# and the first mirrored module to drift. That is where this repository's defects actually come
+# from -- a rule applied to one member of a set and forgotten in the identical ones beside it,
+# eighteen recorded instances.
+#
+# Neither assertion blocks the merge. Both ask what the population IS, not how it was produced, so
+# they survive the restructure if it is ever done.
+from pathlib import Path as _P158
+import hashlib as _h158
+import re as _re158
+
+# The package root comes from a module the suite has already imported, the way check 157 takes the
+# adapter directory from the imported package. Walking up from __file__ is wrong here: a pool check
+# runs from `.chamnan/tools/checks/` under suite_slice and from `tests/` once folded, and only one
+# of those has the package above it.
+import importlib as _im158
+
+_PKG158 = _P158(_im158.import_module("redact").__file__).resolve().parent.parent
+
+# --- every hook that emits context scrubs it first, and filters it for a terminal ----------------
+# The ORDER is the security property and it is structural, not stylistic: a hook that json.dumps
+# before scrubbing has already put the credential in the payload. Asserting presence is what a file
+# can check; the emitter that would make the order structural is banked, not refused.
+_emit158, _thin158 = [], []
+for _h in sorted((_PKG158 / "hooks").glob("*.py")):
+    _t = _h.read_text(encoding="utf-8", errors="replace")
+    if "hookSpecificOutput" not in _t:
+        continue
+    _emit158.append(_h.name)
+    _missing = [w for w in ("scrub(", "for_a_terminal") if w not in _t]
+    if _missing:
+        _thin158.append("%s: no %s" % (_h.name, ", ".join(_missing)))
+for _x in _thin158:
+    print("      DETAIL  %s" % _x)
+print("      DETAIL  hooks that emit context: %d, all scrubbing: %s"
+      % (len(_emit158), not _thin158))
+
+check("EVERY HOOK THAT EMITS CONTEXT SCRUBS IT AND FILTERS IT FOR A TERMINAL",
+      not _thin158, saw="; ".join(_thin158))
+check("...and the population is not empty, so that is not a pass over nothing",
+      len(_emit158) >= 4, saw="%d emitting hook(s) found" % len(_emit158))
+
+# --- the site mirror is a copy, and every copy is the same bytes ---------------------------------
+# 🐛 A check comparing NAMES would pass while the contents drifted, which is the whole failure this
+# is here to catch. The hash is the only thing that answers the question asked.
+_pairs158, _drift158 = 0, []
+for _src in sorted((_PKG158 / "lib").glob("*.py")):
+    _dst = _PKG158 / "site" / "lib" / _src.name
+    if not _dst.is_file():
+        continue
+    _pairs158 += 1
+    if _h158.sha256(_src.read_bytes()).digest() != _h158.sha256(_dst.read_bytes()).digest():
+        _drift158.append(_src.name)
+for _x in _drift158:
+    print("      DETAIL  site/lib differs from lib: %s" % _x)
+print("      DETAIL  mirrored module(s): %d, byte-identical: %d" % (_pairs158, _pairs158 - len(_drift158)))
+
+check("EVERY MIRRORED MODULE IN site/lib IS THE SAME BYTES AS ITS lib/ ORIGINAL",
+      not _drift158,
+      saw="run .chamnan/tools/fold_and_verify.sh, which refreshes the mirror, then commit both")
+check("...and there is a mirror to check, so that is not a pass over an empty directory",
+      _pairs158 >= 10, saw="%d mirrored module(s)" % _pairs158)
+
+# --- and the divergence R20.5 reported does NOT reproduce -----------------------------------------
+# R20.5 called this the round's only MEASURED divergence: eleven commands, three wordings for the
+# same refusal. It is one wording. The commands differ in where they break an f-string across
+# lines -- `chamnan-context` closes its first literal after the path, the others carry the sentence
+# further -- and two attempts to assert it here measured the line breaks instead of the words: the
+# first read one literal per match and reported three wordings, the second joined the literals and
+# reported ten, because concatenation across a line break leaves no space between "builds" and "the
+# index".
+#
+# So there is no assertion here, on purpose. A guard that fires on formatting teaches people to
+# ignore it, and this file's other two checks are the ones that catch a real difference. Recorded
+# rather than deleted so the next round does not re-derive "three wordings" from the same regex.
 # ---- 15_a_pin_is_read_by_every_store.py
 # ------------------------------------------- the pin reached the stores one at a time
 # 🐛 [2026-09-09] 📌 has meant "the owner says this must not be cut" since `state.py` was written,

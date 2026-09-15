@@ -1749,12 +1749,40 @@ def _value_is_the_key_itself(key_part, value):
 # 🐛 `_lazy` wraps a compiled PATTERN, not a string — wrapping the widened vocabulary in it made
 # `str()` reach for `.pattern` on a `str`. It is computed inside the pattern's own lambda instead,
 # which is lazy for the same reason and has no second object to get wrong.
+# 🐛 [2026-09-15] R20.1. The window was `[^\\S\\r\\n]{1,4}` -- one to four whitespace characters
+# between the secret word and the value, so the value had to sit immediately after it. Put any
+# ordinary clause between the two and a real, high-entropy credential walked out:
+#
+#     The break-glass password, which ops rotate quarterly, is `<value>`.
+#     Set the passphrase to '<value>' before running it.
+#     password for the jump host, rotated monthly: `<value>`
+#
+# That is the incident's own shape, and it is the sentence a person is MORE likely to write than the
+# terse one that was caught. `COPULA_SECRET` covered the terse form only, because it requires
+# `is`/`was` immediately after the word as well.
+#
+# So the window is 40 characters of ordinary sentence text, and `_reads_like_a_credential` carries
+# the precision -- which is what that function is for, and why widening the window is what finally
+# made it load-bearing. Measured over all 229 tracked files against the self-scan baseline: five of
+# five leak shapes caught, ZERO new false positives. Each additional guard in the value test was
+# earned by one of them: paths, then calls and dotted names, then product names.
+#
+# A `:` may appear in the gap only when there is a space before it, i.e. the gap is prose rather
+# than `key:` -- an assignment is somebody else's rule and this one must not shadow it.
 DELIMITED_AFTER_SECRET_WORD = _lazy(lambda: re.compile(
     r"(?<![A-Za-z0-9])(?:" + SECRET_WORDS.replace("[_-]", "[\\s_-]") + r")"
-    r"(?![^\s`\"']*[=:])"
-    r"[^\S\r\n]{1,4}"
+    r"(?![^\s`\"'=:]*[=:])"
+    r"(?P<gap>[^`\"'\r\n=]{0,40}?)"
     r"(?P<q>[`\"'])(?P<value>[^`\"'\r\n]{6,200})(?P=q)",
     re.I))
+
+
+_GAP_IS_PROSE = re.compile(r"\s")
+
+
+def _prose_gap(gap):
+    """A gap carrying a `:` is prose only when something precedes the colon with a space in it."""
+    return ":" not in gap or bool(_GAP_IS_PROSE.search(gap.split(":", 1)[0]))
 
 
 _SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
@@ -2410,6 +2438,26 @@ def _reads_like_a_credential(value):
     # that is only identifier-dot-identifier is a name, not a value.
     if _LOOKS_LIKE_CODE.search(value):
         return False
+    # 🐛 [2026-09-15] And a PRODUCT NAME is not a credential. Widening the prose window
+    # brought one more false positive out of chamnan's own tree: `lib/profiles.py:307` reads
+    # "The first token alone was not the family: \"Qwen3-Coder\" normalised", where the secret word
+    # is `token` and the value is letters, a digit and a hyphen -- mixed classes, so every test
+    # above passed it.
+    #
+    # The shape that separates them is WHERE the digits sit. A product name is words with a version
+    # digit or two on the end of a word; a credential scatters them. `Qwen3-Coder` and `bge-m3` are
+    # the first; `Tr0ub4dor-2026` is not, and neither is anything carrying a symbol. Two or three
+    # groups only, the same bound `_is_a_plain_word` uses, so a four-word passphrase stays a
+    # credential.
+    _groups = re.split(r"[-_]", value)
+    if 2 <= len(_groups) <= 3 and all(re.fullmatch(r"[A-Za-z]{2,}\d{0,2}", g) for g in _groups):
+        return False
+    # 🐛 [2026-09-15] A value with an `=` INSIDE it is a fragment of code or a query string,
+    # not a secret written in a sentence -- chamnan's own tree supplied `per_dir=0` from a comment
+    # about coverage ties. Trailing `=` is the exception and must stay, because that is base64
+    # padding and a base64 secret is exactly what this is here to catch.
+    if re.search(r"=(?!=*$)", value):
+        return False
     letters = any(c.isalpha() for c in value)
     digits = any(c.isdigit() for c in value)
     symbols = any(not c.isalnum() and c != "_" for c in value)
@@ -2446,7 +2494,8 @@ def scrub(text, windowed=True, *, _unmask=True):
         # cannot tell what was removed. Same shape as AUTH_SCHEME_SECRET below, one rule further on.
         if pattern is DELIMITED_AFTER_SECRET_WORD:
             text = pattern.sub(
-                lambda m: m.group(0) if not _reads_like_a_credential(m.group("value"))
+                lambda m: m.group(0)
+                if not _prose_gap(m.group("gap")) or not _reads_like_a_credential(m.group("value"))
                 else m.group(0).replace(m.group("value"), PLACEHOLDER), text)
         elif pattern.groups == 1:
             # Same position in the order, one extra question asked. See _is_a_plain_word.
