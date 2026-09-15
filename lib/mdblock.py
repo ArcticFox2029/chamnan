@@ -352,6 +352,26 @@ def cut_outside_a_fence(text, cut):
         if not in_fence:
             safe = at
             boundaries.append((safe, line))
+    # 🐛 [2026-09-09, fixed 2026-09-15] A section with NO line break before the cut has no line
+    # boundary to back up to, so `safe` stayed 0 and the caller received nothing at all — measured
+    # then as 0 of 235 phrases kept, where the same content line-broken kept 28 of 120. It was
+    # found and deliberately left, because the batch that found it was about a different cut.
+    #
+    # A word boundary is the honest fallback, and it is safe precisely here: a fence marker occupies
+    # its own line, so text with no newline in it cannot have opened one. Losing a word beats losing
+    # a section, and this only ever runs where the alternative is zero.
+    # 🐛 The first version of this sat HERE, above the table guard below, and a table's first row
+    # has no newline before it either — so every small budget on a table document took the word
+    # fallback and returned a cut in the middle of `| header |`, which is exactly the half-table the
+    # guard below exists to refuse. Six budgets, caught by that guard's own check.
+    #
+    # A `|` is the tell and a paragraph rarely carries one, so the fallback declines a prefix that
+    # has started a table and lets the existing answer stand. A guard added above other guards does
+    # not extend them, it bypasses them.
+    if safe == 0 and cut > 0 and "\n" not in text[:cut] and "|" not in text[:cut]:
+        space = text.rfind(" ", 0, cut)
+        if space > 0:
+            safe = space
     # 🐛 [2026-09-09] A fence is not the only structure a line boundary can cut in half. Found on a
     # real session handoff: a markdown table delivered as its header row and its `|---|---|` rule
     # with ZERO data rows under it — a table that promises columns and fills none, which is worse

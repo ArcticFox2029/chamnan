@@ -31102,6 +31102,60 @@ try:
           not _early151)
 finally:
     _sh151.rmtree(_d151, ignore_errors=True)
+# ---- 152_a_section_with_no_line_break_keeps_something.py
+# ------------------ a section with no line break in it used to arrive empty
+# 🐛 Found 2026-09-09 and deliberately left: `cut_outside_a_fence` backs a budget cut up to the last
+# complete LINE, and a section written as one long paragraph has no such boundary — so `safe` stayed
+# 0 and the caller received `_…cut here._` with nothing above it. Measured then as **0 of 235
+# phrases kept**, where the same content line-broken kept 28 of 120.
+#
+# It was left because the batch that found it was about a different cut, and the note said why it
+# might matter less than it looks: every handoff on disk is bullets. The shape that fails is a
+# section somebody wrote as a paragraph, which nothing prevents and which five callers share.
+#
+# Fixed 2026-09-15 with a word boundary, which is safe exactly here: a fence marker occupies its own
+# line, so text with no newline in it cannot have opened one. Losing a word beats losing a section,
+# and the fallback only ever runs where the alternative is zero.
+import importlib as _im152
+
+_md152 = _im152.import_module("mdblock")
+
+_ONE152 = " ".join("phrase%d" % _i for _i in range(235))
+_BROKEN152 = "\n".join("- phrase%d" % _i for _i in range(120))
+
+_kept152 = []
+for _budget in (400, 1200, 3000):
+    _cut = _md152.cut_outside_a_fence(_ONE152, _budget)
+    _kept152.append(_ONE152[:_cut].count("phrase"))
+print("      DETAIL  one unbroken line, phrases kept at 400/1200/3000: %s" % _kept152)
+
+check("A SECTION WITH NO LINE BREAK KEEPS WHAT FITS, RATHER THAN ARRIVING EMPTY",
+      all(_k > 0 for _k in _kept152), saw="0 kept — the cut fell back to index 0")
+check("...and it keeps roughly what the budget allows, not a token gesture",
+      _kept152[0] >= 20 and _kept152[1] > _kept152[0])
+
+# The line-broken case is the one that already worked, and it must not have been traded away.
+_lb152 = [_BROKEN152[:_md152.cut_outside_a_fence(_BROKEN152, _b)].count("phrase")
+          for _b in (400, 1200)]
+check("...and the line-broken case it was already right about is unchanged",
+      _lb152[0] >= 20 and _lb152[1] > _lb152[0], saw=str(_lb152))
+
+# 🐛 The whole reason this function exists: a cut inside a ``` block leaves the fence open and every
+# later line renders as code, including the notice saying the text was truncated. The fallback must
+# not have opened that door — so the count of fence markers before any cut stays even.
+_FENCED152 = "intro line\n```\ncode here\nmore code\n```\ntail after the fence\n"
+_odd152 = [_b for _b in range(1, len(_FENCED152))
+           if _FENCED152[:_md152.cut_outside_a_fence(_FENCED152, _b)].count("```") % 2]
+check("...and no budget leaves a fence open, which is what this function is for",
+      not _odd152, saw="budgets leaving an open fence: %s" % _odd152[:8])
+
+# The fallback is scoped to the no-newline case. A document WITH newlines must still stop at a line,
+# or the guard above is being reached by a path that was never meant to need it.
+_MIXED152 = "first line here\nsecond line here\nthird line here\n"
+_cut152 = _md152.cut_outside_a_fence(_MIXED152, 25)
+check("...and a document that HAS line breaks still stops at one",
+      _cut152 == 0 or _MIXED152[_cut152 - 1] == "\n",
+      saw="cut at %d, character before it is %r" % (_cut152, _MIXED152[_cut152 - 1:_cut152]))
 # ---- 15_a_pin_is_read_by_every_store.py
 # ------------------------------------------- the pin reached the stores one at a time
 # 🐛 [2026-09-09] 📌 has meant "the owner says this must not be cut" since `state.py` was written,

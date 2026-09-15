@@ -426,8 +426,10 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
             # fence and a note for the privilege. Under `_trim`'s 300-byte floor the result was "",
             # and a section that fitted comfortably was left out entirely.
             #
-            # Measured on this repository: the Architecture index is 794 bytes. It is rank 0 in
-            # DROP_ORDER so it goes first, dropping it did NOT bring the block under the ceiling —
+            # Measured on this repository at the time: the Architecture index is 794 bytes. It was
+            # rank 0 in DROP_ORDER then and went first — it is rank 8 of 11 today, moved on
+            # 2026-09-10, and this sentence went on saying rank 0 until somebody quoted it as
+            # current on 2026-09-15 and built a finding on top of it, dropping it did NOT bring the block under the ceiling —
             # `Work in flight` had to go as well, and dropping that alone would have sufficed — and
             # then the restore refused to put 794 bytes back into 1,300 bytes of room. Delivery of
             # the index fell from 100% on 2026-08-29 to 41% on 2026-09-02, measured over 126 real
