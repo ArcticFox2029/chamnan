@@ -379,7 +379,16 @@ records existed when the session first fired and stays quiet only once that coun
 
 ```bash
 python3 tests/run_tests.py                   # the full gate
+python3 tools/verify_release.py              # the gate plus the index claim, on your machine
 ```
+
+**5,448 of 5,448 checks passed** on macOS 26.6 / Python 3.9.6, concurrency 34 of 34, with 3 blocks
+skipped for want of another platform — each one says so by name in its own line. The same tree with
+no `.chamnan` workspace above it, which is what a fresh clone and CI see, is **5,385 of 5,385**;
+the difference is entirely checks that measure the development workspace and skip without it.
+
+The research behind these fixes is attached as `INDEX_CITED_IN_CODE.md` — every finding linked to
+the commit that acted on it, so any claim above can be followed to a diff without cloning anything.
 
 `chamnan-report` also stopped quoting the wrong ceiling. It compared the last block against
 `fit.CEILING` — the value the package ships with — rather than the one the workspace runs at, so a
