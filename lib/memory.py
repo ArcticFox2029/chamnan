@@ -556,7 +556,48 @@ def rules_text(root, refuse_conflicts=False):
     # thing that can still be recognised and followed -- and only what is left over is shared out,
     # double weight to a pin. A rule shorter than its share takes what it needs and hands the rest
     # back. Nothing can then push a rule off the end, because nothing was over the end.
-    _weights = [PIN_SHARE if state.pinned(b) else 1 for b in out]
+    # 🎯 [2026-09-15] v1.43, "Rule Relevance at Scale", banked since the v1.26 programme and gated
+    # on `chamnan-recall` shipping — which it has. Its measurement reproduces and has got worse:
+    # 9 of 10 rules had no file-level trigger then, **16 of 16 have none now**, against a store that
+    # grew from 26,609 to 55,041 characters. Nothing fires a just-in-time rule load because no rule
+    # says which files it is about.
+    #
+    # Half of what it asked for arrived by another route today: a critical rule no longer vanishes,
+    # because every rule reaches the session at least as a name. The other half is this — a rule
+    # that is about one part of the tree should not spend the budget when the work is elsewhere.
+    #
+    # The declaration is one line a person can write and nothing forces: `Applies to: lib/redact.py,
+    # lib/*.py` near the top of the rule. A rule that declares nothing behaves exactly as before,
+    # which is every rule in this store today, so this ships as a capability rather than a change.
+    # The signal it matches against is `rollup._churn` — what the repository has actually been
+    # touching — which is already computed and cached for the index and costs nothing more here.
+    _APPLIES = re.compile(r"^\s*Applies to:\s*(.+)$", re.M | re.I)
+
+    def _declared_scope(body):
+        m = _APPLIES.search(body[:800])
+        return [g.strip() for g in m.group(1).split(",") if g.strip()] if m else []
+
+    def _in_play(globs, hot):
+        # 🐛 `fnmatch.fnmatch` normalises case by asking the PLATFORM — it lowercases on macOS and
+        # Windows and does not on Linux, so the same rule and the same repository would match on one
+        # machine and not another, silently. `fnmatchcase` is the explicit one and this package
+        # already forbids the other; the check that says so caught this within the hour.
+        from fnmatch import fnmatchcase
+        return any(fnmatchcase(p, g) or fnmatchcase(p, g + "/*")
+                   for g in globs for p in hot)
+
+    _hot = []
+    try:
+        import rollup as _rollup_scope
+        _hot = [p for p, _n in sorted(_rollup_scope._churn(root).items(),
+                                      key=lambda kv: -kv[1])[:60]]
+    except Exception:                    # noqa: BLE001 — a missing signal means "no trigger fired"
+        _hot = []
+    _scoped = [_declared_scope(b) for b in out]
+    _triggered = [bool(g) and _in_play(g, _hot) for g in _scoped]
+
+    _weights = [PIN_SHARE if (state.pinned(b) or _triggered[_i]) else 1
+                for _i, b in enumerate(out)]
     # The floor is DERIVED from the rule it serves -- a long title needs more room to survive as a
     # title than a short one -- rather than one constant that fits whichever rule it was measured
     # on. `SHARE_FLOOR` stays the point below which a share stops being a rule and becomes a stub.

@@ -77,6 +77,17 @@ HOOK_BODY = """{marker}
 # 1,032 files, in the foreground of the commit. Running it on every M would put two minutes between
 # a person and their commit, most of the time. The staleness is covered instead by the session-start
 # warning, and `chamnan-map --install-git-hook` says all of this out loud at install time.
+# 🐛 [2026-09-15] This hook existed in the owner's infrastructure repository and ran only the
+# index refresh, while `chamnan-guard` — which reads the same staged diff for leaked secrets and
+# ships in the same package — was installed and never called from it. A break-glass password went
+# into four tracked files and stayed fifteen days with this hook firing on every one of those
+# commits. The door was open and the guard was standing somewhere else.
+#
+# It WARNS and never blocks: `chamnan-guard` returns 0 unless a project asked for `--strict`, and a
+# hook that stops somebody committing is a hook they delete.
+if command -v chamnan-guard >/dev/null 2>&1; then
+  chamnan-guard || true
+fi
 if command -v chamnan-map >/dev/null 2>&1; then
   if ! git diff --cached --quiet --diff-filter=ACDR 2>/dev/null; then
     chamnan-map >/dev/null 2>&1 || true

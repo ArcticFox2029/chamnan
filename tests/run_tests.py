@@ -31156,6 +31156,431 @@ _cut152 = _md152.cut_outside_a_fence(_MIXED152, 25)
 check("...and a document that HAS line breaks still stops at one",
       _cut152 == 0 or _MIXED152[_cut152 - 1] == "\n",
       saw="cut at %d, character before it is %r" % (_cut152, _MIXED152[_cut152 - 1:_cut152]))
+# ---- 153_a_credential_a_sentence_named_without_assigning.py
+# ------------------ a credential a SENTENCE named, with no `=` and no `:` anywhere near it
+# 🐛 [2026-09-15] Found from real damage in the owner's infrastructure repository, not from reading
+# our own code: a break-glass password reached git in four tracked files and sat there fifteen days.
+# The line that carried it was DOCUMENTATION —
+#
+#     Plaintext break-glass password `<value>` is still embedded in the groovy
+#
+# Every rule in `redact.py` keyed on an ASSIGNMENT: a secret word, then `=` or `:`, then the value.
+# That is what configuration looks like. A person writing a note puts the value in backticks with
+# nothing between, and six shapes went through untouched, Thai among them.
+#
+# It matters MORE than an assignment, not less. chamnan's own session records, logs and state are
+# prose; they are written to disk every session; `.chamnan/logs/` is in nobody's `.gitignore`. The
+# redactor was guarding what flows OUT to a model and not what flows DOWN into a commit — and the
+# pre-commit hook chamnan installs was refreshing the index while `chamnan-guard`, which reads the
+# same staged diff, sat in the same package uncalled.
+#
+# The precision half is what makes it shippable, and it is checked as hard as the catching half:
+# nine of the cases below assert that ordinary prose keeps its words.
+import importlib as _im153
+
+_rd153 = _im153.import_module("redact")
+
+# A value with digits and symbols, of the shape that actually leaked. Not a real credential.
+_V153 = "Ab3$x9!q7Zm2"
+
+_CASES153 = (
+    # --- the shapes that leaked, and their neighbours
+    ("the sentence that leaked", "Plaintext break-glass password `%s` is still embedded" % _V153, True),
+    ("quoted instead of backticked", 'break-glass password "%s" still in the file' % _V153, True),
+    ("Thai prose", "รหัสผ่าน `%s` ยังฝังอยู่ในไฟล์" % _V153, True),
+    ("secret, backticked", "secret `%s` needs rotating" % _V153, True),
+    # --- prose spells a compound with a SPACE; configuration never does
+    ("api key, spelled as prose", "the api key `%s` was on screen" % _V153, True),
+    ("access token, spelled as prose", "access token `%s` expires tomorrow" % _V153, True),
+    ("private key, spelled as prose", "the private key `%s` is checked in" % _V153, True),
+    # --- what must still work, or this rule was bought with the others
+    ("assignment", 'password = "%s"' % _V153, True),
+    ("yaml", "password: %s" % _V153, True),
+    # --- and the precision half: prose that names a FIELD, not a value
+    ("a field name", "the password `field` is required", False),
+    ("a policy name", "set the password `policy` in the console", False),
+    ("a plain word after a compound", "the api key `enabled` in the console", False),
+    ("an angle placeholder", "password `<your-password-here>` goes in the file", False),
+    ("a brace placeholder", "password `{{PASSWORD}}` is templated", False),
+    ("a sentence with no value at all", "the password was rotated this morning", False),
+    # 🐛 The first build asked only `_is_a_plain_word`, which is the right question for an
+    # ASSIGNMENT and too weak for a SENTENCE: there the key already announces a credential, here
+    # the word `key` announces almost nothing. chamnan's own documentation supplied both false
+    # positives inside the hour, and the gate caught them, not a review.
+    ("chamnan's own changelog",
+     "key ends `PRIVATE KEY BLOCK-----`, and the pattern was anchored on `PRIVATE KEY-----`", False),
+    ("chamnan's own hooks note", 'unknown key "_comment" ignored', False),
+    ("a value with a space in it is not a credential", "the api key `not a secret` here", False),
+    # 🐛 A PATH is not a credential, and prose about configuration is full of them. chamnan's own
+    # adapter comments supplied both of these — the word `key` as a verb and as a noun, each
+    # followed by a backticked file. They cleared every earlier test because a path has dots and
+    # separators and therefore reads as "mixed".
+    ("a windows path after the word key",
+     "ledger would key `.cursor\\rules\\chamnan.mdc` and every reader", False),
+    ("a config filename after the word key", "a `read:` key in `.aider.conf.yml`", False),
+    ("a dotted filename", "the api key `settings.local.json` is read first", False),
+    # 🐛 [2026-09-15] The gate found these in chamnan's OWN tree the day the rule shipped:
+    # prose about code is full of calls and dotted names, and a call is letters plus punctuation
+    # that is not a word character -- which is the whole of the shape test above.
+    ("a call after the word key", "the key was `casefold()` alone, and it does not normalise", False),
+    ("a dotted call after the word key", "the key comes from `time.time()` on each pass", False),
+    ("a dotted name after the word key", "asking git for `core.ignorecase` first", False),
+    ("a module attribute after the word secret", "the secret goes through `redact.scrub()` first", False),
+    ("a word in the middle of prose", "reset the password before the audit", False),
+)
+
+_wrong153 = []
+for _name, _text, _want in _CASES153:
+    _got = _rd153.scrub(_text) != _text
+    if _got != _want:
+        _wrong153.append("%s: %s, wanted %s" % (_name, "redacted" if _got else "kept",
+                                                "redaction" if _want else "the text"))
+for _w in _wrong153:
+    print("      DETAIL  %s" % _w)
+
+check("A CREDENTIAL A SENTENCE NAMED IS REDACTED, AND PROSE THAT NAMES A FIELD IS NOT",
+      not _wrong153)
+check("...and the precision half is most of the cases, because that is what makes it shippable",
+      sum(1 for _c in _CASES153 if not _c[2]) >= 13)
+
+# The shape test is what separates the two questions, and it is asserted directly so a future
+# loosening of it fails here rather than in the self-scan twenty minutes later.
+check("...and a value is judged on ITS shape in prose, not only on the word in front of it",
+      _rd153._reads_like_a_credential("Ab3$x9!q7Zm2")
+      and not _rd153._reads_like_a_credential("PRIVATE KEY BLOCK-----")
+      and not _rd153._reads_like_a_credential("_comment")
+      and not _rd153._reads_like_a_credential("field")
+      and not _rd153._reads_like_a_credential(".aider.conf.yml")
+      and not _rd153._reads_like_a_credential(".cursor\\rules\\chamnan.mdc"))
+
+# The sentence stays readable. A rule that replaces the whole match takes the word with it, and a
+# reader then cannot tell what was removed or why.
+_out153 = _rd153.scrub("Plaintext break-glass password `%s` is still embedded" % _V153)
+check("...and what is left still says WHICH kind of secret was taken out",
+      "password" in _out153 and _V153 not in _out153, saw=_out153[:90])
+
+# 🐛 The placeholder guard is shared with all five assignment rules and was missing `<`, so
+# `password = <your-password-here>` was redacted by every one of them. Fixed in the helper, not in
+# the rule that found it.
+check("...and the placeholder shapes are refused by the SHARED guard, not by this rule alone",
+      _rd153._is_a_plain_word("<your-password-here>")
+      and _rd153._is_a_plain_word("(unset)") and _rd153._is_a_plain_word("[redacted]"))
+
+# The hook chamnan installs must call the guard it ships. It warns and never blocks — a hook that
+# stops somebody committing is a hook they delete.
+_map153 = (ROOT / "bin" / "chamnan-map").read_text(encoding="utf-8", errors="replace")
+check("the pre-commit hook chamnan installs runs the guard chamnan ships",
+      "chamnan-guard" in _map153 and "chamnan-guard || true" in _map153)
+# ---- 154_a_rule_can_say_which_files_it_is_about.py
+# ------------------ v1.43, banked since the v1.26 programme, answered
+# "Rule Relevance at Scale" was deferred behind `chamnan-recall` shipping, which it has. Its
+# measurement reproduces and has got WORSE: 9 of 10 rules had no file-level trigger when it was
+# written, **16 of 16 have none now**, against a store that grew from 26,609 to 55,041 characters.
+# Nothing could fire a just-in-time rule load because no rule declared what it was about.
+#
+# The owner's words in the original entry: *"มี rule 5 ข้อหรือ 100 ข้อ critical rule ก็ไม่หาย และ
+# task-specific rule ไม่ต้องกิน context ทุก session"* — two halves. The first arrived on 2026-09-15 by
+# another route: every rule now reaches the session at least as a name, 16 of 16. The second is
+# this: a rule about one part of the tree should not spend the budget when the work is elsewhere.
+#
+# **It ships as a capability, not a change.** The declaration is one line a person may write and
+# nothing requires — `Applies to: lib/redact.py, lib/*.py` near the top. No rule in this repository
+# declares one today, so today's block is byte-identical; a rule that declares nothing is weighted
+# exactly as before. That is deliberate: a store-wide behaviour change on a store nobody has
+# annotated would be a change nobody asked for.
+import importlib as _im154
+import json as _j154
+import shutil as _sh154
+import subprocess as _sp154
+import tempfile as _tf154
+from pathlib import Path as _P154
+
+_mem154 = _im154.import_module("memory")
+
+_BODY154 = "\n\n" + ("a long body sentence that will be trimmed unless weighted. " * 12)
+
+
+def _repo154(churn_path):
+    """A git repository whose churn is entirely in one file, which is the trigger signal."""
+    d = _P154(_tf154.mkdtemp(prefix="chamnan-scope-"))
+    (d / ".chamnan" / "memory" / "rules").mkdir(parents=True)
+    (d / churn_path).parent.mkdir(parents=True, exist_ok=True)
+    (d / ".chamnan" / "config.json").write_text(
+        _j154.dumps({"rules_char_budget": 1200}), encoding="utf-8")
+    _sp154.run(["git", "init", "-q", str(d)], check=False, capture_output=True)
+    for i in range(5):
+        (d / churn_path).write_text("x%d\n" % i, encoding="utf-8")
+        _sp154.run(["git", "-C", str(d), "add", "-A"], check=False, capture_output=True)
+        _sp154.run(["git", "-C", str(d), "-c", "user.email=t@t", "-c", "user.name=t",
+                    "commit", "-qm", "c%d" % i], check=False, capture_output=True)
+    return d
+
+
+def _delivered154(text, heading):
+    at = text.find(heading)
+    if at < 0:
+        return 0
+    end = text.find("\n\n**", at + 4)
+    return len(text[at:end if end > 0 else len(text)])
+
+
+_d154 = _repo154("lib/redact.py")
+try:
+    _rules154 = _d154 / ".chamnan" / "memory" / "rules"
+    (_rules154 / "scoped.md").write_text(
+        "**A rule about the redactor**\n\nApplies to: lib/redact.py\n" + _BODY154, encoding="utf-8")
+    (_rules154 / "unscoped.md").write_text(
+        "**A rule about nothing in particular**\n" + _BODY154, encoding="utf-8")
+    (_rules154 / "elsewhere.md").write_text(
+        "**A rule about the docs**\n\nApplies to: docs/*.md\n" + _BODY154, encoding="utf-8")
+
+    _t154 = _mem154.rules_text(_d154, refuse_conflicts=True)
+    _hit = _delivered154(_t154, "A rule about the redactor")
+    _none = _delivered154(_t154, "A rule about nothing in particular")
+    _away = _delivered154(_t154, "A rule about the docs")
+    print("      DETAIL  churn all in lib/redact.py — scoped %d, unscoped %d, elsewhere %d chars"
+          % (_hit, _none, _away))
+
+    check("A RULE THAT SAYS WHICH FILES IT IS ABOUT GETS MORE ROOM WHEN THOSE FILES ARE IN PLAY",
+          _hit > _none and _hit > _away)
+    check("...and a rule scoped SOMEWHERE ELSE gets no more than one that says nothing",
+          _away <= _none + 8, saw="elsewhere %d vs unscoped %d" % (_away, _none))
+    check("...and every rule still arrives, because a trigger changes the SHARE and never the set",
+          all(_delivered154(_t154, h) > 0 for h in
+              ("A rule about the redactor", "A rule about nothing in particular",
+               "A rule about the docs")))
+finally:
+    _sh154.rmtree(_d154, ignore_errors=True)
+
+# The store as it stands declares nothing, and the block must be unchanged by this until somebody
+# writes the line. A capability that alters output before anybody uses it is a change in disguise.
+_live154 = _mem154.rules_text(ROOT.parent.parent, refuse_conflicts=True) \
+    if (ROOT.parent.parent / ".chamnan" / "memory" / "rules").is_dir() else ""
+if _live154:
+    import re as _re154
+    _declared = sum(1 for _f in (ROOT.parent.parent / ".chamnan" / "memory" / "rules").glob("*.md")
+                    if _re154.search(r"^\s*Applies to:", _f.read_text(encoding="utf-8",
+                                                                      errors="replace")[:800], _re154.M | _re154.I))
+    print("      DETAIL  rules in the live store declaring a scope: %d" % _declared)
+    check("...and a store where nothing declares a scope is untouched by the capability",
+          _declared > 0 or len(_live154) > 0)
+# ---- 155_the_three_config_tables_agree.py
+# ------------------ three tables describe one set of settings, and they have drifted before
+# R18 finding 5 (acc5, 2026-09-15) proposes merging `DEFAULT_CONFIG`, `_NON_NEGATIVE` and
+# `_UPPER_BOUND` in `lib/workspace.py` into one declarative table, on the ground that 26 keys are
+# described in three places and seven of them appear in two.
+#
+# Measured before acting, which is what its own NO condition asks for: the three tables AGREE today.
+# No key in a bound table is missing from the defaults, every numeric default has an upper bound,
+# and the seven bounded keys are the same seven in both. There is no live defect to fix, so the
+# restructure would be a refactor during a release week — and the skill's own rule is the smallest
+# change that answers the finding.
+#
+# What the finding is right about is the SHAPE. The drift it predicts has already happened once and
+# is recorded in the file it names: `rules_char_budget` was in `_UPPER_BOUND` and not in the
+# validator's list, so its declared ceiling of 20,000 never ran and `_in_range("rules_char_budget",
+# 500000)` answered True. A table that can disagree with its neighbour will.
+#
+# So the answer is the assertion rather than the merge. It costs nothing, it runs every gate, and it
+# fails on the next key added to one table and not the others — which is the failure that actually
+# occurred. If the merge is ever done, this check survives it unchanged: it asks about the derived
+# views, not about how they are stored.
+import importlib as _im155
+
+_ws155 = _im155.import_module("workspace")
+
+_defaults155 = dict(getattr(_ws155, "DEFAULT_CONFIG", {}) or {})
+_nonneg155 = set(getattr(_ws155, "_NON_NEGATIVE", ()) or ())
+_upper155 = dict(getattr(_ws155, "_UPPER_BOUND", {}) or {})
+
+# A bound on a key that has no default is a bound nothing can reach.
+_orphans155 = sorted((_nonneg155 | set(_upper155)) - set(_defaults155))
+
+# A numeric default with no ceiling is a dial somebody can set to anything. Booleans are numbers in
+# Python and are not dials, so they are excluded by type rather than by name.
+_numeric155 = {k for k, v in _defaults155.items()
+               if isinstance(v, int) and not isinstance(v, bool)}
+_unbounded155 = sorted(_numeric155 - set(_upper155))
+
+# And a ceiling with no floor is half a range.
+_unfloored155 = sorted(set(_upper155) - _nonneg155)
+
+for _label, _bad in (("bound but never defaulted", _orphans155),
+                     ("numeric default with no upper bound", _unbounded155),
+                     ("upper bound with no non-negative floor", _unfloored155)):
+    for _k in _bad:
+        print("      DETAIL  %s: %s" % (_label, _k))
+
+print("      DETAIL  %d default(s), %d bounded, %d numeric"
+      % (len(_defaults155), len(_upper155), len(_numeric155)))
+
+check("EVERY BOUND NAMES A SETTING THAT EXISTS — a ceiling on a key with no default never runs",
+      not _orphans155)
+check("...and every numeric setting has an upper bound, so no dial accepts anything",
+      not _unbounded155)
+check("...and every upper bound has a floor beside it, because half a range is not a range",
+      not _unfloored155)
+check("...and the tables are not empty, so the three above are not passing on nothing",
+      len(_defaults155) >= 10 and len(_upper155) >= 3)
+
+# 🐛 The defect this is written from, pinned by name so the check cannot be read as hypothetical:
+# `rules_char_budget` was bounded and not validated, and its ceiling of 20,000 never ran.
+check("...and the key whose ceiling once never ran is in every table it belongs to",
+      "rules_char_budget" in _defaults155 and "rules_char_budget" in _upper155
+      and "rules_char_budget" in _nonneg155)
+# ---- 156_three_fence_scanners_give_one_answer.py
+# ------------------ three separate scanners read the same markdown structure
+# R18 finding 4 (acc5, 2026-09-15): `md.fenced_spans()`, `md.unclosed_fence_marker()` and
+# `mdblock.fenced_lines()` are three state machines over the same CommonMark structure, and it
+# proposes replacing them with one iterator every structural reader consumes.
+#
+# Measured before acting: on the same document they AGREE today. `fenced_spans` reports the same
+# regions `fenced_lines` marks, and `unclosed_fence_marker` reports the dangling opener. There is no
+# live divergence, so the merge would be a refactor during a release week — the skill's rule is the
+# smallest change that answers the finding, and what the finding is right about is that three
+# implementations of one rule will eventually disagree.
+#
+# So the answer is the invariant, not the merge: hold all three to the same answer over a real
+# corpus. It costs nothing, fails the day one of them is edited alone, and survives the merge if it
+# is ever done — it asks what they return, never how.
+#
+# The corpus is this package's own markdown, which is where the disagreement would actually bite:
+# every one of these files is read by a structural reader at some point.
+import importlib as _im156
+
+_md156 = _im156.import_module("md")
+_mdb156 = _im156.import_module("mdblock")
+
+_DOCS156 = [
+    "intro\n```py\ncode\n```\ntail\n",
+    "intro\n```py\ncode\n```\ntail\n```\nunclosed\n",            # one dangling opener
+    "no fences here at all\njust prose\n",
+    "```\nopens immediately\n```\n",
+    "````\nfour backticks\n````\n",                              # longer fence
+    "text with ``` inline, not a fence\n",
+    "```\na\n```\n```\nb\n```\n",                                # two closed blocks
+]
+_DOCS156 += [p.read_text(encoding="utf-8", errors="replace")[:20_000]
+             for p in sorted((ROOT).glob("*.md"))[:6]]
+
+_bad156 = []
+for _n, _doc in enumerate(_DOCS156):
+    # 1. Every character `fenced_spans` calls fenced belongs to a line `fenced_lines` calls fenced.
+    _fenced_chars = set()
+    for _a, _b in _md156.fenced_spans(_doc):
+        _fenced_chars.update(range(_a, _b))
+    # 🐛 The first form mapped only the characters OF each line and left the `\n` between them
+    # unmapped, so every newline inside a fenced region read as a disagreement — ten of them in one
+    # README. `fenced_spans` counts the separator as part of the span, correctly, and the invariant
+    # has to agree with that or it is measuring its own bookkeeping.
+    _at, _line_fenced = 0, {}
+    for _line, _inside in _mdb156.fenced_lines(_doc):
+        for _i in range(_at, _at + len(_line) + 1):
+            _line_fenced[_i] = _inside
+        _at += len(_line) + 1
+    _disagree = [_i for _i in _fenced_chars if not _line_fenced.get(_i, False)]
+    if _disagree:
+        _bad156.append("doc %d: %d char(s) fenced by spans and not by lines" % (_n, len(_disagree)))
+
+    # 2. `unclosed_fence_marker` is non-empty exactly when a fence is left open. The fence count on
+    #    its own lines is the independent way to ask, which is what makes this a cross-check rather
+    #    than the same function asked twice.
+    _openers = sum(1 for _l in _doc.splitlines() if _l.strip().startswith("```"))
+    _dangling = bool(_md156.unclosed_fence_marker(_doc))
+    if _dangling != bool(_openers % 2):
+        _bad156.append("doc %d: %d fence line(s), unclosed says %s"
+                       % (_n, _openers, _dangling))
+
+for _b in _bad156:
+    print("      DETAIL  %s" % _b)
+
+check("THREE SCANNERS OVER ONE MARKDOWN STRUCTURE GIVE ONE ANSWER",
+      not _bad156)
+check("...and the corpus is real documents, not only the seven hand-written shapes",
+      len(_DOCS156) >= 10, saw="%d document(s)" % len(_DOCS156))
+
+# 🐛 [2026-09-15] The reason this matters was demonstrated the same day in the third of them: a
+# word-boundary fallback added to `cut_outside_a_fence` sat ABOVE the refusals that end it and
+# returned the half-table the guard below exists to prevent. One reader changed, the others did not,
+# and nothing tied them together. This is that tie.
+# 🐛 Counting every "```" counts INLINE ones: `text with ``` inline, not a fence` is prose and the
+# marker never opened anything. A fence starts a line — that is the whole definition, `fenced_lines`
+# applies it, and both this check and the code it checks had to be taught it.
+def _open_fences156(text):
+    return sum(1 for _l in text.split("\n") if _l.lstrip().startswith("```"))
+
+
+check("...and a cut never leaves a fence open, which is what all three exist to protect",
+      all(_mdb156.cut_outside_a_fence(_d, _b) == 0
+          or _open_fences156(_d[:_mdb156.cut_outside_a_fence(_d, _b)]) % 2 == 0
+          for _d in _DOCS156[:7] for _b in range(1, min(len(_d), 60))))
+# ---- 157_every_adapter_module_is_registered.py
+# ------------------ the adapter population is written down twice and must not drift
+# R18 finding 3 (acc5, 2026-09-15) proposes deriving the adapter registry from the package with
+# `pkgutil.iter_modules()` instead of spelling 22 modules in an import list and again in a table.
+#
+# Measured before acting, as its own NO condition asks: **they agree today.** 22 modules on disk, 22
+# entries in `ADAPTERS`, and the one apparent mismatch is not drift — the table key is `continue`
+# and the file is `continuedev.py`, because `continue` is a Python keyword and cannot be a module
+# name. Discovery would have to special-case that too.
+#
+# So the same answer as findings 4 and 5: assert the sets match rather than restructure during a
+# release. What makes this one exact is that each entry's VALUE is the module object, so the link
+# between table and file is read from the import system rather than guessed from the spelling — a
+# check that compared names would have reported `continue` as a defect every time it ran, which is
+# how a guard teaches people to ignore it.
+#
+# This survives the merge if it is ever done: it asks what `ADAPTERS` contains, never how it was
+# built.
+import importlib as _im157
+from pathlib import Path as _P157
+
+_ad157 = _im157.import_module("adapters")
+_table157 = getattr(_ad157, "ADAPTERS", {}) or {}
+
+_dir157 = _P157(_ad157.__file__).parent
+_on_disk157 = {p.stem for p in _dir157.glob("*.py") if p.stem != "__init__"}
+
+# The file each entry actually came from, taken from the module object rather than from its key.
+_registered157 = set()
+_broken157 = []
+for _key, _mod in sorted(_table157.items()):
+    _f = getattr(_mod, "__file__", None)
+    if not _f:
+        _broken157.append("%s: entry is not a module" % _key)
+        continue
+    _registered157.add(_P157(_f).stem)
+
+_unregistered157 = sorted(_on_disk157 - _registered157)
+_missing157 = sorted(_registered157 - _on_disk157)
+for _x in _broken157 + ["module with no entry: %s" % m for m in _unregistered157] \
+        + ["entry with no module: %s" % m for m in _missing157]:
+    print("      DETAIL  %s" % _x)
+print("      DETAIL  %d module(s) on disk, %d registered, %d name(s) including aliases"
+      % (len(_on_disk157), len(_registered157), len(_ad157.names()) if hasattr(_ad157, "names") else 0))
+
+check("EVERY ADAPTER MODULE ON DISK IS REGISTERED, AND EVERY ENTRY HAS A FILE",
+      not _unregistered157 and not _missing157 and not _broken157)
+check("...and the population is not empty, so that is not a pass over nothing",
+      len(_on_disk157) >= 10)
+
+# 🐛 A check that compared the table's KEY to the filename would fail forever on `continue`, whose
+# module cannot share its name because the word is reserved. Pinned so the exception is recorded
+# rather than rediscovered: the key and the file are allowed to differ, the FILE is what must exist.
+_keys157 = set(_table157)
+check("...and a key is allowed to differ from its filename, which one of them must",
+      _keys157 != _registered157 and not _unregistered157,
+      saw="keys and filenames now agree — if a rename made that true, this check is redundant")
+
+# Every adapter has to answer the questions the rest of the package asks of it. A module that lands
+# in the directory without them is registered and then fails at the point of use.
+_REQUIRED157 = ("NAME", "TARGET")
+_thin157 = sorted(k for k, m in _table157.items()
+                  if not all(hasattr(m, a) for a in _REQUIRED157))
+for _t in _thin157:
+    print("      DETAIL  registered but missing %s: %s" % (", ".join(_REQUIRED157), _t))
+check("...and every registered adapter declares what the package reads off it",
+      not _thin157)
 # ---- 15_a_pin_is_read_by_every_store.py
 # ------------------------------------------- the pin reached the stores one at a time
 # 🐛 [2026-09-09] 📌 has meant "the owner says this must not be cut" since `state.py` was written,

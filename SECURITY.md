@@ -41,6 +41,8 @@ labelled corpus of 99 secret and personal-data shapes and 48 ordinary strings th
 
 **99.0% recall (98 of 99) · 100% precision — and 93.8% in its weakest class (15 of 16).**
 
+It is measured on a corpus of CREDENTIALS. What flows through the paths chamnan actually redacts is mostly not credentials — session blocks, file-pointer notes, `git status` output, skill titles, commit subjects — so read it as "of the secrets it is shown, it finds 99.0%", not as a rate over everything that passes through.
+
 The pair is deliberate. A blended figure hides a weak class: this corpus gained 36 column-header cases on 2026-09-11 and the headline ROSE, because the class it had been missing turned out to pass. Read the weakest number, not the average.
 
 That is not 100% recall, and the missed shape is named in the README rather than hidden. Two limits

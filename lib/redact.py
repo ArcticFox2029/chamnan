@@ -121,7 +121,11 @@ def _is_a_plain_word(value):
     with `(`, and the assignment rules still cover `password = {...}` if one ever did.
     """
     value = value or ""
-    if bool(_PLAIN_WORD.match(value)) or value[:1] in "([{":
+    # 🐛 [2026-09-15] `<` was missing from this list, and `<your-password-here>` is the commonest
+    # placeholder shape there is — every README, every `.env.example`. Fixed in the shared helper
+    # rather than in the rule that found it, because all five assignment rules ask this same
+    # question and `password = <redacted>` was being redacted by every one of them.
+    if bool(_PLAIN_WORD.match(value)) or value[:1] in "([{<":
         return True
     # 🐛 [2026-09-13] R12.26: the prose guard was ASCII-only, so an ordinary translated word
     # beside a credential label was treated as the value itself. The R7 external corpus caught
@@ -1713,6 +1717,46 @@ def _value_is_the_key_itself(key_part, value):
 # character class, so `re` can extract no literal prefix and tries the whole alternation at every
 # position. This is the coarse-to-fine contract gitleaks and TruffleHog both ship -- one cheap
 # literal pass over the text, the expensive rule only where it hit.
+# 🐛 [2026-09-15] Found from real damage in the owner's infrastructure repository: a break-glass
+# password reached git in four tracked files and sat there fifteen days. The line that carried it
+# was DOCUMENTATION, not configuration —
+#
+#     Plaintext break-glass password `<value>` is still embedded in the groovy
+#
+# Every rule in this module keys on an ASSIGNMENT: a secret word, then `=` or `:`, then the value.
+# That is what a config file looks like. It is not what a person writing a note looks like — a note
+# puts the value in backticks or quotes with nothing between. Six shapes went through untouched,
+# measured against the live module: `password `v``, `password "v"`, `รหัสผ่าน `v``, `token `v``,
+# `secret `v``, and the sentence above.
+#
+# This matters MORE than an assignment, not less. chamnan's own session records, logs and state are
+# prose; they are written to disk every session; and `.chamnan/logs/` is in nobody's `.gitignore`.
+# The redactor was guarding what flows OUT to a model and not what flows DOWN into a commit.
+#
+# Precision comes from the two tests the assignment rules already use, not from a second opinion
+# written beside them: a six-character floor, and `_is_a_plain_word`. So `password `field` is
+# required` keeps its word, and a value with digits and symbols does not. The vocabulary is
+# `SECRET_WORDS`, the same set every other rule reads, so a word added for one is added for all.
+# The vocabulary spells its separator `[_-]` — `api_key`, `api-key`, `apikey` — and never a space,
+# uniformly, across every compound. That is the right boundary for a rule reading configuration and
+# the wrong one for a rule reading a SENTENCE: a person documenting the same thing writes "api key",
+# "access token", "private key". Measured against the live vocabulary: five compounds, none of them
+# reachable with a space.
+#
+# Widened HERE and not in `SECRET_WORDS`, on purpose. Every other rule keys on an assignment, where
+# a space before `=` is not how anybody writes a key, and loosening the shared vocabulary would cost
+# precision in five rules to buy it in one. The guard on the VALUE is unchanged either way.
+# 🐛 `_lazy` wraps a compiled PATTERN, not a string — wrapping the widened vocabulary in it made
+# `str()` reach for `.pattern` on a `str`. It is computed inside the pattern's own lambda instead,
+# which is lazy for the same reason and has no second object to get wrong.
+DELIMITED_AFTER_SECRET_WORD = _lazy(lambda: re.compile(
+    r"(?<![A-Za-z0-9])(?:" + SECRET_WORDS.replace("[_-]", "[\\s_-]") + r")"
+    r"(?![^\s`\"']*[=:])"
+    r"[^\S\r\n]{1,4}"
+    r"(?P<q>[`\"'])(?P<value>[^`\"'\r\n]{6,200})(?P=q)",
+    re.I))
+
+
 _SECRET_WORD_ANYWHERE = re.compile(SECRET_WORDS, re.I)
 
 
@@ -2321,6 +2365,57 @@ def _unmask_disguised_secret_words(text):
     return "".join(out)
 
 
+_LOOKS_LIKE_CODE = re.compile(
+    r"[()\[\]{}]"                                       # a call or a subscript
+    r"|^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")  # a dotted name, and nothing else
+
+
+def _reads_like_a_credential(value):
+    """True when a delimited value in PROSE has the shape of a secret rather than of a word.
+
+    🐛 [2026-09-15] The first version asked only `_is_a_plain_word`, which is the right question for
+    an ASSIGNMENT — there, the key already told you a credential was coming and the only doubt is
+    whether the value is prose. In a sentence the key tells you much less: `key` on its own appears
+    constantly, and chamnan's own documentation supplied both false positives within the hour —
+    "key ends `PRIVATE KEY BLOCK-----`" and `unknown key "_comment" ignored`. Neither value is a
+    secret and both cleared the plain-word test.
+    
+    So prose asks the harder question, of the VALUE: a credential written inline has no spaces, and
+    mixes classes — letters with digits, or letters with punctuation that is not a word character.
+    `PRIVATE KEY BLOCK-----` has spaces. `_comment` is letters and an underscore. A real one is not
+    either of those.
+    """
+    value = (value or "").strip()
+    if len(value) < 6 or " " in value or "\t" in value:
+        return False
+    # 🐛 [2026-09-15] A PATH is not a credential, and prose about configuration is full of them —
+    # chamnan's own comments supplied two more inside the hour: "ledger would key
+    # `.cursor\\rules\\chamnan.mdc`" and "a `read:` key in `.aider.conf.yml`". Both are the word
+    # `key` followed by a backticked file, and both cleared every test above because a path has dots
+    # and separators and is therefore "mixed".
+    #
+    # Scoped to PROSE on purpose: a base64 secret does contain `/`, and `password = "a/b+c="` is
+    # still caught by the assignment rules, which know a credential is coming because the key said
+    # so. Here nothing said so, and in a sentence a slashed or dotted value is a path.
+    if "/" in value or "\\" in value or re.search(r"\.[A-Za-z][A-Za-z0-9]{1,5}$", value):
+        return False
+    if _is_a_plain_word(value) or _is_a_default_credential(value):
+        return False
+    # 🐛 [2026-09-15] A CALL or a DOTTED NAME is not a credential either, and it is the shape
+    # prose about code is made of. chamnan's own tree supplied the failure the same day the rule
+    # shipped: `lib/memory.py:294` reads "The key was `casefold()` alone", and `casefold()` cleared
+    # every test above -- letters plus punctuation that is not a word character. So did
+    # `time.time()`, `resolve()`, `load_config()`, `redact.scrub()`, `core.ignorecase` and
+    # `adapters.generic` across 73 files. A secret is not written with brackets in it, and a value
+    # that is only identifier-dot-identifier is a name, not a value.
+    if _LOOKS_LIKE_CODE.search(value):
+        return False
+    letters = any(c.isalpha() for c in value)
+    digits = any(c.isdigit() for c in value)
+    symbols = any(not c.isalnum() and c != "_" for c in value)
+    return letters and (digits or symbols)
+
+
 def scrub(text, windowed=True, *, _unmask=True):
     """Every string that leaves chamnan for a written file goes through this.
 
@@ -2344,10 +2439,16 @@ def scrub(text, windowed=True, *, _unmask=True):
             _without = scrub(text, windowed, _unmask=False)
             return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
     text = _redact_kubernetes_secret_data(text)
-    for pattern in PATTERNS + LATE_PREFIXES:
+    for pattern in PATTERNS + [DELIMITED_AFTER_SECRET_WORD] + LATE_PREFIXES:
         # A pattern with one group keeps everything outside it: "Bearer <REDACTED>" stays readable
         # as an Authorization header while the credential goes. Groupless patterns replace whole.
-        if pattern.groups == 1:
+        # Two groups, and only the value goes — the sentence has to stay readable or the reader
+        # cannot tell what was removed. Same shape as AUTH_SCHEME_SECRET below, one rule further on.
+        if pattern is DELIMITED_AFTER_SECRET_WORD:
+            text = pattern.sub(
+                lambda m: m.group(0) if not _reads_like_a_credential(m.group("value"))
+                else m.group(0).replace(m.group("value"), PLACEHOLDER), text)
+        elif pattern.groups == 1:
             # Same position in the order, one extra question asked. See _is_a_plain_word.
             if pattern is AUTH_SCHEME_SECRET:
                 text = pattern.sub(

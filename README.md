@@ -53,7 +53,7 @@ index is worth sending, never where anything goes.
 | *"does it work on Windows"* | Yes, and on macOS and Linux — those three run in CI on every commit, WSL as Linux. [Per-OS instructions](#running-it-on-each-operating-system) |
 | *"does it work with GPT / Gemini / Kimi / a local model"* | Yes. The index is text; the model only sets the budget. Unrecognised names still work, and `--window` is exact. [How](#using-it-with-more-than-one-model-or-a-different-one) |
 | *"does it work with Hermes Agent"* | Yes — it writes `.hermes.md`, the file Hermes gives highest priority. [How](#using-it-with-hermes-agent) |
-| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **99.0% recall / 100% precision** on a 99-secret, 48-decoy corpus, with the ceiling it cannot reach stated next to the number. |
+| *"is it safe to point it at a private repo"* | It never makes a network call. Its credential redactor scores **99.0% recall / 100% precision** on a 99-secret, 48-decoy corpus — a corpus of credentials, so that is what it finds among secrets it is shown, not a rate over everything that passes through. The ceiling it cannot reach is stated next to the number. |
 
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
@@ -1818,7 +1818,7 @@ question is not whether it participates — it does — but whether the chain ca
 | link | chamnan |
 |---|---|
 | 1. repo content reaches the agent | **yes, by design** — mitigated only by the fence below, which is worth about a halving |
-| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **99.0% recall / 100% precision**, weakest class **93.8%** |
+| 2. the agent reads something sensitive | possible; the redactor removes what it recognises at **99.0% recall / 100% precision** on a credential corpus, weakest class **93.8%** |
 | 3. it is written into something that configures or executes | **no**, and this is now pinned by tests |
 | 4. a capability turns that into network activity | **no** — pinned by the tests in §9 |
 

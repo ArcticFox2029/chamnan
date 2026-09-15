@@ -391,7 +391,22 @@ def cut_outside_a_fence(text, cut):
     # No complete line fits at all — the pre-existing fallback, which hands back the raw cut. That
     # is right for prose (half a sentence still reads) and wrong for a table, where half a header
     # row is a promise of columns with not even a header to show for it.
-    return 0 if _starts_an_empty_table([(cut, text[:cut])]) else cut
+    #
+    # 🐛 [2026-09-15] ...and wrong for a FENCE, which is the thing this function is named after. A
+    # document opening with ``` and a budget of 3 was handed back a cut of 3 — the opener alone,
+    # unterminated, after which every later line of the injected block renders as code including the
+    # notice saying it was truncated. The fallback had been taught about tables when that defect was
+    # found and never about the fence it exists to protect. Found by a check written to hold three
+    # fence readers to one answer, minutes after it was written.
+    # 🐛 The first form of this counted every "```" in the kept text, inline ones included — so
+    # cutting the sentence `text with ``` inline, not a fence` returned 0 and threw the whole
+    # section away over a fence that was never opened. A fence STARTS A LINE; that is the entire
+    # definition and it is what `fenced_lines` above already applies.
+    _raw = text[:cut]
+    _open = sum(1 for _l in _raw.split("\n") if _l.lstrip().startswith("```"))
+    if _starts_an_empty_table([(cut, _raw)]) or _open % 2:
+        return 0
+    return cut
 
 
 def _starts_an_empty_table(boundaries):
