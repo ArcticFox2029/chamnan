@@ -503,7 +503,24 @@ def _resume_nudge(payload, wsdir, root):
     entry["calls"] = entry.get("calls", 0) + 1
     _nudge_write(wsdir, session_id, entry)
 
-    if sessions.written_today(root):
+    # 🐛 [AUDIT-5] `sessions.written_today(root)` answers a CALENDAR question -- any record filed
+    # today, by anyone -- while this nudge means a narrower one: has THIS session recorded its own
+    # work. Measured on this repository: 24 nudges fired across 27 sessions against a sessions
+    # directory holding exactly ONE record, dated before tracking began -- so the calendar gate was
+    # never once the reason a nudge was suppressed, and the nudge's own wording ("nothing is
+    # recorded for today yet") was never actually checked against the day. A record written at 09:00
+    # by a different session, about different work, silenced the nudge for every other session for
+    # the rest of the day.
+    #
+    # Fixed by remembering how many records existed when THIS session first fired, and nudging again
+    # only once that count has grown. A concurrent session writing a record in between will also
+    # stop this one's nudge -- a smaller, deliberate error than the one being fixed: it under-counts
+    # by one writer instead of by the whole calendar day.
+    records_at_start = entry.get("records_at_start")
+    if records_at_start is None:
+        entry["records_at_start"] = len(sessions.records(root))
+        _nudge_write(wsdir, session_id, entry)
+    elif len(sessions.records(root)) > records_at_start:
         return False
     marks = [NUDGE_AT] + list(NUDGE_AGAIN_AT)
     done = int(entry.get("nudges", 1 if entry.get("nudged") else 0))
