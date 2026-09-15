@@ -107,6 +107,164 @@ def _added_lines(diff):
             lineno += 1
 
 
+# ------------------------------------------------------ where a dependency comes from, and what
+# it runs before anybody reads it
+#
+# A dependency can arrive from somewhere other than the registry it appears to come from, under a
+# name written to be read as a different one, carrying code that runs because it was installed
+# rather than because anything imported it. Those are three separate questions and all three are
+# answerable from a staged diff, offline, without a list of known-bad names.
+#
+# Same stance as the MCP signal above: a review signal, never a verdict. Somebody adding a private
+# registry on purpose is doing their job, and being told once, at the commit that adds it, costs
+# them a second. Being told on every command would cost them the habit of reading it.
+#
+# Restricted to the files that can actually decide a dependency's origin. A README naming a mirror
+# is prose; `.npmrc` naming one is configuration, and the difference is the whole of why this is
+# quiet enough to keep — 0 of 2,917 commits across three real repositories.
+_SUPPLY_FILES = frozenset((
+    ".npmrc", ".yarnrc", ".yarnrc.yml", "pip.conf", "pip.ini", "gemfile", "gemfile.lock",
+    "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "composer.json",
+    "composer.lock", "cargo.toml", "cargo.lock", "go.mod", "pyproject.toml", "setup.py",
+    "setup.cfg", "pipfile", "poetry.lock", "uv.lock", "requirements.txt", "config.toml",
+))
+_SUPPLY_SUFFIXES = ("requirements.txt", ".gemspec")
+
+# The hosts each ecosystem installs from when nobody has changed anything. Naming them is what
+# lets this fire on a REDIRECTION rather than on the existence of a source line -- the first build
+# reported `source 'https://rubygems.org'`, which is the official one, written in the one place a
+# Ruby project is required to write it. A guard that fires on the correct configuration teaches
+# people to ignore it faster than one that never fires at all.
+_OFFICIAL_HOSTS = (
+    "rubygems.org", "registry.npmjs.org", "registry.yarnpkg.com", "pypi.org", "files.pythonhosted.org",
+    "crates.io", "static.crates.io", "index.crates.io", "proxy.golang.org", "sum.golang.org",
+    "repo.packagist.org", "packagist.org",
+)
+# 🐛 `r"\\\\."` here escaped the escape: the alternation became `rubygems\\\\.org`, which matches a
+# literal backslash before the dot and therefore nothing, so the lookahead always succeeded and
+# every official host was reported as a redirection. Four of twenty cases, all of them the
+# "correct configuration is silent" half — the half a guard is judged on.
+# 🐛 The separator used to sit OUTSIDE this as `\\s*["\']?`, and `\\s*` can give back what it took:
+# the lookahead was then applied at the space after `index-url =`, where the text does not begin
+# with a scheme, so it succeeded and `https://pypi.org/simple` was reported as a redirection. The
+# whitespace and the quote belong inside the lookahead, where they cannot be surrendered.
+_OFFICIAL = "(?!\\s*[\'\\\"]?(?:https?://)?(?:www\\.)?(?:%s))" % "|".join(
+    h.replace(".", r"\.") for h in _OFFICIAL_HOSTS)
+
+# 1. THE SOURCE WAS REDIRECTED. A registry line in configuration is the single highest-value thing
+#    in this whole file: it changes where every later install comes from, for everyone who clones.
+_SUPPLY_SOURCE = re.compile(
+    r"(?:^|\s)(?:registry\s*=|@[\w.-]+:registry\s*=|index[-_]url\s*=|extra[-_]index[-_]url\s*=|"
+    r"replace-with\s*=|npmRegistryServer\s*:)" + _OFFICIAL +
+    r"|\[source\.(?!crates-io\])"
+    r"|\bsource\b" + _OFFICIAL + r"\s+[\"']https?://", re.I)
+
+# 2. SOMETHING RUNS AT INSTALL TIME. Code that executes because a package was added, rather than
+#    because anything imported it.
+#
+#    `build.rs` and `extconf.rb` were in the first version and are out: a Rust build script and a
+#    Ruby native extension are how those ecosystems build a normal crate or gem, and this only ever
+#    sees the repository's OWN manifest -- flagging a project for building itself is pure noise.
+_SUPPLY_RUNS = re.compile(
+    r"\"(?:preinstall|postinstall|install|prepare|prepublish|prepack)\"\s*:|"
+    r"\"(?:post-install-cmd|post-update-cmd|post-autoload-dump)\"\s*:|"
+    r"\bcmdclass\s*=", re.I)
+
+# 3. IT DOES NOT COME FROM A REGISTRY AT ALL. A git or path dependency is not wrong -- it is just
+#    not something a registry ever reviewed, and a lockfile cannot pin what it does not host.
+#
+#    🐛 A bare `path = "src/main.rs"` matched, which is a `[[bin]]` target and not a dependency at
+#    all. Cargo writes a path DEPENDENCY as an inline table -- `foo = { path = "../foo" }` -- and
+#    requiring the brace is what separates the two without needing to know which section we are in.
+_SUPPLY_OFF_REGISTRY = re.compile(
+    r"(?:\bgit\+|\bgit@|\"github:|\bfile:|\blink:|\{[^}]*\bpath\s*=|"
+    r"\"resolved\"\s*:" + _OFFICIAL + r"|"
+    r"\bsource\s*=" + _OFFICIAL + r"\s*[\"']https?://)", re.I)
+
+# 4. NOTHING CAN CHECK IT ON ARRIVAL. A lockfile line that pins a version but no digest is a line
+#    that cannot detect the file being swapped underneath it.
+_SUPPLY_UNVERIFIED = re.compile(r"\"resolved\"\s*:", re.I)
+_SUPPLY_VERIFIED = re.compile(r"\"integrity\"\s*:|--hash=|\bsha256\s*=|\bchecksum\s*=", re.I)
+
+# 5. IS IT THE PACKAGE IT LOOKS LIKE? A dependency name written with a Cyrillic `а` or a Greek `ο`
+#    reads as the real one and resolves to a different one. This is the same attack `redact` was
+#    taught to see in a credential NAME on 2026-09-15 (R13.4, reproducing a Codex CLI issue), and
+#    the answer is the same: fold the look-alikes and see whether the name changed. Nothing here
+#    needs a list of real package names, which is what makes it work offline and for every
+#    ecosystem at once.
+#
+#    A dependency name is ASCII in all six registries this file knows about, so a non-ASCII letter
+#    inside one is worth a line whether or not it is an attack.
+_SUPPLY_NAME_CHARS = re.compile(r"[\"'][^\"'\s]*[^\x00-\x7f][^\"'\s]*[\"']\s*:")
+
+# 6. WHAT DOES THE THING THAT RUNS ACTUALLY DO? The install-time hook is the door; this is what
+#    walks through it. A script that fetches and executes, decodes a blob and runs it, or spawns a
+#    shell is not a build step somebody wrote by accident -- these shapes do not occur in the
+#    ordinary `tsc -b` or `python setup.py build_ext` that fills these fields.
+_SUPPLY_PAYLOAD = re.compile(
+    r"curl[^|&;]*\|\s*(?:ba|z|d|)?sh\b|wget[^|&;]*\|\s*(?:ba|z|d|)?sh\b|"
+    r"\bbase64\s+(?:-d|--decode|-D)\b|\batob\s*\(|"
+    r"\bchild_process\b|\brequire\s*\(\s*[\"']child_process|"
+    r"\beval\s*\(|\bexec\s*\(|\bInvoke-Expression\b|\bpowershell[^\n]*-enc\b|"
+    r"\bos\.system\s*\(|\bsubprocess\.(?:call|run|Popen)\s*\(", re.I)
+
+
+def _looks_like_another_name(text):
+    """True when a quoted key in this line reads as one name and is written as another.
+
+    `redact.fold_confusables` maps the look-alike alphabet onto ASCII. If folding changes the line,
+    something in it was written with a character chosen to be read as a different one — which for a
+    dependency name is the whole of the attack, and for an ordinary manifest never happens.
+    """
+    try:
+        return redact.fold_confusables(text) != text
+    except Exception:                        # noqa: BLE001 — a guard must not fail a commit
+        return False
+
+
+_SUPPLY_WHY = (
+    ("the source it installs from", _SUPPLY_SOURCE),
+    ("code that runs at install time", _SUPPLY_RUNS),
+    ("a dependency that no registry hosts", _SUPPLY_OFF_REGISTRY),
+    ("a name written with look-alike characters", _SUPPLY_NAME_CHARS),
+    ("a script that fetches, decodes or executes", _SUPPLY_PAYLOAD),
+)
+
+
+def scan_supply_changes(diff):
+    """`{path: [line numbers]}` for staged lines that change where a dependency comes from.
+
+    Four questions, in the order they matter: was the registry redirected, does something now run
+    at install time, does a dependency come from outside any registry, and can what arrives be
+    checked against a digest.
+
+    The fourth is asked per FILE rather than per line, because "a resolved URL with no integrity
+    field beside it" is a property of the lockfile's shape and a single line cannot answer it.
+    """
+    found, resolved_at, verified = {}, {}, set()
+    for path, lineno, text in _added_lines(diff):
+        normal = str(path).replace("\\", "/").casefold()
+        name = normal.rsplit("/", 1)[-1]
+        if name not in _SUPPLY_FILES and not name.endswith(_SUPPLY_SUFFIXES):
+            continue
+        if _looks_like_another_name(text):
+            found.setdefault(path, []).append(lineno)
+            continue
+        for _why, pattern in _SUPPLY_WHY:
+            if pattern.search(text):
+                found.setdefault(path, []).append(lineno)
+                break
+        if _SUPPLY_VERIFIED.search(text):
+            verified.add(path)
+        elif _SUPPLY_UNVERIFIED.search(text):
+            resolved_at.setdefault(path, []).append(lineno)
+    # A lockfile that added resolved URLs and not one digest anywhere.
+    for path, lines in resolved_at.items():
+        if path not in verified:
+            found.setdefault(path, []).extend(lines)
+    return {p: sorted(set(v)) for p, v in found.items()}
+
+
 def scan(diff):
     """`{path: [line numbers]}` for added lines the redactor would have rewritten.
 
@@ -170,7 +328,8 @@ def main(argv):
 
     found = scan(diff)
     mcp_found = scan_mcp_changes(diff)
-    if not found and not mcp_found:
+    supply_found = scan_supply_changes(diff)
+    if not found and not mcp_found and not supply_found:
         return 0
 
     if found:
@@ -204,6 +363,21 @@ def main(argv):
             print(f"    +{len(mcp_found) - 6} more file(s)", file=sys.stderr)
         print("  Review the server command, pinned version, endpoint and granted access. The added "
               "configuration is not printed.", file=sys.stderr)
+
+    if supply_found:
+        _n = sum(len(v) for v in supply_found.values())
+        print(f"chamnan-guard: {_n} staged line{'s' if _n != 1 else ''} in "
+              f"{len(supply_found)} file{'s' if len(supply_found) != 1 else ''} change where a "
+              "dependency comes from, or what it runs on arrival", file=sys.stderr)
+        for _p in sorted(supply_found)[:6]:
+            _lines = supply_found[_p]
+            _shown = ", ".join(str(n) for n in _lines[:6]) + (" …" if len(_lines) > 6 else "")
+            print(f"    {mdblock.as_quoted(_p, 70)}  line {_shown}", file=sys.stderr)
+        if len(supply_found) > 6:
+            print(f"    +{len(supply_found) - 6} more file(s)", file=sys.stderr)
+        print("  Check the registry it points at, whether an install-time script was added, and "
+              "whether what arrives can be verified against a digest. The lines are not printed.",
+              file=sys.stderr)
 
     print("  This is a WARNING and the commit proceeds. `chamnan-guard --strict` fails instead.",
           file=sys.stderr)
