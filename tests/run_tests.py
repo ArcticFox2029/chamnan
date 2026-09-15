@@ -28061,7 +28061,8 @@ check("no derived stem contains another (a contained stem is dead scanning cost)
 _t_roots121 = [ROOT / _n121 for _n121 in ("lib", "bin", "hooks", "adapters", "commands",
                                           "skills", "agents", "tests")]
 _t_ws121 = ROOT.parent.parent / ".chamnan"
-if (_t_ws121 / "tools").is_dir():
+_t_hasws121 = (_t_ws121 / "tools").is_dir()
+if _t_hasws121:
     # The workspace carries the prose corpora -- MAP.md, the research files, the memory rules --
     # and prose is where the non-English branches and the `mot de passe` separator forms live.
     # A checkout without it still runs this block against the package's own files.
@@ -28084,8 +28085,13 @@ for _t_root121 in _t_roots121:
 
 # A population that came back empty reads as "nothing wrong" and is the failure this suite has
 # recorded most often. It is asserted before anything is concluded from it.
+# The floor is what THIS sweep should reach, not what the development machine reaches: the
+# package alone is 85 files and the workspace adds the prose corpora. A single floor of 100 passed
+# on the machine that wrote it and failed on every clean clone, which is the opposite of what an
+# empty-population guard is for.
+_t_floor121 = 100 if _t_hasws121 else 60
 check(f"the pre-filter corpus is non-empty: {len(_t_corpus121)} file(s)",
-      len(_t_corpus121) >= 100, saw=f"{len(_t_corpus121)} files under {len(_t_roots121)} roots")
+      len(_t_corpus121) >= _t_floor121, saw=f"{len(_t_corpus121)} files under {len(_t_roots121)} roots")
 
 _t_spans121 = lambda _ms121: [(_m121.start(), _m121.end(), _m121.group(0)) for _m121 in _ms121]
 _t_mismatched121, _t_withhits121 = [], 0
@@ -28132,7 +28138,8 @@ _t_redact122 = __import__("redact")
 
 _t_roots122 = [ROOT / _n122 for _n122 in ("lib", "bin", "hooks", "adapters", "commands", "tests")]
 _t_ws122 = ROOT.parent.parent / ".chamnan"
-if (_t_ws122 / "tools").is_dir():
+_t_hasws122 = (_t_ws122 / "tools").is_dir()
+if _t_hasws122:
     _t_roots122 += [_t_ws122 / _n122 for _n122 in ("memory", "skills", "state", "tools")]
 
 _t_corpus122 = []
@@ -28149,8 +28156,13 @@ for _t_root122 in _t_roots122:
         if _t_t122.strip():
             _t_corpus122.append((_t_f122, _t_t122))
 
+# The floor is what THIS sweep should reach, not what the development machine reaches: the
+# package alone is 85 files and the workspace adds the prose corpora. A single floor of 100 passed
+# on the machine that wrote it and failed on every clean clone, which is the opposite of what an
+# empty-population guard is for.
+_t_floor122 = 100 if _t_hasws122 else 60
 check(f"the metamorphic corpus is non-empty: {len(_t_corpus122)} file(s)",
-      len(_t_corpus122) >= 100, saw=f"{len(_t_corpus122)} files under {len(_t_roots122)} roots")
+      len(_t_corpus122) >= _t_floor122, saw=f"{len(_t_corpus122)} files under {len(_t_roots122)} roots")
 
 # RELATION 1 -- idempotence. A document that has been scrubbed is a document, and scrubbing it again
 # must change nothing. A violation means some rule is reading the module's own PLACEHOLDER as fresh
