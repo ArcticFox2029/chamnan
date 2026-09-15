@@ -234,7 +234,8 @@ def _gitattributes_files(root):
     """
     out = [("", ".gitattributes"), (".github", ".gitattributes")]
     seen = 0
-    for dirpath, dirnames, filenames in os.walk(str(root)):
+    for dirpath, dirnames, filenames in os.walk(str(root),
+                                                onerror=tree.note_unreadable(root)):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         rel = os.path.relpath(dirpath, str(root)).replace(os.sep, "/")
         if rel in (".", ".github"):

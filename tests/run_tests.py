@@ -29908,6 +29908,336 @@ check(f"the hook registers a brief for the sections that were never delivered "
       f"({_t_registered141} registration(s))",
       _t_registered141 >= 3,          # the two sections, plus store_section passing it down
       saw=f"{_t_registered141} `brief=` site(s) in the hook")
+# ---- 142_a_walk_that_cannot_read_a_directory_says_so.py
+# ------------------ every tree walk reports what it could not read
+# R12.5, measured 2026-09-15. `os.walk` swallows every error by default: a directory it cannot
+# open is simply absent from the walk, and the caller counts what it got as what is there. That is
+# the silent drop check 120 exists for — and the sweep that produced this block found the mechanism
+# had been wired into ONE of five walks.
+#
+# 🐛 The worst of the four was in the session-start hook. It builds the set of files that EXIST in
+# order to report which paths the index names that "no longer exist", so an unreadable directory
+# made every file under it look deleted and the block told the reader their index was describing a
+# tree that had moved on. Same absent-versus-unreadable confusion the index census carried until
+# the same morning, one layer out, and this one reached the user as advice.
+#
+# The other three: the map builder's `.gitattributes` sweep (a declared encoding or file type
+# missed), the shipped-file hash in `workspace` (an integrity check passing over a tree it did not
+# finish reading, which is false confidence in a verification path), and the ledger's durable-file
+# walk (under-reporting what has not reached a commit).
+#
+# Population derived rather than listed, so a fifth walk cannot arrive silent.
+import ast as _ast142
+import os as _os142
+import importlib as _importlib142
+
+_t_tree142 = _importlib142.import_module("tree")
+
+check("the shared handler exists to be wired in",
+      hasattr(_t_tree142, "note_unreadable") and callable(_t_tree142.note_unreadable(ROOT)),
+      saw=sorted(n for n in dir(_t_tree142) if "unread" in n.lower()))
+
+_t_silent142, _t_walks142, _t_files142 = [], 0, 0
+for _t_r142 in (ROOT / "lib", ROOT / "bin", ROOT / "hooks"):
+    for _t_p142 in sorted(_t_r142.rglob("*")):
+        if not _t_p142.is_file():
+            continue
+        if _t_p142.suffix != ".py" and not _t_p142.read_bytes()[:2].startswith(b"#!"):
+            continue
+        try:
+            _t_src142 = _t_p142.read_text(encoding="utf-8")
+            _t_tree_ast142 = _ast142.parse(_t_src142)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        _t_files142 += 1
+        for _t_n142 in _ast142.walk(_t_tree_ast142):
+            if not isinstance(_t_n142, _ast142.Call):
+                continue
+            if getattr(_t_n142.func, "attr", None) != "walk":
+                continue
+            if getattr(getattr(_t_n142.func, "value", None), "id", "") != "os":
+                continue
+            _t_walks142 += 1
+            if not any(_k142.arg == "onerror" for _k142 in _t_n142.keywords):
+                _t_silent142.append(f"{_t_p142.name}:{_t_n142.lineno}")
+
+check(f"the sweep walked the package: {_t_files142} file(s), {_t_walks142} os.walk call(s)",
+      _t_files142 >= 60 and _t_walks142 >= 4,
+      saw=f"{_t_files142} files, {_t_walks142} walks")
+check("every `os.walk` names what it could not read",
+      not _t_silent142,
+      saw=f"{_t_silent142} -- without `onerror` a directory the walk cannot open is absent from "
+          f"the result and the caller counts what it got as what is there. Pass "
+          f"`onerror=tree.note_unreadable(base)`; `chamnan-map` already prints the set.")
+
+# The behaviour, not only the keyword: a directory that cannot be entered is NAMED.
+_t_dir142 = Path(tempfile.mkdtemp(prefix="chamnan-walk-onerror-"))
+try:
+    (_t_dir142 / "open").mkdir()
+    (_t_dir142 / "open" / "a.py").write_text("x\n", encoding="utf-8")
+    (_t_dir142 / "shut").mkdir()
+    (_t_dir142 / "shut" / "b.py").write_text("y\n", encoding="utf-8")
+    _os142.chmod(_t_dir142 / "shut", 0o000)
+    try:
+        if _os142.access(_t_dir142 / "shut", _os142.R_OK | _os142.X_OK):
+            print("  · this process can enter a 0o000 directory (root?) — the keyword is still "
+                  "asserted above; the behaviour cannot be produced here")
+        else:
+            _t_before142 = set(_t_tree142.UNREADABLE)
+            _t_seen142 = []
+            for _t_dp142, _t_dn142, _t_fn142 in _os142.walk(
+                    _t_dir142, onerror=_t_tree142.note_unreadable(_t_dir142)):
+                _t_seen142 += _t_fn142
+            _t_new142 = set(_t_tree142.UNREADABLE) - _t_before142
+            check("a directory the walk cannot enter is named, not dropped in silence",
+                  "shut" in _t_new142 and "b.py" not in _t_seen142,
+                  saw=f"walk returned {_t_seen142}, newly unreadable {sorted(_t_new142)}")
+            _t_tree142.UNREADABLE.difference_update(_t_new142)
+    finally:
+        _os142.chmod(_t_dir142 / "shut", 0o755)
+finally:
+    shutil.rmtree(_t_dir142, ignore_errors=True)
+# ---- 143_nothing_this_package_ships_is_a_symlink.py
+# ------------------ nothing this package ships is a symlink, because the host now refuses one
+# Claude Code 2.1.257 (2026-09-01) fixed "plugins being able to read files outside their own
+# directory through a declared command, agent, skill, hooks or other component path that is a
+# symlink; such paths are now REFUSED". That is a host rule that did not exist when this package
+# was laid out, and it changed what a correct plugin may contain.
+#
+# chamnan is clean today — zero symlinks, and the manifest declares no component paths at all, so
+# nothing here trips it. The check exists because of where somebody would reach for one next:
+# `site/lib/*.py` are hand-maintained COPIES of `lib/*.py`, kept in step by hand all day long, and
+# "why is this not a symlink" is the obvious question to ask about them. On a host at 2.1.257 or
+# later the answer is that the plugin would stop loading, and the failure arrives as an install
+# that silently does nothing rather than as an error next to the change that caused it.
+#
+# Checked over the whole package rather than over declared paths only: the rule names "command,
+# agent, skill, hooks or other component path", and `other` is doing a lot of work in that
+# sentence. Cheaper to have none.
+import os as _os143
+
+_t_links143 = []
+_t_seen143 = 0
+for _t_dirpath143, _t_dirnames143, _t_filenames143 in _os143.walk(str(ROOT)):
+    # `.git` holds no shipped component and can be large.
+    _t_dirnames143[:] = [_d143 for _t_i143, _d143 in enumerate(_t_dirnames143)
+                         if _d143 not in (".git", "__pycache__", "node_modules")]
+    for _t_name143 in list(_t_dirnames143) + _t_filenames143:
+        _t_p143 = Path(_t_dirpath143) / _t_name143
+        _t_seen143 += 1
+        try:
+            if _t_p143.is_symlink():
+                _t_links143.append(str(_t_p143.relative_to(ROOT)))
+        except OSError:
+            continue
+
+check(f"the package walk found something to look at: {_t_seen143} entries",
+      _t_seen143 >= 200, saw=f"{_t_seen143} entries under {ROOT}")
+check("nothing this package ships is a symlink",
+      not _t_links143,
+      saw=f"{_t_links143[:6]} -- Claude Code 2.1.257 refuses a plugin component path that is a "
+          f"symlink, and the refusal looks like an install that quietly does nothing. If two files "
+          f"must stay identical, copy them and let a check assert they match, which is what "
+          f"`site/lib/` already does.")
+
+# And the property that makes the copies safe to keep as copies: they are actually identical.
+# Without this, "don't symlink them" is advice with no enforcement behind it.
+_t_drift143 = []
+for _t_p143 in sorted((ROOT / "site" / "lib").glob("*.py")):
+    _t_origin143 = ROOT / "lib" / _t_p143.name
+    if not _t_origin143.is_file():
+        continue
+    if _t_p143.read_bytes() != _t_origin143.read_bytes():
+        _t_drift143.append(_t_p143.name)
+check(f"every mirrored module matches the one it copies "
+      f"({len(list((ROOT / 'site' / 'lib').glob('*.py')))} file(s) in site/lib)",
+      not _t_drift143,
+      saw=f"{_t_drift143} -- the mirror is kept by hand, which is the price of not symlinking it. "
+          f"`cp lib/<name>.py site/lib/<name>.py` after every edit.")
+# ---- 144_a_workspace_in_a_temporary_checkout_says_so.py
+# ------------------ a workspace in a checkout that will be deleted says so
+# AUDIT-9, reproduced 2026-09-15. The Agent tool's `isolation: "worktree"` runs a dispatched agent
+# against a separate git worktree. A linked worktree gets its OWN `.chamnan/` — a checkout of the
+# committed workspace — so the agent reads every rule correctly and anything it WRITES is a new
+# untracked file in a directory that `git worktree remove --force` deletes without asking.
+#
+# Reproduced start to finish: a rule written in the worktree showed as `?? .chamnan/memory/rules/…`,
+# never appeared in the main checkout, and was gone after the remove. An agent that learns
+# something and loses it is worse than one that learns nothing, because the session that
+# dispatched it believes the lesson was kept.
+#
+# 🐛 `_warn_if_workspace_escapes` already covers the hazard one step over — a `.chamnan` symlink
+# pointing OUT of the repository — and the linked-worktree case beside it had nothing. Same file,
+# same "what you write here is not where you think", same once-per-process shape. The-set-not-the-
+# member inside the warning built for this class of problem.
+#
+# Said and not refused, deliberately: `ensure()`'s own comment settles that policy for the adjacent
+# case, because someone working in a worktree on purpose has a reason.
+import io as _io144
+import os as _os144
+import contextlib as _ctx144
+import importlib as _importlib144
+
+_t_ws144 = _importlib144.import_module("workspace")
+
+check("the linked-worktree warning exists beside the symlink one",
+      hasattr(_t_ws144, "_warn_if_workspace_is_in_a_linked_worktree"),
+      saw=sorted(n for n in dir(_t_ws144) if n.startswith("_warn_if")))
+
+_t_dir144 = Path(tempfile.mkdtemp(prefix="chamnan-worktree-"))
+
+
+def _t_git144(where, *args):
+    return subprocess.run(["git", "-C", str(where)] + list(args), capture_output=True, text=True,
+                          stdin=subprocess.DEVNULL,
+                          env=dict(_os144.environ, GIT_CONFIG_GLOBAL=str(_t_dir144 / "none"),
+                                   GIT_CONFIG_SYSTEM=str(_t_dir144 / "none")))
+
+
+def _t_warned144(path):
+    """The warning's output for `path`, with the once-per-process memo cleared first."""
+    _t_ws144._WORKTREE_WARNED.clear()
+    _t_buf144 = _io144.StringIO()
+    with _ctx144.redirect_stderr(_t_buf144):
+        _t_ws144._warn_if_workspace_is_in_a_linked_worktree(Path(path) / ".chamnan", Path(path))
+    return _t_buf144.getvalue()
+
+
+try:
+    _t_main144 = _t_dir144 / "main"
+    _t_main144.mkdir()
+    (_t_main144 / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _t_git144(_t_main144, "init", "-q")
+    _t_git144(_t_main144, "add", "-A")
+    _t_git144(_t_main144, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i")
+    _t_side144 = _t_dir144 / "side"
+    _t_added144 = _t_git144(_t_main144, "worktree", "add", "-q", str(_t_side144), "-b", "side")
+
+    if _t_added144.returncode != 0 or not _t_side144.is_dir():
+        print("  · this git could not create a linked worktree here; the function is asserted "
+              "to exist above and the main-checkout arm still runs")
+    else:
+        check("a linked worktree is told that what it writes is not in the main checkout",
+              "linked git worktree" in _t_warned144(_t_side144),
+              saw=repr(_t_warned144(_t_side144)[:220]))
+        check("...and the warning names the remove that deletes it, not just the fact",
+              "worktree remove" in _t_warned144(_t_side144),
+              saw=repr(_t_warned144(_t_side144)[:220]))
+
+    # The arm that stops this becoming noise: an ordinary checkout says nothing.
+    check("an ordinary checkout is not warned about anything",
+          _t_warned144(_t_main144) == "",
+          saw=repr(_t_warned144(_t_main144)[:200]))
+
+    # And the one that is a `.git` FILE but is not this problem. A submodule's worktree is
+    # permanent and its content is tracked by its own repository; only a linked worktree's gitdir
+    # sits under the parent's `worktrees/`, which is what the check keys on.
+    _t_fake144 = _t_dir144 / "submodule-shaped"
+    _t_fake144.mkdir()
+    (_t_fake144 / ".git").write_text("gitdir: ../main/.git/modules/vendored\n", encoding="utf-8")
+    check("a submodule, whose `.git` is also a file, is NOT warned about",
+          _t_warned144(_t_fake144) == "",
+          saw=repr(_t_warned144(_t_fake144)[:200]))
+finally:
+    shutil.rmtree(_t_dir144, ignore_errors=True)
+    _t_ws144._WORKTREE_WARNED.clear()
+# ---- 145_every_byte_this_package_emits_went_past_the_redactor.py
+# ------------------ every byte this package emits went past the redactor, by one of three routes
+# R3.9, settled 2026-09-15. Another coding agent documents its egress BY CHANNEL: operational
+# metrics carry no code or file paths, error reports redact secrets, paths, email addresses and
+# other PII before leaving the machine, explicitly shared feedback redacts known key and token
+# shapes. R3.9 asked chamnan to do the same — classify each output by payload class and scrub
+# contract — and set its own NO: *"if the table cannot be mechanically tied to every real
+# emitter"*.
+#
+# It can, so this is the table, as a check rather than a document. A document goes stale the first
+# time somebody adds a `print`; this fails.
+#
+# Swept: 19 files in the package call `print`, and every one of them reaches the redactor by one of
+# exactly three routes.
+#
+#   1. The SHADOW. 15 files rebind `print = redact.emit_prescrubbed` (or `emit`) at module scope,
+#      so nothing in the file can print unscrubbed even by accident. This is the route for anything
+#      that prints in more than one place.
+#   2. The EXPLICIT scrub at the emit. The two PreToolUse hooks that write `hookSpecificOutput`
+#      JSON — `chamnan_file_pointer` and `chamnan_bulk_read_notice` — call
+#      `redact.for_a_terminal(redact.scrub(...))` on the payload. They emit once, and scrubbing at
+#      the call site says so more plainly than a shadow would. This is the channel that matters
+#      most: it goes straight into the model's context.
+#   3. A named exception, and the list is short because the bar is: the payload IS a path, and the
+#      message exists to say where that path is. Warning that `.chamnan` is a symlink out of the
+#      repository, or that this checkout is a linked worktree, or that a case-colliding sibling was
+#      written — the absolute path is the information, and all three go to stderr, not to the model.
+import ast as _ast145
+
+_t_SHADOWS145 = ("print = redact.emit", "print = redact.for_a_terminal")
+# Route 3, enumerated. Adding to this list is the deliberate act the check exists to force.
+_t_PATH_ONLY145 = {
+    "generic.py": "a case-colliding sibling was written; the payload is the two paths",
+    "workspace.py": "the workspace escapes the repo / is a linked worktree / read-only mode",
+}
+
+_t_files145 = 0
+_t_unrouted145 = []
+for _t_d145 in ("lib", "bin", "hooks"):
+    for _t_p145 in sorted((ROOT / _t_d145).rglob("*")):
+        if not _t_p145.is_file():
+            continue
+        if _t_p145.suffix != ".py" and not _t_p145.read_bytes()[:2].startswith(b"#!"):
+            continue
+        try:
+            _t_src145 = _t_p145.read_text(encoding="utf-8")
+            _t_tree145 = _ast145.parse(_t_src145)
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        _t_calls145 = [_n145 for _n145 in _ast145.walk(_t_tree145)
+                       if isinstance(_n145, _ast145.Call)
+                       and getattr(_n145.func, "id", None) == "print"]
+        if not _t_calls145:
+            continue
+        _t_files145 += 1
+        if any(_s145 in _t_src145 for _s145 in _t_SHADOWS145):
+            continue                                            # route 1
+        if _t_p145.name in _t_PATH_ONLY145:
+            continue                                            # route 3
+        for _t_n145 in _t_calls145:                             # route 2, or nothing
+            _t_seg145 = _ast145.get_source_segment(_t_src145, _t_n145) or ""
+            if "redact.scrub" in _t_seg145 or "redact.for_a_terminal" in _t_seg145:
+                continue
+            _t_unrouted145.append(f"{_t_p145.name}:{_t_n145.lineno}")
+
+check(f"the emitter sweep found the package: {_t_files145} file(s) that print",
+      _t_files145 >= 15, saw=f"{_t_files145} file(s)")
+check("every print reaches the redactor by the shadow, an explicit scrub, or a named exception",
+      not _t_unrouted145,
+      saw=f"{_t_unrouted145} -- shadow `print` with `redact.emit_prescrubbed` at module scope, or "
+          f"scrub at the call, or add the file to the path-only list WITH a reason. A new emitter "
+          f"that does none of the three is an unscrubbed channel out of this machine.")
+
+# Route 3 is a list somebody can grow, so its bar is asserted rather than trusted: each named file
+# must actually still print, and must still not be shadowed. A stale exemption is a hole.
+_t_stale145 = []
+for _t_name145 in sorted(_t_PATH_ONLY145):
+    _t_hits145 = [_t_q145 for _t_d145 in ("lib", "bin", "hooks")
+                  for _t_q145 in (ROOT / _t_d145).rglob(_t_name145)]
+    if not _t_hits145:
+        _t_stale145.append(f"{_t_name145}: no such file any more")
+        continue
+    _t_txt145 = _t_hits145[0].read_text(encoding="utf-8")
+    if any(_s145 in _t_txt145 for _s145 in _t_SHADOWS145):
+        _t_stale145.append(f"{_t_name145}: now shadows print, so the exception is dead weight")
+check(f"every named exception is still live and still needed ({len(_t_PATH_ONLY145)} file(s))",
+      not _t_stale145,
+      saw=f"{_t_stale145} -- an exemption nobody removes is how a real emitter hides.")
+
+# And the channel that matters most, asserted as behaviour: what the PreToolUse hooks put into the
+# model's own context is scrubbed, not merely intended to be.
+import importlib as _importlib145
+_t_redact145 = _importlib145.import_module("redact")
+_t_probe145 = "see config: aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+check("the scrub those hooks call does remove a credential from context-bound text",
+      "wJalrXUtnFEMI" not in _t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)),
+      saw=_t_redact145.for_a_terminal(_t_redact145.scrub(_t_probe145)))
 # ---- 14_pinned_rule_survives.py
 # 🐛 [2026-09-09] Rules were ordered newest-first, which is a fair tie-break and a poor importance
 # signal. Measured, not argued: `the-set-not-the-member.md` records this repository's most-repeated

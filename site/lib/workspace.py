@@ -1000,6 +1000,56 @@ def _warn_if_workspace_escapes(ws, root):
           file=sys.stderr)
 
 
+_WORKTREE_WARNED = set()
+
+
+def _warn_if_workspace_is_in_a_linked_worktree(ws, root):
+    """Say so when this workspace belongs to a linked worktree rather than the main checkout.
+
+    🐛 [2026-09-15] The sibling above covers a `.chamnan` symlink pointing OUT of the repository,
+    and the identical hazard one step over had nothing: a linked worktree gets its own checkout of
+    the committed workspace, so everything reads correctly and everything WRITTEN there is a new
+    untracked file in a directory that may not survive the day.
+
+    Reproduced end to end (AUDIT-9). The Agent tool's `isolation: "worktree"` runs a dispatched
+    agent against exactly this. The agent can read every rule, record what it learned exactly as
+    instructed, and `git worktree remove --force` takes it with no warning — the main checkout
+    never saw it. An agent that learns something and loses it is worse than one that learns
+    nothing, because the session that dispatched it believes the lesson was kept.
+
+    Said, not refused, and deliberately: `ensure()`'s own comment two hundred lines down settles
+    the policy for the adjacent case — *"Someone sharing one workspace across git worktrees has a
+    reason, and this runs on every write path."* Someone working in a worktree on purpose gets a
+    sentence, once per process, not a failure.
+
+    A linked worktree is `.git` as a FILE holding `gitdir: …`; `sessions.py` and `rollup.py`
+    already read it that way and this is the third reader of the same fact.
+    """
+    try:
+        dotgit = Path(root) / ".git"
+        if not dotgit.is_file():
+            return                      # a real checkout, or no git at all
+        pointer = dotgit.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return
+    if not pointer.startswith("gitdir:"):
+        return
+    # A submodule's `.git` is a file too, and a submodule is not this problem: its worktree is
+    # permanent and its content is tracked by the submodule's own repository. A linked worktree's
+    # gitdir sits under the parent's `worktrees/` directory, which is what separates the two.
+    if "/worktrees/" not in pointer.replace("\\", "/"):
+        return
+    key = str(root)
+    if key in _WORKTREE_WARNED:
+        return
+    _WORKTREE_WARNED.add(key)
+    print(f"chamnan: {root} is a linked git worktree, so {ws} is its own copy.\n"
+          f"  Reading is fine — it holds everything that was committed. Anything WRITTEN here is\n"
+          f"  untracked in a checkout that `git worktree remove` deletes, and the main checkout\n"
+          f"  never sees it. Commit it, or write it from the main checkout instead.",
+          file=sys.stderr)
+
+
 # A command that has told the user it writes nothing must be able to keep that promise even when
 # what it runs, to answer the question, is the hook that sets the workspace up.
 READ_ONLY_ENV = "CHAMNAN_READ_ONLY"
@@ -1085,6 +1135,9 @@ def ensure(root=None):
     # runs on every write path -- a hard failure there would break a deliberate setup with no way to
     # opt out. Warned once per process instead, because ensure() is called many times per run.
     _warn_if_workspace_escapes(ws, find_root(root))
+    # The same question one step over: not a symlink out of the repository, but a checkout
+    # that is itself temporary. Both are "what you write here is not where you think".
+    _warn_if_workspace_is_in_a_linked_worktree(ws, find_root(root))
     # 🐛 `state` was missing from this list, and it is the directory CLAUDE.md calls "what the
     # tooling READS". `notice_due()` writes its counter there through `exclusive()`, whose lock file
     # cannot be created when the parent does not exist — so the lock was never held, the function
@@ -1562,13 +1615,16 @@ def _shipped_content_hash(plugin_root):
     installs.py for the same failure shape).
     """
     try:
+        import tree                      # local, and it must be: `tree` imports this module
+
         root = Path(plugin_root)
         files = []
         for sub in _SHIPPED_SUBDIRS:
             base = root / sub
             if not base.is_dir():
                 continue
-            for dirpath, dirnames, filenames in os.walk(base):
+            for dirpath, dirnames, filenames in os.walk(
+                    base, onerror=tree.note_unreadable(base)):
                 dirnames[:] = [d for d in dirnames if d not in _HASH_SKIP_DIRS]
                 for fname in filenames:
                     fpath = Path(dirpath) / fname

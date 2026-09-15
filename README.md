@@ -576,7 +576,7 @@ module instead of naming one example, so a word added later is covered the day i
 **`chamnan-guard` names newly staged MCP server configuration**, so a commit granting a tool
 execution or network capability is visible at review time. Advisory by default; `--strict` fails.
 
-**21 research findings reached the code in this release, 722 in total.** Each is a place in the
+**21 research findings reached the code in this release, 802 in total.** Each is a place in the
 shipped source where a defect a research round found was fixed, linked to the commit that fixed it.
 `INDEX_CITED_IN_CODE.md` ships with the release and lists all of them.
 

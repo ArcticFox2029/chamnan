@@ -290,9 +290,12 @@ def persistence(root, status=None):
         if status is None:
             return None
 
+        import tree                      # local: `tree` reaches workspace, so not at module scope
+
         durable = []
         ignored = [name.rstrip("/") for code, name in status if code == "!!"]
-        for base, dirs, files in os.walk(wsdir, followlinks=False):
+        for base, dirs, files in os.walk(wsdir, followlinks=False,
+                                         onerror=tree.note_unreadable(wsdir)):
             if Path(base) == wsdir:
                 dirs[:] = [d for d in dirs if d != "logs"]
             for filename in files:

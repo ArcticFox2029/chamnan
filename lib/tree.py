@@ -299,6 +299,35 @@ def _ws_failures():
     return _ws.git_cannot_answer()
 
 
+def note_unreadable(base):
+    """An `onerror` for `os.walk` that records what it could not read, instead of dropping it.
+
+    🐛 [2026-09-15] `os.walk` swallows every error by default: a directory it cannot open is
+    simply absent from the walk, and the caller counts what it got as what is there. One walk in
+    this package passed `onerror` and four did not, which is the-set-not-the-member in the
+    mechanism built to answer exactly this question (R12.5).
+
+    The worst of the four was the session-start hook's: it builds the set of files that EXIST in
+    order to report which paths the index names that "no longer exist". An unreadable directory
+    made every file under it look deleted, and the block then told the reader their index was
+    describing a tree that had moved on. That is the same absent-versus-unreadable confusion the
+    index census carried until this morning, one layer out, and it reached the user as advice.
+
+    `UNREADABLE` rather than a set per caller: it already exists for this, and `chamnan-map`
+    already prints it. Over-reporting costs a reader a name they see twice; under-reporting costs
+    them a file that vanished from a report claiming to be complete.
+    """
+    base = Path(base)
+
+    def _note(err):
+        try:
+            UNREADABLE.add(str(Path(err.filename).relative_to(base).as_posix()))
+        except (ValueError, TypeError):
+            pass
+
+    return _note
+
+
 def _unreadable_ancestor(path, base):
     """True when `path` cannot be seen because a directory above it cannot be entered.
 

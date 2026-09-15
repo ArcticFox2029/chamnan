@@ -873,10 +873,17 @@ def dead_entries(root, map_text):
             return 0, 0, []
         ordered = sorted(named)
         if len(ordered) > DEAD_WALK_ABOVE:
+            # 🐛 [2026-09-15] The walk below gained `onerror=tree.note_unreadable(...)` and `tree`
+            # is not imported at module scope in this file — so the NameError went into the
+            # enclosing `except` and this function returned "nothing is dead", silently, which is
+            # the exact failure class the onerror was added to fix. Caught by the check that holds
+            # the stat path and the walk path to the same answer; both returned 0 of 2001.
+            import tree                              # local, as everywhere else in this file
             base = str(root)
             cut = len(base) + 1
             present = set()
-            for dirpath, dirnames, filenames in os.walk(base):
+            for dirpath, dirnames, filenames in os.walk(
+                    base, onerror=tree.note_unreadable(base)):
                 # The index never names anything in these, so descending into them is pure cost —
                 # and `.git` on a large repository is most of the file count.
                 dirnames[:] = [d for d in dirnames if d not in (".git", ws.WORKSPACE_DIRNAME)]
