@@ -534,9 +534,22 @@ that script does, a lock file with no digest to check what arrives, and a depend
 hosts. It warns; `--strict` is where a project says the commit should fail instead. Measured before
 shipping: 0 of 2,917 real commits would have raised a line.
 
-**And the redactor stopped leaking in eight more shapes** — a credential behind a `-` or `_`, a name
-written with a Cyrillic letter, Thai's own word for "code" being treated as English's, YAML's
-explicit-indentation block scalars, CRLF line endings, and two patterns that backtracked
+**On Windows, a cloned repository could have run its own `git.exe`.** `CreateProcess` searches the
+current directory before PATH, and the current directory is the repository you just opened — so a
+repository carrying a `git.exe` at its root got it executed by the SessionStart hook. It is closed
+at the operating system, and because that switch is silently ignored before Windows 10 1809, the
+case it is for is also detected directly: `chamnan-guard` refuses on a program lying in wait rather
+than routing around it.
+
+**`chamnan-guard --history` scans the commits you already have.** Everything the command did
+answered *is this about to go in*; adopting chamnan on a repository with a past asks a different
+question first. It reports by file, worst first, and says rotate before rewrite — in that order,
+because a rewrite leaves the blob in every fork and clone.
+
+**And the redactor stopped leaking in nine more shapes** — a credential a sentence merely *names*,
+with an ordinary clause between the word and the value; one behind a `-` or `_`; a name written
+with a Cyrillic letter; Thai's own word for "code" being treated as English's; YAML's
+explicit-indentation block scalars; CRLF line endings; and two patterns that backtracked
 quadratically on ordinary input. Four silent tree walks now say when they could not read a
 directory instead of reporting it empty.
 

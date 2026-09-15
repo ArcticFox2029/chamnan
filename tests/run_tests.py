@@ -1453,15 +1453,11 @@ second_session_outs = [touch(i, nudge_root, session="nudge-session-2") for i in 
 check("a different session_id is nudged independently of the first",
       any("resume" in o for o in second_session_outs))
 
-silent_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-silent-")).resolve()
-(silent_root / ".git").mkdir()
-ws.ensure(silent_root)
-today_str = datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
-(silent_root / ".chamnan" / "sessions" / f"{today_str}-already-recorded.md").write_text(
-    "# Already recorded\n\n## Remaining\nnone\n", encoding="utf-8")
-silent_outs = [touch(i, silent_root, session="silent-session") for i in range(1, 16)]
-check("NUDGE IS SILENT WHEN TODAY ALREADY HAS A SESSION RECORD",
-      not any("resume" in o for o in silent_outs))
+# The old "silent when today already has a record" check lived here and was removed on
+# 2026-09-16: it asserted the calendar gate that AUDIT-5 deliberately took out. The replacement
+# is the pool check `165_the_nudge_asks_about_this_session_not_the_calendar`, which holds both
+# directions — a record filed before this session started does NOT silence it, one appearing
+# after it does.
 
 off_root = Path(tempfile.mkdtemp(prefix="chamnan-nudge-off-")).resolve()
 (off_root / ".git").mkdir()
@@ -1471,7 +1467,6 @@ off_outs = [touch(i, off_root, session="off-session") for i in range(1, 16)]
 check("NUDGE IS SILENT WHEN THE LEDGER FLAG IS OFF", not any("resume" in o for o in off_outs))
 
 _rmtree(nudge_root, ignore_errors=True)
-_rmtree(silent_root, ignore_errors=True)
 _rmtree(off_root, ignore_errors=True)
 
 # ---------------------------------------------------------------- automatic As-of / Provenance stamping
@@ -10211,7 +10206,10 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
     # it, two check it) and the README's sentence went from seven purposes to nine in the same
     # commit -- the event this check exists to force. Sites and purposes differ because several
     # purposes use two sites; the README counts purposes, this counts sites.
-    _gitcalls += _t.count('["git",')
+    for _tl in _t.splitlines():
+        if _tl.lstrip().startswith("#"):
+            continue
+        _gitcalls += _tl.count('["git",')
 # Raised 2026-09-07: `git_can_speak_for` and `git_toplevel` are two new sites, and the paragraph
 # went from nine purposes to ten in the same commit — the event this check exists to force.
 # Raised again the same day for two FALLBACK sites that add no purpose: `git_is_installed` now asks
@@ -10230,6 +10228,9 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # `git check-attr working-tree-encoding` which paths git stores re-encoded, so a UTF-16 worktree
 # file is reported as text in a declared encoding instead of as "binary" (R14.2). The third,
 # `workspace_is_tracked`, is another `ls-files` serving a purpose the paragraph already lists.
+# Counted per line and comment lines skipped, from 2026-09-16: the Windows fix's own comment in
+# lib/workspace.py quotes `["git", ...]` in prose, and a check that reads its own source will
+# match itself. 24 is the count of real call sites and did not move.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
       _gitcalls == 24, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
@@ -32245,6 +32246,347 @@ check("...and a clean history exits 0 rather than crying wolf",
 # first version and it tells a reader nothing they will act on.
 check("...and the report groups by FILE, so a fixture file is one line and not two hundred",
       "line(s)" in _out163 and "file(s)" in _out163, saw=_out163[:200])
+# ---- 164_a_published_number_still_matches_the_tool_that_made_it.py
+# ------------------ R2 RQ7: a number the README asks a reader to TRUST must still be true
+# Banked 2026-09-12 as "design waits until anyone proposes publishing a second metric". That gate
+# closed on 2026-09-15, when a second redactor metric was added to the same table — the touch rate
+# on real content, beside the recall figure that was already there. Nobody proposed it; it was
+# simply published, which is how the gate would always have closed.
+#
+# RQ7 asked for a machine-readable evidence ledger: claim_id, value, numerator, denominator, corpus
+# manifest hash, class counts, and a release verifier that fails when a cited value changes without
+# its denominator changing. That is a design for a repository publishing many metrics. This one
+# publishes three, in one table, from one tool — so the ledger is answered by asking the TOOL.
+#
+# The lesson underneath is already recorded here: a number written into a pinned file decays. The
+# README's redaction figures are the ones a reader is asked to trust the most, and until now nothing
+# re-derived them. They were true when checked by hand on 2026-09-16; this is what keeps them true.
+import re as _re164
+import subprocess as _sp164
+import sys as _sys164
+from pathlib import Path as _P164
+import importlib as _im164
+
+_PKG164 = _P164(_im164.import_module("redact").__file__).resolve().parent.parent
+_TOOL164 = _PKG164 / "tools" / "redactor_recall.py"
+
+check("THE TOOL THE README CREDITS ITS FIGURES TO SHIPS", _TOOL164.is_file(), saw=str(_TOOL164))
+
+if _TOOL164.is_file():
+    try:
+        _run164 = _sp164.run([_sys164.executable, str(_TOOL164)], capture_output=True, text=True,
+                             timeout=300, cwd=str(_PKG164))
+        _out164 = _run164.stdout or ""
+    except (OSError, _sp164.SubprocessError) as _e164:
+        _out164 = ""
+        print("      DETAIL  the tool did not run: %s" % type(_e164).__name__)
+
+    # What the tool says now. Parsed from its own output rather than recomputed here, because a
+    # second implementation of the measurement would drift from the one the README names.
+    def _pair164(label):
+        m = _re164.search(r"%s\s+([\d.]+)%%\s+\((\d+)/(\d+)" % label, _out164)
+        return (m.group(1), int(m.group(2)), int(m.group(3))) if m else None
+
+    _recall164 = _pair164("recall")
+    _bare164 = _re164.search(r"bare\s+([\d.]+)%\s+\((\d+)/(\d+)\)", _out164)
+    _damaged164 = _re164.search(r"(\d+)/(\d+) ordinary strings damaged", _out164)
+    print("      DETAIL  tool now reports recall=%s bare=%s damaged=%s"
+          % (_recall164, _bare164.groups() if _bare164 else None,
+             _damaged164.groups() if _damaged164 else None))
+
+    check("...and it still produces the three figures the README quotes",
+          bool(_recall164 and _bare164 and _damaged164),
+          saw="the tool's output shape changed; the README's figures cannot be verified from it")
+
+    _readme164 = (_PKG164 / "README.md").read_text(encoding="utf-8", errors="replace")
+    _claims164 = []
+    if _recall164:
+        _claims164.append(("recall", "%s%%" % _recall164[0],
+                           "%d of %d" % (_recall164[1], _recall164[2])))
+    if _bare164:
+        _claims164.append(("weakest class", "%s%%" % _bare164.group(1),
+                           "%s of %s" % (_bare164.group(2), _bare164.group(3))))
+    if _damaged164:
+        _claims164.append(("decoys damaged", None,
+                           "%s of %s ordinary strings damaged"
+                           % (_damaged164.group(1), _damaged164.group(2))))
+
+    # \U0001f41b Twice wrong before this worked, and both bugs had the same shape: a test that
+    # cannot fail. First an `if`/`elif`, so the percentage was only examined once the fraction had
+    # already failed. Then a bare substring search over the WHOLE README — and `99.0%` also appears
+    # in the FAQ, so a drifted table still "found" it somewhere else in the file.
+    #
+    # A claim is a percentage AND its fraction, standing together on ONE line. That is what is
+    # checked, and it is why the mutation test now bites.
+    _stale164 = []
+    _lines164 = _readme164.split("\n")
+    for _name164, _pct164, _frac164 in _claims164:
+        _where164 = [l for l in _lines164 if _frac164 in l]
+        if not _where164:
+            _stale164.append("%s: the tool says %r and no line of the README says it"
+                             % (_name164, _frac164))
+            continue
+        if _pct164 and not any(_pct164 in l for l in _where164):
+            _stale164.append("%s: the tool says %s beside %r, and the README's own line does not"
+                             % (_name164, _pct164, _frac164))
+    for _x164 in _stale164:
+        print("      DETAIL  %s" % _x164)
+
+    check("EVERY REDACTION FIGURE THE README PUBLISHES IS WHAT THE TOOL PRODUCES TODAY",
+          not _stale164,
+          saw="a number a reader is asked to trust has drifted from the tool it is credited to — "
+              "re-run tools/redactor_recall.py and update the table, or explain the difference")
+    check("...and there were claims to check, so that is not a pass over an empty list",
+          len(_claims164) >= 3, saw="%d claim(s) parsed from the tool" % len(_claims164))
+
+    # 🐛 A denominator is what makes a percentage checkable at all. RQ7's own example was a blended
+    # metric published while the class that actually leaked had zero test cases behind it — the
+    # percentage looked fine because nothing said what it was a percentage OF.
+    _bare_pct164 = _re164.findall(r"\*\*(\d+(?:\.\d+)?%)\*\* — (?!\d+ of \d+)", _readme164)
+    _table164 = _readme164[_readme164.find("| recall |"):][:1800] if "| recall |" in _readme164 else ""
+    _nodenom164 = [p for p in _re164.findall(r"\*\*(\d+(?:\.\d+)?%)\*\*", _table164)
+                   if not _re164.search(r"\*\*%s\*\* — \d+ of \d+" % _re164.escape(p), _table164)]
+    print("      DETAIL  figures in the redaction table without a denominator beside them: %d"
+          % len(_nodenom164))
+    check("...and every percentage in that table says what it is a percentage OF",
+          not _nodenom164,
+          saw="%s — a percentage with no denominator cannot be checked, which is the failure RQ7 "
+              "was written about" % ", ".join(_nodenom164))
+# ---- 165_the_nudge_asks_about_this_session_not_the_calendar.py
+# ------------------------------------------- AUDIT-5: the nudge asks about THIS session, not the calendar
+# `sessions.written_today(root)` answers a CALENDAR question -- any record filed today, by anyone --
+# and `_resume_nudge` used it as its gate while its own wording ("nothing is recorded for today yet")
+# means a narrower one: has THIS session recorded its own work. Measured on this repository: 24
+# nudges fired across 27 sessions against a sessions directory holding exactly ONE record, dated
+# before tracking began -- so the calendar gate was never once the reason a nudge was suppressed. A
+# record written at 09:00 by a DIFFERENT session, about different work, silenced the nudge for every
+# other session for the rest of the day.
+#
+# Fixed at the call site in `_resume_nudge`, not in `sessions.written_today` itself -- that
+# function's docstring is accurate about what it answers, and check 4 below pins that it still does.
+import importlib.util as _ilu165
+
+_watch165_spec = _ilu165.spec_from_file_location(
+    "_chamnan_watch165", str(ROOT / "hooks" / "chamnan_scratch_watch.py"))
+_watch165 = _ilu165.module_from_spec(_watch165_spec)
+sys.path.insert(0, str(ROOT / "hooks"))
+_watch165_spec.loader.exec_module(_watch165)
+
+import sessions as sessions165
+
+
+def _ws165():
+    """A workspace `_resume_nudge` will actually act in: `ledger` enabled, `sessions/` present."""
+    d = Path(tempfile.mkdtemp(prefix="chamnan-nudge165-"))
+    (d / ".chamnan" / _watch165.NUDGE_DIR).mkdir(parents=True)
+    (d / ".chamnan" / "sessions").mkdir(parents=True, exist_ok=True)
+    (d / ".chamnan" / "config.json").write_text('{"parts": {"ledger": true}}', encoding="utf-8")
+    return d
+
+
+def _write_record165(root, name, body="## Remaining\n- something\n"):
+    (root / ".chamnan" / "sessions" / name).write_text(body, encoding="utf-8")
+
+
+def _fire165(root, sid, n, transcript="/t/one.jsonl"):
+    """n PostToolUse payloads from one writer, through the REAL `_resume_nudge` -- reimplementing
+    the gate here would produce a check that agrees with itself no matter what the hook does.
+    Returns whether ANY of the n calls actually fired the nudge; `say()` is silenced since it emits
+    a hook protocol object and exactly one may be printed per event."""
+    payload = {"session_id": sid, "transcript_path": transcript,
+               "tool_name": "Bash", "tool_input": {"command": "true"}}
+    _said165 = _watch165.say
+    _watch165.say = lambda *_a, **_k: None
+    fired = False
+    try:
+        for _ in range(n):
+            if _watch165._resume_nudge(payload, root / ".chamnan", root):
+                fired = True
+    finally:
+        _watch165.say = _said165
+    return fired
+
+
+# 1. A record filed by ANOTHER session BEFORE this one starts does not silence the nudge.
+_r1_165 = _ws165()
+try:
+    _write_record165(_r1_165, "2026-09-16-someone-elses-work.md")
+    _fired1_165 = _fire165(_r1_165, "sess-165-1", _watch165.NUDGE_AT)
+    check("a record filed by another session before this one started does not silence the nudge",
+          _fired1_165,
+          saw="the nudge never fired even though nothing of THIS session's own work is recorded")
+finally:
+    shutil.rmtree(_r1_165, ignore_errors=True)
+
+# 2. A record appearing AFTER this session started DOES stop it.
+_r2_165 = _ws165()
+try:
+    _fire165(_r2_165, "sess-165-2", 1)   # establishes records_at_start at 0 (nothing written yet)
+    _write_record165(_r2_165, "2026-09-16-this-session-recorded-itself.md")
+    _fired2_165 = _fire165(_r2_165, "sess-165-2", _watch165.NUDGE_AT)
+    check("...and a record appearing after this session started DOES stop the nudge",
+          not _fired2_165,
+          saw="the nudge fired again after a record was written for this session's own work")
+finally:
+    shutil.rmtree(_r2_165, ignore_errors=True)
+
+# 3. An entry with no `records_at_start` -- an older workspace's state, written before this fix
+# existed -- must not crash and must not be silenced: it is read as "record the count now".
+_r3_165 = _ws165()
+try:
+    _sid3_165 = "sess-165-3"
+    _watch165._nudge_write(_r3_165 / ".chamnan", _sid3_165,
+                            {"calls": _watch165.NUDGE_AT - 1, "nudged": False})
+    _raised165 = None
+    _fired3_165 = False
+    try:
+        _fired3_165 = _fire165(_r3_165, _sid3_165, 1)
+    except Exception as _e165:               # noqa: BLE001 -- the thing under test is "does this raise"
+        _raised165 = repr(_e165)
+    check("an entry with no records_at_start (an older workspace) does not raise",
+          _raised165 is None, saw=_raised165)
+    check("...and is treated as 'record the count now', not as a reason to stay silent",
+          _fired3_165,
+          saw="the missing key silenced the nudge instead of just starting the count")
+finally:
+    shutil.rmtree(_r3_165, ignore_errors=True)
+
+# 4. sessions.written_today itself still answers the calendar question, unchanged -- the fix moved
+# the CALL SITE, not this function.
+_r4_165 = _ws165()
+try:
+    _today165 = datetime.datetime.now().astimezone().strftime("%Y-%m-%d")
+    check("sessions.written_today still answers False with no record dated today",
+          sessions165.written_today(_r4_165, today=_today165) is False)
+    _write_record165(_r4_165, f"{_today165}-someone-elses-work.md")
+    check("...and still answers True once ANY record (from anyone) carries today's date",
+          sessions165.written_today(_r4_165, today=_today165) is True)
+finally:
+    shutil.rmtree(_r4_165, ignore_errors=True)
+# ---- 166_the_block_never_exceeds_its_own_ceiling.py
+# ------------------------------------------- the block never exceeds its own ceiling
+# 🐛 [2026-09-16] `fit.shrink` returns a body AT the ceiling, not under it with room to spare — it
+# fills whatever budget it is given. The hook used to compute the delivery-failure warning AFTER
+# `fit.shrink` had already run and PREPEND it to the finished body, on the assumption recorded in
+# the comment above the old call site: "on the firing where it says something, the block it is
+# prepended to is the SHORT one, since that is what being cut means." Measured on a real firing:
+# 9,447 bytes returned by `shrink`, +119 bytes prepended after it, 9,566 emitted against a 9,500
+# ceiling — 27 of the last 84 firings landed over the ceiling this way, and the host's own
+# truncation of the overage is exactly what `blocklog.check` detects, so the warning re-armed
+# itself the next session instead of ever clearing.
+#
+# The fix moves the `blocklog.check` call to BEFORE `fit.shrink` and folds the resulting line into
+# `header`, the same way `why_this_session` already is — so `shrink` counts it against the ceiling
+# like any other content and can drop a section to make room, instead of a warning about a cut
+# being the reason the block gets cut.
+#
+# This drives the REAL hook end to end (`chamnan_session_start.main()`), the way check 165 drives
+# `_resume_nudge` — no reimplementation of header/shrink/emit here. The only thing stubbed is
+# `blocklog.check` itself, so the scenario is controlled without writing a fake record into this
+# repository's own `logs/block_shape.jsonl`.
+import contextlib as _cl166
+import importlib.util as _ilu166
+import io as _io166
+import json as _js166
+import os as _os166
+import sys as _sys166
+
+_HOOK166 = ROOT / "hooks" / "chamnan_session_start.py"
+_PAYLOAD166 = {
+    "cwd": str(ROOT),
+    "hook_event_name": "SessionStart",
+    "session_id": "chamnan-166-ceiling-check",
+    "source": "startup",
+}
+_FAIL_LINE166 = ("the last block stopped early — it was cut, not shortened, so everything after "
+                 "the cut never reached the session")
+
+
+def _run166(ceiling166, failed166):
+    """One real firing of `main()`, with `blocklog.check` stubbed to `failed166` and the ceiling
+    forced through the environment door — the same door `_ceiling_from_env` reads first. A fresh
+    module instance per call, like check 98's `_t_real_emission98`, so the fence nonce and the
+    other globals `main()` rebinds each firing never leak from one call into the next."""
+    _spec166 = _ilu166.spec_from_file_location("chamnan_session_start_166", _HOOK166)
+    _hook166 = _ilu166.module_from_spec(_spec166)
+    _spec166.loader.exec_module(_hook166)
+
+    _orig_check166 = blocklog.check
+    _old_cwd166 = _os166.getcwd()
+    _old_stdin166 = _sys166.stdin
+    _old_ceiling166 = _os166.environ.get("CHAMNAN_OUTPUT_CEILING")
+    _old_ro166 = _os166.environ.get(ws.READ_ONLY_ENV)
+    _buf166 = _io166.StringIO()
+    try:
+        blocklog.check = lambda *_a, **_k: list(failed166)
+        _os166.environ["CHAMNAN_OUTPUT_CEILING"] = str(ceiling166)
+        _os166.environ[ws.READ_ONLY_ENV] = "1"          # never write this repository's own log
+        _os166.chdir(str(ROOT))
+        _sys166.stdin = _io166.StringIO(_js166.dumps(_PAYLOAD166))
+        with _cl166.redirect_stdout(_buf166):
+            _hook166.main()
+    finally:
+        blocklog.check = _orig_check166
+        _os166.chdir(_old_cwd166)
+        _sys166.stdin = _old_stdin166
+        if _old_ceiling166 is None:
+            _os166.environ.pop("CHAMNAN_OUTPUT_CEILING", None)
+        else:
+            _os166.environ["CHAMNAN_OUTPUT_CEILING"] = _old_ceiling166
+        if _old_ro166 is None:
+            _os166.environ.pop(ws.READ_ONLY_ENV, None)
+        else:
+            _os166.environ[ws.READ_ONLY_ENV] = _old_ro166
+    _raw166 = _buf166.getvalue()
+    # `main()` writes exactly one trailing "\n" after the assembled body (`sys.stdout.write(body +
+    # "\n")`); strip only that one, not whatever the body's own content ends with.
+    return _raw166[:-1] if _raw166.endswith("\n") else _raw166
+
+
+# 1. A roomy ceiling (the maximum the config door itself accepts — `ws.upper_bound` clamps it to
+# 9,500) establishes what this repository's block looks like with nothing to say.
+_plain166 = _run166(9500, [])
+check("blocklog.check stubbed to no findings produced some real output to compare against",
+      bool(_plain166), saw=f"{len(_plain166)} bytes")
+
+# 3. With no delivery failure, the block is unchanged: no warning was folded in, and running the
+# identical firing again produces the identical bytes — this refactor introduces no new state that
+# leaks between calls.
+check("with no delivery failure the block carries no warning line",
+      "_Also: " not in _plain166 and _FAIL_LINE166 not in _plain166,
+      saw=_plain166[:200])
+_plain166_again = _run166(9500, [])
+check("...and is unchanged from firing to firing — the no-failure path is untouched by the move",
+      _plain166_again == _plain166,
+      saw=f"{len(_plain166)} vs {len(_plain166_again)} bytes")
+
+# 2 & 1 & 4. Pin the ceiling to EXACTLY what the no-failure body already fills — reproducing the
+# measured condition ("shrink returned 9,447 bytes... over the ceiling by 66") without depending on
+# this repository happening to be at any particular size today. `shrink` fills to the ceiling it is
+# given, so a body built with no failure at this exact ceiling is the "already full" case the old
+# code silently assumed could not happen.
+_tight166 = len(_plain166.encode("utf-8"))
+check("a ceiling this tight is realistic (not the degenerate 'header alone is bigger' case)",
+      _tight166 > 500, saw=_tight166)
+
+_plain_tight166 = _run166(_tight166, [])
+_fail_tight166 = _run166(_tight166, [_FAIL_LINE166])
+
+check("1. with a delivery failure recorded, the emitted block is still <= the ceiling",
+      len(_fail_tight166.encode("utf-8")) <= _tight166,
+      saw=f"{len(_fail_tight166.encode('utf-8'))} bytes against a {_tight166}-byte ceiling")
+check("2. the warning text is still present — budgeting it must not silence it",
+      _FAIL_LINE166 in _fail_tight166,
+      saw=_fail_tight166[:200])
+check("...and it is wrapped exactly as before: '_...' + the joined sentences + '._' then a blank line",
+      f"_{_FAIL_LINE166}._\n\n" in _fail_tight166,
+      saw=_fail_tight166[:200])
+check("4a. the no-failure emission at the same tight ceiling also stays <= it",
+      len(_plain_tight166.encode("utf-8")) <= _tight166,
+      saw=f"{len(_plain_tight166.encode('utf-8'))} bytes against a {_tight166}-byte ceiling")
+check("4b. and the earlier roomy-ceiling emission stayed <= its own (roomy) ceiling too",
+      len(_plain166.encode("utf-8")) <= 9500,
+      saw=f"{len(_plain166.encode('utf-8'))} bytes against a 9500-byte ceiling")
 # ---- 16_a_cut_section_never_ships_framing_only.py
 # ------------------------------------------- a section cut to its own signposts is worse than absent
 # 🐛 [2026-09-09] `_only_the_opening_block` refused a fragment only when it was a subsequence of the

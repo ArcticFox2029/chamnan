@@ -24,7 +24,7 @@ already reports the last released number while running newer code.
 ### The theme of this release: things that were failing where nobody could see
 
 1.26.0 was about what chamnan *does*. 1.27.0 is almost entirely about what it was quietly getting
-wrong — a redactor that let eight different shapes of credential through, four tree walks that
+wrong — a redactor that let nine different shapes of credential through, four tree walks that
 returned "nothing here" when the truth was "I could not look", and a session block that had been
 dropping two of its nine sections on 96.8% of every session since it was written.
 
@@ -33,11 +33,33 @@ code, and every one now has a check that fails on the build before it.
 
 ---
 
-### The redactor — eight ways a secret was leaving in the clear
+### The redactor — nine ways a secret was leaving in the clear
 
 This is the largest cluster in the release, and they are all the same defect wearing different
 clothes: **a rule was applied to one member of a set and forgotten in the identical ones beside
 it.** Nine of the fixes below are that shape.
+
+### A credential a sentence names, with a clause between the word and the value
+
+Every rule in the module keyed on an assignment — `password=`, `password:`, `password is`. That is
+what configuration looks like. It is not what a person writing a note looks like, and the shape
+came from real damage rather than from reading our own code: a break-glass password reached git in
+four tracked files of a work repository and sat there fifteen days, on a documentation line.
+
+    The break-glass password, which ops rotate quarterly, is `<value>`.
+    Set the passphrase to '<value>' before running it.
+    password for the jump host, rotated monthly: `<value>`
+
+The window between the secret word and the quoted value is now forty characters of ordinary
+sentence text instead of four spaces, and the precision moved onto the value itself, where it
+belongs: a value that reads like a call, a dotted name, a path, a product name or a code fragment
+carrying an inner `=` is not a credential. Trailing `=` is kept — that is base64 padding, and a
+base64 secret is the thing this is here to catch.
+
+Every one of those guards was bought with a real false positive out of chamnan's own tree, found by
+the gate rather than imagined: `casefold()`, `time.time()`, `core.ignorecase`, `Qwen3-Coder`,
+`per_dir=0`. Measured over all 229 tracked files against the self-scan baseline — five of five leak
+shapes caught, zero new hits.
 
 ### A credential's neighbours were deciding whether it counted as one
 
@@ -120,6 +142,33 @@ it. chamnan now says so once, rather than losing the work quietly.
 
 ---
 
+### Windows — a cloned repository could have run its own `git.exe`
+
+On Windows, `CreateProcess` searches the **current directory before PATH**, and the current
+directory is the repository you just opened. This package runs `["git", …]` twenty-six times across
+ten files, the first of them from the SessionStart hook. So cloning a repository that carries a
+`git.exe` at its root was enough to execute it — arbitrary code from cloning, which is the class
+chamnan exists to warn people about.
+
+It is closed at the operating system rather than at the twenty-six call sites:
+`NoDefaultCurrentDirectoryInExePath` is set on Windows at import of a module every path already
+loads, children inherit it, and on every other platform it is an unread variable.
+
+**And a second layer, because the first one can be silently absent.** That switch is not honoured
+before Windows 10 1809, and nothing inside the process can observe whether it took effect — so on
+those versions the hole is exactly as open as before and no error says so. The case it is *for* is
+now detected directly: `chamnan-guard` finds a file named like the program in the directory
+`CreateProcess` would search first, and **refuses** rather than routing around it. Nobody puts a
+`git.exe` in a repository root by accident, and a tool that quietly picked the right binary would
+leave the next tool on that machine to find the wrong one.
+
+**Also Windows, and the same shape one layer up:** `chamnan-map` stripped the repository root from
+a path with `path.replace(str(root) + "/", "")` in two places. On Windows the separator is a
+backslash, so that never matches, the absolute path survives, and the rollup and asset groupings —
+which both split on the first path component — see one component where a directory should be. Ten
+other sites in the same file already used `relative_to(root).as_posix()`; these two were the
+outliers.
+
 ### The architecture map
 
 - **A file git stores re-encoded is text, and the map called it binary.** A repository that
@@ -164,6 +213,25 @@ only to pin that correct configuration says nothing: an official registry, a pro
 script, a binary target path, a pinned requirement, an ordinary build step. Every one of them was
 a false positive at some point while it was being written. Measured over real history before it
 shipped: **0 of 2,917 commits across three repositories would have raised a line.**
+
+### New: `chamnan-guard --history` — the question a staged diff can never answer
+
+Everything `chamnan-guard` did answered *is this about to go in*. Somebody adopting chamnan on a
+repository that already has a past asks a different question first, and none of the thirteen
+commands could answer it — nothing read `git log`.
+
+The scanner is not duplicated: `git log -p` produces a unified diff and the redactor already takes
+one, so this is the same rules over a different input.
+
+**It reports by file, worst first, and that is the finding.** The first version listed every
+(commit, path) pair and produced 431 lines across 79 commits on this package's own history, almost
+all of it the redactor's own specimen credentials. A first run that hands somebody 431 alarms has
+told them nothing. Grouped by file it is 22 rows: the fixture files are recognisable at the top and
+dismissible in one line, and the file you do not recognise is not buried under them.
+
+It says **rotate before rewrite**, in that order, because the order is the point — a rewrite leaves
+the blob in every fork, clone and cache, so somebody who rewrites and stops believes they are
+finished.
 
 ### The session block — every store now arrives, and the order follows the work
 
@@ -248,6 +316,51 @@ of fourteen rules against a 2,000-character budget: **14 of 14 arrive, both pinn
 whole, the twelve others arrive as a heading and a pointer, and the section uses 1,702 of 2,000.**
 
 ---
+
+### The block was exceeding its own ceiling, and the warning about it was what pushed it over
+
+`fit.shrink` was doing its job exactly — 9,447 bytes returned against a 9,500 ceiling. Then the
+delivery-failure warning was prepended to the finished body, +119 bytes, with nothing re-checking.
+9,566 went out, and the host truncated it.
+
+The code said why it believed that was safe: *"on the firing where it says something, the block it
+is prepended to is the SHORT one, since that is what being cut means."* Shrink fills to the ceiling
+regardless, so the block is never short.
+
+**And it could not recover on its own.** Over the ceiling means the host truncates; truncation is
+what the warning detects; detection re-arms the warning next session. 27 of the last 84 firings
+were over. The log is now read *before* shrink and folded into the header, which is already how the
+neighbouring line is counted: +1 byte added afterwards, 9,445 emitted, 55 under the ceiling, the
+warning still present.
+
+### The block is positioned against the prompt's cache breakpoint
+
+The prompt cache is strictly prefix-based, so what matters is not how *much* of the block changed
+but how *early*. Measured here: two firings of one session with a file written between them shared
+95.4% of their bytes and could cache 4.4% of them — because the staleness notice that file write
+produced was inserted at the front, at character ~60, and everything behind it was reprocessed at
+full price. After: 100%.
+
+The rule needs no number and no re-tuning as the workspace grows: **everything chamnan says about
+the moment goes after everything it reads from files.** File-derived text changes when the
+repository changes, which is when a reprocess is honest; a notice about what is stale right now
+changes on its own schedule and belongs where it costs only itself. It is applied where emission
+order is decided, not at the eleven sites that write such a notice, because a twelfth will be
+added by somebody who has not read the comment.
+
+### A section written as one paragraph keeps what fits
+
+A budget cut was backed to the last complete line, so a section with no line break in it had no
+boundary and arrived **empty** — 0 of 235 phrases, where the same content line-broken kept 28 of
+120. A word boundary is the honest fallback and is safe exactly there: a fence marker occupies its
+own line, so text with no newline cannot have opened one.
+
+### The resume nudge asked the calendar, not the session
+
+It gated on whether *any* session record carried today's date. One record written at 09:00 by a
+different session, about different work, silenced every other session for the rest of the day —
+while the nudge's own text said "nothing is recorded for today yet". It now remembers how many
+records existed when the session first fired and stays quiet only once that count has grown.
 
 ### Known, and not fixed in this release
 
