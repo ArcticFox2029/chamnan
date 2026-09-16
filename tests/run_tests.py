@@ -30552,9 +30552,9 @@ check("...and it keeps the titles while dropping the navigation sentence",
       "First decision" in _nl146 and "Read one when" not in _nl146)
 
 # ------------------ and it holds as the stores GROW, which is the part that kept coming back
-# The owner, 2026-09-15, after this had been "fixed" once more: *"ฉันเบื่อแก้ปัญหาเรื่องนี้แล้ว
-# ฉันอยากแก้ให้มันจบซักที ให้มันใช้งานได้ ต่อให้ skill tool rule มันเพิ่มก็ตาม"* — I am tired of
-# fixing this, make it work even as the skills, tools and rules grow.
+# The owner, 2026-09-15, after this had been "fixed" once more: they were tired of fixing this one
+# and wanted it finished for good -- it has to keep working even as the skills, tools and rules
+# keep growing.
 #
 # Every earlier fix was a NUMBER: raise the ceiling, lower `rules_char_budget`, re-rank
 # `DROP_ORDER`. Each one worked on the store sizes of the day it was measured and failed the next
@@ -30628,9 +30628,8 @@ check("a workspace that fits reserves nothing and keeps every section whole",
       not _sd146 and "one_tool.py" in _sb146 and "one_skill.md" in _sb146)
 # ---- 147_the_order_moves_with_what_the_workspace_opens.py
 # ------------------ the drop order follows what this workspace opens, not a list written once
-# The owner, 2026-09-15, on the fix that guaranteed a floor: *"สิ่งสำคัญคือ มันต้องขยับได้จริง ตาม
-# การใช้งาน เพื่อรองรับ skill tool rule ของอนาคตด้วย"* — it has to actually move with usage, so it
-# carries the skills, tools and rules that do not exist yet.
+# The owner, 2026-09-15, on the fix that guaranteed a floor: what matters is that it has to
+# actually MOVE with usage, so it carries the skills, tools and rules that do not exist yet.
 #
 # `DROP_ORDER` is one global ranking written once from what mattered the day it was written, and
 # it decides what every workspace loses forever. Measured here the first time anything read the
@@ -30740,9 +30739,8 @@ check("...and the stores counted from the pointer log are unchanged by it",
 _rmtree(_d147, ignore_errors=True)
 # ---- 148_a_primary_rule_is_loaded_a_secondary_one_is_recognised.py
 # ------------------ primary rules load, secondary rules load far enough to be called on
-# The owner, 2026-09-15, having already said it once: *"กฏ แบ่งเป็น กฏหลัก กฏรอง กฏรองไม่ต้องโหลด
-# ทุกอย่าง ให้มันโหลดแค่ข้อมูลบางส่วน เพื่อรอเรียกใช้งาน"* — rules split into primary and secondary;
-# a secondary rule does not load everything, it loads enough to wait to be called on.
+# The owner, 2026-09-15, having already said it once: rules split into primary and secondary; a
+# secondary rule does not load everything, it loads enough to wait to be called on.
 #
 # Three separate arithmetic faults meant the section did neither, and all three were invisible
 # because the tail honestly reported what was missing:
@@ -39211,7 +39209,7 @@ check("...while an unlabelled run, and a failed checksum under the label, are bo
           "a finding" % (len(_t_eaten88), "; ".join(_t_eaten88[:3])))
 # ---- 89_the_schedule_keeps_its_appointment_on_every_os.py
 # ------------- a schedule that only fires on the machine it was written on is not a feature
-# 🎯 [2026-09-11 owner] "ต้องวางแผนให้ครอบคลุม ทุก ver llm และ ทุก os" — the scheduler has to work on
+# 🎯 [2026-09-11 owner] Plan for full coverage: every LLM version and every OS. The scheduler has to work on
 # every operating system and in front of every model, and the tests have to say so rather than the
 # documentation. What can be proved here is proved here; what depends on a platform this machine is
 # not runs in CI on three of them, and the branch SELECTION is asserted either way, because the one
@@ -39584,7 +39582,7 @@ check("...while a record with no runner named takes the vendor's own shape",
       saw="an unnamed runner inherited flags from somewhere")
 
 # --- 16. EVERY VENDOR IN THE TABLE, asserted from the table rather than from two examples.
-# 🎯 [owner 2026-09-12] "ครอบคลุมทุก llm ที่เราวางไว้". Two vendors, and they disagree on both
+# 🎯 [owner 2026-09-12] Cover every LLM we planned for. Two vendors, and they disagree on both
 # questions this feature has to answer: claude takes its prompt on ARGV and resumes with a FLAG
 # (`--resume <id>`), codex takes its prompt on STDIN (`-`) and resumes with a SUBCOMMAND
 # (`resume <id>`). Hardcoding either would fire the wrong shape at the other — silently, because

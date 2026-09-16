@@ -164,8 +164,9 @@ DEFAULT_CONFIG = {
     # who does not reach it. Measured the same afternoon: chamnan's own repository emits 4,180
     # bytes against the identical ceiling, and a workspace with two files emits about 1,300.
     #
-    # The owner's wording, 2026-09-14: *"ตั้งเป็นค่ามาตรฐานไปก่อน 9500 แต่คุมว่าเฉพาะใช้งานจริง ไม่ใช่ค่าตายตัว
-    # ใครใช้ไม่ถึงก็คิดตามจริง"*.
+    # The owner's instruction, 2026-09-14: make 9,500 the standard for now, but charge only what is
+    # actually used rather than treating it as a fixed cost -- anyone who does not reach it is
+    # billed for what they really emit.
     "output_byte_ceiling": 9500,
     # The rules section's own budget, in characters. It had none until 2026-09-09 and was fixed at
     # 1,500 from a day when this repository had one rule; the two sections beside it in the block

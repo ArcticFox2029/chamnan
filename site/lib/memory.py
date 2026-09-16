@@ -545,8 +545,9 @@ def rules_text(root, refuse_conflicts=False):
     # three rules outright. Thirteen of sixteen arrived, every session, and the notice named the
     # three missing ones -- which is the honest form of a guarantee that was never made.
     #
-    # The owner's own description of what these two kinds of rule are for, 2026-09-15: *"กฏ แบ่ง
-    # เป็น กฏหลัก กฏรอง กฏรองไม่ต้องโหลดทุกอย่าง ให้มันโหลดแค่ข้อมูลบางส่วน เพื่อรอเรียกใช้งาน"* --
+    # The owner's own description of what these two kinds of rule are for, 2026-09-15: rules split
+    # into primary and secondary; a secondary rule does not have to load everything, it loads only
+    # part of itself and waits to be called on. So:
     # a primary rule is loaded, a secondary rule is loaded far enough to be recognised and then
     # fetched when it applies. A secondary rule that does not arrive at all cannot be recognised,
     # so it is the one outcome the split does not allow.
