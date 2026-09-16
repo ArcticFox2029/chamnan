@@ -21,45 +21,73 @@ already reports the last released number while running newer code.
 
 ## What's new in 1.27.0
 
-This release adds almost no new surface. Nearly all of it went into things that were already
-failing where nobody could see — a redactor letting nine shapes of credential through, four tree
-walks answering "nothing here" when the truth was "I could not look", and a session block quietly
-dropping two of its nine sections on 96.8% of every session since it was written.
+**More context, less waste, stronger safeguards.** Mostly about making the capabilities you already use more dependable under real workloads. Very
+little new surface; the work went into what was quietly going wrong underneath it.
 
 ### Highlights
 
-- **Secrets are considerably harder to leak by accident.** Nine separate shapes that used to pass
-  through untouched are closed, including a credential a sentence merely names, one written with a
-  Cyrillic letter, and Thai's own vocabulary for it.
-- **Everything your workspace knows now reaches the session.** Measured on the repository chamnan is
-  developed in: 9 of 9 sections delivered and 16 of 16 rules, against 5 of 9 and 13 of 16 before,
-  for slightly fewer tokens.
-- **On Windows, a cloned repository can no longer run its own `git.exe`.** Closed at the operating
-  system, with a detector for the versions where that switch is silently ignored.
-- **`chamnan-guard` reads what a change does to your dependencies**, and can now scan the commits
-  you already have rather than only the ones about to go in.
-- **Tools that could not read something say so**, instead of reporting an empty result that looks
-  exactly like nothing being there.
+| | before | after |
+|---|---|---|
+| Sections of your workspace delivered to the session | 5 of 9 | **9 of 9** |
+| Rules delivered | 13 of 16 | **16 of 16** |
+| Tokens that costs | 4,189 | **4,161** |
+| Prompt-cacheable prefix, in the measured case | 4.4% | **100%** |
+
+**More context, for fewer tokens.** Those are the same measurement: the block was dropping the
+tools list and the procedures list on 96.8% of firings and recorded decisions on 78.5%, and fixing
+it cost nothing because a section that will not fit now leaves its *names* — the part that cannot be
+guessed — instead of its title.
+
+And it holds as your workspace grows: tested at 2×, 5×, 20× and 100× the present store sizes, every
+store still has a representation in the block.
+
+- **Stronger secret protection across real-world text** — natural-language mentions, Unicode
+  look-alikes, multilingual credential vocabulary, YAML, JSON and CRLF files. Nine shapes that used
+  to pass through untouched.
+- **Safer command execution on Windows** — a cloned repository can no longer run its own `git.exe`.
+- **`chamnan-guard` now reviews where a dependency comes from and what it runs**, and can scan the
+  commits you already have rather than only the ones about to go in.
+- **Tools that could not read something say so**, instead of an empty result that looks exactly like
+  nothing being there.
+- **5,448 / 5,448 verification checks passed.**
+
+No migration required.
 
 ### What you should notice
 
 Most of this is deliberately invisible on the happy path. Its purpose is to make unusual and
 long-running work fail less often, and the honest summary is that a short session in a small
-repository will feel the same as it did in 1.26.
+repository will feel much as it did in 1.26.
 
 Where you may notice something:
 
-- Fewer occasions where a resumed session seems to have forgotten a part of the project — the
-  block that carries it is no longer being cut off by the host.
-- Recorded decisions, procedures and the tool list now arrive; three of those were being delivered
-  zero times in 400 recorded firings.
+- Fewer occasions where a resumed session seems to have forgotten part of the project — the block
+  carrying it is no longer being cut off by the host.
+- Recorded decisions, procedures and the tool list now arrive; three of those were delivered zero
+  times in 400 recorded firings.
 - A warning when chamnan cannot verify something, in place of a confident empty answer.
 
-No migration, no configuration change, nothing to move.
+### What's new
+
+**`chamnan-guard` reads what a change does to your dependencies.** A dependency can arrive from
+somewhere other than the registry it appears to come from, under a name written to be read as a
+different one, carrying code that runs because it was installed rather than because anything
+imported it. Offline, with no list of known-bad names, it reports a redirected registry, a
+look-alike name, a new install-time script and what that script does, a lock file with no digest,
+and a dependency no registry hosts. Measured before shipping: **0 of 2,917 real commits across three
+repositories would have raised a line.**
+
+**`chamnan-guard --history`** answers the question a staged diff cannot: what is already in the
+commits you have. It reports by file, worst first, and says rotate before rewrite — in that order,
+because a rewrite leaves the blob in every fork and clone.
 
 ### Under the hood
 
-#### The redactor — nine ways a secret was leaving in the clear
+#### Secret protection across real-world text
+
+Nine shapes that used to pass through untouched — a sentence that merely names a credential, a
+Unicode look-alike, Thai's own vocabulary for it, YAML's explicit-indentation scalars, CRLF
+files, and the brace that closed the object a value sat in.
 
 This is the largest cluster in the release, and they are all the same defect wearing different
 clothes: **a rule was applied to one member of a set and forgotten in the identical ones beside
