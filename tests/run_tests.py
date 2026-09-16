@@ -33675,6 +33675,95 @@ if _fams177 and _fn177 is not None:
 
     print("      DETAIL  %d famil(ies) x %d id shape(s) resolved, %d decoy(s) rejected"
           % (len(_fams177), len(_shapes177), len(_decoys177)))
+# ---- 178_no_tracked_file_names_the_machine_it_was_built_on.py
+# ------------------ no tracked file names the machine this was built on
+# 🎯 [R4.2.5, 2026-09-17] The suite already sweeps tracked files for a real home directory, with a
+# probe proving the regex fires. It does not sweep for the other half of the same rule: the machine's
+# own NAME. A hostname is not credential-shaped, so no secret scanner looks for it, and on a
+# work-issued machine it is frequently `<asset-tag>.<employer>.<tld>` -- which ties a public
+# repository to an employer in a way no amount of later redaction takes back.
+#
+# Measured before writing this: 0 occurrences across the tracked tree, so this is a guard on a
+# property that holds rather than a fix for a leak. It is worth having because every path that could
+# introduce one is automatic -- a benchmark writing down what it measured, a log pasted into a
+# report, a tool recording where it ran. The home-directory leak this mirrors arrived exactly that
+# way: `run_bench.py` wrote the path itself, and nobody typed it.
+#
+# 🐛 This check must not contain the hostname it looks for, or the check file becomes the leak. Every
+# needle is read from the running machine at test time and nothing is written down -- the same shape
+# the home-directory probe uses, one file above, for the same reason.
+import importlib as _im178
+import pathlib as _pl178
+import socket as _so178
+import subprocess as _sp178
+import sys as _sy178
+
+_PKG178 = _pl178.Path(_im178.import_module("redact").__file__).resolve().parent.parent
+
+# A name too short or too common belongs to everybody and would match ordinary prose. These are
+# generic by definition, so naming them here reveals nothing about any machine.
+_GENERIC178 = {"localhost", "local", "lan", "home", "host", "mac", "macbook", "imac", "ubuntu",
+               "debian", "fedora", "linux", "darwin", "com", "net", "org", "edu", "gov", "co",
+               "io", "dev", "internal", "example", "test", "invalid", "arpa"}
+
+_raw178 = set()
+for _get178 in (_so178.gethostname, _so178.getfqdn):
+    try:
+        _raw178.add((_get178() or "").strip().lower())
+    except OSError:
+        pass
+# The whole name, and each dotted label inside it: the asset tag alone is as identifying as the FQDN,
+# and an employer domain alone is worse.
+_needles178 = set()
+for _n178 in _raw178:
+    for _cand178 in [_n178] + _n178.split("."):
+        if len(_cand178) >= 6 and _cand178 not in _GENERIC178:
+            _needles178.add(_cand178)
+
+check("THIS MACHINE HAS A NAME SPECIFIC ENOUGH TO SWEEP FOR",
+      bool(_needles178),
+      saw="every form of this host's name was generic or shorter than 6 characters, so the sweep "
+          "below would pass over anything -- a green result here would mean nothing")
+
+if _needles178:
+    _tracked178 = _sp178.run(["git", "ls-files"], cwd=str(_PKG178), capture_output=True,
+                             text=True, encoding="utf-8", errors="replace").stdout.split("\n")
+    _named178, _read178 = [], 0
+    for _rel178 in _tracked178:
+        _rel178 = _rel178.strip()
+        if not _rel178:
+            continue
+        try:
+            _text178 = (_PKG178 / _rel178).read_text(encoding="utf-8", errors="replace").lower()
+        except (OSError, ValueError):
+            continue
+        _read178 += 1
+        for _line178, _body178 in enumerate(_text178.splitlines(), 1):
+            for _needle178 in _needles178:
+                if _needle178 in _body178:
+                    # The finding is reported by POSITION, never by quoting the needle -- a failure
+                    # message is printed into a terminal and pasted into reports.
+                    _named178.append("%s:%d names this machine (%d chars, redacted here)"
+                                     % (_rel178, _line178, len(_needle178)))
+
+    check("the machine-name sweep read the tracked files it is meant to police",
+          _read178 >= 40,
+          saw="only %d tracked file(s) were read from %s" % (_read178, _PKG178))
+
+    check("NO TRACKED FILE NAMES THE MACHINE IT WAS BUILT ON",
+          not _named178,
+          saw="%d occurrence(s):\n        %s"
+              % (len(_named178), "\n        ".join(_named178[:10])))
+
+    # ...and the sweep must be able to see one, or an empty list proves only that it is broken.
+    _probe178 = "built on %s at 04:11" % sorted(_needles178)[0]
+    check("...and the sweep would catch one if it were there",
+          any(n in _probe178.lower() for n in _needles178),
+          saw="a line containing this host's own name did not match the sweep")
+
+    print("      DETAIL  %d tracked file(s) swept for %d form(s) of this host's name, 0 found"
+          % (_read178, len(_needles178)))
+    _ = _sy178
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
