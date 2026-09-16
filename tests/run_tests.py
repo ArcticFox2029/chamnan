@@ -8509,9 +8509,13 @@ subprocess.run(["git", "add", "-A"], cwd=_tl, capture_output=True)
 subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
                cwd=_tl, capture_output=True)
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_tl, capture_output=True)
+# encoding named: text mode without it decodes with the machine's codec, cp1252 on the
+# Windows runner, and one stray byte kills the reader thread rather than the call. These two
+# sit above the fold marker and are maintained here; the other seventeen live in the pool.
 _tl_out = subprocess.run(
     [sys.executable, str(ROOT / "hooks" / "chamnan_session_start.py")],
     input='{"hook_event_name":"SessionStart","source":"startup"}', capture_output=True, text=True,
+    encoding="utf-8", errors="replace",
     cwd=_tl, env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_tl))).stdout
 check("THE INDEX'S HOW-TO-READ INSTRUCTION IS PAID FOR ONCE, NOT TWICE",
       "for the one heading you need" in _tl_out
@@ -8843,7 +8847,8 @@ def _sb_fire():
     _r = subprocess.run([sys.executable, str(ROOT / "hooks" / "chamnan_subagent_start.py")],
                         input=json.dumps({"cwd": str(_sb), "agent_type": "general-purpose",
                                           "session_id": "fixedsession1"}),
-                        capture_output=True, text=True, cwd=_sb,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace",
+                        cwd=_sb,
                         env=dict(os.environ, CLAUDE_PROJECT_DIR=str(_sb)))
     try:
         return json.loads(_r.stdout)["hookSpecificOutput"]["additionalContext"]
@@ -26109,7 +26114,10 @@ _t_home101 = _t_root101 / "empty-home"
 _t_home101.mkdir()
 _t_env101 = dict(_os101.environ)
 _t_env101["HOME"] = str(_t_home101)
+# encoding named explicitly: text mode without it decodes with the machine's codec, which is
+# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 _t_run101 = _sp101.run([_sys101.executable, str(_t_report101)], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace",
                        cwd=str(_t_root101), env=_t_env101, timeout=60)
 _t_out101 = _t_run101.stdout
 check("THE REPORT SEPARATES TRACKED FILES FROM CURRENT BYTES THAT ARE COMMITTED",
@@ -26190,8 +26198,11 @@ check("the fixture produced a non-empty durable population with exactly one untr
 _t_payload102 = _json102.dumps({"cwd": str(_t_root102), "session_id": "check-102",
                                 "source": "startup"})
 _t_env102 = dict(_os102.environ)
+# encoding named explicitly: text mode without it decodes with the machine's codec, which is
+# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 _t_first102 = _sp102.run([_sys102.executable, str(_t_hook102)], input=_t_payload102,
-                         capture_output=True, text=True, cwd=str(_t_root102), env=_t_env102,
+                         capture_output=True, text=True, encoding="utf-8", errors="replace",
+                         cwd=str(_t_root102), env=_t_env102,
                          timeout=60)
 check("THE REAL SESSIONSTART NAMES THE EXACT UNTRACKED PATH AND NARROW GIT ADD",
       _t_first102.returncode == 0
@@ -26210,7 +26221,8 @@ check("...and the heading-less reminder fits its declared undroppable-content ce
           (_t_reminder_lines102, _ledger102.PERSISTENCE_REMINDER_BYTES))
 
 _t_second102 = _sp102.run([_sys102.executable, str(_t_hook102)], input=_t_payload102,
-                          capture_output=True, text=True, cwd=str(_t_root102), env=_t_env102,
+                          capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          cwd=str(_t_root102), env=_t_env102,
                           timeout=60)
 check("AN UNCHANGED UNTRACKED SET IS NOT REPEATED ON THE NEXT SESSIONSTART",
       "durable chamnan files are not tracked" not in _t_second102.stdout,
@@ -26226,7 +26238,8 @@ _t_resume_payload102 = _json102.dumps({
     "transcript_path": str(_t_transcript102),
 })
 _t_changed102 = _sp102.run([_sys102.executable, str(_t_hook102)], input=_t_resume_payload102,
-                           capture_output=True, text=True, cwd=str(_t_root102), env=_t_env102,
+                           capture_output=True, text=True, encoding="utf-8", errors="replace",
+                           cwd=str(_t_root102), env=_t_env102,
                            timeout=60)
 check("A CHANGED SET IS NAMED AGAIN ON THE EARLY-RESUME PATH, WITH BOTH CURRENT PATHS",
       ".chamnan/memory/lessons/needs-commit.md" in _t_changed102.stdout
@@ -30188,8 +30201,11 @@ check("the linked-worktree warning exists beside the symlink one",
 _t_dir144 = Path(tempfile.mkdtemp(prefix="chamnan-worktree-"))
 
 
+# encoding named explicitly: text mode without it decodes with the machine's codec, which is
+# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 def _t_git144(where, *args):
     return subprocess.run(["git", "-C", str(where)] + list(args), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace",
                           stdin=subprocess.DEVNULL,
                           env=dict(_os144.environ, GIT_CONFIG_GLOBAL=str(_t_dir144 / "none"),
                                    GIT_CONFIG_SYSTEM=str(_t_dir144 / "none")))
@@ -31341,6 +31357,7 @@ import tempfile as _tf154
 from pathlib import Path as _P154
 
 _mem154 = _im154.import_module("memory")
+_rollup154 = _im154.import_module("rollup")
 
 _BODY154 = "\n\n" + ("a long body sentence that will be trimmed unless weighted. " * 12)
 
@@ -31353,7 +31370,13 @@ def _repo154(churn_path):
     (d / ".chamnan" / "config.json").write_text(
         _j154.dumps({"rules_char_budget": 1200}), encoding="utf-8")
     _sp154.run(["git", "init", "-q", str(d)], check=False, capture_output=True)
-    for i in range(5):
+    # Enough commits for `_churn` to rank at all. It returns {} below `MIN_COMMITS_TO_RANK`, and
+    # this fixture made five -- so the trigger under test never fired, on any platform, and the
+    # comparison below was reading raw text lengths: the scoped rule's body is longer because it
+    # literally carries the extra `Applies to:` line. It passed on macOS for that reason and
+    # failed on Windows when the lengths landed the other way round. Derived from the constant so
+    # the fixture follows it rather than drifting from it.
+    for i in range(_rollup154.MIN_COMMITS_TO_RANK + 2):
         (d / churn_path).write_text("x%d\n" % i, encoding="utf-8")
         _sp154.run(["git", "-C", str(d), "add", "-A"], check=False, capture_output=True)
         _sp154.run(["git", "-C", str(d), "-c", "user.email=t@t", "-c", "user.name=t",
@@ -31379,21 +31402,35 @@ try:
     (_rules154 / "elsewhere.md").write_text(
         "**A rule about the docs**\n\nApplies to: docs/*.md\n" + _BODY154, encoding="utf-8")
 
-    _t154 = _mem154.rules_text(_d154, refuse_conflicts=True)
-    _hit = _delivered154(_t154, "A rule about the redactor")
-    _none = _delivered154(_t154, "A rule about nothing in particular")
-    _away = _delivered154(_t154, "A rule about the docs")
-    print("      DETAIL  churn all in lib/redact.py — scoped %d, unscoped %d, elsewhere %d chars"
-          % (_hit, _none, _away))
+    # Before comparing shares, confirm the trigger COULD have fired at all. `memory.rules_text`
+    # derives its `_hot` list from `rollup._churn(root)` -- if the check's own temp repository
+    # produced no churn signal there, every `Applies to:` match is untriggered by construction,
+    # and a comparison over that population proves nothing about the capability under test. This
+    # measures the same signal the same way, against the check's own root, before trusting it.
+    _churn154 = _rollup154._churn(_d154)
+    print("      DETAIL  churn signal for the check's own temp repo: %d path(s)" % len(_churn154))
 
-    check("A RULE THAT SAYS WHICH FILES IT IS ABOUT GETS MORE ROOM WHEN THOSE FILES ARE IN PLAY",
-          _hit > _none and _hit > _away)
-    check("...and a rule scoped SOMEWHERE ELSE gets no more than one that says nothing",
-          _away <= _none + 8, saw="elsewhere %d vs unscoped %d" % (_away, _none))
-    check("...and every rule still arrives, because a trigger changes the SHARE and never the set",
-          all(_delivered154(_t154, h) > 0 for h in
-              ("A rule about the redactor", "A rule about nothing in particular",
-               "A rule about the docs")))
+    if not _churn154:
+        skip("  [SKIP] file-scope trigger comparison — the temp repository produced no churn "
+             "signal, so the `Applies to:` trigger could not have fired and there is nothing to "
+             "compare")
+    else:
+        _t154 = _mem154.rules_text(_d154, refuse_conflicts=True)
+        _hit = _delivered154(_t154, "A rule about the redactor")
+        _none = _delivered154(_t154, "A rule about nothing in particular")
+        _away = _delivered154(_t154, "A rule about the docs")
+        print("      DETAIL  churn all in lib/redact.py — scoped %d, unscoped %d, elsewhere %d "
+              "chars" % (_hit, _none, _away))
+
+        check("A RULE THAT SAYS WHICH FILES IT IS ABOUT GETS MORE ROOM WHEN THOSE FILES ARE IN "
+              "PLAY", _hit > _none and _hit > _away)
+        check("...and a rule scoped SOMEWHERE ELSE gets no more than one that says nothing",
+              _away <= _none + 8, saw="elsewhere %d vs unscoped %d" % (_away, _none))
+        check("...and every rule still arrives, because a trigger changes the SHARE and never "
+              "the set",
+              all(_delivered154(_t154, h) > 0 for h in
+                  ("A rule about the redactor", "A rule about nothing in particular",
+                   "A rule about the docs")))
 finally:
     _sh154.rmtree(_d154, ignore_errors=True)
 
@@ -32021,8 +32058,14 @@ if callable(_detect160):
     check("...and it names the planted program rather than only saying something is wrong",
           _found160 == ["git.exe"], saw=repr(_found160))
     check("...and a clean directory is not accused", _none160 == [], saw=repr(_none160))
-    check("...and it stays silent on a platform that does not search the current directory",
-          _detect160(_d160) == [], saw="it fired off Windows, where the risk does not exist")
+    # This call runs with the REAL platform, not the forced one above, so what it should find
+    # depends on which platform is actually running the check: off Windows the current directory
+    # is never searched, so the detector must stay silent; ON Windows (the CI runner this guards)
+    # it is the real risk, so the same planted git.exe must be found.
+    _on_windows160 = __import__("sys").platform == "win32"
+    check("...and it fires for real on Windows, where the risk exists, and stays silent elsewhere",
+          _detect160(_d160) == (["git.exe"] if _on_windows160 else []),
+          saw="platform=%r -> %r" % (__import__("sys").platform, _detect160(_d160)))
 
 # The guard is where it refuses, and a detection nobody acts on is a comment.
 _guard160 = (_PKG160 / "bin" / "chamnan-guard").read_text(encoding="utf-8", errors="replace")
@@ -32059,9 +32102,12 @@ _CMDS161 = sorted(p for p in (_PKG161 / "bin").iterdir()
                   if p.is_file() and not p.suffix and not p.name.startswith("."))
 
 
+# encoding named explicitly: text mode without it decodes with the machine's codec, which is
+# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 def _run161(cmd, flag):
     try:
         r = _sp161.run([_sys161.executable, str(cmd), flag], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace",
                        timeout=60, cwd=str(_PKG161))
     except (OSError, _sp161.SubprocessError) as exc:
         return None, "%s: %s" % (type(exc).__name__, exc)
@@ -32199,9 +32245,12 @@ _GUARD163 = _PKG163 / "bin" / "chamnan-guard"
 _SECRET163 = "AKIA" + "IOSFODNN7" + "EXAMPLE"
 
 
+# encoding named explicitly: text mode without it decodes with the machine's codec, which is
+# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 def _repo163(with_secret):
     d = _P163(_tmp163.mkdtemp(prefix="chamnan-hist163-"))
-    run = lambda *a: _sp163.run(list(a), cwd=str(d), capture_output=True, text=True, timeout=60)
+    run = lambda *a: _sp163.run(list(a), cwd=str(d), capture_output=True, text=True,
+                                 encoding="utf-8", errors="replace", timeout=60)
     run("git", "init", "-q", ".")
     run("git", "config", "user.email", "check@example.invalid")
     run("git", "config", "user.name", "Check 163")
@@ -32222,7 +32271,8 @@ def _repo163(with_secret):
 
 def _guard163(d, *flags):
     r = _sp163.run([_sys163.executable, str(_GUARD163), *flags],
-                   cwd=str(d), capture_output=True, text=True, timeout=300)
+                   cwd=str(d), capture_output=True, text=True,
+                   encoding="utf-8", errors="replace", timeout=300)
     return r.returncode, (r.stdout or "") + (r.stderr or "")
 
 _dirty163 = _repo163(True)
@@ -32293,7 +32343,11 @@ check("THE TOOL THE README CREDITS ITS FIGURES TO SHIPS", _TOOL164.is_file(), sa
 
 if _TOOL164.is_file():
     try:
+        # encoding named explicitly: text mode without it decodes with the machine's codec, which
+        # is cp1252 on the Windows runner, and a stray byte kills the reader thread rather than
+        # the call.
         _run164 = _sp164.run([_sys164.executable, str(_TOOL164)], capture_output=True, text=True,
+                             encoding="utf-8", errors="replace",
                              timeout=300, cwd=str(_PKG164))
         _out164 = _run164.stdout or ""
     except (OSError, _sp164.SubprocessError) as _e164:
@@ -35914,8 +35968,11 @@ for _i56 in range(_t_cap56):
     (_t_r56 / ("f%d.py" % _i56)).write_text("x = %d\n" % _i56, encoding="utf-8")
     _sp56.run(["git", "-C", str(_t_r56), "add", "-A"], capture_output=True)
     _sp56.run(["git", "-C", str(_t_r56), "commit", "-qm", "c%d" % _i56], capture_output=True)
+    # encoding named explicitly: text mode without it decodes with the machine's codec, which is
+    # cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
     _t_heads56.append(_sp56.run(["git", "-C", str(_t_r56), "rev-parse", "HEAD"],
-                                capture_output=True, text=True).stdout.strip())
+                                capture_output=True, text=True,
+                                encoding="utf-8", errors="replace").stdout.strip())
 
 _t_live56 = _t_heads56[-1]
 _t_near56 = _t_heads56[-3]                       # 2 commits behind: inside the bound
@@ -37287,8 +37344,12 @@ else:
         (_t_repo70 / "cfg.py").write_text(_t_line70 + "\n", encoding="utf-8")
         _sp70.run(["git", "-C", str(_t_repo70), "add", "-A"], capture_output=True)
 
+        # encoding named explicitly: text mode without it decodes with the machine's codec, which
+        # is cp1252 on the Windows runner, and a stray byte kills the reader thread rather than
+        # the call.
         _t_run70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70),
-                             capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+                             capture_output=True, text=True, encoding="utf-8", errors="replace",
+                             stdin=_sp70.DEVNULL, timeout=60)
         _t_said70 = _t_run70.stdout + _t_run70.stderr
         check("...IT WARNS AND DOES NOT FAIL THE COMMIT",
               _t_run70.returncode == 0,
@@ -37320,7 +37381,8 @@ else:
                   % (_t_shape70,))
 
         _t_strict70 = _sp70.run([_sys70.executable, str(_t_cmd70), "--strict"], cwd=str(_t_repo70),
-                                capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+                                capture_output=True, text=True, encoding="utf-8",
+                                errors="replace", stdin=_sp70.DEVNULL, timeout=60)
         check("...while `--strict` is the opt-in that does fail", _t_strict70.returncode == 1,
               saw="exit %d" % _t_strict70.returncode)
 
@@ -37333,7 +37395,7 @@ else:
         _sp70.run(["git", "-C", str(_t_repo70), "add", "-A"], capture_output=True)
         _t_mcp_run70 = _sp70.run(
             [_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70), capture_output=True,
-            text=True, stdin=_sp70.DEVNULL, timeout=60)
+            text=True, encoding="utf-8", errors="replace", stdin=_sp70.DEVNULL, timeout=60)
         _t_mcp_said70 = _t_mcp_run70.stdout + _t_mcp_run70.stderr
         check("AN MCP CAPABILITY CHANGE WARNS END TO END WITHOUT BLOCKING",
               _t_mcp_run70.returncode == 0 and ".mcp.json" in _t_mcp_said70
@@ -37344,7 +37406,8 @@ else:
               saw=repr(_t_mcp_said70[:180]))
         _t_mcp_strict70 = _sp70.run(
             [_sys70.executable, str(_t_cmd70), "--strict"], cwd=str(_t_repo70),
-            capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            stdin=_sp70.DEVNULL, timeout=60)
         check("...and the existing `--strict` choice applies to capability changes too",
               _t_mcp_strict70.returncode == 1,
               saw="exit %d" % _t_mcp_strict70.returncode)
@@ -37355,10 +37418,12 @@ else:
         _sp70.run(["git", "-C", str(_t_repo70), "commit", "-qm", "mcp fixture"],
                   capture_output=True)
         _t_clean70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_repo70),
-                               capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+                               capture_output=True, text=True, encoding="utf-8",
+                               errors="replace", stdin=_sp70.DEVNULL, timeout=60)
         _t_nogit70 = _Path70(_tmp70.mkdtemp(prefix="chamnan-nogit70-"))
         _t_out70 = _sp70.run([_sys70.executable, str(_t_cmd70)], cwd=str(_t_nogit70),
-                             capture_output=True, text=True, stdin=_sp70.DEVNULL, timeout=60)
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", stdin=_sp70.DEVNULL, timeout=60)
         check("...and says nothing when there is nothing staged, or no repository at all",
               _t_clean70.returncode == 0 and not (_t_clean70.stdout + _t_clean70.stderr).strip()
               and _t_out70.returncode == 0 and not (_t_out70.stdout + _t_out70.stderr).strip(),
@@ -39535,8 +39600,11 @@ check("...and a quoted argument survives as ONE argv entry, the way the shell wo
 # Cancelled rather than killed, which is also the only honest way to exercise it: `cancel` writes
 # the record and sends no signal at all, so the waiter has to notice by itself at its next tick.
 # Taking the 21 down that way is what proved the design works at more than fixture scale.
+# encoding named explicitly: text mode without it decodes with the machine's codec, which is
+# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 _sp89.run([_sys89.executable, str(_t_CMD89), "cancel", "--all"],
-          cwd=str(_t_q89), capture_output=True, text=True, timeout=60)
+          cwd=str(_t_q89), capture_output=True, text=True,
+          encoding="utf-8", errors="replace", timeout=60)
 # ---- 90_a_posix_idiom_that_means_something_else_on_windows.py
 # ------------- the package ships to Windows and this machine will never run it there
 # 🐛 [2026-09-12] `schedule.alive` asked "does this process exist" with `os.kill(pid, 0)`, which is
