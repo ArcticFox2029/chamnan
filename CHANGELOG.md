@@ -21,25 +21,51 @@ already reports the last released number while running newer code.
 
 ## What's new in 1.27.0
 
-### The theme of this release: things that were failing where nobody could see
-
-1.26.0 was about what chamnan *does*. 1.27.0 is almost entirely about what it was quietly getting
-wrong — a redactor that let nine different shapes of credential through, four tree walks that
-returned "nothing here" when the truth was "I could not look", and a session block that had been
+This release adds almost no new surface. Nearly all of it went into things that were already
+failing where nobody could see — a redactor letting nine shapes of credential through, four tree
+walks answering "nothing here" when the truth was "I could not look", and a session block quietly
 dropping two of its nine sections on 96.8% of every session since it was written.
 
-None of these announced themselves. Every one was found by pointing an outside finding at our own
-code, and every one now has a check that fails on the build before it.
+### Highlights
 
----
+- **Secrets are considerably harder to leak by accident.** Nine separate shapes that used to pass
+  through untouched are closed, including a credential a sentence merely names, one written with a
+  Cyrillic letter, and Thai's own vocabulary for it.
+- **Everything your workspace knows now reaches the session.** Measured on the repository chamnan is
+  developed in: 9 of 9 sections delivered and 16 of 16 rules, against 5 of 9 and 13 of 16 before,
+  for slightly fewer tokens.
+- **On Windows, a cloned repository can no longer run its own `git.exe`.** Closed at the operating
+  system, with a detector for the versions where that switch is silently ignored.
+- **`chamnan-guard` reads what a change does to your dependencies**, and can now scan the commits
+  you already have rather than only the ones about to go in.
+- **Tools that could not read something say so**, instead of reporting an empty result that looks
+  exactly like nothing being there.
 
-### The redactor — nine ways a secret was leaving in the clear
+### What you should notice
+
+Most of this is deliberately invisible on the happy path. Its purpose is to make unusual and
+long-running work fail less often, and the honest summary is that a short session in a small
+repository will feel the same as it did in 1.26.
+
+Where you may notice something:
+
+- Fewer occasions where a resumed session seems to have forgotten a part of the project — the
+  block that carries it is no longer being cut off by the host.
+- Recorded decisions, procedures and the tool list now arrive; three of those were being delivered
+  zero times in 400 recorded firings.
+- A warning when chamnan cannot verify something, in place of a confident empty answer.
+
+No migration, no configuration change, nothing to move.
+
+### Under the hood
+
+#### The redactor — nine ways a secret was leaving in the clear
 
 This is the largest cluster in the release, and they are all the same defect wearing different
 clothes: **a rule was applied to one member of a set and forgotten in the identical ones beside
 it.** Nine of the fixes below are that shape.
 
-### A credential a sentence names, with a clause between the word and the value
+#### A credential a sentence names, with a clause between the word and the value
 
 Every rule in the module keyed on an assignment — `password=`, `password:`, `password is`. That is
 what configuration looks like. It is not what a person writing a note looks like, and the shape
@@ -61,7 +87,7 @@ the gate rather than imagined: `casefold()`, `time.time()`, `core.ignorecase`, `
 `per_dir=0`. Measured over all 229 tracked files against the self-scan baseline — five of five leak
 shapes caught, zero new hits.
 
-### A credential's neighbours were deciding whether it counted as one
+#### A credential's neighbours were deciding whether it counted as one
 
 Twenty-three provider patterns guarded themselves with `(?<![A-Za-z0-9_-])`, which reads as "not
 preceded by a word character" and actually means "…and not preceded by a hyphen or an underscore
@@ -72,77 +98,53 @@ every removed line with a hyphen. All twenty-three are now `(?<![A-Za-z0-9])`.
 The AWS key-ID rule had the mirror image of it on the trailing edge: `[0-9A-Z]{16}\b` stops at a
 word boundary, so a key followed by another capital letter did not match.
 
-### A Cyrillic letter in the credential name walked past every rule in the file
-
-`раssword` with a Cyrillic `а` is not `password` to any regex in this module, and it is
-indistinguishable from `password` on screen. chamnan now unmasks confusable characters, scrubs
-both spellings, and keeps whichever redacts more — so the disguised form cannot be used to smuggle
-a value past a reader who can see nothing wrong with it.
-
-### Thai had a wider credential vocabulary than English
+#### Thai had a wider credential vocabulary than English
 
 The Thai list was `รหัสผ่าน|รหัส`, and `รหัส` alone means "code" — it fired on order numbers and
 product codes while missing `รหัสลับ` and `รหัสเข้า`, which are what people actually write. Thai
 also has no spaces, so every false positive in it takes its neighbours with it.
 
-### `password: |2` is a YAML block scalar too
+#### `password: |2` is a YAML block scalar too
 
 `[|>][-+]?` matched `|`, `|-` and `|+` and not `|2`, `|-2` or `|2-` — the explicit-indentation
 forms, which are in the YAML spec and in real configuration files. The header pattern and the
 secret pattern both had it, and both were fixed; fixing one would have left the other.
 
-### The redactor was eating the brace that closed the object it stood in
+#### The redactor was eating the brace that closed the object it stood in
 
 A secret at the end of a JSON object took the closing `}` with it, so the document the block
 carried no longer parsed. The same class of over-reach was fixed in six other places.
 
-### It leaked on every CRLF line
+#### It leaked on every CRLF line
 
 A file checked out on Windows ends its lines with `\r\n`, and `$`-anchored rules stopped at the
 `\r`. Every rule in the module was affected; the scan that proved it is 48% of the module's test
 surface.
 
-### Two quadratics, neither visible one pattern at a time
+#### Two quadratics, neither visible one pattern at a time
 
 Two patterns backtracked quadratically on inputs that occur in ordinary files. Neither shows up
 when you test a pattern by itself, which is why they survived every review.
 
-### And it now compiles when something needs it, not at import
+#### And it now compiles when something needs it, not at import
 
 61 patterns were compiled on every hook firing whether or not any of them would be used.
 
 ---
 
-### Four silent tree walks, and a census that could not tell "gone" from "not yours"
-
-`os.walk` swallows a permission error by default and simply yields nothing for that directory. Four
-walks in this package did exactly that — the map, the ledger, the workspace sweep and the
-session-start scan — so a repository with one root-owned directory was reported as *empty* rather
-than as *unreadable*, with nothing said anywhere.
-
-The index census had the same hole from the other side: a file behind a closed door counted as a
-deleted file, so chamnan would report a map as stale when the map was fine and the permissions were
-not. `absent` and `unreadable` are now different answers.
-
-**A fix for silent failures that failed silently.** The first version of this added
-`onerror=tree.note_unreadable(...)` to a module that imports `tree` only inside other functions.
-The resulting `NameError` landed in an enclosing blanket `except` and the function returned
-"nothing is dead" — the exact failure class the change was written to end. It was caught by a check
-that holds two independent code paths to the same answer, and that check is in this release.
-
-### A failure in one prune was cancelling two unrelated jobs
+#### A failure in one prune was cancelling two unrelated jobs
 
 Three retention sweeps ran under one `try`. When the first raised, the second and third never ran,
 and nothing said so. Each has its own guard now.
 
-### A worktree that eats what it learns
+#### A worktree that eats what it learns
 
 A workspace inside a linked git worktree writes its state where the next session will not look for
 it. chamnan now says so once, rather than losing the work quietly.
 
 ---
 
-### Windows — a cloned repository could have run its own `git.exe`
+#### Windows — a cloned repository could have run its own `git.exe`
 
 On Windows, `CreateProcess` searches the **current directory before PATH**, and the current
 directory is the repository you just opened. This package runs `["git", …]` twenty-six times across
@@ -169,7 +171,7 @@ which both split on the first path component — see one component where a direc
 other sites in the same file already used `relative_to(root).as_posix()`; these two were the
 outliers.
 
-### The architecture map
+#### The architecture map
 
 - **A file git stores re-encoded is text, and the map called it binary.** A repository that
   declares `*.py text eol=lf` was having its own source classified as unreadable.
@@ -179,7 +181,7 @@ outliers.
 
 ---
 
-### New: `chamnan-guard` now reads what a change does to your dependencies
+#### New: `chamnan-guard` now reads what a change does to your dependencies
 
 A dependency can arrive from somewhere other than the registry it appears to come from, under a
 name written to be read as a different one, carrying code that runs because it was installed rather
@@ -214,7 +216,7 @@ script, a binary target path, a pinned requirement, an ordinary build step. Ever
 a false positive at some point while it was being written. Measured over real history before it
 shipped: **0 of 2,917 commits across three repositories would have raised a line.**
 
-### New: `chamnan-guard --history` — the question a staged diff can never answer
+#### New: `chamnan-guard --history` — the question a staged diff can never answer
 
 Everything `chamnan-guard` did answered *is this about to go in*. Somebody adopting chamnan on a
 repository that already has a past asks a different question first, and none of the thirteen
@@ -233,7 +235,7 @@ It says **rotate before rewrite**, in that order, because the order is the point
 the blob in every fork, clone and cache, so somebody who rewrites and stops believes they are
 finished.
 
-### The session block — every store now arrives, and the order follows the work
+#### The session block — every store now arrives, and the order follows the work
 
 This is the part that has been re-opened the most times, and the reason is worth stating plainly:
 **every previous attempt was a NUMBER.** Raise the output ceiling. Lower the rules budget. Re-rank
@@ -255,7 +257,7 @@ constraint. The material is three to four times the ceiling at 9,000 and at 9,50
 larger budget only moved where the same cut landed — and a fixed global drop order meant a
 workspace whose skills are the point never received its skills, on any session, ever.
 
-### What changed
+#### What changed
 
 **A dropped section leaves its names, not its title.** A section that will not fit registers a
 *brief* — the names in the store, one line. Names are what cannot be guessed; the prose around
@@ -293,7 +295,7 @@ what the budget cost has to be inside the budget, or it only prints when nobody 
 Held under growth: with the stores at 2×, 5×, 20× and 100× their present size, every store still
 delivers names and the block stays inside its ceiling.
 
-### Rules: primary loads, secondary loads enough to be called on
+#### Rules: primary loads, secondary loads enough to be called on
 
 Three arithmetic faults meant the rules section did neither, and all three were invisible because
 the section honestly reported what was missing:
@@ -317,93 +319,115 @@ whole, the twelve others arrive as a heading and a pointer, and the section uses
 
 ---
 
-### The block was exceeding its own ceiling, and the warning about it was what pushed it over
-
-`fit.shrink` was doing its job exactly — 9,447 bytes returned against a 9,500 ceiling. Then the
-delivery-failure warning was prepended to the finished body, +119 bytes, with nothing re-checking.
-9,566 went out, and the host truncated it.
-
-The code said why it believed that was safe: *"on the firing where it says something, the block it
-is prepended to is the SHORT one, since that is what being cut means."* Shrink fills to the ceiling
-regardless, so the block is never short.
-
-**And it could not recover on its own.** Over the ceiling means the host truncates; truncation is
-what the warning detects; detection re-arms the warning next session. 27 of the last 84 firings
-were over. The log is now read *before* shrink and folded into the header, which is already how the
-neighbouring line is counted: +1 byte added afterwards, 9,445 emitted, 55 under the ceiling, the
-warning still present.
-
-### The block is positioned against the prompt's cache breakpoint
-
-The prompt cache is strictly prefix-based, so what matters is not how *much* of the block changed
-but how *early*. Measured here: two firings of one session with a file written between them shared
-95.4% of their bytes and could cache 4.4% of them — because the staleness notice that file write
-produced was inserted at the front, at character ~60, and everything behind it was reprocessed at
-full price. After: 100%.
-
-The rule needs no number and no re-tuning as the workspace grows: **everything chamnan says about
-the moment goes after everything it reads from files.** File-derived text changes when the
-repository changes, which is when a reprocess is honest; a notice about what is stale right now
-changes on its own schedule and belongs where it costs only itself. It is applied where emission
-order is decided, not at the eleven sites that write such a notice, because a twelfth will be
-added by somebody who has not read the comment.
-
-### A section written as one paragraph keeps what fits
+#### A section written as one paragraph keeps what fits
 
 A budget cut was backed to the last complete line, so a section with no line break in it had no
 boundary and arrived **empty** — 0 of 235 phrases, where the same content line-broken kept 28 of
 120. A word boundary is the honest fallback and is safe exactly there: a fence marker occupies its
 own line, so text with no newline cannot have opened one.
 
-### The resume nudge asked the calendar, not the session
+#### The resume nudge asked the calendar, not the session
 
 It gated on whether *any* session record carried today's date. One record written at 09:00 by a
 different session, about different work, silenced every other session for the rest of the day —
 while the nudge's own text said "nothing is recorded for today yet". It now remembers how many
 records existed when the session first fired and stays quiet only once that count has grown.
 
-### Known, and not fixed in this release
+### Interesting findings
 
-- **A pinned rule too long to load is still not loaded.** The mechanism is in and proven; on the
-  development repository the two pinned rule files are 3,894 and 3,701 characters, which is 3,390
-  tokens — 81% of the whole 9,500-byte block for two rules. That is a content decision for whoever
-  owns the rules, not a code defect: a rule that must be in front of the agent every session has to
-  be short enough to be.
-- **Nothing yet audits a dependency's origin outside a staged diff.** `chamnan-guard` answers the
-  question at the commit that changes it; a repository that already carries a redirected registry
-  from before this release is not told until something touches that file.
+Four worth reading, out of the set.
 
----
+#### A warning that made the thing it was warning about worse
 
-### Verify it yourself
+The injected block has a byte ceiling, and the packer was respecting it exactly: 9,447 bytes against
+a limit of 9,500. Then a delivery-failure warning was prepended to the finished body, +119 bytes,
+with nothing re-checking. 9,566 went out and the host truncated it.
+
+The loop closed on itself. Over the ceiling means truncation; truncation is what the warning detects;
+detecting it re-arms the warning next session, which adds the bytes that push it over again. 27 of
+the last 84 firings were in that state. The log is read before packing now: +1 byte afterwards,
+9,445 emitted, warning still present.
+
+#### "Nothing here" and "I could not look" were the same answer
+
+`os.walk` defaults to ignoring directories it cannot read. Silently. A `chmod 000` on a subtree
+holding five of six source files produced "1 source file(s)" and a green 100% coverage bar — and a
+root-owned directory from a Docker bind mount or a CI checkout is how that happens to a real person.
+Four walks had this. They report what they could not read now.
+
+#### A single letter nobody could see
+
+`раssword` with a Cyrillic `а` is not `password` to any regex in the module, and on screen the two
+are identical. chamnan now unmasks confusable characters, scrubs both spellings and keeps whichever
+redacts more, so the disguised form cannot carry a value past a reader who sees nothing wrong.
+
+#### 95.4% of the bytes were the same and only 4.4% could be cached
+
+The prompt cache is prefix-based, so what matters is not how much of the block changed but how
+early. Two firings of one session with a file written between them shared 95.4% of their bytes and
+cached 4.4% of them, because the staleness notice that file write produced was inserted at
+character ~60 and everything behind it was reprocessed at full price. After: 100%.
+
+The rule needs no tuning as the workspace grows — everything chamnan says about the *moment* goes
+after everything it reads from *files*.
+
+### Where these came from
+
+Several began as small inconsistencies noticed while using chamnan on this repository and on real
+work, not as failures. They produced no crash and no error message, which is why each was turned
+into a reproducible case before any code moved: the ceiling defect was found by reading what
+`chamnan-context --preview` actually prints, and the silent walks by deleting eight files, hiding
+eight more, and comparing what was reported.
+
+The research behind the rest is attached as `INDEX_CITED_IN_CODE.md` — every finding linked to the
+commit that acted on it, so any claim here can be followed to a diff without cloning anything.
+Regenerate it with `python3 .chamnan/tools/research_citations.py --write`.
+
+### What was measured and rejected
+
+The Windows fix shipped is not the one first written. Resolving `git` to an absolute path at all
+twenty-six call sites also closes the hole — and it broke three other things, and it violates a rule
+added the same day forbidding use of `shutil.which`'s *result* as a path, because Python 3.12
+changed what that selects on Windows. It was reverted in full for a single line that sets the
+operating system's own switch.
+
+### Verification
+
+**5,448 of 5,448 checks passed** on macOS 26.6 / Python 3.9.6, concurrency 34 of 34, with 3 blocks
+skipped for want of another platform — each says so by name in its own line. The same tree with no
+`.chamnan` workspace above it, which is what a fresh clone and CI see, is **5,385 of 5,385**; the
+difference is entirely checks that measure the development workspace and skip without it.
+
+The suite covers known regressions, malformed input, platform-specific behaviour, research-derived
+edge cases and adversarial security fixtures. It is not a claim that chamnan has no defects — it is
+5,448 behaviours that are defined, and still do what they were defined to do.
 
 ```bash
 python3 tests/run_tests.py                   # the full gate
 python3 tools/verify_release.py              # the gate plus the index claim, on your machine
 ```
 
-**5,448 of 5,448 checks passed** on macOS 26.6 / Python 3.9.6, concurrency 34 of 34, with 3 blocks
-skipped for want of another platform — each one says so by name in its own line. The same tree with
-no `.chamnan` workspace above it, which is what a fresh clone and CI see, is **5,385 of 5,385**;
-the difference is entirely checks that measure the development workspace and skip without it.
+### Known limitations
 
-The research behind these fixes is attached as `INDEX_CITED_IN_CODE.md` — every finding linked to
-the commit that acted on it, so any claim above can be followed to a diff without cloning anything.
+`chamnan-report`'s ceiling comparison used to quote the value the package ships with rather than the
+one your workspace runs at; it uses the recorded ceiling now, but a measurement taken before this
+release still carries the old comparison. The redaction recall figure is measured over a corpus of
+credentials, so it describes what is found among secrets it is shown, not a rate over everything
+that passes through.
 
-`chamnan-report` also stopped quoting the wrong ceiling. It compared the last block against
-`fit.CEILING` — the value the package ships with — rather than the one the workspace runs at, so a
-block comfortably inside its own limit was reported as "9,493 bytes of 9,000 (105% of the ceiling)".
-The recorded ceiling each block was built against is used now, so a config changed since then cannot
-make an old measurement lie.
+### Upgrade
 
-Every fix above has a check that fails on the build before it. Three of them are worth running
-directly, because they are the ones that encode a guarantee rather than a case:
+```
+/plugin update chamnan
+```
 
-- `NO STORE IS STARVED AS THE STORES GROW` — 2×, 5×, 20× and 100× the present store sizes
-- `EVERY RULE ARRIVES` — no allocation that does not add up
-- `THE STAT PATH AND THE WALK PATH GIVE THE SAME ANSWER` — the census, two ways
+No migration is required.
 
 ---
+
+This release adds little that is new. Almost all of it went into making behaviour that already
+existed harder to break, easier to verify, and more predictable on machines and repositories that
+are not the one it was written on.
 
 ## What's new in 1.26.0
 
