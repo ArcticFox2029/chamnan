@@ -27988,31 +27988,38 @@ check("EVERY DIRECTORY THIS SUITE SCANS CAN ACTUALLY BE READ",
 # skipping, this whole block becomes unnecessary and should be deleted rather than left as noise.
 import tempfile as _tf120
 
-_t_tmp120 = None
-try:
-    _t_tmp120 = Path(_tf120.mkdtemp(prefix="chamnan-scanprobe-"))
-    _t_locked120 = _t_tmp120 / "locked"
-    _t_locked120.mkdir()
-    (_t_locked120 / "hidden.py").write_text("x = 1", encoding="utf-8")
-    (_t_tmp120 / "seen.py").write_text("y = 2", encoding="utf-8")
-    _os120.chmod(_t_locked120, 0o000)
+# POSIX-only on both halves: chmod(0o000) does not remove read access on Windows, and
+# os.geteuid does not exist there. Running it anyway is what killed the Windows CI leg with a
+# traceback rather than a failing check.
+if os.name != "posix":
+    skip("  [SKIP] the glob-silence premise — chmod(0o000) and os.geteuid are POSIX-only, "
+         "not a question on this platform")
+else:
+    _t_tmp120 = None
     try:
-        _t_got120 = sorted(p.name for p in _t_tmp120.rglob("*.py"))
-        _t_silent120 = (_t_got120 == ["seen.py"])
-    except PermissionError:
-        _t_silent120 = False
+        _t_tmp120 = Path(_tf120.mkdtemp(prefix="chamnan-scanprobe-"))
+        _t_locked120 = _t_tmp120 / "locked"
+        _t_locked120.mkdir()
+        (_t_locked120 / "hidden.py").write_text("x = 1", encoding="utf-8")
+        (_t_tmp120 / "seen.py").write_text("y = 2", encoding="utf-8")
+        _os120.chmod(_t_locked120, 0o000)
+        try:
+            _t_got120 = sorted(p.name for p in _t_tmp120.rglob("*.py"))
+            _t_silent120 = (_t_got120 == ["seen.py"])
+        except PermissionError:
+            _t_silent120 = False
+        finally:
+            _os120.chmod(_t_locked120, 0o700)
+        if _os120.geteuid() == 0:
+            skip("  [SKIP] the glob-silence premise — running as root, which can read the locked "
+                 "directory and makes the probe meaningless")
+        else:
+            check("...and the premise still holds: glob hides an unreadable subtree rather than raising",
+                  _t_silent120,
+                  saw="this interpreter RAISED instead of skipping — if that is now the behaviour "
+                      "everywhere, this block has no job and should be deleted, not muted")
     finally:
-        _os120.chmod(_t_locked120, 0o700)
-    if _os120.geteuid() == 0:
-        skip("  [SKIP] the glob-silence premise — running as root, which can read the locked "
-             "directory and makes the probe meaningless")
-    else:
-        check("...and the premise still holds: glob hides an unreadable subtree rather than raising",
-              _t_silent120,
-              saw="this interpreter RAISED instead of skipping — if that is now the behaviour "
-                  "everywhere, this block has no job and should be deleted, not muted")
-finally:
-    _rmtree(_t_tmp120, ignore_errors=True)
+        _rmtree(_t_tmp120, ignore_errors=True)
 # ---- 121_the_prefilter_stems_are_derived_from_the_pattern_they_filter.py
 # ------------------ the coarse pre-filter's stems are derived from the pattern, not written beside it
 # R10.6 and R10.7: gitleaks builds one keyword trie over every configured rule, and every TruffleHog
@@ -33881,16 +33888,49 @@ _t_src31 = (ROOT / "lib" / "redact.py").read_text(encoding="utf-8-sig", errors="
 _t_tree31 = ast.parse(_t_src31)
 # Built at runtime: writing the forbidden literal in this file would make the check match itself.
 _t_generic = "[" + ":=" + "]"
+# The suffix that marks the one blessed shared name a rule is allowed to route the separator
+# through. Also built at runtime, for the same reason.
+_t_kv_suffix31 = "_KV" + "_SEP"
 
 
-def _t_literal_of(node):
-    """The source string a `re.compile` argument resolves to, through `+` of string literals."""
+def _t_nameval_of(tree):
+    """Map every module-level `name = value` assignment in `tree` to its value node, so a `Name`
+    met while resolving a `compile()` argument can be followed back to what it was assigned."""
+    _map = {}
+    for _n in ast.walk(tree):
+        if isinstance(_n, ast.Assign) and _n.targets and hasattr(_n.targets[0], "id"):
+            _map[_n.targets[0].id] = _n.value
+    return _map
+
+
+def _t_literal_of(node, nameval, seen=()):
+    """The source text a `re.compile` argument resolves to. Over-approximating on purpose through
+    `+`, `%`, `str.join([...])` and a plain `Name` lookup (via `nameval`) — the only question this
+    check asks is whether the forbidden text appears anywhere in the construction, never what the
+    final string actually evaluates to. `seen` stops a self-referential assignment from recursing
+    forever."""
     if isinstance(node, ast.Constant) and isinstance(node.value, str):
         return node.value
-    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        return _t_literal_of(node.left) + _t_literal_of(node.right)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Mod)):
+        # `%`-formatting does not literally concatenate, but resolving both sides and joining them
+        # is enough to surface the substring wherever it was smuggled in.
+        return _t_literal_of(node.left, nameval, seen) + _t_literal_of(node.right, nameval, seen)
     if isinstance(node, ast.JoinedStr):
-        return "".join(_t_literal_of(v) for v in node.values if isinstance(v, ast.Constant))
+        return "".join(_t_literal_of(v, nameval, seen) for v in node.values
+                        if isinstance(v, ast.Constant))
+    if (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "join"
+            and node.args and isinstance(node.args[0], ast.List)):
+        return "".join(_t_literal_of(_elt, nameval, seen) for _elt in node.args[0].elts)
+    if isinstance(node, ast.Name):
+        if node.id.endswith(_t_kv_suffix31):
+            # This name IS the shared constant -- routing through it is correct, not an offense.
+            return ""
+        if node.id in seen:
+            return ""  # self-referential assignment; stop rather than recurse forever
+        _target = nameval.get(node.id)
+        if _target is None:
+            return ""
+        return _t_literal_of(_target, nameval, seen + (node.id,))
     return ""
 
 
@@ -33901,6 +33941,8 @@ for _n in ast.walk(_t_tree31):
         for _sub in ast.walk(_n.value):
             _t_owner31[id(_sub)] = _n.targets[0].id
 
+_t_nameval31 = _t_nameval_of(_t_tree31)
+
 _t_offenders = []
 _t_sites = 0
 for _n in ast.walk(_t_tree31):
@@ -33910,7 +33952,7 @@ for _n in ast.walk(_t_tree31):
         continue
     if not _n.args:
         continue
-    _t_body31 = _t_literal_of(_n.args[0])
+    _t_body31 = _t_literal_of(_n.args[0], _t_nameval31)
     if _t_generic not in _t_body31:
         continue
     _t_sites += 1
@@ -33941,6 +33983,59 @@ for _t_line, _t_val in (('password => "s3cr3t-rocket-value-9x"', "s3cr3t-rocket-
         _t_lang.append(_t_line.replace("\n", " / ")[:60])
 check("...and the rules with a language-bound separator still redact, untouched by this",
       not _t_lang, saw="\n".join(_t_lang) or None)
+
+# ------------------------------------------- the gate has to be able to fail, or it isn't a gate
+# `redact.py` carries zero offenders today, so the checks above pass over an empty population --
+# which proves nothing about whether the resolver actually catches anything. Plant a synthetic
+# module with five smuggled shapes and two legitimate ones, and assert the resolver sorts them
+# correctly. The forbidden literal is never typed into this file: `{sep}` and `{lb}` are format
+# placeholders, filled in at runtime from `_t_generic` (built the same way, above) and a harmless
+# language-bound separator, exactly as the module docstring already does for `_t_generic` itself.
+_t_lb31 = "=" + ">"  # Ruby's rocket -- language-bound, must never be flagged by this gate
+_t_planted_src31 = '''
+import re
+
+_MY_KV_SEP = "{sep}"
+
+R_LITERAL = re.compile(r"a{sep}(.+)")
+R_PLUS = re.compile(r"b" + "{sep}" + r"(.+)")
+_NAME31 = "[" + ":=" + "]"
+R_NAME = re.compile(r"c" + _NAME31 + r"(.+)")
+R_JOIN = re.compile(r"d" + "".join(["[", ":=", "]"]) + r"(.+)")
+R_MOD = re.compile(r"e%s(.+)" % ("[" + ":=" + "]"))
+R_SHARED_OK = re.compile(r"f" + _MY_KV_SEP + r"(.+)")
+R_ROCKET_OK = re.compile(r"g{lb}(.+)")
+'''.format(sep=_t_generic, lb=_t_lb31)
+
+_t_planted_tree31 = ast.parse(_t_planted_src31)
+_t_planted_nameval31 = _t_nameval_of(_t_planted_tree31)
+
+_t_planted_owner31 = {}
+for _n in ast.walk(_t_planted_tree31):
+    if isinstance(_n, ast.Assign) and _n.targets and hasattr(_n.targets[0], "id"):
+        for _sub in ast.walk(_n.value):
+            _t_planted_owner31[id(_sub)] = _n.targets[0].id
+
+_t_planted_flagged = []
+for _n in ast.walk(_t_planted_tree31):
+    if not isinstance(_n, ast.Call):
+        continue
+    if getattr(_n.func, "attr", "") != "compile":
+        continue
+    if not _n.args:
+        continue
+    if _t_generic in _t_literal_of(_n.args[0], _t_planted_nameval31):
+        _t_planted_flagged.append(_t_planted_owner31.get(id(_n), "<unassigned>"))
+
+_t_planted_expect31 = {"R_LITERAL", "R_PLUS", "R_NAME", "R_JOIN", "R_MOD"}
+check("...and a planted sample proves the gate can actually fail: "
+      "inline, +, a name, .join and % are all caught",
+      set(_t_planted_flagged) == _t_planted_expect31,
+      saw=f"flagged={sorted(_t_planted_flagged)}")
+
+check("...while the planted shared-name and language-bound rules still clear the same gate untouched",
+      "R_SHARED_OK" not in _t_planted_flagged and "R_ROCKET_OK" not in _t_planted_flagged,
+      saw=f"flagged={sorted(_t_planted_flagged)}")
 # ---- 32_the_stdlib_fallback_is_the_real_stdlib.py
 # ------------------------------------------- a hand-written list of what Python ships with
 # 🐛 [2026-09-09] `impact_mod._STDLIB` prefers `sys.stdlib_module_names` and falls back to a list typed
@@ -39466,8 +39561,11 @@ _sp89.run([_sys89.executable, str(_t_CMD89), "cancel", "--all"],
 # that the package was already careful — the defect was in the code added yesterday.
 import ast as _ast90
 
+# `tests/run_tests.py` is the generated suite itself, and it is exactly what CI actually runs on
+# Windows — a POSIX idiom missed here is invisible to this sweep right up until that leg fails.
 _t_files90 = (sorted((ROOT / "lib").rglob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
-              + [p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix])
+              + [p for p in (ROOT / "bin").glob("chamnan-*") if not p.suffix]
+              + [p for p in [ROOT / "tests" / "run_tests.py"] if p.is_file()])
 check("the platform sweep has files to read: %d" % len(_t_files90), len(_t_files90) >= 30,
       saw="too few files — the sweep is measuring a fraction of the package")
 
@@ -39478,12 +39576,66 @@ _t_ABSENT_CALLS90 = {"os.fork", "os.setsid", "os.getuid", "os.geteuid", "os.getg
                      "signal.alarm", "signal.setitimer", "signal.pause"}
 _t_ABSENT_ATTRS90 = {"signal.SIGKILL", "signal.SIGHUP", "signal.SIGUSR1", "signal.SIGUSR2",
                      "signal.SIGQUIT", "signal.SIGCHLD"}
+
+
+def _t_aliases_of90(tree):
+    """Map every `import X as Y` in `tree` to the real module name X, so an Attribute access on the
+    LOCAL alias Y can still be resolved back to what it actually is. The generated suite imports
+    every module under a per-block alias (`import os as _os120`), so matching the literal name "os"
+    alone misses every one of those call sites."""
+    _map = {}
+    for _n in _ast90.walk(tree):
+        if isinstance(_n, _ast90.Import):
+            for _a in _n.names:
+                if _a.asname:
+                    _map[_a.asname] = _a.name
+    return _map
+
+
+# The generated suite (`tests/run_tests.py`) is held to a DIFFERENT rule than shipped code. Shipped
+# code must never reach for these APIs at all, guarded or not — an import or a call at module scope
+# fails the whole file on Windows before any `if` around it can run. The suite is different: it
+# legitimately exercises POSIX behaviour on purpose (check 120's own `if os.name != "posix":` block
+# calls `geteuid`), so for the suite alone the question is whether the call is GUARDED by a platform
+# test, not whether it exists at all.
+_t_SUITE_FILE90 = ROOT / "tests" / "run_tests.py"
+
+
+def _t_platform_test90(test_node):
+    """True if an `ast.If` test's dump mentions an attribute name platform code asks about
+    (`os.name`, `sys.platform`, `platform.system()`) — regardless of which local alias the module
+    was imported under, since the alias never appears in the attribute's own name."""
+    _dump = _ast90.dump(test_node)
+    return any("attr='%s'" % _attr in _dump for _attr in ("name", "platform", "system"))
+
+
+def _t_guarded90(node, parents):
+    """Climb from `node` through the parent map, looking for an ancestor `ast.If` whose test asks
+    about the platform. Ancestry, not a line window — a fixed-line heuristic was tried here first
+    and failed a guarded call sitting 13 lines below its own `if` (see the header of this file).
+    Climbing the real tree means a call in either branch of the `if`, at any distance, is found;
+    a call under `if True:` is still reported, because that test does not ask the right question."""
+    _n = node
+    while _n in parents:
+        _n = parents[_n]
+        if isinstance(_n, _ast90.If) and _t_platform_test90(_n.test):
+            return True
+    return False
+
+
 _t_absent90 = []
 for _t_f90 in _t_files90:
     try:
         _t_tree90 = _ast90.parse(_t_f90.read_text(encoding="utf-8-sig", errors="replace"))
     except (SyntaxError, ValueError, OSError):
         continue
+    _t_aliases90 = _t_aliases_of90(_t_tree90)
+    _t_is_suite90 = (_t_f90 == _t_SUITE_FILE90)
+    _t_parents90 = {}
+    if _t_is_suite90:
+        for _t_p90 in _ast90.walk(_t_tree90):
+            for _t_c90 in _ast90.iter_child_nodes(_t_p90):
+                _t_parents90[_t_c90] = _t_p90
     for _t_n90 in _ast90.walk(_t_tree90):
         if isinstance(_t_n90, _ast90.Import):
             for _t_a90 in _t_n90.names:
@@ -39493,9 +39645,12 @@ for _t_f90 in _t_files90:
             if (_t_n90.module or "").split(".")[0] in _t_ABSENT_MODULES90:
                 _t_absent90.append("%s:%d from %s" % (_t_f90.name, _t_n90.lineno, _t_n90.module))
         elif isinstance(_t_n90, _ast90.Attribute) and isinstance(_t_n90.value, _ast90.Name):
-            _t_full90 = "%s.%s" % (_t_n90.value.id, _t_n90.attr)
+            _t_full90 = "%s.%s" % (_t_aliases90.get(_t_n90.value.id, _t_n90.value.id), _t_n90.attr)
             if _t_full90 in _t_ABSENT_CALLS90 or _t_full90 in _t_ABSENT_ATTRS90:
-                _t_absent90.append("%s:%d %s" % (_t_f90.name, _t_n90.lineno, _t_full90))
+                if _t_is_suite90 and _t_guarded90(_t_n90, _t_parents90):
+                    continue
+                _t_absent90.append("%s:%d %s%s" % (_t_f90.name, _t_n90.lineno, _t_full90,
+                                                     " (unguarded)" if _t_is_suite90 else ""))
 check("NOTHING SHIPPED REACHES FOR AN API WINDOWS DOES NOT HAVE",
       not _t_absent90,
       saw="%s — an import at module scope fails the whole file there, and this machine cannot see "
