@@ -33585,6 +33585,96 @@ check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
 check("EVERY DATED DEFECT RECORD CARRIES A DATE THAT EXISTS AND IS NOT IN THE FUTURE",
       not _bad176,
       saw="the citation index is built from these dates:\n        " + "\n        ".join(_bad176))
+# ---- 177_a_model_family_is_read_from_segments_not_substrings.py
+# ------------------ a model family is read off whole segments, never as a substring
+# 🐛 [R4.4.6, 2026-09-17] `_family()` in `chamnan_agent_result.py` decided which model family a pin
+# named with `fam in low`, a substring test over `("haiku", "sonnet", "opus", "fable", "mythos")`.
+# `opus` is inside `corpus`, and this project ships a `chamnan-corpus` repository whose name can
+# reach a `model:` field -- so a correctly-pinned agent could be accused of a mismatch it never had.
+# A wrong accusation is the worse direction here: the run has already finished by the time this hook
+# speaks, so a missed mismatch costs a warning while a false one costs trust in every warning.
+#
+# The round that found it was measuring something else -- whether the word "again" is precise enough
+# to trigger on in a commit subject. It is not: over 746 subjects, `"again" in s` matched 9 and 7 of
+# those were the word "against", a precision of 22%. That is the same defect in a different place,
+# which is why this check asserts the PROPERTY over every family rather than patching one word.
+#
+# Derived from the hook's own tuple, so a family added later is covered without editing this file.
+import ast as _ast177
+import importlib as _im177
+import pathlib as _pl177
+import re as _re177
+
+_PKG177 = _pl177.Path(_im177.import_module("redact").__file__).resolve().parent.parent
+_HOOK177 = _PKG177 / "hooks" / "chamnan_agent_result.py"
+_src177 = _HOOK177.read_text(encoding="utf-8", errors="replace")
+_tree177 = _ast177.parse(_src177)
+
+# The tuple and the function, lifted out of the module rather than imported: importing the hook runs
+# its top level, and what is under test is one pure function.
+_fams177, _fn177 = (), None
+for _n177 in _tree177.body:
+    if isinstance(_n177, _ast177.Assign) and any(
+            getattr(t, "id", "") == "_FAMILIES" for t in _n177.targets):
+        _fams177 = tuple(_ast177.literal_eval(_n177.value))
+    if isinstance(_n177, _ast177.FunctionDef) and _n177.name == "_family":
+        _fn177 = _n177
+
+check("THE HOOK STILL DECLARES A FAMILY TUPLE AND A _family() TO READ IT",
+      bool(_fams177) and _fn177 is not None,
+      saw="families=%r function=%s in %s -- this check reads both out of the source, so a rename "
+          "must reach it rather than leaving it passing over nothing"
+          % (_fams177, bool(_fn177), _HOOK177.name))
+
+if _fams177 and _fn177 is not None:
+    _ns177 = {"_FAMILIES": _fams177, "re": _re177,
+              "_SEGMENT": _re177.compile(r"[^a-z]+")}
+    exec(compile(_ast177.Module(body=[_fn177], type_ignores=[]), "<_family>", "exec"), _ns177)
+    _family177 = _ns177["_family"]
+
+    # Every shape a real id arrives in, for every declared family.
+    _shapes177 = ("%s", "claude-%s-5", "claude-%s-4-5-20251001", "claude-%s-4-5@20251101",
+                  "anthropic.claude-%s-4-5-v1:0", "CLAUDE-%s-5")
+    _wrong177 = []
+    for _f177 in _fams177:
+        for _s177 in _shapes177:
+            _got177 = _family177(_s177 % _f177)
+            if _got177 != _f177:
+                _wrong177.append("%r -> %r, wanted %r" % (_s177 % _f177, _got177, _f177))
+
+    check("EVERY DECLARED FAMILY IS READ OUT OF EVERY SHAPE A REAL MODEL ID ARRIVES IN",
+          not _wrong177,
+          saw="%d of %d (family, shape) pair(s) resolved wrong:\n        %s"
+              % (len(_wrong177), len(_fams177) * len(_shapes177),
+                 "\n        ".join(_wrong177[:12])))
+
+    # No family may be a substring of another, or the ordered scan returns whichever comes first in
+    # the tuple rather than the one that was named.
+    _nested177 = ["%r contains %r" % (a, b) for a in _fams177 for b in _fams177
+                  if a != b and b in a]
+    check("NO FAMILY NAME CONTAINS ANOTHER, SO TUPLE ORDER CANNOT DECIDE THE ANSWER",
+          not _nested177, saw="; ".join(_nested177))
+
+    # The defect itself: an ordinary word that merely CONTAINS a family name is not that family.
+    # `corpus` is not hypothetical -- `Work-Mode/chamnan-corpus` is a repository in this project.
+    _decoys177 = ("corpus", "chamnan-corpus", "opuscule", "haikus-and-sonnets", "fabled",
+                  "a-sonnet-writing-agent-name" if "sonnet" not in _fams177 else "unsonnetlike",
+                  "mythoslike")
+    _leaked177 = ["%r -> %r" % (d, _family177(d)) for d in _decoys177 if _family177(d)]
+    check("A WORD THAT MERELY CONTAINS A FAMILY NAME IS NOT READ AS THAT FAMILY",
+          not _leaked177,
+          saw="a substring match would accuse a correctly-pinned agent of a mismatch:\n        "
+              + "\n        ".join(_leaked177))
+
+    # And the guard that makes a mismatch a mismatch: unknown or empty names resolve to "", which is
+    # what stops the hook reporting anything at all.
+    check("AN UNPINNED, EMPTY OR UNKNOWN NAME RESOLVES TO NOTHING RATHER THAN TO A GUESS",
+          all(_family177(x) == "" for x in (None, "", "   ", "gpt-4o", "llama-3", "claude")),
+          saw="one of None/''/'   '/'gpt-4o'/'llama-3'/'claude' resolved to a family: %r"
+              % {x: _family177(x) for x in (None, "", "   ", "gpt-4o", "llama-3", "claude")})
+
+    print("      DETAIL  %d famil(ies) x %d id shape(s) resolved, %d decoy(s) rejected"
+          % (len(_fams177), len(_shapes177), len(_decoys177)))
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build

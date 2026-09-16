@@ -33,6 +33,7 @@ about installed plugins that fight the work: do not remove, do not disable -- de
 person, and keep a record they can refer back to when something turns out to be wrong later.
 """
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,12 +60,25 @@ MAX_RECORDS = 2_000
 # warning worthless.
 _FAMILIES = ("haiku", "sonnet", "opus", "fable", "mythos")
 
+# 🐛 [2026-09-17] These were matched with `fam in low`, which is a substring test: `opus` is inside
+# `corpus`, and this project has a `chamnan-corpus` repository whose name can reach a `model:` field.
+# The cost was a warning accusing a correctly-pinned agent of running the wrong model -- a wrong
+# accusation is worse than a missed one here, because the run has already happened either way.
+_SEGMENT = re.compile(r"[^a-z]+")
+
 
 def _family(name):
-    """The model family in a pin or a resolved id, or "" when it names none of them."""
+    """The model family in a pin or a resolved id, or "" when it names none of them.
+
+    Matched on whole segments rather than as a substring. Every real id separates the family with a
+    punctuation character -- `claude-opus-5`, `claude-haiku-4-5-20251001`, `claude-opus-4-5@20251101`,
+    `anthropic.claude-opus-4-5-v1:0` -- so splitting loses nothing, while a substring test reads
+    `opus` out of `corpus` and accuses a correctly-pinned agent of a mismatch it never had.
+    """
     low = (name or "").lower()
+    parts = set(_SEGMENT.split(low))
     for fam in _FAMILIES:
-        if fam in low:
+        if fam in parts:
             return fam
     return ""
 
