@@ -33116,6 +33116,76 @@ check("A HOOK THE REPOSITORY ALREADY HAS IS NEVER DAMAGED BY CHAMNAN'S INSTALLER
 check("...and chamnan refuses a hook it could only append dead code to, saying why",
       not _wrong170,
       saw="\n        ".join(_wrong170))
+# ---- 171_the_block_log_can_be_joined_to_what_a_session_opened.py
+# ------------------ the two logs share a key, so "was this drop regretted" is answerable
+# 🎯 [R3.3.10, 2026-09-16] `block_shape.jsonl` recorded what a firing DROPPED and `pointer.jsonl`
+# records which store a session OPENED, and neither carried the other's key. So the question every
+# eviction proposal needs — was a dropped section reopened later in the same session — could only be
+# answered by joining on timestamp proximity, which is a heuristic, not a key.
+#
+# Five banked items are blocked on it: GDSF ranking, Belady as a yardstick, PACMS, ARC's self-tuning
+# recency/frequency split, and the usage-recompute question. None can be SCORED without a regret
+# measure, and ranking eviction policies without one ranks them by how small they make the block.
+#
+# Backfill is impossible — old records do not carry the field — so the clock started when it was
+# written, which is the argument for writing it before the proposals rather than alongside them.
+# `shape()`'s own docstring records the identical mistake being fixed once already, for `source` on
+# 2026-09-09: "the one dimension that makes the rest of this log answerable... discarded before
+# reaching here".
+#
+# This asserts the JOIN, not the field. A field that exists and never gets populated is the failure
+# this replaces, and only driving the real hook can tell the two apart.
+import importlib as _im171
+import json as _js171
+import pathlib as _pl171
+import subprocess as _sp171
+import sys as _sy171
+import tempfile as _tf171
+
+_blocklog171 = _im171.import_module("blocklog")
+_PKG171 = _pl171.Path(_im171.import_module("redact").__file__).resolve().parent.parent
+
+# --- the shape function carries it, and only when given one -----------------------------------
+_with171 = _blocklog171.shape("### A\nbody\n", session="abc-123")
+_without171 = _blocklog171.shape("### A\nbody\n")
+check("THE BLOCK RECORD CARRIES A SESSION ID WHEN ONE IS GIVEN",
+      _with171.get("session") == "abc-123",
+      saw="shape() dropped the session id: %r" % sorted(_with171))
+check("...and omits the key entirely when there is none, rather than writing a null",
+      "session" not in _without171,
+      saw="a record with no session id still carries the key, which makes an absent id "
+          "indistinguishable from an empty one in the join")
+
+# --- and the HOOK actually passes it, which is the half a field alone cannot prove -------------
+_root171 = _pl171.Path(_tf171.mkdtemp(prefix="chamnan-blocklog-join-"))
+_joined171 = None
+try:
+    _sp171.run(["git", "init", "-q"], cwd=_root171, capture_output=True)
+    (_root171 / "a.py").write_text("# a file that does a thing\n", encoding="utf-8")
+    _sid171 = "join-probe-0001"
+    _sp171.run([_sy171.executable, str(_PKG171 / "hooks" / "chamnan_session_start.py")],
+               input=_js171.dumps({"cwd": str(_root171), "hook_event_name": "SessionStart",
+                                   "session_id": _sid171, "source": "startup"}),
+               capture_output=True, text=True)
+    _log171 = _root171 / ".chamnan" / "logs" / "block_shape.jsonl"
+    if _log171.is_file():
+        for _l171 in _log171.read_text(encoding="utf-8").splitlines():
+            try:
+                _r171 = _js171.loads(_l171)
+            except ValueError:
+                continue
+            if _r171.get("session") == _sid171:
+                _joined171 = _r171
+finally:
+    import shutil as _sh171
+    _sh171.rmtree(_root171, ignore_errors=True)
+
+print("      DETAIL  a real session-start firing wrote a record with its own id: %s"
+      % bool(_joined171))
+check("...and a REAL firing writes the id the host gave it, not just an argument the test passed",
+      _joined171 is not None,
+      saw="the hook ran and no record in its own log carried the session id it was handed — the "
+          "field exists and the call site does not fill it, which is the failure this replaces")
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build

@@ -32,7 +32,7 @@ _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
 def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-          index_behind=None):
+          index_behind=None, session=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
@@ -47,6 +47,19 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     for i, m in enumerate(marks):
         end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
         sections[m.group(1).strip()[:NAME_CHARS]] = len(body[m.start():end].encode("utf-8"))
+    # 🎯 [R3.3.10, 2026-09-16] `session` is the field that makes the rest of this log ANSWERABLE,
+    # and it is the same lesson `source` above records. Without it, this log knows what a firing
+    # dropped and `pointer.jsonl` knows which store a session opened, and NEITHER can answer the
+    # question every eviction proposal needs: was a dropped section reopened later in the same
+    # session? Joining them on a timestamp is a heuristic, not a key.
+    #
+    # Five banked items — GDSF ranking, Belady as a yardstick, PACMS, ARC's self-tuning split, and
+    # the usage-recompute question — cannot be SCORED until this exists. Backfill is impossible
+    # because old records do not carry it, so the clock starts when it is written, which is the
+    # argument for writing it before the proposals rather than with them.
+    #
+    # Costs one short string per record. `source` cost the same and is now the dimension this log
+    # is most often grouped by.
     rec = {"bytes": len(body.encode("utf-8")), "sec": sections,
            # The hook catches every exception and ends the block with this sentence rather than
            # failing, which is right — and is exactly why the truncation went unseen for hours.
@@ -57,6 +70,8 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
         rec["t"] = when
     if source:
         rec["src"] = source
+    if session:
+        rec["session"] = session
     if not resent:
         # A firing that proved the previous block is still in the transcript and printed a pointer
         # instead. There is no block to measure; the record exists so the log counts the session.
@@ -83,7 +98,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
 
 
 def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-           index_behind=None):
+           index_behind=None, session=None):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -95,7 +110,7 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     # here first, and a second caller (the Agent-result hook) would have made it the eighth function
     # body in this package written in more than one file, in the package that counts them.
     return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
-                                            index_behind), KEEP)
+                                            index_behind, session), KEEP)
 
 
 

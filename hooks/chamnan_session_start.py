@@ -1299,6 +1299,8 @@ def main():
             blocklog.record(root, "",
                             when=time.strftime("%Y-%m-%dT%H:%M:%S"),
                             source=(payload.get("source") if isinstance(payload, dict) else None),
+                            session=(payload.get("session_id") if isinstance(payload, dict)
+                                     else None),
                             resent=False)
         print("\n".join(_lines))
         return 0
@@ -2543,6 +2545,10 @@ def main():
         blocklog.record(root, body, ceiling=ceiling,
                         when=time.strftime("%Y-%m-%dT%H:%M:%S"),
                         source=(payload.get("source") if isinstance(payload, dict) else None),
+                        # 🎯 [R3.3.10] The join key. `pointer.jsonl` records which store a session
+                        # opened; this records what that session's block dropped. Neither could
+                        # answer "was a dropped section reopened later in the same session" alone.
+                        session=(payload.get("session_id") if isinstance(payload, dict) else None),
                         dropped=[t for t, _src in dropped],
                         index_behind=_behind_seconds)
     try:
