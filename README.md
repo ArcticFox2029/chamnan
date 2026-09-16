@@ -2231,9 +2231,11 @@ this README.
 Every corpus figure above — in **Evidence**, and every token count in **The chaos test** —
 came from one synthetic corpus, and that corpus is published, so none of it has to be taken on
 trust:
-**[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — 800 files,
-72 file types, comments in eight writing systems, three SQL dialects, and one corner of
-deliberately careless code with no comments at all.
+**[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — 804 files,
+72 extensions, **23 programming languages**, comments in eight writing systems, three SQL dialects,
+and one corner of deliberately careless code with no comments at all. It publishes no results of its
+own, on purpose: a fixture that ships its own numbers invites you to read them instead of running
+the thing.
 
 Roughly two minutes, and it touches nothing you own:
 
@@ -2247,9 +2249,18 @@ git clone https://github.com/ArcticFox2029/chamnan.git
 cd chamnan-corpus
 python3 plant_secrets.py
 
-# 3. index it
+# 3. check the fixture agrees with itself before measuring anything against it
+python3 check_spec.py
+
+# 4. index it
 ../chamnan/bin/chamnan-map
 ```
+
+**Step 3 is not a formality.** `corpus/SPEC.md` is the corpus's answer key — it names every service,
+table, column, endpoint, event and environment variable, which is what lets a tool be scored on
+resolving a cross-reference. On 2026-09-16 twelve of the fourteen service directories it named did
+not exist, and nothing anywhere said so. `check_spec.py` asserts the 64 claims a filesystem can
+settle and exits non-zero if the key and the tree have drifted apart again.
 
 ```
 531 source file(s), 1,447,342 tokens of code, 3.5s
@@ -2501,7 +2512,7 @@ in 1.3 — which took the suite from 87 checks to over 1,800.
 
 ## More documentation
 
-- **[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic codebase the Evidence and chaos-test figures were measured on: 800 files, 72 file types, comments in eight writing systems. Download it and reproduce them rather than take them on trust; steps are under [Try it on the test corpus](#try-it-on-the-test-corpus) above.
+- **[→ chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus)** — the synthetic codebase the Evidence and chaos-test figures were measured on: 804 files, 72 extensions, 23 programming languages, comments in eight writing systems. It publishes no figures of its own; these are ours, measured against it, and `check_spec.py` in that repository says whether its own answer key still resolves. Download it and reproduce them rather than take them on trust; steps are under [Try it on the test corpus](#try-it-on-the-test-corpus) above.
 
 | | |
 |---|---|
