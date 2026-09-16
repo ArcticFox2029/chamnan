@@ -58,7 +58,7 @@ index is worth sending, never where anything goes.
 **Every number here is sourced in [Evidence](#evidence)** — including the measured findings that argue against this tool, and the nine features that were measured and then not built. The nearest causal evidence is [arXiv:2606.22417](https://arxiv.org/abs/2606.22417), whose within-harness ablation of a *richer* index than this one moved resolve **+7.9pp (p = 0.003)** and localization **+39.6pp (p < 0.0001)**. Read against this tool it is a burden, not a endorsement: the paper puts that gain in **cross-file, call-graph-dependent** work, and `MAP.md` is mostly a flat per-file line.
 
 **Verifiable claims, not adjectives.** `chamnan-map` is **byte-identical across three consecutive
-runs**; the index's own assertions about the tree check out at **2,329 of 2,329**; and **51.1%** of
+runs**; the index's own assertions about the tree check out at **1,514 of 1,514**; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
 > **Using Kiro instead of Claude Code?** There is a Kiro Power, in its own repository:
@@ -1160,7 +1160,7 @@ at all.
 A larger model does not fix that. It cannot know a name it has never seen. What closes the gap is
 having the real names in front of it — which is what `MAP.md` is, and why **51.1%** of the
 identifiers this repository's own sessions searched for are answerable from it, and why the index's
-claims about the tree are checked at **2,329 of 2,329** rather than asserted.
+claims about the tree are checked at **1,514 of 1,514** rather than asserted.
 
 **Stated as narrowly as the evidence allows:** the 85.25% is somebody else's measurement of the gap,
 not a measurement of chamnan closing it. Nothing here has measured an invented-identifier rate
@@ -1421,7 +1421,7 @@ Third-party libraries are all over the training data; your repository's names ar
 A larger model cannot know a name it has never seen.
 
 **Measured here:** `MAP.md` answers **51.1%** of the identifiers this repository's sessions actually
-searched for, and its claims about the tree check out at **2,329 of 2,329**.
+searched for, and its claims about the tree check out at **1,514 of 1,514** (`tools/map_claim_check.py`).
 
 **Bounded honestly:** the 85.25% is someone else's measurement of the gap, not a measurement of
 chamnan closing it. No before/after invented-identifier rate has been measured here.
@@ -1718,7 +1718,7 @@ way around a repository it has seen and does not know its way around yours. Benc
 collected on the first kind of repository. Your repository is the second kind.
 
 **Measured here:** `tools/map_claim_check.py` verifies the index's assertions against the tree —
-paths, line counts, functions, classes, symbols. **2,329 of 2,329 true.** Two defects were found by
+paths, line counts, functions, classes, symbols. **1,514 of 1,514 true.** Two defects were found by
 writing it: every line count was over by exactly one (`count("\n") + 1` counts the empty string after
 a trailing newline, 276 of 277 entries affected), and `index_is_behind` filtered differently from
 `mapper`, so a nested checkout made the staleness warning permanently on — which is the same as
@@ -2098,7 +2098,7 @@ under load, not a benchmark of your codebase. `chamnan-map` gives you that one.
 
 | | |
 |---|---|
-| **529 files indexed** across all 31 file types | Each parsed with its own idioms — `fun` and `suspend fun` in Kotlin, `data class`, extension functions, Elixir's `defmodule`, Rust's `impl`, C prototypes in headers, Terraform resources |
+| **531 files indexed** across all 31 file types | Each parsed with its own idioms — `fun` and `suspend fun` in Kotlin, `data class`, extension functions, Elixir's `defmodule`, Rust's `impl`, C prototypes in headers, Terraform resources |
 | **3,960 symbols extracted** | Functions, classes, structs, traits, protocols, objects, constants. Up from 3,266 once each language's own facts replaced one universal rule — Ruby methods ending `?`/`!`/`=` and its operator methods, `module`, TypeScript `interface` and `type`, and a Terraform `data` block's second name |
 | **97% described** | 516 of 531 files carry a one-line summary in the index. The remaining 15 genuinely have no opening comment — chamnan lists them by name so you can add one. This number went DOWN from 98% on purpose: a leading `#` is a comment in Python and Ruby and an attribute in Rust, and counting the attribute as a description inflated the figure |
 | **8 writing systems intact** | Summaries carried through from javadoc, kdoc, docstrings, rustdoc, godoc, doxygen, phpdoc, xmldoc and `@moduledoc` without mangling, and the token budget is counted per script because Thai runs ~1.2 characters per token where English code runs 2.5 |
@@ -2494,7 +2494,7 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
 python3 tests/run_tests.py
 ```
 
-Over 5,400 checks, no dependencies — 5,448 on the 1.27.0 gate, 5,385 of them on a checkout with no workspace above it, which is what CI sees. The redaction cases are the reason the file exists: every other part of
+Several thousand checks, no dependencies. The count is deliberately not written here — it grows every week, and a number frozen into this sentence is the exact trap `docs/verification.md` records twice. The run prints its own total, and that is the one to quote. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.
