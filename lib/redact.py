@@ -2393,6 +2393,87 @@ def _unmask_disguised_secret_words(text):
     return "".join(out)
 
 
+# U+FE00-FE0F and their supplementary range U+E0100-E01EF are variation selectors -- category
+# `Mn` (nonspacing mark), not `Cf` -- so a category test alone misses them. Listed here rather than
+# in `_TERMINAL_SAFE` above (which this deliberately does not share a table with -- see the
+# docstring below) because that table is applied to a whole document and this one only ever to a
+# candidate word span.
+_INVISIBLE_VARIATION_SELECTORS = frozenset(
+    chr(_c) for _c in range(0xFE00, 0xFE10)
+) | frozenset(chr(_c) for _c in range(0xE0100, 0xE01F0))
+
+
+def _is_planted_invisible(ch):
+    """True for a codepoint that renders as nothing and can be planted inside a word to split it.
+
+    Category `Cf` (format character) covers ZWSP, ZWNJ, ZWJ, the word joiner, the Unicode Tags
+    block, the directional marks and BOM in one test. It also covers U+00AD SOFT HYPHEN -- verified
+    live rather than trusted from a report: `unicodedata.category("­")` returns `Cf` under
+    this interpreter's Unicode 16.0.0 tables. Variation selectors are `Mn`, not `Cf` (checked the
+    same way), so they are added from the explicit set above.
+    """
+    return unicodedata.category(ch) == "Cf" or ch in _INVISIBLE_VARIATION_SELECTORS
+
+
+def _unmask_invisible_secret_words(text):
+    """`text` with ONLY the credential words an invisible codepoint is splitting rewritten whole.
+
+    Same shape as `_unmask_disguised_secret_words` just above, for a different disguise: instead of
+    a look-alike letter substituted for one of the word's own, an invisible codepoint is INSERTED
+    between two of them -- `pass<ZWSP>word` -- so `SECRET_WORDS` does not match and everything that
+    anchors on it, including the value beside it, is skipped.
+
+    R8 (2026-09-05) left ZWJ, ZWNJ and the directional marks out of `_TERMINAL_SAFE` on purpose:
+    stripped from a whole document they corrupt real Devanagari/Bengali conjuncts and pull emoji
+    families apart. That reason is about a DOCUMENT. This function only ever looks inside a
+    candidate SECRET_WORDS span, never the document, and inside the letters of `password` or
+    `api key` there is no legitimate use for any of these codepoints -- so its strip set can be the
+    wider, property-derived one above without repeating R8's mistake. That boundary is why this is
+    its own function rather than a call site reusing `_TERMINAL_SAFE`.
+
+    Reproduced against this module before this function existed, five shapes: ZWSP U+200B, ZWNJ
+    U+200C, soft hyphen U+00AD, a Unicode Tag character (e.g. U+E0061) and the word joiner U+2060,
+    each inserted mid-word left `scrub()` returning the input unchanged.
+
+    Deliberately minimal, same contract as `_unmask_disguised_secret_words`: only the WORD's own
+    span is rewritten, never the value and never a character anywhere else in `text`, and only
+    where removing the invisible codepoints reveals a name the original span does not already read
+    as. Unlike confusable folding this is not a 1:1 codepoint map -- the invisible codepoints are
+    dropped, so positions shift -- hence the explicit origin index below instead of the direct
+    offset reuse the confusable version uses.
+    """
+    if not any(_is_planted_invisible(ch) for ch in text):
+        return text
+    kept_chars, origin = [], []
+    for i, ch in enumerate(text):
+        if _is_planted_invisible(ch):
+            continue
+        kept_chars.append(ch)
+        origin.append(i)
+    stripped = "".join(kept_chars)
+    known = {(h.start(), h.end()) for h in _secret_word_hits(text)}
+    extra = []
+    for h in _secret_word_hits(stripped):
+        if h.start() == h.end():
+            continue
+        orig_start, orig_end = origin[h.start()], origin[h.end() - 1] + 1
+        if (orig_start, orig_end) in known:
+            continue
+        extra.append((orig_start, orig_end, stripped[h.start():h.end()]))
+    if not extra:
+        return text
+    extra.sort()
+    out, pos = [], 0
+    for start, end, word in extra:
+        if start < pos:
+            continue
+        out.append(text[pos:start])
+        out.append(word)
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
 _LOOKS_LIKE_CODE = re.compile(
     r"[()\[\]{}]"                                       # a call or a subscript
     r"|^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)+$")  # a dotted name, and nothing else
@@ -2484,6 +2565,16 @@ def scrub(text, windowed=True, *, _unmask=True):
         _unmasked = _unmask_disguised_secret_words(text)
         if _unmasked is not text:
             _with = scrub(_unmasked, windowed, _unmask=False)
+            _without = scrub(text, windowed, _unmask=False)
+            return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
+        # A second disguise, same contract: an invisible codepoint INSERTED inside the word rather
+        # than a look-alike SUBSTITUTED for one of its letters. Checked only when the confusable
+        # branch above found nothing to unmask -- the two attacks have not been seen combined, and
+        # trying both unconditionally would mean reasoning about which of four variants to keep
+        # rather than two, for a case not yet observed.
+        _destripped = _unmask_invisible_secret_words(text)
+        if _destripped is not text:
+            _with = scrub(_destripped, windowed, _unmask=False)
             _without = scrub(text, windowed, _unmask=False)
             return _with if _with.count(PLACEHOLDER) > _without.count(PLACEHOLDER) else _without
     text = _redact_kubernetes_secret_data(text)
