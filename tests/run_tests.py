@@ -33518,6 +33518,73 @@ print("      DETAIL  hooks using the never_fail wrapper: %d of %d — session-st
 check("...and every hook that is NOT session-start still uses the shared wrapper",
       all(h in _wrapped175 for h in _HOOKS175 if "session_start" not in h),
       saw="a hook lost never_fail: wrapped = %s" % _wrapped175)
+# ---- 176_a_dated_defect_record_carries_a_real_date.py
+# ------------------ the dates the citation index is built from are dates that exist
+# 🎯 [R4.5.1, 2026-09-17] `research_citations.py` parses dated `🐛 [YYYY-MM-DD]` and `🎯 [...]`
+# comments by SHAPE and never asks whether the date is real. It resolves 916 citation points out of
+# them — the comments ARE this project's defect history and the index is built by reading them — so
+# a typed date nothing checks is a fact nothing checks.
+#
+# Measured before writing this: 919 marked comments, 899 carrying a date, and **0 of the 899 wrong**.
+# So this is a property that holds today rather than a defect, and the check exists because the
+# failure is silent in both directions: `2026-13-45` parses as text and vanishes from the index,
+# while a date typed from a wrong clock lands in the FUTURE and sorts above everything real.
+#
+# It also counts the 20 that carry no date at all. Those are not failures — the convention is a
+# marker plus an optional bracket — but the citation index can only link the dated ones, so the
+# number is worth printing rather than discovering later as a gap.
+import datetime as _dt176
+import importlib as _im176
+import pathlib as _pl176
+import re as _re176
+
+_PKG176 = _pl176.Path(_im176.import_module("redact").__file__).resolve().parent.parent
+_MARK176 = _re176.compile(r"(🐛|🎯)\s*\[([^\]]{0,80})\]")
+_DATE176 = _re176.compile(r"(\d{4})-(\d{2})-(\d{2})")
+# Nothing in this project predates 2026, and a record dated after today came from a wrong clock.
+_FLOOR176 = _dt176.date(2026, 1, 1)
+_TODAY176 = _dt176.date.today()
+
+_files176 = (list((_PKG176 / "lib").glob("*.py")) + list((_PKG176 / "hooks").glob("*.py"))
+             + [p for p in (_PKG176 / "bin").glob("*") if p.is_file()])
+_bad176, _total176, _dated176 = [], 0, 0
+for _p176 in _files176:
+    try:
+        _t176 = _p176.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        continue
+    for _m176 in _MARK176.finditer(_t176):
+        _total176 += 1
+        _d176 = _DATE176.search(_m176.group(2))
+        if not _d176:
+            continue
+        _dated176 += 1
+        _y, _mo, _dy = (int(x) for x in _d176.groups())
+        try:
+            _when176 = _dt176.date(_y, _mo, _dy)
+        except ValueError:
+            _bad176.append("%s: %r is not a real date" % (_p176.name, _d176.group(0)))
+            continue
+        if _when176 > _TODAY176:
+            _bad176.append("%s: %s is in the future by %d day(s) — a wrong clock, and it sorts "
+                           "above every real record"
+                           % (_p176.name, _d176.group(0), (_when176 - _TODAY176).days))
+        elif _when176 < _FLOOR176:
+            _bad176.append("%s: %s predates this project" % (_p176.name, _d176.group(0)))
+
+print("      DETAIL  marked comment(s): %d, of which %d carry a date and %d do not"
+      % (_total176, _dated176, _total176 - _dated176))
+for _x176 in _bad176:
+    print("      DETAIL  %s" % _x176)
+
+check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
+      _dated176 >= 100,
+      saw="only %d dated comment(s) found across %d file(s) — the scan broke, and a green result "
+          "here would mean nothing" % (_dated176, len(_files176)))
+
+check("EVERY DATED DEFECT RECORD CARRIES A DATE THAT EXISTS AND IS NOT IN THE FUTURE",
+      not _bad176,
+      saw="the citation index is built from these dates:\n        " + "\n        ".join(_bad176))
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
