@@ -28782,25 +28782,89 @@ _t_families129 = {
 }
 
 
-def _t_ms129(lead, filler, n):
+def _t_ms129(lead, filler, n, repeat=1):
+    # `repeat` runs scrub() that many times inside ONE process_time() window and returns the
+    # TOTAL, so a caller that needs a measurable baseline can repeat the call rather than trust a
+    # single sub-resolution sample.
     doc = lead + filler * n + "\x00\n"
     _t0129 = _t129.process_time()
-    _t_redact129.scrub(doc)
+    for _ in range(repeat):
+        _t_redact129.scrub(doc)
     return (_t129.process_time() - _t0129) * 1000.0
+
+
+# Repetition rather than a floor: process_time() resolves to ~15.6 ms on Windows, and a 0.05 ms
+# floor under a 0.0 ms reading manufactured a x625 ratio out of an unmeasurable baseline. The
+# same input passed on 3.8 in the same run, which is what gave it away.
+#
+# get_clock_info("process_time").resolution is NOT the same number as how often the counter
+# actually advances. On Windows it reports 1e-07 s (100 ns), because that is the unit
+# GetProcessTimes returns values in -- but the value only advances on the ~15.6 ms scheduler tick,
+# so a reading of 7 ms of real CPU still reads as one whole tick, not "7.xxx". This file was
+# written believing those two numbers were one, so the empirical tick below is measured directly
+# and the LARGER of the two is used.
+def _t_measure_tick_ms129(cap=2_000_000):
+    # Sample process_time() in a tight loop until it changes, and return the delta in ms. Bounded
+    # so a platform where the clock never appears to move cannot hang the gate; None means "did
+    # not observe a change within the cap", not "the tick is zero".
+    _start = _t129.process_time()
+    _i = 0
+    while _i < cap:
+        _now = _t129.process_time()
+        if _now != _start:
+            return (_now - _start) * 1000.0
+        _i += 1
+    return None
+
+
+def _t_measured_tick_ms129(samples=3):
+    # A few samples, take the largest: a single sample can catch the counter mid-tick and read an
+    # artificially small delta.
+    _seen = [_s for _s in (_t_measure_tick_ms129() for _ in range(samples)) if _s is not None]
+    return max(_seen) if _seen else 0.0
+
+
+_t_resolution_ms129 = max(_t129.get_clock_info("process_time").resolution * 1000.0,
+                           _t_measured_tick_ms129())
+_t_target_ms129 = 20 * _t_resolution_ms129
+_t_repeat_cap129 = 4096
+
+
+def _t_autorange129(lead, filler, n):
+    # Doubling search, the way timeit autoranges: find how many repetitions of the SMALL input
+    # push the measured TOTAL comfortably above the clock's own resolution, so the ratio taken
+    # later is a like-for-like comparison rather than a division by an artefact.
+    _repeat = 1
+    while _repeat <= _t_repeat_cap129:
+        _total = _t_ms129(lead, filler, n, _repeat)
+        if _total >= _t_target_ms129:
+            return _repeat, _total
+        _repeat *= 2
+    return None, None
 
 
 for _t_name129, (_t_lead129, _t_fill129) in sorted(_t_families129.items()):
     # 4 KiB and 16 KiB: four times the input. Linear is x4, quadratic is x16. R16-2's bound is
     # x3.5 per DOUBLING, so two doublings allow 3.5 * 3.5 = 12.25.
-    _t_small129 = _t_ms129(_t_lead129, _t_fill129, 4096)
-    _t_big129 = _t_ms129(_t_lead129, _t_fill129, 16384)
-    _t_ratio129 = _t_big129 / max(_t_small129, 0.05)
+    _t_repeat129, _t_small_total129 = _t_autorange129(_t_lead129, _t_fill129, 4096)
+    if _t_repeat129 is None:
+        skip(f"  [SKIP] late failure on {_t_name129!r} -- process_time() resolves to "
+             f"{_t_resolution_ms129:.3f} ms and {_t_repeat_cap129} repetitions of the 4 KiB case "
+             f"still measured below the {_t_target_ms129:.3f} ms target; the ratio would be an "
+             f"artefact of dividing by a baseline this clock cannot resolve.")
+        continue
+    _t_big_total129 = _t_ms129(_t_lead129, _t_fill129, 16384, _t_repeat129)
+    _t_small129 = _t_small_total129 / _t_repeat129
+    _t_big129 = _t_big_total129 / _t_repeat129
+    _t_ratio129 = _t_big_total129 / _t_small_total129
     check(f"late failure on {_t_name129!r} grows no worse than linearly: "
-          f"{_t_small129:.1f} ms at 4 KiB, {_t_big129:.1f} ms at 16 KiB (x{_t_ratio129:.1f})",
+          f"{_t_small129:.3f} ms at 4 KiB, {_t_big129:.3f} ms at 16 KiB (x{_t_ratio129:.1f})",
           _t_ratio129 <= 12.25,
           saw=f"four times the input cost {_t_ratio129:.1f} times the CPU, over the 12.25 that two "
               f"doublings of R16-2's x3.5 bound allow. Linear would be about x4. Find the pattern "
               f"with `python3 .chamnan/tools/redact_cpu_curve.py`, which names it.")
+    print(f"      DETAIL  {_t_name129!r}: process_time() resolution {_t_resolution_ms129:.3f} ms, "
+          f"repeated x{_t_repeat129} to reach a {_t_small_total129:.3f} ms measured baseline")
 
 # The construct itself, asserted over the whole module rather than over the patterns that were
 # measured. `\s*<optional token>\s*` is the `(a*)*` family reached without a nested quantifier: a
