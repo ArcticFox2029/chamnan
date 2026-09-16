@@ -33421,6 +33421,103 @@ check("...and a user who has ALREADY committed it is not told to do it again",
 check("...and the notice names the command, not just the problem",
       _MARK174 not in _never174 or "git add" in _never174,
       saw="the notice says the workspace is not in git and does not say what to type")
+# ---- 175_no_hook_takes_a_session_down.py
+# ------------------ every hook survives a broken workspace, including the one with no wrapper
+# 🎯 [R4.3.6, 2026-09-16] R4.3 noticed that `chamnan_session_start.py` ends `sys.exit(main())` while
+# the other hooks end `sys.exit(ws.never_fail(main))`, and read that as a missing guard. It is not:
+# `never_fail`'s own docstring says session-start is excluded on purpose, because it has PARTIAL
+# OUTPUT worth emitting when something fails and handles its own failures instead of returning 0.
+#
+# So the finding is refused and the real gap is the one underneath it: **that claim is asserted in a
+# docstring and nothing tests it.** Three hooks are protected by a wrapper; the fourth — the one
+# that runs at every single session start, whose crash the user would see first — relies on
+# discipline, and discipline is what this package's most recorded defect is made of.
+#
+# The failures below are the ones a real machine produces: a container or CI run touching the
+# workspace as root, a truncated file, a half-written config. `never_fail`'s docstring cites exactly
+# the first of them — `chmod 000` on `.chamnan/logs` killed four of five hooks before it existed.
+#
+# Asserted as a POPULATION: every hook, against every fault. A guard that holds for session-start and
+# not for the subagent hook is the defect this file exists to catch.
+import importlib as _im175
+import json as _js175
+import pathlib as _pl175
+import shutil as _sh175
+import subprocess as _sp175
+import sys as _sy175
+import tempfile as _tf175
+
+_PKG175 = _pl175.Path(_im175.import_module("redact").__file__).resolve().parent.parent
+_HOOKS175 = ["chamnan_session_start.py", "chamnan_file_pointer.py",
+             "chamnan_session_end.py", "chamnan_subagent_start.py"]
+_FAULTS175 = {
+    "logs unwritable": lambda d: (d / ".chamnan" / "logs").chmod(0o000),
+    "MAP.md unreadable": lambda d: (d / ".chamnan" / "MAP.md").chmod(0o000),
+    "MAP.md is binary junk": lambda d: (d / ".chamnan" / "MAP.md").write_bytes(b"\x00\xff" * 400),
+    "config.json is not JSON": lambda d: (d / ".chamnan" / "config.json").write_text(
+        "{{{", encoding="utf-8"),
+    "the whole workspace unreadable": lambda d: (d / ".chamnan").chmod(0o000),
+}
+
+
+def _payload175(hook, root):
+    p = {"cwd": str(root), "session_id": "fault-probe", "hook_event_name": "SessionStart"}
+    if "file_pointer" in hook:
+        p.update({"tool_name": "Read", "tool_input": {"file_path": str(root / "app.py")}})
+    return _js175.dumps(p)
+
+
+_crashed175, _ran175 = [], 0
+for _fault175, _break175 in _FAULTS175.items():
+    _d175 = _pl175.Path(_tf175.mkdtemp(prefix="chamnan-fault-"))
+    try:
+        _sp175.run(["git", "init", "-q"], cwd=_d175, capture_output=True)
+        (_d175 / "app.py").write_text("# the entry point\ndef main():\n    pass\n", encoding="utf-8")
+        _sp175.run([_sy175.executable, str(_PKG175 / "bin" / "chamnan-map")], cwd=_d175,
+                   capture_output=True)
+        try:
+            _break175(_d175)
+        except OSError:
+            continue                        # the fault could not be applied here; not a result
+        for _hook175 in _HOOKS175:
+            _r175 = _sp175.run([_sy175.executable, str(_PKG175 / "hooks" / _hook175)],
+                               input=_payload175(_hook175, _d175), capture_output=True, text=True)
+            _ran175 += 1
+            if _r175.returncode != 0 or "Traceback" in _r175.stderr:
+                _crashed175.append("%s under '%s': exit %d%s"
+                                   % (_hook175, _fault175, _r175.returncode,
+                                      ", traceback" if "Traceback" in _r175.stderr else ""))
+    finally:
+        for _p175 in list(_d175.rglob("*")) + [_d175]:
+            try:
+                _p175.chmod(0o755)
+            except OSError:
+                pass
+        _sh175.rmtree(_d175, ignore_errors=True)
+
+print("      DETAIL  %d hook/fault combination(s) exercised across %d fault(s)"
+      % (_ran175, len(_FAULTS175)))
+for _x175 in _crashed175:
+    print("      DETAIL  %s" % _x175)
+
+check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
+      _ran175 >= len(_HOOKS175) * 3,
+      saw="only %d combination(s) ran — the faults could not be applied, and a green result here "
+          "would mean nothing" % _ran175)
+
+check("NO HOOK TAKES A SESSION DOWN, WHATEVER THE WORKSPACE LOOKS LIKE",
+      not _crashed175,
+      saw="a hook crashed, and a hook's stderr never reaches the transcript — the user would see "
+          "a session start wrong with nothing saying why:\n        " + "\n        ".join(_crashed175))
+
+# The structural half, so a refactor cannot quietly remove the wrapper from the three that have it.
+_wrapped175 = [h for h in _HOOKS175
+               if "never_fail(main)" in (_PKG175 / "hooks" / h).read_text(encoding="utf-8")]
+print("      DETAIL  hooks using the never_fail wrapper: %d of %d — session-start is excluded by "
+      "its own documented decision" % (len(_wrapped175), len(_HOOKS175)))
+check("...and every hook that is NOT session-start still uses the shared wrapper",
+      all(h in _wrapped175 for h in _HOOKS175 if "session_start" not in h),
+      saw="a hook lost never_fail: wrapped = %s" % _wrapped175)
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
