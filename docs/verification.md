@@ -333,7 +333,11 @@ run that gated this release. 1.22.0 shipped without it and 1.22.1 existed largel
 a page whose front matter says *"verifiable claims, not adjectives"* had dropped the one line in its
 notes that is a claim rather than an adjective. Write the number the suite actually printed — not
 one carried over from the previous release, which is how the README came to say "Over 1,800 checks"
-long after there were 3,600.
+long after there were 3,600 — and then "Over 3,600" long after there were 5,448. **It happened
+twice, and the second time it was the owner who noticed, not this project.** The same sweep
+(2026-09-16) found the injected-block figure published as "roughly 3,600 tokens here" when the
+repository it was measured on had reached 4,173. A number that was true when it was written decays
+silently: nothing fails, nothing warns, and the page goes on asserting it.
 
 **2. What changed, in terms of what it cost the user.** "Fixed a bug in `rulecheck`" is not a note.
 "One committed rule file ended the injected block at the rules section — milestones, the session

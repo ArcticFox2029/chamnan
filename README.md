@@ -44,7 +44,7 @@ index is worth sending, never where anything goes.
 
 | what people actually ask | the short answer |
 |---|---|
-| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223× (last measured on an unpublished corpus, not independently reproducible — see the corpus section), and 28.8× on the published corpus, measured 2026-09-08**, which omits 20 MB of binary attachments — of which **308 to 1,428 reach each session** — 537 to 3,711 counting the whole injected block — measured across four real repositories. |
+| *"a Claude Code plugin to reduce token usage"* | It replaces file scanning with an index. On the polyglot test corpus, **11,560,484 tokens of source become a 51,937-token index** — **223× (last measured on an unpublished corpus, not independently reproducible — see the corpus section), and 28.8× on the published corpus, measured 2026-09-08**, which omits 20 MB of binary attachments — of which **159 to 1,571 reach each session** — 521 to 4,173 counting the whole injected block — measured across four real repositories, 2026-09-16. |
 | *"my agent keeps re-reading the same files"* | Measured across 12,332 re-read events in six working sessions: the injected roll-up named **22.7%** of them by alphabet, **35.6%** once ranked by git churn. |
 | *"my SessionStart hook output is being truncated"* | Claude Code cuts a hook's stdout above **10,000 bytes** to its first 2,048 ([#70460](https://github.com/anthropics/claude-code/issues/70460), [#44086](https://github.com/anthropics/claude-code/issues/44086)). **47 of 120** measured injections lost **77–86%** each. `output_byte_ceiling` bounds the block in bytes so nothing is cut. |
 | *"how do I keep context between Claude Code sessions"* | Session records, decisions, rules and open threads, injected at the next start. A compaction pass recovers about **63% of facts** and destroys file paths first; re-injecting exact paths is the repair. |
@@ -155,8 +155,29 @@ above are load-bearing, and they are load-bearing for different reasons:
 **How many sessions it takes to pay off is a fair question, and the honest answer is fewer than it
 sounds.** The index build is a local script - about 12 seconds on a 277-file repository - and costs
 no tokens at all, so there is very little there to amortise. The recurring cost is the injected
-block, and it is charged every session: roughly 3,600 tokens here, against the file reads it
-replaces. That trade settles per session, not across a hundred of them.
+block, and it is charged every session, against the file reads it replaces. That trade settles per
+session, not across a hundred of them.
+
+**That block is not a fixed number, and a README that prints one as though it were is telling you
+something false.** What it costs is a function of how much a repository has accumulated — its
+standing rules, its recorded decisions, its procedures and tools, and where the last session
+stopped. Measured across the four repositories this build runs in (2026-09-16): **521 to 4,173
+tokens**, the low end a small infrastructure repo with almost nothing written down yet, the high end
+the four-project monorepo chamnan is developed in.
+
+**A mature workspace costs more to inject because it has more that is worth preserving, and that is
+not a regression.** The relevant question is not whether the block stays small forever — there is a
+hard ceiling that stops it, `output_byte_ceiling`, and the repository at the top of that range is
+sitting on it at 100% — but whether the context it replaces, or stops being re-derived, is worth
+more than the tokens it costs. On that repository the 4,173 break down as 1,195 tokens of standing
+rules, 1,185 of unfinished work, 473 naming tools that already exist so a fourth copy of one does
+not get written, 261 of environment constraints, and 159 of architecture index. Every one of those
+is there because working it out again costs more than carrying it. `--explain` prints the same
+table for yours:
+
+```sh
+python3 ~/.claude/plugins/*/chamnan/hooks/chamnan_session_start.py --explain
+```
 
 Which matters, because a hundred sessions is not what repositories get. A study of 20,574 sessions
 across 1,639 repositories works out at about **12.6 sessions per repository**, and its own
@@ -966,7 +987,8 @@ nothing to do.
 **What has actually been checked.** The claims above are read off the source: no network call, no
 endpoint variable, no model name outside the `--model` name table. chamnan has **not** been run
 end-to-end against a live 9Router install, so this is a structural argument rather than a test
-result. If you run one and something behaves differently, that is worth an issue — it would mean
+result. If you run one and something behaves differently, that is worth
+[an issue](https://github.com/ArcticFox2029/chamnan/issues) — it would mean
 the boundary described here is not where it looks.
 
 ### Three axes, kept apart
@@ -2103,13 +2125,21 @@ window. So the question is what reaches a session instead.
 |---|---|
 | Every source file | **11,560,484** |
 | The index chamnan writes | 51,937 |
-| **The index that reaches each session** | **308 – 1,428** |
-| Everything chamnan injects, index included | 537 – 3,711 |
+| **The index that reaches each session** | **159 – 1,571** |
+| Everything chamnan injects, index included | 521 – 4,173 |
 
 That last number is the one that matters, and it is the one to check first, because it is the only
-one measured on *your* repository rather than on a corpus. Measured on 2026-09-02 across the four
-real workspaces this build runs in: 308 tokens on a small infrastructure repository, 943 on a
-four-project monorepo, 1,251 on chamnan's own repository, 1,428 on a Kubernetes and Terraform one.
+one measured on *your* repository rather than on a corpus. Measured 2026-09-16 across the four real
+workspaces this build runs in — the index first, the whole block in brackets: **295 (521)** on a
+small infrastructure repository, **631 (3,280)** on a Kubernetes and Terraform one, **1,571
+(1,910)** on chamnan's own repository, **159 (4,173)** on a four-project monorepo.
+
+**Read the last pair rather than the range.** That repository has the smallest index of the four
+and the largest block, because it is the one sitting against its byte ceiling: everything it has
+written down — rules, unfinished work, its own tool index — competes for the same 9,500 bytes, and
+the index is what gets rolled up coarser to make room. Which way that trade should go is a
+judgement, and those numbers are what it looks like on a workspace that has been used for months
+rather than days.
 
 The second row is the honest total, and it is the one to compare against another tool's figure: the
 index is what replaces reading files, but the block around it also carries this repository's rules,
@@ -2140,7 +2170,7 @@ field publishes in percent while chamnan published in multiples. `28.8×` and `9
 measurement; the first reads smaller than tools reporting 60-95%, and the second does not. Both are
 printed so neither can be quoted without the other.
 
-<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which 308 to 1,428 reach each session." width="100%">
+<img src="docs/assets/chamnan.png" alt="11,560,484 tokens of source become a 51,937-token index, of which 159 to 1,571 reach each session." width="100%">
 
 <sub>**The 223× in that picture counts a corpus that carries 20 MB of binary attachments beside
 its source. The published corpus omits them, so the ratio you will measure by following the
@@ -2222,14 +2252,24 @@ python3 plant_secrets.py
 ```
 
 ```
-529 source file(s), 1,373,242 tokens of code
-Quick Index    53,652 tokens  (3.9% of the source)
-Full Detail   132,999 tokens  (grep this, never read it whole)
-described    [###################.] 514/529 files (97%)
+531 source file(s), 1,447,342 tokens of code, 3.5s
+not indexed, no reader for the extension: 2 .pl, 1 .pm
+Quick Index    50,208 tokens  (3.5% of the source)
+Full Detail   142,541 tokens  (grep this, never read it whole)
+described    [###################.] 516/531 files (97%, 2 chamnan could not parse
+                                    rather than nobody described)
 
 Over the 3,000-token session budget, so session start will roll this up by
-directory: ~2,970 tokens injected per session instead of 53,652
+directory: ~2,552 tokens injected per session instead of 50,208
 ```
+
+**Three of those 531 are worth reading rather than skipping past, because they are the honest
+part.** Two `.pl` and one `.pm` have no reader at all — Perl is not in `mapper.EXT_LANG`, so those
+files are counted and never opened. Two more are Python 2 (`print` without parentheses) and cannot
+be parsed; chamnan indexes them by name and declines to guess, which is the behaviour wanted — a
+tool that invented a description there would be worse, not better. The rest of the gap is the
+corner of the corpus deliberately written with no comments in it. **97% is the ceiling currently
+available on this fixture, and a Perl reader is what would move it.**
 
 Then the test that matters more than the ratio — whether any of the credentials you just planted
 came out the other end:
@@ -2291,6 +2331,29 @@ chamnan-map --preview
 | `not a git repository — nothing to install into` | `--install-git-hook` found no `.git` directory | Run it from inside the repository. If it genuinely is not a git repo, skip the hook and use `/chamnan:remap` |
 | A flag appears to do nothing | `chamnan-map` looks for its flags in the argument list rather than parsing them strictly, so a misspelt one is ignored in silence | Check the spelling against [Commands](#commands) |
 | A workspace file looks wrong | Any of it can be rebuilt | `MAP.md` from `chamnan-map`; `config.json` reappears with defaults if deleted; `STATE.md` is yours to edit by hand |
+
+### If none of that is it — where to say so
+
+**[→ Open an issue](https://github.com/ArcticFox2029/chamnan/issues)**, and it is worth saying
+plainly that nobody has opened one yet, so you would not be adding to a queue.
+
+Three things make a report immediately actionable, and all three are one command each:
+
+```bash
+chamnan-map --preview                                       # what is actually being injected
+python3 hooks/chamnan_session_start.py --explain            # the byte total and every section's share
+chamnan-report --version                                    # the build, which may not be the one you installed
+```
+
+**Do not paste `MAP.md` or the injected block into an issue without reading it first.** It is
+generated from your repository, and although the redactor runs over everything that reaches it,
+this README states its own recall as 99.0% rather than 100% — the one shape it is known to miss is
+a bare high-entropy string with no assignment around it. The three commands above print to your
+terminal, where you can look before anything is published.
+
+A measurement that disagrees with one in this README is the most useful kind of report, and
+[How to disagree with any of it](#how-to-disagree-with-any-of-it) says what would settle it.
+
 
 ## Update, disable, uninstall
 
@@ -2420,7 +2483,7 @@ file contains nothing else besides `#!/bin/sh` — deleting the whole file is eq
 python3 tests/run_tests.py
 ```
 
-Over 3,600 checks, no dependencies. The redaction cases are the reason the file exists: every other part of
+Over 5,400 checks, no dependencies — 5,448 on the 1.27.0 gate, 5,385 of them on a checkout with no workspace above it, which is what CI sees. The redaction cases are the reason the file exists: every other part of
 this fails visibly — a wrong map entry sends you to the wrong file and you notice — while a
 redaction regression fails silently and writes a credential into a file this README tells you to
 commit.

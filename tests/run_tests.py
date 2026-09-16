@@ -26114,10 +26114,7 @@ _t_home101 = _t_root101 / "empty-home"
 _t_home101.mkdir()
 _t_env101 = dict(_os101.environ)
 _t_env101["HOME"] = str(_t_home101)
-# encoding named explicitly: text mode without it decodes with the machine's codec, which is
-# cp1252 on the Windows runner, and a stray byte kills the reader thread rather than the call.
 _t_run101 = _sp101.run([_sys101.executable, str(_t_report101)], capture_output=True, text=True,
-                       encoding="utf-8", errors="replace",
                        cwd=str(_t_root101), env=_t_env101, timeout=60)
 _t_out101 = _t_run101.stdout
 check("THE REPORT SEPARATES TRACKED FILES FROM CURRENT BYTES THAT ARE COMMITTED",
@@ -32724,6 +32721,66 @@ check("4a. the no-failure emission at the same tight ceiling also stays <= it",
 check("4b. and the earlier roomy-ceiling emission stayed <= its own (roomy) ceiling too",
       len(_plain166.encode("utf-8")) <= 9500,
       saw=f"{len(_plain166.encode('utf-8'))} bytes against a 9500-byte ceiling")
+# ---- 167_an_invisible_character_inside_a_trigger_word.py
+# ---------------- one invisible codepoint inside `password` walked the credential out whole
+# 🐛 [2026-09-16] R2.2 agent 2, reproduced here before it was believed: inserting a single
+# zero-width or format-control character between `pass` and `word` stopped `SECRET_WORDS` matching,
+# and `scrub()` returned the line unchanged with the credential in it. Five shapes, five leaks. On
+# screen the word reads `password` exactly, which is the whole point of the attack — Boucher et al.,
+# *Bad Characters*, IEEE S&P 2022 (arxiv 2106.09898), and Microsoft's 2026-09-03 report of the
+# Unicode Tags block being used this way at over a million attempts a day.
+#
+# The near-miss worth recording: `_TERMINAL_SAFE` already strips ZWSP, the word joiner and the Tags
+# block — but it is applied to OUTPUT, and it covers three of the five. Reusing it would have closed
+# ZWSP, Tags and word joiner, left ZWNJ and soft hyphen open, and looked finished. The fix asks
+# Unicode instead: category `Cf`, plus the variation selectors, which are `Mn` and would have been
+# missed by a category test alone.
+import unicodedata as _ud167
+import redact as _rd167  # noqa: E402
+
+_SECRET167 = "Ab3$x9!q7Zm2Extra"
+
+# Built from codepoints rather than pasted, so this file carries no invisible characters of its own
+# — a reviewer diffing it would see nothing, which is the trap the check is about.
+_INVISIBLE167 = {
+    "ZWSP U+200B": "​", "ZWNJ U+200C": "‌", "ZWJ U+200D": "‍",
+    "SOFT HYPHEN U+00AD": "­", "WORD JOINER U+2060": "⁠",
+    "LRM U+200E": "‎", "TAGS U+E0061": chr(0xE0061), "BOM U+FEFF": "﻿",
+    "VARIATION SELECTOR U+FE00": "︀",
+}
+
+_leaked167 = []
+for _name167, _ch167 in sorted(_INVISIBLE167.items()):
+    _line167 = 'pass' + _ch167 + 'word: "' + _SECRET167 + '"'
+    if _SECRET167 in _rd167.scrub(_line167):
+        _leaked167.append("%s (%s)" % (_name167, _ud167.category(_ch167)))
+
+check("AN INVISIBLE CHARACTER INSIDE A TRIGGER WORD DOES NOT CARRY THE CREDENTIAL OUT",
+      not _leaked167,
+      saw="; ".join(_leaked167[:5]) or None)
+
+# The population has to be non-empty, or the loop above proves nothing.
+check("...and the sweep really had shapes to try: %d" % len(_INVISIBLE167),
+      len(_INVISIBLE167) >= 8, saw="too few shapes to call this a set")
+
+# The clean case must still redact — a fix that stops matching anything passes the check above.
+check("...and the undisguised word still redacts",
+      _SECRET167 not in _rd167.scrub('password: "' + _SECRET167 + '"'))
+
+# 🐛 R8 (2026-09-05) deliberately left ZWJ/ZWNJ/directional marks alone in `mdblock.one_line`,
+# because they build Devanagari and Bengali conjuncts and hold emoji families together. That reason
+# is about stripping a DOCUMENT; this strips only the candidate trigger-word span. The distinction
+# is only real if the document is provably untouched, so it is asserted rather than described.
+_intact167 = []
+for _name167, _text167 in [
+        ("Devanagari conjunct", "क्‍ष सुरक्षा"),
+        ("emoji family", "\U0001f468‍\U0001f469‍\U0001f467‍\U0001f466 family"),
+        ("Persian ZWNJ", "می‌روم"),
+        ("Thai", "รหัสผ่านของฉัน")]:
+    if _rd167.scrub(_text167) != _text167:
+        _intact167.append(_name167)
+check("...and ordinary text whose invisibles are load-bearing is returned byte-identical",
+      not _intact167, saw="; ".join(_intact167) or None)
 # ---- 16_a_cut_section_never_ships_framing_only.py
 # ------------------------------------------- a section cut to its own signposts is worse than absent
 # 🐛 [2026-09-09] `_only_the_opening_block` refused a fragment only when it was a subsequence of the
