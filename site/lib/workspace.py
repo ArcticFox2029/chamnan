@@ -2867,6 +2867,36 @@ def git_is_installed():
 _GIT_ON_PATH = None
 
 
+_GIT_TOPLEVEL_PROBE = {}
+
+
+def _git_toplevel_probe(root):
+    """Run `git -C root rev-parse --show-toplevel` once per resolved root and memoise the raw
+    subprocess result — returncode, stdout, stderr — for every caller that asks this exact
+    question.
+
+    `git_toplevel`, `git_can_speak_for` and `git_owns` each run this identical command today and
+    read the result three different ways; this is the one subprocess they share, not the three
+    interpretations, which stay in each function unchanged. A failure to run at all is memoised as
+    None, so an exception can never be mistaken for a cached success. Only `git_cannot_answer()` is
+    caught here — the same set each of the three callers already caught around this exact call —
+    so a caller that used to catch something wider around its own subprocess call still does,
+    because the exception simply propagates out of this one instead.
+    """
+    key = str(Path(root).resolve())
+    if key in _GIT_TOPLEVEL_PROBE:
+        return _GIT_TOPLEVEL_PROBE[key]
+    result = None
+    try:
+        result = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
+                                   stdin=_subprocess().DEVNULL, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=10)
+    except git_cannot_answer():
+        result = None
+    _GIT_TOPLEVEL_PROBE[key] = result
+    return result
+
+
 def git_toplevel(root):
     """The working-tree root of the repository `root` belongs to, or None when there is none.
 
@@ -2874,13 +2904,10 @@ def git_toplevel(root):
     False has two very different meanings — "no repository anywhere" and "a repository, higher up"
     — and a message that does not tell them apart sends the reader to check the wrong thing.
     """
-    try:
-        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-                                stdin=_subprocess().DEVNULL, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=10)
-        return (out.stdout.strip() or None) if out.returncode == 0 else None
-    except git_cannot_answer():
+    out = _git_toplevel_probe(root)
+    if out is None:
         return None
+    return (out.stdout.strip() or None) if out.returncode == 0 else None
 
 
 _GIT_SPEAKS = {}
@@ -3065,10 +3092,8 @@ def git_can_speak_for(root):
     if key in _GIT_SPEAKS:
         return _GIT_SPEAKS[key]
     answer = False
-    try:
-        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-                                stdin=_subprocess().DEVNULL, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=10)
+    out = _git_toplevel_probe(root)
+    if out is not None:
         # A git too old for `-C` fails on the OPTION, not on the directory — "unknown option"
         # rather than "not a repository". Recorded here because this is the first `git -C` any
         # session makes, so the answer costs nothing beyond the call already being made.
@@ -3078,8 +3103,6 @@ def git_can_speak_for(root):
         answer = out.returncode == 0 and bool(out.stdout.strip())
         if not answer:
             answer = git_owns(root)          # a bare repository, which has no working tree
-    except git_cannot_answer():
-        answer = False
     _GIT_SPEAKS[key] = answer
     return answer
 
@@ -3100,10 +3123,10 @@ def git_owns(root):
         return _GIT_OWNS[key]
     answer = False
     try:
-        out = _subprocess().run(["git", "-C", str(root), "rev-parse", "--show-toplevel"],
-                                capture_output=True, text=True, encoding="utf-8",
-                                errors="replace", timeout=10)
-        if out.returncode == 0 and out.stdout.strip():
+        out = _git_toplevel_probe(root)
+        if out is None:
+            answer = False
+        elif out.returncode == 0 and out.stdout.strip():
             answer = Path(out.stdout.strip()).resolve() == Path(root).resolve()
         else:
             # No working tree: a bare repository is still "this directory IS the repository", and
