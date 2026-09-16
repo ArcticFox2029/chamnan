@@ -36,8 +36,47 @@ import pointer  # noqa: E402
 import workspace as ws  # noqa: E402
 
 TOOLS = {"Read", "Edit", "Write", "NotebookEdit"}
+# 🎯 [R3.11.5, 2026-09-16] A search is not an open, and the two artefacts this plugin exists for are
+# never opened: `MAP.md`'s own header says never to read it whole, and `STATE.md` is scanned for the
+# section that applies. Both therefore registered ZERO opens, and `lib/fit.py` carries what that
+# cost — ranked on opens alone, the architecture index and the work-in-flight section were the first
+# two things dropped from the block.
+#
+# Separate from TOOLS on purpose: a Grep never renders a pointer, never runs the impact lookup, and
+# returns after one cheap comparison. Everything below the pointer machinery stays untouched.
+QUERY_TOOLS = {"Grep", "Glob", "Search"}
 MAX_MS = 120.0          # after the corpus scan; past this the impact lookup is skipped
 MAP_MAX_BYTES = 4_000_000
+
+
+def _note_query(payload):
+    """Record a SEARCH of one of chamnan's own artefacts. Cheap, and never renders anything.
+
+    Only fires when the search is actually pointed at the workspace — a repository-wide grep says
+    nothing about whether chamnan's own files were wanted, and counting it would make every session
+    look like a reader of everything.
+    """
+    root = ws.hook_root(payload)
+    wsdir = ws.workspace(root)
+    if wsdir is None:
+        return 0
+    inp = payload.get("tool_input") or {}
+    target = str(inp.get("path") or inp.get("file_path") or inp.get("glob") or "")
+    if not target or wsdir.name not in target:
+        return 0
+    rel = target.split(wsdir.name + "/", 1)[-1] if wsdir.name + "/" in target else target
+    try:
+        # The pattern is user text and can carry anything at all, so it goes through the same
+        # redactor as every other string this package writes down.
+        import redact
+        _q = redact.scrub(str(inp.get("pattern") or ""))
+    except Exception:                       # noqa: BLE001 — accounting must never break a tool call
+        _q = ""
+    try:
+        pointer.note_query(wsdir, payload.get("session_id") or "", rel, _q)
+    except Exception:                       # noqa: BLE001
+        pass
+    return 0
 
 
 def main():
@@ -49,7 +88,10 @@ def main():
         payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0
-    if (payload.get("tool_name") or "") not in TOOLS:
+    _tool = payload.get("tool_name") or ""
+    if _tool in QUERY_TOOLS:
+        return _note_query(payload)
+    if _tool not in TOOLS:
         return 0
 
     root = ws.hook_root(payload)

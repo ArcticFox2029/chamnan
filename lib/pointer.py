@@ -488,6 +488,30 @@ def note_opened(wsdir, session_id, rel_path):
     ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
 
 
+def note_query(wsdir, session_id, rel_path, pattern=""):
+    """Record that a session SEARCHED one of chamnan's own files, rather than opening it.
+
+    🎯 [R3.11.5, 2026-09-16] `note_opened` can only see a Read, and the two artefacts this plugin
+    exists for are not read — they are grepped. `MAP.md` is 428,000 characters and its own header
+    tells you never to read it whole; `STATE.md` is scanned for the section that applies. So both
+    register ZERO opens, and `lib/fit.py` carries the scar: ranked on that evidence alone, the
+    architecture index and the work-in-flight section were the first two things dropped from the
+    block.
+
+    Recorded as `"event": "query"`, deliberately DISTINCT from `"opened"`, and nothing ranks on it
+    yet. Mixing the two is how the defect above happened, and the instrument has to exist before
+    anybody can argue about what it means. What it answers that nothing else can: whether a store
+    with no opens is a store nobody needs, or one everybody reaches by search.
+
+    The pattern is truncated hard and passed through the redactor by the caller -- a search string
+    is user text and can carry anything.
+    """
+    rec = {"t": int(time.time()), "session": session_id, "path": rel_path, "event": "query"}
+    if pattern:
+        rec["q"] = pattern[:80]
+    ws.append_jsonl(Path(wsdir).parent, EVENT_LOG, rec, KEEP)
+
+
 # 🐛 [2026-09-09] `workspace.SELF_PRUNING_LOGS` exempts this file from the 7-day sweep, and
 # its own comment states the contract: "A log that bounds itself by record must say so here, or the
 # directory sweep bounds it by date instead." This file was on that list and nothing bounded it —

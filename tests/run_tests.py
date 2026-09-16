@@ -33278,6 +33278,77 @@ check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
 check("A FILESYSTEM FAILURE AT ANY STEP LEAVES THE DESTINATION WHOLE AND NAMES ITSELF",
       not _bad172,
       saw="the claim R2.6.1 refused fsync on does not hold:\n        " + "\n        ".join(_bad172))
+# ---- 173_a_search_of_the_index_is_recorded_as_one.py
+# ------------------ the two artefacts nobody opens are the two this plugin exists for
+# 🎯 [R3.11.5, 2026-09-16] `pointer.note_opened` can only see a Read, and `MAP.md` and `STATE.md` are
+# never read — `MAP.md`'s own header says never to read it whole at 428,000 characters, and
+# `STATE.md` is scanned for the section that applies. Both therefore registered ZERO opens.
+#
+# `lib/fit.py` carries what that cost: ranked on opens alone, the architecture index and the
+# work-in-flight section were the FIRST TWO THINGS DROPPED from the block. Its comment states the
+# rule that came out of it — "a store with no counter is not a store nobody uses; it is a store this
+# log cannot speak for" — and this is the log learning to speak for them.
+#
+# Recorded as `"event": "query"`, deliberately distinct from `"opened"`, and NOTHING RANKS ON IT
+# YET. Mixing the two is how that defect happened; the instrument comes first and the argument about
+# what it means comes after.
+import importlib as _im173
+import json as _js173
+import pathlib as _pl173
+import shutil as _sh173
+import subprocess as _sp173
+import sys as _sy173
+import tempfile as _tf173
+
+_PKG173 = _pl173.Path(_im173.import_module("redact").__file__).resolve().parent.parent
+_pointer173 = _im173.import_module("pointer")
+
+check("THE RECORDER FOR A SEARCH EXISTS AND IS SEPARATE FROM THE ONE FOR AN OPEN",
+      hasattr(_pointer173, "note_query") and hasattr(_pointer173, "note_opened"),
+      saw="pointer has %s" % sorted(n for n in dir(_pointer173) if n.startswith("note_")))
+
+_root173 = _pl173.Path(_tf173.mkdtemp(prefix="chamnan-query-"))
+_rows173 = []
+try:
+    _sp173.run(["git", "init", "-q"], cwd=_root173, capture_output=True)
+    (_root173 / "a.py").write_text("# a file that does a thing\n", encoding="utf-8")
+    _sp173.run([_sy173.executable, str(_PKG173 / "hooks" / "chamnan_session_start.py")],
+               input=_js173.dumps({"cwd": str(_root173), "hook_event_name": "SessionStart",
+                                   "session_id": "q-probe"}), capture_output=True, text=True)
+    # Three calls: a search OF the index, a search of the repository at large, and an ordinary open.
+    for _tool173, _inp173 in (
+            ("Grep", {"path": str(_root173 / ".chamnan" / "MAP.md"), "pattern": "def render"}),
+            ("Grep", {"path": str(_root173), "pattern": "unrelated"}),
+            ("Read", {"file_path": str(_root173 / ".chamnan" / "skills" / "x.md")})):
+        _sp173.run([_sy173.executable, str(_PKG173 / "hooks" / "chamnan_file_pointer.py")],
+                   input=_js173.dumps({"cwd": str(_root173), "session_id": "q-probe",
+                                       "tool_name": _tool173, "tool_input": _inp173}),
+                   capture_output=True, text=True)
+    _log173 = _root173 / ".chamnan" / "logs" / "pointer.jsonl"
+    if _log173.is_file():
+        for _l173 in _log173.read_text(encoding="utf-8").splitlines():
+            try:
+                _rows173.append(_js173.loads(_l173))
+            except ValueError:
+                pass
+finally:
+    _sh173.rmtree(_root173, ignore_errors=True)
+
+_q173 = [r for r in _rows173 if r.get("event") == "query"]
+_o173 = [r for r in _rows173 if r.get("event") == "opened"]
+print("      DETAIL  events recorded: %d query, %d opened" % (len(_q173), len(_o173)))
+
+check("A SEARCH OF THE INDEX IS RECORDED, WHICH IS THE ONE SIGNAL THIS LOG NEVER HAD",
+      any("MAP.md" in str(r.get("path")) for r in _q173),
+      saw="a Grep of MAP.md left no query event — the blind spot fit.py names is still open")
+
+check("...and a repository-wide search is NOT recorded, or every session looks like a reader",
+      len(_q173) == 1,
+      saw="%d query events for one workspace search and one repository-wide one" % len(_q173))
+
+check("...and an ordinary open is still recorded as an open, not reclassified",
+      any(str(r.get("path")).startswith("skills/") for r in _o173),
+      saw="adding the query path broke the open path: %s" % [r.get("path") for r in _o173])
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
