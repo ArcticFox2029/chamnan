@@ -714,9 +714,27 @@ BOILERPLATE_WINDOW = 240
 # needed, and it WOULD fire on `// A small HTTP client.` above a plain `import`, which is a real
 # description. The wording is the reliable signal: a comment whose entire content is the word
 # "dependencies" is never about the file.
+# 🐛 [R3.9.9, 2026-09-16] The `\s*` runs here were UNBOUNDED, and there are three of them with an
+# optional group between each pair -- the exact shape `redact.py`'s R16-3 work names as its own
+# worst case ("two adjacent `\s*` with an optional token between"). Measured before the fix, on a
+# leading comment reading `import` then spaces then one rejecting character:
+#
+#     2,000 spaces  153 ms | 4,000  560 ms | 8,000  2,374 ms   -- 4.2x per doubling, where 2 is linear
+#
+# `.strip()` upstream does not save it: it removes the leading and trailing run, not the interior
+# one, and pure-space input is the only case it defuses. A source file carrying such a comment makes
+# `chamnan-map` hang -- reachable from any repository, which is the whole class R3.8 was about.
+#
+# This was missed because the ReDoS audit was scoped to `redact.py`, the module somebody worried
+# about, rather than to the population of compiled patterns. `mapper.py` has 33 of them.
+# The-set-not-the-member, again, in the checks themselves.
+#
+# Bounded rather than restructured: four is already more consecutive spaces than any real import
+# label carries, and the rewrite is behaviour-identical on all fifteen cases tested -- eleven that
+# must match, four that must not. After: 0.0 ms at 8,000, 0.9x per doubling.
 IMPORT_LABEL = re.compile(
-    r"^(?:load(?:s|ing)?|require|import|include)?\s*(?:the\s+)?"
-    r"(?:module|external|internal|package|third[-\s]party|project|core|npm|node|composer|vendor)?\s*"
+    r"^(?:load(?:s|ing)?|require|import|include)?\s{0,4}(?:the\s{1,4})?"
+    r"(?:module|external|internal|package|third[-\s]party|project|core|npm|node|composer|vendor)?\s{0,4}"
     r"(?:dependencies|dependency|imports|requires|includes|autoloader|autoload)\b[\s.:;,-]*$", re.I)
 # Used only for the comparison against IMPORT_LABEL: a trailing doc tag of ANY name, not only the
 # handful DOC_TAG_TAIL knows. "Module dependencies. @private" and "Module dependencies. @api

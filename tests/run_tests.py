@@ -32873,6 +32873,84 @@ _src168 = _insp168.getsource(_fn168) if _fn168 else ""
 check("...and the map writer still applies both scrub and for_a_terminal",
       "for_a_terminal" in _src168 and "scrub" in _src168,
       saw="the map writer no longer applies both passes to the finished document")
+# ---- 169_every_pattern_in_the_indexer_stays_linear.py
+# ------------------ the indexer's regexes, not just the redactor's, measured for a quadratic curve
+# 🎯 [R3.9.9, 2026-09-16] Check 129 measures this curve for `scrub()`. It was scoped to `redact.py`
+# because that is the module anybody worried about. `mapper.py` compiles THIRTY-THREE patterns and
+# had no equivalent, and one of them was quadratic:
+#
+#   IMPORT_LABEL, on `import` + N spaces + one rejecting character
+#     2,000  153 ms | 4,000  560 ms | 8,000  2,374 ms   -- 4.2x per doubling, where 2 is linear
+#
+# Three unbounded `\s*` runs with an optional group between each pair: the same family R16-3 names
+# as its own worst case, in a different module. The-set-not-the-member, inside the checks.
+#
+# So this asserts the POPULATION. It derives every compiled pattern reachable from the module rather
+# than listing the one that failed, because a fix that lands on the measured member and leaves its
+# identical neighbours is the defect this file exists to catch.
+#
+# It measures the SHAPE, not a wall clock, for check 129's reason: a loaded machine makes every
+# number bigger, and the ratio between two sizes on the same machine is what says quadratic. The
+# bound is 129's own -- 3.5 per doubling, where linear is 2.
+import importlib as _im169
+import re as _re169
+import time as _t169
+
+_mapper169 = _im169.import_module("mapper")
+
+_pats169 = [(n, v) for n, v in vars(_mapper169).items() if isinstance(v, _re169.Pattern)]
+for _n169, _v169 in list(vars(_mapper169).items()):
+    if isinstance(_v169, dict):
+        for _k169, _vv169 in _v169.items():
+            if isinstance(_vv169, _re169.Pattern):
+                _pats169.append(("%s[%r]" % (_n169, _k169), _vv169))
+
+# A long run of one character class, then ONE character nothing accepts -- the shape that makes an
+# unanchored search restart from every position. Families, not the one input that happened to fail.
+_FAM169 = {"spaces": " ", "alnum": "a", "digits": "1", "dots": ".", "slashes": "/", "dashes": "-"}
+
+
+def _curve169(pat, ch):
+    out = []
+    for _n in (2000, 4000):
+        _s = ch * _n + "\x00"
+        _t0 = _t169.perf_counter()
+        pat.search(_s)
+        out.append(_t169.perf_counter() - _t0)
+    return out
+
+
+_slow169 = []
+for _name169, _p169 in _pats169:
+    for _fam169, _ch169 in _FAM169.items():
+        _a169, _b169 = _curve169(_p169, _ch169)
+        # Only a curve that is BOTH superlinear and already costly is a finding: a pattern taking
+        # microseconds can show any ratio at all, and reporting those is how a check becomes noise.
+        if _b169 > 0.02 and _a169 > 0 and _b169 / _a169 > 3.5:
+            _slow169.append("%s on %s: %.0f ms -> %.0f ms (x%.1f)"
+                            % (_name169, _fam169, _a169 * 1000, _b169 * 1000, _b169 / _a169))
+
+print("      DETAIL  compiled pattern(s) in the indexer measured: %d, over %d input famil(ies)"
+      % (len(_pats169), len(_FAM169)))
+for _x169 in _slow169:
+    print("      DETAIL  superlinear: %s" % _x169)
+
+check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
+      len(_pats169) >= 20,
+      saw="only %d compiled pattern(s) found in mapper — the derivation broke, and a green result "
+          "here would mean nothing" % len(_pats169))
+
+check("NO PATTERN IN THE INDEXER GOES QUADRATIC ON A LONG RUN AND ONE REJECTING CHARACTER",
+      not _slow169,
+      saw="a leading comment in any repository file can make chamnan-map hang:\n        "
+          + "\n        ".join(_slow169))
+
+# The member that failed, pinned by NAME as well as by the sweep above -- a sweep can be weakened by
+# a later refactor that stops reaching some patterns, and this one cannot be weakened quietly.
+check("...and IMPORT_LABEL specifically stays bounded, since it is the one that was quadratic",
+      all(_b <= 0.02 or _b / max(_a, 1e-9) <= 3.5
+          for _a, _b in [_curve169(_mapper169.IMPORT_LABEL, " ")]),
+      saw="IMPORT_LABEL is quadratic again on a run of spaces")
 # ---- 16_a_cut_section_never_ships_framing_only.py
 # ------------------------------------------- a section cut to its own signposts is worse than absent
 # 🐛 [2026-09-09] `_only_the_opening_block` refused a fragment only when it was a subsequence of the
