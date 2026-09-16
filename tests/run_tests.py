@@ -33349,6 +33349,78 @@ check("...and a repository-wide search is NOT recorded, or every session looks l
 check("...and an ordinary open is still recorded as an open, not reclassified",
       any(str(r.get("path")).startswith("skills/") for r in _o173),
       saw="adding the query path broke the open path: %s" % [r.get("path") for r in _o173])
+# ---- 174_a_new_user_is_told_the_workspace_belongs_in_git.py
+# ------------------ the one thing a user must do, said where they are when it matters
+# 🎯 [R1 agent 2 Q6, built 2026-09-16] chamnan writes `.chamnan/.gitignore` to exclude the volatile
+# parts of its own workspace — which only makes sense if the REST is committed — and then said so
+# nowhere a user looks. Measured on a fresh repository before the fix: `chamnan-map` printed nine
+# lines and none mentioned committing, `git status` read `?? .chamnan/`, and a grep for
+# "git add|worth committing" over `bin/`, `hooks/` and the bootstrap skill returned nothing a user
+# ever sees. The instruction existed once, in README prose, at the end of a section nobody reaches
+# in their first ten minutes.
+#
+# What missing it costs is everything: an uncommitted workspace means the next session on another
+# machine, the teammate who clones, and the CI checkout all start from nothing — the entire premise
+# of the tool failing silently while looking exactly like it working.
+#
+# Chosen over five other open decisions on the owner's rule: ask what the person USING it gains.
+# Four of the six were invisible to a user (report ids, citation resolution, fold markers, our own
+# repetition detector). This one is the difference between the product working and not.
+#
+# Said ONCE, on the run that creates the workspace, and only when the workspace has never been
+# committed — the same shape as the PATH notice beside it. Deliberately NOT in the session block:
+# the archive measured recurring advice there at about 1 acted on in 24.
+import importlib as _im174
+import pathlib as _pl174
+import shutil as _sh174
+import subprocess as _sp174
+import sys as _sy174
+import tempfile as _tf174
+
+_PKG174 = _pl174.Path(_im174.import_module("redact").__file__).resolve().parent.parent
+_MAP174 = _PKG174 / "bin" / "chamnan-map"
+_MARK174 = "not in git yet"
+
+
+def _run174(commit_first):
+    """A fresh repository, chamnan-map run, optionally committed, then run again."""
+    d = _pl174.Path(_tf174.mkdtemp(prefix="chamnan-commit-notice-"))
+    try:
+        _sp174.run(["git", "init", "-q"], cwd=d, capture_output=True)
+        (d / "app.py").write_text("# the entry point\ndef main():\n    pass\n", encoding="utf-8")
+        _sp174.run([_sy174.executable, str(_MAP174)], cwd=d, capture_output=True)
+        if commit_first:
+            _sp174.run(["git", "add", "-A"], cwd=d, capture_output=True)
+            _sp174.run(["git", "-c", "user.email=a@b", "-c", "user.name=a", "commit", "-qm", "ws"],
+                       cwd=d, capture_output=True)
+        # Removing the map makes the next run a "first run" again, which is what gates the notice.
+        (d / ".chamnan" / "MAP.md").unlink()
+        r = _sp174.run([_sy174.executable, str(_MAP174)], cwd=d, capture_output=True, text=True)
+        return r.stdout
+    finally:
+        _sh174.rmtree(d, ignore_errors=True)
+
+
+_never174 = _run174(False)
+_done174 = _run174(True)
+
+check("A USER WHOSE WORKSPACE IS NOT IN GIT IS TOLD SO, ONCE, WHERE IT JUST APPEARED",
+      _MARK174 in _never174,
+      saw="a fresh workspace produced no notice — the one instruction that decides whether this "
+          "tool works for the next session is still only in README prose")
+
+# The other half, and the reason the first two attempts at this were wrong. "Any `??` under the
+# workspace" fires on a COMMITTED repository too, because a healthy workspace grows new state files
+# between runs — so the notice told somebody who had already done it to do it. A notice that cries
+# wolf is the notice people learn to skip, which is worse than not having one.
+check("...and a user who has ALREADY committed it is not told to do it again",
+      _MARK174 not in _done174,
+      saw="the notice fired at a workspace that is already in git — ordinary state churn was read "
+          "as 'never committed'")
+
+check("...and the notice names the command, not just the problem",
+      _MARK174 not in _never174 or "git add" in _never174,
+      saw="the notice says the workspace is not in git and does not say what to type")
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build

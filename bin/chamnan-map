@@ -1444,6 +1444,55 @@ def main(argv):
         else:
             print(f"    export PATH=\"{_bindir}:$PATH\"")
 
+    # 🐛 [R1 agent 2 Q6, said once here 2026-09-16] chamnan writes `.chamnan/.gitignore` to exclude
+    # the volatile parts of its own workspace — which only makes sense if the REST is committed —
+    # and then never says so anywhere a user looks. Measured on a fresh repository: `chamnan-map`
+    # prints nine lines and none mentions committing, `git status` reads `?? .chamnan/`, and
+    # `grep -rn "git add|worth committing"` over `bin/`, `hooks/` and the bootstrap skill returns
+    # nothing a user ever sees. The instruction exists once, in README prose, at the end of a
+    # section nobody reaches in their first ten minutes.
+    #
+    # What it costs to miss: everything. An uncommitted `.chamnan/` means the next session on
+    # another machine, the teammate who clones, and the CI checkout all get nothing — which is the
+    # entire premise of the tool, failing silently and looking exactly like it working.
+    #
+    # Same shape as the PATH notice above, and for the same reason: once, on the run that creates
+    # the workspace, and only when git really says it is untracked. NOT in the session block — the
+    # archive is clear that recurring advice there is acted on about 1 time in 24, while this is a
+    # one-time fact about a directory that has just this moment appeared.
+    if _first_run:
+        # 🐛 Two corrections, both caught by testing rather than reading. First, `WSNAME` and
+        # `ws.git_status_snapshot` were invented names; the real ones are `ws.WORKSPACE_DIRNAME` and
+        # `ws.git_status`. Second — and this is the one that mattered — `ws.git_status` is a CACHED
+        # snapshot, taken early in the run, BEFORE this command writes the workspace. Asking it here
+        # returns the state from before `.chamnan/` existed, so the notice fired at a user who had
+        # committed the workspace already, which is precisely the cry-wolf failure that makes a
+        # notice worth ignoring.
+        #
+        # Asked directly, scoped to the one directory, at the moment the answer is needed.
+        # And the THIRD correction, which is the one that made it right. "Any `??` under the
+        # workspace" is too broad a question: a workspace that IS committed still grows new state
+        # files between runs, so `?? .chamnan/state/` appears on a perfectly healthy repository and
+        # the notice fired at somebody who had done exactly what it was about to ask them to do.
+        #
+        # The real question is narrower and has one answer: has ANYTHING in the workspace ever been
+        # committed? `git ls-files` returns nothing only when it never has, which cannot be
+        # confused with ordinary state churn.
+        _wsname = ws.WORKSPACE_DIRNAME
+        _untracked = False
+        try:
+            _q = subprocess.run(["git", "ls-files", "--", _wsname],
+                                cwd=str(root), capture_output=True, text=True, timeout=5)
+            _untracked = _q.returncode == 0 and not _q.stdout.strip()
+        except Exception:                      # noqa: BLE001 — a missing signal is not an error
+            _untracked = False
+        if _untracked:
+            print(f"\n  `{_wsname}/` is not in git yet, and it is meant to be. Everything in it is")
+            print(f"  plain markdown written for the next session — on another machine, or for")
+            print(f"  whoever clones this next. Uncommitted, they all start from nothing:")
+            print(f"    git add {_wsname} && git commit -m \"chamnan: the workspace\"")
+            print(f"  The volatile parts are already excluded by {_wsname}/.gitignore.")
+
     if total == 0:
         # 🐛 [2026-09-08] `pct = have / total * 100 if total else 0` makes a repository with nothing
         # indexable read as 0% documented, which satisfies `pct < 70` exactly as a real, badly
