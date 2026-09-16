@@ -2305,4 +2305,18 @@ def _render(files, root):
         quick = text.split("## Quick Index", 1)[-1].split("\n---", 1)[0]
         if tokens.estimate(quick) > _READ_IN_FULL_CEILING:
             text = text.replace(_HOW_TO_READ, _TOO_BIG_TO_READ_IN_FULL, 1)
-    return redact.scrub(text)
+    # 🎯 [R3.8.1, 2026-09-16] `for_a_terminal` as well as `scrub`, because the two answer different
+    # questions and this file needed both. `scrub` hides credentials; `for_a_terminal` drops the
+    # characters that are not on screen at all — the Tag block, variation selectors, ZWSP, the BOM,
+    # the bidi EMBEDDING controls. Until now those reached the hook's output and were stripped
+    # there, while the identical text written to `MAP.md` kept them: a committed file, read by
+    # people and by agents, carrying instructions nobody can see in a diff. The module's own comment
+    # at 2807 reproduces that attack through `scrub()` "untouched", and the file this function
+    # writes was the one place still untouched.
+    #
+    # It is free on real content, which is why it is safe on a file whose whole job is preserving
+    # what the source said: over the published corpus — 804 files, 8 writing systems, 23 languages,
+    # emoji in comments — it changes **0 of 392,293 characters**. What it would change is what
+    # nobody wrote on purpose. ZWJ, ZWNJ and the bidi MARKS are deliberately not in that table; see
+    # `redact._TERMINAL_SAFE`, which argues that case at length and is right.
+    return redact.for_a_terminal(redact.scrub(text))
