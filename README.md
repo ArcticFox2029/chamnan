@@ -2423,6 +2423,21 @@ chamnan never writes outside the repository it is working in, so there is nothin
 elsewhere. Any `.chamnan/` directories stay where they are until you delete them — which is
 deliberate: `MAP.md` and `STATE.md` are useful to whoever opens the repo next, plugin or no plugin.
 
+**If you committed `.chamnan/`, deleting the directory does not remove it from your history.** It
+stays in every commit that carried it, and `git log -- .chamnan` will still show them. Taking it out
+of history for real means rewriting it — `git filter-repo`, or BFG — which changes every commit hash
+from the first touched one onward and forces everyone else on the repository to re-clone. That is a
+real cost and it is worth knowing before you commit the workspace rather than after, which is why it
+is written here rather than left for you to discover. Most people should simply leave the directory
+in place: it is text, it is small, and nothing reads it once the plugin is gone.
+
+One thing a left-behind workspace cannot tell the next person is when it stopped being true.
+`MAP.md` describes the code as it was the last time it was built, and one nobody has rebuilt for a
+year reads exactly as confident as one rebuilt this morning. `chamnan-report` dates every knowledge
+store it lists — that is where you see how long ago anyone touched them — but the map carries no
+such line, so the only way to know it is current is to run `chamnan-map` again. If you are handing
+the repository to someone else, rebuild first, or say in the handover that you did not.
+
 ### Removing the Git hook
 
 The hook is a block appended to `.git/hooks/pre-commit`, fenced by markers:
