@@ -30,7 +30,7 @@ little new surface; the work went into what was quietly going wrong underneath i
 |---|---|---|
 | Sections of your workspace delivered to the session | 5 of 9 | **9 of 9** |
 | Rules delivered | 13 of 16 | **16 of 16** |
-| Tokens that costs | 4,189 | **4,161** |
+| Tokens it costs | 4,189 | **4,161** |
 | Prompt-cacheable prefix, in the measured case | 4.4% | **100%** |
 
 **More context, for fewer tokens.** Those are the same measurement: the block was dropping the
