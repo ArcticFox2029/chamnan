@@ -33186,6 +33186,98 @@ check("...and a REAL firing writes the id the host gave it, not just an argument
       _joined171 is not None,
       saw="the hook ran and no record in its own log carried the session id it was handed — the "
           "field exists and the call site does not fill it, which is the failure this replaces")
+# ---- 172_the_atomic_writer_survives_a_failure_at_every_step.py
+# ------------------ fail the Nth filesystem call, for every N, and the file is still whole
+# 🎯 [R3.6.2, 2026-09-16] SQLite's own I/O-error test re-runs an operation failing the Nth syscall
+# for increasing N. No scheduler, no threads, no framework — which is why R3.6 proposed it and
+# argued AGAINST building FoundationDB-style deterministic simulation, correctly: a simulation
+# framework is a second runtime under a stdlib-only contract.
+#
+# It answers something this package had asserted and never tested. `atomic_write_text` is the writer
+# behind every store, and `R2.6.1` REFUSED adding an fsync to it on the trade — a decision that
+# rests entirely on the claim that a failure anywhere in the sequence leaves the destination whole.
+# Nobody had made a failure happen.
+#
+# Four properties, at every injection point, and they are the whole of what "atomic" has to mean
+# here:
+#   * it never RAISES — a store that cannot be written must not take the session down
+#   * the destination is the OLD content or the NEW content, never something in between
+#   * no `.tmp` staging file is left behind for a later reader to trip over
+#   * when it fails it NAMES the failure, because "could not write" and "permission refused" need
+#     opposite fixes and used to arrive as one sentence
+import os as _os172
+import pathlib as _pl172
+import shutil as _sh172
+import tempfile as _tf172
+import importlib as _im172
+
+_ws172 = _im172.import_module("workspace")
+_REAL172 = {"replace": _os172.replace, "chmod": _os172.chmod,
+            "mkdir": _pl172.Path.mkdir, "open": _pl172.Path.open}
+
+
+def _fail_at172(n, dest):
+    """Run one write with the Nth filesystem call failing. Restores every patch, always."""
+    _state = {"i": 0}
+
+    def _wrap(fn):
+        def _inner(*a, **k):
+            _state["i"] += 1
+            if _state["i"] == n:
+                raise OSError(28, "No space left on device")
+            return fn(*a, **k)
+        return _inner
+
+    _os172.replace = _wrap(_REAL172["replace"])
+    _os172.chmod = _wrap(_REAL172["chmod"])
+    _pl172.Path.mkdir = _wrap(_REAL172["mkdir"])
+    _pl172.Path.open = _wrap(_REAL172["open"])
+    try:
+        _ws172.LAST_WRITE_ERROR[:] = []
+        try:
+            return _ws172.atomic_write_text(dest, "NEW CONTENT\n"), None
+        except BaseException as _e:                       # noqa: BLE001 — the point is catching it
+            return None, type(_e).__name__
+    finally:
+        # 🐛 A helper that swaps a module must swap it back: an earlier probe in this repository left
+        # a patched module in place and an unrelated later check reported a false failure.
+        _os172.replace, _os172.chmod = _REAL172["replace"], _REAL172["chmod"]
+        _pl172.Path.mkdir, _pl172.Path.open = _REAL172["mkdir"], _REAL172["open"]
+
+
+_bad172, _points172 = [], 0
+for _n172 in range(1, 9):
+    _d172 = _pl172.Path(_tf172.mkdtemp(prefix="chamnan-ioerr-"))
+    try:
+        _dest172 = _d172 / "store.md"
+        _dest172.write_text("ORIGINAL\n", encoding="utf-8")     # written BEFORE the patches go on
+        _ok172, _raised172 = _fail_at172(_n172, _dest172)
+        _points172 += 1
+        _body172 = _dest172.read_text(encoding="utf-8").strip() if _dest172.is_file() else "<GONE>"
+        _left172 = [p.name for p in _d172.iterdir() if ".tmp" in p.name]
+        if _raised172:
+            _bad172.append("failing call %d: raised %s instead of returning" % (_n172, _raised172))
+        if _body172 not in ("ORIGINAL", "NEW CONTENT"):
+            _bad172.append("failing call %d: destination is %r — neither the old nor the new content"
+                           % (_n172, _body172[:40]))
+        if _left172:
+            _bad172.append("failing call %d: left staging file(s) %s" % (_n172, _left172))
+        if _ok172 is False and not _ws172.LAST_WRITE_ERROR:
+            _bad172.append("failing call %d: refused without naming why" % _n172)
+    finally:
+        _sh172.rmtree(_d172, ignore_errors=True)
+
+print("      DETAIL  injection points exercised: %d" % _points172)
+for _x172 in _bad172:
+    print("      DETAIL  %s" % _x172)
+
+check("THE POPULATION IS NOT EMPTY, SO A PASS IS NOT A PASS OVER NOTHING",
+      _points172 >= 8,
+      saw="only %d injection point(s) ran" % _points172)
+
+check("A FILESYSTEM FAILURE AT ANY STEP LEAVES THE DESTINATION WHOLE AND NAMES ITSELF",
+      not _bad172,
+      saw="the claim R2.6.1 refused fsync on does not hold:\n        " + "\n        ".join(_bad172))
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
