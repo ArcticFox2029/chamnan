@@ -26,7 +26,7 @@ people worry about is not present here.
 | **Third-party code** | None. Python standard library only, enforced by the test suite. There is no dependency tree to compromise. |
 | **Background execution** | None. No daemon, no server, no scheduled job. It runs only when a hook fires or you type a command. |
 | **Writes** | Everything it writes goes inside `.chamnan/`, as plain markdown and JSON you can read and delete. The single exception is an optional Git pre-commit hook, installed only if you say yes. |
-| **Your source** | Read, never rewritten. The index copies comments you already wrote rather than generating them. |
+| **Your source** | Read-only during indexing and hooks. The optional `commenter` agent can add one opening comment line to a source file when explicitly asked; otherwise the index copies comments you already wrote rather than generating them. |
 | **Reads outside the repository** | `chamnan-report` reads Claude Code's own transcript directory to count tokens. Nothing else leaves the repository, and nothing outside it is written. |
 
 The chain that would have to complete for a repository's secrets to reach someone else — read,
