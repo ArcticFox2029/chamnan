@@ -60,10 +60,17 @@ MAX_RECORDS = 2_000
 # warning worthless.
 _FAMILIES = ("haiku", "sonnet", "opus", "fable", "mythos")
 
-# 🐛 [2026-09-17] These were matched with `fam in low`, which is a substring test: `opus` is inside
-# `corpus`, and this project has a `chamnan-corpus` repository whose name can reach a `model:` field.
-# The cost was a warning accusing a correctly-pinned agent of running the wrong model -- a wrong
-# accusation is worse than a missed one here, because the run has already happened either way.
+# 🐛 [2026-09-17] These were matched with `fam in low`, a substring test, so any longer word that
+# CONTAINS a family name resolved to that family. Verified against the pre-fix function: `opuscule`,
+# `fabled`, `haikus-and-sonnets`, `unsonnetlike` and `mythoslike` all leaked. The cost was a warning
+# accusing a correctly-pinned agent of running the wrong model -- a wrong accusation is worse than a
+# missed one here, because the run has already happened either way.
+#
+# 🐛 The example this was FIRST written around was `opus` inside `corpus`, which is false and was
+# never checked: `corpus` is c-o-r-p-u-s, with an `r` between the `o` and the `p`. It was asserted in
+# a commit title, in this comment and in a check header before anybody ran `"opus" in "corpus"`. The
+# defect class is real and the fix stands; the story attached to it was invented. Run the two-second
+# check on the EXAMPLE, not only on the rule.
 _SEGMENT = re.compile(r"[^a-z]+")
 
 
@@ -73,7 +80,7 @@ def _family(name):
     Matched on whole segments rather than as a substring. Every real id separates the family with a
     punctuation character -- `claude-opus-5`, `claude-haiku-4-5-20251001`, `claude-opus-4-5@20251101`,
     `anthropic.claude-opus-4-5-v1:0` -- so splitting loses nothing, while a substring test reads
-    `opus` out of `corpus` and accuses a correctly-pinned agent of a mismatch it never had.
+    `fable` out of `fabled` and accuses a correctly-pinned agent of a mismatch it never had.
     """
     low = (name or "").lower()
     parts = set(_SEGMENT.split(low))

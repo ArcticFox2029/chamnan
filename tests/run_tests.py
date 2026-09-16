@@ -33589,10 +33589,17 @@ check("EVERY DATED DEFECT RECORD CARRIES A DATE THAT EXISTS AND IS NOT IN THE FU
 # ------------------ a model family is read off whole segments, never as a substring
 # 🐛 [R4.4.6, 2026-09-17] `_family()` in `chamnan_agent_result.py` decided which model family a pin
 # named with `fam in low`, a substring test over `("haiku", "sonnet", "opus", "fable", "mythos")`.
-# `opus` is inside `corpus`, and this project ships a `chamnan-corpus` repository whose name can
-# reach a `model:` field -- so a correctly-pinned agent could be accused of a mismatch it never had.
-# A wrong accusation is the worse direction here: the run has already finished by the time this hook
-# speaks, so a missed mismatch costs a warning while a false one costs trust in every warning.
+# so any longer word CONTAINING a family name resolved to that family. Verified against the pre-fix
+# function: `opuscule`, `fabled`, `haikus-and-sonnets`, `unsonnetlike` and `mythoslike` all leaked --
+# five of the seven decoys below. A wrong accusation is the worse direction here: the run has already
+# finished by the time this hook speaks, so a missed mismatch costs a warning while a false one costs
+# trust in every warning.
+#
+# 🐛 `corpus` and `chamnan-corpus` head the decoy list because this check was first written around
+# the claim that `opus` is inside `corpus`. It is not -- there is an `r` between the `o` and the `p`,
+# and nobody ran `"opus" in "corpus"` before it reached a commit title. They stay as decoys, because
+# they are exactly the words a reader expects to collide and it is worth pinning that they do not,
+# but the assertion is carried by the other five.
 #
 # The round that found it was measuring something else -- whether the word "again" is precise enough
 # to trigger on in a commit subject. It is not: over 746 subjects, `"again" in s` matched 9 and 7 of
