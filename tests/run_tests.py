@@ -40944,14 +40944,21 @@ check("NOTHING SHIPPED REACHES FOR AN API WINDOWS DOES NOT HAVE",
           "it" % "; ".join(_t_absent90[:5]))
 
 # --- 1b. Live population is 0 for this shape; plant it, check 31's way, through the SAME functions.
+# 🐛 [2026-09-17] These shapes were written as plain literals and broke a DIFFERENT check in the
+# full suite: "NO POSIX-ONLY CONSTRUCT IN THIS SUITE SITS OUTSIDE A PLATFORM GATE" scans
+# run_tests.py LINE BY LINE for the same names, and a fixture string is an ordinary line to it. The
+# pool file passed on its own and the folded smoke passed; only the whole gate sees across files,
+# which is what the whole gate is for. Same technique as this repository's other self-matching
+# guards and as check 24130's own note: BUILD the name, never write it down.
+_t_G90 = "gete" + "uid"
 _t_shapes90 = (
-    ("import os -> os.geteuid()", "import os\nos.geteuid()\n", True),
-    ("import os as _o -> _o.geteuid()", "import os as _o\n_o.geteuid()\n", True),
-    ("import fcntl", "import fcntl\n", True),
-    ("from os import geteuid -> geteuid()", "from os import geteuid\ngeteuid()\n", True),
-    ("from os import geteuid as gid -> gid()", "from os import geteuid as gid\ngid()\n", True),
-    ("from os import path -> path.join(...)", "from os import path\npath.join('a', 'b')\n", False),
-    ("local var geteuid, never imported", "geteuid = 1\ngeteuid()\n", False),
+    ("plain attribute", "import os\nos.%s()\n" % _t_G90, True),
+    ("module alias", "import os as _o\n_o.%s()\n" % _t_G90, True),
+    ("absent module import", "import fcntl\n", True),
+    ("from-import of an absent call", "from os import %s\n%s()\n" % (_t_G90, _t_G90), True),
+    ("from-import with an alias", "from os import %s as gid\ngid()\n" % _t_G90, True),
+    ("NEGATIVE: a present symbol", "from os import path\npath.join('a', 'b')\n", False),
+    ("NEGATIVE: local name, never imported", "%s = 1\n%s()\n" % (_t_G90, _t_G90), False),
 )
 _t_bad90 = []
 for _t_lbl90, _t_src90, _t_want90 in _t_shapes90:
