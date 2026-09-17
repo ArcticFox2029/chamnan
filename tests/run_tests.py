@@ -10215,6 +10215,10 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
         if _tl.lstrip().startswith("#"):
             continue
         _gitcalls += _tl.count('["git",')
+# LOWERED 2026-09-17, the first time this bound has gone DOWN: R6.3 gave `git_toplevel`,
+# `git_can_speak_for` and `git_owns` one shared memoised `rev-parse --show-toplevel` rather than a
+# subprocess each — 24 sites to 23, and 7 git spawns per session start to 6. The fifteen PURPOSES
+# are unchanged, which is why only one of the sentence's two numbers moved.
 # Raised 2026-09-07: `git_can_speak_for` and `git_toplevel` are two new sites, and the paragraph
 # went from nine purposes to ten in the same commit — the event this check exists to force.
 # Raised again the same day for two FALLBACK sites that add no purpose: `git_is_installed` now asks
@@ -10237,13 +10241,13 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # lib/workspace.py quotes `["git", ...]` in prose, and a check that reads its own source will
 # match itself. 24 is the count of real call sites and did not move.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 24, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 23, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-four call sites serve fifteen read-only paths"
+      and "Twenty-three call sites serve fifteen read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -33771,6 +33775,83 @@ if _needles178:
     print("      DETAIL  %d tracked file(s) swept for %d form(s) of this host's name, 0 found"
           % (_read178, len(_needles178)))
     _ = _sy178
+# ---- 179_one_git_probe_serves_three_readers_without_merging_them.py
+# ------------------ one git probe serves three readers, and none of them reads another's answer
+# 🎯 [R6.3, 2026-09-17] `git_toplevel`, `git_can_speak_for` and `git_owns` each ran
+# `git -C <root> rev-parse --show-toplevel` separately. Measured with a shim ahead of git on PATH:
+# one session start spawned 7 git subprocesses, two of them that identical command. They now share
+# one memoised subprocess result and nothing else -- 6 spawns, 1 of them the probe.
+#
+# The risk this check exists for is the merge going one step too far. The three readings are NOT
+# interchangeable: `git_can_speak_for` scans STDERR for "unknown option" to catch a git too old for
+# `-C`, `git_owns` compares STDOUT to the root and falls back through `--absolute-git-dir` for a
+# bare repository, and `git_toplevel` returns the string itself. Sharing the process is the change;
+# sharing the interpretation would be a defect, and it would look like a passing refactor.
+import importlib as _im179
+import inspect as _ins179
+import pathlib as _pl179
+
+_ws179 = _im179.import_module("workspace")
+_src179 = _pl179.Path(_ws179.__file__).read_text(encoding="utf-8", errors="replace")
+
+check("THE SHARED PROBE EXISTS AND IS MEMOISED",
+      callable(getattr(_ws179, "_git_toplevel_probe", None))
+      and isinstance(getattr(_ws179, "_GIT_TOPLEVEL_PROBE", None), dict),
+      saw="workspace must expose _git_toplevel_probe() and a dict to memoise it in; without both, "
+          "the three callers are back to a subprocess each and this check is measuring nothing")
+
+# Derived from the source rather than from a list, so a fourth caller added later is covered.
+_callers179 = ("git_toplevel", "git_can_speak_for", "git_owns")
+_own179 = []
+for _name179 in _callers179:
+    _fn179 = getattr(_ws179, _name179, None)
+    if _fn179 is None:
+        _own179.append("%s is gone" % _name179)
+        continue
+    _body179 = _ins179.getsource(_fn179)
+    if "rev-parse" in _body179 and "--show-toplevel" in _body179 and "_git_toplevel_probe" not in _body179:
+        _own179.append("%s still spawns its own --show-toplevel" % _name179)
+
+check("NO CALLER STILL RUNS ITS OWN --show-toplevel",
+      not _own179, saw="; ".join(_own179))
+
+# Each reading survives. These are the three distinctions that would vanish in a careless merge.
+_speak179 = _ins179.getsource(_ws179.git_can_speak_for)
+_owns179 = _ins179.getsource(_ws179.git_owns)
+_top179 = _ins179.getsource(_ws179.git_toplevel)
+
+check("git_can_speak_for STILL READS STDERR FOR THE OLD-GIT CASE",
+      "unknown option" in _speak179 and "stderr" in _speak179,
+      saw="the `-C`-too-old detection reads stderr; a merge that kept only stdout would drop it "
+          "silently and every old-git user would be told their directory is not a repository")
+
+check("git_owns STILL HAS ITS BARE-REPOSITORY FALLBACK",
+      "--absolute-git-dir" in _owns179 or "--git-dir" in _owns179,
+      saw="a bare repository has no working tree, so --show-toplevel alone answers wrongly for it")
+
+check("git_toplevel STILL RETURNS THE PATH RATHER THAN A BOOLEAN",
+      "stdout" in _top179 and "return" in _top179,
+      saw="it exists so a refusal can NAME the repository the caller is in")
+
+# A failure to run must not be cacheable as a success. Probed through the real memo.
+_probe179 = _ws179._git_toplevel_probe
+_missing179 = "/nonexistent-%s-xyz" % __name__.replace(".", "-")
+_r1_179 = _probe179(_missing179)
+_r2_179 = _probe179(_missing179)
+check("A PATH THAT CANNOT BE PROBED ANSWERS THE SAME WAY TWICE",
+      _r1_179 == _r2_179 or (_r1_179 is None and _r2_179 is None),
+      saw="first call %r, second call %r -- a memo that stores a failure differently from how it "
+          "recomputes it is a cache that changes the answer" % (_r1_179, _r2_179))
+check("...AND ALL THREE READERS AGREE IT IS NOT A REPOSITORY",
+      _ws179.git_toplevel(_missing179) is None
+      and _ws179.git_can_speak_for(_missing179) is False
+      and _ws179.git_owns(_missing179) is False,
+      saw="toplevel=%r speak=%r owns=%r for a path that does not exist"
+          % (_ws179.git_toplevel(_missing179), _ws179.git_can_speak_for(_missing179),
+             _ws179.git_owns(_missing179)))
+
+print("      DETAIL  %d caller(s) share one probe, each keeping its own reading" % len(_callers179))
+_ = _src179
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
@@ -33846,6 +33927,83 @@ check("both hook paths that remove the index before shrink runs record it",
       _t_sites == 2, saw=f"{_t_sites} recording site(s), expected 2")
 check("...and the hook hands that list to shrink",
       "absent=" + _t_marker in _t_hook)
+# ---- 180_the_suite_guard_can_tell_a_first_run_from_a_wiped_memory.py
+# ------------------ the guard against a shrinking suite can tell a first run from a wiped memory
+# 🎯 [R6.1 and R6.2, 2026-09-17] `smoke_the_folded_checks.py` is the guard that notices when the
+# generated suite silently loses checks. Two holes were found in it on the same night, and both had
+# the same shape: the guard could not tell "nothing recorded yet" from "the record is broken".
+#
+#   R6.1  Its floor counted `# ---- <name>.py` MARKS, and seven pool files carry none -- their
+#         checks sit at bytes 1,613,800-1,631,809 while the first mark is at 1,634,709, entirely
+#         outside the MARK..END region the fold manages. Drop one and the count does not move.
+#         Fixed by verifying every pool file by CONTENT against the whole suite source.
+#   R6.2  A floor key that was RENAMED made `floor.get(...)` return None, and the first branch of
+#         `_check_floor` is "no prior record -- adopt this run, silently". So the guard against a
+#         shrinking suite quietly adopted whatever it found as the new baseline.
+#
+# This check is here because that tool guards the suite and the suite does not guard the tool. It
+# asserts the two distinctions by SOURCE, because running it takes about eight minutes.
+#
+# 🐛 [2026-09-17] Written first as `Path(__file__).parent.parent / "smoke_the_folded_checks.py"`,
+# which is wrong once folded: `__file__` is then the SUITE's path inside the plugin, and the tool
+# lives in a WORKSPACE. It failed loudly rather than passing over nothing, which is the one thing it
+# got right. The guard is workspace-only and the plugin ships without one, so it takes the same
+# route this suite already uses for that: CHAMNAN_LIVE_WORKSPACE, set by the owner, skipped with a
+# line that SAYS it skipped for everybody else. The suite's own comment on that pattern records two
+# blocks that used `ROOT.parent.parent` and passed for weeks only because the author's clone
+# happened to sit inside another chamnan workspace.
+import os as _os180
+import pathlib as _pl180
+import re as _re180
+
+_env180 = _os180.environ.get("CHAMNAN_LIVE_WORKSPACE", "").strip()
+_TOOL180 = (_pl180.Path(_env180) / ".chamnan" / "tools" / "smoke_the_folded_checks.py"
+            if _env180 else None)
+if _TOOL180 is None:
+    skip("  [SKIP] fold-guard source check — set CHAMNAN_LIVE_WORKSPACE=<repo with a .chamnan> "
+         "to run it")
+elif not _TOOL180.is_file():
+    skip("  [SKIP] fold-guard source check — no .chamnan/tools/smoke_the_folded_checks.py "
+         "under %s" % _env180)
+
+if _TOOL180 is not None and _TOOL180.is_file():
+    _t180 = _TOOL180.read_text(encoding="utf-8", errors="replace")
+
+    # R6.2 -- an absent file stays silent, a present-but-incomplete file is loud.
+    check("A FLOOR FILE WITH A MISSING KEY IS REFUSED RATHER THAN ADOPTED",
+          "_FLOOR_KEYS" in _t180 and _re180.search(r"if floor:\s*\n\s*_floor_missing", _t180)
+          and "SystemExit(1)" in _t180,
+          saw="the guard must name the missing key and exit rather than re-baselining; without "
+              "`if floor:` gating it, a fresh install would nag on every first run instead")
+
+    check("...AND THE FOUR EXPECTED KEYS ARE NAMED ONCE, NOT REPEATED PER CALL SITE",
+          _t180.count("_FLOOR_KEYS = ") == 1
+          and all(k in _t180 for k in ("max_checks", "max_checks_date", "max_files", "max_files_date")),
+          saw="a key list written twice drifts, which is how the shape changed in the first place")
+
+    # R6.1 -- content verification covers the pool files the mark count cannot see.
+    check("EVERY POOL FILE IS VERIFIED BY CONTENT, NOT ONLY BY ITS MARK",
+          "_content_needle" in _t180 and "_no_needle" in _t180,
+          saw="the mark count is blind to any file folded in before the mark convention existed; "
+              "content verification is what covers them")
+
+    check("...AND THE CONTENT SEARCH LOOKS AT THE WHOLE SUITE, NOT ONLY THE FOLDED REGION",
+          _re180.search(r"_needle\s+not\s+in\s+src", _t180) is not None,
+          saw="searching `block` alone reports the seven pre-convention files as missing on every "
+              "clean run -- measured, it read 170 of 177 and named all seven as failures")
+
+    check("...AND IT REFUSES RATHER THAN REPORTING CLEAN WHEN IT CANNOT SEE THE POOL",
+          "REFUSING content verification" in _t180,
+          saw="an empty or tiny pool is a fact about the scan, not about the suite; this file "
+              "already carries a defect record about a blind-spot report that went blind")
+
+    # Both fixes are only meaningful if the tool still fails the run when they fire.
+    check("A CONTENT FAILURE REACHES THE EXIT CODE",
+          _re180.search(r"SystemExit\(1 if \(failed or _content_fail\) else 0\)", _t180) is not None,
+          saw="a guard that prints a failure and exits 0 is a guard nothing is gated on")
+
+    print("      DETAIL  guard source checked for both 2026-09-17 distinctions: "
+          "missing key vs missing file, and content vs mark")
 # ---- 18_a_pointer_does_not_repeat_the_title_above_it.py
 # ------------------------------------------- the reader is looking at the title; give them the path
 # 🐛 [2026-09-09] Each trimmed rule ended with "_…the rest of **<full title>** is in `<path>`._" and

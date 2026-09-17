@@ -1481,8 +1481,14 @@ def main(argv):
         _wsname = ws.WORKSPACE_DIRNAME
         _untracked = False
         try:
+            # 🐛 [2026-09-17] `text=True` with no `encoding=` decodes with the locale default, which
+            # on a non-UTF-8 console is not UTF-8 and raises on the first path with a non-ASCII byte
+            # in it. Every other subprocess in this package names both; this one was added on
+            # 2026-09-16 and did not, which the suite's own "every decoded subprocess names its
+            # encoding" check caught the first time the full gate ran after it.
             _q = subprocess.run(["git", "ls-files", "--", _wsname],
-                                cwd=str(root), capture_output=True, text=True, timeout=5)
+                                cwd=str(root), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=5)
             _untracked = _q.returncode == 0 and not _q.stdout.strip()
         except Exception:                      # noqa: BLE001 — a missing signal is not an error
             _untracked = False
@@ -1490,7 +1496,13 @@ def main(argv):
             print(f"\n  `{_wsname}/` is not in git yet, and it is meant to be. Everything in it is")
             print(f"  plain markdown written for the next session — on another machine, or for")
             print(f"  whoever clones this next. Uncommitted, they all start from nothing:")
-            print(f"    git add {_wsname} && git commit -m \"chamnan: the workspace\"")
+            # 🐛 [2026-09-17] Printed as `git add {_wsname}` with no `--`, and the suite's own
+            # "every git add carries a pathspec" check caught it the first time the full gate
+            # ran after this notice was added. The check sweeps the whole file rather than only
+            # the shell hook, which is right: advice this package PRINTS is advice somebody
+            # pastes, and a bare `git add <path>` is one slip from staging a tree they did not
+            # mean to. The separator costs nothing and is what the rest of this file does.
+            print(f"    git add -- {_wsname} && git commit -m \"chamnan: the workspace\"")
             print(f"  The volatile parts are already excluded by {_wsname}/.gitignore.")
 
     if total == 0:
