@@ -41851,6 +41851,6 @@ total = PASSED + len(FAILED)
 # smaller suite than it appears to is the false-confidence failure this project calls worse than a
 # red one (R10 agent 1, measured against real CI logs).
 print(f"\n{PASSED}/{total} checks passed"
-      + (f", {SKIPPED} block(s) skipped on this platform — the [SKIP] lines above say why"
+      + (f", {SKIPPED} block(s) skipped on this platform — the [SKIP] and · lines above say why"
          if SKIPPED else ""))
 sys.exit(1 if FAILED else 0)
