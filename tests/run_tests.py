@@ -40840,6 +40840,8 @@ _t_ABSENT_CALLS90 = {"os.fork", "os.setsid", "os.getuid", "os.geteuid", "os.getg
                      "signal.alarm", "signal.setitimer", "signal.pause"}
 _t_ABSENT_ATTRS90 = {"signal.SIGKILL", "signal.SIGHUP", "signal.SIGUSR1", "signal.SIGUSR2",
                      "signal.SIGQUIT", "signal.SIGCHLD"}
+# Derived, not typed twice: `from os import geteuid` binds the bare name `geteuid`.
+_t_ABSENT_SYMBOLS90 = {_c.split(".", 1)[1]: _c for _c in _t_ABSENT_CALLS90 | _t_ABSENT_ATTRS90}
 
 
 def _t_aliases_of90(tree):
@@ -40887,6 +40889,26 @@ def _t_guarded90(node, parents):
     return False
 
 
+def _t_bound_of90(tree):  # names an `ImportFrom` binds to an absent symbol, module itself present
+    _map = {}
+    for _n in _ast90.walk(tree):
+        if isinstance(_n, _ast90.ImportFrom) and (_n.module or "").split(".")[0] not in _t_ABSENT_MODULES90:
+            for _a in _n.names:
+                if _a.name in _t_ABSENT_SYMBOLS90:
+                    _map[_a.asname or _a.name] = _t_ABSENT_SYMBOLS90[_a.name]
+    return _map
+
+
+def _t_hit90(node, aliases, bound):  # shared by the sweep and the planted shapes below
+    if isinstance(node, _ast90.Attribute) and isinstance(node.value, _ast90.Name):
+        _full = "%s.%s" % (aliases.get(node.value.id, node.value.id), node.attr)
+        if _full in _t_ABSENT_CALLS90 or _full in _t_ABSENT_ATTRS90:
+            return _full
+    if isinstance(node, _ast90.Call) and isinstance(node.func, _ast90.Name) and node.func.id in bound:
+        return bound[node.func.id]
+    return None
+
+
 _t_absent90 = []
 for _t_f90 in _t_files90:
     try:
@@ -40894,6 +40916,7 @@ for _t_f90 in _t_files90:
     except (SyntaxError, ValueError, OSError):
         continue
     _t_aliases90 = _t_aliases_of90(_t_tree90)
+    _t_bound90 = _t_bound_of90(_t_tree90)
     _t_is_suite90 = (_t_f90 == _t_SUITE_FILE90)
     _t_parents90 = {}
     if _t_is_suite90:
@@ -40908,9 +40931,9 @@ for _t_f90 in _t_files90:
         elif isinstance(_t_n90, _ast90.ImportFrom):
             if (_t_n90.module or "").split(".")[0] in _t_ABSENT_MODULES90:
                 _t_absent90.append("%s:%d from %s" % (_t_f90.name, _t_n90.lineno, _t_n90.module))
-        elif isinstance(_t_n90, _ast90.Attribute) and isinstance(_t_n90.value, _ast90.Name):
-            _t_full90 = "%s.%s" % (_t_aliases90.get(_t_n90.value.id, _t_n90.value.id), _t_n90.attr)
-            if _t_full90 in _t_ABSENT_CALLS90 or _t_full90 in _t_ABSENT_ATTRS90:
+        elif isinstance(_t_n90, (_ast90.Attribute, _ast90.Call)):
+            _t_full90 = _t_hit90(_t_n90, _t_aliases90, _t_bound90)
+            if _t_full90:
                 if _t_is_suite90 and _t_guarded90(_t_n90, _t_parents90):
                     continue
                 _t_absent90.append("%s:%d %s%s" % (_t_f90.name, _t_n90.lineno, _t_full90,
@@ -40919,6 +40942,27 @@ check("NOTHING SHIPPED REACHES FOR AN API WINDOWS DOES NOT HAVE",
       not _t_absent90,
       saw="%s — an import at module scope fails the whole file there, and this machine cannot see "
           "it" % "; ".join(_t_absent90[:5]))
+
+# --- 1b. Live population is 0 for this shape; plant it, check 31's way, through the SAME functions.
+_t_shapes90 = (
+    ("import os -> os.geteuid()", "import os\nos.geteuid()\n", True),
+    ("import os as _o -> _o.geteuid()", "import os as _o\n_o.geteuid()\n", True),
+    ("import fcntl", "import fcntl\n", True),
+    ("from os import geteuid -> geteuid()", "from os import geteuid\ngeteuid()\n", True),
+    ("from os import geteuid as gid -> gid()", "from os import geteuid as gid\ngid()\n", True),
+    ("from os import path -> path.join(...)", "from os import path\npath.join('a', 'b')\n", False),
+    ("local var geteuid, never imported", "geteuid = 1\ngeteuid()\n", False),
+)
+_t_bad90 = []
+for _t_lbl90, _t_src90, _t_want90 in _t_shapes90:
+    _t_tp90 = _ast90.parse(_t_src90)
+    _t_al90, _t_bd90 = _t_aliases_of90(_t_tp90), _t_bound_of90(_t_tp90)
+    _t_got90 = any(_t_hit90(_n, _t_al90, _t_bd90) is not None or (isinstance(_n, _ast90.Import) and any(
+        _a.name.split(".")[0] in _t_ABSENT_MODULES90 for _a in _n.names)) for _n in _ast90.walk(_t_tp90))
+    if _t_got90 != _t_want90:
+        _t_bad90.append("%s: want %s got %s" % (_t_lbl90, _t_want90, _t_got90))
+check("planted shapes: five already-caught (incl. the two missed until now) + two negatives match",
+      not _t_bad90, saw="; ".join(_t_bad90))
 
 # --- 2. A POSIX-only keyword argument is used only where the capability was asked about. Asking
 # `os.supports_dir_fd` is the right question; asking `os.name` is a weaker one that happens to work.
