@@ -2864,6 +2864,30 @@ def scrub(text, windowed=True, *, _unmask=True):
 #
 # In this table rather than at the call sites, for the reason stated above: a per-call rule is one
 # every future print has to remember, and the misses are silent (R11 acc3, hostile repo).
+# 🎯 [R46 #4/#5, 2026-09-17] `_TERMINAL_SAFE` above strips ANSI escapes so a committed file cannot
+# rewrite what a reader sees. Probed the same way: a chat-template control token -- `<|im_start|>`,
+# `<|im_end|>`, `<|endoftext|>` -- sits in ordinary text next to it and passes through untouched,
+# because it is made of printable characters and this table only ever removed non-printing ones.
+# The route is a user's own workspace file (`STATE.md`, `memory/`, a rule) reaching the SessionStart
+# block through `for_a_terminal`, the same choke point every hook already routes through -- not a
+# second filter, this one, extended.
+#
+# Matched generically rather than enumerated, the same reasoning `_TERMINAL_SAFE`'s own history
+# argues (R12/R13 above: "some members of a set" is the recorded failure mode) -- `<|word|>` covers
+# `im_start`, `im_end`, `endoftext`, `system`, `start_header_id` and any future one without a
+# hand-maintained list to fall out of date. The inner run excludes whitespace and `<>|` themselves,
+# so it cannot cross a line or swallow a second sentinel, and it requires at least one inner
+# character, so `<|>` alone (no content) never matches.
+#
+# Defused, not deleted: the text is a user's own file, and they may be writing ABOUT these tokens
+# (this finding's own writeup does). Replacing only the two `|` delimiters with U+00A6 BROKEN BAR
+# leaves `im_start` readable in place -- a person reading `<¦im_start¦>` still sees exactly what
+# token is being discussed -- while the byte sequence a chat template parses no longer exists.
+# Ordinary punctuation is untouched: `a < b | c > d`, a bare `|`, and a markdown table row
+# `| a | b |` have no `<|...|>` shape to match.
+_CHAT_TEMPLATE_SENTINEL = re.compile(r"<\|([^\s<>|]+)\|>")
+
+
 _TERMINAL_SAFE = str.maketrans({
     **{chr(i): None for i in range(0x20) if chr(i) not in "\n\t"},
     chr(0x7F): None,
@@ -3651,7 +3675,12 @@ def _redact_personal_data(text):
     return "".join(out)
 
 def for_a_terminal(text):
-    """Repository text with the characters that rewrite what a reader sees removed."""
+    """Repository text with the characters that rewrite what a reader sees removed.
+
+    Also defuses chat-template control-token sentinels (`<|im_start|>` and the like) -- see
+    `_CHAT_TEMPLATE_SENTINEL` above.
+    """
+    text = _CHAT_TEMPLATE_SENTINEL.sub("<¦\\1¦>", text)
     return text.translate(_TERMINAL_SAFE)
 
 
