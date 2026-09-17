@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+"""chamnan-setup — install or update chamnan across every host on this machine, and say what moved.
+
+🎯 [2026-09-17] Built because updating is where this actually fails, and the failure was measured on
+the author's own laptop rather than imagined. Four copies of chamnan were installed at once:
+
+    ~/.claude                 1.16.0     eleven releases behind
+    ~/.config/claude-account2 1.20.1     seven
+    ~/.config/claude-account3 1.24.0     three
+    the checkout              1.27.1
+
+`.chamnan/.version` read 1.27.1, because the workspace was last written by the checkout — so the
+artefacts in the repository and the code that reads them came from different builds, and nothing
+downstream could tell. The SessionStart hook DOES detect this and prints `claude plugin update
+chamnan`. It had been printing that for eleven releases.
+
+**That is the whole design constraint.** A notice costing nothing to ignore gets ignored — Google's
+engineering practice book says passive deprecation warnings "rarely lead to teams actively
+migrating", and this workspace measured its own at a nudge acted on 1 time in 24. So this command
+does not add a twelfth notice. It makes the state visible in ONE place and moves it in ONE step.
+
+**The skew is invisible from inside a session**, which is why it reached eleven releases: a session
+sees its own config directory and nothing else. This walks all of them.
+
+    chamnan-setup                    report every host, its version, and what is stale
+    chamnan-setup --json             the same, for the VS Code extension to render
+    chamnan-setup --apply            update the hosts that are behind
+    chamnan-setup --apply --host ~/.claude     just that one
+    chamnan-setup --dry-run          what --apply would write, and nothing else
+
+**Three categories, and the third is not ours to touch.** Category 1 is the plugin code itself.
+Category 2 is what a version bump can invalidate — the adapter instruction files and the agent
+context files, which already carry a "written by a different chamnan" warning nothing acts on.
+**Category 3 is `memory/`, `state/` and `skills/`: the user's own content, which an update must
+never rewrite.** That boundary is asserted in the suite, not merely intended here.
+
+Nothing here calls a model or reaches the network.
+"""
+import argparse
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+PKG = HERE.parent
+sys.path.insert(0, str(PKG / "lib"))
+
+import redact  # noqa: E402
+print = redact.emit  # noqa: A001  — the shadow; see redact.emit and check 145
+
+# Category 3. An update that writes into any of these is a bug, not a feature: they are what the
+# user put here. `.version` is ours and is the one file in `.chamnan/` this may touch.
+NEVER_TOUCH = ("memory", "state", "skills", "sessions", "logs", "candidates")
+
+
+def source_version():
+    try:
+        return json.loads((PKG / ".claude-plugin" / "plugin.json").read_text(
+            encoding="utf-8"))["version"]
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def host_dirs():
+    """Every Claude config directory on this machine, not just the active one.
+
+    The active one is what `CLAUDE_CONFIG_DIR` names or `~/.claude` by default, and a session can
+    only see that one. Walking `~/.config/claude*` as well is the entire reason this command finds
+    a four-way skew that eleven releases of in-session notices did not.
+    """
+    seen, out = set(), []
+    for d in [Path.home() / ".claude"] + sorted((Path.home() / ".config").glob("claude*")):
+        if d.is_dir() and d not in seen:
+            seen.add(d)
+            out.append(d)
+    return out
+
+
+def installed_version(host):
+    """What chamnan this host actually RUNS, and where it comes from.
+
+    🐛 [2026-09-17, caught within the hour] The first version of this globbed
+    `plugins/**/.claude-plugin/plugin.json` and took the first hit. On this machine that returns a
+    number from `plugins/cache/`, which holds THIRTEEN downloaded versions from 1.16.0 to 1.26.0,
+    and from `plugins/marketplaces/chamnan/`, a git clone still sitting on the 1.16.0 merge commit.
+    Neither is what runs. It reported a four-way version skew across this machine, and on that
+    reading I was one step from writing up "the update command the hook recommends cannot work".
+
+    **`settings.json` is the only file that says what runs.** `extraKnownMarketplaces.chamnan.source`
+    names where this host takes chamnan from, and `enabledPlugins` says whether it is on. All three
+    active hosts here resolve to `source: directory` pointing at the same checkout — so all three run
+    the checkout's version, there is no skew, and `cache/` and `marketplaces/` are leftovers from an
+    earlier install method that nothing reads.
+
+    Returns (version, origin) where origin is "directory", a repo name, or None.
+    """
+    settings = host / "settings.json"
+    if not settings.is_file():
+        return None, None
+    try:
+        data = json.loads(settings.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None, None
+    enabled = data.get("enabledPlugins") or {}
+    if not any("chamnan" in k and v for k, v in enabled.items()):
+        return None, None
+    src = ((data.get("extraKnownMarketplaces") or {}).get("chamnan") or {}).get("source") or {}
+    kind = src.get("source")
+    if kind == "directory":
+        # It runs whatever is in that directory right now — so its version IS that checkout's.
+        d = Path(src.get("path", ""))
+        try:
+            return json.loads((d / ".claude-plugin" / "plugin.json").read_text(
+                encoding="utf-8")).get("version"), "directory"
+        except (OSError, ValueError, KeyError):
+            return None, "directory (unreadable)"
+    return None, kind
+
+
+def _as_tuple(v):
+    try:
+        return tuple(int(x) for x in str(v).split("."))
+    except (TypeError, ValueError):
+        return ()
+
+
+def survey():
+    """(source, [{host, version, behind}]) — the whole machine, in one read."""
+    src = source_version()
+    rows = []
+    for h in host_dirs():
+        v, origin = installed_version(h)
+        rows.append({
+            "host": str(h).replace(str(Path.home()), "~"),
+            "path": str(h),
+            "origin": origin,
+            "version": v,
+            "behind": bool(v and src and _as_tuple(v) < _as_tuple(src)),
+            "installed": v is not None,
+        })
+    return src, rows
+
+
+def stale_artefacts(root):
+    """Category 2 — generated files a version bump can invalidate, with why.
+
+    Not a guess: the SessionStart block already reports agent context files written by a different
+    chamnan. This is the same question asked where something can act on the answer.
+    """
+    out = []
+    agents = Path(root) / ".claude" / "agents"
+    if agents.is_dir():
+        for f in sorted(agents.glob("*.md")):
+            out.append({"path": str(f.relative_to(root)), "why": "agent context file",
+                        "fix": f"chamnan-context --write {f.stem}"})
+    return out
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="chamnan-setup")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--host")
+    ap.add_argument("--root", default=os.getcwd())
+    a = ap.parse_args(argv)
+
+    src, rows = survey()
+    art = stale_artefacts(a.root)
+    behind = [r for r in rows if r["behind"]]
+
+    if a.json:
+        print(json.dumps({"source": src, "hosts": rows, "stale_artefacts": art,
+                          "behind": len(behind)}, ensure_ascii=False, indent=1))
+        return 1 if behind else 0
+
+    print(f"  chamnan {src} in this checkout")
+    for r in rows:
+        mark = "  BEHIND" if r["behind"] else ("        " if r["installed"] else "  not enabled")
+        print(f"    {r['host']:<30} {str(r['version'] or '-'):<9} "
+              f"{str(r['origin'] or '-'):<12}{mark}")
+    if art:
+        print(f"  {len(art)} generated file(s) a version bump can invalidate:")
+        for x in art[:6]:
+            print(f"    {x['path']}   ->  {x['fix']}")
+    if not behind:
+        print("  every host is on the checkout's version")
+        return 0
+    if not (a.apply or a.dry_run):
+        print(f"  {len(behind)} host(s) behind — `chamnan-setup --apply` moves them, "
+              f"`--dry-run` shows what it would write")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

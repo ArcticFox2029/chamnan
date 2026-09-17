@@ -1,0 +1,35 @@
+{
+  "name": "chamnan",
+  "displayName": "chamnan",
+  "description": "Install and update chamnan in this repository, from a button instead of three typed commands.",
+  "version": "1.27.1",
+  "publisher": "ArcticFox2029",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/ArcticFox2029/chamnan" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Other"],
+  "main": "./extension.js",
+  "activationEvents": ["onStartupFinished"],
+  "contributes": {
+    "commands": [
+      { "command": "chamnan.status", "title": "chamnan: what is installed on this machine" },
+      { "command": "chamnan.setup", "title": "chamnan: install or update in this workspace" },
+      { "command": "chamnan.context", "title": "chamnan: show the block this repository injects" }
+    ],
+    "configuration": {
+      "title": "chamnan",
+      "properties": {
+        "chamnan.checkoutPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the chamnan checkout. Empty means the one bundled with this extension."
+        },
+        "chamnan.pythonPath": {
+          "type": "string",
+          "default": "python3",
+          "description": "Interpreter used to run chamnan's own commands. Nothing else is executed."
+        }
+      }
+    }
+  }
+}
