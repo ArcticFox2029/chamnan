@@ -1065,6 +1065,9 @@ From a shell, in the repository:
 | `chamnan-guard` | does anything staged for commit look like a credential — names the file and line, never the value, and never fails the commit (`--strict` does) |
 | `chamnan-guard --history` | the question the staged diff can never answer: is anything ALREADY committed. A one-off audit over the last 500 commits, grouped by file and worst first, so a fixture file is dismissed in one line and the file you do not recognise is not buried under it. It says rotate before rewrite, because rewriting history leaves the blob in every fork, clone and cache |
 | `chamnan-report` | opens with the knowledge inventory (every store's count and last write, zeros included), then Usage (chamnan's own commands and any promoted tool, counts only, zeros included), then weekly context-per-turn. On a repo with no Claude Code history it still shows the first two sections, then says so instead of inventing a trend |
+| `chamnan-setup` | every host on this machine that has chamnan installed, its version, and what is stale. A session sees only its own config directory, which is how one machine here reached a four-way skew of eleven releases without anything noticing |
+| `chamnan-setup --apply` | update the hosts that are behind, in one step. `--host <dir>` does just one; `--dry-run` says what it would write and writes nothing. It never touches `memory/`, `state/`, `skills/`, `sessions/`, `logs/` or `candidates/` — those are yours |
+| `chamnan-setup --json` | the same report as data, for a wrapper or an editor extension to render |
 
 ### Finishing later, when the limit has reset
 

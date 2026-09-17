@@ -48,6 +48,7 @@ PKG = HERE.parent
 sys.path.insert(0, str(PKG / "lib"))
 
 import redact  # noqa: E402
+import workspace as ws  # noqa: E402
 print = redact.emit  # noqa: A001  — the shadow; see redact.emit and check 145
 
 # Category 3. An update that writes into any of these is a bug, not a feature: they are what the
@@ -59,7 +60,7 @@ def source_version():
     try:
         return json.loads((PKG / ".claude-plugin" / "plugin.json").read_text(
             encoding="utf-8"))["version"]
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, RecursionError):
         return None
 
 
@@ -101,7 +102,7 @@ def installed_version(host):
         return None, None
     try:
         data = json.loads(settings.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None, None
     enabled = data.get("enabledPlugins") or {}
     if not any("chamnan" in k and v for k, v in enabled.items()):
@@ -114,7 +115,7 @@ def installed_version(host):
         try:
             return json.loads((d / ".claude-plugin" / "plugin.json").read_text(
                 encoding="utf-8")).get("version"), "directory"
-        except (OSError, ValueError, KeyError):
+        except (OSError, ValueError, KeyError, RecursionError):
             return None, "directory (unreadable)"
     return None, kind
 
@@ -153,7 +154,10 @@ def stale_artefacts(root):
     agents = Path(root) / ".claude" / "agents"
     if agents.is_dir():
         for f in sorted(agents.glob("*.md")):
-            out.append({"path": str(f.relative_to(root)), "why": "agent context file",
+            # `.as_posix()`, not `str()`: a relative path rendered as TEXT must carry forward
+            # slashes or the same line reads differently on Windows. The suite asserts this across
+            # the package.
+            out.append({"path": f.relative_to(root).as_posix(), "why": "agent context file",
                         "fix": f"chamnan-context --write {f.stem}"})
     return out
 
@@ -165,6 +169,16 @@ def main(argv):
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--host")
     ap.add_argument("--root", default=os.getcwd())
+    # Before parsing: "which build is this" has to be answerable from any command, including one
+    # that would refuse the arguments beside it. Same convention as every other bin/ command --
+    # `ws.wants_version` and `ws.version_line` are shared so no command can report a different
+    # build from its siblings.
+    if ws.wants_version(argv):
+        print(ws.version_line())
+        return 0
+    if ws.wants_help(argv):
+        print(__doc__.strip())
+        return 0
     a = ap.parse_args(argv)
 
     src, rows = survey()

@@ -239,7 +239,7 @@ def primary(root=None, env=None, home=None):
 
 # The context files that sit BESIDE chamnan's block and are loaded whole on every session.
 #
-# 🎯 [2026-09-07] chamnan budgets itself to the byte -- `output_byte_ceiling` is 9,000 and
+# 🎯 [2026-09-07] chamnan budgets itself to the byte -- `output_byte_ceiling` is 9,500 and
 # `fit.shrink` enforces it section by section -- and said nothing at all about the file next to it.
 # Measured on this repository the day this was written: chamnan's block 8,925 bytes against its own
 # ceiling, `CLAUDE.md` 17,116 bytes with no budget of any kind. Nearly twice the size, same context,

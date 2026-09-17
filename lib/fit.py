@@ -30,10 +30,17 @@ standing instruction being broken. That asymmetry is the whole drop order.
 """
 import re
 
+import workspace as ws  # noqa: E402 -- `workspace` imports only stdlib, so this direction is cycle-free
+
 # Default sits under the measured 10,000-byte cap with room for a host that counts the newline,
 # a wrapper, or a slightly different boundary. Raising it to the cap exactly is how a margin gets
 # spent by something outside this repository's control.
-CEILING = 9000
+#
+# 🐛 [2026-09-17] This used to be a literal `9000`, typed separately from `workspace.DEFAULT_CONFIG`
+# and `workspace._UPPER_BOUND` -- both of which had already moved to 9,500 on 2026-09-14. Same
+# defect as the config merge two sections up: one limit, kept as more than one number by hand.
+# Derived now, so there is exactly one place this ceiling is ever typed.
+CEILING = ws.DEFAULT_CONFIG["output_byte_ceiling"]
 
 # ------------------------------------------------------------------ the floor under every store
 # 🐛 [2026-09-15] Everything below used to be leftovers: sections were packed in full, dropped

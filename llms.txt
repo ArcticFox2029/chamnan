@@ -56,6 +56,7 @@ chamnan is delivered as a Claude Code plugin and as a plain command-line tool. T
 - `chamnan-recall`: what do the stores already say about this, before you start from scratch
 - `chamnan-report`: measure this repo's context cost per turn, before and after the workspace existed
 - `chamnan-schedule`: finish this work later, when the limit has reset
+- `chamnan-setup`: install or update chamnan across every host on this machine, and say what moved
 - `chamnan-timeline`: one line of work followed across the sessions it actually took
 
 ## Documentation

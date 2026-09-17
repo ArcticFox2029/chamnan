@@ -2198,8 +2198,11 @@ if live_state is not None and live_state.is_file():
     # FIT. A section that does not fit is named in the drop notice and is one grep away; a section
     # past the host's cut is not named at all.
     _live_bytes = len(live_out.encode())
+    # Read from the same source the hook itself enforces against, not a literal typed here --
+    # `lib/fit.py`'s own CEILING is that number's other copy, and both used to disagree with it.
+    _live_ceiling = ws.DEFAULT_CONFIG["output_byte_ceiling"]
     check("THE LIVE WORKSPACE'S BLOCK FITS, SO WHAT IT CONTAINS IS ACTUALLY DELIVERED",
-          _live_bytes <= 9000 + 400)
+          _live_bytes <= _live_ceiling + 400)
     # 🐛 This asserted that the live block contains "could not be brought back", which is the notice
     # for ONE of two different drops -- a section whose PINNED lines alone exceed the room left, as
     # against the ordinary "Left out to stay under the … limit" list. Whether the live workspace is
@@ -2214,7 +2217,7 @@ if live_state is not None and live_state.is_file():
               "read it if you need it" in live_out or "could not be brought back" in live_out)
     else:
         check("...and the live block dropped nothing, so there is nothing to explain",
-              _live_bytes <= 9000 + 400)
+              _live_bytes <= _live_ceiling + 400)
 
 # The pinned-overflow notice on a fixture, both directions. `_oversize` is set by fit itself, so
 # this drives the module rather than hoping a real workspace is in the right state today.
@@ -2885,54 +2888,66 @@ check("an Elixir bang function keeps its bang", "verify_coverage!" in enames)
 # A session record answers "where did the last stretch of work stop". Only the unfinished part
 # reaches the next session: Done is history and Files is recoverable from git, so injecting them
 # would spend the budget on what the reader could already get.
+# 🐛 [2026-09-17] These record names were hard-coded dates, and `sessions.prune` reads the date out
+# of the FILENAME rather than the mtime -- deliberately, because a clone resets mtime and a record
+# filed 2020-01-01 once survived prune untouched. So the fixture aged into the window it was testing:
+# on 2026-09-17, `2026-08-18` fell outside the 30-day retention window, prune deleted two records
+# instead of one, and two checks went red with no commit behind them. A suite that turns red on a
+# date is a whole gate run spent looking for a change that was never made. The dates are computed
+# from today, four days back to one, so the fixture is the same age on every run and their ORDER --
+# which `latest` and `carry_forward` depend on -- is the order the hard-coded names had.
+_rec_d = lambda n: (datetime.date.today() - datetime.timedelta(days=n)).isoformat()
+_REC_PARSER, _REC_SCHEMA = _rec_d(4), _rec_d(3)
+_REC_FINISHED, _REC_GARBAGE = _rec_d(2), _rec_d(1)
+_REC_LEAKY = _rec_d(0)          # the newest, because `carry_forward` reads the LATEST record
 sess = Path(tempfile.mkdtemp(prefix="chamnan-sess-"))
 (sess / ".chamnan" / "sessions").mkdir(parents=True)
 sdir = sess / ".chamnan" / "sessions"
 
-(sdir / "2026-08-18-parser-work.md").write_text(
+(sdir / f"{_REC_PARSER}-parser-work.md").write_text(
     "# Kotlin extension functions\n\n"
     "## Done\n- Added the kotlin rules block\n\n"
     "## Remaining\n- extract_regex returns the wrong arg list for extension functions\n\n"
     "## Files\n- `lib/mapper.py` \u2014 new rules\n\n"
     "## Decisions\n- Kotlin gets its own entry rather than borrowing Java's\n\n"
     "## Blockers\n- none yet\n", encoding="utf-8")
-(sdir / "2026-08-19-schema-work.md").write_text(
+(sdir / f"{_REC_SCHEMA}-schema-work.md").write_text(
     "# Materialized views\n\n"
     "## Done\n- CREATE VIEW pattern added\n\n"
     "## Remaining\n- MySQL swap-staging tables still appear as schema\n\n"
     "## Blockers\n- waiting on a decision about partitions\n", encoding="utf-8")
 
 check("records are listed newest first",
-      sessions.records(sess)[0].name.startswith("2026-08-19"))
-check("latest picks the newest record", sessions.latest(sess).name.startswith("2026-08-19"))
+      sessions.records(sess)[0].name.startswith(_REC_SCHEMA))
+check("latest picks the newest record", sessions.latest(sess).name.startswith(_REC_SCHEMA))
 
 carried = sessions.carry_forward(sess)
 check("the carried text names the session", "Materialized views" in carried)
-check("the carried text dates it", "2026-08-19" in carried)
+check("the carried text dates it", _REC_SCHEMA in carried)
 check("REMAINING IS CARRIED FORWARD", "swap-staging tables" in carried)
 check("BLOCKERS ARE CARRIED FORWARD", "waiting on a decision" in carried)
 check("DONE IS NOT CARRIED FORWARD", "CREATE VIEW pattern" not in carried)
 check("an older record is not carried forward", "extension functions" not in carried)
 
 # A record with nothing outstanding must inject nothing at all, rather than a heading saying so.
-(sdir / "2026-08-20-finished.md").write_text(
+(sdir / f"{_REC_FINISHED}-finished.md").write_text(
     "# All done\n\n## Done\n- everything\n\n## Remaining\n-\n\n## Blockers\n- none\n",
     encoding="utf-8")
 check("A FINISHED SESSION CARRIES NOTHING", sessions.carry_forward(sess) == "")
 # People write "- none" instead of omitting the section, and mean the same thing.
-(sdir / "2026-08-20-finished.md").write_text(
+(sdir / f"{_REC_FINISHED}-finished.md").write_text(
     "# All done\n\n## Remaining\n- nothing\n\n## Blockers\n- N/A.\n", encoding="utf-8")
 check("'- nothing' and '- N/A' are treated as empty", sessions.carry_forward(sess) == "")
-(sdir / "2026-08-20-finished.md").write_text(
+(sdir / f"{_REC_FINISHED}-finished.md").write_text(
     "# Partly done\n\n## Remaining\n- none\n- but check the parser\n", encoding="utf-8")
 check("a real item beside a 'none' is still carried",
       "check the parser" in sessions.carry_forward(sess))
-(sdir / "2026-08-20-finished.md").unlink()
+(sdir / f"{_REC_FINISHED}-finished.md").unlink()
 
 # Robustness: the hook must survive whatever is in that directory.
-(sdir / "2026-08-21-garbage.md").write_text("no headings at all, just prose\n", encoding="utf-8")
+(sdir / f"{_REC_GARBAGE}-garbage.md").write_text("no headings at all, just prose\n", encoding="utf-8")
 check("a record with no headings carries nothing", sessions.carry_forward(sess) == "")
-(sdir / "2026-08-21-garbage.md").unlink()
+(sdir / f"{_REC_GARBAGE}-garbage.md").unlink()
 check("an empty directory carries nothing",
       sessions.carry_forward(Path(tempfile.mkdtemp(prefix="chamnan-none-"))) == "")
 
@@ -2958,7 +2973,7 @@ check("filename puts the date first",
 
 # The record is committed and is free text about the repository, which makes it the likeliest
 # place for a pasted credential to land. The injection path must scrub it.
-(sdir / "2026-08-22-leaky.md").write_text(
+(sdir / f"{_REC_LEAKY}-leaky.md").write_text(
     "# Leaky\n\n## Blockers\n- prod db is postgres://admin:" + fake("Hunter2", "Pass")
     + "@db.internal/main\n", encoding="utf-8")
 leaked = sessions.carry_forward(sess)
@@ -8199,7 +8214,11 @@ _clk = Path(tempfile.mkdtemp(prefix="chamnan-clock-")) / "r"
 (_clk / ".chamnan" / "sessions").mkdir(parents=True)
 _now = _time.time()
 for _i in range(3):
-    for _sub, _nm in (("logs", f"l{_i}.md"), ("sessions", f"2026-09-0{_i + 1}-s{_i}.md")):
+    # Dated from today for the same reason as `_cur_name` below: a literal here ages out of
+    # whatever window this block is exercising and the check stops measuring what it names.
+    for _sub, _nm in (("logs", f"l{_i}.md"),
+                      ("sessions", "%s-s%d.md" % (
+                          (datetime.date.today() - datetime.timedelta(days=_i)).isoformat(), _i))):
         _f = _clk / ".chamnan" / _sub / _nm
         _f.write_text("x\n", encoding="utf-8")
         _os.utime(_f, (_now, _now))
@@ -8232,14 +8251,20 @@ check("...and nothing is reported as about to expire either",
 # workspace is in when retention fires.
 (_ret / ".chamnan" / "config.json").write_text(
     json.dumps({"log_retention_days": 7, "session_retention_days": 7}), encoding="utf-8")
-for _sub, _name in (("logs", "today.md"), ("sessions", "2026-09-06-current.md")):
+# 🐛 [2026-09-17] `2026-09-06-current.md` was a literal, and `sessions.prune` reads a record's date
+# out of its FILENAME. Eleven days later the "current" entry was older than the 7-day window it was
+# meant to survive, and the check below went on passing for exactly the wrong reason this block's
+# own comment warns about: keep-the-newest spared it. Proved by adding a third record, at which
+# point prune deletes it. Dated from today, so "current" stays current on every run.
+_cur_name = datetime.date.today().isoformat() + "-current.md"
+for _sub, _name in (("logs", "today.md"), ("sessions", _cur_name)):
     (_ret / ".chamnan" / _sub / _name).write_text("# fresh\n", encoding="utf-8")
 ws.prune_logs(_ret)
 check("...while a real window still prunes both",
       not (_ret / ".chamnan" / "logs" / "old.md").is_file() and sessions.prune(_ret, 7) == 1)
 check("...and leaves the current entry in each store alone",
       (_ret / ".chamnan" / "logs" / "today.md").is_file()
-      and (_ret / ".chamnan" / "sessions" / "2026-09-06-current.md").is_file())
+      and (_ret / ".chamnan" / "sessions" / _cur_name).is_file())
 _rmtree(_ret.parent, ignore_errors=True)
 
 
@@ -9010,6 +9035,7 @@ _de_silent = {
     # create-a-workspace sentence of it would have added an error to a command that had none. A
     # derived sweep is only as right as its exemption list, and an exemption needs a reason.
     "chamnan-peek": "reads one file and needs no workspace at all",
+    "chamnan-setup": "reports what every host on this machine runs — nothing about it is per-repository",
     # Reads a git diff and nothing else, and runs from a pre-commit hook — where a command that
     # cannot answer must add NO line to somebody's commit output, let alone advice about a workspace
     # it does not need. Same reasoning as `chamnan-peek` above, reached from the other direction.
@@ -16861,9 +16887,33 @@ check("...and does not still claim the index is a fraction of the detail",
 _rmtree(_bigrepo.parent, ignore_errors=True)
 
 # The small end must be untouched -- this repository's own map still gives the original advice.
+# 🐛 [2026-09-17] Both checks below read THIS repository's own `.chamnan/MAP.md` and asserted it
+# still carried the small-index advice. That was true when they were written and stopped being true
+# when chamnan's own map reached 179 KB: the index crossed into the large branch, the header
+# correctly swapped to "grep BOTH sections", and two checks went red for behaviour that is right.
+# A check whose fixture is the live repository passes until the repository grows and then reports
+# the growth as a defect. The property is about a SMALL index, so the fixture is a small repository
+# built here — the same shape as the large-repo fixture above, which never had this problem. Both
+# copies are rewritten together, because one of them being fixed and the other left is this
+# package's most recorded defect.
+def _small_repo_map():
+    """A three-file repository, indexed for real. Returns its MAP.md text."""
+    small = Path(tempfile.mkdtemp()) / "small"
+    (small / ".git").mkdir(parents=True)
+    src = small / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"mod_{i}.py").write_text(
+            f"# Does the {i}th small thing.\ndef go{i}():\n    return {i}\n", encoding="utf-8")
+    subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(small),
+                   capture_output=True, text=True, encoding="utf-8", errors="replace")
+    text = (small / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
+    _rmtree(small.parent, ignore_errors=True)
+    return text
+
+
 check("a small index still says to read the Quick Index in full",
-      "Read the Quick Index in full" in (ROOT / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
-      if (ROOT / ".chamnan" / "MAP.md").is_file() else True)
+      "Read the Quick Index in full" in _small_repo_map())
 
 
 # ============ the index folded once and then let the budget cut whole directories off the end
@@ -16914,8 +16964,7 @@ _rmtree(_fold.parent, ignore_errors=True)
 # A repository whose index already fits must be untouched — the stepping is a response to not
 # fitting, not a new default.
 check("an index that already fits is not folded further",
-      "Read the Quick Index in full" in (ROOT / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
-      if (ROOT / ".chamnan" / "MAP.md").is_file() else True)
+      "Read the Quick Index in full" in _small_repo_map())
 
 
 # ---------------------------------------- detection was inert, and blind to eighteen agents
@@ -21177,6 +21226,7 @@ if _CAN_DENY_WRITE:
         "chamnan-peek": None,
         "chamnan-report": None,
         "chamnan-guard": None,
+        "chamnan-setup": None,
     }
     _nw_commands = sorted(p.name for p in (ROOT / "bin").glob("chamnan-*") if p.suffix != ".cmd")
     check("the write-honesty sweep knows about every command that ships",
@@ -34004,6 +34054,46 @@ if _TOOL180 is not None and _TOOL180.is_file():
 
     print("      DETAIL  guard source checked for both 2026-09-17 distinctions: "
           "missing key vs missing file, and content vs mark")
+# ---- 181_a_check_whose_fixture_is_the_live_repository.py
+# ------------------ a check whose fixture is the repository it lives in reports growth as a defect
+# 🐛 [2026-09-17] Two checks read THIS repository's own `.chamnan/MAP.md` and asserted it still
+# carried the advice a SMALL index gets. True when written; false once chamnan's own map reached
+# 179 KB and the index correctly crossed into the large branch. Both went red on a day with no
+# commit behind them, and the whole 25-minute gate was spent looking for a change nobody had made.
+#
+# The class is not ours: R52 #7 is a project whose suite had 33 assertions scanning the working tree
+# through `process.cwd()`, and R52 #8 is a size ceiling that decayed as the population it bounded
+# grew underneath it. The rule both arrive at is the same — when the assertion is about SIZE or
+# SHAPE, the fixture must be constructed, never the live tree.
+#
+# Scoped deliberately to the workspace directory rather than to every mention of ROOT. A check may
+# legitimately read the package's own shipped files -- `bin/`, `lib/`, `README.md` are what this
+# suite exists to check. What it must not do is take its expected VALUE from the working copy's
+# `.chamnan/`, which is state that grows with use.
+import re as _re181
+
+_t_suite181 = ROOT / "tests" / "run_tests.py"
+_t_src181 = _t_suite181.read_text(encoding="utf-8", errors="replace")
+
+# Built at runtime. This file is folded INTO the suite it scans, so a literal here would be a hit on
+# itself -- the shape this repository has recorded before, where a check that quotes the string it
+# looks for is the thing it finds.
+_t_NEEDLE181 = 'ROOT / "' + "." + 'chamnan"'
+
+_t_lines181 = [(_t_i181 + 1, _t_l181) for _t_i181, _t_l181 in enumerate(_t_src181.splitlines())
+               if _t_NEEDLE181 in _t_l181]
+if _t_lines181:
+    for _t_n181, _t_l181 in _t_lines181[:4]:
+        print("      line %d: %s" % (_t_n181, _t_l181.strip()[:110]))
+check("NO CHECK TAKES ITS EXPECTED VALUE FROM THIS WORKING COPY'S OWN .chamnan/",
+      _t_lines181 == [],
+      saw="%d line(s) read the live workspace — build a fixture repository and index it instead, the "
+          "way the large-repo block above does" % len(_t_lines181))
+
+# "Nothing matched" is only evidence when something was searched. The suite is one file and its
+# check count is known to be in the thousands; a read that came back short means the path moved.
+check("...and the scan actually read the suite, rather than an empty or truncated file",
+      _t_src181.count("check(") > 1000)
 # ---- 18_a_pointer_does_not_repeat_the_title_above_it.py
 # ------------------------------------------- the reader is looking at the title; give them the path
 # 🐛 [2026-09-09] Each trimmed rule ended with "_…the rest of **<full title>** is in `<path>`._" and

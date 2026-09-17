@@ -837,9 +837,30 @@ _BETWEEN_NAME_AND_VALUE = (
 # whether this is worth having, and it is measured -- `tools/redactor_recall.py` reports it.
 _TYPE_BEFORE_ASSIGN = r"(?:[ \t]+[A-Za-z_][\w.]*(?:\[[^\]\n]*\])?)?[ \t]*=[ \t]*"
 
+# 🐛 [2026-09-17] A value written on the line AFTER the separator was found — `\s*` behind the
+# separator crosses a newline — unless a grouping paren or a backslash continuation stood between
+# them, which nothing consumed:
+#
+#     api_key = (          MISSED          api_key = \          MISSED
+#         "<the value>"                        "<the value>"
+#     )
+#
+# A bracket in the same position was already handled, which is this package's most recorded defect
+# wearing its usual costume: one member of a set fixed, the identical one beside it left. Admitting
+# `(` here cannot re-open the case the value class excludes it for — `AWS_SECRET =
+# base64.b64decode("QUtJQ…")`, where `base64.b64decode(` was captured AS the secret — because this
+# only matches a bracket standing IMMEDIATELY after the separator, which is grouping or a list
+# literal. A call has its callee's name in that position, and `ASSIGNED_SECRET_CALL` still owns it.
+#
+# Deliberately NOT applied to `ASSIGNED_SECRET_BARE`: its value is `\S{6,}` with no closing quote to
+# backstop a wrong guess, so a bracket there would widen a rule that already has no anchor. An
+# unquoted credential inside a grouping paren on its own line is not a shape any config format
+# produces, and the trade is the one this module keeps making — precision over the last percent.
+_GROUPING_BEFORE_VALUE = r"(?:(?:[\[(]|\\)\s*)?"
+
 ASSIGNED_SECRET = _lazy(lambda: re.compile(
     r"((?:" + SECRET_WORDS + r")[\w-]*(?:\s*(?:['\"]\s*)?" + _KV_SEP + r"\s*" + _BETWEEN_NAME_AND_VALUE
-    + r"|" + _TYPE_BEFORE_ASSIGN + r"))(['\"])([^'\"]{6,})\2", re.I))
+    + r"|" + _TYPE_BEFORE_ASSIGN + r")" + _GROUPING_BEFORE_VALUE + r")(['\"])([^'\"]{6,})\2", re.I))
 # The same assignment without quotes, which is how every .env and .ini file on earth is written.
 # Requiring quotes meant DATABASE_PASSWORD=tr0ub4dor&3-horse passed through untouched. Bounded to a
 # single unbroken run of characters so a prose comment ("password: ask the platform team") is not
