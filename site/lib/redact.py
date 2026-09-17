@@ -1313,6 +1313,43 @@ _NOUNS_AFTER_A_CREDENTIAL = frozenset("""
     id ids name names type types field fields label labels kind value
 """.split())
 
+# The connective words an ordinary English sentence is built from, and a Diceware-style passphrase
+# never is -- a passphrase is content words only. Used by `_looks_like_a_passphrase` below to tell
+# "correct horse battery staple" (no member of this set) from "must be rotated quarterly" (two).
+# English only, on purpose: a Thai or Japanese passphrase has no spaces to split into tokens in the
+# first place, so this filter cannot see one either way, and pretending otherwise here would be
+# worse than the gap.
+_ENGLISH_FUNCTION_WORDS = frozenset("""
+    a an the and or but nor yet so for of with by from as into onto upon over under between through
+    during before after about above below across against along among around behind beside besides
+    beyond despite except inside near outside since toward towards underneath until within without
+    i you he she it we they me him her us them this that these those who whom whose which what
+    is are was were be been being am have has had do does did will would shall should may might
+    must can could not no if than when where while because although though unless whether either
+    neither both each every any all few many much more most such own same in on at
+""".split())
+
+# A passphrase token: letters only, with an internal hyphen allowed so `correct-horse` counts as
+# one token. A digit, a dot, a slash or any other punctuation disqualifies the whole value -- those
+# are exactly the paths and dotted names `_reads_like_a_credential`'s other guards were earned by.
+_PASSPHRASE_TOKEN = re.compile(r"^[A-Za-z]+(?:-[A-Za-z]+)*$")
+
+
+def _looks_like_a_passphrase(value):
+    """True when a SPACED value has the shape of a passphrase, not of a sentence.
+
+    All three conditions have to hold together. 3 to 8 whitespace-separated tokens: fewer is not a
+    passphrase, more is prose. Every token alphabetic (an internal hyphen allowed): a token holding
+    a digit, a dot or any other punctuation is a path or a version string, not passphrase content.
+    No token a function word: a passphrase is content words, and ordinary prose is not.
+    """
+    tokens = value.split()
+    if not (3 <= len(tokens) <= 8):
+        return False
+    if not all(_PASSPHRASE_TOKEN.match(t) for t in tokens):
+        return False
+    return not any(t.lower() in _ENGLISH_FUNCTION_WORDS for t in tokens)
+
 
 def _key_ends_in_a_credential_word(key):
     """True when the key's LAST meaningful component says credential.
@@ -2493,10 +2530,17 @@ def _reads_like_a_credential(value):
     mixes classes — letters with digits, or letters with punctuation that is not a word character.
     `PRIVATE KEY BLOCK-----` has spaces. `_comment` is letters and an underscore. A real one is not
     either of those.
+
+    A SPACED value is not rejected outright any more, since a Diceware-style passphrase is a
+    credential too and it walks straight through the rest of this function unspaced-only. Handed
+    off to `_looks_like_a_passphrase`, which asks the narrower question a space cannot answer by
+    itself: content words, none of them a function word, on their own.
     """
     value = (value or "").strip()
-    if len(value) < 6 or " " in value or "\t" in value:
+    if len(value) < 6:
         return False
+    if " " in value or "\t" in value:
+        return _looks_like_a_passphrase(value)
     # 🐛 [2026-09-15] A PATH is not a credential, and prose about configuration is full of them —
     # chamnan's own comments supplied two more inside the hour: "ledger would key
     # `.cursor\\rules\\chamnan.mdc`" and "a `read:` key in `.aider.conf.yml`". Both are the word
