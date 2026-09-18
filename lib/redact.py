@@ -1552,18 +1552,63 @@ def _looks_like_more_credential(token):
     return (has_digit and (has_upper or has_lower)) or (has_upper and has_lower and len(token) >= 12)
 
 
+_QUOTE_CHARS = "'\""
+# The gap between two adjacent string literals -- implicit concatenation's only separator, on one
+# line, across a bare newline, or across a backslash line-continuation (which a shell or Python
+# logical line treats as whitespace too, per `_GROUPING_BEFORE_VALUE` a few screens up). A comma,
+# an operator or any other character here means these are not adjacent literals at all, which is
+# what stops this from merging two DIFFERENT list elements into one run.
+_LITERAL_GAP = re.compile(r"[ \t]*(?:\\?\r?\n[ \t]*)*")
+
+
 def _swallow_trailing_credential_runs(text, start):
     """How many characters after `start` are more of the same credential. 0 when the next run is
-    prose, which is the common case and the one the space boundary exists to protect."""
+    prose, which is the common case and the one the space boundary exists to protect.
+
+    🐛 [2026-09-18] A credential split across two adjacent string literals --
+
+        api_key = (
+            "sk_live_"
+            "<the real 40-character body>"
+        )
+
+    -- left the SECOND literal untouched: the bare provider-prefix on the first line absorbed the
+    name anchor and got its `<REDACTED>`, and this function's own newline stop meant it never
+    looked past that line. Worse than a plain miss, since the marker says the line was handled.
+
+    Fixed only for a value that was itself QUOTED -- a matching quote character sits immediately
+    before `start` (it opened the value) and immediately after it (it closed the value), the shape
+    every quoted-value replacement in this module leaves behind. From there, whitespace -- possibly
+    crossing one or more newlines, nothing else -- followed by another literal opened with that
+    SAME quote character is swallowed too, as long as `_looks_like_more_credential` still calls its
+    contents more of the same, and the process repeats for as many adjacent literals as qualify.
+    The trailing quote of the LAST literal consumed is left standing, so the placeholder keeps a
+    syntactically closed value instead of an unterminated one.
+
+    The unquoted rule (`ASSIGNED_SECRET_BARE`) gets none of this: its value class is `\\S{6,}` with
+    no closing quote to backstop a wrong guess, and letting THAT cross a newline is how this module
+    has leaked before -- see the comment beside it. It also has no quote character flanking `start`
+    for this to key off, so the check below simply never triggers for it.
+    """
+    quote = None
+    before = start - len(PLACEHOLDER) - 1
+    if before >= 0 and start < len(text) and text[before] in _QUOTE_CHARS and text[start] == text[before]:
+        quote = text[before]
     end = start
     while True:
         gap = re.match(r"[ \t]+", text[end:])
-        if not gap:
-            return end - start
-        run = re.match(r"[^\s]+", text[end + gap.end():])
-        if not run or not _looks_like_more_credential(run.group(0)):
-            return end - start
-        end += gap.end() + run.end()
+        if gap:
+            run = re.match(r"[^\s]+", text[end + gap.end():])
+            if run and _looks_like_more_credential(run.group(0)):
+                end += gap.end() + run.end()
+                continue
+        if quote and end < len(text) and text[end] == quote:
+            cross = _LITERAL_GAP.match(text[end + 1:])
+            literal = _STRING_LITERAL.match(text[end + 1 + cross.end():])
+            if literal and literal.group(1) == quote and _looks_like_more_credential(literal.group(2)):
+                end = end + 1 + cross.end() + literal.end() - 1
+                continue
+        return end - start
 
 
 def _full_key_at(match):
