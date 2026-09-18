@@ -112,6 +112,15 @@ os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 # the older cousin — git's default pager is `less`, whose `!` escape hands over a shell (CVE-2017-8386)
 # — and it costs nothing to close beside it even though our calls capture output and never page.
 #
+# The population is the full class, not those two examples: eleven repository-settable keys that
+# cause git to run a program — `core.fsmonitor`, `core.pager`, `core.editor`, `core.sshCommand`,
+# `core.askPass`, `core.hooksPath`, `diff.external`, `credential.helper`,
+# `uploadpack.packObjectsHook`, `sequence.editor`, `gpg.program`. Of those, only `core.fsmonitor`
+# (via `git status`) and `diff.external` (via `git diff`) are reachable by this package's own
+# read-only commands today; the other nine are closed pre-emptively because each is one new call
+# site (an editor invocation, a push, a credential prompt) away from becoming reachable, and closing
+# them now costs nothing a call site would otherwise have to remember to do itself.
+#
 # Set through the ENVIRONMENT rather than by adding `-c` to each call, for the reason the block above
 # gives: there are twenty-five `git` invocations across eight files, every entry point imports this
 # module, and three of the four times this repository has tried to fix something at N call sites it
@@ -124,7 +133,19 @@ os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 # keeps its entries and ours are added after it.
 def _harden_git_config():
     """Refuse the repository-controlled config keys that turn a read into an execution."""
-    forced = (("core.fsmonitor", "false"), ("core.pager", "cat"))
+    forced = (
+        ("core.fsmonitor", "false"),
+        ("core.pager", "cat"),
+        ("core.editor", "true"),
+        ("core.sshCommand", ""),
+        ("core.askPass", ""),
+        ("core.hooksPath", "/dev/null"),
+        ("diff.external", ""),
+        ("credential.helper", ""),
+        ("uploadpack.packObjectsHook", ""),
+        ("sequence.editor", "true"),
+        ("gpg.program", "true"),
+    )
     try:
         start = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
     except ValueError:

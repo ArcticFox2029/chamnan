@@ -252,4 +252,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(ws.never_fail(main)())
+    sys.exit(ws.never_fail(main))
