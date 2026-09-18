@@ -22,6 +22,7 @@ None of those was noticed for hours. All three are obvious in a column of number
 import json
 import re
 
+import tokens
 import workspace as ws
 
 LOG = "logs/block_shape.jsonl"
@@ -63,7 +64,12 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
     rec = {"bytes": len(body.encode("utf-8")), "sec": sections,
            # The hook catches every exception and ends the block with this sentence rather than
            # failing, which is right — and is exactly why the truncation went unseen for hours.
-           "early": "stopped early" in body}
+           "early": "stopped early" in body,
+           # Same estimator every other caller in this package prices a block with
+           # (`bin/chamnan-map`, `.chamnan/tools/session_block_size.py`) — script-weighted, so
+           # Thai/CJK text is not priced as if it were plain Latin. Stored alongside `bytes` rather
+           # than replacing it: `bytes` is the byte-for-byte size check, `tok` is the cost estimate.
+           "tok": int(tokens.estimate(body))}
     if ceiling:
         rec["ceiling"] = ceiling
     if when:

@@ -1383,21 +1383,25 @@ def main(argv):
               f"{(amr-bmr)/max(bmr,1)*100:+.1f}%")
         # The "after" figure above is the whole session's context per turn, and chamnan's own
         # injected block is PART of it -- nothing above says so. `blocklog` records one row per
-        # session start (`bytes`), over the same trailing window `print_block_trend` already reads
-        # (`blocklog.trend(root, last=10)`), so the median of those rows is the going size of the
-        # thing being measured. Converted to tokens the same way every other estimate in this
-        # toolkit is: `tokens.weight()`, the per-character cost `tokens.estimate()` itself applies
-        # to plain Latin/code text -- which is what the block mostly is. There is no stored block
-        # TEXT to run the real estimator on (blocklog keeps shape, not content, by design), so a
-        # plain byte is priced as one such character rather than measured directly.
-        _block_sizes = [r.get("bytes") for r in blocklog.trend(root, last=10)
-                        if isinstance(r.get("bytes"), int)]
-        if _block_sizes:
-            _ordered = sorted(_block_sizes)
+        # session start (`bytes`, and since this change `tok`), over the same trailing window
+        # `print_block_trend` already reads (`blocklog.trend(root, last=10)`), so the median of
+        # those rows is the going size of the thing being measured. Rows written since `tok` was
+        # added carry the real script-weighted estimate; older rows have no `tok` field, so each
+        # row falls back to its own `bytes * tokens.weight("a")` -- pricing a byte as one plain-Latin
+        # character, same as before -- only when it has to. A row is converted to tokens on its own
+        # before the median is taken, so a window that is all old rows reduces to exactly the old
+        # calculation (median(bytes) * weight, since every row is scaled by the same constant).
+        _block_tok = []
+        for _r in blocklog.trend(root, last=10):
+            if isinstance(_r.get("tok"), (int, float)):
+                _block_tok.append(_r["tok"])
+            elif isinstance(_r.get("bytes"), int):
+                _block_tok.append(_r["bytes"] * tokens_mod.weight("a"))
+        if _block_tok:
+            _ordered = sorted(_block_tok)
             _mid = len(_ordered) // 2
-            _block_median = (_ordered[_mid] if len(_ordered) % 2
+            _block_tokens = (_ordered[_mid] if len(_ordered) % 2
                               else (_ordered[_mid - 1] + _ordered[_mid]) / 2)
-            _block_tokens = _block_median * tokens_mod.weight("a")
             print(f"  of which chamnan's own block   ~{_block_tokens:,.0f} tokens  "
                   f"({_block_tokens * 100 / amr:.1f}% of the after figure)")
         if ac != amc:
