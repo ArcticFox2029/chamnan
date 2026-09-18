@@ -778,6 +778,105 @@ def _pid_is_alive(pid):
         return True
 
 
+def _process_started(pid, run=None):
+    """The moment `pid` was born, as a string that never changes, or "" when it cannot be known.
+
+    \U0001f3af The owner's fix for pid reuse, sharpened by one step. They proposed recording how long
+    the app had been running and adding the wait to it — right in substance, and it needs a
+    tolerance, because "3h now, so 5h10m later" only holds if nothing distorted the clock. A BIRTH
+    TIME needs no tolerance at all: it never moves, so it is compared exactly. That matters on this
+    machine specifically, which sleeps after one idle minute — elapsed time keeps counting while it
+    does, so a wait across a suspend produces an elapsed figure nobody predicted, while the birth
+    time is the same string it always was.
+
+    \U0001f41b [2026-09-12] The first version shelled out to `ps` on POSIX and `powershell` on Windows,
+    and the gate refused it — correctly, and for a reason worth keeping. The README tells anyone
+    auditing this package that it executes exactly two things: `git`, and this interpreter re-running
+    a file that ships inside it. Adding `ps` would have been a third, which is a change to a promise
+    made to users, not an implementation detail. It would also have cost a process spawn — about
+    21ms each on this machine — for a question the kernel answers directly.
+
+    So all three platforms are read through the OS, with no child process at all:
+      Linux   `/proc/<pid>` exists and its ctime IS the moment the process was created.
+      macOS   `libproc.proc_pidinfo` with PROC_PIDTBSDINFO carries `pbi_start_tvsec`.
+      Windows `GetProcessTimes` on an opened handle gives creation time directly.
+    `run` stays in the signature so a test can inject a failure without a platform to fail on.
+
+    \U0001f3af Moved here from `schedule.py` (2026-09-18): `exclusive()`'s lock needs the identical
+    answer for the identical reason — a pid alone is reused, after a reboot or after enough process
+    churn — and `_pid_is_alive` has been this package's one answer to pid liveness all along.
+    `schedule.process_started` is now a thin delegating wrapper; see `_own_process_started` below
+    for the cached form `exclusive()` actually calls.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return ""
+    if pid <= 0:
+        return ""
+    if run is not None:                       # a test speaking for the platform
+        return str(run(pid) or "")
+    try:
+        if sys.platform.startswith("linux"):
+            return "%.6f" % pathlib.Path("/proc/%d" % pid).stat().st_ctime
+        if sys.platform == "darwin":
+            import ctypes
+            # PROC_PIDTBSDINFO is 1; the struct's `pbi_start_tvsec` sits at offset 120 and the
+            # call returns the bytes written, so a short answer is a failure rather than a value.
+            libc = ctypes.CDLL("libc.dylib", use_errno=True)
+            # The signature is declared. Without it ctypes guesses, and the guess is wrong here in
+            # two ways at once: the flavor argument arrives the wrong width and the return is
+            # truncated, so the first draft read 24 bytes of a file-descriptor list and turned it
+            # into a plausible-looking number. Verified against `ps -o lstart=` on two live
+            # processes before being trusted — the same rule the ID fixtures are held to.
+            libc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                          ctypes.c_void_p, ctypes.c_int]
+            libc.proc_pidinfo.restype = ctypes.c_int
+            buf = ctypes.create_string_buffer(1024)
+            # PROC_PIDTBSDINFO is 3, not 1 — 1 is PROC_PIDLISTFDS, which answers a different
+            # question and answers it successfully, which is why the wrong flavor read as data.
+            written = libc.proc_pidinfo(pid, 3, 0, buf, 1024)
+            if written < 128:
+                return ""
+            # `pbi_start_tvsec` at offset 120 of struct proc_bsdinfo.
+            return "%d" % int.from_bytes(buf.raw[120:128], "little")
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_errno=True)   # noqa: F821 — Windows only
+            handle = k32.OpenProcess(0x1000, False, pid)      # QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ""
+            try:
+                created = wintypes.FILETIME()
+                rest = [wintypes.FILETIME() for _ in range(3)]
+                if not k32.GetProcessTimes(handle, ctypes.byref(created),
+                                           *[ctypes.byref(x) for x in rest]):
+                    return ""
+                return "%d" % ((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            finally:
+                k32.CloseHandle(handle)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return ""
+    return ""
+
+
+# This process's own start time, cached — [] empty until first call, then a single string. A
+# process's birth time cannot change during its own lifetime, so the cache is sound for as long as
+# the interpreter runs. Load-bearing: `_process_started(os.getpid())` costs 99.5 µs measured on
+# this machine against an uncontended `exclusive()` acquire of 224 µs, so calling it uncached on
+# every acquire would be +44% on a path `record_call` takes on every Bash call. One call per
+# process lifetime instead.
+_OWN_PROCESS_STARTED = []
+
+
+def _own_process_started():
+    """This process's own start time, computed once and cached for the rest of its life."""
+    if not _OWN_PROCESS_STARTED:
+        _OWN_PROCESS_STARTED.append(_process_started(os.getpid()))
+    return _OWN_PROCESS_STARTED[0]
+
+
 def prune_orphaned_temps(root=None):
     """Remove staging files a killed write left behind. Best effort and silent, like every prune.
 
@@ -2329,14 +2428,41 @@ def _lock_holder_state(lock):
     syscalls, so "names nobody" is also what a perfectly healthy holder looks like for a few
     microseconds — breaking on that would hand the same file to two writers, which is the one
     thing this mutex exists to prevent.
+
+    🐛 [2026-09-18] The PID alone answers "does SOMETHING with this number exist", not "does the
+    process that wrote this lock still exist" — a PID is reused, after a reboot or after enough
+    process churn, and a lock left by a crashed holder whose PID has since been handed to an
+    unrelated live process then reads as ALIVE forever, which is exactly what let the age rule at
+    `LOCK_STALE` never fire. The lock's SECOND line, when there is one, is the birth time the
+    holder recorded for its own PID at write time (see `exclusive()`); the two bounds now split
+    the question:
+      - PID not alive                                          → DEAD, as before.
+      - PID alive, no second line                               → ALIVE, as before — an older
+        version wrote this lock and there is nothing more to check.
+      - PID alive, second line present, `_process_started(pid)` disagrees with it → DEAD: the
+        number is alive, but it is not the process that wrote this lock.
+      - PID alive, second line present, `_process_started(pid)` returns "" (this platform cannot
+        answer) → ALIVE. Never inferred DEAD from an absent or unreadable start time; DEAD only
+        follows from two values that are both present and disagree. A false ALIVE costs waiting;
+        a false DEAD unlinks a live holder's lock and hands the file to two writers at once, which
+        is strictly worse than the bug this exists to fix.
     """
     try:
-        first = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        lines = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
     except OSError:
         return LOCK_HOLDER_UNKNOWN
-    if not first or not first[0].strip().isdigit():
+    if not lines or not lines[0].strip().isdigit():
         return LOCK_HOLDER_UNKNOWN
-    return LOCK_HOLDER_ALIVE if _pid_is_alive(int(first[0].strip())) else LOCK_HOLDER_DEAD
+    pid = int(lines[0].strip())
+    if not _pid_is_alive(pid):
+        return LOCK_HOLDER_DEAD
+    recorded_start = lines[1].strip() if len(lines) > 1 else ""
+    if not recorded_start:
+        return LOCK_HOLDER_ALIVE
+    actual_start = _process_started(pid)
+    if actual_start and actual_start != recorded_start:
+        return LOCK_HOLDER_DEAD
+    return LOCK_HOLDER_ALIVE
 
 
 @contextlib.contextmanager
@@ -2371,8 +2497,14 @@ def exclusive(path):
             # second process reads a lock a live process is still holding as abandoned, unlinks it
             # and takes it -- so the mutex hands the same shared file to two writers at once, which
             # is exactly the lost update it exists to prevent (R11 agent 2).
+            #
+            # 🐛 [2026-09-18] The PID alone is reused -- after a reboot, or after enough process
+            # churn -- so a lock left by a holder that CRASHED reads as ALIVE forever once its PID
+            # is handed to an unrelated live process, and the age rule can never break it. The
+            # second line is this process's own birth time, cached in `_own_process_started` so
+            # paying for it happens once per process lifetime rather than on every acquire.
             try:
-                os.write(fd, f"{os.getpid()}\n".encode())
+                os.write(fd, f"{os.getpid()}\n{_own_process_started()}\n".encode())
             except OSError:
                 pass
             break

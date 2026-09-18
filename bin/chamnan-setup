@@ -59,7 +59,7 @@ NEVER_TOUCH = ("memory", "state", "skills", "sessions", "logs", "candidates")
 def source_version():
     try:
         return json.loads((PKG / ".claude-plugin" / "plugin.json").read_text(
-            encoding="utf-8"))["version"]
+            encoding="utf-8-sig"))["version"]
     except (OSError, ValueError, KeyError, RecursionError):
         return None
 
@@ -101,7 +101,7 @@ def installed_version(host):
     if not settings.is_file():
         return None, None
     try:
-        data = json.loads(settings.read_text(encoding="utf-8"))
+        data = json.loads(settings.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         return None, None
     enabled = data.get("enabledPlugins") or {}
@@ -114,7 +114,7 @@ def installed_version(host):
         d = Path(src.get("path", ""))
         try:
             return json.loads((d / ".claude-plugin" / "plugin.json").read_text(
-                encoding="utf-8")).get("version"), "directory"
+                encoding="utf-8-sig")).get("version"), "directory"
         except (OSError, ValueError, KeyError, RecursionError):
             return None, "directory (unreadable)"
     return None, kind

@@ -60,7 +60,8 @@ def active_plugin_roots(home=None):
     out = []
     manifest = _home(home) / ".claude" / "plugins" / "installed_plugins.json"
     try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
+        # utf-8-sig: this file is host-written, and a Windows editor on it leaves a BOM.
+        data = json.loads(manifest.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         # RecursionError is named because this file is written by the host, not by chamnan, and a
         # deeply nested document raises it rather than a ValueError. A hook that dies here takes the

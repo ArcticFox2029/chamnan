@@ -197,7 +197,7 @@ def _set(argv, root):
         print(f"chamnan: could not start the waiting process ({exc.__class__.__name__}).",
               file=sys.stderr)
         return 1
-    sched.update(root, rid, pid=pid)
+    sched.update(root, rid, pid=pid, pid_started=sched.process_started(pid))
     if reset_observation:
         appointment = ("at %s from %s %s reset as %s" %
                        (when.strftime("%H:%M"), reset_observation["provider"],

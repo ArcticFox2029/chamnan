@@ -222,7 +222,7 @@ def main():
     session = str(payload.get("session_id") or "")
     seen_path = wsdir / SEEN
     try:
-        seen = json.loads(seen_path.read_text(encoding="utf-8")) if seen_path.is_file() else {}
+        seen = json.loads(seen_path.read_text(encoding="utf-8-sig")) if seen_path.is_file() else {}
     except (OSError, ValueError):
         seen = {}
     if not isinstance(seen, dict):

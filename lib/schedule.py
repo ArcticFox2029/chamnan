@@ -203,7 +203,13 @@ FIELDS = ("id", "when", "runner", "resume_from", "note", "account", "session", "
           # `transport` and `handle` are recorded to REPORT where the schedule came from, not to answer
     # through — chamnan is a plugin that installs alongside a CLI, so a CLI is what it drives.
     "transport", "handle", "app_pid", "app_started", "runner_explicit",
-          "cwd", "pid", "status", "created", "reset_provider", "reset_kind", "reset_source",
+          "cwd", "pid",
+          # The WAITING process's own birth time, beside `pid` for the identical reason `app_pid`
+          # is beside `app_started`: a pid alone is reused, and `describe()` must not mistake an
+          # unrelated live process for the one it spawned. Named `pid_started`, not `started` —
+          # that name already answers a different question, the firing timestamp read below.
+          "pid_started",
+          "status", "created", "reset_provider", "reset_kind", "reset_source",
           "reset_observed_at", "reset_at")
 
 DEFAULT_RUNNER = ("claude", "-p")
@@ -384,78 +390,12 @@ def transport_of(env=None):
 def process_started(pid, run=None):
     """The moment `pid` was born, as a string that never changes, or "" when it cannot be known.
 
-    \U0001f3af The owner's fix for pid reuse, sharpened by one step. They proposed recording how long
-    the app had been running and adding the wait to it — right in substance, and it needs a
-    tolerance, because "3h now, so 5h10m later" only holds if nothing distorted the clock. A BIRTH
-    TIME needs no tolerance at all: it never moves, so it is compared exactly. That matters on this
-    machine specifically, which sleeps after one idle minute — elapsed time keeps counting while it
-    does, so a wait across a suspend produces an elapsed figure nobody predicted, while the birth
-    time is the same string it always was.
-
-    \U0001f41b [2026-09-12] The first version shelled out to `ps` on POSIX and `powershell` on Windows,
-    and the gate refused it — correctly, and for a reason worth keeping. The README tells anyone
-    auditing this package that it executes exactly two things: `git`, and this interpreter re-running
-    a file that ships inside it. Adding `ps` would have been a third, which is a change to a promise
-    made to users, not an implementation detail. It would also have cost a process spawn — about
-    21ms each on this machine — for a question the kernel answers directly.
-
-    So all three platforms are read through the OS, with no child process at all:
-      Linux   `/proc/<pid>` exists and its ctime IS the moment the process was created.
-      macOS   `libproc.proc_pidinfo` with PROC_PIDTBSDINFO carries `pbi_start_tvsec`.
-      Windows `GetProcessTimes` on an opened handle gives creation time directly.
-    `run` stays in the signature so a test can inject a failure without a platform to fail on.
+    Thin delegating wrapper — the body moved to `workspace._process_started` (2026-09-18), the same
+    move `alive()` above already made for plain liveness, so `exclusive()`'s lock can answer the
+    identical pid-reuse question without a second implementation.
     """
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return ""
-    if pid <= 0:
-        return ""
-    if run is not None:                       # a test speaking for the platform
-        return str(run(pid) or "")
-    try:
-        if sys.platform.startswith("linux"):
-            return "%.6f" % pathlib.Path("/proc/%d" % pid).stat().st_ctime
-        if sys.platform == "darwin":
-            import ctypes
-            # PROC_PIDTBSDINFO is 1; the struct's `pbi_start_tvsec` sits at offset 120 and the
-            # call returns the bytes written, so a short answer is a failure rather than a value.
-            libc = ctypes.CDLL("libc.dylib", use_errno=True)
-            # The signature is declared. Without it ctypes guesses, and the guess is wrong here in
-            # two ways at once: the flavor argument arrives the wrong width and the return is
-            # truncated, so the first draft read 24 bytes of a file-descriptor list and turned it
-            # into a plausible-looking number. Verified against `ps -o lstart=` on two live
-            # processes before being trusted — the same rule the ID fixtures are held to.
-            libc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
-                                          ctypes.c_void_p, ctypes.c_int]
-            libc.proc_pidinfo.restype = ctypes.c_int
-            buf = ctypes.create_string_buffer(1024)
-            # PROC_PIDTBSDINFO is 3, not 1 — 1 is PROC_PIDLISTFDS, which answers a different
-            # question and answers it successfully, which is why the wrong flavor read as data.
-            written = libc.proc_pidinfo(pid, 3, 0, buf, 1024)
-            if written < 128:
-                return ""
-            # `pbi_start_tvsec` at offset 120 of struct proc_bsdinfo.
-            return "%d" % int.from_bytes(buf.raw[120:128], "little")
-        if os.name == "nt":
-            import ctypes
-            from ctypes import wintypes
-            k32 = ctypes.WinDLL("kernel32", use_errno=True)   # noqa: F821 — Windows only
-            handle = k32.OpenProcess(0x1000, False, pid)      # QUERY_LIMITED_INFORMATION
-            if not handle:
-                return ""
-            try:
-                created = wintypes.FILETIME()
-                rest = [wintypes.FILETIME() for _ in range(3)]
-                if not k32.GetProcessTimes(handle, ctypes.byref(created),
-                                           *[ctypes.byref(x) for x in rest]):
-                    return ""
-                return "%d" % ((created.dwHighDateTime << 32) | created.dwLowDateTime)
-            finally:
-                k32.CloseHandle(handle)
-    except (OSError, ValueError, AttributeError, TypeError):
-        return ""
-    return ""
+    import workspace as _ws
+    return _ws._process_started(pid, run=run)
 
 
 def agent_process(start_pid=None, env=None, run=None):
@@ -522,7 +462,16 @@ def whose_session(root, env=None):
 
 
 def describe(rec, now=None):
-    """One line a person can read: when it fires, whether anything is still waiting for it."""
+    """One line a person can read: when it fires, whether anything is still waiting for it.
+
+    `watching` starts from `alive()` — a pid that is not alive is gone, full stop — and only
+    downgrades that to "gone" when a recorded `pid_started` and a freshly-read one are BOTH present
+    and disagree, the same pid-reuse case `still_the_same` exists to catch. Any other combination —
+    no `pid_started` recorded, or the current start time unreadable on this platform — leaves the
+    answer at whatever `alive()` said, on the same bias `workspace._lock_holder_state` uses: "cannot
+    tell" resolves to still watching, because a false "gone" costs a live job the user cancels, while
+    a false "watching" only withholds a warning.
+    """
     now = now or datetime.now()
     try:
         due = datetime.fromisoformat(str(rec.get("when") or ""))
@@ -538,7 +487,12 @@ def describe(rec, now=None):
                 "`cancel` it to clear." % (rec.get("id"), rec.get("started") or "?"))
     if status != "pending":
         return "%s — %s at %s" % (rec.get("id"), status, due.strftime("%H:%M"))
+    pid_started = rec.get("pid_started")
     watching = alive(rec.get("pid"))
+    if watching and pid_started:
+        current_started = process_started(rec.get("pid"))
+        if current_started and current_started != pid_started:
+            watching = False
     secs = int(left.total_seconds())
     when = ("%dh%02dm" % (secs // 3600, (secs % 3600) // 60)) if secs > 0 else "now"
     return ("%s — fires %s (in %s)%s" %
