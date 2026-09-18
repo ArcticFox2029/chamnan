@@ -1103,7 +1103,7 @@ def print_pointer(fired, named, opened, root=None):
     print()
 
 
-KNOWN_FLAGS = ()
+KNOWN_FLAGS = ("--full", "--short")
 
 
 def _configured_ceiling(root):
@@ -1166,10 +1166,28 @@ def main(argv):
     if not ws.enabled("report", root):
         print("chamnan: report is disabled in .chamnan/config.json")
         return 0
-    print_inventory(root)
-    print_persistence(root)
-    print_block_trend(root)
-    print_usage(root)
+    # 🎯 [R5, 2026-09-18] Measured at about 3,850 tokens — more than the whole session-start block,
+    # whose ceiling is 9,500 BYTES — against under 400 for every other command here. A person at a
+    # terminal wants the tables; a dispatched agent is never a TTY, pays for them on every turn
+    # afterwards and cannot skim. `gh` switches its output on the same test with no flag, which is
+    # the property that matters: a flag only helps the caller who already knew to pass it.
+    #
+    # The human path is byte-identical to what it was. `--full` forces the tables into a pipe (which
+    # is what a person redirecting to a file wants) and `--short` forces the summary at a terminal.
+    # The pruning below runs either way — it is this command's other job and skipping it in one mode
+    # would be the defect this repository records most often.
+    _short = "--short" in argv or (not ws.reader_is_a_terminal() and "--full" not in argv)
+    if _short:
+        print_block_trend(root)
+        print("\n  Summary only, because this output is not going to a terminal.")
+        print("  `chamnan-report --full` prints the knowledge inventory, the settings this "
+              "repository has changed,")
+        print("  what the workspace is not delivering, and per-command usage.")
+    else:
+        print_inventory(root)
+        print_persistence(root)
+        print_block_trend(root)
+        print_usage(root)
     project_dir = encoded_dir(root)
     entries = []
     if project_dir:

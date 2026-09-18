@@ -97,6 +97,48 @@ def a_program_is_lying_in_wait(root, names=("git",)):
 # `rev-list`) and have nothing to fetch, so this costs them nothing.
 os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 
+# A repository chooses what `git` RUNS, and one of our reads is enough to trigger it.
+#
+# 🐛 [2026-09-18] Reproduced here end to end, not taken from the advisory: a repository whose own
+# `.git/config` carries `core.fsmonitor = <a program>` executes that program when git refreshes the
+# index, and `git status --porcelain` refreshes the index. `hooks/chamnan_session_start.py` runs
+# exactly that, on every session, inside whatever repository the user opened. A clone, a dependency
+# checkout or a pull request branch is therefore able to run code as the user the moment a session
+# starts — with no prompt, because nothing here is being asked to trust anything. The payload in the
+# reproduction wrote a file and exited 1; git carried on and reported a clean status.
+#
+# That is the GitSpawn class (Manifold/Shattered, 2026), the same key behind Copilot CLI's
+# GHSA-9ccr-r5hg-74gf, and the shape Claude Code itself shipped a fix for in 2.0.71. `core.pager` is
+# the older cousin — git's default pager is `less`, whose `!` escape hands over a shell (CVE-2017-8386)
+# — and it costs nothing to close beside it even though our calls capture output and never page.
+#
+# Set through the ENVIRONMENT rather than by adding `-c` to each call, for the reason the block above
+# gives: there are twenty-five `git` invocations across eight files, every entry point imports this
+# module, and three of the four times this repository has tried to fix something at N call sites it
+# has missed one. `GIT_CONFIG_COUNT`/`_KEY_n`/`_VALUE_n` is git's documented way to inject config
+# into every child, it outranks the repository's own config, and a hostile `.git/config` cannot
+# unset it. Verified both ways in the reproduction: with these set the payload does not run; without
+# them it does.
+#
+# Appended to whatever the user already has rather than assigned, so an existing `GIT_CONFIG_COUNT`
+# keeps its entries and ours are added after it.
+def _harden_git_config():
+    """Refuse the repository-controlled config keys that turn a read into an execution."""
+    forced = (("core.fsmonitor", "false"), ("core.pager", "cat"))
+    try:
+        start = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
+    except ValueError:
+        start = 0
+    if start < 0:
+        start = 0
+    for offset, (key, value) in enumerate(forced):
+        os.environ["GIT_CONFIG_KEY_%d" % (start + offset)] = key
+        os.environ["GIT_CONFIG_VALUE_%d" % (start + offset)] = value
+    os.environ["GIT_CONFIG_COUNT"] = str(start + len(forced))
+
+
+_harden_git_config()
+
 WORKSPACE_DIRNAME = ".chamnan"
 # Each part can be switched off independently. Nothing here is load-bearing for the others: turning
 # `map` off leaves state and skills working, and vice versa. That is deliberate — the parts have
@@ -2605,6 +2647,30 @@ def wants_version(argv):
     typing it and getting "unknown flag" is worse than useless.
     """
     return any(a in VERSION_FLAGS for a in (argv or []))
+
+
+def reader_is_a_terminal(stream=None):
+    """True when a person is watching this output, false when it is being captured.
+
+    🎯 [R5, 2026-09-18] Measured: `chamnan-report` prints about 3,850 tokens — more than the entire
+    session-start block, whose ceiling is 9,500 BYTES — and every other command is under 400. Whoever
+    runs it at a terminal wants that table. A dispatched agent, which is never a TTY, pays for it on
+    every turn of the session afterwards, and cannot skim.
+
+    Until now every reader got identical bytes: there was no `isatty` call anywhere in `lib/` or
+    `bin/`. `gh` switches to tab-delimited fields, stops truncating and drops colour on the same
+    test, with no flag to pass and nothing to document — which is the property that matters here,
+    because a flag only helps the caller who already knew to use it.
+
+    Errors are answered False rather than raised: a stream with no `isatty` (a pipe replacement, a
+    captured buffer in a test) is not a person, and an output decision must never be the reason a
+    command fails.
+    """
+    stream = sys.stdout if stream is None else stream
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
 
 
 def nonce_for(session_id):

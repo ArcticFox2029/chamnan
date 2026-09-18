@@ -76,7 +76,12 @@ def _staged_diff(root):
         return None
     try:
         out = subprocess.run(
-            ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff", "-U0"],
+            ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff",
+         # 🐛 [2026-09-18] `--no-ext-diff` refuses an external diff COMMAND and does nothing about a
+         # textconv driver, which is a different key and runs anyway. A repository shipping
+         # `.gitattributes` with `*.bin diff=evil` and a `[diff "evil"] textconv = <program>` in its
+         # own config had that program executed by this exact call — reproduced, R3 2026-09-18.
+         "--no-textconv", "-U0"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=30)
     except (OSError, subprocess.SubprocessError):
@@ -321,7 +326,10 @@ def _history_diff(root, limit):
         return None
     try:
         out = subprocess.run(
-            ["git", "-C", str(root), "log", "-p", "--no-color", "--no-ext-diff", "-U0",
+            ["git", "-C", str(root), "log", "-p", "--no-color", "--no-ext-diff",
+             # The same textconv hole as the staged diff above — one member of a set fixed and its
+             # twin left is this package's most recorded defect, so both went in together.
+             "--no-textconv", "-U0",
              "--no-merges", "-n", str(int(limit))],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.DEVNULL, timeout=300)
