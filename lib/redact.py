@@ -1565,7 +1565,7 @@ def _swallow_trailing_credential_runs(text, start):
     """How many characters after `start` are more of the same credential. 0 when the next run is
     prose, which is the common case and the one the space boundary exists to protect.
 
-    🐛 [2026-09-18] A credential split across two adjacent string literals --
+    🐛 [2026-09-18] (R47 agent 2) A credential split across two adjacent string literals --
 
         api_key = (
             "sk_live_"

@@ -4,7 +4,7 @@
 ENFORCES: memory/rules/check-for-a-skill-first-and-extend-it-not-fork-it.md, and the session-start
 block's own instruction to read the matching procedure before starting that kind of task.
 
-🐛 [2026-09-18] The instruction has been in the block every session since the workspace existed, and
+🐛 [2026-09-18] (R26.5) The instruction has been in the block every session since the workspace existed, and
 the procedures are good, and they are still not opened at the moment they apply. The reason is not
 mystery: a procedure is named at session start, and the work begins hours and a hundred thousand
 tokens later. R19 measured the tier this belongs to — NIOSH ranks administrative controls fourth of

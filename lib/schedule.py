@@ -466,7 +466,7 @@ def describe(rec, now=None):
 
     `watching` starts from `alive()` — a pid that is not alive is gone, full stop — and only
     downgrades that to "gone" when a recorded `pid_started` and a freshly-read one are BOTH present
-    and disagree, the same pid-reuse case `still_the_same` exists to catch. Any other combination —
+    and disagree, the same pid-reuse case `still_the_same` exists to catch (R27.7). Any other combination —
     no `pid_started` recorded, or the current start time unreadable on this platform — leaves the
     answer at whatever `alive()` said, on the same bias `workspace._lock_holder_state` uses: "cannot
     tell" resolves to still watching, because a false "gone" costs a live job the user cancels, while

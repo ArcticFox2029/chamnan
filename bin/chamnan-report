@@ -1381,6 +1381,10 @@ def main(argv):
         # answer one question. The reasoning lives in these comments, not in the output.
         print(f"\n  context per turn   before {bmr:>10,.0f}   after {amr:>10,.0f}   "
               f"{(amr-bmr)/max(bmr,1)*100:+.1f}%")
+        # 🐛 [2026-09-18] (R20.3) The report never said how much of the context per turn was
+        # chamnan's own injected block, leaving a reader unable to tell how much of the "after"
+        # figure above was the tool's own overhead rather than the conversation it was measuring.
+        #
         # The "after" figure above is the whole session's context per turn, and chamnan's own
         # injected block is PART of it -- nothing above says so. `blocklog` records one row per
         # session start (`bytes`, and since this change `tok`), over the same trailing window

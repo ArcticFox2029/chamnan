@@ -2429,7 +2429,7 @@ def _lock_holder_state(lock):
     microseconds — breaking on that would hand the same file to two writers, which is the one
     thing this mutex exists to prevent.
 
-    🐛 [2026-09-18] The PID alone answers "does SOMETHING with this number exist", not "does the
+    🐛 [2026-09-18] (R27.7) The PID alone answers "does SOMETHING with this number exist", not "does the
     process that wrote this lock still exist" — a PID is reused, after a reboot or after enough
     process churn, and a lock left by a crashed holder whose PID has since been handed to an
     unrelated live process then reads as ALIVE forever, which is exactly what let the age rule at
@@ -2498,7 +2498,7 @@ def exclusive(path):
             # and takes it -- so the mutex hands the same shared file to two writers at once, which
             # is exactly the lost update it exists to prevent (R11 agent 2).
             #
-            # 🐛 [2026-09-18] The PID alone is reused -- after a reboot, or after enough process
+            # 🐛 [2026-09-18] (R27.7) The PID alone is reused -- after a reboot, or after enough process
             # churn -- so a lock left by a holder that CRASHED reads as ALIVE forever once its PID
             # is handed to an unrelated live process, and the age rule can never break it. The
             # second line is this process's own birth time, cached in `_own_process_started` so

@@ -60,7 +60,12 @@ def active_plugin_roots(home=None):
     out = []
     manifest = _home(home) / ".claude" / "plugins" / "installed_plugins.json"
     try:
-        # utf-8-sig: this file is host-written, and a Windows editor on it leaves a BOM.
+        # 🐛 [2026-09-18] (R29.9) Five of twenty-one `json.loads` reads in this package could not
+        # strip a leading BOM; three of the five read a file the HOST writes, not chamnan itself --
+        # this one, a host's `settings.json`, and the `plugin.json` it points at -- and PowerShell's
+        # `Set-Content` writes UTF-8 with a BOM by default. Fixed here and at the other four sites
+        # (`hooks/chamnan_skill_pointer.py`, `bin/chamnan-setup` x3); this comment is the one place
+        # that records why, per check 185.
         data = json.loads(manifest.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, RecursionError):
         # RecursionError is named because this file is written by the host, not by chamnan, and a

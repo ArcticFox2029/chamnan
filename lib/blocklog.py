@@ -65,6 +65,9 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
            # The hook catches every exception and ends the block with this sentence rather than
            # failing, which is right — and is exactly why the truncation went unseen for hours.
            "early": "stopped early" in body,
+           # 🐛 [2026-09-18] (R20.3) The block's token cost used to be derived from a fixed
+           # bytes-per-token constant, measured 6% low on a block of mixed Thai and English.
+           #
            # Same estimator every other caller in this package prices a block with
            # (`bin/chamnan-map`, `.chamnan/tools/session_block_size.py`) — script-weighted, so
            # Thai/CJK text is not priced as if it were plain Latin. Stored alongside `bytes` rather
