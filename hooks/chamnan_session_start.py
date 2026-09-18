@@ -571,7 +571,7 @@ def _map_is_current_by_git(root, map_path):
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
         diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet",
-                               # 🐛 [2026-09-18] This one runs on EVERY session, which makes it the
+                               # 🐛 [2026-09-18] (R3 agent 2) This one runs on EVERY session, which makes it the
                                # worst of the three: a repository shipping a textconv driver had it
                                # executed here before the user typed anything. `--quiet` suppresses
                                # the OUTPUT and does not stop the driver running to produce it.

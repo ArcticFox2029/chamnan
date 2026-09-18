@@ -77,7 +77,7 @@ def _staged_diff(root):
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff",
-         # 🐛 [2026-09-18] `--no-ext-diff` refuses an external diff COMMAND and does nothing about a
+         # 🐛 [2026-09-18] (R3 agent 2) `--no-ext-diff` refuses an external diff COMMAND and does nothing about a
          # textconv driver, which is a different key and runs anyway. A repository shipping
          # `.gitattributes` with `*.bin diff=evil` and a `[diff "evil"] textconv = <program>` in its
          # own config had that program executed by this exact call — reproduced, R3 2026-09-18.

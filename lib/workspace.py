@@ -99,7 +99,7 @@ os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 
 # A repository chooses what `git` RUNS, and one of our reads is enough to trigger it.
 #
-# 🐛 [2026-09-18] Reproduced here end to end, not taken from the advisory: a repository whose own
+# 🐛 [2026-09-18] (R3 agent 2) Reproduced here end to end, not taken from the advisory: a repository whose own
 # `.git/config` carries `core.fsmonitor = <a program>` executes that program when git refreshes the
 # index, and `git status --porcelain` refreshes the index. `hooks/chamnan_session_start.py` runs
 # exactly that, on every session, inside whatever repository the user opened. A clone, a dependency

@@ -860,6 +860,62 @@ def print_block_trend(root):
         print(f"  ⚠ {_finding}")
 
 
+def print_followed(root):
+    """Did today follow the procedures, or go round them — from logs that already exist.
+
+    🎯 [owner, 2026-09-18] Three notices fired at me that day and I walked past all three, and what
+    actually stopped the drift was the owner noticing and saying so — at the cost of them policing
+    it by hand all day. A refusing hook was considered here before and rejected on record: the
+    documented `permissionDecision` enum has no `ask`, and whether `escalate` reaches a prompt under
+    auto mode is undocumented, so a guard that might silently not fire is worse than none.
+
+    What is left is making the deviation visible without anyone having to catch it. Every number
+    below is already being written by something else; none of it is new instrumentation.
+    """
+    import collections as _c
+    import json as _j
+    import time as _t
+    wsdir = ws.workspace(root)
+    today = _t.strftime("%Y-%m-%d")
+
+    def _rows(name):
+        p = wsdir / "logs" / name
+        if not p.is_file():
+            return []
+        out = []
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                r = _j.loads(line)
+            except ValueError:
+                continue
+            if str(r.get("at") or r.get("t") or "").startswith(today):
+                out.append(r)
+        return out
+
+    cmds = _rows("commands.jsonl")
+    if not cmds:
+        return
+    sigs = _c.Counter(str(r.get("sig") or "") for r in cmds)
+    gates = sum(1 for r in _rows("gate_runs.jsonl") if r)
+    recalls = sigs.get("chamnan-recall", 0)
+    promotes = sigs.get("chamnan-promote", 0)
+    print("\nWhat today did with the procedures")
+    print("  %-34s %d" % ("commands run", len(cmds)))
+    print("  %-34s %d" % ("chamnan-recall (asked what exists)", recalls))
+    print("  %-34s %d" % ("chamnan-promote (new tools kept)", promotes))
+    print("  %-34s %d of 2 in the cadence" % ("full gate runs", gates))
+    if promotes and not recalls:
+        print("  ⚠ %d tool(s) kept today and `chamnan-recall` was never asked — the 292-entry store "
+              "answers\n    \"does this exist already\" in under a second, and it is the step that was "
+              "skipped." % promotes)
+    if gates > 2:
+        print("  ⚠ the gate ran %d times; the cadence is ~100 checks to one run plus at most one to "
+              "confirm." % gates)
+
+
 def print_usage(root):
     """Counts, never a savings figure — a tokens-saved number would be invented, and this project
     already retired an "Engineer Scoreboard" for measuring what is easy instead of what matters.
@@ -1188,6 +1244,7 @@ def main(argv):
         print_persistence(root)
         print_block_trend(root)
         print_usage(root)
+        print_followed(root)
     project_dir = encoded_dir(root)
     entries = []
     if project_dir:

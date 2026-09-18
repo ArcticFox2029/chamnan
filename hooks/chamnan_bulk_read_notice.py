@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse hook — say when a file about to be read is bulk with no reading value.
 
+ENFORCES: memory/rules/the-local-model-reads-long-things-first.md — at the moment of the
+command, which is the only placement the evidence supports (R19: administrative controls rank
+fourth of five *because* they rely on people following rules).
+
 This is the honest half of "filter the file before it enters the context". The other half is not
 possible: hooks cannot rewrite what a tool returns. PostToolUse exposes only `additionalContext`
 and `systemMessage`, and PreToolUse can change a tool's INPUT but never its OUTPUT — so nothing in
@@ -30,6 +34,7 @@ the highest-value tokens in a file for a reader trying to understand intent, and
 index is built out of them. Saving tokens by deleting them would be sawing off the branch.
 """
 import json
+import shlex
 import re
 import sys
 from pathlib import Path
@@ -138,6 +143,41 @@ def reason_for(path, root=None):
     return ""
 
 
+# 🐛 [2026-09-18] (R19 agent 4) This hook watched `Read` and nothing else, and the door everybody actually walks
+# through is `Bash`. Measured on one working day in this repository: 129 shell commands, of which the
+# reads — `cat`, `sed -n`, `head`, `cut`, `grep` over whole files — were every one of them invisible
+# here. The workspace rule that says to hand a long file to the local model first is one of seventeen
+# with no machine behind it, and this is the machine that was supposed to be behind it, guarding a
+# door that was not being used.
+#
+# Deliberately narrow, because a wrong notice on a shell command is worse than none: ONE command, no
+# pipe and no redirect (a pipeline is usually already a filter, which is the behaviour being asked
+# for), a reader verb, and a path that exists. `sed -i` is an edit and is excluded by requiring the
+# `-n` form. Anything clever — a subshell, a loop, a heredoc — falls through and says nothing.
+_READERS = ("cat", "head", "tail", "less", "more", "bat")
+_PIPE_OR_REDIRECT = re.compile(r"[|><]|&&|\|\||;|\$\(|`")
+
+
+def _file_a_shell_command_reads(command):
+    """The one file this command exists to read, or "" when it is doing anything else."""
+    text = (command or "").strip()
+    if not text or _PIPE_OR_REDIRECT.search(text):
+        return ""
+    parts = shlex.split(text) if text else []
+    if len(parts) < 2:
+        return ""
+    verb = parts[0].rsplit("/", 1)[-1]
+    if verb == "sed":
+        # `sed -n '10,20p' file` reads a slice, which is already the cheaper behaviour. Only a bare
+        # `sed 'expr' file` — printing the whole file — is worth a word.
+        if "-n" in parts or "-i" in parts:
+            return ""
+    elif verb not in _READERS:
+        return ""
+    candidates = [a for a in parts[1:] if not a.startswith("-")]
+    return candidates[-1] if candidates else ""
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -146,13 +186,16 @@ def main():
         payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0
-    if (payload.get("tool_name") or "") != "Read":
+    _tool = payload.get("tool_name") or ""
+    if _tool not in ("Read", "Bash"):
         return 0
     root = ws.hook_root(payload)
     if not ws.workspace(root).is_dir() or not ws.load_config(root).get("warn_on_bulk_reads", True):
         return 0
 
     raw = (payload.get("tool_input") or {}).get("file_path") or ""
+    if _tool == "Bash":
+        raw = _file_a_shell_command_reads((payload.get("tool_input") or {}).get("command") or "")
     if not raw:
         return 0
     path = Path(raw)

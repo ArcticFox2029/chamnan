@@ -58,6 +58,15 @@
             "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_file_pointer.py\""
           }
         ]
+      },
+      {
+        "matcher": "Bash|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_skill_pointer.py\""
+          }
+        ]
       }
     ],
     "SubagentStart": [
