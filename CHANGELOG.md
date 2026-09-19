@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1270), and every one of these is on the
+[README](README.md#whats-new-in-1280), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -16,6 +16,218 @@ the version number and a new empty one starts.
 Nothing under **Unreleased** carries a version number, on purpose. Numbering it would put a version
 in this file that no tag matches — and on the machine chamnan is developed on, the installed plugin
 already reports the last released number while running newer code.
+
+---
+
+## What's new in 1.28.0
+
+**A firmer boundary between chamnan and the repository it reads, and hooks that answer even when
+the workspace is broken.** The repository you point this at is now treated as untrusted input
+throughout — its config, its comments, its filenames — and the parts that run on every session were
+made to fail visibly instead of quietly.
+
+### Highlights
+
+| | before | after |
+|---|---|---|
+| Session start on a workspace it cannot read | >45 s, 0 bytes | **0.5 s, with the reason** |
+| `chamnan-map` on a crafted 8,000-space comment | 2,374 ms | **0.0 ms** |
+| Windows installs where a byte-order mark hid the install | 21 of 21 | **0 of 21** |
+| Repository-controlled git keys that can make git run something | 0 refused | **11 refused** |
+| Secret detection on the published corpus | — | **99.0% recall · 100.0% precision** |
+
+**A repository can no longer choose what git runs.** Eleven config keys — `core.hooksPath`,
+`core.pager`, `core.editor`, `core.sshCommand`, `core.askPass`, `diff.external`,
+`credential.helper`, `uploadpack.packObjectsHook`, `sequence.editor`, `gpg.program`,
+`core.fsmonitor` — are forced inert for every git command chamnan issues. Cloning a repository and
+opening a session in it used to be enough to have its chosen commands run.
+
+- **Warnings at the moment of the command, not in a document.** Before `git checkout --`,
+  `git restore`, `git reset --hard`, `git clean` or `git stash drop`, chamnan says how many files
+  in that repository carry uncommitted work — the actual number, from `git status`, not a caution
+  that something might.
+- **A hidden instruction in a source comment no longer reaches the architecture index.** Stripping
+  covered what hooks printed; the index is written from repository text and was not covered.
+- **Every hook survives a workspace it cannot read**, and says so, instead of returning nothing
+  that looks exactly like having nothing to say.
+- **`chamnan-report` answers by who is reading it** — tables at a terminal, a summary when piped.
+- **5,550 / 5,550 verification checks passed**, on all three platforms.
+
+No migration required.
+
+### What you should notice
+
+Most of this is deliberately invisible on the happy path, and the honest summary is that a short
+session in a healthy repository feels exactly as it did in 1.27. What changes is the unusual case:
+a workspace with the wrong permissions, a repository that is not yours, a file with a byte-order
+mark, a comment written to be hostile. Those used to produce silence, a hang, or an empty result
+that reads like an answer.
+
+The one thing you will see directly is the warning before an irreversible git command.
+
+### Under the hood
+
+#### Security — the repository is untrusted input
+
+- **Git configuration.** Eleven keys forced inert for every git command chamnan runs. The list is
+  the set of keys that turn a read into an execution; `git -C <dir>` makes git read that
+  directory's config, so every such call now also asks git whether it can speak for the directory
+  at all before running.
+- **Hostile comments.** `mapper.py` compiled thirty-three patterns with no ReDoS check — the audit
+  had been scoped to the redactor. One was quadratic: a leading comment of `import`, then spaces,
+  then one rejecting character. `2,000 → 153 ms · 4,000 → 560 ms · 8,000 → 2,374 ms`, 4.2x per
+  doubling where linear is 2; roughly 37 seconds at 32,000. Bounded rather than restructured, and
+  behaviour-identical across all fifteen cases tested. **After: 0.0 ms at 8,000 spaces, 0.9x per
+  doubling.**
+- **Secret protection.** A decoy in the value position no longer keeps the real secret out of
+  reach; one invisible character inside the word `password` no longer carries the credential out
+  whole; a passphrase named in a sentence is treated as a credential; chat-template control tokens
+  are stripped from the injected block, as ANSI escapes already were. Measured on the published
+  corpus: **recall 99.0%, precision 100.0%**, with every category represented.
+- **The index, not just the output.** A hidden instruction planted in a repository file reached
+  `MAP.md`, because only the hook's own output was being stripped.
+
+#### Reliability — the parts that run every time
+
+- **A workspace that cannot be read.** The lock helper treated a permission error as a lock on its
+  way out and retried it for the full timeout. On Windows that is right — a deleted lock lingers in
+  `DELETE-PENDING` and every open fails with access-denied for a moment. Everywhere else it means
+  what it says and will not change by waiting. Session start on an unreadable `.chamnan` therefore
+  spun for **more than 45 seconds and answered with 0 bytes** — a hang, as far as anyone watching
+  could tell. **Now 0.5 s, and it records why it gave up.**
+- **A lock naming a process id that has been recycled** can now be broken.
+- **Byte-order marks.** PowerShell's `Set-Content` writes UTF-8 with a BOM by default, so a file
+  written on Windows could hide an install from the very code looking for it: **21 of 21 read sites
+  affected, now 0 of 21**, with the check deriving its population from the source rather than a
+  list, so the next site is caught without being enumerated.
+- **Hooks under a broken workspace.** Every hook now survives one, including the one deliberately
+  left unwrapped, and the deliberate exclusion is documented where it is made.
+
+#### Measurement — numbers that stop being true
+
+- **The block's token cost is measured where the text is**, not inferred from its byte count. The
+  old arithmetic understated a Thai-and-English workspace's own block by 6% — 3,942 against 4,184.
+- **`chamnan-report` now says how much of the context it reports is its own block.**
+- **Published figures re-derive themselves.** Every re-derivable number in the README carries a
+  marker naming the tool that produces it, and one command rewrites them all. Three had quietly
+  stopped being true and were found by a reader, not by the project.
+
+### Interesting findings
+
+**A guard that fires on its own documentation.** The new warning before a destructive git command
+matched the words of that command anywhere in the command line — including inside a heredoc, where
+they are the document being written rather than the command being run. It fired while this session
+was writing a note *about* such a command. It blocks nothing, so it cost no work; what it cost is
+worse. A warning built to stop a reader skimming had started teaching them to skim.
+
+**A rule that broke because the tool obeyed.** A recorded rule asserted a heading was present in a
+generated document. The heading was changed on purpose, the generator produced the new one, and the
+rule reported itself violated — a guard failing because the thing it guards did exactly what it was
+asked to do. The rule now names a fixed marker in the *generator*, which is bounded source, rather
+than a line in its output, which is not.
+
+**A file too large to read was counted as a file that broke the rule.** The rule checker skips any
+file over its scan cap, and a skipped file fell through into the "did not match" count. A `present`
+check over one oversized document therefore reported the tree in violation when nothing had been
+read at all. The other direction is worse and was silent: an `absent` guard over an unread file
+reported that it held. A verdict now stands only when a file nobody read could not have changed it.
+
+**The audit that was scoped to one module.** The ReDoS work had been done on the redactor and
+reasoned about carefully there. Thirty-three patterns in the mapper had never been asked the same
+question, and one of them was quadratic — the same failure family, in a different file, found only
+because a round asked what breaks above the sizes anybody had run.
+
+### Dogfood and real-world discovery
+
+The permission-error hang was not found by a fixture. A session on this machine watched its own
+session-start hook take more than forty-five seconds and produce nothing, which reads as slowness
+rather than as failure; the workspace was simply unreadable. It was turned into a provoked,
+reproducible case before any code moved, and that case now asserts both platforms' behaviour rather
+than whichever one the suite happens to be running on.
+
+### Research-driven improvements
+
+Rounds run against outside literature during this cycle changed the code in three places: the
+prompt-injection stripping was widened to the index after a round on what reaches a model's context
+without passing a filter; the mapper ReDoS sweep exists because a round asked what breaks above the
+sizes anybody has run; and the rule-conflict detector's categories were replaced after a round on
+how real systems detect contradictions in a rule base — it had been using the firewall anomaly
+classes, which assume ordered rules matching a packet space, on prose rules that have neither.
+
+The full index of which research changed which line is attached to this release as
+`INDEX_CITED_IN_CODE.md`. It is generated from the citations in this project's own source rather
+than written by hand — every entry points at the commit that carries it, so a claim here can be
+followed to a diff without cloning anything. The generator lives in the development workspace and
+is not part of the package; what ships is the document.
+
+### Research & evidence
+
+- `INDEX_CITED_IN_CODE.md`, attached to this release — every cited fix, with the round that found
+  it and the commit that carries it
+- [chamnan-corpus](https://github.com/ArcticFox2029/chamnan-corpus) — 804 files, 72 extensions,
+  23 programming languages, comments in eight writing systems. The secret-detection and coverage
+  figures above are measured against it and are reproducible without cloning this repository.
+
+### Verification
+
+```
+5550/5550 checks passed, 3 block(s) skipped on this platform
+```
+
+Quoted from the run on the tagged code, not remembered. The public CI matrix — Ubuntu, macOS and
+Windows on Python 3.8 and 3.13 — is green on the same commit, and the suite was also run from a
+checkout with no development workspace above it (`5469/5469`), which is what anybody cloning the
+repository gets.
+
+`5,550 / 5,550` is not "chamnan has no bugs". It is "5,550 behaviours we have defined still do what we said" —
+known regressions, malformed input, platform-specific behaviour, research-derived edge cases and
+adversarial security fixtures.
+
+A tool anyone can run to reproduce it on their own machine:
+
+```bash
+python3 tools/verify_release.py
+```
+
+### Negative results
+
+- **A grammar constraint on the local model was measured and rejected.** It blocked zero foreign-
+  script leaks over fifty messages while pushing fourteen of them into the output cap, where the
+  reply is discarded. It derails the model rather than guarding it, and it ships switched off.
+- **Aggressive prompt compression was not adopted.** A pre-registered trial over 358 real runs
+  found moderate compression cut cost 27.9% while aggressive compression *raised* it 1.8% through
+  output expansion. The work stopped there rather than continuing toward a worse number.
+- **One proof could not be automated and is stated as such.** The quadratic-pattern fix needs two
+  bounded groups reverted at once, and the mutation harness takes a single substring, so it
+  correctly reported "nothing failed". It was proved by hand instead: both groups reverted gives
+  142 ms → 539 ms at 3.8x, and the check fires; restored, it does not.
+
+### Known limitations
+
+- Windows behaviour is exercised only on CI. Nothing on the development machine substitutes for it,
+  and this cycle is the clearest evidence of that: the one defect no local instrument could reach
+  was found by the Windows column of the release matrix.
+- The corpus is synthetic. It is 804 real-shaped files across 72 extensions, not a sample of
+  anybody's production code, and it does not cover every secret format that exists.
+- The secret-detection figures are measured on that corpus. 99.0% recall is a number about those
+  fixtures, not a guarantee about your repository.
+- Nothing here is validated at very large scale. The block-fitting work was tested at 2x, 5x, 20x
+  and 100x present store sizes; the repositories it has actually run on are smaller than that.
+
+### Upgrade
+
+```
+/plugin update chamnan
+```
+
+Nothing to do afterwards. No configuration changed, no file format moved, and an existing
+`.chamnan/` directory is read exactly as before.
+
+### Closing
+
+This release spends almost all of its effort on the boundary: what a repository can make chamnan
+do, and what chamnan does when the thing it is reading is broken or hostile. Very little new
+surface, and the parts you already use should feel the same — which is the point.
 
 ---
 

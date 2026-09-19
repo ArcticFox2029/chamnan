@@ -119,7 +119,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.27.0](#whats-new-in-1270) · [Commands](#commands)
+[What's new in 1.28.0](#whats-new-in-1280) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -524,57 +524,42 @@ claude --plugin-dir ./chamnan
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
 
-## What's new in 1.27.0
+## What's new in 1.28.0
 
-**Every store now reaches the session, and the order follows what your workspace opens.** The
-injected block had been losing the same sections since it was written — measured over 400 recorded
-firings on the repository chamnan is developed in, the tools list and the procedures list were
-dropped on 96.8% of them, recorded decisions on 78.5%, the session handoff on 58.8%.
+**A firmer boundary between chamnan and the repository it reads, and hooks that answer even when
+the workspace is broken.** The repository you point this at is treated as untrusted input
+throughout — its config, its comments, its filenames — and the parts that run on every session were
+made to fail visibly instead of quietly.
 
-The ceiling was never the constraint: none of those blocks was truncated by the host, at either
-setting. A section that will not fit now leaves its **names** — names are what cannot be guessed,
-the prose around them is what does not fit — and the room for that is reserved before anything is
-packed, sized by how many stores exist rather than by how much is in them. A workspace small enough
-for everything to fit reserves nothing and is unaffected.
+| | before | after |
+|---|---|---|
+| Session start on a workspace it cannot read | >45 s, 0 bytes | **0.5 s, with the reason** |
+| `chamnan-map` on a crafted 8,000-space comment | 2,374 ms | **0.0 ms** |
+| Windows installs where a byte-order mark hid the install | 21 of 21 | **0 of 21** |
+| Repository-controlled git keys that can make git run something | 0 refused | **11 refused** |
+| Secret detection on the published corpus | — | **99.0% recall · 100.0% precision** |
 
-The drop order follows what your workspace has actually been seen to open, which chamnan had been
-recording all along and never read. A fresh install, where every count is zero, behaves exactly as
-before.
+**A repository can no longer choose what git runs.** Eleven config keys — among them
+`core.hooksPath`, `core.sshCommand`, `diff.external` and `credential.helper` — are forced inert for
+every git command chamnan issues, and every `git -C <dir>` call first asks git whether it can speak
+for that directory. Cloning a repository and opening a session in it used to be enough to have its
+chosen commands run.
 
-Rules split the way they were always meant to: a pinned rule is loaded, every other rule loads far
-enough to be recognised and fetched when it applies, and the budget rises to whatever naming all of
-them costs — because a rule the session never sees cannot be called on. Result here: 9 of 9 sections
-and 16 of 16 rules, for slightly fewer tokens than 5 of 9 and 13 of 16 cost before.
+- **Warnings at the moment of the command.** Before `git checkout --`, `git restore`,
+  `git reset --hard`, `git clean` or `git stash drop`, chamnan says how many files in that
+  repository carry uncommitted work — the actual number, not a caution that something might.
+- **A hidden instruction in a source comment no longer reaches the architecture index.**
+- **Every hook survives a workspace it cannot read**, and says so, instead of returning nothing
+  that looks exactly like having nothing to say.
+- **`chamnan-report` answers by who is reading it** — tables at a terminal, a summary when piped.
 
-**`chamnan-guard` now reads what a change does to your dependencies.** A dependency can arrive from
-somewhere other than the registry it appears to come from, under a name written to be read as a
-different one, carrying code that runs because it was installed rather than because anything
-imported it. On a staged commit, offline, with no list of known-bad names, chamnan-guard reports a
-redirected registry, a name written with look-alike characters, a new install-time script and what
-that script does, a lock file with no digest to check what arrives, and a dependency no registry
-hosts. It warns; `--strict` is where a project says the commit should fail instead. Measured before
-shipping: 0 of 2,917 real commits would have raised a line.
+Most of this is deliberately invisible on the happy path; a short session in a healthy repository
+feels as it did in 1.27. What changes is the unusual case — the wrong permissions, a repository
+that is not yours, a file with a byte-order mark, a comment written to be hostile. Those used to
+produce silence, a hang, or an empty result that reads like an answer.
 
-**On Windows, a cloned repository could have run its own `git.exe`.** `CreateProcess` searches the
-current directory before PATH, and the current directory is the repository you just opened — so a
-repository carrying a `git.exe` at its root got it executed by the SessionStart hook. It is closed
-at the operating system, and because that switch is silently ignored before Windows 10 1809, the
-case it is for is also detected directly: `chamnan-guard` refuses on a program lying in wait rather
-than routing around it.
-
-**`chamnan-guard --history` scans the commits you already have.** Everything the command did
-answered *is this about to go in*; adopting chamnan on a repository with a past asks a different
-question first. It reports by file, worst first, and says rotate before rewrite — in that order,
-because a rewrite leaves the blob in every fork and clone.
-
-**And the redactor stopped leaking in nine more shapes** — a credential a sentence merely *names*,
-with an ordinary clause between the word and the value; one behind a `-` or `_`; a name written
-with a Cyrillic letter; Thai's own word for "code" being treated as English's; YAML's
-explicit-indentation block scalars; CRLF line endings; and two patterns that backtracked
-quadratically on ordinary input. Four silent tree walks now say when they could not read a
-directory instead of reporting it empty.
-
-Full notes for every version are in [CHANGELOG.md](CHANGELOG.md).
+The full note, with the measurements and what was rejected, is in
+[CHANGELOG.md](CHANGELOG.md#whats-new-in-1280).
 
 ## Bootstrap does not rewrite your code
 
