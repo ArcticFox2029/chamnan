@@ -196,6 +196,10 @@ _harden_git_config()
 # read-only call site may neutralise ONE key for itself, and nothing more: the slot is overwritten
 # with an inert key rather than removed, because renumbering `GIT_CONFIG_COUNT` would silently drop
 # whichever entry the caller's own environment had after ours.
+# Whether this is Windows, as one value a test can override. `os.name` cannot be patched
+# for that purpose: `pathlib` dispatches on it at construction time.
+_IS_WINDOWS = os.name == "nt"
+
 _INERT_SETTING_NAME = "chamnan.inert"
 
 
@@ -2660,7 +2664,13 @@ def exclusive(path):
             # It was invisible because the check that asks "does any hook take a session down"
             # had no timeout on the subprocess it was driving, so it hung alongside the hook
             # instead of reporting it. Two unbounded waits, one inside the other.
-            if os.name != "nt":
+            # 🐛 [2026-09-19] (self-measured) Read from a module flag rather than `os.name`, so a
+            # test can exercise the Windows branch on this machine. Patching `os.name` itself does
+            # work here — and then `pathlib` builds a `WindowsPath` for every `Path()` made while
+            # the patch is in place and raises `UnsupportedOperation`. It took the whole gate down
+            # with no totals line, which is the shape this project treats as "not a pass" rather
+            # than as a failure, because a crashed run prints no FAIL lines at all.
+            if not _IS_WINDOWS:
                 LOCK_GIVEUPS["permission_denied"] = LOCK_GIVEUPS.get("permission_denied", 0) + 1
                 break
             now = time.time()

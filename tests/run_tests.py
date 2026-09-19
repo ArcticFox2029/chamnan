@@ -9004,7 +9004,14 @@ _hg.mkdir(parents=True)
 subprocess.run(["git", "init", "-q"], cwd=_hg, capture_output=True)
 subprocess.run(["git", "-C", str(_hg), "config", "core.fsmonitor", "/tmp/payload"],
                capture_output=True)
-subprocess.run(["git", "-C", str(_hg), "config", "core.hooksPath", "/tmp/theirhooks"],
+# 🐛 [2026-09-19] (self-measured) `/tmp/theirhooks` as a literal, compared against
+# `Path("/tmp/theirhooks")`. On Windows git answers with a drive-qualified path and the comparison
+# could never hold — a check written on macOS, reasoned about carefully, and first run on the other
+# platform by the release matrix, where it was simply always red. The path is made here and both
+# sides are compared as `Path`, so the assertion is about what git RESOLVED rather than about how
+# this machine spells a directory.
+_hg_theirs = Path(tempfile.mkdtemp(prefix="chamnan-theirhooks-"))
+subprocess.run(["git", "-C", str(_hg), "config", "core.hooksPath", str(_hg_theirs)],
                capture_output=True)
 _hg_fsm = subprocess.run(["git", "-C", str(_hg), "config", "--get", "core.fsmonitor"],
                          capture_output=True, text=True, encoding="utf-8",
@@ -9015,7 +9022,8 @@ check("...AND A REPOSITORY CANNOT WIN ONE BACK BY SETTING IT IN ITS OWN CONFIG",
 # this is what husky and lefthook do — and a plain repository must resolve to its own .git/hooks
 # rather than to the value chamnan forces for execution.
 check("...while asking WHERE hooks live still reads the repository, not the refusal",
-      ws.git_hooks_dir(_hg) == Path("/tmp/theirhooks"), saw=ws.git_hooks_dir(_hg))
+      Path(ws.git_hooks_dir(_hg)).resolve() == _hg_theirs.resolve(),
+      saw="%s against %s" % (ws.git_hooks_dir(_hg), _hg_theirs))
 # The exemption is one call's own environment. If it reached os.environ it would stand the control
 # down for every git call afterwards in the same process, which is the whole of what it protects.
 check("...and standing the key down for one read does not stand it down for the process",
@@ -10334,7 +10342,7 @@ check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL G
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
 check("...and the README retracts the claim rather than repeating it",
       "was **false**" in _rdme
-      and "Twenty-three call sites serve fifteen read-only paths"
+      and "Twenty-four call sites serve sixteen read-only paths"
           in _rdme.split("| **Git** |")[1][:900])
 
 # 🐛 FOUR ways a file could vanish from the index while the run reported full confidence.
@@ -10417,8 +10425,22 @@ check("...and reports whether the two periods were even the same kind of work",
 # 🎯 Kept short deliberately. Three blocks of caveats that half-contradict each other leave a
 # reader less able to decide than one clear line does, and this is the screen somebody opens to
 # answer one question.
+# 🐛 [2026-09-19] (self-measured) This counted `print(` across the WHOLE file against a ceiling of
+# 80. The file is a report with a dozen sections; the verdict is one of them, and the count reached
+# 90 because the other sections gained features — reader-aware output, the block's share of the
+# context — while the verdict itself did not grow by a line. A proxy that moves for reasons
+# unrelated to what it is guarding has two endings: it fails on work that was fine, or it is raised
+# until it can no longer fail. Counted inside the function that PRINTS the verdict instead, by AST,
+# so the number means what the sentence above it says.
+_rverdict = next((_f for _f in ast.walk(ast.parse(_rsrc))
+                  if isinstance(_f, ast.FunctionDef) and _f.name == "main"), None)
+_rprints = (sum(1 for _s in ast.walk(_rverdict)
+                if isinstance(_s, ast.Call) and isinstance(_s.func, ast.Name)
+                and _s.func.id == "print")
+            if _rverdict is not None else -1)
 check("...in a verdict short enough to act on",
-      _rsrc.count("print(") < 80 and "could not show the effect either way" in _rsrc)
+      0 <= _rprints < 45 and "could not show the effect either way" in _rsrc,
+      saw=f"{_rprints} print call(s) in the verdict")
 
 # 🐛 The bulk-read notice priced BINARY bytes through a text tokenizer and then advised grepping
 # the result. Replayed over a real 2,431-Read session it fired 28 times, and all 28 were the
@@ -20315,15 +20337,18 @@ def _dp_fake_open(path, flags, *a, **k):
 # fixture: the retry is asserted under a simulated `nt`, and the give-up under the real POSIX name.
 # Asserting one of a pair and leaving the other to the platform that happens to run the suite is
 # how a correct fix looks like a regression.
-_dp_real_name = os.name
+_dp_real_win = ws._IS_WINDOWS
 try:
     os.open = _dp_fake_open
-    os.name = "nt"
+    # 🐛 [2026-09-19] (self-measured) NOT `os.name = "nt"`. `pathlib` reads `os.name` when a Path is
+    # constructed, so every Path made while that patch is in place raises UnsupportedOperation —
+    # it took the whole gate down mid-run with no totals line at all.
+    ws._IS_WINDOWS = True
     with ws.exclusive(_dp_target) as _dp_held:
         _dp_got = _dp_held
 finally:
     os.open = _dp_real_open
-    os.name = _dp_real_name
+    ws._IS_WINDOWS = _dp_real_win
 
 check("the delete-pending condition was actually provoked", _dp_raised["n"] == 3)
 check("A LOCK IN DELETE-PENDING IS RETRIED ON WINDOWS, NOT REPORTED AS UNLOCKABLE", _dp_got is True)
@@ -20343,26 +20368,33 @@ def _dp_always_denied(path, flags, *a, **k):
     return _dp_real_open(path, flags, *a, **k)
 
 
+# 🐛 [2026-09-19] (self-measured) Guarded on the real platform, not the flag. On Windows the retry
+# IS correct, so "gives up at once" is false there by design — asserting it unconditionally made
+# the release matrix red on a behaviour that is right. The Windows half above runs everywhere
+# because the flag can be set; this half only runs where it is true.
 _dp_before = dict(getattr(ws, "LOCK_GIVEUPS", {}))
-try:
-    os.open = _dp_always_denied
-    _dp_t1 = time.time()
-    with ws.exclusive(_dp_target) as _dp_posix:
-        pass
-    _dp_elapsed = time.time() - _dp_t1
-finally:
-    os.open = _dp_real_open
+if os.name == "nt":
+    skip("  [SKIP] the POSIX give-up case — on Windows the retry above is the correct behaviour")
+else:
+    try:
+        os.open = _dp_always_denied
+        _dp_t1 = time.time()
+        with ws.exclusive(_dp_target) as _dp_posix:
+            pass
+        _dp_elapsed = time.time() - _dp_t1
+    finally:
+        os.open = _dp_real_open
 
-check("...and on POSIX the same error gives up instead of waiting out the timeout",
-      _dp_posix is False and _dp_elapsed < max(1.0, ws.LOCK_TIMEOUT * 0.5),
-      saw="returned %r after %.2fs against a %.1fs timeout"
-          % (_dp_posix, _dp_elapsed, ws.LOCK_TIMEOUT))
-check("...having actually tried, so this is not passing on a path that never ran",
-      _dp_forever["n"] >= 1, saw="%d denied open(s)" % _dp_forever["n"])
-check("...and it records WHY it gave up rather than failing silently",
-      getattr(ws, "LOCK_GIVEUPS", {}).get("permission_denied", 0)
-      > _dp_before.get("permission_denied", 0),
-      saw="LOCK_GIVEUPS=%r" % (getattr(ws, "LOCK_GIVEUPS", {}),))
+    check("...and on POSIX the same error gives up instead of waiting out the timeout",
+          _dp_posix is False and _dp_elapsed < max(1.0, ws.LOCK_TIMEOUT * 0.5),
+          saw="returned %r after %.2fs against a %.1fs timeout"
+              % (_dp_posix, _dp_elapsed, ws.LOCK_TIMEOUT))
+    check("...having actually tried, so this is not passing on a path that never ran",
+          _dp_forever["n"] >= 1, saw="%d denied open(s)" % _dp_forever["n"])
+    check("...and it records WHY it gave up rather than failing silently",
+          getattr(ws, "LOCK_GIVEUPS", {}).get("permission_denied", 0)
+          > _dp_before.get("permission_denied", 0),
+          saw="LOCK_GIVEUPS=%r" % (getattr(ws, "LOCK_GIVEUPS", {}),))
 
 # ...and the failure it must still report: a lock genuinely held by somebody else for longer than
 # the timeout has to yield False, or this fix would have turned every contention into a false
@@ -34371,10 +34403,22 @@ else:
         _t_mark182.unlink()
     _sp182.run(["git", "-C", str(_t_repo182), "status", "--porcelain"],
                capture_output=True, env=_t_env182)
-    check("...and the check can fail, because the same repository still executes it unprotected",
-          _t_mark182.is_file(),
-          saw="the payload did not run even with our config entries removed, so this git build does "
-              "not honour core.fsmonitor and the check above proves nothing on this machine")
+    # 🐛 [2026-09-19] (self-measured) The positive half above holds everywhere — the hardening is
+    # environment, not shell. This negative half does not: the payload is a `#!/bin/sh` script, and
+    # Windows has no shell to run it, so the marker never appears and the check reported that the
+    # mechanism no longer exists. It was written and reasoned about on macOS and first run on
+    # Windows by the release matrix. The proof it provides is real and is kept where it can be
+    # made; writing a `.cmd` payload for the other platform is work nobody has done, and claiming
+    # the proof on a platform where it did not run would be worse than saying so.
+    if _os182.name == "nt":
+        skip("  [SKIP] the can-it-fail half — the payload is a /bin/sh script and this is Windows; "
+             "the hardening itself is asserted above and does hold here")
+    else:
+        check("...and the check can fail, because the same repository still executes it "
+              "unprotected",
+              _t_mark182.is_file(),
+              saw="the payload did not run even with our config entries removed, so this git "
+                  "build does not honour core.fsmonitor and the check above proves nothing here")
     _rmtree(_t_base182, ignore_errors=True)
 
 # 🐛 [2026-09-18] (self-measured) (R3 agent 2, 2026-09-18) The SECOND vector, and `--no-ext-diff` does not cover it: a repository shipping
@@ -34454,9 +34498,19 @@ check("A SUBPROCESS THAT REPLACES THE ENVIRONMENT STILL CARRIES THE GIT HARDENIN
 import subprocess as _sp183
 import sys as _sys183
 
+# 🐛 [2026-09-19] (self-measured) This ran `chamnan-report` with `cwd` two levels above the
+# package and compared the two output lengths. That only produces output where a `.chamnan`
+# workspace happens to sit above the checkout — on this machine it does. In a clone, and in every
+# CI column, the report has nothing to describe, both runs come back near-empty, and the length
+# comparison fails: three checks red for anybody who cloned the repository and ran the suite. It is
+# the documented class this project already skips 27 blocks for, and this one had been written
+# without the guard. The check itself is about output SHAPE and needs real content to have a shape.
 _t_rep183 = ROOT / "bin" / "chamnan-report"
+_t_ws183 = owner_workspace("the report output-shape check")
 if not _t_rep183.is_file():
     skip("  [SKIP] report output-shape check — no bin/chamnan-report")
+elif _t_ws183 is None:
+    pass                      # owner_workspace already printed why
 else:
     def _t_run183(*flags):
         # Captured, so stdout is never a TTY — which is exactly the reader this is about.
