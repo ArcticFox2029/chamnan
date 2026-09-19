@@ -473,10 +473,19 @@ def _matches(root, pattern, glob, why=None):
     paths = scan(root, glob)
     if paths is None or not paths:
         return _no(WHY_NO_FILES)
-    hits, missing = 0, []
+    hits, missing, skipped = 0, [], []
     for p in paths:
         try:
             if p.stat().st_size > MAX_BYTES:
+                # 🐛 [2026-09-19] (self-measured) This was a bare `continue`, and a file too large
+                # to read then counted as a file that did not match. A `present` check over one
+                # oversized file reported the rule BROKEN -- the tree VIOLATES it -- when the truth
+                # is that nothing was read. It happened the day this repository's research index
+                # crossed the cap at 401,932 bytes against 400,000, and the verdict named a rename
+                # that had nothing to do with it. Worse in the other direction: an `absent` guard
+                # over an unread file reported `holds`, a silent all-clear over text nobody looked
+                # at. Skips are carried out of here so the caller can refuse to answer.
+                skipped.append(p)
                 continue
             if rx.search(p.read_text(encoding="utf-8-sig", errors="replace")):
                 hits += 1
@@ -486,7 +495,7 @@ def _matches(root, pattern, glob, why=None):
             continue
     # The files that did NOT match come back too, so a per-file check can name them instead of
     # handing the reader a count and leaving them to diff the glob themselves.
-    return len(paths), hits, missing
+    return len(paths), hits, missing, skipped
 
 
 def run(root, rules):
@@ -514,7 +523,7 @@ def run(root, rules):
                             f"nothing to check: {why[0] if why else WHY_NO_FILES} "
                             f"(`{pattern}` in `{glob}`)"))
                 continue
-            scanned, hits, missing = got
+            scanned, hits, missing, skipped = got
             where = f"every `{glob}`" if per_file else f"`{glob}`"
             if per_file:
                 ok = hits == scanned if mode == "present" else hits == 0
@@ -525,6 +534,19 @@ def run(root, rules):
             else:
                 ok = hits > 0 if mode == "present" else hits == 0
                 offenders = []
+            # A verdict is only sound when a file nobody read could not have changed it. Finding a
+            # match is such a verdict: `present` with a hit holds whatever the unread file says,
+            # and `absent` with a hit is broken whatever it says. Every other outcome rests on
+            # having read everything, so with a skip it becomes "could not check", never a pass
+            # and never a violation.
+            _positive = hits > 0 if mode == "present" else hits > 0
+            if skipped and not (_positive or (per_file and mode == "present" and missing)):
+                _big = ", ".join(f"`{q.name}`" for q in sorted(skipped)[:3])
+                out.append((title, "unverifiable",
+                            f"not checked: {len(skipped)} of {scanned} file(s) are larger than "
+                            f"{MAX_BYTES:,} bytes and were not read ({_big}) — `{pattern}` in "
+                            f"{where}"))
+                continue
             if ok:
                 out.append((title, "holds",
                             f"{mode} `{pattern}` in {where} — {hits}/{scanned} file(s)"))

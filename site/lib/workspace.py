@@ -133,16 +133,35 @@ os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 # keeps its entries and ours are added after it.
 def _harden_git_config():
     """Refuse the repository-controlled config keys that turn a read into an execution."""
+    # 🐛 [2026-09-19] (self-measured) Five of these were `""`, and on Windows assigning an empty
+    # string to an environment variable DELETES it. `GIT_CONFIG_COUNT` still said 11 while
+    # `GIT_CONFIG_VALUE_3` no longer existed, so git refused every command it was given:
+    # `error: missing config value GIT_CONFIG_VALUE_3`, and `git init` exited 128. Every git
+    # feature in the package was dead on Windows and nothing here could see it — the suite's checks
+    # read `os.environ`, which still holds the key because Python keeps its own copy; git reads the
+    # real environment block, which does not. Found by the CI matrix on a release check, which is
+    # the only instrument in this project that runs on Windows at all.
+    #
+    # Git does not fold whitespace either: measured, `GIT_CONFIG_VALUE_0=" "` comes back as one
+    # space, not as empty. So an empty value simply cannot be carried this way on Windows, and the
+    # replacement has to express "refuse" rather than "unset". A name that cannot resolve to a
+    # program does that on both platforms, identically, which is worth more than a per-OS branch:
+    # git tries to run it, fails loudly, and the repository's own command never runs. The three
+    # keys below that already used `true`/`cat` were doing exactly this and were never empty.
+    #
+    # `diff.external` is the one with a caller: both `git diff` sites in this package now pass
+    # `--no-ext-diff`, so the refusal is stated on the command line and never reaches this value.
+    _REFUSE = "chamnan-refuses-repository-supplied-command"
     forced = (
         ("core.fsmonitor", "false"),
         ("core.pager", "cat"),
         ("core.editor", "true"),
-        ("core.sshCommand", ""),
-        ("core.askPass", ""),
+        ("core.sshCommand", _REFUSE),
+        ("core.askPass", _REFUSE),
         ("core.hooksPath", "/dev/null"),
-        ("diff.external", ""),
-        ("credential.helper", ""),
-        ("uploadpack.packObjectsHook", ""),
+        ("diff.external", _REFUSE),
+        ("credential.helper", _REFUSE),
+        ("uploadpack.packObjectsHook", _REFUSE),
         ("sequence.editor", "true"),
         ("gpg.program", "true"),
     )

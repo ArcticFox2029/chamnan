@@ -234,8 +234,22 @@ def _about_to_discard(command, root):
     Counts only what is actually AT RISK — files git reports as modified, staged or untracked —
     because a path holding a hundred clean files and one dirty one is a one-file decision.
     """
-    _hit = next((why for frag, why in _DESTRUCTIVE if frag in command), "")
+    # 🐛 [2026-09-19] (self-measured) This matched the whole command line, so the WORDS of a
+    # destructive command sitting inside a heredoc body tripped it — it fired while this session was
+    # writing a note ABOUT such a command, with nothing destructive being run. It is advisory, so it
+    # blocked nothing; the cost is that a warning built to stop the reader skimming taught them to
+    # skim it. Everything from the first heredoc operator on is the document being written, not the
+    # command being run, so only the part before it is examined.
+    _cmd = re.split(r"<<-?\s*['\"]?\w", command, maxsplit=1)[0]
+    _hit = next((why for frag, why in _DESTRUCTIVE if frag in _cmd), "")
     if not _hit:
+        return ""
+    # `git -C <dir>` makes git read that directory's config, and a directory chamnan does not own
+    # is a directory that can choose what git runs. Asked before the call, never after.
+    try:
+        if not ws.git_can_speak_for(root):
+            return ""
+    except Exception:            # noqa: BLE001 — a guard must never be why a command fails
         return ""
     try:
         out = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],

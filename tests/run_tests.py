@@ -10324,8 +10324,11 @@ for _f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.
 # Counted per line and comment lines skipped, from 2026-09-16: the Windows fix's own comment in
 # lib/workspace.py quotes `["git", ...]` in prose, and a check that reads its own source will
 # match itself. 24 is the count of real call sites and did not move.
+# Raised 2026-09-19 from 23 to 24: the PreToolUse discard guard asks `git status --porcelain`
+# before an irreversible command so the warning can name how many files carry uncommitted work.
+# That is a SIXTEENTH purpose, not a repeat of the cached status snapshot, and the README says so.
 check("THE README'S GIT PARAGRAPH STILL MATCHES THE NUMBER OF PLACES THAT CALL GIT",
-      _gitcalls == 23, saw=f"{_gitcalls} site(s)")
+      _gitcalls == 24, saw=f"{_gitcalls} site(s)")
 # Checked as the correction being PRESENT rather than the old phrase being absent — the corrected
 # paragraph quotes the old claim in order to retract it, so an absence test fails on its own fix.
 _rdme = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -20302,15 +20305,64 @@ def _dp_fake_open(path, flags, *a, **k):
     return _dp_real_open(path, flags, *a, **k)
 
 
+# 🐛 [2026-09-19] (self-measured) This fixture provoked PermissionError and asserted a RETRY, while
+# running on POSIX -- where, as the comment above says in its own words, PermissionError from
+# O_EXCL never means delete-pending. `exclusive()` was retrying it everywhere, so a `.chamnan` the
+# user cannot read made the session-start hook spin the full timeout and answer with 0 bytes: >45s
+# of nothing, which reads as a hang rather than as a refusal. The break-out for non-Windows fixed
+# that and turned this check red, because the check was asserting Windows behaviour without being
+# on Windows. Both behaviours are real and they are DIFFERENT, so the platform is now part of the
+# fixture: the retry is asserted under a simulated `nt`, and the give-up under the real POSIX name.
+# Asserting one of a pair and leaving the other to the platform that happens to run the suite is
+# how a correct fix looks like a regression.
+_dp_real_name = os.name
 try:
     os.open = _dp_fake_open
+    os.name = "nt"
     with ws.exclusive(_dp_target) as _dp_held:
         _dp_got = _dp_held
 finally:
     os.open = _dp_real_open
+    os.name = _dp_real_name
 
 check("the delete-pending condition was actually provoked", _dp_raised["n"] == 3)
-check("A LOCK IN DELETE-PENDING IS RETRIED, NOT REPORTED AS UNLOCKABLE", _dp_got is True)
+check("A LOCK IN DELETE-PENDING IS RETRIED ON WINDOWS, NOT REPORTED AS UNLOCKABLE", _dp_got is True)
+
+# The other half of the pair. On POSIX the same error is permanent -- an unreadable directory does
+# not become readable by waiting -- so it must give up AT ONCE and say why, rather than spend the
+# whole timeout. The timing is the assertion that matters: a retry loop here costs LOCK_TIMEOUT.
+_dp_raised["n"] = 0
+_dp_forever = {"n": 0}
+
+
+def _dp_always_denied(path, flags, *a, **k):
+    """PermissionError on every O_EXCL create of the lock — the unreadable-directory shape."""
+    if str(path).endswith(".lock") and (flags & os.O_EXCL):
+        _dp_forever["n"] += 1
+        raise PermissionError(13, "Permission denied")
+    return _dp_real_open(path, flags, *a, **k)
+
+
+_dp_before = dict(getattr(ws, "LOCK_GIVEUPS", {}))
+try:
+    os.open = _dp_always_denied
+    _dp_t1 = time.time()
+    with ws.exclusive(_dp_target) as _dp_posix:
+        pass
+    _dp_elapsed = time.time() - _dp_t1
+finally:
+    os.open = _dp_real_open
+
+check("...and on POSIX the same error gives up instead of waiting out the timeout",
+      _dp_posix is False and _dp_elapsed < max(1.0, ws.LOCK_TIMEOUT * 0.5),
+      saw="returned %r after %.2fs against a %.1fs timeout"
+          % (_dp_posix, _dp_elapsed, ws.LOCK_TIMEOUT))
+check("...having actually tried, so this is not passing on a path that never ran",
+      _dp_forever["n"] >= 1, saw="%d denied open(s)" % _dp_forever["n"])
+check("...and it records WHY it gave up rather than failing silently",
+      getattr(ws, "LOCK_GIVEUPS", {}).get("permission_denied", 0)
+      > _dp_before.get("permission_denied", 0),
+      saw="LOCK_GIVEUPS=%r" % (getattr(ws, "LOCK_GIVEUPS", {}),))
 
 # ...and the failure it must still report: a lock genuinely held by somebody else for longer than
 # the timeout has to yield False, or this fix would have turned every contention into a false
@@ -34570,7 +34622,13 @@ for _t_f185 in _t_files185:
         # keyword correctly sees "utf-8-sig" in the expression -- a plain regex over the file text
         # would either miss it or, worse, match an unrelated mention of the string elsewhere on
         # the same line.
-        _t_txt185 = _ast185.unparse(_t_kw185) if _t_kw185 is not None else "<none>"
+        # 🐛 [2026-09-19] (self-measured) `ast.unparse` is 3.9+ and this package declares 3.8;
+        # check 93 records that rule and this file broke it, unnoticed until the fold made a pool
+        # check part of the shipped `tests/run_tests.py`. `get_source_segment` is 3.8 and answers
+        # the same question more directly — it returns the keyword's OWN source rather than a
+        # round trip through the AST, which is what the reasoning above actually asks for.
+        _t_txt185 = (_ast185.get_source_segment(_t_src185, _t_kw185) or "<none>"
+                     if _t_kw185 is not None else "<none>")
         _t_hits185.append((_t_f185, _t_call185.lineno, _t_txt185))
 
 _t_bad185 = ["%s:%d %s" % (_f.relative_to(ROOT), _ln, _txt)
@@ -35127,6 +35185,58 @@ if _t_ws190 is not None:
     # this rule failed five times in a day.
     check("...and the sweep read a real population, so that is not a pass over nothing",
           len(_t_where190) >= 40, saw="%d distinct pattern(s) seen" % len(_t_where190))
+# ---- 191_a_forced_config_value_the_child_never_receives.py
+# ---- 191_a_forced_config_value_the_child_never_receives.py
+# 🐛 [2026-09-19] (self-measured) `_harden_git_config` forces eleven keys through
+# `GIT_CONFIG_COUNT`/`_KEY_n`/`_VALUE_n`, and five of them were set to the empty string. On Windows
+# assigning "" to an environment variable DELETES it, so the count said 11 while VALUE_3 was gone
+# and git refused every command: `error: missing config value GIT_CONFIG_VALUE_3`, `git init`
+# exit 128. The whole package's git integration was dead on Windows.
+#
+# The existing checks could not see it, and the reason is the finding. They read `os.environ` —
+# Python's own dict, which still holds the key because Python never removed it from its copy. The
+# only reader whose answer matters is a CHILD PROCESS, and nothing asked one. So this asks git
+# itself, in a subprocess, which is the one place the defect is visible.
+#
+# It is also the shape that made it survive: a value nobody asserted. The keys were checked; what
+# they were set TO was not, on the reasoning that the key being present is what does the work.
+_t_ws191 = owner_workspace("the forced-config sweep")
+if _t_ws191 is not None:
+    import subprocess as _sp191
+
+    _t_count191 = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
+
+    # What THIS process holds, and what a child is actually handed. They are the same on POSIX and
+    # were not on Windows, which is the whole point of asking twice.
+    _t_gone191 = [i for i in range(_t_count191)
+                  if not os.environ.get("GIT_CONFIG_KEY_%d" % i)
+                  or os.environ.get("GIT_CONFIG_VALUE_%d" % i) in (None, "")]
+    check("NO FORCED GIT CONFIG SLOT IS EMPTY OR MISSING IN THIS PROCESS",
+          _t_gone191 == [],
+          saw="slots %s of %d have no key or an empty value" % (_t_gone191, _t_count191))
+
+    check("...and there are slots to check, so this is not a pass over nothing",
+          _t_count191 >= 11, saw="GIT_CONFIG_COUNT=%d" % _t_count191)
+
+    # The real instrument: git runs, reads the environment block itself, and says what it got. An
+    # empty VALUE_n makes this exit non-zero with `missing config value`, whatever os.environ says.
+    _t_out191 = None
+    try:
+        _t_out191 = _sp191.run(["git", "config", "--get", "core.pager"],
+                               capture_output=True, text=True, timeout=20)
+    except (OSError, _sp191.SubprocessError):
+        _t_out191 = None
+    if _t_out191 is None:
+        check("git is present, so the child-process half of this check ran", False,
+              saw="could not run git at all")
+    else:
+        _t_err191 = (_t_out191.stderr or "").strip()
+        check("A CHILD PROCESS RECEIVES EVERY FORCED SLOT — git reads the real environment, not ours",
+              _t_out191.returncode == 0 and "missing config value" not in _t_err191,
+              saw="git exited %d, stderr %r" % (_t_out191.returncode, _t_err191[:120]))
+        check("...and it reads the value we forced, not the repository's",
+              (_t_out191.stdout or "").strip() == "cat",
+              saw="core.pager resolved to %r" % (_t_out191.stdout or "").strip())
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption

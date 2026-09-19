@@ -575,7 +575,14 @@ def _map_is_current_by_git(root, map_path):
                                # worst of the three: a repository shipping a textconv driver had it
                                # executed here before the user typed anything. `--quiet` suppresses
                                # the OUTPUT and does not stop the driver running to produce it.
-                               "--no-textconv", stamped, "--",
+                               # 🐛 [2026-09-19] (self-measured) `--no-ext-diff` was on the sibling
+                               # call in `bin/chamnan-guard` and missing here — the same rule
+                               # applied to one member of a pair. It matters more here than there:
+                               # this runs on every session, and `diff.external` is one of the keys
+                               # forced inert below, which only holds while the environment carries
+                               # it. Passing the flag makes the refusal true on the command line
+                               # rather than only in the environment.
+                               "--no-textconv", "--no-ext-diff", stamped, "--",
                                ".", ":(exclude).chamnan"],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=5)
