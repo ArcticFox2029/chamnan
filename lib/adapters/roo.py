@@ -27,7 +27,7 @@ that wrote it -- `55c32f0a` made Kilo an alias and, in this sibling file, claime
 its own message even lists Kilo among the eight agents that became aliases. Not staleness from a
 later change: wrong the moment it was written, and it sat in the shipped docstring for five days
 across several research rounds, because every round checked this file against Roo's behaviour and
-none checked its prose against `__init__.py`'s table (R8 agent 1).
+none checked its prose against `__init__.py`'s table (R8 agent 1, 2026-09-08).
 
 **The extension was archived on 2026-05-15** (RooCodeInc/Roo-Code, `archived: true`, confirmed via
 the GitHub API 2026-09-05). Kept rather than removed: an archived extension still runs for everyone
@@ -41,7 +41,7 @@ NAME = "roo"
 # session, and pays for it twice. Declared here rather than listed in `__init__.py`:
 # 🐛 [2026-09-10] that list held four names while EIGHT vendors qualified, and the evidence
 # for the missing four was sitting in their own docstrings. A set kept beside the thing it
-# describes cannot drift from it (R4 agent 1, finding 6).
+# describes cannot drift from it (R4 agent 1, 2026-09-10, finding 6).
 # Evidence: roocodeinc.github.io/Roo-Code/features/custom-instructions — merged by default, opt-OUT
 # via `roo-cline.useAgentRules`, since v3.38 (verified 2026-09-08).
 ALSO_READS_AGENTS_MD = True

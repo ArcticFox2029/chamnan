@@ -493,11 +493,11 @@ def main():
         # defect in a tool whose whole purpose is to reduce tokens, and nothing said so.
         #
         # Said HERE, at the moment the second file is created, because that is the only moment the
-        # person paying has both the information and the choice (R8 agent 16).
+        # person paying has both the information and the choice (R8 agent 16, 2026-09-10).
         # 🐛 [2026-09-10] Asked in ONE direction, of a set of canonical names, against a raw
         # argument: `--write roo` then `--write generic` created the same duplicate in silence, and
         # so did any alias. `duplicating_agents_md` asks it from whichever side is being written
-        # (R4 agent 1, finding 7).
+        # (R4 agent 1, 2026-09-10, finding 7).
         _root_file = adapters.for_agent("generic").TARGET
         _dupes = adapters.duplicating_agents_md(root, args.write)
         if _dupes == [adapters.for_agent("generic").NAME]:
@@ -517,7 +517,7 @@ def main():
         # None, and what fell out of that is a decision nobody made: an agent whose vendor imposes
         # no limit is handed roughly twice what Claude Code's own hook is allowed. Measured on this
         # repository, same information both ways: `--emit generic` 18,805 bytes / 7,959 tokens
-        # against the hook's 8,942 bytes / 3,799 (R7 agent 6).
+        # against the hook's 8,942 bytes / 3,799 (R7 agent 6, 2026-09-08).
         #
         # Not capped here, and that is deliberate: a file has no host truncation to protect it
         # from, more of the index is genuinely useful to a tool that will not be re-handed it every
@@ -601,7 +601,7 @@ def main():
         # \U0001f41b [2026-09-07] `for_a_terminal` too. `print` here is the shadow that applies both
         # halves; this fallback applied only the credential half, so the one path that exists
         # BECAUSE the text contains an awkward character was the path that stopped filtering
-        # awkward characters. Same shape as the three hooks fixed this morning (R13 agent 2).
+        # awkward characters. Same shape as the three hooks fixed this morning (R13 agent 2, 2026-09-07).
         sys.stdout.buffer.write(
             redact.for_a_terminal(redact.scrub(body)).encode("utf-8", "replace") + b"\n")
     return 0

@@ -31,7 +31,7 @@ CEILING = None
 # So the guard bought nothing, and it was not free. A `---` that FOLLOWS a text line is a setext
 # `<h2>` underline in CommonMark; rewriting it to `***` turns somebody's heading into a paragraph
 # plus a horizontal rule, which changes the outline of the document the agent is handed. The one
-# real effect the function had was the one nobody wrote down (R4 agent 1, finding 10).
+# real effect the function had was the one nobody wrote down (R4 agent 1, 2026-09-10, finding 10).
 #
 # This is not a reversal of the round that kept the six copies and policed them for divergence
 # (R5 agent 3, 2026-09-06): that round asked whether the copies AGREED, and they did. It never

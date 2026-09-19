@@ -47,7 +47,7 @@ import mdblock
 # floor — 3.8 and 3.9, and the `/usr/bin/python3` this repository is developed against — the
 # fallback is the LIVE path, not a rarity. A stdlib name it does not recognise becomes a false
 # dependency edge in the map, which is the exact class of bug this module already fixed once
-# (R10 agent 1, finding 3).
+# (R10 agent 1, 2026-09-09, finding 3).
 #
 # Generated from a real interpreter rather than remembered: `sorted(sys.stdlib_module_names)`
 # on Python 3.14, keeping the public names plus the three underscore ones that are genuinely
@@ -59,7 +59,7 @@ import mdblock
 # floor — 3.8 and 3.9, and the `/usr/bin/python3` this repository is developed against — the
 # fallback is the LIVE path, not a rarity. A stdlib name it does not recognise becomes a false
 # dependency edge in the map, which is the exact class of bug this module already fixed once
-# (R10 agent 1, finding 3).
+# (R10 agent 1, 2026-09-09, finding 3).
 #
 # Generated from a real interpreter rather than remembered: `sorted(sys.stdlib_module_names)`
 # on Python 3.14, keeping the public names plus the three underscore ones that are genuinely

@@ -287,6 +287,9 @@ def demote_headings(text):
 # about. `timeline.py`'s own docstring states the contract -- "Files: is the join key, and it is
 # checked ... free prose is not a join key" -- and this is that line's one definition, so a second
 # store gaining the field cannot gain a second spelling of it with it.
+#
+# 🐛 [2026-09-19] (self-measured) It already had one: `timeline.py` compiled its own `_FILES` copy
+# of this exact pattern instead of reading this one. One question, one pattern -- see check 190.
 FILES_FIELD = re.compile(r"^\*\*Files:\*\*\s*(.+?)\s*$", re.M)
 
 
@@ -333,7 +336,7 @@ def cut_outside_a_fence(text, cut):
     had been bitten. Four other places cut markdown by a token budget -- `lib/rollup.py` twice,
     `lib/sessions.py` and `lib/peek.py` -- and each backed up to a LINE boundary with
     `rsplit("\n", 1)` and stopped there, which is the half of the job that does not close a fence.
-    Reproduced at four of five budgets on a document with one code block (R8 agent 8).
+    Reproduced at four of five budgets on a document with one code block (R8 agent 8, 2026-09-08).
 
     The sibling `close_dangling_fence` below answers the same question the other way, by appending
     a closing marker. That one is right where the text has already been cut and cannot be re-cut;
@@ -376,7 +379,7 @@ def cut_outside_a_fence(text, cut):
     # real session handoff: a markdown table delivered as its header row and its `|---|---|` rule
     # with ZERO data rows under it — a table that promises columns and fills none, which is worse
     # than either delivering it or never starting it. Backing up past a table that lost all its
-    # data costs the header nobody could use anyway (R7 agent 1).
+    # data costs the header nobody could use anyway (R7 agent 1, 2026-09-09).
     while boundaries and _starts_an_empty_table(boundaries):
         boundaries.pop()
         safe = boundaries[-1][0] if boundaries else 0
@@ -509,7 +512,7 @@ def filename_safe(stem):
     stores doing this, and both counts were wrong. Three separate call sites carried
     near-identical comments correcting the number in place rather than fixing it here -- the
     correction written down three times and applied to the sentence never, which means three
-    people counted and none edited (R2 agent 3, finding 1). Neither sentence carries a number
+    people counted and none edited (R2 agent 3, 2026-09-10, finding 1). Neither sentence carries a number
     any more: a count is a fact about today wearing the clothes of a rule, and the suite asserts
     the population directly, which a number never could. The old wording is deliberately not
     quoted here -- the check that forbids it reads this file.
@@ -546,7 +549,7 @@ def filesystem_key(name):
     Left as it is, deliberately, and the direction is the reason: the error this makes is a warning
     nobody needed, and the opposite error is one file quietly replacing another with nothing on
     screen. A key that over-matches costs a reader a glance; a key that under-matches costs them the
-    file. Measured 2026-09-08 (R7 agent 1).
+    file. Measured 2026-09-08 (R7 agent 1, 2026-09-09).
     """
     return unicodedata.normalize("NFC", name).casefold()
 

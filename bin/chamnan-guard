@@ -77,7 +77,7 @@ def _staged_diff(root):
     try:
         out = subprocess.run(
             ["git", "-C", str(root), "diff", "--cached", "--no-color", "--no-ext-diff",
-         # 🐛 [2026-09-18] (R3 agent 2) `--no-ext-diff` refuses an external diff COMMAND and does nothing about a
+         # 🐛 [2026-09-18] (R3 agent 2, 2026-09-18) `--no-ext-diff` refuses an external diff COMMAND and does nothing about a
          # textconv driver, which is a different key and runs anyway. A repository shipping
          # `.gitattributes` with `*.bin diff=evil` and a `[diff "evil"] textconv = <program>` in its
          # own config had that program executed by this exact call — reproduced, R3 2026-09-18.
@@ -446,12 +446,29 @@ def main(argv):
         print("  Nothing here put it there. Remove it, or check where it came from, before "
               "running any tool in this repository.", file=sys.stderr)
         return 2
+    # 🐛 [2026-09-19] (self-measured) All three quiet returns below printed nothing at all, on the reasoning in the
+    # comment that follows — right for the HOOK and wrong for the person. Run by hand this command
+    # produced zero bytes on BOTH streams and exit 0, so "scanned the staged diff, found nothing"
+    # and "did not run" were the same output. Derived rather than spotted: running all 14 commands
+    # bare and measuring stdout AND stderr, this is the only one that says nothing either way.
+    # That is R6's finding in AWS's own words — without something on the healthy path, a working
+    # run and a run nobody set up are indistinguishable.
+    #
+    # The switch is the one `chamnan-report` already uses: answer by who is reading. A commit hook
+    # is not a terminal and still gets silence, so nothing is added to anybody's commit output.
+    def _say(line):
+        if ws.reader_is_a_terminal():
+            print(f"chamnan-guard: {line}")
+
     diff = _staged_diff(root)
     if diff is None:
         # Not a git repository, or git is not installed. Silence: this runs from a commit hook, and
         # a command that cannot answer must not add a line to somebody's commit output.
+        _say("not a git repository, or git cannot answer here — nothing was scanned.")
         return 0
     if not diff.strip():
+        _say("nothing is staged, so there was nothing to scan. "
+             "`git add` first, or `--history` to audit what is already committed.")
         return 0
     if len(diff.encode("utf-8", "replace")) > MAX_DIFF_BYTES:
         print(f"chamnan-guard: staged diff is over {MAX_DIFF_BYTES // 1_000_000} MB — not scanned. "
@@ -462,6 +479,8 @@ def main(argv):
     mcp_found = scan_mcp_changes(diff)
     supply_found = scan_supply_changes(diff)
     if not found and not mcp_found and not supply_found:
+        _say(f"scanned {len(diff.encode('utf-8', 'replace')):,} byte(s) of staged diff — "
+             f"nothing credential-shaped, no new MCP capability, no supply-chain change.")
         return 0
 
     if found:

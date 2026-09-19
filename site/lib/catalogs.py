@@ -204,7 +204,7 @@ def _grpc(root):
 # over `tree.MAX_FILE_BYTES`. A generated `.proto`, a bundled OpenAPI document or a vendored spec
 # is exactly the file that is huge, and this is a passive path nobody opts into. The second
 # instance of the class R7 agent 2 found in `peek.py`, in a call site R7 did not check
-# (R8 agent 2). Skip, not truncate: half a spec parsed is an answer nobody can check.
+# (R8 agent 2, 2026-09-08). Skip, not truncate: half a spec parsed is an answer nobody can check.
         if not tree.within_size(path):
             continue
         try:
@@ -739,7 +739,7 @@ def render_env(pairs, unsafe):
     #
     # 🐛 [2026-09-07] MEASURED AND KEPT AT FULL LENGTH. This sentence is 128.8 tokens, 7.9% of the
     # delivered block on this repository — the single most expensive static string chamnan injects
-    # (R2 agent 6). Shortening the prose around the pattern list was tried and saves 20.5 tokens,
+    # (R2 agent 6, 2026-09-07). Shortening the prose around the pattern list was tried and saves 20.5 tokens,
     # 1.2% of the block, because the sentence is MOSTLY the pattern names and those are the part
     # that makes the boundary checkable. Trading the clarity of a caveat that exists to stop an
     # agent treating an incomplete list as complete, for 1.2%, is not a trade worth making.

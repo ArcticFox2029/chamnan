@@ -98,7 +98,7 @@ MAX_FILE_BYTES = tree.MAX_FILE_BYTES
 #
 # Every one of those passes MAX_FILE_BYTES cleanly. A 1.8 MB file — entirely plausible as generated
 # or data-shaped source — takes 1.7 GB, which OOM-kills `chamnan-map` on any CI container capped
-# under 2 GB, and the byte ceiling never sees it coming (R5 agent 1). Peak memory does NOT
+# under 2 GB, and the byte ceiling never sees it coming (R5 agent 1, 2026-09-06). Peak memory does NOT
 # accumulate across files (the AST is released between them), so bounding the single worst file
 # bounds the run.
 #
@@ -145,7 +145,7 @@ SKIPPED_UNKNOWN_EXT = __import__("collections").Counter()
 # is per directory. Twelve unreadable files split six-and-six across two directories summed to 12 --
 # not below the floor -- so the explanation stayed silent while neither directory had cleared the
 # floor and the command still exited 1 with nothing to go on. A counter keyed the way the gate is
-# keyed is the only version of this that cannot drift back apart (R12 agent 2).
+# keyed is the only version of this that cannot drift back apart (R12 agent 2, 2026-09-07).
 SKIPPED_UNKNOWN_DIR = __import__("collections").Counter()
 
 
@@ -1052,7 +1052,7 @@ def _parse_py(source, path):
         # that could not be parsed AT ALL was indistinguishable downstream from one that parsed
         # fine and had nothing to say. Carried out as a third element; `extract_python` records it
         # once per file, which is the one place that knows a file is being scanned rather than
-        # re-checked (R2 agent 4, finding 4).
+        # re-checked (R2 agent 4, 2026-09-10, finding 4).
         result = (None, [], f"{type(err).__name__}: {err}".split("\n")[0][:160])
     _PARSE_MEMO = (source, result)
     return result
@@ -1080,7 +1080,7 @@ def extract_python(source, path, lang='py'):
         # DURING a successful parse, and this is the branch where there was none.
         #
         # Found by matching semgrep#11443, where a parse failure reported as "100% of lines parsed,
-        # zero findings" (R2 agent 4, finding 4). Same mechanism, one layer down.
+        # zero findings" (R2 agent 4, 2026-09-10, finding 4). Same mechanism, one layer down.
         SKIPPED_UNPARSEABLE.append((str(path), unreadable))
         # SyntaxError is the expected one. ValueError is a file with a .py extension whose contents
         # are not text at all — a null byte makes ast.parse raise it, and catching only SyntaxError
@@ -1152,7 +1152,7 @@ REGEX_RULES = {
     "js": [
         # 🐛 `export default function Foo()` was invisible while `export default class Foo`
         # was not: the class rule three lines down already carried `default` and the func rule
-        # beside it never gained it (R8 agent 14).
+        # beside it never gained it (R8 agent 14, 2026-09-08).
         ("func", r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s+(\w+)"
                  r"\s*\(([^)]*)\)"),
         # 🐛 `[^)]*` let a `(` into the parameter capture, so `const I18N = (() => {...})()` -- a
@@ -1181,7 +1181,7 @@ REGEX_RULES = {
     # Rust's rule below allowed for it -- so `func Map[T, U any](...)`, `func map<T, U>(...)` and
     # `public T Get<T>(int id)` were each entirely invisible to the index, in three languages,
     # while the identical construct worked in the fourth. Go spells it with square brackets and
-    # the others with angle ones (R8 agent 14).
+    # the others with angle ones (R8 agent 14, 2026-09-08).
     ("func", r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*(?:\[[^\]]*\])?\s*\(([^)]*)\)"),
         ("class", r"^type\s+(\w+)\s+struct"),
         ("const", r"^(?:const|var)\s+([A-Z][A-Za-z0-9_]{2,})\s*="),
@@ -1353,7 +1353,7 @@ EXT_LANG = {
 # `.ts` -- was never recognised as build output: it counted against description coverage and was
 # listed under `--undocumented`, sending somebody to write an opening comment on a bundle. The
 # identical content saved as `.js` was correctly called generated. Reproduced with a 300-line
-# licence banner over ~2,000 minified functions on one line (R8 agent 11).
+# licence banner over ~2,000 minified functions on one line (R8 agent 11, 2026-09-08).
 #
 # Derived now, so the next extension added to the js family is covered by arriving there. The two
 # subtractions are the whole judgement, and each is narrow:
@@ -1397,7 +1397,7 @@ KEYWORD_DEFINED = {"rs", "rb", "py", "go", "ex", "nim", "php", "swift", "kotlin"
 # 🐛 [2026-09-08] `REGEX_RULES` and `impact.IMPORT_PATTERNS` both get `mark_aware` applied over
 # the whole table; this one is compiled on its own line and was the only identifier-capturing regex
 # in the file the generic fix never reached. `_guard_names` returned the ASCII guard and an empty
-# set for a Thai-named one — a total miss, not a truncated name (R10 agent 3). Low severity, since
+# set for a Thai-named one — a total miss, not a truncated name (R10 agent 3, 2026-09-08). Low severity, since
 # guard macros are ASCII by convention, and fixed anyway because it is a literal instance of the
 # failure class this file's history is built around: the rule applied to the table and forgotten in
 # the member beside it.
@@ -1709,7 +1709,7 @@ def _inside_workspace(path, root):
     # asset there — a `.dat`, a fixture, a binary a tool reads — was silently absent from the
     # unindexed tally, which is the one place the index admits what it could not read. The
     # docstring already said "chamnan's own files"; the code said "anything under .chamnan"
-    # (R13 agent 2).
+    # (R13 agent 2, 2026-09-07).
     at = parts.index(WORKSPACE_DIRNAME)
     return parts[at + 1:at + 2] != ("tools",)
 
@@ -1725,7 +1725,7 @@ def _unreadable(root, path):
     confidence rather than degraded confidence" the comment forty lines up already names as the
     worse kind, in the same function, three branches later.
 
-    A two-hop symlink loop is the shape that found it (R8 agent 7): it passes `tree.py`'s escape
+    A two-hop symlink loop is the shape that found it (R8 agent 7, 2026-09-08): it passes `tree.py`'s escape
     guard, then raises ELOOP here. The other two branches are its siblings and were silent for the
     same reason, so all three are wired up rather than the one that was reported.
 
@@ -1771,7 +1771,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # resolve: a broken link, or a loop. `tree.files()` yields it, this line removes it, no
             # count changes, and the run prints "1/1 files (100%)" over a tree that has three. That
             # is the "false confidence rather than degraded confidence" this file names elsewhere
-            # as the worse kind, and it was the drop nobody could see (R8 agent 7).
+            # as the worse kind, and it was the drop nobody could see (R8 agent 7, 2026-09-08).
             #
             # A directory, a socket or a fifo is NOT recorded: `is_file()` is right to refuse those
             # and there is nothing a reader would want said about them. The discriminator is
@@ -1849,7 +1849,7 @@ def indexable(root, nested=None, with_text=False, sniff=True):
             # five of them `.gitignore`, `.gitattributes`, `.version`, `config.json` and MAP.md,
             # every one written by chamnan itself minutes earlier. The first thing a new user is
             # told about their repository is a complaint about files they did not create
-            # (R7 agent 2).
+            # (R7 agent 2, 2026-09-07).
             #
             # Narrower than skipping `.chamnan/` outright, which would be wrong: this repository
             # keeps real indexed Python under `.chamnan/tools/` and `.chamnan/tests/`, and those
@@ -2059,7 +2059,7 @@ _HOW_TO_READ = ("**Read the Quick Index in full. Do NOT read the Full Detail sec
 # with `grep -A N` gets a SILENTLY truncated answer whenever the section is longer than N. Measured
 # on this repository's real index: the median Full Detail section is 10 lines, so `-A 20` returns
 # the whole of 285 of 326 files — and cuts the other 41 with nothing saying so. The longest is 472
-# lines, and at `-A 20` a reader sees 4% of it and cannot tell (R8 agent 6).
+# lines, and at `-A 20` a reader sees 4% of it and cannot tell (R8 agent 6, 2026-09-06).
 #
 # A RANGE read cannot truncate, and it is one line of instruction rather than a number every reader
 # has to guess. `grep` is still named first because it is what a reader reaches for and it is right
@@ -2083,7 +2083,7 @@ def _what_this_index_leaves_out(root):
     SessionStart injects, and it named none of them: a 2 MB module and a binary behind a `.py`
     suffix were simply absent, with the header above stating a file count that silently excluded
     them. An index that is missing a file is worse than one that says it is missing it, which is
-    this project's own stated position on staleness applied to absence (R12 agent 5).
+    this project's own stated position on staleness applied to absence (R12 agent 5, 2026-09-07).
     
     The comment beside `SKIPPED_BUILD_DIR` conceded this in passing more than a year of commits ago
     — "SKIPPED_TOO_LARGE and SKIPPED_BINARY above are written and never read by anything but a
@@ -2282,7 +2282,7 @@ def _render(files, root):
         # shortened BECAUSE Full Detail headings are untouched and greppable by full path. They
         # were not untouched, so the nineteen files with the most descriptive names were the exact
         # nineteen a session could not look up, and the index reported them as present
-        # (R2 agent13, which saw the ellipsis and called it a display bug).
+        # (R2 agent13, 2026-09-11, which saw the ellipsis and called it a display bug).
         #
         # A heading here is a KEY. It is still made inert — a backtick would close the span early —
         # but it is no longer clipped.

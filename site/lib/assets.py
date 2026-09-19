@@ -63,7 +63,7 @@ UNEXTRACTED_SOURCE = {
     # images and data — so a fifteen-notebook data-science repository reported "described 2/2 files
     # (100%)" while every line of its real content was invisible, and nothing said so. It is source
     # this indexer cannot parse, which is precisely what this set is for and what Perl, R, Julia and
-    # Fortran already get: named, counted as unindexed, and honest about it (R9 agent 4). The
+    # Fortran already get: named, counted as unindexed, and honest about it (R9 agent 4, 2026-09-07). The
     # sibling finding in that same report was fixed the same day and this one-line half was not.
     ".ipynb",
 }

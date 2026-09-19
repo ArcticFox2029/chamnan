@@ -415,7 +415,7 @@ def store_section(root, title, body, source, scan_sources=None, brief=""):
     shared boundary their sibling stores all cross. A conflicted skill description, decision title,
     milestone, thread or session record could therefore still be rendered first and fenced second,
     after the marker lines themselves had disappeared but one or both disputed claims remained
-    (R9 agent 3, x-rayed across every repository-backed `section` call).
+    (R9 agent 3, 2026-09-12, x-rayed across every repository-backed `section` call).
 
     A single-file store is refused whole. In a directory store, its renderer has already omitted
     each conflicted file, so the warning is added beside the clean siblings rather than replacing
@@ -548,7 +548,7 @@ def _map_is_current_by_git(root, map_path):
         # design. So a source file created five minutes ago and not yet added was invisible, the
         # index was reported current, and `chamnan-impact` then answered "nothing imports it" about
         # a symbol something had just started importing. Not a stale answer -- a wrong one, which
-        # is the failure this whole function exists to prevent (R2 agent 6).
+        # is the failure this whole function exists to prevent (R2 agent 6, 2026-09-08).
         #
         # The comment this replaces claimed the single call was "verified equivalent" across "a new
         # untracked source file". It was not. Measured across five states, neither command is right
@@ -571,7 +571,7 @@ def _map_is_current_by_git(root, map_path):
         # subprocess call's first element from the AST to prove it is `git` or this interpreter,
         # and a list assembled with `+` is opaque to it. The pathspec repeats rather than shares.
         diff = subprocess.run(["git", "-C", str(root), "diff", "--quiet",
-                               # 🐛 [2026-09-18] (R3 agent 2) This one runs on EVERY session, which makes it the
+                               # 🐛 [2026-09-18] (R3 agent 2, 2026-09-18) This one runs on EVERY session, which makes it the
                                # worst of the three: a repository shipping a textconv driver had it
                                # executed here before the user typed anything. `--quiet` suppresses
                                # the OUTPUT and does not stop the driver running to produce it.
@@ -734,7 +734,7 @@ def rebuild_hook_installed(root):
     # from a stale one that morning; this function — which the report naming the defect named by
     # name — did not, so a session with a hook from months ago was told it was covered and the
     # offer to reinstall was suppressed. Half a fix is the shape this project keeps producing: the
-    # member the report pointed at was changed, and the one beside it was not (R7 agent 5).
+    # member the report pointed at was changed, and the one beside it was not (R7 agent 5, 2026-09-09).
     #
     # `git_hook_state` needs the current template to answer "stale", and reads it the way
     # `chamnan-report` reads MAX_TOOLS — out of the source, never a retyped copy. Without it the
@@ -776,7 +776,7 @@ _QI_ROW = re.compile(r"^- \*\*`([^`]+)`\*\*")
 # function is a pure function of, and because the hook holds the text in memory anyway — nothing
 # here reads the file a second time. One entry: the two callers are given the same string, and
 # holding more than the current index would be caching for a caller that does not exist
-# (R13 agent 1, who called it a scoping note rather than a defect, which is the right weight).
+# (R13 agent 1, 2026-09-07, who called it a scoping note rather than a defect, which is the right weight).
 _QUICK_NAMES_CACHE = (None, None)
 
 
@@ -938,7 +938,7 @@ def dead_entries(root, map_text):
     over a sample would be a wrong number where the caller expects a right one, and this function
     exists to catch a map that lies -- but past `DEAD_WALK_ABOVE` it is reached by walking the tree
     once rather than by stating every name, which is 68 ms instead of 250 ms at fifty thousand
-    (R13 agent 1, re-measured here rather than taken on trust).
+    (R13 agent 1, 2026-09-07, re-measured here rather than taken on trust).
     """
     try:
         named = _quick_index_names(map_text)
@@ -1070,7 +1070,7 @@ def _with_profile(cfg):
     # was called by nothing in the package. So a typo fell back to the default profile in total
     # silence: the user asks for a bigger block, gets the standard one, and concludes the feature
     # does not work, which is exactly the conclusion the inert-config bug above already earned once
-    # (R8 agent 4). Recorded rather than printed here, because this function returns a config; the
+    # (R8 agent 4, 2026-09-06). Recorded rather than printed here, because this function returns a config; the
     # caller that owns the session's warning line decides whether to say it.
     UNKNOWN_PROFILE[:] = [] if _name in profiles.PROFILES else [_name]
     out = dict(cfg)
@@ -1265,7 +1265,7 @@ def main():
                 # resumes rather than restarts — so the check the codebase built specifically for
                 # deletions was missing from the branch most sessions take. One of a pair guarded
                 # and the identical one beside it left, which is this repository's oldest defect
-                # (R5 agent 5).
+                # (R5 agent 5, 2026-09-09).
                 _map_text = _mp.read_text(encoding="utf-8", errors="replace")
                 # The full-start path refuses this file below. Resume returns before that path, so
                 # it needs the same content check before deriving a factual dead-file count from
@@ -1435,11 +1435,11 @@ def main():
                 # host truncates a SessionStart hook to its first 2,048 -- landing mid-key-name,
                 # with everything chamnan would otherwise have said gone. Every other key in the
                 # file is type-checked against DEFAULT_CONFIG; these are kept precisely BECAUSE
-                # they are unrecognised, so a bound is the only thing available (R12 agent 2).
+                # they are unrecognised, so a bound is the only thing available (R12 agent 2, 2026-09-07).
                 _shown = sorted(ws.LAST_CONFIG_KEYS_KEPT)[:KEPT_KEYS_NAMED]
                 # The names come from a committed `config.json` in somebody else's repository,
                 # and this line reaches the block in chamnan's own voice. Scrubbed like the sibling
-                # warnings below it, which say the same thing about filenames (R7 agent 2).
+                # warnings below it, which say the same thing about filenames (R7 agent 2, 2026-09-08).
                 kept = ", ".join(f"`{mdblock.as_quoted(redact.scrub(k))}`" for k in _shown)
                 if len(ws.LAST_CONFIG_KEYS_KEPT) > len(_shown):
                     kept += f" +{len(ws.LAST_CONFIG_KEYS_KEPT) - len(_shown)} more"
@@ -1580,7 +1580,7 @@ def main():
                     # -- and every later resize loop and the drop-and-restore pass can only act on
                     # a section that is in `out`. On 34 of 61 real startup firings in one day the
                     # index was in neither the block nor the notice, with 62-368 bytes of the
-                    # ceiling still unused (R7 agent 7, new finding 1). The README says nothing is
+                    # ceiling still unused (R7 agent 7, 2026-09-09, new finding 1). The README says nothing is
                     # silently dropped; for the largest section in the block, on the majority of
                     # firings, it was not true.
                     _never_built.append(("Architecture index", display(mp, root)))
@@ -1637,7 +1637,7 @@ def main():
                     # `dead_entries` fires unconditionally and correctly reports `a.py` as gone, and
                     # `unindexed`, which is the half that would name `b.py`, never runs. The remedy
                     # offered is right and the reason given for it is wrong: it reads as though the
-                    # file vanished rather than moved (R17 agent 5).
+                    # file vanished rather than moved (R17 agent 5, 2026-09-10).
                     #
                     # One of a pair gated and the identical other not — this repository's most
                     # recorded defect, in the function whose own comment two lines up is about
@@ -1679,7 +1679,7 @@ def main():
                     #
                     # The staleness warning itself is NOT capped — that one is about the state of
                     # the tree right now and is true every time it fires. What is capped is the
-                    # OFFER, which teaches a thing once (R7 agent 5).
+                    # OFFER, which teaches a thing once (R7 agent 5, 2026-09-09).
                     _offer = (not rebuild_hook_installed(root)
                               and ws.notice_due(root, "install-git-hook"))
                     fix = ("`chamnan-map`, or `chamnan-map --install-git-hook` to rebuild it "
@@ -1705,7 +1705,7 @@ def main():
                     # know the map is stale is the moment there is no map in front of them.
                     #
                     # A lead line — before the first heading — belongs to no section, so `reorder`
-                    # keeps it at the front and nothing can drop it (R5 agent 5).
+                    # keeps it at the front and nothing can drop it (R5 agent 5, 2026-09-09).
                     _stale_lines.append(redact.scrub(
                         f"_⚠ Source has changed since this index was built ({ago(behind)}). "
                         f"{what}Rebuild it with {fix}._\n"))
@@ -1725,7 +1725,7 @@ def main():
                     # that — it now runs whenever anything is dead, not only when the mtime moved —
                     # and this is where its answer reaches the reader, because the "N not in it"
                     # line above lives inside `if behind:` and a rename never sets `behind`
-                    # (R17 agent 5).
+                    # (R17 agent 5, 2026-09-10).
                     _arrived = ""
                     if n and not behind:
                         _arrived = (" " + f"**{n} file(s) are in the tree and not in the index** — "
@@ -1881,7 +1881,7 @@ def main():
                 # path, and is read at the START of the matching task — the worst moment to be handed
                 # a command that no longer exists. Its four trailers had never been evaluated once,
                 # and six of the eight named a DIRECTORY where the grammar wants a file glob, so they
-                # would have reported `unverifiable` the first time anything looked (R1 agent 5).
+                # would have reported `unverifiable` the first time anything looked (R1 agent 5, 2026-09-10).
                 #
                 # `contradictions()` stays rules-only: two skills describing different procedures is
                 # what a skill store IS, and a rule contradicting a rule is a defect.
@@ -1951,7 +1951,7 @@ def main():
                 # attacker-controlled in a repository somebody else wrote. `AKIAIOSFODNN7EXAMPLE.md`
                 # went in whole. The skills version of this same warning, added in the same commit,
                 # scrubs correctly; two of the three copies did not. Found within the hour by the
-                # round pointed at what had just changed (R7 agent 2).
+                # round pointed at what had just changed (R7 agent 2, 2026-09-08).
                 open_threads += redact.scrub(
                     f"\n- ⚠️ These thread files differ only by case or Unicode normalisation "
                     f"({names}). They are listed above as separate work and a case-insensitive "
@@ -2082,7 +2082,7 @@ def main():
             # only reason nothing had gone wrong — and the round that looked at this saw one READER
             # missing the check rather than the check existing three times. `tools_index.real_name`
             # is the one definition now; it returns the validated name because this caller writes it
-            # back over the raw field (R1 agent 5, finding 5).
+            # back over the raw field (R1 agent 5, 2026-09-10, finding 5).
             def _real_tool(t):
                 if not isinstance(t, dict):
                     return False
@@ -2107,7 +2107,7 @@ def main():
                 # other file here. It left `run()` into the hook's blanket `except Exception` and
                 # ended the block at this section — the tools index and everything after it gone,
                 # every session, permanently. Same blast radius as the rulecheck glob fixed this
-                # morning, reached through a different field (R13 agent 2).
+                # morning, reached through a different field (R13 agent 2, 2026-09-07).
                 #
                 # `_real_tool` above validates the NAME because that one becomes a path. The other
                 # fields were trusted, and a sort key is exactly where an untrusted field turns
@@ -2160,7 +2160,7 @@ def main():
             # choice and not the reader's.
             # `ws.is_store_index` drops the directory's own README: it is the index OF this
             # store, not a procedure in it, and here it sorted second of twenty and spent one of
-            # twelve slots describing what the folder is (R8 agent 5).
+            # twelve slots describing what the folder is (R8 agent 5, 2026-09-08).
             # 🐛 [2026-09-08] The cap chose WHICH twelve by filename alphabet, and this is the third
             # member of a three-way set to need the same fix. The tools index beside it ranks by its
             # `runs` counter and then by recency, after registration order "held the list for ever:
@@ -2529,7 +2529,7 @@ def main():
     # (`chamnan_bulk_read_notice`, `chamnan_file_pointer`) spell it `for_a_terminal(scrub(...))`
     # and were correct; this is the one that runs on every session, and instructions smuggled in
     # Unicode Tag characters inside a committed source comment reached Claude Code's context
-    # through it with no rendered width (R12 agent 3, reproduced end to end).
+    # through it with no rendered width (R12 agent 3, 2026-09-07, reproduced end to end).
     body = redact.for_a_terminal(body)
     # What this session was handed, as a shape rather than a copy — 188 bytes against the block's
     # ~9,000, bounded by record count, no content stored. Written AFTER `fit.shrink` and after the

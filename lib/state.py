@@ -184,7 +184,7 @@ def render(text, budget, path_for_marker):
     # tells the reader the text comes from the repository, with nothing marking either as disputed.
     # The fix already existed one file away: `memory.unresolved_conflict()` guards rules against
     # exactly this and was never called from here, so the same rule was applied to one of two stores
-    # (R9 agent 3). Its own docstring says why a rule in conflict is not a rule — a plan in conflict
+    # (R9 agent 3, 2026-09-06). Its own docstring says why a rule in conflict is not a rule — a plan in conflict
     # is not a plan either, and the honest injection is that the file needs resolving.
     #
     # Said instead of the content, not beside it: the point is that neither side is trustworthy, and

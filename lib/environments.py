@@ -80,7 +80,7 @@ def _ymd_to_ts(text):
     # calendar half of that fix and not the future half -- one member of a pair, again. Here it is
     # worse than a wrong count: `**Checked:** 2027-01-01` makes the entry permanently fresh, so
     # `stale_environments()` never names it and the aging check, whose whole job is to REFUSE to
-    # report against an unmaintained source, issues an all-clear from one forever (R11 agent 3).
+    # report against an unmaintained source, issues an all-clear from one forever (R11 agent 3, 2026-09-06).
     # A slack of one day, same as ledger, so an entry written in a timezone ahead of this machine
     # is not thrown away.
     try:
@@ -109,7 +109,7 @@ def entries(root):
     # workspace travels with a clone, so `environments.md` arriving as a symlink to `~/.ssh/id_rsa` is
     # chosen by whoever wrote the repository, not by the person reading it — and its content lands
     # in the injected block. The set was "stores this reads"; the fix reached the members that
-    # happened to be directories. (R3 agent 2, reproduced.)
+    # happened to be directories. (R3 agent 2, 2026-09-09, reproduced.)
     import workspace as _ws
     if not _ws.inside(p, root):
         return []
@@ -250,7 +250,7 @@ def upsert(root, name, entry_text):
     # after six writers were found doing it and milestones.py measured five of six entries
     # vanishing; three writers never adopted it, and this was one. Measured here the same way: 2 of
     # 20 concurrent environment entries lost, 10%, valid Markdown throughout and no error anywhere
-    # (R2 agent 3).
+    # (R2 agent 3, 2026-09-08).
     #
     # The read happens INSIDE the lock, which is the whole reason this is `rewrite_shared` and not a
     # lock around the write: reading first and locking second leaves the same race with a smaller

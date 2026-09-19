@@ -401,7 +401,7 @@ def note(wsdir, session_id, rel_path, hits, ms):
     # the machine writes, carrying `session` as a FIELD rather than as a filename. A record appended
     # between one session's `read_text` and its `atomic_write_text` was dropped: the lost update
     # `blocklog` and `tools_index` each take `ws.exclusive` to prevent. Silent when it happened, and
-    # rare enough to stay silent — the trim only woke past 200 KB (R4 agent 1, finding 4).
+    # rare enough to stay silent — the trim only woke past 200 KB (R4 agent 1, 2026-09-10, finding 4).
     #
     # `ws.append_jsonl` is that entire pattern — locked, SKIPPING rather than blocking when another
     # process holds it, atomic, bounded by `keep` — extracted on 2026-09-10 and already the writer
@@ -516,7 +516,7 @@ def note_query(wsdir, session_id, rel_path, pattern=""):
 # its own comment states the contract: "A log that bounds itself by record must say so here, or the
 # directory sweep bounds it by date instead." This file was on that list and nothing bounded it —
 # `note()` was the only writer and it only appended. Every sibling on that list has a `KEEP`; this
-# one had the exemption without the obligation (R4 agent 4).
+# one had the exemption without the obligation (R4 agent 4, 2026-09-09).
 #
 # By record rather than by date, which is what the exemption promises. One PreToolUse firing per
 # file pointer is a handful a session, so this holds months of them.

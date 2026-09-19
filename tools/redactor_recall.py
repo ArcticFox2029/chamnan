@@ -115,7 +115,7 @@ POSITIVES = [
     # YAML anchor stands between the name and the secret in five ordinary language idioms, and the
     # rules captured THAT and stopped -- redacting the type and leaving the credential beside a
     # marker that says it was handled. Adding these four dropped recall from 97.4% to 88.1% before
-    # the fix, which is the number that made the case for it (R8 agent 2).
+    # the fix, which is the number that made the case for it (R8 agent 2, 2026-09-06).
     ("kotlin annotated",     f'val apiPassword: String = "{_F}{_F}"', f"{_F}{_F}"),
     ("typescript annotated", f'const apiKey: string = "{_F}{_F}";', f"{_F}{_F}"),
     ("yaml anchor",          f'api_password: &shared_pw "{_F}{_F}"', f"{_F}{_F}"),

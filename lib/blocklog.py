@@ -90,7 +90,7 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
         # "how often has my index actually been stale this month" had no log to answer it from and
         # could only be re-derived by hand with a one-off script. One integer per record — seconds
         # behind — makes it a query. Recorded only when it IS behind, so a healthy log stays the
-        # same size it is today (R5 agent 5).
+        # same size it is today (R5 agent 5, 2026-09-09).
         # The key is `behind`, not `index_behind` — the keyword argument and the record field have
         # different names, which is a trap for whoever greps the log first. And a record with NO
         # `behind` key means the index was current at that firing, not that staleness went

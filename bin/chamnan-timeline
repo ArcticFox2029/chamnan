@@ -148,7 +148,7 @@ def cmd_for(root, target):
 # their default action with nothing on screen -- so a typo did something other than what was asked
 # and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
 # it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
-# not the member this round happened to be pointed at (R7 agent 4).
+# not the member this round happened to be pointed at (R7 agent 4, 2026-09-08).
 KNOWN_FLAGS = ('--list', '-l', '--files')
 TAKES_VALUE = ()
 TAKES_REST = ('--files',)
@@ -160,7 +160,7 @@ def main(argv):
     # sat BELOW two such refusals -- the no-workspace exit and the config-disabled exit -- so
     # `--version` printed the refusal instead of the version in exactly the two cases the comment
     # names. Six of nine commands placed it first and three did not: the same rule applied to some
-    # members of a set and forgotten in the identical ones beside it (R12 agent 2).
+    # members of a set and forgotten in the identical ones beside it (R12 agent 2, 2026-09-07).
     #
     # Before help, and before anything is parsed: "which build is this" must be
     # answerable from any command, including one that would otherwise refuse the
@@ -175,7 +175,7 @@ def main(argv):
         # sentence, and the actionable one 46 lines below it for a near-identical condition — so
         # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
         # ordering accident rather than anything they controlled. No test ran any of the six
-        # against a directory that genuinely has no workspace (R15 agent 3).
+        # against a directory that genuinely has no workspace (R15 agent 3, 2026-09-06).
         print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
               f"creates the workspace and builds the index. (Inside Claude Code, "
               f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
@@ -232,7 +232,7 @@ def main(argv):
         # side; the WRITE side, which is what reaches the commit, was never wired to it. Claude Code
         # requires absolute paths for Read and Edit, so an agent recording what it touched types
         # exactly the shape that breaks. The sibling command `chamnan-promote` had this same bug
-        # fixed on 2026-09-04 (R18 agent 3).
+        # fixed on 2026-09-04 (R18 agent 3, 2026-09-07).
         files = [_relativise(root, f) for f in ",".join(note_parts[at + 1:]).split(",") if f.strip()]
         note_parts = note_parts[:at]
     if not note_parts:

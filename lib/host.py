@@ -160,7 +160,7 @@ def _marker_present(base, marker):
     report what is there" did not. Reproduced on a case-sensitive APFS volume: a repository whose
     file is `agents.md` reported no agent at all, so `--detect` and `primary()` both answered as
     though nothing was set up. One of a pair guarded and the identical one beside it left
-    (R1 agent 1).
+    (R1 agent 1, 2026-09-09).
 
     The directory scan runs only when the exact name misses, so the ordinary case still costs one
     stat, and a directory that cannot be listed falls back to the answer this always gave.

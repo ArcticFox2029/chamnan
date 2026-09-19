@@ -39,7 +39,7 @@ print = redact.emit  # noqa: A001
 # their default action with nothing on screen -- so a typo did something other than what was asked
 # and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
 # it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
-# not the member this round happened to be pointed at (R7 agent 4).
+# not the member this round happened to be pointed at (R7 agent 4, 2026-09-08).
 KNOWN_FLAGS = ('--find', '--budget')
 TAKES_VALUE = ('--find', '--budget')
 TAKES_REST = ()
@@ -63,7 +63,7 @@ def main(argv):
     # 🐛 [2026-09-08] peek reads a file straight into the transcript, and it followed a symlink
     # without asking where the link went. A repository that ships `docs/notes.md -> ~/.ssh/id_rsa`
     # got that key printed, and the name the model chose it by came out of chamnan's own index
-    # (R10 agent 2, reproduced before this was written). `workspace.inside` exists for exactly this
+    # (R10 agent 2, 2026-09-08, reproduced before this was written). `workspace.inside` exists for exactly this
     # shape and its docstring records the same leak reaching the injected block.
     #
     # The line is drawn at ESCAPE, not at "outside": a path the caller names outside the repository

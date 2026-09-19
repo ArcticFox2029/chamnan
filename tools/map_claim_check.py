@@ -197,7 +197,7 @@ def check_map(map_path, root=ROOT, verbose=False):
             # function or class claim on a non-Python row was not checked, not counted, and not
             # subtracted from anything, so a repository whose non-Python claims were wildly wrong
             # still printed `ALL … 100.0%`. Reproduced on a two-file fixture with 99 functions
-            # claimed for a JS file that has 3 (R9 agent 1). Recorded here so the headline can say
+            # claimed for a JS file that has 3 (R9 agent 1, 2026-09-08). Recorded here so the headline can say
             # what it did not look at.
             UNCHECKED_CLAIMS.append(rel)
 
@@ -273,7 +273,7 @@ def main():
     # 🐛 [2026-09-06] This returned 0 whatever it found, so it could not gate anything -- which is
     # half of why "nothing runs this file" was true for three days while its own parser was broken.
     # A checker that cannot fail is a report nobody is obliged to read. `chamnan-map --verify` is
-    # the other half: it is now reachable by name instead of only by knowing the path (R17 agent 5).
+    # the other half: it is now reachable by name instead of only by knowing the path (R17 agent 5, 2026-09-06).
     return 0 if ok == tot else 1
 
 

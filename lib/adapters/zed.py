@@ -90,7 +90,7 @@ def install(root, body, command=""):
                 # supported". So on any repository where chamnan installed the Cline adapter, the
                 # Zed adapter refused to write `.rules` on the grounds that Zed was reading a file
                 # Zed skips — chamnan blocking itself over a file the vendor never opens
-                # (R1 agent 1).
+                # (R1 agent 1, 2026-09-09).
                 if probe.is_file():
                     raise ValueError(
                         f"Zed is reading {candidate} in this repository. Writing .rules would take "

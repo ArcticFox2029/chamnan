@@ -28,6 +28,7 @@ import re
 import subprocess
 
 import mdblock
+import milestones
 import state
 import redact
 import workspace as ws  # noqa: E402
@@ -39,12 +40,10 @@ DIRNAME = "threads"
 # holding in mind before it starts.
 INJECT_OPEN = 3
 
-# Same shape as milestones' _ENTRY, and all three dash characters are listed explicitly for the
-# same reason -- an en-dash from an editor's autocorrect silently failing to match is a bug this
-# repository has already paid for once (see lib/milestones.py).
-_ENTRY = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+?)\s*$", re.M)
+# 🐛 [2026-09-19] (self-measured) This file held its own copy of `milestones._ENTRY` (the heading
+# shape, en-dash bug included) and of `mdblock.FILES_FIELD` (the `**Files:**` join key). Both were
+# a second answer to a question one module already owns -- see check 190. Read from there instead.
 _STATUS = re.compile(r"^\*\*Status:\*\*\s*(\w+)", re.M)
-_FILES = re.compile(r"^\*\*Files:\*\*\s*(.+?)\s*$", re.M)
 
 OPEN, CLOSED = "open", "closed"
 
@@ -92,7 +91,7 @@ def threads(root):
     # the full, unredacted content of whatever it named -- an SSH config, internal prose, anything
     # the process can read. Nothing about that content is secret-SHAPED, so the redactor cannot
     # help; the refusal is the only thing that can. The workspace arrives with a clone, so the link
-    # is the repository's choice and not the reader's (R9 agent 2).
+    # is the repository's choice and not the reader's (R9 agent 2, 2026-09-06).
     return sorted(p for p in d.glob("*.md")
                   if p.is_file() and not ws.is_store_index(p) and ws.inside(p, root))
 
@@ -182,18 +181,18 @@ def entries_of(path, text=None):
     # with its own `**Files:**` line -- parsed as a second, indistinguishable entry, and for_path()
     # then attached that thread's history to a file the thread had never touched.
     masked = mdblock.masked(text)
-    found = list(_ENTRY.finditer(masked))
+    found = list(milestones._ENTRY.finditer(masked))
     out = []
     for i, m in enumerate(found):
         end = found[i + 1].start() if i + 1 < len(found) else len(text)
         body = text[m.end():end].strip()
-        fm = _FILES.search(mdblock.masked(body))
+        fm = mdblock.FILES_FIELD.search(mdblock.masked(body))
         files = [f.strip().strip("`") for f in fm.group(1).split(",")] if fm else []
         title = m.group(2)
         # 🐛 [2026-09-07] The guard `milestones.entries` got today, on the reader that the comment
         # at the top of this file already calls "the same shape as milestones' _ENTRY". It was
         # applied to one member of the pair and not the identical one beside it, which is this
-        # repository's recurring defect exactly (R13 agent 2).
+        # repository's recurring defect exactly (R13 agent 2, 2026-09-07).
         #
         # Thread files are COMMITTED, so a clone carries whatever its author put in one. A title
         # holding "\n## <date> — <text>" becomes a second entry that this reader trusts completely,
@@ -277,7 +276,7 @@ def append(root, ident, date, note, files=None):
     # snapshot replaced the first's entry entirely. `ws.rewrite_shared` exists because six writers
     # were found doing this and `milestones.py` measured five of six appends vanishing; three
     # writers never adopted it and this was one. Measured the same way here: 5 of 60 concurrent
-    # entries lost, 8.3%, valid Markdown throughout and no error anywhere (R2 agent 3).
+    # entries lost, 8.3%, valid Markdown throughout and no error anywhere (R2 agent 3, 2026-09-08).
     #
     # Two accounts on one machine, or a session and a commit hook, is an ordinary afternoon rather
     # than an edge case -- and a thread entry is something a person typed a reason into.
@@ -298,7 +297,7 @@ def set_status(root, ident, status):
     # 🐛 [2026-09-08] The read happens inside the lock now, for the reason its sibling `append`
     # twenty lines up carries at length: read-modify-write with no lock loses the other writer's
     # work entirely, and this file has two such writers rather than one. Closing only the one that
-    # was measured would be the half-applied fix this repository pays for most often (R2 agent 3).
+    # was measured would be the half-applied fix this repository pays for most often (R2 agent 3, 2026-09-08).
     def _with_status(existing):
         text = existing or ""
         if _STATUS.search(text):

@@ -44,7 +44,7 @@ from pathlib import Path
 # natural way, "every service config declares a timeout" became
 # ``**Check:** present `timeout:` in `config/*.yaml` ``; adding a second config with no timeout at
 # all, the exact regression the rule exists to prevent, still reported `holds — 1/2 file(s)`,
-# because one OTHER file matched (R8 agent 3). This module's own docstring says collapsing "I could
+# because one OTHER file matched (R8 agent 3, 2026-09-06). This module's own docstring says collapsing "I could
 # not check" into "this is violated" is how a check becomes noise; collapsing "violated" into
 # "holds" is the same failure and worse, and it had no name here.
 #
@@ -71,7 +71,7 @@ MAX_BYTES = 400_000
 # 🐛 [2026-09-06] The two above bound ONE check. Nothing bounded the SUM, and the sum is what a
 # session start actually pays: measured ~90-100 ms per check at those caps' own worst case, so 50
 # ordinary non-adversarial trailers cost 4.5 s -- whether spread over 50 rule files or written into
-# one (R12 agent 2). The count is the third dimension of the same product the ReDoS guards bound in
+# one (R12 agent 2, 2026-09-06). The count is the third dimension of the same product the ReDoS guards bound in
 # the other two, and it was the one nobody had a number on.
 #
 # 25, because a repository with more rule checks than that has stopped using them as rules. The
@@ -134,7 +134,7 @@ _QUANTIFIERS = frozenset("+*{")
 # Measured on the real engine: N=18 0.244s, N=20 0.896s, N=22 3.513s, about 4.3x per +2 -- and
 # through the real SessionStart hook, N=28 was still running after 90 seconds. The control
 # `(a){24}b`, the same shape without the `?`, is 0.00008s, which isolates the hazard to the nullable
-# atom rather than to the bounded count (R14 agent 2). Under 30 characters in one committed rule
+# atom rather than to the bounded count (R14 agent 2, 2026-09-06). Under 30 characters in one committed rule
 # file: a colleague's `git pull` is enough to deliver it.
 #
 # So `?` counts as an INNER marker and nowhere else. A group holding a nullable atom AND carrying a
@@ -215,7 +215,7 @@ def _quantified_group_over_quantifier(pattern):
 # `_ANY_ALTERNATION` below, while its sibling `(a|a){20}b` was caught. That is the eighth family,
 # and a distinct root cause from the seventh: nullable through an empty branch rather than through
 # a `?`. Measured: N=18 0.247s, N=20 0.943s, N=22 3.560s, the same 4.4x per +2, and through the
-# real hook N=28 did not return inside 20 seconds (R17 agent 2).
+# real hook N=28 did not return inside 20 seconds (R17 agent 2, 2026-09-06).
 #
 # `*` rather than `+`, and `_branches_overlap`'s prefix test already answers correctly once an
 # empty branch reaches it -- "" is a prefix of everything, which is exactly why the group is
@@ -229,7 +229,7 @@ _AMBIGUOUS_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)\s*[+*{]")
 # `a` characters and a trailing `b` that never matches: k=14 0.004s, k=16 0.018s, k=18 0.078s,
 # k=20 0.338s, k=26 over 15 seconds -- roughly 4.4x per +2, which is 2^k. Reproduced end to end
 # against the real SessionStart hook, which hung indefinitely on a 157-character `**Check:**` line
-# in one committed rule file (R11 agent 2).
+# in one committed rule file (R11 agent 2, 2026-09-06).
 _ANY_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)")
 
 
@@ -240,7 +240,7 @@ _ANY_ALTERNATION = re.compile(r"\(([^()|]*(?:\|[^()|]*)+)\)")
 # they do not want the capture, so this family is MORE likely to be written by accident than the
 # five already caught. Measured on the real engine: `(?:a|a)*$` against 20 `a`s and a `b` takes
 # 0.088s, 24 takes 1.381s, 26 takes 5.500s, while the capturing twin was refused outright
-# (R12 agent 2).
+# (R12 agent 2, 2026-09-06).
 #
 # Stripped rather than matched, and stripped in ONE place both detectors go through -- the two are
 # deliberately the same question asked about differently-quantified groups, and this repository's
@@ -388,7 +388,7 @@ def _too_many_quantifiers(pattern):
 # different actions -- a refused pattern is a rule to REWRITE, an empty glob is a path to FIX, and
 # they read identically. Nobody noticed while the only consumer was a session line that stays
 # silent unless something is broken; surfacing the count in `chamnan-report` is what made the
-# ambiguity visible (R12 agent 5).
+# ambiguity visible (R12 agent 5, 2026-09-06).
 WHY_REFUSED = "the pattern is refused as a backtracking hazard — rewrite it more simply"
 WHY_INVALID = "the pattern is not valid regular expression syntax"
 WHY_NO_FILES = "no readable file inside this repository matched the glob"
@@ -425,7 +425,7 @@ def scan(root, glob):
     # stands. Everything after the rules section -- milestones, where the last session stopped, the
     # tools index, open threads, the reply style -- silently stopped being injected, on every
     # session, permanently, under a generic "stopped early" line that never named the rule
-    # (R12 agent 1). An absolute glob is a rule asking to read outside the repository, which the
+    # (R12 agent 1, 2026-09-07). An absolute glob is a rule asking to read outside the repository, which the
     # containment filter below refuses anyway; refusing it here as "no files" is the same answer
     # arrived at without the crash.
     except (ValueError, OSError, NotImplementedError):
@@ -560,7 +560,7 @@ def contradictions(rules):
     inside one file, and two filenames colliding by case -- and nothing at all catches two cleanly
     written rules that flatly disagree. "Always run the full suite before every commit" and "Never
     run the test suite locally" are both injected, back to back, as equally authoritative fact
-    (R8 agent 3).
+    (R8 agent 3, 2026-09-06).
     #
     A general contradiction detector needs judgement a grep cannot have, and is not what this is.
     This is the one shape the plugin already holds the data for: two trailers with the same pattern

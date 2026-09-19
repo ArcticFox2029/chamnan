@@ -2,7 +2,7 @@
 
 Plain text, no frontmatter, read from the project directory and up the git hierarchy, with
 `~/.config/goose/.goosehints` as the global one. Goose reads a root `AGENTS.md` by default as well
-(R8 agent 1), so a repository that has run `--write generic` was already reaching it; `.goosehints`
+(R8 agent 1, 2026-09-10), so a repository that has run `--write generic` was already reaching it; `.goosehints`
 is the file Goose's own convention names, and it is what this adapter is for.
 
 Not "(Block)" any more: the project moved to the Linux Foundation's AAIF. Attribution in a docstring
@@ -41,9 +41,9 @@ NAME = "goose"
 # session, and pays for it twice. Declared here rather than listed in `__init__.py`:
 # 🐛 [2026-09-10] that list held four names while EIGHT vendors qualified, and the evidence
 # for the missing four was sitting in their own docstrings. A set kept beside the thing it
-# describes cannot drift from it (R4 agent 1, finding 6).
+# describes cannot drift from it (R4 agent 1, 2026-09-10, finding 6).
 # Evidence: this adapter's own docstring above: Goose reads a root `AGENTS.md` by default as well
-# as `.goosehints` (R8 agent 1).
+# as `.goosehints` (R8 agent 1, 2026-09-10).
 ALSO_READS_AGENTS_MD = True
 
 TARGET = ".goosehints"

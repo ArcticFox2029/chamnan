@@ -47,7 +47,7 @@ sys.path.insert(0, str(HERE.parent / "lib"))
 # ordinary source file reaches none of them. Importing them anyway cost 22.9 ms of the 26.5 ms this
 # process spends above the interpreter's own floor, on every Read, to load code the call was never
 # going to run. `redact` alone is 21.7 ms of that, because it compiles 45 regexes doing it
-# (R7 agent 2). Each one is imported immediately before the line that uses it, not at the top of
+# (R7 agent 2, 2026-09-06). Each one is imported immediately before the line that uses it, not at the top of
 # the function, or the cost would simply move rather than go.
 import workspace as ws  # noqa: E402
 
@@ -172,7 +172,7 @@ def reason_for(path, root=None):
     return ""
 
 
-# 🐛 [2026-09-18] (R19 agent 4) This hook watched `Read` and nothing else, and the door everybody actually walks
+# 🐛 [2026-09-18] (R19 agent 4, 2026-09-18) This hook watched `Read` and nothing else, and the door everybody actually walks
 # through is `Bash`. Measured on one working day in this repository: 129 shell commands, of which the
 # reads — `cat`, `sed -n`, `head`, `cut`, `grep` over whole files — were every one of them invisible
 # here. The workspace rule that says to hand a long file to the local model first is one of seventeen

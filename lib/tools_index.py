@@ -88,7 +88,7 @@ def load(root):
     # workspace travels with a clone, so `tools/index.json` arriving as a symlink to `~/.ssh/id_rsa` is
     # chosen by whoever wrote the repository, not by the person reading it — and its content lands
     # in the injected block. The set was "stores this reads"; the fix reached the members that
-    # happened to be directories. (R3 agent 2, reproduced.)
+    # happened to be directories. (R3 agent 2, 2026-09-09, reproduced.)
     import workspace as _ws
     if not _ws.inside(path(root), root):
         return []
@@ -246,7 +246,7 @@ def _register_locked(root, entry):
     # entries, the old one at 3 runs, the new one at 0. No error at any point.
     #
     # Reachable through the plugin's own advice — `chamnan-candidates` tells a user to run exactly
-    # that command for a tool already sitting in `.chamnan/tools/` (R10 agent 3, finding 1).
+    # that command for a tool already sitting in `.chamnan/tools/` (R10 agent 3, 2026-09-09, finding 1).
     #
     # The counters are the tool's history and belong to the NAME, not to the registration, so they
     # carry across; everything a person can retype is replaced. `entry` wins only where it says
@@ -399,7 +399,7 @@ def signals(root):
     function anything reads this file back with — returns `(name, runs)` and drops both. Measured
     on this repository: `extract_findings.py` wrote to stderr on all ten of its recorded runs and
     `chamnan-report` said "10 runs", so noticing it meant knowing `tools/index.json` exists and
-    computing the ratio by hand (R7 agent 5).
+    computing the ratio by hand (R7 agent 5, 2026-09-08).
 
     A separate function rather than a wider `usage()`: that one's two-tuple shape is asserted in
     the suite and read by a caller that wants exactly it, and widening a return type to add a field
@@ -422,7 +422,7 @@ def missing_files(root):
     `chamnan-report`'s "Promoted tools" section printed them as ordinary rows at `0 runs`,
     indistinguishable from a real tool nobody uses and therefore worth demoting. Two of its other
     counters had the same gap. The root `CLAUDE.md` names that command as how to answer "is chamnan
-    worth keeping", so a phantom row there is the expensive kind of wrong (R1 agent 5, finding 5).
+    worth keeping", so a phantom row there is the expensive kind of wrong (R1 agent 5, 2026-09-10, finding 5).
 
     The predicate lives HERE rather than being copied to a third caller: this module owns
     `index.json`, so it is the one place that can answer what an entry refers to. `ws.inside` is
@@ -439,7 +439,7 @@ def real_name(root, name):
     The one predicate behind three callers that each used to carry their own copy — the SessionStart
     hook's `_real_tool`, `chamnan-promote --list`, and `missing_files` above. They agreed, which is
     the only reason nothing had gone wrong yet; the report that found this saw one reader missing the
-    check and not that the check existed three times (R1 agent 5, finding 5).
+    check and not that the check existed three times (R1 agent 5, 2026-09-10, finding 5).
 
     Three things, and every caller needs all three:
 

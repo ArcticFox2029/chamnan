@@ -70,7 +70,7 @@ def installs(start=None):
     # the SHAPE was not: valid JSON whose top level is a list, a string or a number reached
     # `data.get` and raised `AttributeError`, which nothing here caught. In the hook that is a raise
     # inside `never_fail` — the block loses a section and says nothing, which is the precise failure
-    # this module exists to end, arriving through the module itself (R2 agent 9's brief, question 3).
+    # this module exists to end, arriving through the module itself (R2 agent 9, 2026-09-11's brief, question 3).
     # The same applies one level down: `plugins` may be a list, and a record may be anything at all.
     if not isinstance(data, dict):
         return []

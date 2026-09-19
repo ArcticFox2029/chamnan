@@ -74,7 +74,7 @@ def main(argv):
         # sentence, and the actionable one 46 lines below it for a near-identical condition — so
         # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
         # ordering accident rather than anything they controlled. No test ran any of the six
-        # against a directory that genuinely has no workspace (R15 agent 3).
+        # against a directory that genuinely has no workspace (R15 agent 3, 2026-09-06).
         print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
               f"creates the workspace and builds the index. (Inside Claude Code, "
               f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)
@@ -96,7 +96,7 @@ def main(argv):
     # 🐛 [2026-09-06] `environments.md`'s own docstring names its central risk — "the oracle has to
     # be maintained, or this reports nothing" — and until now the only thing keeping it honest was
     # somebody re-typing a `Checked:` date. `deploy.scan()` has been extracting the repository's own
-    # `name:tag` strings all along for MAP.md, and nothing ever compared the two (R12 agent 5).
+    # `name:tag` strings all along for MAP.md, and nothing ever compared the two (R12 agent 5, 2026-09-06).
     # A date proves a person looked once; a manifest disagreeing proves the content is wrong now.
     #
     # Printed FIRST, because it is the strongest of the three signals here, and worded as a
@@ -104,7 +104,7 @@ def main(argv):
     # static scan, so what this can honestly say is that two things in this repository disagree.
     drift = aging.deploy_drift(root)
     # 🐛 [2026-09-08] A failing `deploy.scan()` returned the same empty list as a repository with no
-    # manifests, so a broken scanner read here as "nothing disagrees" (R9 agent 1). The comparison
+    # manifests, so a broken scanner read here as "nothing disagrees" (R9 agent 1, 2026-09-08). The comparison
     # not happening is a different fact from it happening and finding nothing, and this is where a
     # reader learns which one they got.
     if aging.DRIFT_ERROR:
@@ -133,11 +133,11 @@ def main(argv):
         # one that happens to still run the old version. That pooling is deliberate (two
         # environments legitimately differ, which is why environments.md exists) and this module
         # has no way to read which environment a sentence is about. So the sentence says what was
-        # actually checked (R11 agent 3).
+        # actually checked (R11 agent 3, 2026-09-08).
         # 🐛 [2026-09-08] An entry the library could not open was dropped from the loop with no
         # trace, so this sentence — a completeness claim — was printed over a check that had
         # skipped files. One `chmod 000` was the whole difference between a correct finding and a
-        # clean pass (R9 agent 1). Named, not counted: "3 could not be read" sends somebody looking
+        # clean pass (R9 agent 1, 2026-09-08). Named, not counted: "3 could not be read" sends somebody looking
         # at the wrong three as easily as the right ones.
         if aging.UNREADABLE:
             _n = len(aging.UNREADABLE)

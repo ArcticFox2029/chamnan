@@ -324,7 +324,7 @@ def collect(project_dir, want_opened=False, root=None):
                             # machine's real transcripts: 87,945 usage records, 14.0% landing on a
                             # different day and 1.9% on a different ISO week, with seven of eight
                             # weekly totals differing. In UTC+7 every call between local midnight
-                            # and 07:00 was filed under the previous day (R4 agent 3, finding 2).
+                            # and 07:00 was filed under the previous day (R4 agent 3, 2026-09-10, finding 2).
                             #
                             # Silent, unlike the two composition artefacts this function's own
                             # comments already record: both numbers looked plausible.
@@ -395,7 +395,7 @@ def print_inventory(root):
     # Two config defects found today were both invisible for the same reason: `context_profile` set
     # in the file did nothing at all, and `log_retention_days: 0` deleted every log while the three
     # settings beside it read 0 as "keep everything". In each case a person could read their own
-    # config.json and still not know what chamnan was doing with it (R9 agent 5).
+    # config.json and still not know what chamnan was doing with it (R9 agent 5, 2026-09-06).
     #
     # Only the DIFFERENCES, and only here rather than in the injected block: a list of 23 defaults
     # nobody changed is the kind of always-true output that stops being read, and on an untouched
@@ -436,7 +436,7 @@ def print_inventory(root):
     # describes — evidence, candidate, human confirm, memory — so a workspace whose candidates are
     # all machine-detected and never reviewed reports the same "4" as one where four were confirmed
     # and promoted. Measured on this repository: 4 candidates, all `ai-inferred`, none ever promoted
-    # (R14 agent 5). That is the fact somebody deciding whether the workflow is worth using needs,
+    # (R14 agent 5, 2026-09-06). That is the fact somebody deciding whether the workflow is worth using needs,
     # and a raw count actively hides it.
     #
     # Said only when there is something to say: a workspace where every candidate has been looked at
@@ -475,7 +475,7 @@ def print_inventory(root):
     # actually installed. Only `chamnan-map --install-git-hook` could answer it, because the
     # detection lived inside that command as a private function — so a repository whose index goes
     # quietly stale on every commit looks exactly like one whose hook is working, and this
-    # repository turned out to be the former (R14 agent 5).
+    # repository turned out to be the former (R14 agent 5, 2026-09-06).
     #
     # Someone else's pre-commit hook is reported as a fact and NOT as a problem: chamnan does not
     # edit a hook it did not write, and its own installer refuses to, so the advice differs.
@@ -493,7 +493,7 @@ def print_inventory(root):
     # only BROKEN, malformed and contradictions. So "unverifiable" reaches nobody at all: a glob
     # that matches no file, a pattern the guards refuse, or a check past MAX_CHECKS looks exactly
     # like a rule with no check trailer, which is the silent-failure class this whole module exists
-    # to close, one layer up (R12 agent 5).
+    # to close, one layer up (R12 agent 5, 2026-09-06).
     #
     # Here, where a person is asking about workspace health, the count that is silent in a session
     # is the one worth saying — including how many DO hold, because that is the number that makes
@@ -538,7 +538,7 @@ def print_inventory(root):
         # round proposed answering it with a SUGGESTED number, and its own argument against that is
         # right: "what would make today's rules fit" optimises for the wrong quantity and says
         # nothing about whether more rules SHOULD arrive in full. A large rule may deserve to stay a
-        # title (R3 agent 5, idea 7).
+        # title (R3 agent 5, 2026-09-10, idea 7).
         #
         # So this prints the CONSTRAINT rather than a recommendation. The judgement stays with the
         # person; what they were missing is that on this repository the judgement is mostly already
@@ -649,7 +649,7 @@ def print_inventory(root):
         # Skills too, and for the same reason the session hook now reads them: a `**Check:**`
         # trailer is the same claim wherever it is written, and wiring the checker to one store was
         # how four skills' worth of trailers sat unevaluated. Both callers changed together — one
-        # of the two would have been this repository's own commonest defect (R1 agent 5).
+        # of the two would have been this repository's own commonest defect (R1 agent 5, 2026-09-10).
         # Derived from the stores rather than named here — see memory.checkable_with_titles.
         _rc_titled = memory.checkable_with_titles(root)
         _rc_results = rulecheck.run(root, _rc_titled) if _rc_titled else []
@@ -674,7 +674,7 @@ def print_inventory(root):
     # 🐛 [2026-09-06] `aging.check()` was reachable from `chamnan-age` and from nowhere else, so a
     # stored lesson naming a version no environment declares was visible in one command and
     # invisible in the one people actually run to ask "is this workspace healthy". Every other
-    # health signal in this section is here for exactly that reason (R12 agent 5).
+    # health signal in this section is here for exactly that reason (R12 agent 5, 2026-09-06).
     #
     # A COUNT and a pointer, not the findings themselves: `chamnan-age` exists, prints them in
     # full, and this section is a list of one-line signals. Duplicating its output here would make
@@ -821,7 +821,7 @@ def print_block_trend(root):
     Forty-two real records sat unread in this repository, and what they said mattered: the block
     had been sitting at 8,947 bytes against a 9,000-byte ceiling for six sessions running, which
     means sections were being dropped to fit, every session, with nothing anywhere saying so
-    (R7 agent 5, selected over its sibling proposal after the measurement).
+    (R7 agent 5, 2026-09-08, selected over its sibling proposal after the measurement).
 
     The ceiling is not chamnan's own preference. Claude Code truncates a SessionStart hook's stdout
     at around ten thousand bytes -- still open, filed today as anthropics/claude-code#91614 -- so a
@@ -865,7 +865,7 @@ def print_block_trend(root):
     # 🐛 [2026-09-08] The lines above answer "is the block too big", which is one of four questions
     # this log can answer and the only one that was being asked. The other three are the defects
     # `blocklog.py`'s own docstring was written around — a cut block, a byte collapse, a section
-    # gone — and each of them went unnoticed for hours when it really happened (R7 agent 5).
+    # gone — and each of them went unnoticed for hours when it really happened (R7 agent 5, 2026-09-08).
     for _finding in blocklog.check(root):
         print(f"  ⚠ {_finding}")
 
@@ -966,7 +966,7 @@ def print_usage(root):
     # prints `← no such file in tools/`. This one printed them as ordinary rows at `0 runs`,
     # indistinguishable from a real tool nobody uses and therefore worth demoting; and the two
     # counters above had the same gap. The root CLAUDE.md names this command as how to answer "is
-    # chamnan worth keeping", so a phantom row here is the expensive kind of wrong (R1 agent 5).
+    # chamnan worth keeping", so a phantom row here is the expensive kind of wrong (R1 agent 5, 2026-09-10).
     #
     # Said, not silently dropped: an entry pointing at nothing is a thing to fix, and hiding it
     # would make the registry quietly wrong instead of visibly wrong.
@@ -980,7 +980,7 @@ def print_usage(root):
         # correct commands write progress there -- so it is said only when it is every run and
         # there have been enough runs to mean something, the same high bar `workflows.REPEAT_AT`
         # keeps for its own noisy signal. `interrupted` needs no threshold: a command the user
-        # stopped is an unambiguous fact, and what it MEANS is still theirs to decide (R7 agent 5).
+        # stopped is an unambiguous fact, and what it MEANS is still theirs to decide (R7 agent 5, 2026-09-08).
         _signals = tools_index.signals(root)
         for name, runs in tools:
             _r, _int, _err = _signals.get(name, (runs, 0, 0))
@@ -1003,7 +1003,7 @@ def print_usage(root):
     # `chamnan-candidates promote`. A script a person DROPPED INTO `tools/` -- which this project's
     # own README documents as normal use -- is invisible to every mechanism here for asking whether
     # a tool still earns its place. Measured on this repository: 43 files in `tools/`, 3 registered,
-    # and the 40 include `preflight.py`, `run_tests.py` and `map_claim_check.py` (R11 agent 1).
+    # and the 40 include `preflight.py`, `run_tests.py` and `map_claim_check.py` (R11 agent 1, 2026-09-08).
     #
     # A fact, not a verdict: a repository that deliberately keeps hand-written scripts there is not
     # doing anything wrong, and a line reading "N need fixing" would be one more notice that fires
@@ -1130,7 +1130,7 @@ def print_pointer(fired, named, opened, root=None):
     # weight? A round proposed building a second usage store to answer it — a `record_call` for
     # skills, a sibling index, its own lock and atomic write. None of that is needed: the pointer
     # log already records every entry it named, and the store on disk says what exists. The answer
-    # is a set difference over two things already written down (R3 agent 5, idea 3).
+    # is a set difference over two things already written down (R3 agent 5, 2026-09-10, idea 3).
     #
     # Measured before it was built, which is what decided it: 18 of 27 skills named at least once
     # over 9.8 days and 93 firings, 9 never. Lopsided is the outcome the idea itself said would
@@ -1217,14 +1217,14 @@ def main(argv):
     # running this anywhere printed a complete inventory reading "0 entries, last write never" —
     # which is exactly what a real workspace nobody has written to yet also prints. The reader
     # cannot tell "you are in the wrong directory" from "your workspace is empty", and those call
-    # for opposite next steps (R21 agent 5).
+    # for opposite next steps (R21 agent 5, 2026-09-06).
     if not ws.workspace(root).is_dir():
         # 🐛 [2026-09-06] A dead end in six of ten commands. `chamnan-context` was given the way
         # out on 2026-09-05 and its siblings were not, and `chamnan-impact` carried BOTH — this
         # sentence, and the actionable one 46 lines below it for a near-identical condition — so
         # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
         # ordering accident rather than anything they controlled. No test ran any of the six
-        # against a directory that genuinely has no workspace (R15 agent 3).
+        # against a directory that genuinely has no workspace (R15 agent 3, 2026-09-06).
         print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
               f"creates the workspace and builds the index. (Inside Claude Code, "
               f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)

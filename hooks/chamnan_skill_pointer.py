@@ -21,7 +21,7 @@ in its own header, so a new procedure arrives with its triggers and this file ne
 in the hook would be the defect this repository records most often — a set maintained in one place
 and forgotten in the other.
 
-🐛 [2026-09-18] (R19 agent 4) "Once per procedure per session" assumed a session is short. Measured on this
+🐛 [2026-09-18] (R19 agent 4, 2026-09-18) "Once per procedure per session" assumed a session is short. Measured on this
 repository's own session today, from `.chamnan/logs/commands.jsonl` and the old
 `logs/skill_pointer_seen.json`: 387 tool commands over 8.0 hours (07:12 → 15:12), the pointer spoke
 3 times — one procedure each — all before 08:30, then silence for roughly 360 commands. The
@@ -127,7 +127,7 @@ def _nudge_write(wsdir, session_id, entry):
         pass
 
 
-# 🐛 [2026-09-18] (R19 agent 4) The division is the owner's, set 2026-09-16 and written in two skills and in the
+# 🐛 [2026-09-18] (R19 agent 4, 2026-09-18) The division is the owner's, set 2026-09-16 and written in two skills and in the
 # operating agent's own definition: this session picks the work, X-rays it and designs the A/B; the
 # CUT is dispatched to `engineer-operate` on sonnet; this session judges the result. On 2026-09-18 I
 # made every cut of the day myself on opus — two hooks, three checks, three tools, a redactor change
@@ -207,6 +207,52 @@ def _emit(text):
         "additionalContext": redact.for_a_terminal(redact.scrub(text))}}))
 
 
+# 🐛 [2026-09-19] (self-measured) A `git checkout -- <directory>` was run to undo ONE file a tool had mangled, and
+# it discarded every uncommitted change under that directory — four files of work that had no
+# commit behind them yet. The class was already recorded in four places: two gotchas in
+# `working_fixing_a_finding.md` and two "X-ray the blast radius" references in the skills. It
+# happened anyway, which is this repository's own measured finding about rules: the ones that break
+# are the ones with no machine.
+#
+# So the control moves to the moment of the command, which is the only place it can act — the
+# operation is irreversible the instant it runs, and there is nothing to inspect afterwards. It
+# does not block: it says how many files with uncommitted work sit inside the path, and lets the
+# caller decide. A count is what was missing, not permission.
+_DESTRUCTIVE = (
+    ("git checkout --", "checkout -- discards every uncommitted change under the path"),
+    ("git restore", "restore overwrites the working tree from the index or a commit"),
+    ("git reset --hard", "reset --hard throws away every uncommitted change in the tree"),
+    ("git clean", "clean deletes untracked files outright"),
+    ("git stash drop", "stash drop cannot be undone once the ref is gone"),
+    ("git stash clear", "stash clear deletes every stash"),
+)
+
+
+def _about_to_discard(command, root):
+    """A line naming what an irreversible git command is about to take, or ''.
+
+    Counts only what is actually AT RISK — files git reports as modified, staged or untracked —
+    because a path holding a hundred clean files and one dirty one is a one-file decision.
+    """
+    _hit = next((why for frag, why in _DESTRUCTIVE if frag in command), "")
+    if not _hit:
+        return ""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "status", "--porcelain"],
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=10)
+    except Exception:            # noqa: BLE001 — a guard must never be why a command fails
+        return ""
+    if out.returncode != 0:
+        return ""
+    dirty = [ln[3:] for ln in out.stdout.splitlines() if ln.strip()]
+    if not dirty:
+        return ""
+    return ("chamnan: %s. %d file(s) in this repository currently carry uncommitted work.\n"
+            "  Name the exact paths instead of a directory, or commit first — this is not "
+            "recoverable afterwards.\n  %s" % (_hit, len(dirty), ", ".join(dirty[:6])))
+
+
 def _surgery_belongs_to_the_operator(payload):
     """Editing the package's own source is step 4, and step 4 has an owner."""
     raw = (payload.get("tool_input") or {}).get("file_path") or ""
@@ -275,11 +321,15 @@ def main():
     if not command:
         return 0
     root = ws.hook_root(payload)
+    _risk = _about_to_discard(command, root)
+    if _risk:
+        _emit(_risk)
+        return 0
     wsdir = ws.workspace(root)
     if not wsdir.is_dir():
         return 0
 
-    # 🐛 [2026-09-18] (R18 agent 1) Two PreToolUse hooks on Bash cost 234 ms per command against 132 for one —
+    # 🐛 [2026-09-18] (R18 agent 1, 2026-09-18) Two PreToolUse hooks on Bash cost 234 ms per command against 132 for one —
     # measured — and every shell command in a session pays it. R18's own finding says a change is
     # perceptible at about 20% of the base, and this was doubling it. So Bash has ONE hook and it
     # does both jobs by CALLING the other module rather than copying it: the long-read notice lives

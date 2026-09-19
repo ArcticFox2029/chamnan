@@ -86,7 +86,7 @@ def show(root):
         # that reads exactly like a real one, in output an agent and the owner both read directly.
         # The SessionStart hook's reader of this very field already folds it with
         # `mdblock.one_line`; this one, the command a person runs to audit the registry, did not
-        # (R12 agent 2).
+        # (R12 agent 2, 2026-09-06).
         desc = "" if why else redact.scrub(mdblock.one_line(
             str(e.get("desc", "") or "(no description)")))
         print(f"  {name:<24} {desc}{why}")
@@ -121,7 +121,7 @@ def _origin_for(src, root):
 # their default action with nothing on screen -- so a typo did something other than what was asked
 # and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
 # it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
-# not the member this round happened to be pointed at (R7 agent 4).
+# not the member this round happened to be pointed at (R7 agent 4, 2026-09-08).
 KNOWN_FLAGS = ('--list', '-l', '--desc')
 TAKES_VALUE = ()
 TAKES_REST = ('--desc',)
@@ -142,7 +142,7 @@ def main(argv):
         # returned 0 for both while `chamnan-impact` and `chamnan-peek` -- the same idiom, the same
         # line, two files away -- returned `0 if argv else 2`. So `chamnan-promote && echo ok` with
         # a forgotten argument reported success and promoted nothing. One member of a set of three
-        # (R2 agent 20).
+        # (R2 agent 20, 2026-09-11).
         return 0 if argv else 2
 
     _bad = ws.unknown_flags(argv, KNOWN_FLAGS, TAKES_VALUE, TAKES_REST)
@@ -153,7 +153,7 @@ def main(argv):
     # 🐛 [2026-09-08] Seven sibling commands refuse here and name `chamnan-map` as the way out;
     # this one and `chamnan-candidates promote` instead called `ws.ensure()` further down and
     # BOOTSTRAPPED THE WHOLE WORKSPACE in silence. The eighth member of a set of eight, doing the
-    # opposite of the other seven, with no message either way (R7 agent 4).
+    # opposite of the other seven, with no message either way (R7 agent 4, 2026-09-08).
     #
     # Refusing is the right side to be on, judged from the user's side: somebody running
     # `chamnan-promote` in a directory with no `.chamnan/` has almost certainly mistyped a path or

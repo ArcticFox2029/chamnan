@@ -117,7 +117,7 @@ def _split_unquoted(text):
         # `python3 - <<'PY'` block had its Python source split on every `;` in it and each fragment
         # became a fabricated step. Five of the eight candidates in this repository's own queue
         # carried the resulting garbage token `s`, from `sed -i '' 's/…/…/'` inside such a block:
-        # the `s` of a sed expression was being read as a command name (R13 agent 3).
+        # the `s` of a sed expression was being read as a command name (R13 agent 3, 2026-09-07).
         #
         # The body ends at a line that is exactly the delimiter — optionally indented when the
         # operator was `<<-`, which is what that dash means.
@@ -342,7 +342,7 @@ def record(log_path, sigs, when, tool=None, interrupted=False, history=None):
     to read it a second time. The PostToolUse hook reads the log to learn what qualified BEFORE the
     command, then called this, which read the whole file again — measured at the documented
     retention ceiling of 9,000 entries, that second parse is 11.4 ms of the 29.4 ms this pair costs,
-    on every single Bash tool call, in the user's critical path (R7 agent 2).
+    on every single Bash tool call, in the user's critical path (R7 agent 2, 2026-09-06).
 
     The trade is stated rather than hidden: reconstructing from the caller's snapshot cannot see an
     entry another process appended in between, so `repeated()` may miss it for ONE call and catch

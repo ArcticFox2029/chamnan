@@ -764,7 +764,7 @@ def _only_the_opening_block(full, kept):
     # that does not exist: the warning that says so is ~190 bytes, the budgets it resolves to are
     # identical to the default, and that alone moved the delivered Architecture index from 1,378
     # bytes / 7 directory rows to 1,136 bytes / ZERO rows -- under a heading reading "## Quick
-    # Index" and a line describing rows that were not there (R7 agent 7, new finding 2). A typo in
+    # Index" and a line describing rows that were not there (R7 agent 7, 2026-09-09, new finding 2). A typo in
     # a config key the reader is invited to set cost them the section the warning was about.
     #
     # So the question is asked about content rather than about position: when the body has rows at

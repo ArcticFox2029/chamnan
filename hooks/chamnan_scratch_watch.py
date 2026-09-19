@@ -197,7 +197,7 @@ def say(text):
     # anyway, because `json.dumps` has by then escaped every non-ASCII code point to `\uXXXX` text
     # that no character filter matches -- Claude Code decodes it back on the other side. The two
     # PreToolUse hooks spell it `for_a_terminal(scrub(...))` on the text, which is the correct
-    # order; all three of the others had it wrong, each in its own way (R12 agent 3).
+    # order; all three of the others had it wrong, each in its own way (R12 agent 3, 2026-09-07).
     sys.stdout.write(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PostToolUse",
         "additionalContext": redact.for_a_terminal(text)}}) + "\n")
@@ -268,7 +268,7 @@ def notice_workflow(payload, wsdir, root):
 # 🐛 [2026-09-06] These matched any line that merely STARTED with the bold words, so a decision
 # whose own prose opens `**As-of:** last quarter this was reconsidered...` read as already stamped.
 # The stamper then skipped it permanently: that entry never gets a machine-readable date, and
-# nothing reports the gap (R2 agent 4). Fencing was closed separately and does not cover this --
+# nothing reports the gap (R2 agent 4, 2026-09-06). Fencing was closed separately and does not cover this --
 # the prose is not in a fence, it is the body.
 #
 # The whole LINE has to be the trailer the stamper itself writes: a bare ISO date, or one of the
@@ -287,7 +287,7 @@ def _outside_fences(text):
     like it already carried the stamp. The stamper then skipped it permanently: the file never gets
     its real dated trailer, and nothing says why. chamnan's own memory files are full of examples
     of chamnan's own conventions, so this fires on exactly the repositories that use the feature
-    most (R2 agent 4).
+    most (R2 agent 4, 2026-09-06).
     """
     out, fenced = [], False
     for line in text.splitlines():
@@ -333,7 +333,7 @@ def _stamp_memory_entry(payload, root):
     # copy of the text this call had already read, losing the newer content silently. Every sibling
     # writer in this codebase takes ws.exclusive and goes through atomic_write_text; this one did
     # neither, which is the shape of defect the rest of this file is full of notes about
-    # (R2 agent 4). The whole read-decide-write now happens under the lock, and a lock that cannot
+    # (R2 agent 4, 2026-09-06). The whole read-decide-write now happens under the lock, and a lock that cannot
     # be taken means skipping the stamp rather than racing for it — the stamp is a convenience and
     # the user's text is not.
     with ws.exclusive(resolved) as held:
@@ -575,7 +575,7 @@ def _index_missed_this_file(payload, root, wsdir, session_id):
     through works for hours against an index that does not name them and finds out at the next
     start, which for a single long session may be never. The hook that could say so already fires
     on every Write and Edit and was doing other work; this is the question it was not asking
-    (R5 agent 5).
+    (R5 agent 5, 2026-09-09).
 
     Deliberately not a staleness walk. `index_is_behind` compares mtimes across the whole tree,
     and doing that per tool call would be the wrong trade. The payload already names the file, so

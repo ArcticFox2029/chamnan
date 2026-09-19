@@ -534,7 +534,7 @@ def peek_pdf(path, find=None):
     # one — `peek_zip`/`peek_tar` through `_zread`, `peek_source` through `tree.read_capped` — and
     # the note on `tree.MAX_FILE_BYTES` says the constant was collected into "the two places that
     # most needed it" and names `peek_source`, not this. So a cloned repository holding a large
-    # `.pdf` had it read whole into memory (R1 agent 2).
+    # `.pdf` had it read whole into memory (R1 agent 2, 2026-09-09).
     # `tree.read_capped` decodes, and a PDF is bytes; the ceiling is the shared constant either
     # way. Bounded on the way IN, for the reason `read_capped`'s own docstring gives: reading whole
     # and slicing afterwards has already spent the memory the limit exists to refuse.
@@ -563,7 +563,7 @@ def peek_pdf(path, find=None):
     # Pairing delimiters is not a job for a regex. `bytes.find` is a C-level substring search, so
     # locating each open and its close is linear in the file and stops at the 40 streams this loop
     # already wanted. The 40-stream limit was always there and never helped, because the cost was
-    # in FINDING a match rather than in handling one (R1 agent 2).
+    # in FINDING a match rather than in handling one (R1 agent 2, 2026-09-09).
     text = []
     _at = 0
     while len(text) <= 40:
@@ -665,7 +665,7 @@ def peek_binary(path):
     so "a malformed file must not crash the caller" -- so a file that disappeared between the
     dispatch and the recovery produced an uncaught `FileNotFoundError` and a raw traceback, out of
     the branch whose whole job is to stop that. Reproduced by the round that found it, which had
-    deleted its own fixture during cleanup while the command was still running (R7 agent 2).
+    deleted its own fixture during cleanup while the command was still running (R7 agent 2, 2026-09-08).
     Guarded HERE rather than at the recovery site, because all three callers need it and guarding
     the one that was seen failing is how this codebase produces its commonest defect.
 
@@ -739,7 +739,7 @@ def peek_source(path, find=None):
     # 🐛 [2026-09-08] Read whole, with no bound, while `mapper` refuses anything over the same
     # ceiling and every other reader in this file has one: a 150 MB file hung `chamnan-peek` for
     # over 150 seconds. A preview TRUNCATES rather than skipping -- unlike the index, it never
-    # claimed to be complete, and the caller already prints a truncation notice (R7 agent 2).
+    # claimed to be complete, and the caller already prints a truncation notice (R7 agent 2, 2026-09-08).
     source = tree.read_capped(path, encoding=_text_encoding(path) or "utf-8-sig")
     out = []
     try:
@@ -812,7 +812,7 @@ def peek(path, find=None, budget=DEFAULT_BUDGET):
     straight out of those bytes. Reproduced: a `.csv` holding an AWS access key ID between null
     bytes printed the key in full. It was masked because both real callers scrub again on their own,
     so the module's own guarantee was untrue while the product happened to be safe — and a second
-    caller written without that habit would have shipped the leak (R1 agent 2).
+    caller written without that habit would have shipped the leak (R1 agent 2, 2026-09-09).
     """
     return _scrub_everything_out(_peek(path, find, budget))
 

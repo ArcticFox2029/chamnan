@@ -30,7 +30,7 @@ already been corrected elsewhere: the vendor fact two paragraphs above (Trae rea
 under `.trae/rules/`), and the overwrite behaviour in `__init__.py`'s shared writer. Each fix
 landed BESIDE the claim it retracted rather than over it, so a reader who stopped at paragraph one
 got the right answer and a reader who continued to the design rationale got the wrong one, with a
-justification built on it (R8 agent 1).
+justification built on it (R8 agent 1, 2026-09-08).
 """
 
 NAME = "trae"
@@ -48,7 +48,7 @@ CEILING = None
 # So the guard bought nothing, and it was not free. A `---` that FOLLOWS a text line is a setext
 # `<h2>` underline in CommonMark; rewriting it to `***` turns somebody's heading into a paragraph
 # plus a horizontal rule, which changes the outline of the document the agent is handed. The one
-# real effect the function had was the one nobody wrote down (R4 agent 1, finding 10).
+# real effect the function had was the one nobody wrote down (R4 agent 1, 2026-09-10, finding 10).
 #
 # This is not a reversal of the round that kept the six copies and policed them for divergence
 # (R5 agent 3, 2026-09-06): that round asked whether the copies AGREED, and they did. It never

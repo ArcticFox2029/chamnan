@@ -189,7 +189,7 @@ def _write(strict):
     .chamnan/candidates/a-tool.md", exit 0, with no such file: by that point in the same command
     the tool had already been moved to `tools/archived/` and its index entry already removed, both
     successfully. So the net effect was the permanent, silent loss of the only record of why the
-    tool existed, under a message naming the file that holds it (R7 agent 1, finding 2).
+    tool existed, under a message naming the file that holds it (R7 agent 1, 2026-09-07, finding 2).
     """
     return ws.write_or_raise if strict else ws.atomic_write_text
 
@@ -207,7 +207,7 @@ def upsert(root, sequence, observed, when, provenance="ai-inferred", strict=Fals
     # file: `_same_habit` scans every candidate, then this unlinks one and writes another. Two
     # PostToolUse hooks firing together each scanned, each found nothing to merge with, and each
     # wrote its own file — reproducing, under concurrency, the exact "five files for one habit"
-    # the comment below says this merge exists to prevent (R7 agent 5).
+    # the comment below says this merge exists to prevent (R7 agent 5, 2026-09-07).
     #
     # The lock is on the directory because the invariant is: one habit, one file. A per-file lock
     # cannot express that — the two writers are racing over which file should EXIST, and they hold

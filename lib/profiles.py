@@ -141,7 +141,7 @@ def resolve(config):
     never move either of them. Choosing `large-window` in the file did nothing at all. The one path
     that worked, the environment variable, worked only because its caller popped the two keys first,
     which is the same fix spelled at one call site instead of here where the precedence lives
-    (R8 agent 4).
+    (R8 agent 4, 2026-09-06).
     #
     A value still equal to its own default was not tuned by anybody, so it does not outrank a
     profile the user chose. A value they changed still does.
@@ -210,7 +210,7 @@ MODEL_WINDOWS = {
     # the R1 vendor check, which exists for exactly this: a table of other people's numbers goes
     # stale without anything failing.
     #
-    # These four are from Anthropic's own documentation, checked 2026-09-06 (R2 agent 1). `mythos`
+    # These four are from Anthropic's own documentation, checked 2026-09-06 (R2 agent 1, 2026-09-09). `mythos`
     # is deliberately NOT here: it is very probably 1M like its siblings, and probably is not a
     # number. It falls through to `standard` with the table's own "not in the model table, which is
     # a dated convenience rather than an authority" note, which is the honest answer.
@@ -234,7 +234,7 @@ MODEL_WINDOWS = {
     "openai": 1_050_000,
     "gemini": 1_000_000,
     # 🐛 [2026-09-06] Four entries checked against each vendor's OWN current documentation, not
-    # against a listicle (R8 agent 1). Three were stale toward the small number and one toward the
+    # against a listicle (R8 agent 1, 2026-09-06). Three were stale toward the small number and one toward the
     # large, which is what tells you they aged separately rather than all being copied from one
     # outdated source. The `kimi` direction is the one that matters: a window stated LARGER than the
     # model really has is the only error in this table that can make chamnan ship a block the model
@@ -257,7 +257,7 @@ MODEL_WINDOWS = {
     # comment explaining the refusal. What closes it is a different URL shape: the overview page is
     # client-rendered, the per-model cards at `docs.mistral.ai/models/model-cards/<slug>` are not.
     # Fetched 2026-09-09 from the vendor, not from this report: Mistral Medium 3.5's specifications
-    # table reads "256k" (R2 agent 1).
+    # table reads "256k" (R2 agent 1, 2026-09-09).
     "kimi": 1_000_000,
     "grok": 500_000,
     "deepseek": 1_000_000,
@@ -286,7 +286,7 @@ AMBIGUOUS = {
     # Gemma: checked 2026-09-06 at 128K and correct for Gemma 3, then Gemma 4 shipped. Fetched
     # 2026-09-09 from `ai.google.dev/gemma/docs/core`: "Small models feature a 128K context window,
     # while the medium models support 256K." Three days between a verified entry and a stale one is
-    # the argument for this table saying when it was checked (R2 agent 1).
+    # the argument for this table saying when it was checked (R2 agent 1, 2026-09-09).
     "gemma": ("a small build, E2B or E4B, 128K",
               "a medium build — 12B, 26B A4B, 31B — 256K"),
     # Mistral: `docs.mistral.ai/models/model-cards/mistral-medium-3-5-26-04`, fetched 2026-09-09,

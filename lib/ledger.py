@@ -212,7 +212,7 @@ def _age(seconds, now):
     # calendar day, and `_ymd_to_ts` anchors a written date at NOON UTC. So "today" meant "within
     # 24 hours of noon UTC on that date" and not "on today's date": east of UTC the two diverge by
     # the offset, and a record written yesterday was called "today" for 19 of 24 local hours here
-    # (R4 agent 3, finding 1). This line is injected into every session, and the module's own
+    # (R4 agent 3, 2026-09-10, finding 1). This line is injected into every session, and the module's own
     # docstring says it exists because a count that never changes gets tuned out — a date that is
     # wrong most of the day is the same failure with a friendlier face.
     #
@@ -387,13 +387,13 @@ def inventory(root, now=None):
     # 🐛 [2026-09-06] `skills/` is a real store — the session block lists it, `/chamnan:capture`
     # writes into it, and housekeeping keeps it forever — and it was the one store this inventory
     # never mentioned. Someone asking `chamnan-report` "what does this workspace hold" was told
-    # about six stores and silently not about the seventh (R8 agent 5).
+    # about six stores and silently not about the seventh (R8 agent 5, 2026-09-06).
     skl = _files(root, "skills") or []
     # 🐛 [2026-09-06] And `environments.md` was the eighth, missed by the same fix. It is a store
     # by every test this list applies: a write skill creates it, `chamnan-env` writes it, the
     # session block reads it, and `chamnan-age` refuses to run without it. Someone asking
     # `chamnan-report` what the workspace holds was told about seven and silently not the eighth
-    # (R12 agent 5). One file holding N entries, so it is counted the way `milestones.md` is --
+    # (R12 agent 5, 2026-09-06). One file holding N entries, so it is counted the way `milestones.md` is --
     # by ENTRY, not by file -- and dated by its newest `Checked:`, which is the field that says how
     # much of it is still worth trusting.
     from environments import entries as env_entries, path as env_path
@@ -411,7 +411,7 @@ def inventory(root, now=None):
     # "last write" over all of them -- while three of the nine answer with a date a PERSON stamped
     # rather than a time the filesystem recorded. A decision edited today whose `**As-of:**` still
     # says August is reported as written in August. Reproduced: a file created seconds earlier came
-    # back as "last write 39 days ago" (R8 agent 3).
+    # back as "last write 39 days ago" (R8 agent 3, 2026-09-09).
     #
     # The stamp beating mtime is right and stays: a clone resets every mtime to the checkout time,
     # which would report a store nobody has touched in months as written today, and a date somebody

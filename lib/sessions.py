@@ -207,7 +207,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
     # answer False, and this returned "" for either — so on a machine without git the section that
     # tells a session where it stopped just vanished, with nothing anywhere saying why. The two need
     # different answers: not-a-repository is correctly silent (there is genuinely nothing to say),
-    # while git-not-installed is a thing the reader can fix and would want to (R10 agent 1).
+    # while git-not-installed is a thing the reader can fix and would want to (R10 agent 1, 2026-09-07).
     if not ws.git_is_installed():
         return ("**Where the last session stopped** — not available: `git` is not on this machine's "
                 "PATH, and this section is read from the working tree. Everything else in this "
@@ -238,7 +238,7 @@ def where_git_says_you_stopped(root, limit=6, name_files=True, status=None):
         # content at all -- added exactly +1 to the count on every session until somebody committed
         # `.chamnan/`, which nothing ever tells them to do. On a clean tree it did worse than
         # inflate: it produced the whole section, reading "1 uncommitted file(s), and nobody
-        # recorded what for", which is flatly false (R15 agent 6).
+        # recorded what for", which is flatly false (R15 agent 6, 2026-09-06).
         #
         # Excluded rather than counted, and that is the right direction even once `.chamnan/` IS
         # committed: this section answers "where did I stop", and STATE.md changing every session
@@ -511,7 +511,7 @@ def prune(root, days):
                     # single typo'd filename makes the "always spare one" promise protect the
                     # wrong file and delete the genuinely newest. A day of slack, so a record
                     # written in a timezone ahead of this one is not refused for being an hour
-                    # early (R4 agent 3, finding 5). Third copy of this parser, third time this
+                    # early (R4 agent 3, 2026-09-10, finding 5). Third copy of this parser, third time this
                     # exact pair has been half-applied.
                     if _ts > time.time() + 86400:
                         raise ValueError("a date in the future is not an age")
@@ -559,7 +559,7 @@ def distinct_filename(root, date, title):
     \U0001f41b [2026-09-09] `slug()` cuts at 40 characters here — the shortest of the four stores —
     and the date prefix narrows the collision to one day without closing it. Two records written on
     the same day whose titles agree for 40 characters landed on one file and the second overwrote
-    the first, which is a whole session's handoff gone (R10 agent 3, finding 4).
+    the first, which is a whole session's handoff gone (R10 agent 3, 2026-09-09, finding 4).
 
     The date is part of the base rather than of the suffix, so the disambiguating hash still sorts
     inside its own day and a directory listing stays chronological.

@@ -20,7 +20,7 @@ NAME = "continue"
 # session, and pays for it twice. Declared here rather than listed in `__init__.py`:
 # 🐛 [2026-09-10] that list held four names while EIGHT vendors qualified, and the evidence
 # for the missing four was sitting in their own docstrings. A set kept beside the thing it
-# describes cannot drift from it (R4 agent 1, finding 6).
+# describes cannot drift from it (R4 agent 1, 2026-09-10, finding 6).
 # Evidence: docs.continue.dev/customize/deep-dives/rules — "alongside .continue/rules"
 # (verified 2026-09-08).
 ALSO_READS_AGENTS_MD = True
@@ -42,7 +42,7 @@ _DESCRIPTION = ("What this repository is, how it is laid out, and the rules and 
 # So the guard bought nothing, and it was not free. A `---` that FOLLOWS a text line is a setext
 # `<h2>` underline in CommonMark; rewriting it to `***` turns somebody's heading into a paragraph
 # plus a horizontal rule, which changes the outline of the document the agent is handed. The one
-# real effect the function had was the one nobody wrote down (R4 agent 1, finding 10).
+# real effect the function had was the one nobody wrote down (R4 agent 1, 2026-09-10, finding 10).
 #
 # This is not a reversal of the round that kept the six copies and policed them for divergence
 # (R5 agent 3, 2026-09-06): that round asked whether the copies AGREED, and they did. It never

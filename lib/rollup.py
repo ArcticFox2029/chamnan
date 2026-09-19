@@ -514,7 +514,7 @@ def _collapse(index, map_rel, budget=None, root=None, per_dir=8):
     # was unreachable in practice. Both were right about the cliff and wrong about the scope: the
     # heading is dropped only when the whole SECTION goes, so the cliff is where the symptom
     # disappears, not where it starts. Gated on folding actually happening, not on the budget
-    # (R7 agent 1).
+    # (R7 agent 1, 2026-09-06).
     # Trailing blanks first: whether a blank line separates the heading from the first row is a
     # detail of how MAP.md was rendered, not of whether the heading is orphaned. Checking `head[-1]`
     # before stripping them made the fix work on the real index (no blank there) and silently do

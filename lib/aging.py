@@ -61,7 +61,7 @@ _CLAIM = re.compile(r"((?=[\w.+-]*[A-Za-z])\w[\w.+-]*)\s+v?(\d+(?:\.\d+)*)")
 # opposite directions because of it: `chamnan-env set --versions "postgres version 16"` declared an
 # environment running `version: 16` and nothing running postgres, while a memory entry phrased
 # "Postgres version 13" produced a claim about `version` that no declared name ever matched, so it
-# was silently never checked and `chamnan-age` reported an all-clear (R11 agent 3).
+# was silently never checked and `chamnan-age` reported an all-clear (R11 agent 3, 2026-09-06).
 #
 # Removed rather than special-cased in the pattern, and removed in ONE place used by both sides --
 # the declaration parser and the claim parser are deliberately the same shape, and a fix applied to
@@ -104,7 +104,7 @@ def _covers(declared, claimed):
     3" is the most DURABLE claim a lesson can make about a language version, true through every
     future minor bump. `ledger.py` in this same codebase warns that "a count that never changes is
     what gets tuned out"; a finding that never clears is that failure mode in the opposite feature,
-    and it teaches a reader to skim past the one finding in ten that is real (R11 agent 3).
+    and it teaches a reader to skim past the one finding in ten that is real (R11 agent 3, 2026-09-06).
 
     Design revised [2026-09-13]. The same reasoning applies to a minor release-series name: Python
     `3.9` is the series containing `3.9.6`, not an imprecise patch claim. Requiring the entry to say
@@ -176,7 +176,7 @@ def check(root, now=None):
                 # all-clear is worse than no check at all, because it stops somebody looking" — and
                 # builds the flagged/unverifiable/silent split so that "no findings" and "no check
                 # happened" can never print as the same sentence. The split covered a cold
-                # environment and not an unreadable entry (R9 agent 1).
+                # environment and not an unreadable entry (R9 agent 1, 2026-09-08).
                 UNREADABLE.append(f"{category}/{path.name}")
                 continue
             seen = set()
@@ -240,7 +240,7 @@ def deploy_drift(root):
     # every call site as "nothing disagrees", which is this module's own named worst outcome one
     # function above. The scan really can fail on somebody else's repository (a manifest chamnan
     # has never seen), so crashing `chamnan-age` over it is wrong too; what was missing was the
-    # third state (R9 agent 1).
+    # third state (R9 agent 1, 2026-09-08).
     DRIFT_ERROR.clear()
     try:
         import deploy

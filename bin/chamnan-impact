@@ -42,7 +42,7 @@ def _index_age(map_path, root=None):
     ago read "built today" while a file added five minutes ago imported the very symbol being asked
     about. The command then said "nothing imports it", which is not a stale answer but a WRONG one:
     the reader changes the thing freely on the strength of it. Reproduced by adding an importing
-    file to a fixture and asking again (R2 agent 4).
+    file to a fixture and asking again (R2 agent 4, 2026-09-08).
     #
     `index_is_behind` already answers this correctly, by comparing the index against the mtimes of
     the files mapper would index, and it lived in the SessionStart hook with exactly one caller --
@@ -88,7 +88,7 @@ def _index_age(map_path, root=None):
 # their default action with nothing on screen -- so a typo did something other than what was asked
 # and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
 # it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
-# not the member this round happened to be pointed at (R7 agent 4).
+# not the member this round happened to be pointed at (R7 agent 4, 2026-09-08).
 KNOWN_FLAGS = ()
 TAKES_VALUE = ()
 TAKES_REST = ()
@@ -117,7 +117,7 @@ def main(argv):
         # sentence, and the actionable one 46 lines below it for a near-identical condition — so
         # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
         # ordering accident rather than anything they controlled. No test ran any of the six
-        # against a directory that genuinely has no workspace (R15 agent 3).
+        # against a directory that genuinely has no workspace (R15 agent 3, 2026-09-06).
         print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
               f"creates the workspace and builds the index. (Inside Claude Code, "
               f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)

@@ -139,7 +139,7 @@ ALIASES = {
     # OTHER vendors' directories. The per-project file table lists `config.toml`, `skills/`,
     # `hooks/`, `agents/`, `lsp.json` and `sandbox.toml` — no `rules/` — and the home table has no
     # `rules/` either. The one documented per-project instruction mechanism is `AGENTS.md`. So
-    # everything chamnan wrote for Grok was read by nothing (R6 agent 1, finding 1).
+    # everything chamnan wrote for Grok was read by nothing (R6 agent 1, 2026-09-10, finding 1).
     #
     # An alias and not a module, for the reason every name above is: two modules writing one path
     # would give that path two owners.
@@ -177,7 +177,7 @@ def names_canonical_first():
     were told was a third-party product (Sourcegraph Amp) that a user of Codex, OpenCode, Devin,
     Kilo, Kimi, Mistral Vibe, Crush, Warp, DeepSeek or Muse does not have and never mentioned. The
     refresh still worked — the alias resolves to the same file — so nothing failed; the answer was
-    just untrue, in the two places anybody reads it (R4 agent 1, finding 8).
+    just untrue, in the two places anybody reads it (R4 agent 1, 2026-09-10, finding 8).
 
     An alias is a spelling of an adapter. Asked which agent a file belongs to, the answer is the
     adapter, and that does not depend on where its aliases fall in the alphabet.
@@ -209,7 +209,7 @@ def names_canonical_first():
 # in their own adapter docstrings, saying in plain words that the vendor reads a root `AGENTS.md`
 # as well as its own file. So `--write generic` followed by `--write goose` printed nothing while
 # `--write generic` followed by `--write roo` printed the full duplicate-delivery warning: the
-# same condition, the same cost, warned about for one and not the other (R4 agent 1, finding 6).
+# same condition, the same cost, warned about for one and not the other (R4 agent 1, 2026-09-10, finding 6).
 #
 # Derived from a declaration each adapter carries beside its own TARGET. An adapter added later
 # joins this set by declaring it, not by somebody remembering to come back here — which is the
@@ -232,7 +232,7 @@ def duplicating_agents_md(root, writing):
     roughly half of real orderings, and it is the MORE likely half: `AGENTS.md` is the thing people
     add last, once they notice it covers thirteen more tools. The warning's own comment says it is
     printed at the only moment the person paying has both the information and the choice, and in
-    half of those orderings that moment passed without it (R4 agent 1, finding 7).
+    half of those orderings that moment passed without it (R4 agent 1, 2026-09-10, finding 7).
 
     The same condition also compared `args.write` raw against a set of CANONICAL names. No alias
     reaches one of those seven adapters TODAY — every alias in the table points at `generic` — so
@@ -349,7 +349,7 @@ def safe_target(root, rel):
     #
     # `relative_to` answers containment by path component rather than by character, which is the
     # question actually being asked; `..` is refused by name as well, so the refusal names the
-    # cause rather than the symptom (R2 agent 1).
+    # cause rather than the symptom (R2 agent 1, 2026-09-09).
     if ".." in ws.Path(rel).parts:
         raise ValueError(f"{rel} contains `..`, which leaves {root}; refusing to write there")
     try:
@@ -656,7 +656,7 @@ def artefact_drift(root, running=None):
     # looked. A ledger entry naming a path no adapter declares any more, because the adapter was
     # renamed or retired, was invisible: the file stays on disk with nothing claiming it, and
     # nothing can report it or clean it up. A population derived from one side of a two-sided
-    # relationship, which is the same shape as a check that filters its own input away (R2 agent29).
+    # relationship, which is the same shape as a check that filters its own input away (R2 agent29, 2026-09-11).
     #
     # Reported as its own state rather than folded into "unknown", because the remedy differs: an
     # unknown file is refreshed by writing it again, and an orphan cannot be — no adapter will ever

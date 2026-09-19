@@ -99,7 +99,7 @@ os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 
 # A repository chooses what `git` RUNS, and one of our reads is enough to trigger it.
 #
-# 🐛 [2026-09-18] (R3 agent 2) Reproduced here end to end, not taken from the advisory: a repository whose own
+# 🐛 [2026-09-18] (R3 agent 2, 2026-09-18) Reproduced here end to end, not taken from the advisory: a repository whose own
 # `.git/config` carries `core.fsmonitor = <a program>` executes that program when git refreshes the
 # index, and `git status --porcelain` refreshes the index. `hooks/chamnan_session_start.py` runs
 # exactly that, on every session, inside whatever repository the user opened. A clone, a dependency
@@ -357,7 +357,7 @@ DEFAULT_CONFIG = {
     # `.chamnan/config.json`, not sniffed" -- and it was not a key here, so `load_config()`'s
     # allowlist dropped it before `profiles.resolve()` ever saw it. Setting it in the file the
     # module names did precisely nothing, silently; only the environment variable worked, and the
-    # module does not mention one (R8 agent 4). The two budget keys beside it still WIN over the
+    # module does not mention one (R8 agent 4, 2026-09-06). The two budget keys beside it still WIN over the
     # profile when set by hand, which `resolve()` documents and does not change.
     "context_profile": "standard",
 }
@@ -365,13 +365,13 @@ DEFAULT_CONFIG = {
 # every store here is listed by globbing `*.md`. In this workspace `.chamnan/skills/README.md` sorts
 # second of twenty, so with a twelve-slot listing it took a real skill's place — and it was described
 # to the model by its own first prose line, which explains what the folder is rather than what a
-# procedure does (R8 agent 5). One predicate rather than a check at each listing, because there are
+# procedure does (R8 agent 5, 2026-09-06). One predicate rather than a check at each listing, because there are
 # eight of those and this is exactly the shape this repository keeps rediscovering.
 # 🐛 [2026-09-06] Every retention pass computes its cutoff from `time.time()`, and nothing bounds
 # what happens when that value is wrong. Reproduced with a 400-day forward jump — an NTP correction
 # or a dead RTC battery, not an exotic input: `prune_logs` and `sessions.prune` each deleted a file
 # written SECONDS earlier, and `expiring_logs`, the warning that exists to give notice, is computed
-# from the same broken clock and gives none (R10 agent 2).
+# from the same broken clock and gives none (R10 agent 2, 2026-09-06).
 #
 # There is no way to tell a jumped clock from real age using the clock that jumped. So the rule is
 # not about the clock at all: a retention pass never empties a store. Whatever it believes about
@@ -473,7 +473,7 @@ def workspace(root=None):
 # `rules_char_budget` was in `_UPPER_BOUND` and not here — so its declared ceiling of 20,000 never
 # ran and `_in_range("rules_char_budget", 500000)` answered True. A bound that is declared and never
 # consulted is the same shape as the environment ceiling fixed the day before: the number is written
-# down, it looks enforced, and nothing checks it (R10 agent 5, finding 5).
+# down, it looks enforced, and nothing checks it (R10 agent 5, 2026-09-10, finding 5).
 #
 # `state_stale_days` was worse and the report did not name it: in NEITHER tuple, so no bound and no
 # type check at all. Every numeric key a real config carries is in both now, and a check asserts the
@@ -620,7 +620,7 @@ def enabled(part, root=None):
 # firings, and the evidence base for every question about what the block costs — and the second is
 # what lets the release gate say "4,613 checks — was 4,605" instead of a bare number nobody can
 # compare. A week without a session on a repository is not unusual, and neither file announces its
-# own deletion (R4 agent 3, findings 3 and 4).
+# own deletion (R4 agent 3, 2026-09-10, findings 3 and 4).
 #
 # The reason it was missed is worth keeping: `blocklog` declares its path as `"logs/block_shape.jsonl"`
 # — WITH the directory — so a search for a bare `"*.jsonl"` filename literal walks straight past it.
@@ -771,7 +771,7 @@ def _pid_is_alive(pid):
     file between those two and the write is lost -- the destination keeps its old content, which is
     the atomicity working, and the NEW content is simply gone. The comment above says "both bounds
     have to be wrong before this can touch a write in progress", and the second bound was the
-    NAME's shape, which a live writer's staging file matches exactly (R10 agent 2).
+    NAME's shape, which a live writer's staging file matches exactly (R10 agent 2, 2026-09-06).
 
     So the second bound becomes one the clock cannot move: the filename already carries the PID
     that wrote it. A recycled PID means an orphan lingers until that unrelated process exits, and
@@ -1038,7 +1038,7 @@ def prune_logs(root=None):
     # days`), and so does `state_stale_days` (`state.py`: "days <= 0 disables the whole pass") and
     # the ledger's own window. Here it made `cutoff` equal to NOW, so every log older than this
     # instant was deleted — a user writing 0 to mean "keep everything", the reading three of the
-    # four places already have, lost the lot (R8 agent 4). Three against one is not a design, it is
+    # four places already have, lost the lot (R8 agent 4, 2026-09-06). Three against one is not a design, it is
     # an omission; this is the one that was out of step.
     if not days or days <= 0:
         return 0
@@ -1076,7 +1076,7 @@ def prune_logs(root=None):
             # it only ever compares against one number. A 409 MB, 6,870-file scratch directory that
             # an earlier research round left here cost 120 ms of EVERY SessionStart firing on this
             # repository -- 34% of the hook's 349 ms -- and the directory was fresh, so the walk
-            # could have stopped on its first file (R12 agent 1). Third occurrence of this shape:
+            # could have stopped on its first file (R12 agent 1, 2026-09-06). Third occurrence of this shape:
             # the two above it are named in this same function's comments.
             #
             # One fresh file is the whole answer, so the loop stops at it. A directory being written
@@ -1159,7 +1159,7 @@ def hook_root(payload=None):
         # `never_fail` below, on the stated reasoning that it "has something partial worth
         # emitting". It has nothing partial to emit when it dies on its first line. The reasoning is
         # sound and the crash simply happened before it could apply, so the fix is here, where a
-        # malformed payload becomes "no candidate" rather than an exception (R7 agent 9).
+        # malformed payload becomes "no candidate" rather than an exception (R7 agent 9, 2026-09-07).
         #
         # Not `str(c)`: that would turn `{"a": 1}` into a directory name and search for it. A value
         # of the wrong type carries no path, and the next candidate — or `find_root()` — is the
@@ -1186,7 +1186,7 @@ def hook_root(payload=None):
     # resume pointer and no `STATE.md` for the nested repository, for as long as the session was
     # opened from the parent, which is how this project's own dogfood shape is normally used. The
     # read side already knows about this — `chamnan_subagent_start.py` names nested checkouts and
-    # says to use that one if the work is in there — and the write side did not (R1 agent 3).
+    # says to use that one if the work is in there — and the write side did not (R1 agent 3, 2026-09-09).
     #
     # A nested workspace wins over the one enclosing it, because filing one project's session data
     # into another project's workspace mixes two repositories with nothing saying so. Order is
@@ -1459,7 +1459,7 @@ def ensure(root=None):
     #
     # And it is a read-modify-write on a file every command and hook touches at startup, so it
     # needs the lock as well as the atomicity: `merged` is computed from a snapshot of `current`,
-    # and two sessions opening together each merge into their own snapshot (R7 agent 5).
+    # and two sessions opening together each merge into their own snapshot (R7 agent 5, 2026-09-07).
     malformed = bool(_config_problem(cfg))
 
     def _merged(text):
@@ -1489,7 +1489,7 @@ def ensure(root=None):
         # one `chamnan-map` from v1.4.0 — nine keys gone in a single call, silently, including the
         # one `fit.py`'s own comment calls security-relevant because it keeps the block under the
         # host's truncation. Running HEAD again "restored" it to the DEFAULT 9000, so the value the
-        # user chose was gone for good and nothing at any point said so (R7 agent 6).
+        # user chose was gone for good and nothing at any point said so (R7 agent 6, 2026-09-07).
         #
         # `.version` already records the newest build that has touched this workspace, for exactly
         # this class of question, so the evidence needed was on disk and unused. When it names a
@@ -1604,7 +1604,7 @@ def _mark_generated(root):
         # processes doing that at once each saw the same empty file and each appended the whole
         # block, so the content TRIPLED under three. Both self-repairs in this module had it, and
         # both are called from `ensure()`, which every command and every hook runs at startup: two
-        # sessions opening together is the ordinary way to hit it, not a contrived one (R7 agent 5).
+        # sessions opening together is the ordinary way to hit it, not a contrived one (R7 agent 5, 2026-09-07).
         #
         # The read has to be inside the lock, so the whole read-decide-append becomes one locked
         # rewrite. Append semantics are preserved exactly — whatever is in the file stays, and only
@@ -2376,7 +2376,7 @@ def atomic_write_text(dest, text, encoding="utf-8"):
         # 🐛 [2026-09-06] The reason was caught here and thrown away, so every caller could say was
         # "could not write X". Reproduced live with `chmod 444` and `chmod 555`: a read-only FILE, a
         # read-only DIRECTORY and a full disk all produced the identical sentence, and the first two
-        # need different fixes (R15 agent 3). The bool return stays the contract -- every caller
+        # need different fixes (R15 agent 3, 2026-09-06). The bool return stays the contract -- every caller
         # tests it -- so the reason goes in a module-level slot the raising wrapper reads, the same
         # shape `LAST_UNREAD` already uses for the read ceiling.
         LAST_WRITE_ERROR[:] = [f"{type(err).__name__}: {err}"]
@@ -2400,7 +2400,7 @@ def write_or_raise(dest, text, encoding="utf-8"):
     named two paragraphs above -- `chamnan-timeline new` printing "declared -- .chamnan/threads/
     a-thread.md" with no file on disk -- was fixed only in this function's own return value; the
     caller went on discarding it, so the same output came back for a read-only directory, a full
-    disk, and the staging-file race in `prune_orphaned_temps` (R10 agent 2).
+    disk, and the staging-file race in `prune_orphaned_temps` (R10 agent 2, 2026-09-06).
 
     The line is the one `tools_index._save`'s comment already draws: a log line, a pointer, a
     rollup cache is housekeeping and stays silent, because a workspace that cannot be written must
@@ -2549,7 +2549,7 @@ def exclusive(path):
             # forward clock jump inverted a bound. Skew the clock by more than 30 seconds and a
             # second process reads a lock a live process is still holding as abandoned, unlinks it
             # and takes it -- so the mutex hands the same shared file to two writers at once, which
-            # is exactly the lost update it exists to prevent (R11 agent 2).
+            # is exactly the lost update it exists to prevent (R11 agent 2, 2026-09-18).
             #
             # 🐛 [2026-09-18] (R27.7) The PID alone is reused -- after a reboot, or after enough process
             # churn -- so a lock left by a holder that CRASHED reads as ALIVE forever once its PID
@@ -2628,6 +2628,22 @@ def exclusive(path):
         # The ubuntu column of the same run raised it zero times, which is why POSIX never saw this.
         except PermissionError:
             # DELETE-PENDING is progress by definition: the previous holder is on its way out.
+            #
+            # 🐛 [2026-09-19] (self-measured) That is true on WINDOWS, which is what the measurement above is
+            # about, and false everywhere else. On POSIX a PermissionError here means EACCES on the
+            # directory — a permission that will not change while this process runs — so the retry
+            # spun for the full LOCK_WAIT_MAX of 30 seconds and then gave up, once per shared file.
+            # `chamnan_session_start.py` therefore never answered at all with `.chamnan` unreadable:
+            # reproduced at over 45 seconds with no output on either stream, and a hook's stderr
+            # does not reach the transcript, so the user sees a session start wrong with nothing
+            # saying why.
+            #
+            # It was invisible because the check that asks "does any hook take a session down"
+            # had no timeout on the subprocess it was driving, so it hung alongside the hook
+            # instead of reporting it. Two unbounded waits, one inside the other.
+            if os.name != "nt":
+                LOCK_GIVEUPS["permission_denied"] = LOCK_GIVEUPS.get("permission_denied", 0) + 1
+                break
             now = time.time()
             deadline = now + LOCK_TIMEOUT
             if now - started > LOCK_WAIT_MAX:
@@ -2760,7 +2776,7 @@ def git_hooks_dir(root):
     🐛 [2026-09-06] Lived in `bin/chamnan-map` as a private function, so the only code that could
     ask "is the hook installed" was the code that installs it -- and nothing ever asked. A
     repository whose index quietly goes stale on every commit looks exactly like one whose hook is
-    working (R14 agent 5). Moved here so the report can ask the same question the installer does,
+    working (R14 agent 5, 2026-09-06). Moved here so the report can ask the same question the installer does,
     with the same three subtleties handled, rather than checking `.git/hooks/pre-commit` and being
     wrong in all three.
     """
@@ -2785,7 +2801,7 @@ def git_hooks_dir(root):
 # `chamnan-context --write` refresh loop and both bug fixes made to it since, so it rebuilt the map
 # and refreshed no adapter file at all. `--install-git-hook` printed "already installed" and
 # changed nothing, and the session-start warning stayed silent, because both asked only whether the
-# marker was there. A repository that installed it once runs that version forever (R5 agent 5).
+# marker was there. A repository that installed it once runs that version forever (R5 agent 5, 2026-09-09).
 #
 # The stamp is eight hex of a hash of the body, written into the marker line at install and
 # compared on every ask. Short on purpose: this answers "is it the same text", and a full digest in
@@ -2981,7 +2997,7 @@ def unknown_flags(argv, known, takes_value=(), takes_rest=()):
     have: every VALUE was read as a flag, so `chamnan-promote --desc "-n means dry run"` would have
     been refused for the value it was given. That is why `takes_value` and `takes_rest` exist —
     the helper had to learn the shape of a value before the set could adopt it, and adopting it in
-    three commands and stopping is how this project produces its commonest defect (R7 agent 4).
+    three commands and stopping is how this project produces its commonest defect (R7 agent 4, 2026-09-08).
 
     `takes_value` names flags whose NEXT argument is a value: `--budget 400`, `--platform "..."`.
     `takes_rest` names flags that swallow everything after them: `--desc` takes the rest of the
@@ -3108,7 +3124,7 @@ def git_is_installed():
     and every caller treats both as "nothing to say". For the first that is right; for the second it
     is a silent failure in a plugin whose whole session block is built out of git — "Where the last
     session stopped" simply vanished, with no diagnostic anywhere, and the user is left thinking
-    chamnan has nothing to tell them rather than that it cannot look (R10 agent 1).
+    chamnan has nothing to tell them rather than that it cannot look (R10 agent 1, 2026-09-07).
     """
     global _GIT_ON_PATH
     if _GIT_ON_PATH is None:
@@ -3118,7 +3134,7 @@ def git_is_installed():
         # shipped 1.8.3.1 for years. On such a machine this returned True, the diagnostic added
         # this morning for "git is missing" therefore never fired, and every git-derived section
         # went silent with nothing anywhere saying why — which is the exact failure that
-        # diagnostic exists to prevent, reached by the other half of the same set (R13 agent 1).
+        # diagnostic exists to prevent, reached by the other half of the same set (R13 agent 1, 2026-09-07).
         #
         # So the question is not "is git here" but "can git answer the way this package asks", and
         # the only honest way to know is to ask it once.
@@ -3407,7 +3423,7 @@ def git_owns(root):
             # so a git from the 1.8.5-2.12 range — Ubuntu 14.04 and 16.04 shipped one — has the
             # flag this function is called with and not the flag this branch uses. It answered
             # False for a bare repository that git itself resolves, silently. `--git-dir` is as old
-            # as git and gives the same answer once resolved against `root` (R13 agent 1).
+            # as git and gives the same answer once resolved against `root` (R13 agent 1, 2026-09-07).
             bare = _subprocess().run(
                 ["git", "-C", str(root), "rev-parse", "--absolute-git-dir"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)

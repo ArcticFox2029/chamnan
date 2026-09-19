@@ -115,7 +115,7 @@ def _record_a_firing(root, agent_type, size, outcome="delivered"):
         # `lib/coedit.py` does the identical read-trim-write and does it under `ws.exclusive`, and
         # its comment says the lock is what makes the read non-stale. That reasoning applies here
         # word for word; this file is the one member of SELF_PRUNING_LOGS that trims itself from a
-        # hook and never got it (R7 agent 5).
+        # hook and never got it (R7 agent 5, 2026-09-07).
         def _with_firing(text):
             lines = (text or "").splitlines()[-(MAX_FIRINGS - 1):]
             lines.append(json.dumps(entry, ensure_ascii=False))
@@ -205,7 +205,7 @@ def _block(root):
             # 🐛 [2026-09-06] This escaped exactly ONE string, the close mark of the session in
             # force, and its sibling `chamnan_session_start.py` was widened to neutralise every
             # fence-SHAPED marker hours earlier — leaving this hook as the pre-fix version of the
-            # same guard, in the same package, on the same day (R9 agent 2). A body carrying
+            # same guard, in the same package, on the same day (R9 agent 2, 2026-09-06). A body carrying
             # `[/repo:aaaaaa]` passed through byte-for-byte here. No breakout, and R3 agent 2 proved
             # separately that the reader matching the nonce is what actually holds; what fails is
             # that a marker the reader might mistake for a fence can sit inside one.
@@ -301,7 +301,7 @@ def main():
     # `json.dumps` has already escaped every smuggled code point to `\uXXXX` text by then, so the
     # filter matched nothing and Claude Code decoded the payload straight back out. The strip has
     # to happen on the text, before the dump. Same defect in `chamnan_scratch_watch`, and a third
-    # spelling of it in `chamnan_session_start` (R12 agent 3).
+    # spelling of it in `chamnan_session_start` (R12 agent 3, 2026-09-07).
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "SubagentStart",
         "additionalContext": redact.for_a_terminal(text)}}))

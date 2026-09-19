@@ -35,7 +35,7 @@ import state
 # which carries the comment "not a store yet; joins automatically the day it exists". It does not
 # join automatically: `counts()` and the session block are built from this tuple, so an entry
 # written to `memory/incidents/` is scanned by the file pointer, invisible to everything else, and
-# nothing says so. One spelling, and `incidents` is in it (R4 agent 4).
+# nothing says so. One spelling, and `incidents` is in it (R4 agent 4, 2026-09-09).
 CATEGORIES = ("decisions", "incidents", "lessons", "rules")
 
 # Rules reach every session, so they are capped. Roughly a third of state_token_budget's
@@ -133,7 +133,7 @@ CITATION = re.compile(r"memory[:\s]+`([a-z0-9][a-z0-9._-]*)`", re.I)
 # nine `[[slug]]` links across eight files in this repository's live workspace -- two of which
 # point at slugs that exist nowhere, confirmed against the files on disk. One store, two citation
 # formats, and only one of them checked: the same shape this codebase carries more fixes for than
-# any other, in the function whose entire job is to find broken pointers (R7 agent 3).
+# any other, in the function whose entire job is to find broken pointers (R7 agent 3, 2026-09-08).
 #
 # A `[[...]]` may carry a path (`[[../lessons/some-slug]]`) or a `.md`, because that is how people
 # write them; both are reduced to the bare stem, which is what an entry is named by. A link whose
@@ -181,7 +181,7 @@ def dangling_citations(root):
     # about case: `[[Never-Write-To-Prod]]` was reported dangling on a filesystem where it resolves
     # to `never-write-to-prod.md` perfectly well. `mdblock.filesystem_key` is the fold a filesystem
     # actually applies — NFC then casefold — and is what every other name comparison in this package
-    # goes through (R4 agent 4).
+    # goes through (R4 agent 4, 2026-09-09).
     known = set()
     for category in CATEGORIES:
         known.update(mdblock.filesystem_key(e.stem) for e in entries(root, category))
@@ -323,7 +323,7 @@ def title_of(path, text=None):
     # this comment used to say, and it was wrong in the way this repository is always wrong -- one
     # member of a set fixed, the identical ones beside it left. `timeline.title_of` reads a thread
     # the same way, and a BOM there made `_distinct_slug` fork a thread's history into a second
-    # file; `sessions.title_of` lost the "last session" title the same way (R11 agent 1). So the
+    # file; `sessions.title_of` lost the "last session" title the same way (R11 agent 1, 2026-09-06). So the
     # BOM is stripped at the READ now -- every `read_text` in lib/, bin/ and hooks/ decodes
     # `utf-8-sig`, which is plain UTF-8 plus "drop a leading BOM if there is one" -- and this
     # `lstrip` stays only because `text` may be passed in by a caller that read it itself.
@@ -332,7 +332,7 @@ def title_of(path, text=None):
     # heading unification reached `state`, `pointer`, `timeline.title_of` and `sessions`; it did
     # not reach here or `timeline.set_status`, so a memory entry titled with a CJK keyboard's
     # U+3000 after the hash was injected under its de-slugged FILENAME instead of its title, and a
-    # decision the owner wrote by hand arrived unrecognisable (R12 agent 2).
+    # decision the owner wrote by hand arrived unrecognisable (R12 agent 2, 2026-09-07).
     for line in text.lstrip("\ufeff").splitlines():
         title = mdblock.heading_title(line)
         if title is not None:
@@ -438,7 +438,7 @@ def rules_text(root, refuse_conflicts=False):
     # written — by a commit whose own body says "the third time the same sweep has been done and
     # the second time it left members out". At that moment the rule was in the store and arriving
     # as a TITLE ONLY, and it still was when the round measured it. The rule most worth reading was
-    # the one nobody could read (R7 agent 6).
+    # the one nobody could read (R7 agent 6, 2026-09-09).
     #
     # A pin is the owner saying this must not be cut — `state.py` has meant exactly that by 📌
     # since it was written, and `fit._fit_lines` reserves pinned blocks before it fills anything
@@ -467,7 +467,7 @@ def rules_text(root, refuse_conflicts=False):
         # every rule file was read a further FOUR times to recover a heading the caller already had
         # in `body`. Measured by instrumenting the real hook sequence: 1,500 `read_text` calls for
         # 500 rule files, where 500 is the whole requirement. The parameter to pass it exists and
-        # its docstring says what it is for (R12 agent 3).
+        # its docstring says what it is for (R12 agent 3, 2026-09-06).
         title = title_of(path, body)
         group = collision_of.get(path)
         if group:
@@ -533,7 +533,7 @@ def rules_text(root, refuse_conflicts=False):
     # repository's most-violated rule, pinned for exactly that reason — was trimmed to the same 150
     # characters as everything else, which stopped one line short of its own evidence ("18 distinct
     # recorded instances"). A pin means "this must not be cut"; giving it the same slice as the rest
-    # honours the ordering and not the intent (R9 agent 6, finding 1).
+    # honours the ordering and not the intent (R9 agent 6, 2026-09-10, finding 1).
     #
     # Weighted rather than exempted. An exempt rule would take whatever it liked and starve the
     # other nine, and this store's whole problem is that it is 21x over its budget — there is no
@@ -724,7 +724,7 @@ def rules_text(root, refuse_conflicts=False):
                 # sixteen times, out of a 2,000 budget that could not fit all sixteen titles. The
                 # section's own tail already names the directory once. What the reader does not
                 # have is WHICH FILE, which is the finding that put a filename here in the first
-                # place (R5 agent 2), and that is exactly what is left.
+                # place (R5 agent 2, 2026-09-15), and that is exactly what is left.
                 _tail = f"\n\n_…rest: `{mdblock.as_quoted(fname)}`._"
                 # Out of the share, not on top of it -- see the tails comment above.
                 trimmed.append(_cut_clean(body, max(SHARE_FLOOR // 2, share - len(_tail))) + _tail)
@@ -764,7 +764,7 @@ def rules_text(root, refuse_conflicts=False):
     # and the notice the model reads named one.
     #
     # One predicate, used by both. `arrived_whole` is what "the rule reached the session" means
-    # here, and there is now exactly one spelling of it (R4 agent 4).
+    # here, and there is now exactly one spelling of it (R4 agent 4, 2026-09-09).
     missing = [(t, f) for (t, f), body in zip(titles, out) if not arrived_whole(t, body, kept)]
     tail = f"\n\n_…more rules in `.chamnan/memory/rules/` — {len(out)} in total."
     if missing:
@@ -779,7 +779,7 @@ def rules_text(root, refuse_conflicts=False):
         # rules arrive with a body and how many as a name — and nothing calls it except
         # `chamnan-report`, which is a command a person runs on purpose. `hooks.json` registers
         # five hook points and that report is not one of them, so the figure reached nobody who had
-        # not gone looking for it. Two rounds found this and neither closed it (R7 agent 6).
+        # not gone looking for it. Two rounds found this and neither closed it (R7 agent 6, 2026-09-09).
         #
         # Said HERE, in a line that already exists, and only when most of the store is not arriving.
         # A new section would cost bytes in a block that is already at its ceiling, and a figure
@@ -915,7 +915,7 @@ def titles(root, refuse_conflicts=False):
         paths = entries(root, category)
         # 🐛 [2026-09-06] `case_collisions` was wired into `rules_text` and nowhere else. Decisions
         # and lessons are the same mechanism -- one file per entry, named from its title -- and got
-        # no collision detection at all (R12 agent 1). The consequence is quieter than a rule's and
+        # no collision detection at all (R12 agent 1, 2026-09-06). The consequence is quieter than a rule's and
         # not smaller: a colliding pair leaves ONE file on APFS or NTFS holding the SECOND entry's
         # body under the FIRST entry's name, so this listing tells a reader a decision exists, they
         # open it, and they get a different one. Marked rather than dropped, for the reason the
@@ -942,7 +942,7 @@ def titles(root, refuse_conflicts=False):
     # 🐛 [2026-09-08] The cap below chose which entries a session sees BY FILENAME ALPHABET, so a
     # lesson written today lost its slot to one written months ago whose title happens to start with
     # an earlier letter. Reproduced on this repository's own store: two entries committed that day
-    # were absent from the block while an older one was shown (R1 agent 4).
+    # were absent from the block while an older one was shown (R1 agent 4, 2026-09-08).
     #
     # Both siblings that face the identical "more entries than the cap" problem already sort by
     # recency -- `milestones.recent_titles` and `timeline.open_titles` -- and `rules_text` in THIS
@@ -982,7 +982,7 @@ def _written_at(path):
 # as a visible nudge to shorten it, rather than a silent workaround.
 # whole_graphemes, as every other cutter in this codebase: a title ending in a flag emoji cut
 # mid-cluster left one regional indicator behind, rendering as a stray letter box in the injected
-# block (R4 agent 1). That cut is `mdblock.one_line_capped` now, shared with the three sections
+# block (R4 agent 1, 2026-08-27). That cut is `mdblock.one_line_capped` now, shared with the three sections
 # that were missing it entirely.
 #
 # The number moved to `mdblock.INJECTED_ITEM_CHARS`, which is where the reasoning above now lives
@@ -1030,7 +1030,7 @@ def counts(root):
     `incidents: 0` into every repository's block forever, for a store almost none of them use. The
     pointer's own comment says what was meant: "not a store yet; joins automatically the day it
     exists." Reporting what EXISTS is what makes that true, and it costs the caller nothing, because
-    a count of zero was never worth a line (R4 agent 4).
+    a count of zero was never worth a line (R4 agent 4, 2026-09-09).
     """
     return {c: n for c in CATEGORIES if (n := len(entries(root, c)))}
 
@@ -1061,7 +1061,7 @@ def distinct_filename(root, category, title):
     afterwards landed on ONE file, and the second overwrote the first — silently, in the store
     whose entire job is remembering. Measured on this repository: **20 of 22 memory titles already
     exceed 50 characters**, so there are no collisions today by luck rather than by guard
-    (R10 agent 3, finding 3).
+    (R10 agent 3, 2026-09-09, finding 3).
 
     `timeline` had this guard and was one store of four. The shared helper is
     `mdblock.distinct_stem`; an entry that already exists under the plain name keeps it, so nothing

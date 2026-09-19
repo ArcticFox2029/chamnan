@@ -484,7 +484,7 @@ def by_suffix(root, *suffixes):
 # diverges the other way — `fnmatch` folds even where `core.ignorecase` is false.
 #
 # Three call sites had the identical gap: `mapper._is_generated`, `catalogs`' gitignore reader and
-# `matching` below (R10 agent 1, findings 1 and 2). One matcher now, asking git rather than the
+# `matching` below (R10 agent 1, 2026-09-09, findings 1 and 2). One matcher now, asking git rather than the
 # platform, and `fnmatchcase` underneath so the fold is never applied behind our back.
 _IGNORECASE = {}
 
@@ -643,7 +643,7 @@ git_dirs = vcs_dirs
 # that most needed it: `lib/catalogs.py` read every `.proto` and every API-spec file whole on every
 # ordinary map build, and `peek.peek_source` read a whole source file with no bound while the
 # `mapper` beside it refused anything over this size. A 150 MB file hung `chamnan-peek` for over
-# 150 seconds (R7 agent 2, R8 agent 2).
+# 150 seconds (R7 agent 2, 2026-09-08, R8 agent 2).
 MAX_FILE_BYTES = 2_000_000
 
 

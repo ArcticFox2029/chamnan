@@ -46,6 +46,11 @@ INJECT_RECENT = 2
 # an unmatched entry was not merely mis-parsed: it was absorbed whole into the PRECEDING entry's
 # body, with no error and no sign anything had gone wrong. All three dash characters are listed
 # explicitly now rather than as a range, since "—" to "-" is not an ascending codepoint range.
+#
+# 🐛 [2026-09-19] (self-measured) `timeline.py` held a second copy of this exact pattern under its
+# own `_ENTRY` name, checked separately for the same en-dash failure above. One question, one
+# pattern -- see check 190. It now imports this module and reads `milestones._ENTRY`. Name kept
+# private (not renamed to `ENTRY`) because `run_tests.py` already reaches across modules for it.
 _ENTRY = re.compile(r"^##\s+(\d{4}-\d{2}-\d{2})\s*[—–-]\s*(.+?)\s*$", re.M)
 FIELDS = ("Why", "Affected", "Decisions")
 
@@ -69,7 +74,7 @@ def entries(root):
     # workspace travels with a clone, so `milestones.md` arriving as a symlink to `~/.ssh/id_rsa` is
     # chosen by whoever wrote the repository, not by the person reading it — and its content lands
     # in the injected block. The set was "stores this reads"; the fix reached the members that
-    # happened to be directories. (R3 agent 2, reproduced.)
+    # happened to be directories. (R3 agent 2, 2026-09-09, reproduced.)
     import workspace as _ws
     if not _ws.inside(p, root):
         return []
@@ -174,7 +179,7 @@ def append(root, entry_text):
     # FIVE VANISHED, valid Markdown throughout, no error anywhere. This is the highest-value store
     # in the workspace, because a milestone is the one thing here a person typed a reason for, and
     # two accounts on one machine both running /chamnan:milestone in the same minute is an ordinary
-    # afternoon rather than an edge case (R7 agent 5).
+    # afternoon rather than an edge case (R7 agent 5, 2026-09-07).
     #
     # The read has to happen INSIDE the lock, which is why this is `rewrite_shared` rather than a
     # lock wrapped around the write: reading first and locking second leaves the same race with a

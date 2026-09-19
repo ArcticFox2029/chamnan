@@ -242,7 +242,7 @@ def cmd_promote(root, ident, destination=None, name=None):
         # for a FIRST write failing, reused for a SECOND one after the first had already landed. On
         # disk was an executable, unregistered skeleton in `.chamnan/tools/`, a directory this
         # workspace commits on purpose — so `git add .chamnan` would have committed a script the
-        # user had just been told did not exist (R7 agent 1, finding 3).
+        # user had just been told did not exist (R7 agent 1, 2026-09-07, finding 3).
         try:
             tools_index.register(root, {
                 "name": dest.name,
@@ -362,7 +362,7 @@ def cmd_demote(root, tool_name):
 # their default action with nothing on screen -- so a typo did something other than what was asked
 # and said nothing. `ws.unknown_flags` existed the whole time; the seven could not use it because
 # it read every VALUE as a flag, which is why it grew `takes_value`/`takes_rest` first. The set,
-# not the member this round happened to be pointed at (R7 agent 4).
+# not the member this round happened to be pointed at (R7 agent 4, 2026-09-08).
 KNOWN_FLAGS = ('--list', '-l')
 TAKES_VALUE = ()
 TAKES_REST = ()
@@ -374,7 +374,7 @@ def main(argv):
     # sat BELOW two such refusals -- the no-workspace exit and the config-disabled exit -- so
     # `--version` printed the refusal instead of the version in exactly the two cases the comment
     # names. Six of nine commands placed it first and three did not: the same rule applied to some
-    # members of a set and forgotten in the identical ones beside it (R12 agent 2).
+    # members of a set and forgotten in the identical ones beside it (R12 agent 2, 2026-09-07).
     #
     # Before help, and before anything is parsed: "which build is this" must be
     # answerable from any command, including one that would otherwise refuse the
@@ -390,7 +390,7 @@ def main(argv):
         # sentence, and the actionable one 46 lines below it for a near-identical condition — so
         # which of the two a user got depended on whether `.chamnan/` happened to exist yet, an
         # ordering accident rather than anything they controlled. No test ran any of the six
-        # against a directory that genuinely has no workspace (R15 agent 3).
+        # against a directory that genuinely has no workspace (R15 agent 3, 2026-09-06).
         print(f"chamnan: no .chamnan/ workspace at {root}. Run `chamnan-map` there first — it "
               f"creates the workspace and builds the index. (Inside Claude Code, "
               f"`/chamnan:bootstrap` does that and records a baseline.)", file=sys.stderr)

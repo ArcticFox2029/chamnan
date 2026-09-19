@@ -69,7 +69,7 @@ def build(seed):
     # 🐛 [2026-09-12] Both copies live under the operator's home directory and neither is in the
     # repository `overlaps` was asked about, so reporting it put somebody else's machine in a
     # stranger's first `chamnan-report`. The plant stays and the expectation moves: a regression
-    # that starts reporting it again fails on `forbidden` below (R1 agent 2).
+    # that starts reporting it again fails on `forbidden` below (R1 agent 2, 2026-09-12).
     forbidden = set()
     if shipped and rnd.random() < 0.6:
         n = rnd.choice(shipped)

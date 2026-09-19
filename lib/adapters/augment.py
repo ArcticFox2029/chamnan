@@ -12,7 +12,7 @@ NAME = "augment"
 # session, and pays for it twice. Declared here rather than listed in `__init__.py`:
 # 🐛 [2026-09-10] that list held four names while EIGHT vendors qualified, and the evidence
 # for the missing four was sitting in their own docstrings. A set kept beside the thing it
-# describes cannot drift from it (R4 agent 1, finding 6).
+# describes cannot drift from it (R4 agent 1, 2026-09-10, finding 6).
 # Evidence: this adapter's own docstring above: Augment honours a root `AGENTS.md` as well as
 # `.augment/rules/`.
 ALSO_READS_AGENTS_MD = True
@@ -20,7 +20,7 @@ ALSO_READS_AGENTS_MD = True
 TARGET = ".augment/rules/chamnan.md"
 # 49,512 characters, from Augment's own documentation: the limit is COMBINED across Workspace
 # Guidelines and Rules, and chamnan's rules file counts against it. It was `None`, so nothing shrank
-# toward it and nothing warned (R20 agent 1). Not a hard reject like CodeBuddy's — no evidence
+# toward it and nothing warned (R20 agent 1, 2026-09-10). Not a hard reject like CodeBuddy's — no evidence
 # either way on what Augment does past it, so the default soft wording stands.
 CEILING = 49_512
 

@@ -186,7 +186,7 @@ def overlaps(root, home=None, found=None):
         # exist in two places with DIFFERENT contents", every one of them read out of
         # `~/.claude/plugins/` on the machine running it. For a tool whose pitch is "measure it,
         # trust the numbers", the first number a stranger sees was about somebody else's computer
-        # (R1 agent 2).
+        # (R1 agent 2, 2026-09-12).
         #
         # The message was also untrue for that case. `snapshot_roots` says in its own docstring that
         # marketplace snapshots are NOT loaded -- they are what a resync WOULD promote -- and the
