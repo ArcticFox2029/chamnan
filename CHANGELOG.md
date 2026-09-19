@@ -69,10 +69,10 @@ reading that command's own declared choices rather than keeping a second list.
 ### Verification
 
 ```
-1005/1005 folded check(s) passed
+5554/5554 checks passed, 3 block(s) skipped on this platform
 ```
 
-Plus the full suite and the public CI matrix on the same commit.
+Quoted from the run on the tagged code. The public CI matrix is green on the same commit.
 
 ### Upgrade
 
