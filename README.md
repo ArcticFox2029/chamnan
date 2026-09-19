@@ -534,7 +534,7 @@ takes an adapter name, so every one exited with `invalid choice`. Measured here:
 registry, which is what its own docstring already said it did. If you have subagents, chamnan stops
 telling you they are out of date; nothing else changes.
 
-## What's new in 1.28.0
+### The release it patches — 1.28.0, the same day
 
 **A firmer boundary between chamnan and the repository it reads, and hooks that answer even when
 the workspace is broken.** The repository you point this at is treated as untrusted input
