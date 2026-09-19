@@ -789,7 +789,24 @@ CREDENTIALED_URL = _lazy(lambda: re.compile(
     # Relaxing it costs nothing: this rule fires only when a `:password@host` follows, so a plain
     # URL is still untouched no matter what precedes the scheme. (R3.1 boundary mutation.)
     r"(?<![A-Za-z0-9])([a-zA-Z][a-zA-Z0-9+.-]*(?::[a-zA-Z][a-zA-Z0-9+.-]*)?://[^\s:/@]*)"
-    r":([^\s/]{3,})@(?=[^\s/@]+)"))
+    # 🐛 [2026-09-19] (self-measured) The class was `[^\s/]{3,}` alone, and the comment above says
+    # why `/` is excluded: it stops the match running past the authority into a path. That reasoning
+    # is right and is kept. What it did not cover is that standard base64 CONTAINS `/` — which is
+    # what an AWS secret key and an ed25519 key are — so `https://x:AKIA…/…@host` went through in
+    # the clear. Measured by `tools/metamorphic_secrets.py` on its first run: 2 misses in 263
+    # trials, both this. A 40-character AWS secret has a 46.7% chance of carrying at least one `/`,
+    # an 88-character ed25519 key 75%.
+    #
+    # The added alternative is deliberately narrow, and the narrowness is what keeps the original
+    # reasoning intact: base64 alphabet only, twenty characters or more. A path cannot reach it —
+    # the host class `[^\s:/@]*` forbids `/`, so the `:` that starts this group must already be
+    # inside the authority, and a URL with a userinfo colon is a credentialed URL by construction.
+    # `@2x.png` retina asset paths, `/a/b@c` and `https://user:name/path@host` were each checked
+    # and none matches: the first two never reach the `:`, the third is nine characters.
+    # The base64 alternative is tried FIRST so it wins where both could apply, and it cannot cross
+    # an `@` because `@` is not in its class — so the old greedy-to-the-last-`@` behaviour, which
+    # `amqp://svc:a@b@rabbit/vhost` depends on, is unchanged for everything else.
+    r":((?:[A-Za-z0-9+/=]{20,}|[^\s/]{3,}))@(?=[^\s/@]+)"))
 # password = "...", api_key: '...', SECRET_TOKEN="..." — the value goes, the name stays.
 # 🐛 [2026-09-06] What sits immediately after the separator is not always the value. Three shapes
 # put something else there, and the rules below captured THAT and stopped:

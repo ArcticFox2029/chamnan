@@ -35361,6 +35361,70 @@ if _t_ws192 is not None:
                 print("      " + _t_x192)
             check("EVERY REMEDIATION chamnan-setup PRINTS NAMES AN ARGUMENT THE COMMAND ACCEPTS",
                   _t_bad192 == [], saw="%d unrunnable fix line(s)" % len(_t_bad192))
+# ---- 193_a_base64_secret_in_a_url_carries_a_slash.py
+# ---- 193_a_base64_secret_in_a_url_carries_a_slash.py
+# 🐛 [2026-09-19] (self-measured) `CREDENTIALED_URL` excluded `/` from the password class on purpose
+# — the comment beside it says so, and the reason is sound: `/` ends the authority, so a match that
+# admitted it could run into the path. What the reasoning did not cover is that standard base64
+# CONTAINS `/`, and that is exactly what an AWS secret key and an ssh key are. So
+# `https://x:AKIA…/…@host` went out in the clear, while the same secret one character different
+# went out redacted.
+#
+# Found by `tools/metamorphic_secrets.py` on its first real run: 2 misses in 263 trials, both this.
+# Probability a real 40-character AWS secret carries at least one `/`: 46.7%. An 88-character
+# ed25519 key: 75%. It was not an edge case, it was a coin flip.
+#
+# This asserts BOTH directions, because the fix is a widening and a widening is where a redactor
+# earns false positives. The negatives are the shapes the original comment was protecting, plus the
+# ones an asset pipeline produces — `@2x.png` retina naming is the realistic collision.
+_t_ws193 = owner_workspace("the base64-in-URL sweep")
+if _t_ws193 is not None:
+    _t_lib193 = str(ROOT / "lib")
+    if _t_lib193 not in sys.path:
+        sys.path.insert(0, _t_lib193)
+    import redact as _t_r193
+
+    # A secret is a secret whichever base64 characters it happens to draw. Built here rather than
+    # quoted so no literal in this file can itself look like a credential to a scanner.
+    _t_body193 = ("Aa9" * 14)[:40]
+    _t_must_hide193 = [
+        ("base64 with a slash", "https://x:%s/B@example.invalid/repo.git" % _t_body193[:38]),
+        ("base64 with a plus", "https://x:%s+B@example.invalid/repo.git" % _t_body193[:38]),
+        ("two slashes", "https://u:AA/BB/CCDDEEFFGGHHIIJJKKLLMM@host.example/x"),
+        ("slash at the front", "https://u:/%s@host.example/x" % _t_body193[:39]),
+        # The shapes the pattern already handled, kept so a widening cannot quietly drop them.
+        ("ordinary password", "postgres://admin:Hunter2Pass@db.internal/main"),
+        ("password containing @", "amqp://svc:a@b@rabbit/vhost"),
+        ("no username at all", "redis://:sup3rsecret@cache:6379/0"),
+    ]
+    _t_must_keep193 = [
+        ("retina asset path", "https://cdn.example.com/img/9f8e7d6c5b4a3210abcdef0123456789@2x.png"),
+        ("path segment with @", "https://example.com/a/b@c"),
+        ("short userinfo with a slash", "https://user:name/path@host"),
+        ("an address in a path", "https://example.com/contact/someone@example.com"),
+        ("an ordinary url", "https://example.com/v1/users?page=2"),
+        ("documentation url", "https://docs.example.com/api/v2/auth/tokens"),
+    ]
+
+    _t_leaked193 = [_n for _n, _s in _t_must_hide193 if _t_r193.scrub(_s) == _s]
+    _t_false193 = [_n for _n, _s in _t_must_keep193 if _t_r193.scrub(_s) != _s]
+
+    for _t_x193 in _t_leaked193:
+        print("      still in the clear: " + _t_x193)
+    for _t_x193 in _t_false193:
+        print("      falsely redacted:   " + _t_x193)
+
+    check("A CREDENTIAL IN A URL IS REDACTED WHATEVER BASE64 CHARACTERS IT DREW",
+          _t_leaked193 == [],
+          saw="%d of %d credentialed URL(s) went through in the clear: %s"
+              % (len(_t_leaked193), len(_t_must_hide193), _t_leaked193))
+    check("...and widening it did not start redacting ordinary URLs",
+          _t_false193 == [],
+          saw="%d of %d ordinary URL(s) were redacted: %s"
+              % (len(_t_false193), len(_t_must_keep193), _t_false193))
+    check("...and both populations are non-empty, so neither half passes over nothing",
+          len(_t_must_hide193) >= 5 and len(_t_must_keep193) >= 5,
+          saw="%d must-hide, %d must-keep" % (len(_t_must_hide193), len(_t_must_keep193)))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
