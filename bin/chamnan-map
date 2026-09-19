@@ -599,7 +599,7 @@ def uninstall_git_hook(root):
 
 
 KNOWN_FLAGS = ("--install-git-hook", "--uninstall-git-hook", "--explain", "--preview",
-               "--measure", "--undocumented", "--verify", "-h", "--help")
+               "--measure", "--undocumented", "--verify", "--replace", "-h", "--help")
 
 
 def _paths_being_dropped(map_path, files, root):
@@ -639,6 +639,41 @@ def _paths_being_dropped(map_path, files, root):
            else f["path"] for f in files}
     return len(had - now)
 
+
+def _existing_map_paths(map_path):
+    """Every file the current map describes, read from its own `## `path`` headings.
+
+    The Full Detail section carries exactly one such heading per indexed file -- 589 of them on
+    this repository -- so the covered set is derivable from the file itself with one regex. No
+    separate manifest, and no dependency on the Quick Index's own directory-grouping shape, which
+    `_paths_being_dropped` above already had to special-case once (the "Stored material" section
+    reuses the same `- **`name`**` row for directories, not files).
+
+    A map that cannot be read describes nothing: a first run, or a corrupt one, is not something
+    a narrow run needs to refuse against.
+    """
+    try:
+        text = map_path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return set()
+    return set(re.findall(r"(?m)^## `([^`]*)`$", text))
+
+
+def _targets_miss(old_paths, targets, root):
+    """Which of `old_paths` fall outside every directory in `targets`.
+
+    A target equal to `root` covers everything by definition -- the default full run, or an
+    explicit `chamnan-map <root>`, can never narrow anything away, whatever files were added or
+    deleted since the map was last built. This is a directory-coverage question, not a
+    does-the-file-still-exist one: a file that was simply deleted stays "covered" as long as its
+    old path sits under a requested directory, so an ordinary rebuild after deleting a file is
+    never mistaken for narrowing.
+    """
+    if any(t == root for t in targets):
+        return set()
+    rels = [str(t.relative_to(root).as_posix()) for t in targets]
+    return {p for p in old_paths
+            if not any(p == r or p.startswith(r + "/") for r in rels)}
 
 
 def list_undocumented(root):
@@ -773,11 +808,20 @@ def main(argv):
                 ("-h, --help", "this text"))
         for _flag, _what in _rows:
             print(f"  {_flag:<20} {_what}")
-        _documented = {f.strip() for row in _rows for f in row[0].split(",")}
+        # `--replace` is not a standalone flag like the ones in `_rows` above -- it modifies the
+        # `<dir>` usage printed below, so it is documented there instead. Named here too, or the
+        # derivation below would call it undocumented, which is the exact drift this whole
+        # derivation exists to catch on every OTHER flag.
+        _documented = {f.strip() for row in _rows for f in row[0].split(",")} | {"--replace"}
         _undocumented = [f for f in KNOWN_FLAGS if f not in _documented]
         if _undocumented:
             print(f"  (also accepted, undocumented: {', '.join(_undocumented)})")
         print("\n  chamnan-map <dir> [<dir> ...]   index only those directories")
+        # 🐛 [2026-09-18] (agent) A narrow run REPLACES MAP.md, so it can silently destroy a broader index
+        # someone else already built (see the comment above `_targets_miss`) -- refused by default
+        # since this fix. `--replace` is the explicit override.
+        print("  chamnan-map <dir> [<dir> ...] --replace   ...even where that drops files a "
+              "broader map already described")
         return 0
     unknown = [a for a in argv if a.startswith("-") and a not in KNOWN_FLAGS]
     if unknown:
@@ -971,6 +1015,29 @@ def main(argv):
     except ws.NotAWorkspace as err:
         print(f"chamnan: {err}", file=sys.stderr)
         return 1
+    # 🐛 [2026-09-18] (agent) A narrow run REPLACES `.chamnan/MAP.md` outright rather than merging into it
+    # (see the comment on `_dropping`, right below) -- and until this fix nothing stopped that from
+    # silently destroying a broader index someone else had already built. Reproduced in a throwaway
+    # 8-file repository: a full map came to 1,025 bytes / 8 file section(s); mapping only one
+    # subdirectory of it left 568 bytes / 2 file section(s), and nothing else on disk was touched.
+    # It has already happened for real on this repository -- engineer-operate's own testing turned
+    # `.chamnan/state/research/chamnan_research_backlog.md` from 586 files to 1, caught by accident
+    # and restored by hand.
+    #
+    # `--measure` is exempted for the same reason `--preview` never reaches this function at all:
+    # both already promise to write nothing, so there is nothing here for either to destroy.
+    # `--replace` is the explicit override -- with it, this behaves exactly as it did before this
+    # fix, including the informational warning two blocks below.
+    if "--measure" not in argv and "--replace" not in argv:
+        _existing_paths = _existing_map_paths(out)
+        _would_lose = _targets_miss(_existing_paths, targets, root)
+        if _would_lose:
+            print(f"chamnan-map: refusing — the current {out.name} describes "
+                  f"{len(_existing_paths):,} file section(s); this run covers only the path(s) "
+                  f"given and would leave it describing {len(files):,}, dropping "
+                  f"{len(_would_lose):,} outside them. Run `chamnan-map` with no arguments for a "
+                  f"full rebuild, or add --replace to narrow it anyway.", file=sys.stderr)
+            return 1
     # 🐛 `chamnan-map <dir>` REPLACES the map rather than adding to it. That is the documented
     # behaviour and the useful one -- the README offers it as the way to narrow an index on a tree
     # bigger than you work in -- but it happened in silence. Reproduced on this repository's real

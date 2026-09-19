@@ -155,10 +155,54 @@ def _harden_git_config():
     for offset, (key, value) in enumerate(forced):
         os.environ["GIT_CONFIG_KEY_%d" % (start + offset)] = key
         os.environ["GIT_CONFIG_VALUE_%d" % (start + offset)] = value
+        _FORCED_AT[key] = start + offset
     os.environ["GIT_CONFIG_COUNT"] = str(start + len(forced))
 
 
+# Which slot each forced key occupies, so a read-only query can ask git what the REPOSITORY says
+# about one of them. See `_env_reading` below.
+_FORCED_AT = {}
+
 _harden_git_config()
+
+
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. `core.hooksPath` is forced to `/dev/null` above so a repository's hooks cannot
+# run when chamnan invokes git. But `git_hooks_dir` ASKS git where hooks live, through the same
+# environment — so it answered `/dev/null` in every repository on earth. `chamnan-report` then told
+# every user their pre-commit hook was missing, right after they installed it, and
+# `chamnan-map --install-git-hook` died with `FileExistsError: /dev/null` before it could install
+# anything. The whole documented feature was unreachable, in a clean clone, on any machine.
+#
+# The forced value is about EXECUTION; a query that only reads is a different question. So one
+# read-only call site may neutralise ONE key for itself, and nothing more: the slot is overwritten
+# with an inert key rather than removed, because renumbering `GIT_CONFIG_COUNT` would silently drop
+# whichever entry the caller's own environment had after ours.
+_INERT_SETTING_NAME = "chamnan.inert"
+
+
+def _env_reading(key):
+    """A copy of the environment with every forced value for `key` stood down.
+
+    Only for commands that READ. `rev-parse --git-path hooks` resolves a path and runs nothing,
+    which is why dropping the hooks override for it cannot re-open what the override closed. Do not
+    reach for this from a command that can execute what the key names.
+
+    🐛 [2026-09-19] (self-measured), from the full gate run of this date. The first version of this cleared the ONE slot this process wrote, and that is
+    wrong the moment chamnan runs chamnan: the child appends its eleven entries after the parent's
+    eleven, so the key it neutralises is its own copy and the parent's is still in force, still
+    naming /dev/null. `--install-git-hook` worked from a shell and failed from the test suite for
+    exactly that reason. Every slot naming the key is stood down, whoever wrote it.
+    """
+    env = dict(os.environ)
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    except ValueError:
+        return env
+    for slot in range(max(count, 0)):
+        if env.get("GIT_CONFIG_KEY_%d" % slot) == key:
+            env["GIT_CONFIG_KEY_%d" % slot] = _INERT_SETTING_NAME
+            env["GIT_CONFIG_VALUE_%d" % slot] = "1"
+    return env
 
 WORKSPACE_DIRNAME = ".chamnan"
 # Each part can be switched off independently. Nothing here is load-bearing for the others: turning
@@ -644,6 +688,15 @@ SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.
                     # forever, every week — which is precisely what `notice_due`'s own docstring
                     # says it exists to prevent: "advice that repeats forever is worse than advice
                     # shown once." A count of showings is a record of when something happened.
+                    # 🐛 [2026-09-18] (self-measured) One row per long document opened directly instead of
+                    # through the local model, which is the DENOMINATOR of the rule this package
+                    # keeps breaking: the ledger counts the reads that went to Local, and until
+                    # this file existed nothing counted the ones that did not, so the figure was a
+                    # numerator with nothing to divide by and read green on three calls while
+                    # twelve documents were opened by hand. Bounded by record like the rest. An
+                    # age sweep on it would erase the only evidence that the rule was ignored,
+                    # which is the one thing this measurement exists to make visible.
+                    "long_reads.jsonl",
                     "nudge_state.json")
 
 
@@ -2717,7 +2770,7 @@ def git_hooks_dir(root):
     try:
         out = sp.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
                      capture_output=True, text=True, encoding="utf-8",
-                     errors="replace", timeout=10)
+                     errors="replace", timeout=10, env=_env_reading("core.hooksPath"))
         if out.returncode == 0 and out.stdout.strip():
             found = pathlib.Path(out.stdout.strip())
             return found if found.is_absolute() else (pathlib.Path(root) / found)

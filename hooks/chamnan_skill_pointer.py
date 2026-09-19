@@ -13,25 +13,49 @@ reaches for, remembering and re-reading, are the two with evidence against them.
 number is a control that acts at the moment of the command.
 
 `chamnan_file_pointer.py` already does this for a FILE being opened. This is the same idea for a
-COMMAND being run, and it holds itself to the same four rules: silent when it has nothing, once per
-procedure per session, never noisy, and never about chamnan's own reading of itself.
+COMMAND being run, and it holds itself to the same four rules: silent when it has nothing, at most
+three times per procedure per session, never noisy, and never about chamnan's own reading of itself.
 
 **The mapping lives in the skills, not here.** Each procedure declares `COVERS: <pattern> | <pattern>`
 in its own header, so a new procedure arrives with its triggers and this file never changes. A table
 in the hook would be the defect this repository records most often — a set maintained in one place
 and forgotten in the other.
+
+🐛 [2026-09-18] (R19 agent 4) "Once per procedure per session" assumed a session is short. Measured on this
+repository's own session today, from `.chamnan/logs/commands.jsonl` and the old
+`logs/skill_pointer_seen.json`: 387 tool commands over 8.0 hours (07:12 → 15:12), the pointer spoke
+3 times — one procedure each — all before 08:30, then silence for roughly 360 commands. The
+heaviest three hours of work, 271 of the 387 commands, got no pointer at all. This is the identical
+defect already found and fixed in the sibling hook, `chamnan_scratch_watch.py` (its `NUDGE_AT` /
+`NUDGE_AGAIN_AT` comment there, "one ask per session, at call 10, and then silence"): a budget keyed
+to "session" instead of to elapsed work goes quiet exactly when a long session most needs it. Fixed
+the same way here — a procedure may speak up to three times per session, mirroring the sibling's
+own re-ask marks so the two numbers cannot drift apart.
 """
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 import workspace as ws  # noqa: E402
 
-SEEN = "logs/skill_pointer_seen.json"
+# Mirrors chamnan_scratch_watch.NUDGE_AGAIN_AT (its resume nudge fires again at 150 and 400 calls).
+# Kept as a literal rather than an import: that module's top-level pulls in `redact` and other
+# PostToolUse-only weight this frequently-run PreToolUse hook should not pay for on every command
+# (see the dated note further down about two PreToolUse hooks on Bash doubling the cost -- it is
+# referenced, not repeated, because a bug marker in a cross-reference reads as a second defect
+# record to anything that counts them). The two
+# constants must move together by hand.
+NUDGE_AGAIN_AT = (150, 400)
+
+# One state file per session (own directory — this hook does not share chamnan_scratch_watch.py's
+# `logs/nudge`, because its entries are keyed per PROCEDURE, not one counter for the whole session).
+NUDGE_DIR = "logs/skill_pointer_nudge"
+NUDGE_MAX_AGE = 2 * 24 * 3600     # a session older than this is over; its marker is dead weight
 
 
 def _covers(wsdir):
@@ -70,6 +94,37 @@ def _first_steps(path):
         if line.startswith("FIRST:"):
             return [x.strip() for x in line[len("FIRST:"):].split("·") if x.strip()]
     return []
+
+
+def _nudge_path(wsdir, session_id):
+    """One state file per session, never one shared dict keyed by session id — the same reasoning
+    as chamnan_scratch_watch.py's `_nudge_path`: a shared file is a read-modify-write with no lock,
+    and two writers on one repository is normal rather than exotic. This hook does not reuse that
+    module's file, because its entries are keyed per procedure rather than one counter."""
+    safe = "".join(c if c.isalnum() or c in "-_" else "-" for c in str(session_id))[:64] or "none"
+    return wsdir / NUDGE_DIR / f"{safe}.json"
+
+
+def _nudge_read(wsdir, session_id):
+    try:
+        d = json.loads(_nudge_path(wsdir, session_id).read_text(encoding="utf-8-sig"))
+    except (UnicodeDecodeError, OSError, json.JSONDecodeError, RecursionError):
+        return {"calls": 0, "procs": {}}
+    # Valid JSON of the wrong shape is not a missing file.
+    return d if isinstance(d, dict) else {"calls": 0, "procs": {}}
+
+
+def _nudge_write(wsdir, session_id, entry):
+    if ws.read_only():
+        return
+    p = _nudge_path(wsdir, session_id)
+    try:
+        ws.atomic_write_text(p, json.dumps(entry))
+        for old in p.parent.glob("*.json"):
+            if old != p and time.time() - old.stat().st_mtime > NUDGE_MAX_AGE:
+                old.unlink()
+    except OSError:
+        pass
 
 
 # 🐛 [2026-09-18] (R19 agent 4) The division is the owner's, set 2026-09-16 and written in two skills and in the
@@ -112,8 +167,14 @@ def _what_this_repo_already_has(payload):
     if not recall.is_file():
         return ""
     try:
-        out = subprocess.run([sys.executable, str(recall)] + words, cwd=str(root),
-                             capture_output=True, text=True, timeout=20).stdout
+        # The argv is one list literal with `*words` spread into it, not `[...] + words`: a
+        # concatenation is a BinOp, and the sweep that asserts every subprocess call runs git or
+        # this interpreter cannot read the head of a BinOp, so it reports the site as executing
+        # something unknown. And `text=True` alone decodes with the platform's preferred encoding,
+        # which is not UTF-8 everywhere this ships.
+        out = subprocess.run([sys.executable, str(recall), *words], cwd=str(root),
+                             capture_output=True, text=True, encoding="utf-8",
+                             errors="replace", timeout=20).stdout
     except Exception:
         return ""
     lines = [ln for ln in out.splitlines() if ln.strip()]
@@ -125,6 +186,27 @@ def _what_this_repo_already_has(payload):
     return "\n".join(head)
 
 
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. This hook emitted four `additionalContext` payloads and ran none of them through
+# the redactor — the one hook in the family that did not, while every sibling has since
+# 2026-09-06. Scrub is the credential half; `for_a_terminal` is the control-character half, and it
+# has to reach the TEXT: `json.dumps` escapes every non-ASCII code point to `\uXXXX`, which no
+# character filter matches and which Claude Code decodes straight back on the other side.
+#
+# `redact` is imported HERE rather than at module scope, and that is the whole reason this was put
+# off. Measured on this machine, five runs, after `workspace` is already imported (which this hook
+# pays for anyway): **20.5 ms marginal**, tight across runs. This is a PreToolUse hook on every Bash
+# command, so at module scope that is 20.5 ms every command, forever, including the large majority
+# of commands where the hook says nothing at all. Inside the one function that writes, it is paid
+# only when there is something to write. The cost argument was real; it was an argument about
+# WHERE, not about whether.
+def _emit(text):
+    """The one place this hook writes to stdout. Scrubbed, then control-stripped, then serialised."""
+    import redact
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": redact.for_a_terminal(redact.scrub(text))}}))
+
+
 def _surgery_belongs_to_the_operator(payload):
     """Editing the package's own source is step 4, and step 4 has an owner."""
     raw = (payload.get("tool_input") or {}).get("file_path") or ""
@@ -133,10 +215,9 @@ def _surgery_belongs_to_the_operator(payload):
     # The operating agent edits these files too; it must not be told to dispatch itself.
     if os.environ.get("CLAUDE_AGENT_NAME") or os.environ.get("CLAUDE_SUBAGENT"):
         return 0
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext":
-        "chamnan: this is the CUT, and the cut is step 4 — `engineer-operate` (sonnet) makes it, "
-        "this session X-rays and judges. `.chamnan/skills/working_choosing_and_proving_a_change.md`. "
-        "Hand it the sites the x-ray named and the A/B; never ask it whether to cut."}}))
+    _emit("chamnan: this is the CUT, and the cut is step 4 — `engineer-operate` (sonnet) makes it, "
+          "this session X-rays and judges. `.chamnan/skills/working_choosing_and_proving_a_change.md`. "
+          "Hand it the sites the x-ray named and the A/B; never ask it whether to cut.")
     return 0
 
 
@@ -184,8 +265,7 @@ def main():
     if _tool == "Write":
         _already = _what_this_repo_already_has(payload)
         if _already:
-            print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                                     "additionalContext": _already}}))
+            _emit(_already)
             return 0
     if _tool in ("Edit", "Write"):
         return _surgery_belongs_to_the_operator(payload)
@@ -207,47 +287,50 @@ def main():
     # guard and forking one.
     _long = _long_read_notice(payload)
     if _long:
-        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                                 "additionalContext": _long}}))
+        _emit(_long)
         return 0
+
+    # Every Bash command this hook evaluates counts toward the session's call total, whether or
+    # not it matches a procedure — the same thing chamnan_scratch_watch.py's `entry["calls"]`
+    # counts. Read before computing hits, so the total reflects the whole session, not just the
+    # commands that happened to match.
+    session = str(payload.get("session_id") or "")
+    entry = _nudge_read(wsdir, session)
+    entry["calls"] = entry.get("calls", 0) + 1
+    calls = entry["calls"]
 
     hits = [(stem, pats) for stem, pats in _covers(wsdir)
             if any(pat in command for pat in pats)]
     if not hits:
+        _nudge_write(wsdir, session, entry)
         return 0
     stem = hits[0][0]
 
-    # Once per procedure per session. A reminder on every command is noise, and noise is what
-    # gets a hook switched off — which would be worse than the drift it exists to stop.
-    session = str(payload.get("session_id") or "")
-    seen_path = wsdir / SEEN
-    try:
-        seen = json.loads(seen_path.read_text(encoding="utf-8-sig")) if seen_path.is_file() else {}
-    except (OSError, ValueError):
-        seen = {}
-    if not isinstance(seen, dict):
-        seen = {}
-    if stem in (seen.get(session) or []):
+    # At most three times PER PROCEDURE per session: immediately on the first match, then again
+    # once the session has passed each of chamnan_scratch_watch.NUDGE_AGAIN_AT's own marks (150,
+    # 400 calls) — mirrored above so the two budgets cannot drift apart. `0` stands for "no
+    # minimum": unlike that hook's resume nudge, the first time IS the point of this one, so it
+    # does not wait for a threshold the way NUDGE_AT does. A reminder on every command is noise,
+    # and noise is what gets a hook switched off — which would be worse than the drift it exists
+    # to stop, so the budget stops at three rather than firing on every later match too.
+    procs = entry.setdefault("procs", {})
+    proc = procs.setdefault(stem, {"nudges": 0})
+    marks = (0,) + NUDGE_AGAIN_AT
+    done = int(proc.get("nudges", 0))
+    if done >= len(marks) or calls < marks[done]:
+        _nudge_write(wsdir, session, entry)
         return 0
-    seen[session] = sorted(set((seen.get(session) or []) + [stem]))
-    # Keep only the last few sessions; this file is a convenience, never a record.
-    if len(seen) > 8:
-        for k in list(seen)[:-8]:
-            seen.pop(k, None)
-    try:
-        seen_path.parent.mkdir(parents=True, exist_ok=True)
-        ws.atomic_write_text(seen_path, json.dumps(seen, indent=1))
-    except Exception:
-        pass
+    proc["nudges"] = done + 1
+    _nudge_write(wsdir, session, entry)
 
     steps = _first_steps(wsdir / "skills" / (stem + ".md"))
     lines = ["chamnan: this work has a recorded procedure — `.chamnan/skills/%s.md`" % stem]
     for s in steps:
         lines.append("  · " + s[:150])
     if steps:
-        lines.append("  (read it before going further; this is said once per session)")
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-                                             "additionalContext": "\n".join(lines)}}))
+        lines.append("  (read it before going further; said up to 3 times per session — now, "
+                      "and again past %d and %d commands)" % NUDGE_AGAIN_AT)
+    _emit("\n".join(lines))
     return 0
 
 

@@ -97,6 +97,113 @@ def a_program_is_lying_in_wait(root, names=("git",)):
 # `rev-list`) and have nothing to fetch, so this costs them nothing.
 os.environ.setdefault("GIT_NO_LAZY_FETCH", "1")
 
+# A repository chooses what `git` RUNS, and one of our reads is enough to trigger it.
+#
+# 🐛 [2026-09-18] (R3 agent 2) Reproduced here end to end, not taken from the advisory: a repository whose own
+# `.git/config` carries `core.fsmonitor = <a program>` executes that program when git refreshes the
+# index, and `git status --porcelain` refreshes the index. `hooks/chamnan_session_start.py` runs
+# exactly that, on every session, inside whatever repository the user opened. A clone, a dependency
+# checkout or a pull request branch is therefore able to run code as the user the moment a session
+# starts — with no prompt, because nothing here is being asked to trust anything. The payload in the
+# reproduction wrote a file and exited 1; git carried on and reported a clean status.
+#
+# That is the GitSpawn class (Manifold/Shattered, 2026), the same key behind Copilot CLI's
+# GHSA-9ccr-r5hg-74gf, and the shape Claude Code itself shipped a fix for in 2.0.71. `core.pager` is
+# the older cousin — git's default pager is `less`, whose `!` escape hands over a shell (CVE-2017-8386)
+# — and it costs nothing to close beside it even though our calls capture output and never page.
+#
+# The population is the full class, not those two examples: eleven repository-settable keys that
+# cause git to run a program — `core.fsmonitor`, `core.pager`, `core.editor`, `core.sshCommand`,
+# `core.askPass`, `core.hooksPath`, `diff.external`, `credential.helper`,
+# `uploadpack.packObjectsHook`, `sequence.editor`, `gpg.program`. Of those, only `core.fsmonitor`
+# (via `git status`) and `diff.external` (via `git diff`) are reachable by this package's own
+# read-only commands today; the other nine are closed pre-emptively because each is one new call
+# site (an editor invocation, a push, a credential prompt) away from becoming reachable, and closing
+# them now costs nothing a call site would otherwise have to remember to do itself.
+#
+# Set through the ENVIRONMENT rather than by adding `-c` to each call, for the reason the block above
+# gives: there are twenty-five `git` invocations across eight files, every entry point imports this
+# module, and three of the four times this repository has tried to fix something at N call sites it
+# has missed one. `GIT_CONFIG_COUNT`/`_KEY_n`/`_VALUE_n` is git's documented way to inject config
+# into every child, it outranks the repository's own config, and a hostile `.git/config` cannot
+# unset it. Verified both ways in the reproduction: with these set the payload does not run; without
+# them it does.
+#
+# Appended to whatever the user already has rather than assigned, so an existing `GIT_CONFIG_COUNT`
+# keeps its entries and ours are added after it.
+def _harden_git_config():
+    """Refuse the repository-controlled config keys that turn a read into an execution."""
+    forced = (
+        ("core.fsmonitor", "false"),
+        ("core.pager", "cat"),
+        ("core.editor", "true"),
+        ("core.sshCommand", ""),
+        ("core.askPass", ""),
+        ("core.hooksPath", "/dev/null"),
+        ("diff.external", ""),
+        ("credential.helper", ""),
+        ("uploadpack.packObjectsHook", ""),
+        ("sequence.editor", "true"),
+        ("gpg.program", "true"),
+    )
+    try:
+        start = int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0)
+    except ValueError:
+        start = 0
+    if start < 0:
+        start = 0
+    for offset, (key, value) in enumerate(forced):
+        os.environ["GIT_CONFIG_KEY_%d" % (start + offset)] = key
+        os.environ["GIT_CONFIG_VALUE_%d" % (start + offset)] = value
+        _FORCED_AT[key] = start + offset
+    os.environ["GIT_CONFIG_COUNT"] = str(start + len(forced))
+
+
+# Which slot each forced key occupies, so a read-only query can ask git what the REPOSITORY says
+# about one of them. See `_env_reading` below.
+_FORCED_AT = {}
+
+_harden_git_config()
+
+
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. `core.hooksPath` is forced to `/dev/null` above so a repository's hooks cannot
+# run when chamnan invokes git. But `git_hooks_dir` ASKS git where hooks live, through the same
+# environment — so it answered `/dev/null` in every repository on earth. `chamnan-report` then told
+# every user their pre-commit hook was missing, right after they installed it, and
+# `chamnan-map --install-git-hook` died with `FileExistsError: /dev/null` before it could install
+# anything. The whole documented feature was unreachable, in a clean clone, on any machine.
+#
+# The forced value is about EXECUTION; a query that only reads is a different question. So one
+# read-only call site may neutralise ONE key for itself, and nothing more: the slot is overwritten
+# with an inert key rather than removed, because renumbering `GIT_CONFIG_COUNT` would silently drop
+# whichever entry the caller's own environment had after ours.
+_INERT_SETTING_NAME = "chamnan.inert"
+
+
+def _env_reading(key):
+    """A copy of the environment with every forced value for `key` stood down.
+
+    Only for commands that READ. `rev-parse --git-path hooks` resolves a path and runs nothing,
+    which is why dropping the hooks override for it cannot re-open what the override closed. Do not
+    reach for this from a command that can execute what the key names.
+
+    🐛 [2026-09-19] (self-measured), from the full gate run of this date. The first version of this cleared the ONE slot this process wrote, and that is
+    wrong the moment chamnan runs chamnan: the child appends its eleven entries after the parent's
+    eleven, so the key it neutralises is its own copy and the parent's is still in force, still
+    naming /dev/null. `--install-git-hook` worked from a shell and failed from the test suite for
+    exactly that reason. Every slot naming the key is stood down, whoever wrote it.
+    """
+    env = dict(os.environ)
+    try:
+        count = int(env.get("GIT_CONFIG_COUNT", "0") or 0)
+    except ValueError:
+        return env
+    for slot in range(max(count, 0)):
+        if env.get("GIT_CONFIG_KEY_%d" % slot) == key:
+            env["GIT_CONFIG_KEY_%d" % slot] = _INERT_SETTING_NAME
+            env["GIT_CONFIG_VALUE_%d" % slot] = "1"
+    return env
+
 WORKSPACE_DIRNAME = ".chamnan"
 # Each part can be switched off independently. Nothing here is load-bearing for the others: turning
 # `map` off leaves state and skills working, and vice versa. That is deliberate — the parts have
@@ -581,6 +688,15 @@ SELF_PRUNING_LOGS = ("commands.jsonl", "pointer.jsonl", "scratch.jsonl", "edits.
                     # forever, every week — which is precisely what `notice_due`'s own docstring
                     # says it exists to prevent: "advice that repeats forever is worse than advice
                     # shown once." A count of showings is a record of when something happened.
+                    # 🐛 [2026-09-18] (self-measured) One row per long document opened directly instead of
+                    # through the local model, which is the DENOMINATOR of the rule this package
+                    # keeps breaking: the ledger counts the reads that went to Local, and until
+                    # this file existed nothing counted the ones that did not, so the figure was a
+                    # numerator with nothing to divide by and read green on three calls while
+                    # twelve documents were opened by hand. Bounded by record like the rest. An
+                    # age sweep on it would erase the only evidence that the rule was ignored,
+                    # which is the one thing this measurement exists to make visible.
+                    "long_reads.jsonl",
                     "nudge_state.json")
 
 
@@ -713,6 +829,105 @@ def _pid_is_alive(pid):
         return True                       # exists, owned by somebody else
     except OSError:
         return True
+
+
+def _process_started(pid, run=None):
+    """The moment `pid` was born, as a string that never changes, or "" when it cannot be known.
+
+    \U0001f3af The owner's fix for pid reuse, sharpened by one step. They proposed recording how long
+    the app had been running and adding the wait to it — right in substance, and it needs a
+    tolerance, because "3h now, so 5h10m later" only holds if nothing distorted the clock. A BIRTH
+    TIME needs no tolerance at all: it never moves, so it is compared exactly. That matters on this
+    machine specifically, which sleeps after one idle minute — elapsed time keeps counting while it
+    does, so a wait across a suspend produces an elapsed figure nobody predicted, while the birth
+    time is the same string it always was.
+
+    \U0001f41b [2026-09-12] The first version shelled out to `ps` on POSIX and `powershell` on Windows,
+    and the gate refused it — correctly, and for a reason worth keeping. The README tells anyone
+    auditing this package that it executes exactly two things: `git`, and this interpreter re-running
+    a file that ships inside it. Adding `ps` would have been a third, which is a change to a promise
+    made to users, not an implementation detail. It would also have cost a process spawn — about
+    21ms each on this machine — for a question the kernel answers directly.
+
+    So all three platforms are read through the OS, with no child process at all:
+      Linux   `/proc/<pid>` exists and its ctime IS the moment the process was created.
+      macOS   `libproc.proc_pidinfo` with PROC_PIDTBSDINFO carries `pbi_start_tvsec`.
+      Windows `GetProcessTimes` on an opened handle gives creation time directly.
+    `run` stays in the signature so a test can inject a failure without a platform to fail on.
+
+    \U0001f3af Moved here from `schedule.py` (2026-09-18): `exclusive()`'s lock needs the identical
+    answer for the identical reason — a pid alone is reused, after a reboot or after enough process
+    churn — and `_pid_is_alive` has been this package's one answer to pid liveness all along.
+    `schedule.process_started` is now a thin delegating wrapper; see `_own_process_started` below
+    for the cached form `exclusive()` actually calls.
+    """
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return ""
+    if pid <= 0:
+        return ""
+    if run is not None:                       # a test speaking for the platform
+        return str(run(pid) or "")
+    try:
+        if sys.platform.startswith("linux"):
+            return "%.6f" % pathlib.Path("/proc/%d" % pid).stat().st_ctime
+        if sys.platform == "darwin":
+            import ctypes
+            # PROC_PIDTBSDINFO is 1; the struct's `pbi_start_tvsec` sits at offset 120 and the
+            # call returns the bytes written, so a short answer is a failure rather than a value.
+            libc = ctypes.CDLL("libc.dylib", use_errno=True)
+            # The signature is declared. Without it ctypes guesses, and the guess is wrong here in
+            # two ways at once: the flavor argument arrives the wrong width and the return is
+            # truncated, so the first draft read 24 bytes of a file-descriptor list and turned it
+            # into a plausible-looking number. Verified against `ps -o lstart=` on two live
+            # processes before being trusted — the same rule the ID fixtures are held to.
+            libc.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64,
+                                          ctypes.c_void_p, ctypes.c_int]
+            libc.proc_pidinfo.restype = ctypes.c_int
+            buf = ctypes.create_string_buffer(1024)
+            # PROC_PIDTBSDINFO is 3, not 1 — 1 is PROC_PIDLISTFDS, which answers a different
+            # question and answers it successfully, which is why the wrong flavor read as data.
+            written = libc.proc_pidinfo(pid, 3, 0, buf, 1024)
+            if written < 128:
+                return ""
+            # `pbi_start_tvsec` at offset 120 of struct proc_bsdinfo.
+            return "%d" % int.from_bytes(buf.raw[120:128], "little")
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_errno=True)   # noqa: F821 — Windows only
+            handle = k32.OpenProcess(0x1000, False, pid)      # QUERY_LIMITED_INFORMATION
+            if not handle:
+                return ""
+            try:
+                created = wintypes.FILETIME()
+                rest = [wintypes.FILETIME() for _ in range(3)]
+                if not k32.GetProcessTimes(handle, ctypes.byref(created),
+                                           *[ctypes.byref(x) for x in rest]):
+                    return ""
+                return "%d" % ((created.dwHighDateTime << 32) | created.dwLowDateTime)
+            finally:
+                k32.CloseHandle(handle)
+    except (OSError, ValueError, AttributeError, TypeError):
+        return ""
+    return ""
+
+
+# This process's own start time, cached — [] empty until first call, then a single string. A
+# process's birth time cannot change during its own lifetime, so the cache is sound for as long as
+# the interpreter runs. Load-bearing: `_process_started(os.getpid())` costs 99.5 µs measured on
+# this machine against an uncontended `exclusive()` acquire of 224 µs, so calling it uncached on
+# every acquire would be +44% on a path `record_call` takes on every Bash call. One call per
+# process lifetime instead.
+_OWN_PROCESS_STARTED = []
+
+
+def _own_process_started():
+    """This process's own start time, computed once and cached for the rest of its life."""
+    if not _OWN_PROCESS_STARTED:
+        _OWN_PROCESS_STARTED.append(_process_started(os.getpid()))
+    return _OWN_PROCESS_STARTED[0]
 
 
 def prune_orphaned_temps(root=None):
@@ -2266,14 +2481,41 @@ def _lock_holder_state(lock):
     syscalls, so "names nobody" is also what a perfectly healthy holder looks like for a few
     microseconds — breaking on that would hand the same file to two writers, which is the one
     thing this mutex exists to prevent.
+
+    🐛 [2026-09-18] (R27.7) The PID alone answers "does SOMETHING with this number exist", not "does the
+    process that wrote this lock still exist" — a PID is reused, after a reboot or after enough
+    process churn, and a lock left by a crashed holder whose PID has since been handed to an
+    unrelated live process then reads as ALIVE forever, which is exactly what let the age rule at
+    `LOCK_STALE` never fire. The lock's SECOND line, when there is one, is the birth time the
+    holder recorded for its own PID at write time (see `exclusive()`); the two bounds now split
+    the question:
+      - PID not alive                                          → DEAD, as before.
+      - PID alive, no second line                               → ALIVE, as before — an older
+        version wrote this lock and there is nothing more to check.
+      - PID alive, second line present, `_process_started(pid)` disagrees with it → DEAD: the
+        number is alive, but it is not the process that wrote this lock.
+      - PID alive, second line present, `_process_started(pid)` returns "" (this platform cannot
+        answer) → ALIVE. Never inferred DEAD from an absent or unreadable start time; DEAD only
+        follows from two values that are both present and disagree. A false ALIVE costs waiting;
+        a false DEAD unlinks a live holder's lock and hands the file to two writers at once, which
+        is strictly worse than the bug this exists to fix.
     """
     try:
-        first = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+        lines = lock.read_text(encoding="utf-8", errors="replace").strip().splitlines()
     except OSError:
         return LOCK_HOLDER_UNKNOWN
-    if not first or not first[0].strip().isdigit():
+    if not lines or not lines[0].strip().isdigit():
         return LOCK_HOLDER_UNKNOWN
-    return LOCK_HOLDER_ALIVE if _pid_is_alive(int(first[0].strip())) else LOCK_HOLDER_DEAD
+    pid = int(lines[0].strip())
+    if not _pid_is_alive(pid):
+        return LOCK_HOLDER_DEAD
+    recorded_start = lines[1].strip() if len(lines) > 1 else ""
+    if not recorded_start:
+        return LOCK_HOLDER_ALIVE
+    actual_start = _process_started(pid)
+    if actual_start and actual_start != recorded_start:
+        return LOCK_HOLDER_DEAD
+    return LOCK_HOLDER_ALIVE
 
 
 @contextlib.contextmanager
@@ -2308,8 +2550,14 @@ def exclusive(path):
             # second process reads a lock a live process is still holding as abandoned, unlinks it
             # and takes it -- so the mutex hands the same shared file to two writers at once, which
             # is exactly the lost update it exists to prevent (R11 agent 2).
+            #
+            # 🐛 [2026-09-18] (R27.7) The PID alone is reused -- after a reboot, or after enough process
+            # churn -- so a lock left by a holder that CRASHED reads as ALIVE forever once its PID
+            # is handed to an unrelated live process, and the age rule can never break it. The
+            # second line is this process's own birth time, cached in `_own_process_started` so
+            # paying for it happens once per process lifetime rather than on every acquire.
             try:
-                os.write(fd, f"{os.getpid()}\n".encode())
+                os.write(fd, f"{os.getpid()}\n{_own_process_started()}\n".encode())
             except OSError:
                 pass
             break
@@ -2522,7 +2770,7 @@ def git_hooks_dir(root):
     try:
         out = sp.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
                      capture_output=True, text=True, encoding="utf-8",
-                     errors="replace", timeout=10)
+                     errors="replace", timeout=10, env=_env_reading("core.hooksPath"))
         if out.returncode == 0 and out.stdout.strip():
             found = pathlib.Path(out.stdout.strip())
             return found if found.is_absolute() else (pathlib.Path(root) / found)
@@ -2605,6 +2853,30 @@ def wants_version(argv):
     typing it and getting "unknown flag" is worse than useless.
     """
     return any(a in VERSION_FLAGS for a in (argv or []))
+
+
+def reader_is_a_terminal(stream=None):
+    """True when a person is watching this output, false when it is being captured.
+
+    🎯 [R5, 2026-09-18] Measured: `chamnan-report` prints about 3,850 tokens — more than the entire
+    session-start block, whose ceiling is 9,500 BYTES — and every other command is under 400. Whoever
+    runs it at a terminal wants that table. A dispatched agent, which is never a TTY, pays for it on
+    every turn of the session afterwards, and cannot skim.
+
+    Until now every reader got identical bytes: there was no `isatty` call anywhere in `lib/` or
+    `bin/`. `gh` switches to tab-delimited fields, stops truncating and drops colour on the same
+    test, with no flag to pass and nothing to document — which is the property that matters here,
+    because a flag only helps the caller who already knew to use it.
+
+    Errors are answered False rather than raised: a stream with no `isatty` (a pipe replacement, a
+    captured buffer in a test) is not a person, and an output decision must never be the reason a
+    command fails.
+    """
+    stream = sys.stdout if stream is None else stream
+    try:
+        return bool(stream.isatty())
+    except (AttributeError, ValueError, OSError):
+        return False
 
 
 def nonce_for(session_id):

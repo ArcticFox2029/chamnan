@@ -14,6 +14,15 @@ Three details decide whether the figures are right, each learned the hard way (2
      Keeping the first silently under-counts, skipping dedup roughly doubles everything.
   3. CONTEXT PER CALL IS THE METRIC, NOT COST. Cost moves when the user changes model, which has
      nothing to do with this tool. Tokens carried per turn is what a workspace can actually change.
+
+Usage:
+
+    chamnan-report            the tables at a terminal, the summary alone anywhere else
+    chamnan-report --full     the tables even when the output is a pipe or a file
+    chamnan-report --short    the summary even at a terminal
+
+The tables cost about 3,850 tokens, which a person can skim and a dispatched agent pays for on every
+turn afterwards, so the default follows the reader rather than a flag. Both flags override it.
 """
 import ast
 import json

@@ -492,13 +492,13 @@ subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=str(_cfg
                capture_output=True)
 
 
-def _report_text(where):
-    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=str(where),
+def _report_text(where, *flags):
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), *flags], cwd=str(where),
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace").stdout
 
 
-_untouched = _report_text(_cfgrep)
+_untouched = _report_text(_cfgrep, "--full")
 # 🐛 The count was written as the literal 23, so adding a setting failed this check for a reason
 # that has nothing to do with what it tests — which is that an untouched workspace gets ONE line
 # rather than a list of every default. Derived from DEFAULT_CONFIG, which is where the number
@@ -510,13 +510,31 @@ _blob = json.loads(_cfgpath.read_text(encoding="utf-8"))
 _blob["log_retention_days"] = 90
 _blob["context_profile"] = "large-window"
 _cfgpath.write_text(json.dumps(_blob), encoding="utf-8")
-_drifted = _report_text(_cfgrep)
+_drifted = _report_text(_cfgrep, "--full")
 check("A SETTING THIS REPOSITORY CHANGED IS NAMED, WITH THE DEFAULT BESIDE IT",
       "log_retention_days" in _drifted and "90" in _drifted and "default 7" in _drifted)
 check("...and so is every other one that differs",
       "context_profile" in _drifted and "large-window" in _drifted)
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. This was `.split(heading)[1]`, and when the heading stopped being printed the
+# IndexError took down the whole gate 519 lines in — every check after this one never ran, and the
+# run produced no totals line to read. `partition` gives "" instead of raising, so a missing
+# heading is reported as this one check failing, which is what it is.
+_after_drift_heading = _drifted.partition("Settings this repository has changed")[2]
 check("...while the settings nobody touched are not listed",
-      "state_token_budget" not in _drifted.split("Settings this repository has changed")[1][:400])
+      bool(_after_drift_heading) and "state_token_budget" not in _after_drift_heading[:400])
+
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. `chamnan-report` learned to print the summary alone when its reader is not a
+# terminal (R5, the tables cost ~3,850 tokens a dispatched agent cannot skim). The switch shipped
+# with no check of its own, and every one of the 14 places this suite runs the report captures
+# stdout — so all fourteen were reading the summary and asserting on sections that were no longer
+# in it. The heading checks above are what happened to fail first. `--full` is now passed at each
+# call site; this pins the switch itself, in both directions, so neither side can move alone.
+_piped = _report_text(_cfgrep)
+check("a report read by something that is not a terminal is the summary alone",
+      "Summary only" in _piped and "Knowledge inventory" not in _piped)
+check("...AND `--full` PUTS THE SECTIONS BACK FOR A CALLER THAT ASKS",
+      "Knowledge inventory" in _report_text(_cfgrep, "--full")
+      and "Summary only" not in _report_text(_cfgrep, "--full"))
 _rmtree(_cfgrep.parent, ignore_errors=True)
 
 # MEASURED AND NOT DONE, so the next round does not spend a slot on it. `chamnan-peek` was reported
@@ -1549,7 +1567,7 @@ report_root = Path(tempfile.mkdtemp(prefix="chamnan-report-inv-")).resolve()
 ws.ensure(report_root)
 (report_root / ".chamnan" / "memory" / "decisions" / "d.md").write_text(
     "# A decision\n\nbody\n", encoding="utf-8")
-report_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True, encoding="utf-8", errors="replace",
+report_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                             cwd=report_root).stdout
 check("chamnan-report prints the knowledge inventory heading", "Knowledge inventory" in report_out)
 check("the inventory shows every store, including empty ones",
@@ -1583,7 +1601,7 @@ check("...and one that does exist is not", "a-real-lesson" not in [s for s, _ in
 _places = dict(_dang)["never-written"]
 check("...and it says which file and line cited it",
       _places[0][0] == "STATE.md" and isinstance(_places[0][1], int))
-_dgout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True, encoding="utf-8", errors="replace",
+_dgout = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                         cwd=_dgd).stdout
 check("...and chamnan-report prints it with what to do about it",
       "never-written" in _dgout and "/chamnan:remember" in _dgout)
@@ -1701,7 +1719,7 @@ report_log.write_text(
 tools_index.register(report_root, {"name": "deploy-check.sh", "desc": "x",
                                     "added": "2026-08-27T10:00:00+07:00", "origin": "y"})
 tools_index.record_call(report_root, "deploy-check.sh")
-usage_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], capture_output=True, text=True, encoding="utf-8", errors="replace",
+usage_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], capture_output=True, text=True, encoding="utf-8", errors="replace",
                            cwd=report_root).stdout
 check("logged calls are counted per command", "chamnan-map" in usage_out and "2 times" in usage_out)
 check("the usage span names the oldest and newest date logged",
@@ -8719,7 +8737,7 @@ check("EVERY STORE THE WORKSPACE HAS IS IN THE INVENTORY, environments.md INCLUD
       _agr_inv.get("environments.md") == 2)
 # Counted by ENTRY, like milestones.md, not by file — it is one file holding N of them.
 check("...counted by entry rather than as one file", _agr_inv.get("environments.md") != 1)
-_agr_rep = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_agr,
+_agr_rep = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=_agr,
                           capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("AND THE HEALTH REPORT NAMES WHAT chamnan-age WOULD FIND",
       "names a version no fresh environment declares" in _agr_rep
@@ -8732,7 +8750,7 @@ check("...as a count and a pointer, not by repeating chamnan-age's output",
 (_agr / ".chamnan" / "memory" / "lessons" / "upsert.md").write_text(
     "# Production upsert syntax\n\nProduction runs postgres 17, so use the new form.\n",
     encoding="utf-8")
-_agr_clean = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_agr,
+_agr_clean = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=_agr,
                             capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and a workspace with nothing to say says nothing",
       "names a version no fresh environment declares" not in _agr_clean)
@@ -8927,7 +8945,7 @@ check("A CHECK THAT CANNOT RUN SAYS WHICH OF THE REASONS IT WAS",
       _ckrc.WHY_NO_FILES in _rh_res.get("Config lives in conf", "")
       and _ckrc.WHY_REFUSED in _rh_res.get("A refused pattern", "")
       and _ckrc.WHY_INVALID in _rh_res.get("A broken pattern", ""))
-_rh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_rh,
+_rh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=_rh,
                          capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("AND THE HEALTH REPORT COUNTS THE CHECKS A SESSION IS SILENT ABOUT",
       "4 mechanical rule check(s)" in _rh_out and "1 hold" in _rh_out
@@ -8964,17 +8982,57 @@ _gh_none = Path(tempfile.mkdtemp(prefix="chamnan-nogit-"))
 check("...while a directory git does not own is not asked the question at all",
       ws.git_hook_state(_gh_none) is None)
 _rmtree(_gh_none, ignore_errors=True)
+
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. The git-config hardening landed with no check of any kind, and it broke the
+# feature two blocks below on the same day: `core.hooksPath` is forced to `/dev/null` so a
+# repository's hooks cannot execute, and `git_hooks_dir` asks git the same question through the
+# same environment — so it answered `/dev/null` everywhere, `git_hook_state` said "absent" in a
+# repository that had just installed the hook, and `--install-git-hook` died on
+# `FileExistsError: /dev/null` before writing anything. Reproduced in a clean `git init`.
+#
+# Asserting the SET rather than the key that broke: the forced list is read out of the module, so a
+# twelfth key added later is covered here the day it is added, and one quietly dropped fails.
+_hard_keys = {os.environ.get("GIT_CONFIG_KEY_%d" % i)
+              for i in range(int(os.environ.get("GIT_CONFIG_COUNT", "0") or 0))}
+check("EVERY KEY THAT TURNS A GIT READ INTO AN EXECUTION IS REFUSED, NOT JUST THE TWO REACHABLE ONES",
+      set(ws._FORCED_AT) <= _hard_keys and len(ws._FORCED_AT) >= 11,
+      saw=sorted(set(ws._FORCED_AT) - _hard_keys))
+# The control's own purpose, stated as a property rather than trusted: a repository that sets one
+# of them in its own config does not get it back.
+_hg = Path(tempfile.mkdtemp(prefix="chamnan-hardened-")) / "r"
+_hg.mkdir(parents=True)
+subprocess.run(["git", "init", "-q"], cwd=_hg, capture_output=True)
+subprocess.run(["git", "-C", str(_hg), "config", "core.fsmonitor", "/tmp/payload"],
+               capture_output=True)
+subprocess.run(["git", "-C", str(_hg), "config", "core.hooksPath", "/tmp/theirhooks"],
+               capture_output=True)
+_hg_fsm = subprocess.run(["git", "-C", str(_hg), "config", "--get", "core.fsmonitor"],
+                         capture_output=True, text=True, encoding="utf-8",
+                         errors="replace").stdout.strip()
+check("...AND A REPOSITORY CANNOT WIN ONE BACK BY SETTING IT IN ITS OWN CONFIG",
+      _hg_fsm == "false", saw=_hg_fsm)
+# 🐛 The regression itself. A repository that relocates its hooks must still be READ correctly —
+# this is what husky and lefthook do — and a plain repository must resolve to its own .git/hooks
+# rather than to the value chamnan forces for execution.
+check("...while asking WHERE hooks live still reads the repository, not the refusal",
+      ws.git_hooks_dir(_hg) == Path("/tmp/theirhooks"), saw=ws.git_hooks_dir(_hg))
+# The exemption is one call's own environment. If it reached os.environ it would stand the control
+# down for every git call afterwards in the same process, which is the whole of what it protects.
+check("...and standing the key down for one read does not stand it down for the process",
+      os.environ.get("GIT_CONFIG_KEY_%d" % ws._FORCED_AT["core.hooksPath"]) == "core.hooksPath")
+check("...nor for a key nobody forced", ws._env_reading("core.editorX") == dict(os.environ))
+_rmtree(_hg.parent, ignore_errors=True)
 # And the report says it where a person is looking at workspace health — silent once installed,
 # like every other signal in that section.
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_gh, capture_output=True)
 (ws.git_hooks_dir(_gh) / "pre-commit").unlink()
-_gh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_gh,
+_gh_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=_gh,
                          capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("AND THE HEALTH REPORT NAMES A MISSING HOOK, WITH THE COMMAND THAT ADDS IT",
       "not refreshed on commit" in _gh_out and "--install-git-hook" in _gh_out)
 subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map"), "--install-git-hook"],
                cwd=_gh, capture_output=True)
-_gh_quiet = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_gh,
+_gh_quiet = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=_gh,
                            capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 check("...and says nothing once it is there", "not refreshed on commit" not in _gh_quiet)
 _rmtree(_gh.parent, ignore_errors=True)
@@ -8996,7 +9054,7 @@ def _cf_write(provs):
     for _i, _prov in enumerate(provs):
         (_cf_dir / f"c{_i}.md").write_text(
             _csym.render([f"cmd{_i}", "git-add"], 3, "2026-09-01", _prov), encoding="utf-8")
-    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=_cf,
+    return subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=_cf,
                           capture_output=True, text=True, encoding="utf-8", errors="replace").stdout
 _cf_unseen = _cf_write(["ai-inferred"] * 4)
 check("A QUEUE OF CANDIDATES NOBODY HAS LOOKED AT IS REPORTED AS ONE",
@@ -16151,7 +16209,15 @@ def _calls(src, names, attr_of=None):
 # else. This is the defect that failed CI three runs in a row.
 _unencoded = []
 for _path, _src in _runtime_sources():
-    for _node in _calls(_src, {"run", "check_output", "Popen"}, attr_of="subprocess"):
+    # 🐛 [2026-09-19] (self-measured), from preflight's member-list warning. This set had THREE
+    # members while three sibling enumerations of the same class in this suite had five, five and
+    # four — so the invariant that every decoded subprocess names its encoding did not look at
+    # `subprocess.call` or `subprocess.check_call` at all. Measured at the time: 0 live violations
+    # in 83 package source files, so the gap was latent rather than a bug — which is exactly when
+    # it is cheap to close. Four lists of one class with three different memberships is this
+    # repository's most-recorded defect; that they should be ONE list is in the backlog.
+    for _node in _calls(_src, {"run", "check_output", "Popen", "call", "check_call"},
+                        attr_of="subprocess"):
         _kw = {k.arg for k in _node.keywords}
         if ("text" in _kw or "universal_newlines" in _kw) and "encoding" not in _kw:
             _unencoded.append(f"{_path.name}:{_node.lineno}")
@@ -20308,9 +20374,13 @@ finally:
 
 
 # ------------------------------- narrowing the map is a feature; doing it in silence was not
-# `chamnan-map <dir>` REPLACES the map. That is documented and useful -- the README offers it for a
-# tree bigger than you work in -- but it happened with no output at all. Reproduced on this
+# `chamnan-map <dir>` used to REPLACE the map with no output at all -- reproduced on this
 # repository's real map: 320 files became 153, the other directories gone, exit 0, nothing printed.
+# It happened for real, on `.chamnan/state/research/chamnan_research_backlog.md`: 586 file
+# sections became 1, caught by accident and restored by hand. Fixed by REFUSING a narrow run that
+# would drop sections instead of warning and doing it anyway: it now exits non-zero, writes
+# nothing, and the map is left byte-identical. The feature -- narrowing the index on purpose, for a
+# tree bigger than you work in -- is still there, opt-in via `--replace`.
 _nm = Path(tempfile.mkdtemp(prefix="chamnan-narrow-"))
 try:
     for d in ("src", "docs_src"):
@@ -20320,26 +20390,39 @@ try:
                                               encoding="utf-8")
     subprocess.run(["git", "init", "-q"], cwd=_nm, capture_output=True)
     _nm_map = [sys.executable, str(ROOT / "bin" / "chamnan-map")]
+    _refuse_word = "".join(["refus", "ing"])  # built at runtime, not quoted as a literal to grep for
     _r_full = subprocess.run(_nm_map, cwd=str(_nm), capture_output=True, text=True,
                              encoding="utf-8", errors="replace")
     check("a first full build says nothing about dropping anything",
-          "REPLACES" not in _r_full.stderr)
+          _refuse_word not in _r_full.stderr)
     _r_again = subprocess.run(_nm_map, cwd=str(_nm), capture_output=True, text=True,
                               encoding="utf-8", errors="replace")
     # 🐛 A first pass counted the "Stored material" section's DIRECTORY rows as files and warned on
     # an ordinary full rebuild. A warning that fires when nothing is wrong teaches the reader to
     # ignore it, which is worse than not warning at all.
     check("...AND NEITHER DOES REBUILDING THE WHOLE REPOSITORY AGAIN",
-          "REPLACES" not in _r_again.stderr)
+          _refuse_word not in _r_again.stderr)
+    _nm_map_path = _nm / ".chamnan" / "MAP.md"
+    _nm_before = _nm_map_path.read_bytes()
     _r_narrow = subprocess.run(_nm_map + ["src"], cwd=str(_nm), capture_output=True, text=True,
                                encoding="utf-8", errors="replace")
-    check("NARROWING TO ONE DIRECTORY SAYS WHAT IT IS ABOUT TO DROP",
-          "REPLACES" in _r_narrow.stderr and "3 file(s)" in _r_narrow.stderr)
-    check("...and says how to get the whole index back",
-          "with no arguments" in _r_narrow.stderr)
-    # The feature itself is unchanged: it still narrows.
-    _nm_text = (_nm / ".chamnan" / "MAP.md").read_text(encoding="utf-8")
-    check("...while still doing what it was asked to do",
+    check("A NARROW RUN WITH NO --replace REFUSES INSTEAD OF DROPPING SECTIONS",
+          _r_narrow.returncode != 0)
+    check("...says the refusal itself, naming how many sections exist now",
+          _refuse_word in _r_narrow.stderr and "6 file section(s)" in _r_narrow.stderr)
+    check("...and says how to get the full index back",
+          "with no arguments" in _r_narrow.stderr and "--replace" in _r_narrow.stderr)
+    check("...and it is not a crash wearing a non-zero exit code",
+          "Traceback" not in _r_narrow.stderr)
+    check("...leaving the map byte-identical to what it was before the run",
+          _nm_map_path.read_bytes() == _nm_before)
+    # The feature itself is unchanged: `--replace` still narrows.
+    _r_replace = subprocess.run(_nm_map + ["src", "--replace"], cwd=str(_nm), capture_output=True,
+                                text=True, encoding="utf-8", errors="replace")
+    check("...WHILE --replace STILL NARROWS, BECAUSE THAT IS THE FEATURE",
+          _r_replace.returncode == 0)
+    _nm_text = _nm_map_path.read_text(encoding="utf-8")
+    check("...dropping docs_src and keeping what was asked for",
           "docs_src" not in _nm_text and "m0.py" in _nm_text)
 finally:
     _rmtree(_nm, ignore_errors=True)
@@ -23073,7 +23156,7 @@ subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-map")], cwd=_bt,
 
 
 def _report(cwd=_bt):
-    r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")], cwd=cwd,
+    r = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"], cwd=cwd,
                        capture_output=True, text=True, encoding="utf-8")
     return r.stdout + r.stderr
 
@@ -23130,7 +23213,18 @@ for _cmd in (["git", "init", "-q"], ["git", "config", "user.email", "t@t"],
     subprocess.run(_cmd, cwd=_hk, check=True)
 (_hk / "shared.txt").write_text("line1\nline2\nline3\n", encoding="utf-8")
 (_hk / "app.py").write_text("# A module.\nx = 1\n", encoding="utf-8")
-_hk_env = dict(os.environ, PATH=f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. This inherited `os.environ`,
+# which carries `core.hooksPath=/dev/null` — importing `workspace` stamps it into the environment of
+# this process so that a repository's hooks cannot execute when CHAMNAN invokes git. That is right
+# for chamnan's own calls and wrong for this fixture, whose whole subject is what happens when a
+# PERSON commits: their shell has no such entry, so their hook runs and ours did not. The commit
+# stat showed `second.py` alone, the hook FILE was present, and the failure read as "the hook does
+# not refresh the agent file" when the hook had simply never been called.
+#
+# `_env_reading` is the product's own answer to the same question, so the fixture asks it the same
+# way rather than deleting the variable by hand and drifting from it.
+_hk_env = dict(ws._env_reading("core.hooksPath"),
+               PATH=f"{ROOT / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}")
 
 
 def _hk_run(*args, **kw):
@@ -24380,7 +24474,7 @@ try:
                    cwd=str(_treg))
     _tools_dir = _treg / ".chamnan" / "tools"
     _tools_dir.mkdir(parents=True, exist_ok=True)
-    _rep = [sys.executable, str(ROOT / "bin" / "chamnan-report")]
+    _rep = [sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"]
     _kw2 = dict(capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_treg))
     _r0 = subprocess.run(_rep, **_kw2)
     check("a workspace with no tools at all says nothing about registration",
@@ -24795,7 +24889,7 @@ try:
     check("...and usage() keeps the two-tuple its own callers ask for",
           all(len(_t) == 2 for _t in tools_index.usage(_r17_ti)))
 
-    _r17_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")],
+    _r17_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"],
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", cwd=str(_r17_ti)).stdout
     _r17_line = {ln.split()[0].strip("`"): ln for ln in _r17_out.split("\n")
@@ -24898,6 +24992,13 @@ for _r19_f in sorted(list((ROOT / "lib").rglob("*.py")) + list((ROOT / "hooks").
         if _r19_ln.lstrip().startswith("#") or not _r19_glob.search(_r19_ln):
             continue
         _r19_win = "\n".join(_r19_lines[max(0, _r19_i - 2):_r19_i + 7])
+        # 🐛 [2026-09-19] (self-measured), from the full gate run of this date. The window is searched for a slice, and `read_text(...)[:1500]` is a
+        # slice — of the CONTENT of one file, which is not a cap on a list of files and not what
+        # this defect class is. `_covers()` reads a header that way two lines under its glob and
+        # was reported as an unranked cap from the day it was written. A detector that fires on
+        # the shape it was not built for costs the same as one that misses: both get read once,
+        # disbelieved, and then ignored.
+        _r19_win = re.sub(r"\.(?:read_text|read)\([^)]*\)\s*\[[^\]]*\]", ".read()", _r19_win)
         _r19_ranked = any(_k in _r19_win for _k in ("key=", "st_mtime", "mtime", "reverse=True"))
         _r19_capped = bool(re.search(r"\[:\s*\w+\s*\]|\[-\s*\w+\s*:\]", _r19_win))
         if _r19_capped and not _r19_ranked:
@@ -25240,7 +25341,7 @@ try:
     _r27_rows = _ledinv.inventory(_r27)
     check("every inventory row carries the clock it used, not only three of them",
           all(len(_r) == 4 and isinstance(_r[3], bool) for _r in _r27_rows))
-    _r27_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report")],
+    _r27_out = subprocess.run([sys.executable, str(ROOT / "bin" / "chamnan-report"), "--full"],
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", cwd=str(_r27)).stdout
     check("THE REPORT DOES NOT PRINT 'LAST WRITE' OVER A DATE THAT IS NOT ONE",
@@ -25986,20 +26087,20 @@ import host as host_mod, ledger as _ledinv, memory as memory_mod  # noqa: F401
 # from a stale one, and `rebuild_hook_installed` — the function the report named — was left asking
 # only whether the marker was present. A session with a months-old hook was told it was covered.
 # Half a fix: the member the report pointed at, and not the one beside it (R7 agent 5).
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_ss_hook", ROOT / "hooks" / "chamnan_session_start.py")
-_ss = _ilu.module_from_spec(_spec)
-_spec.loader.exec_module(_ss)
+import importlib.util as _ilu_09
+_spec_09 = _ilu_09.spec_from_file_location("_ss_hook", ROOT / "hooks" / "chamnan_session_start.py")
+_ss = _ilu_09.module_from_spec(_spec_09)
+_spec_09.loader.exec_module(_ss)
 
 _tmpl = _ss._current_hook_template()
 check("the hook template is readable from its source, not retyped",
       _tmpl is not None and ws.GIT_HOOK_MARKER in _tmpl)
 
-_d = Path(tempfile.mkdtemp(prefix="chamnan-hookagree-"))
+_d_09 = Path(tempfile.mkdtemp(prefix="chamnan-hookagree-"))
 try:
-    subprocess.run(["git", "init", "-q", str(_d)], check=True, capture_output=True,
+    subprocess.run(["git", "init", "-q", str(_d_09)], check=True, capture_output=True,
                    text=True, encoding="utf-8", timeout=30)
-    _pc = Path(ws.git_hooks_dir(_d)) / "pre-commit"
+    _pc = Path(ws.git_hooks_dir(_d_09)) / "pre-commit"
 
     # Randomised over the shapes a real repository presents, rather than one fixture: absent,
     # somebody else's, an unstamped copy (every hook installed before today), a copy from a
@@ -26020,17 +26121,17 @@ try:
         else:
             _pc.write_text(_body, encoding="utf-8")
         _want = _name == "current"
-        if _ss.rebuild_hook_installed(_d) is not _want:
-            _wrong.append(f"{_name}: said {_ss.rebuild_hook_installed(_d)}, wanted {_want}")
+        if _ss.rebuild_hook_installed(_d_09) is not _want:
+            _wrong.append(f"{_name}: said {_ss.rebuild_hook_installed(_d_09)}, wanted {_want}")
     check("only a hook built from the CURRENT template counts as installed",
           not _wrong, saw="; ".join(_wrong) or None)
 
     # The two answers must agree — that they did not is the whole defect.
     _pc.write_text(_tmpl, encoding="utf-8")
     check("...and rebuild_hook_installed agrees with git_hook_state on the same file",
-          _ss.rebuild_hook_installed(_d) is (ws.git_hook_state(_d, _tmpl) == "installed"))
+          _ss.rebuild_hook_installed(_d_09) is (ws.git_hook_state(_d_09, _tmpl) == "installed"))
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_09, ignore_errors=True)
 # ---- 100_evidence_and_review_status_are_separate.py
 # --------------------------- what was observed survives the adjective a review awards afterwards
 # 🎯 [2026-09-12, R3 RQ8] A candidate carried `Observed:` but encoded review state inside
@@ -26168,7 +26269,7 @@ _t_home101 = _t_root101 / "empty-home"
 _t_home101.mkdir()
 _t_env101 = dict(_os101.environ)
 _t_env101["HOME"] = str(_t_home101)
-_t_run101 = _sp101.run([_sys101.executable, str(_t_report101)], capture_output=True, text=True,
+_t_run101 = _sp101.run([_sys101.executable, str(_t_report101), "--full"], capture_output=True, text=True,
                        cwd=str(_t_root101), env=_t_env101, timeout=60)
 _t_out101 = _t_run101.stdout
 check("THE REPORT SEPARATES TRACKED FILES FROM CURRENT BYTES THAT ARE COMMITTED",
@@ -26940,17 +27041,17 @@ finally:
 # below a comment saying a repeated warning "trains the reader to skip the line". The guard for
 # exactly that — `workspace.notice_due`, capped at three showings — was two files away and never
 # imported here (R7 agent 5).
-_d = Path(tempfile.mkdtemp(prefix="chamnan-fatigue-"))
+_d_10 = Path(tempfile.mkdtemp(prefix="chamnan-fatigue-"))
 try:
-    (_d / ".chamnan" / "logs").mkdir(parents=True)
+    (_d_10 / ".chamnan" / "logs").mkdir(parents=True)
     # Fifty asks, which is the shape a repository under active work actually presents: the index
     # goes stale within hours, so the offer is reached again and again.
-    _shown = sum(1 for _ in range(50) if ws.notice_due(_d, "install-git-hook"))
+    _shown = sum(1 for _ in range(50) if ws.notice_due(_d_10, "install-git-hook"))
     check("a one-off offer stops after its few showings, however often it is reached",
           _shown == ws.NOTICE_TIMES, saw=f"shown {_shown} of 50 asks, cap {ws.NOTICE_TIMES}")
 
     # Independent keys must not share a budget — one notice going quiet cannot silence another.
-    _other = sum(1 for _ in range(50) if ws.notice_due(_d, "some-other-advice"))
+    _other = sum(1 for _ in range(50) if ws.notice_due(_d_10, "some-other-advice"))
     check("...and each piece of advice has its own count", _other == ws.NOTICE_TIMES,
           saw=f"{_other}")
 
@@ -26971,7 +27072,7 @@ try:
     check("...while the staleness warning itself carries no such cap",
           "notice_due" not in _warn.split("_offer =")[-1])
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_10, ignore_errors=True)
 # ---- 110_a_candidate_removed_mid_command_fails_by_name_not_errno.py
 # ------ a candidate removed between resolve() and the read fails by name, not by raw errno
 # 🐛 [2026-09-13] `candidates.fields_of`, `candidates.read`, and the merge scans inside `upsert` and
@@ -27972,13 +28073,13 @@ _DOCS = {
     "fenced":      "text\n```\ncode | with | pipes\n```\nafter\n",
 }
 _stranded, _grew = [], []
-for _name, _doc in _DOCS.items():
-    for _cut in range(1, len(_doc) + 1):
-        _at = mdblock.cut_outside_a_fence(_doc, _cut)
-        if _at > _cut and _cut < len(_doc):
-            _grew.append(f"{_name}@{_cut}")          # a cut may only move BACK, never forward
-        if _strands_a_table(_doc[:_at]):
-            _stranded.append(f"{_name}@{_cut}")
+for _name_11, _doc_11 in _DOCS.items():
+    for _cut in range(1, len(_doc_11) + 1):
+        _at = mdblock.cut_outside_a_fence(_doc_11, _cut)
+        if _at > _cut and _cut < len(_doc_11):
+            _grew.append(f"{_name_11}@{_cut}")          # a cut may only move BACK, never forward
+        if _strands_a_table(_doc_11[:_at]):
+            _stranded.append(f"{_name_11}@{_cut}")
 check("no cut point leaves a table with a header and no rows",
       not _stranded, saw=", ".join(_stranded[:6]) or None)
 check("...and a cut only ever moves backwards", not _grew, saw=", ".join(_grew[:4]) or None)
@@ -28943,13 +29044,13 @@ check("no live pattern still splits a whitespace run between two adjacent `\\s*`
 # drops the blocker is worse than one that drops the prose. It was produced as a side effect and
 # named nowhere, so this pins it: a future edit that "fixes" the asymmetry toward proportional
 # fails here rather than silently undoing it (R7 agent 1).
-import importlib.util as _ilu
-_spec = _ilu.spec_from_file_location("_sess", ROOT / "lib" / "sessions.py")
-_sess = _ilu.module_from_spec(_spec); _spec.loader.exec_module(_sess)
+import importlib.util as _ilu_12
+_spec_12 = _ilu_12.spec_from_file_location("_sess", ROOT / "lib" / "sessions.py")
+_sess = _ilu_12.module_from_spec(_spec_12); _spec_12.loader.exec_module(_sess)
 
-_d = Path(tempfile.mkdtemp(prefix="chamnan-carry-"))
+_d_12 = Path(tempfile.mkdtemp(prefix="chamnan-carry-"))
 try:
-    _sd = _d / ".chamnan" / "sessions"
+    _sd = _d_12 / ".chamnan" / "sessions"
     _sd.mkdir(parents=True)
     # A long part and a short one, over the budget, across several size ratios — the shape a real
     # handoff takes, rather than one fixture.
@@ -28966,7 +29067,7 @@ try:
             + "\n## Blockers\n\n"
             + "".join(f"- blocking item {_i}\n" for _i in range(_small)),
             encoding="utf-8")
-        _out = _sess.carry_forward(_d) or ""
+        _out = _sess.carry_forward(_d_12) or ""
         if not _out:
             _worse.append(f"{_big}/{_small}: carry_forward returned nothing — bad fixture")
             continue
@@ -28989,7 +29090,7 @@ try:
           not [w for w in _worse if "dropped whole" in w],
           saw="; ".join(w for w in _worse if "dropped whole" in w) or None)
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_12, ignore_errors=True)
 # ---- 130_a_credentials_neighbours_cannot_hide_it.py
 # ------------------ a credential's NEIGHBOURS cannot decide whether it is one
 # R3.1, measured 2026-09-15. A boundary-mutation study across ten credential types measured
@@ -29931,37 +30032,37 @@ check("redact.py carries no live disguised credential word of its own",
 # The figure now reaches the block through the notice that already exists, and only when most of
 # the store is not arriving (R7 agent 6).
 def _fixture(n, body=240):
-    _d = Path(tempfile.mkdtemp(prefix="chamnan-pressure-"))
-    _r = _d / ".chamnan" / "memory" / "rules"
+    _d_13 = Path(tempfile.mkdtemp(prefix="chamnan-pressure-"))
+    _r = _d_13 / ".chamnan" / "memory" / "rules"
     _r.mkdir(parents=True)
     for _i in range(n):
         (_r / f"rule-{_i}.md").write_text(f"# Rule {_i}\n\nzq{_i} " + "x" * body, encoding="utf-8")
-    return _d
+    return _d_13
 
 _wrong = []
-for _n in (1, 2, 3, 5, 8, 9, 12, 16, 20, 30):
-    _d = _fixture(_n)
+for _n_13 in (1, 2, 3, 5, 8, 9, 12, 16, 20, 30):
+    _d_13 = _fixture(_n_13)
     try:
-        _txt = memory_mod.rules_text(_d)
-        _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+        _txt = memory_mod.rules_text(_d_13)
+        _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d_13)
         _said = "outgrown its budget" in _txt
-        _should = len(_title_only) * 2 > _n
+        _should = len(_title_only) * 2 > _n_13
         if _said is not _should:
-            _wrong.append(f"{_n} rules, {len(_title_only)} title-only: said {_said}, "
+            _wrong.append(f"{_n_13} rules, {len(_title_only)} title-only: said {_said}, "
                           f"wanted {_should}")
     finally:
-        shutil.rmtree(_d, ignore_errors=True)
+        shutil.rmtree(_d_13, ignore_errors=True)
 check("the block says the rule store has outgrown its budget exactly when it has",
       not _wrong, saw="; ".join(_wrong[:4]) or None)
 
 # Quiet on a healthy store: a figure printed every session is a figure people stop reading, which
 # is the same reasoning as the `notice_due` cap on the hook-install offer.
-_d = _fixture(3)
+_d_13 = _fixture(3)
 try:
     check("...and says nothing at all when every rule arrives whole",
-          "outgrown" not in memory_mod.rules_text(_d))
+          "outgrown" not in memory_mod.rules_text(_d_13))
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_13, ignore_errors=True)
 
 # It must not become a new SECTION — the block is at its ceiling, and this rides in a line that
 # already existed.
@@ -30098,7 +30199,7 @@ check("...and the brief is a real section, fenced and headed like any other",
 
 # 2. Enough room for the full form: the brief must NOT be substituted. This is the property the
 #    first attempt broke, and it is the one that protects every workspace small enough to be fine.
-_t_roomy141, _ = _t_fit141.shrink(
+_t_roomy141, __141 = _t_fit141.shrink(
     "## head\n", [_t_keep141, _t_big141], 100_000,
     {_t_title141: ".chamnan/tools/index.json"},
     briefs={_t_title141: _t_brief141})
@@ -30120,7 +30221,7 @@ check("with no brief registered the old behaviour is unchanged: dropped and name
 #    refusal `_trim` already makes, for the same reason: a host-truncated block is worse than a
 #    named absence.
 _t_fat141 = "\n### " + _t_title141 + "\n" + ("x" * 5000) + "\n"
-_t_fatbody141, _ = _t_fit141.shrink(
+_t_fatbody141, __141 = _t_fit141.shrink(
     "## head\n", [_t_keep141, _t_big141], _t_ceiling141,
     {_t_title141: ".chamnan/tools/index.json"}, briefs={_t_title141: _t_fat141})
 check("a brief too large for the room is refused, not forced in",
@@ -30545,7 +30646,7 @@ check("...and the block is still inside the ceiling after the sweep added them",
 
 # Before this change the sweep did not exist, so the second-most-valuable dropped section had no
 # path to the block at all. Proven by asking for the same thing with briefs withheld.
-_bare146, _ = _fit146.shrink("## chamnan\n", _parts146, 3200, sources={}, briefs=None)
+_bare146, __146 = _fit146.shrink("## chamnan\n", _parts146, 3200, sources={}, briefs=None)
 check("...and without briefs neither list reaches the block, which is the state this replaces",
       "tool_00.py" not in _bare146 and "skill_00" not in _bare146)
 
@@ -30650,7 +30751,7 @@ for _mult in (2, 5, 20, 100):
         _M2: ", ".join("`m%d`" % _i for _i in range(8 * _mult)),
     }
     _b2 = {_k: _s2(_k, "names:\n" + _v) for _k, _v in _names2.items()}
-    _body2, _ = _fit146.shrink("## chamnan\n", _parts2, 9500, sources={}, briefs=_b2)
+    _body2, __146 = _fit146.shrink("## chamnan\n", _parts2, 9500, sources={}, briefs=_b2)
     if len(_body2.encode()) > 9500:
         _over146.append("%dx -> %d bytes" % (_mult, len(_body2.encode())))
     for _k, _pre, _mark in ((_T2, "`t", "FULLTOOLS"), (_S2, "`s", "FULLSKILLS"),
@@ -30661,8 +30762,8 @@ for _mult in (2, 5, 20, 100):
             _starved146.append("%dx: %s delivered neither its section nor 3 names (%d)"
                                % (_mult, _k.split(" —")[0], _got))
 
-for _line in _starved146 + _over146:
-    print("      DETAIL  %s" % _line)
+for _line_146 in _starved146 + _over146:
+    print("      DETAIL  %s" % _line_146)
 
 check("NO STORE IS STARVED AS THE STORES GROW — 2x, 5x, 20x and 100x all deliver names",
       not _starved146)
@@ -30723,13 +30824,13 @@ _br7 = {_T7: _s7(_T7, "tools:\n" + ", ".join("`t%d`" % _i for _i in range(40))),
         _S7: _s7(_S7, "skills:\n" + ", ".join("`s%d`" % _i for _i in range(40)))}
 
 # No evidence at all is the fresh-install case, and it must be bit-for-bit what DROP_ORDER gives.
-_none7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7, usage=None)
-_zero7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7, usage={})
+_none7, __147 = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7, usage=None)
+_zero7, __147 = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7, usage={})
 check("a workspace with no recorded opens is ordered exactly as DROP_ORDER says",
       _none7 == _zero7)
 
 # With skills opened and tools not, the two swap the slots they occupy — and nothing else moves.
-_used7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7,
+_used7, __147 = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7,
                            usage={"skills": 8})
 check("THE STORE THIS WORKSPACE OPENS IS THE ONE IT KEEPS",
       _used7.count("`s0`") + _used7.count("SSSS") >= 1)
@@ -30739,7 +30840,7 @@ check("...and the sections the log cannot speak for are not moved by it",
 
 # 🐛 The regression that made the scoping necessary, pinned as its own case: usage must never cost
 # the block the index or the handoff, whatever the counts say.
-_wild7, _ = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7,
+_wild7, __147 = _fit147.shrink("## chamnan\n", _parts7, 4200, sources=_src7, briefs=_br7,
                            usage={"skills": 900, "memory": 900, "tools": 900})
 check("...even when every counted store is opened far more than the uncounted ones",
       ("Architecture index" in _wild7) == ("Architecture index" in _none7))
@@ -30955,13 +31056,13 @@ _CASES149 = (
 
 _g149 = _load149()
 _wrong149 = []
-for _label, _path, _lines, _want in _CASES149:
+for _label_149, _path, _lines, _want_149 in _CASES149:
     _got = bool(_g149.scan_supply_changes(_diff149(_path, _lines)))
-    if _got != _want:
-        _wrong149.append(f"{_label} ({_path}): {'reported' if _got else 'silent'}, "
-                         f"wanted {'a report' if _want else 'silence'}")
-for _w in _wrong149:
-    print(f"      DETAIL  {_w}")
+    if _got != _want_149:
+        _wrong149.append(f"{_label_149} ({_path}): {'reported' if _got else 'silent'}, "
+                         f"wanted {'a report' if _want_149 else 'silence'}")
+for _w_149 in _wrong149:
+    print(f"      DETAIL  {_w_149}")
 
 _quiet149 = [c for c in _CASES149 if not c[3]]
 check("WHERE A DEPENDENCY COMES FROM, AND WHAT IT RUNS, IS REPORTED BEFORE IT IS COMMITTED",
@@ -30998,8 +31099,8 @@ check("...and a supply finding warns rather than blocking, unless --strict was a
 import time as _t_pin
 
 def _store(n, pin_index=None, body=260):
-    _d = Path(tempfile.mkdtemp(prefix="chamnan-pinrule-"))
-    _r = _d / ".chamnan" / "memory" / "rules"
+    _d_14 = Path(tempfile.mkdtemp(prefix="chamnan-pinrule-"))
+    _r = _d_14 / ".chamnan" / "memory" / "rules"
     _r.mkdir(parents=True)
     for _i in range(n):
         _mark = " \U0001F4CC" if _i == pin_index else ""
@@ -31008,18 +31109,18 @@ def _store(n, pin_index=None, body=260):
         # Oldest first, so an unpinned rule 0 would be last under mtime order — the pin has to
         # beat recency, not agree with it by luck.
         os.utime(_f, (1_600_000_000 + _i, 1_600_000_000 + _i))
-    return _d
+    return _d_14
 
 # Across store sizes where the budget genuinely cannot carry everything.
 _lost = []
-for _n in (6, 9, 12, 20, 30):
-    _d = _store(_n, pin_index=0)
+for _n_14 in (6, 9, 12, 20, 30):
+    _d_14 = _store(_n_14, pin_index=0)
     try:
-        _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+        _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d_14)
         if "Rule 0" in _title_only:
-            _lost.append(f"{_n} rules: the pinned one arrived as a title")
+            _lost.append(f"{_n_14} rules: the pinned one arrived as a title")
     finally:
-        shutil.rmtree(_d, ignore_errors=True)
+        shutil.rmtree(_d_14, ignore_errors=True)
 check("a pinned rule arrives with its body however many rules crowd it",
       not _lost, saw="; ".join(_lost) or None)
 
@@ -31030,21 +31131,21 @@ check("a pinned rule arrives with its body however many rules crowd it",
 # it applies — so twenty rules all fit and the branch under test never ran. The fixture is
 # scaled past the runaway guard (`memory.RULES_RUNAWAY_SHARE` of the output ceiling, about
 # thirty-eight rules at the shipped default) so the cut still happens and is still tested.
-_d = _store(60, pin_index=None)
+_d_14 = _store(60, pin_index=None)
 try:
-    _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d)
+    _fitted, _title_only, _c, _b = memory_mod.rules_pressure(_d_14)
     check("...and the same rule unpinned is not privileged", "Rule 0" in _title_only,
           saw=f"fitted {len(_fitted)}, title-only {len(_title_only)}")
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_14, ignore_errors=True)
 
 # A store that pins nothing keeps exactly the order it had.
-_d = _store(9, pin_index=None)
+_d_14 = _store(9, pin_index=None)
 try:
     check("...and a store with no pins is ordered as before",
-          "Rule 8" in memory_mod.rules_text(_d))      # newest still leads
+          "Rule 8" in memory_mod.rules_text(_d_14))      # newest still leads
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_14, ignore_errors=True)
 # ---- 150_the_windows_answers_reachable_without_windows.py
 # ------------------ three items banked for want of a Windows runner, answered without one
 # R6.1, R6.3 and R6.7 were banked on 2026-09-13 as "not refused; not reachable from here" — all
@@ -31094,8 +31195,8 @@ for _p in _PY150:
         if not _ok:
             _which_bad150.append(f"{_p.relative_to(ROOT)}:{_n.lineno}")
 
-for _b in _which_bad150:
-    print(f"      DETAIL  shutil.which result used as a path: {_b}")
+for _b_150 in _which_bad150:
+    print(f"      DETAIL  shutil.which result used as a path: {_b_150}")
 check("R6.7 · NO `shutil.which` RESULT IS USED AS A PATH, so 3.12's PATHEXT change cannot reach us",
       not _which_bad150)
 # And the population is not empty, or the check above passes by having nothing to look at.
@@ -31143,8 +31244,8 @@ _cases150 = (
 )
 _bad150 = [f"{_s!r} ({_why}) -> {_PW150(_s).is_absolute()}"
            for _s, _want, _why in _cases150 if _PW150(_s).is_absolute() != _want]
-for _b in _bad150:
-    print(f"      DETAIL  {_b}")
+for _b_150 in _bad150:
+    print(f"      DETAIL  {_b_150}")
 check("R6.1 · Windows path classification is exercised on this host, with no Windows and no new dependency",
       not _bad150)
 # 🎯 The one that made the item worth banking: `\foo` answered True on Windows before 3.13 and
@@ -31404,13 +31505,13 @@ _CASES153 = (
 )
 
 _wrong153 = []
-for _name, _text, _want in _CASES153:
+for _name_153, _text, _want_153 in _CASES153:
     _got = _rd153.scrub(_text) != _text
-    if _got != _want:
-        _wrong153.append("%s: %s, wanted %s" % (_name, "redacted" if _got else "kept",
-                                                "redaction" if _want else "the text"))
-for _w in _wrong153:
-    print("      DETAIL  %s" % _w)
+    if _got != _want_153:
+        _wrong153.append("%s: %s, wanted %s" % (_name_153, "redacted" if _got else "kept",
+                                                "redaction" if _want_153 else "the text"))
+for _w_153 in _wrong153:
+    print("      DETAIL  %s" % _w_153)
 
 check("A CREDENTIAL A SENTENCE NAMED IS REDACTED, AND PROSE THAT NAMES A FIELD IS NOT",
       not _wrong153)
@@ -31600,11 +31701,11 @@ _unbounded155 = sorted(_numeric155 - set(_upper155))
 # And a ceiling with no floor is half a range.
 _unfloored155 = sorted(set(_upper155) - _nonneg155)
 
-for _label, _bad in (("bound but never defaulted", _orphans155),
+for _label_155, _bad in (("bound but never defaulted", _orphans155),
                      ("numeric default with no upper bound", _unbounded155),
                      ("upper bound with no non-negative floor", _unfloored155)):
     for _k in _bad:
-        print("      DETAIL  %s: %s" % (_label, _k))
+        print("      DETAIL  %s: %s" % (_label_155, _k))
 
 print("      DETAIL  %d default(s), %d bounded, %d numeric"
       % (len(_defaults155), len(_upper155), len(_numeric155)))
@@ -31659,35 +31760,35 @@ _DOCS156 += [p.read_text(encoding="utf-8", errors="replace")[:20_000]
              for p in sorted((ROOT).glob("*.md"))[:6]]
 
 _bad156 = []
-for _n, _doc in enumerate(_DOCS156):
+for _n_156, _doc_156 in enumerate(_DOCS156):
     # 1. Every character `fenced_spans` calls fenced belongs to a line `fenced_lines` calls fenced.
     _fenced_chars = set()
-    for _a, _b in _md156.fenced_spans(_doc):
-        _fenced_chars.update(range(_a, _b))
+    for _a, _b_156 in _md156.fenced_spans(_doc_156):
+        _fenced_chars.update(range(_a, _b_156))
     # 🐛 The first form mapped only the characters OF each line and left the `\n` between them
     # unmapped, so every newline inside a fenced region read as a disagreement — ten of them in one
     # README. `fenced_spans` counts the separator as part of the span, correctly, and the invariant
     # has to agree with that or it is measuring its own bookkeeping.
     _at, _line_fenced = 0, {}
-    for _line, _inside in _mdb156.fenced_lines(_doc):
+    for _line, _inside in _mdb156.fenced_lines(_doc_156):
         for _i in range(_at, _at + len(_line) + 1):
             _line_fenced[_i] = _inside
         _at += len(_line) + 1
     _disagree = [_i for _i in _fenced_chars if not _line_fenced.get(_i, False)]
     if _disagree:
-        _bad156.append("doc %d: %d char(s) fenced by spans and not by lines" % (_n, len(_disagree)))
+        _bad156.append("doc %d: %d char(s) fenced by spans and not by lines" % (_n_156, len(_disagree)))
 
     # 2. `unclosed_fence_marker` is non-empty exactly when a fence is left open. The fence count on
     #    its own lines is the independent way to ask, which is what makes this a cross-check rather
     #    than the same function asked twice.
-    _openers = sum(1 for _l in _doc.splitlines() if _l.strip().startswith("```"))
-    _dangling = bool(_md156.unclosed_fence_marker(_doc))
+    _openers = sum(1 for _l in _doc_156.splitlines() if _l.strip().startswith("```"))
+    _dangling = bool(_md156.unclosed_fence_marker(_doc_156))
     if _dangling != bool(_openers % 2):
         _bad156.append("doc %d: %d fence line(s), unclosed says %s"
-                       % (_n, _openers, _dangling))
+                       % (_n_156, _openers, _dangling))
 
-for _b in _bad156:
-    print("      DETAIL  %s" % _b)
+for _b_156 in _bad156:
+    print("      DETAIL  %s" % _b_156)
 
 check("THREE SCANNERS OVER ONE MARKDOWN STRUCTURE GIVE ONE ANSWER",
       not _bad156)
@@ -31706,9 +31807,9 @@ def _open_fences156(text):
 
 
 check("...and a cut never leaves a fence open, which is what all three exist to protect",
-      all(_mdb156.cut_outside_a_fence(_d, _b) == 0
-          or _open_fences156(_d[:_mdb156.cut_outside_a_fence(_d, _b)]) % 2 == 0
-          for _d in _DOCS156[:7] for _b in range(1, min(len(_d), 60))))
+      all(_mdb156.cut_outside_a_fence(_d, _b_156) == 0
+          or _open_fences156(_d[:_mdb156.cut_outside_a_fence(_d, _b_156)]) % 2 == 0
+          for _d in _DOCS156[:7] for _b_156 in range(1, min(len(_d), 60))))
 # ---- 157_every_adapter_module_is_registered.py
 # ------------------ the adapter population is written down twice and must not drift
 # R18 finding 3 (acc5, 2026-09-15) proposes deriving the adapter registry from the package with
@@ -31748,9 +31849,9 @@ for _key, _mod in sorted(_table157.items()):
 
 _unregistered157 = sorted(_on_disk157 - _registered157)
 _missing157 = sorted(_registered157 - _on_disk157)
-for _x in _broken157 + ["module with no entry: %s" % m for m in _unregistered157] \
+for _x_157 in _broken157 + ["module with no entry: %s" % m for m in _unregistered157] \
         + ["entry with no module: %s" % m for m in _missing157]:
-    print("      DETAIL  %s" % _x)
+    print("      DETAIL  %s" % _x_157)
 print("      DETAIL  %d module(s) on disk, %d registered, %d name(s) including aliases"
       % (len(_on_disk157), len(_registered157), len(_ad157.names()) if hasattr(_ad157, "names") else 0))
 
@@ -31779,8 +31880,8 @@ check("...and a key is allowed to differ from its filename, which one of them mu
 _REQUIRED157 = ("NAME", "TARGET", "CEILING", "render")
 _thin157 = sorted(k for k, m in _table157.items()
                   if not all(hasattr(m, a) for a in _REQUIRED157))
-for _t in _thin157:
-    print("      DETAIL  registered but missing %s: %s" % (", ".join(_REQUIRED157), _t))
+for _t_157 in _thin157:
+    print("      DETAIL  registered but missing %s: %s" % (", ".join(_REQUIRED157), _t_157))
 check("...and every registered adapter declares what the package reads off it",
       not _thin157)
 # ---- 158_the_sets_that_are_identical_today_must_stay_identical.py
@@ -31822,8 +31923,8 @@ for _h in sorted((_PKG158 / "hooks").glob("*.py")):
     _missing = [w for w in ("scrub(", "for_a_terminal") if w not in _t]
     if _missing:
         _thin158.append("%s: no %s" % (_h.name, ", ".join(_missing)))
-for _x in _thin158:
-    print("      DETAIL  %s" % _x)
+for _x_158 in _thin158:
+    print("      DETAIL  %s" % _x_158)
 print("      DETAIL  hooks that emit context: %d, all scrubbing: %s"
       % (len(_emit158), not _thin158))
 
@@ -31836,15 +31937,15 @@ check("...and the population is not empty, so that is not a pass over nothing",
 # 🐛 A check comparing NAMES would pass while the contents drifted, which is the whole failure this
 # is here to catch. The hash is the only thing that answers the question asked.
 _pairs158, _drift158 = 0, []
-for _src in sorted((_PKG158 / "lib").glob("*.py")):
-    _dst = _PKG158 / "site" / "lib" / _src.name
+for _src_158 in sorted((_PKG158 / "lib").glob("*.py")):
+    _dst = _PKG158 / "site" / "lib" / _src_158.name
     if not _dst.is_file():
         continue
     _pairs158 += 1
-    if _h158.sha256(_src.read_bytes()).digest() != _h158.sha256(_dst.read_bytes()).digest():
-        _drift158.append(_src.name)
-for _x in _drift158:
-    print("      DETAIL  site/lib differs from lib: %s" % _x)
+    if _h158.sha256(_src_158.read_bytes()).digest() != _h158.sha256(_dst.read_bytes()).digest():
+        _drift158.append(_src_158.name)
+for _x_158 in _drift158:
+    print("      DETAIL  site/lib differs from lib: %s" % _x_158)
 print("      DETAIL  mirrored module(s): %d, byte-identical: %d" % (_pairs158, _pairs158 - len(_drift158)))
 
 check("EVERY MIRRORED MODULE IN site/lib IS THE SAME BYTES AS ITS lib/ ORIGINAL",
@@ -32041,7 +32142,7 @@ _t_NAME = {"decisions": "Entry", "lessons": "Entry", "rules": "Rule",
 # 50 randomised cases across all five stores. `n` is always larger than what the store injects, so
 # every case is one where something genuinely has to be cut.
 _t_missed = []
-for _t_case in range(50):
+for _t_case_15 in range(50):
     _kind = _t_rnd.choice(("decisions", "lessons", "rules", "milestones", "threads"))
     _n = _t_rnd.randint(6, 22)
     _root = _t_ws(_kind, _n, pin_at=0)
@@ -32079,15 +32180,15 @@ check("...and with nothing pinned the same stores still cut, so the first check 
 # Structural, so the FIFTH store gets the convention by calling it rather than by remembering it.
 # Built at runtime from `state.PIN_MARK` itself: writing the marker literally in this file would
 # make the check match its own source.
-_t_needle = "PIN_" + "MARK"
-_t_own = []
-for _t_f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
-    if _t_f.name == "state.py":
+_t_needle_15 = "PIN_" + "MARK"
+_t_own_15 = []
+for _t_f_15 in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
+    if _t_f_15.name == "state.py":
         continue
-    if _t_needle in _t_f.read_text(encoding="utf-8-sig", errors="replace"):
-        _t_own.append(_t_f.name)
+    if _t_needle_15 in _t_f_15.read_text(encoding="utf-8-sig", errors="replace"):
+        _t_own_15.append(_t_f_15.name)
 check("the pin has one spelling: no store reads the marker itself, they all ask state.pinned",
-      not _t_own, saw=", ".join(_t_own) or None)
+      not _t_own_15, saw=", ".join(_t_own_15) or None)
 # ---- 160_the_current_directory_is_not_a_place_to_find_a_program.py
 # ------------------ R6.7: Windows searches the CURRENT DIRECTORY for a program before it searches PATH
 # `subprocess` on Windows goes through CreateProcess, whose default order reaches the current
@@ -33901,7 +34002,7 @@ check("...AND ALL THREE READERS AGREE IT IS NOT A REPOSITORY",
              _ws179.git_owns(_missing179)))
 
 print("      DETAIL  %d caller(s) share one probe, each keeping its own reading" % len(_callers179))
-_ = _src179
+__179 = _src179
 # ---- 17_a_section_never_built_is_still_reported.py
 # ------------------------------------------- gone from the block AND gone from the notice
 # 🐛 [2026-09-09] `fit.shrink` reports what IT removed. A section the CALLER decided not to build
@@ -33931,7 +34032,7 @@ def _t_section(title, rows):
 # Across ceilings that comfortably fit everything and ceilings that do not, an absent title must be
 # named every time — the failure was specifically a run with room to spare.
 _t_unnamed = []
-for _t_case in range(50):
+for _t_case_17 in range(50):
     _rows = _t_rnd2.randint(2, 30)
     _parts = [_t_section("Work in flight", _rows), _t_section("Rules this repository works under", _rows)]
     _ceiling = _t_rnd2.choice((900, 1500, 3000, 9000, 60000))
@@ -33972,9 +34073,9 @@ check("...and a caller that passes nothing gets exactly what it got before",
 _t_hook = (ROOT / "hooks" / "chamnan_session_start.py").read_text(encoding="utf-8-sig",
                                                                  errors="replace")
 _t_marker = "_never" + "_built"
-_t_sites = _t_hook.count(_t_marker + ".append(")
+_t_sites_17 = _t_hook.count(_t_marker + ".append(")
 check("both hook paths that remove the index before shrink runs record it",
-      _t_sites == 2, saw=f"{_t_sites} recording site(s), expected 2")
+      _t_sites_17 == 2, saw=f"{_t_sites_17} recording site(s), expected 2")
 check("...and the hook hands that list to shrink",
       "absent=" + _t_marker in _t_hook)
 # ---- 180_the_suite_guard_can_tell_a_first_run_from_a_wiped_memory.py
@@ -34094,6 +34195,579 @@ check("NO CHECK TAKES ITS EXPECTED VALUE FROM THIS WORKING COPY'S OWN .chamnan/"
 # check count is known to be in the thousands; a read that came back short means the path moved.
 check("...and the scan actually read the suite, rather than an empty or truncated file",
       _t_src181.count("check(") > 1000)
+# ---- 182_a_repository_cannot_choose_what_git_runs.py
+# ------------------ a repository's own config turning one of our reads into an execution
+# 🐛 [2026-09-18] (R3 agent 2) Reproduced end to end before it was fixed: a repository whose `.git/config` carries
+# `core.fsmonitor = <a program>` runs that program when git refreshes the index, and
+# `git status --porcelain` refreshes the index. `hooks/chamnan_session_start.py` runs exactly that,
+# on every session, inside whatever repository the user opened — so a clone, a dependency checkout or
+# a pull-request branch could run code as the user at session start, with no prompt, because nothing
+# was being asked to trust anything. Run against the pre-fix hook the payload wrote its file and the
+# hook still exited 0 reporting a clean status.
+#
+# That is the GitSpawn class (R3, 2026-09-18), the same key behind Copilot CLI's GHSA-9ccr-r5hg-74gf.
+# The fix is in the ENVIRONMENT — `GIT_CONFIG_COUNT`/`_KEY_n`/`_VALUE_n` set once at import of
+# `workspace` — rather than `-c` at each of twenty-five call sites across eight files, because the
+# defect this package records most often is a fix reaching some members of a set and not the others.
+#
+# This is an end-to-end reproduction rather than a grep for the variable: what matters is that the
+# payload does not run, not that a particular spelling is present.
+import json as _json182
+import re as _re182
+import os as _os182
+import subprocess as _sp182
+import tempfile as _tf182
+from pathlib import Path as _P182
+
+_t_git182 = _sp182.run(["git", "--version"], capture_output=True, text=True)
+if _t_git182.returncode != 0:
+    skip("  [SKIP] git-config execution check — no `git` on PATH")
+else:
+    _t_base182 = _P182(_tf182.mkdtemp())
+    _t_repo182 = _t_base182 / "hostile"
+    _t_repo182.mkdir()
+    _sp182.run(["git", "init", "-q", str(_t_repo182)], capture_output=True)
+    _t_mark182 = _t_base182 / "IT_RAN.txt"
+    _t_pay182 = _t_base182 / "payload.sh"
+    # Writes a file and exits non-zero, which is what a real one would do to stay unnoticed: git
+    # carries on and reports a clean status either way.
+    _t_pay182.write_text("#!/bin/sh\necho ran > %s\nexit 1\n" % _t_mark182, encoding="utf-8")
+    _os182.chmod(str(_t_pay182), 0o755)
+    with open(str(_t_repo182 / ".git" / "config"), "a", encoding="utf-8") as _t_fh182:
+        _t_fh182.write("\n[core]\n\tfsmonitor = %s\n" % _t_pay182)
+    (_t_repo182 / "a.txt").write_text("x\n", encoding="utf-8")
+
+    # The exact call `hooks/chamnan_session_start.py` makes, in this process's environment — which
+    # is the environment importing `workspace` produced.
+    _sp182.run(["git", "-C", str(_t_repo182), "status", "--porcelain"], capture_output=True)
+    check("A REPOSITORY'S OWN CONFIG CANNOT MAKE ONE OF OUR READS EXECUTE SOMETHING",
+          not _t_mark182.is_file(),
+          saw="`git status --porcelain` ran the program named by the repository's core.fsmonitor — "
+              "the hardening in workspace._harden_git_config is missing or has been overridden")
+
+    # An empty population is not a pass: if the payload could never have run in this environment,
+    # the check above would pass whatever the hardening did. So prove the mechanism still exists by
+    # running the same repository with our own config entries removed.
+    _t_env182 = dict(_os182.environ)
+    for _t_k182 in [_t_k for _t_k in _t_env182 if _t_k.startswith("GIT_CONFIG_")]:
+        _t_env182.pop(_t_k182, None)
+    if _t_mark182.is_file():
+        _t_mark182.unlink()
+    _sp182.run(["git", "-C", str(_t_repo182), "status", "--porcelain"],
+               capture_output=True, env=_t_env182)
+    check("...and the check can fail, because the same repository still executes it unprotected",
+          _t_mark182.is_file(),
+          saw="the payload did not run even with our config entries removed, so this git build does "
+              "not honour core.fsmonitor and the check above proves nothing on this machine")
+    _rmtree(_t_base182, ignore_errors=True)
+
+# 🐛 [2026-09-18] (R3 agent 2) The SECOND vector, and `--no-ext-diff` does not cover it: a repository shipping
+# `.gitattributes` with `*.bin diff=evil` and a `[diff "evil"] textconv = <program>` in its own
+# config had that program executed by `chamnan-guard`'s staged diff, by `chamnan-guard --history`'s
+# `log -p`, and — worst of the three — by the session-start hook's `diff --quiet`, which runs before
+# the user has typed anything. `--quiet` suppresses the OUTPUT; the driver still runs to produce it.
+# `GIT_CONFIG_*` cannot close this one, because the driver's NAME is chosen by the repository, so
+# the flag has to be at the call site and the population has to be asserted rather than remembered.
+_t_diffy182 = []
+for _t_f182 in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")) + \
+        [_t_p182 for _t_p182 in sorted((ROOT / "bin").iterdir())
+         if _t_p182.is_file() and _t_p182.suffix in ("", ".py")]:
+    _t_src182b = _t_f182.read_text(encoding="utf-8", errors="replace")
+    # 🐛 Comments are stripped first. The bug markers written INSIDE these argv lists carry a
+    # bracketed date, and a regex that stops at the first `]` ended at `[2026-09-18]` instead
+    # of at the end of the call — reporting two protected calls as unprotected on the first
+    # run of this check. A scanner whose own repository's comment style breaks it is worse
+    # than no scanner, because the failure looks exactly like the defect.
+    _t_src182b = _re182.sub(r"(?m)#.*$", "", _t_src182b)
+    for _t_m182 in _re182.finditer(r'\["git"[^\]]*\]', _t_src182b, _re182.S):
+        _t_call182 = _t_m182.group(0)
+        # Only the shapes that render a PATCH reach a textconv driver. `log --name-only` does not,
+        # and that was measured rather than assumed.
+        _t_patchy182 = ('"diff"' in _t_call182) or ('"log"' in _t_call182 and '"-p"' in _t_call182)
+        if _t_patchy182 and "--no-textconv" not in _t_call182:
+            _t_diffy182.append("%s: %s" % (_t_f182.name, " ".join(_t_call182.split())[:80]))
+if _t_diffy182:
+    for _t_line182 in _t_diffy182[:5]:
+        print("      " + _t_line182)
+check("EVERY GIT CALL THAT RENDERS A PATCH REFUSES THE REPOSITORY'S OWN TEXTCONV DRIVER",
+      _t_diffy182 == [],
+      saw="%d patch-rendering git call(s) without --no-textconv" % len(_t_diffy182))
+
+# 🐛 [R6, 2026-09-18] The central mitigation above is one `env=` away from being silently discarded:
+# `subprocess` REPLACES the environment when `env=` is passed rather than augmenting it, so a caller
+# that builds a fresh mapping loses `GIT_CONFIG_*` and every child it spawns goes back to honouring
+# the repository's own config. Checked when the finding arrived: both call sites that pass `env=`
+# build it from `os.environ` (`dict(os.environ, **{...})` in `bin/chamnan-map`, `dict(os.environ)` in
+# `lib/schedule.py`), so nothing is exposed today. This asserts the POPULATION rather than those two,
+# because the failure is invisible — the child simply runs without the protection and reports nothing.
+_t_envy182 = []
+for _t_f182c in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")) + \
+        [_t_p182c for _t_p182c in sorted((ROOT / "bin").iterdir())
+         if _t_p182c.is_file() and _t_p182c.suffix in ("", ".py")]:
+    _t_src182c = _t_re182c = _t_f182c.read_text(encoding="utf-8", errors="replace")
+    _t_src182c = _re182.sub(r"(?m)#.*$", "", _t_src182c)
+    if not _re182.search(r"\benv\s*=\s*[A-Za-z_]", _t_src182c):
+        continue
+    # Every mapping this file could be passing has to come from the real environment. Both spellings
+    # that do are accepted; anything else is a fresh dict and is what this is looking for.
+    _t_derived182 = ("dict(os.environ" in _t_src182c) or ("os.environ if" in _t_src182c) \
+        or ("os.environ.copy()" in _t_src182c)
+    # `env=None`, `env=env` in a signature and `env=` on a helper of our own are not subprocess calls.
+    _t_calls182 = _re182.findall(r"(?:subprocess|sp)\.(?:run|Popen|call|check_output)\([^)]*env\s*=",
+                                 _t_src182c, _re182.S)
+    if _t_calls182 and not _t_derived182:
+        _t_envy182.append("%s: %d subprocess call(s) pass env= with no os.environ in the file"
+                          % (_t_f182c.name, len(_t_calls182)))
+if _t_envy182:
+    for _t_line182c in _t_envy182[:5]:
+        print("      " + _t_line182c)
+check("A SUBPROCESS THAT REPLACES THE ENVIRONMENT STILL CARRIES THE GIT HARDENING",
+      _t_envy182 == [],
+      saw="%d file(s) hand a subprocess a fresh environment — the child loses GIT_CONFIG_* and goes "
+          "back to honouring the repository's own config" % len(_t_envy182))
+# ---- 183_a_piped_report_does_not_hand_an_agent_its_tables.py
+# ------------------ output written for a person and charged to a model that cannot skim
+# 🎯 [R5 agent 6, 2026-09-18] `chamnan-report` prints about 3,850 tokens — more than the whole session-start
+# block, whose ceiling is 9,500 BYTES — while every other command here is under 400. Until this
+# landed there was no `isatty` call anywhere in `lib/` or `bin/`, so a dispatched agent, which is
+# never a TTY, paid for the person's tables on every turn afterwards. `gh` switches its output on the
+# same test with no flag; a flag only helps the caller who already knew to pass it.
+#
+# Measured when it landed: 19,071 chars at a terminal against 3,373 piped, and `--full` reproduced
+# the previous default BYTE FOR BYTE. That last property is what this block exists to keep.
+import subprocess as _sp183
+import sys as _sys183
+
+_t_rep183 = ROOT / "bin" / "chamnan-report"
+if not _t_rep183.is_file():
+    skip("  [SKIP] report output-shape check — no bin/chamnan-report")
+else:
+    def _t_run183(*flags):
+        # Captured, so stdout is never a TTY — which is exactly the reader this is about.
+        return _sp183.run([_sys183.executable, str(_t_rep183)] + list(flags),
+                          cwd=str(ROOT.parent.parent), capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=180).stdout
+
+    _t_piped183 = _t_run183()
+    _t_full183 = _t_run183("--full")
+    check("A PIPED REPORT IS THE SUMMARY, NOT THE TABLES",
+          len(_t_piped183) * 2 < len(_t_full183),
+          saw="piped %d chars against --full %d; the non-terminal reader is still being handed the "
+              "full output" % (len(_t_piped183), len(_t_full183)))
+    # The half that matters to the person: --full has to be the whole thing, not a longer summary.
+    check("...and --full still carries the sections a person runs it for",
+          "Knowledge inventory" in _t_full183 and "Knowledge inventory" not in _t_piped183,
+          saw="--full missing the inventory, or the summary carrying it")
+    # The summary must still ANSWER the question the command exists for, or it is not a summary,
+    # it is a refusal.
+    check("...and the summary still reports what each session was handed",
+          "What each session was handed" in _t_piped183,
+          saw="the piped form dropped the block trend, which is the measurement this command is for")
+    # 🐛 The risk this block was written against: `chamnan-report` also PRUNES, and a short mode that
+    # returned early would have skipped it silently. Both modes must reach the same side effects.
+    _t_src183 = _t_rep183.read_text(encoding="utf-8", errors="replace")
+    _t_body183 = _t_src183[_t_src183.index("def main("):]
+    _t_short183 = _t_body183.index("_short = ")
+    _t_prunes183 = [_t_n183 for _t_n183 in ("prune_logs", "prune_orphaned_temps", "prune_sessions")
+                    if _t_n183 in _t_body183[_t_short183:]]
+    check("...and pruning still happens on both paths, after the branch rather than inside one",
+          len(_t_prunes183) == 3,
+          saw="only %s reached after the short/full branch" % (_t_prunes183,))
+# ---- 184_two_features_switched_off_together.py
+# ------------------ every feature verified alone, and no two of them ever verified together
+# 🎯 [R12 agent 5, 2026-09-18] chamnan has sixteen boolean feature switches — 65,536 states, 120 pairs — and
+# every configuration the suite wrote flipped AT MOST ONE away from the defaults (`{"map": false}`,
+# `{**DEFAULT_CONFIG, "promote": False}`). Measured before this block existed: **0 of 120 pairs
+# exercised.** Sixteen features each verified alone is exactly the population the interaction-fault
+# literature is about, and NIST's own work is that pairwise faults dominate a real fault population.
+#
+# The pairs are DERIVED, not chosen: eleven of the sixteen are consulted by `chamnan_session_start.py`,
+# the one file every session runs, and they all decide what goes into the same block. That is 55
+# pairs sharing one output, which is where an interaction can actually happen. A hand-written list
+# would be taste, and R33 spent a morning on detectors chosen that way.
+#
+# What is asserted per pair is deliberately weak and cheap: with both off, the hook must exit 0, emit
+# no traceback, and leave no unterminated fence. A stronger per-pair assertion would need to know
+# what each section should look like, which is what the rest of the suite already does one at a time.
+import itertools as _it184
+import json as _json184
+import re as _re184
+import subprocess as _sp184
+import sys as _sys184
+import tempfile as _tf184
+from pathlib import Path as _P184
+
+_t_ws184 = None
+try:
+    _sys184.path.insert(0, str(ROOT / "lib"))
+    import workspace as _wsmod184
+    _t_ws184 = _wsmod184
+except Exception:
+    _t_ws184 = None
+
+_t_hook184 = ROOT / "hooks" / "chamnan_session_start.py"
+if _t_ws184 is None or not _t_hook184.is_file():
+    skip("  [SKIP] feature-pair check — workspace or the session-start hook is not importable")
+else:
+    _t_sw184 = [k for k, v in _t_ws184.DEFAULT_CONFIG.items() if isinstance(v, bool)]
+    _t_src184 = _t_hook184.read_text(encoding="utf-8", errors="replace")
+    _t_inhook184 = sorted(k for k in _t_sw184
+                          if _re184.search(r'["\']%s["\']' % _re184.escape(k), _t_src184))
+    _t_pairs184 = list(_it184.combinations(_t_inhook184, 2))
+
+    _t_base184 = _P184(_tf184.mkdtemp())
+    _t_repo184 = _t_base184 / "r"
+    (_t_repo184 / ".git").mkdir(parents=True)
+    (_t_repo184 / "src").mkdir()
+    (_t_repo184 / "src" / "a.py").write_text("# one thing\ndef go():\n    return 1\n", encoding="utf-8")
+    _sp184.run([_sys184.executable, str(ROOT / "bin" / "chamnan-map")],
+               cwd=str(_t_repo184), capture_output=True, text=True)
+    _t_cfg184 = _t_repo184 / ".chamnan" / "config.json"
+
+    _t_broke184 = []
+    for _t_a184, _t_b184 in _t_pairs184:
+        _t_cfg184.write_text(_json184.dumps({**_t_ws184.DEFAULT_CONFIG,
+                                             _t_a184: False, _t_b184: False}), encoding="utf-8")
+        _t_r184 = _sp184.run(
+            [_sys184.executable, str(_t_hook184)], cwd=str(_t_repo184),
+            input=_json184.dumps({"session_id": "pair-%s-%s" % (_t_a184, _t_b184),
+                                  "cwd": str(_t_repo184)}),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
+        _t_out184 = (_t_r184.stdout or "") + (_t_r184.stderr or "")
+        _t_open184 = len(_re184.findall(r"\[repo:[0-9a-f]+\]", _t_out184))
+        _t_close184 = len(_re184.findall(r"\[/repo:[0-9a-f]+\]", _t_out184))
+        if _t_r184.returncode != 0 or "Traceback" in _t_out184 or _t_open184 != _t_close184:
+            _t_broke184.append("%s+%s (exit %d, %d open / %d close fence%s)"
+                               % (_t_a184, _t_b184, _t_r184.returncode, _t_open184, _t_close184,
+                                  ", traceback" if "Traceback" in _t_out184 else ""))
+    if _t_broke184:
+        for _t_line184 in _t_broke184[:5]:
+            print("      " + _t_line184)
+    print("      DETAIL  %d switch pair(s) exercised together, derived from the %d the session-start "
+          "hook consults" % (len(_t_pairs184), len(_t_inhook184)))
+    check("NO PAIR OF FEATURES SWITCHED OFF TOGETHER BREAKS THE SESSION BLOCK",
+          _t_broke184 == [],
+          saw="%d pair(s) failed: %s" % (len(_t_broke184), _t_broke184[:3]))
+    # An empty population is not a pass — if the derivation returns nothing, this block proves nothing.
+    check("...and the pair population was actually derived, rather than coming back empty",
+          len(_t_pairs184) >= 20,
+          saw="only %d pair(s) derived from %d switch(es)" % (len(_t_pairs184), len(_t_inhook184)))
+    _rmtree(_t_base184, ignore_errors=True)
+# ---- 185_a_json_read_that_cannot_strip_a_bom.py
+# ------------------ a json.loads read that cannot strip a BOM reports absence instead of drift
+# 🎯 [2026-09-18] json.loads raises on a leading UTF-8 BOM -- "Unexpected UTF-8 BOM (decode using
+# utf-8-sig)" -- and Python's own message names the fix. An AST sweep of `lib/*.py`, `hooks/*.py`
+# and every file in `bin/` for every `read_text(...)` call reachable inside a `json.loads(...)`
+# call found 5 of 21 sites (23.8%) reading with plain `encoding="utf-8"`. Three of the five read a
+# file a HOST writes, not chamnan itself -- `installed_plugins.json`, a host's `settings.json`, and
+# the `plugin.json` it points at -- which is what makes this reachable rather than theoretical:
+# PowerShell's `Set-Content` writes UTF-8 with a BOM by default. Nothing crashes: each falls into
+# an existing `except (OSError, ValueError, ...)` and reports "not installed / unknown" instead --
+# `survey()` goes quiet on a host where chamnan is running, and `skill_overlap` silently sees no
+# installed plugins. Fixed at the five sites; this block is what keeps the population at zero.
+import ast as _ast185
+import json as _json185
+import tempfile as _tf185
+from pathlib import Path as _P185
+
+
+def _read_text_under_json_loads185(tree):
+    """Every read_text(...) call reachable inside a json.loads(...) call, anywhere in `tree`."""
+    out = []
+    for node in _ast185.walk(tree):
+        fn = getattr(node, "func", None)
+        if not (isinstance(node, _ast185.Call) and isinstance(fn, _ast185.Attribute)
+                and fn.attr == "loads" and isinstance(fn.value, _ast185.Name)
+                and fn.value.id == "json"):
+            continue
+        for sub in _ast185.walk(node):
+            if (isinstance(sub, _ast185.Call) and isinstance(sub.func, _ast185.Attribute)
+                    and sub.func.attr == "read_text"):
+                out.append(sub)
+    return out
+
+
+_t_files185 = (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+               + sorted(p for p in (ROOT / "bin").iterdir() if p.is_file()))
+
+_t_hits185 = []
+for _t_f185 in _t_files185:
+    try:
+        _t_src185 = _t_f185.read_text(encoding="utf-8-sig", errors="replace")
+        _t_tree185 = _ast185.parse(_t_src185)
+    except (OSError, SyntaxError):
+        # Cannot parse -> skipped, not failed; this population is about json reads chamnan itself
+        # writes correctly, not about every file being valid Python.
+        continue
+    for _t_call185 in _read_text_under_json_loads185(_t_tree185):
+        _t_kw185 = next((k.value for k in _t_call185.keywords if k.arg == "encoding"), None)
+        # ast.unparse of the keyword's own source, not a regex on the raw text: lib/peek.py passes
+        # encoding=_text_encoding(path) or "utf-8-sig", where a substring test on the unparsed
+        # keyword correctly sees "utf-8-sig" in the expression -- a plain regex over the file text
+        # would either miss it or, worse, match an unrelated mention of the string elsewhere on
+        # the same line.
+        _t_txt185 = _ast185.unparse(_t_kw185) if _t_kw185 is not None else "<none>"
+        _t_hits185.append((_t_f185, _t_call185.lineno, _t_txt185))
+
+_t_bad185 = ["%s:%d %s" % (_f.relative_to(ROOT), _ln, _txt)
+             for _f, _ln, _txt in _t_hits185 if "utf-8-sig" not in _txt]
+
+if _t_bad185:
+    for _t_line185 in _t_bad185[:10]:
+        print("      " + _t_line185)
+check("EVERY read_text() FEEDING json.loads() CAN STRIP A LEADING BOM",
+      _t_bad185 == [],
+      saw="%d of %d site(s) cannot: %s" % (len(_t_bad185), len(_t_hits185), _t_bad185[:5]))
+# An empty population is not a pass -- if the derivation returns nothing, this block proves
+# nothing, and .chamnan/memory/ already records exactly that failure mode once.
+check("...and the read_text()-under-json.loads() population was actually derived, not empty",
+      len(_t_hits185) > 0,
+      saw="found %d read_text() call(s) under json.loads() across %d file(s)"
+          % (len(_t_hits185), len(_t_files185)))
+
+# Pin the mechanism itself, from first principles, so this block still means something if
+# what utf-8-sig does ever changes: a leading BOM parses under "utf-8-sig" and raises under
+# plain "utf-8".
+_t_tmp185 = _P185(_tf185.mkdtemp()) / "bom.json"
+_t_tmp185.write_bytes("﻿".encode("utf-8") + b'{"a": 1}')
+try:
+    _json185.loads(_t_tmp185.read_text(encoding="utf-8-sig"))
+    _t_sig_ok185 = True
+except _json185.JSONDecodeError:
+    _t_sig_ok185 = False
+try:
+    _json185.loads(_t_tmp185.read_text(encoding="utf-8"))
+    _t_plain_raised185 = False
+except _json185.JSONDecodeError:
+    _t_plain_raised185 = True
+check("utf-8-sig STRIPS A LEADING BOM WHERE utf-8 RAISES -- the mechanism this check is about",
+      _t_sig_ok185 and _t_plain_raised185,
+      saw="utf-8-sig parsed=%s, utf-8 raised=%s" % (_t_sig_ok185, _t_plain_raised185))
+# ---- 186_a_fix_that_does_not_say_which_round_found_it.py
+# ------------------ a recent defect record with no research citation is invisible to the index
+# 🎯 [2026-09-18] `INDEX_CITED_IN_CODE.md` is built by reading citations OUT OF the shipped source
+# (`.chamnan/tools/research_citations.py`), and five commits shipped 2026-09-18 carried a `🐛`
+# defect record with no citation at all -- measured with
+# `git show <sha> -- lib/ bin/ hooks/ | grep -cE '\(R[0-9]+ ?(agent|acc|item)'`, all five returned 0.
+# A record with no citation in one of the four accepted forms is a fix the index cannot see, even
+# though the research that found it is sitting in `state/research/`. Asserted only on records
+# dated on or after the day this rule started -- a record dated before that predates the rule
+# entirely and was written under no such obligation. Most of those could never satisfy it
+# honestly either: read their own prose and they name the gate, the owner's own infrastructure
+# repository, or the work itself as the source, not a research round -- forcing one on would put
+# a fabricated attribution into the one document that exists to let a claim be followed back to a
+# diff. Back-filling that backlog is recorded separately and is not this check's job;
+# `research_provenance.py` is what measures it.
+import datetime as _dt186
+import importlib.util as _ilu186
+import re as _re186
+
+# Non-research provenance markers this check also accepts, alongside a round citation.
+# Deliberately NOT read by `research_citations.py`'s CITE pattern, and that is not an oversight to
+# fix -- `INDEX_CITED_IN_CODE.md` exists to say what RESEARCH changed the code, and the moment CITE
+# recognised one of these too, every self-measured or agent-found fix would inflate that figure
+# with something research never touched. This check asks the broader question ("does the record
+# say where it came from at all"); the index asks the narrower one ("did research say so"); they
+# are allowed to disagree, and disagreeing on purpose is what keeps the index honest.
+_NONRESEARCH186 = _re186.compile(r"\((?:self-measured|agent|owner)\)", _re186.I)
+
+# The day this rule started binding. Records dated before it were written when no such rule
+# existed and are not in the population this check asserts over -- see the block comment above.
+_RULE_STARTED_186 = _dt186.date(2026, 9, 18)
+
+_t_rc_path186 = ROOT.parent.parent / ".chamnan" / "tools" / "research_citations.py"
+_t_rc186 = None
+if _t_rc_path186.is_file():
+    try:
+        _t_spec186 = _ilu186.spec_from_file_location("research_citations186", str(_t_rc_path186))
+        _t_rc186 = _ilu186.module_from_spec(_t_spec186)
+        _t_spec186.loader.exec_module(_t_rc186)
+    except Exception:      # noqa: BLE001 — an unloadable tool is a skip, not a false green
+        _t_rc186 = None
+
+if _t_rc186 is None:
+    skip("  [SKIP] check 186 — could not load %s to get its CITE/DATED patterns" % (_t_rc_path186,))
+else:
+    CITE186, DATED186 = _t_rc186.CITE, _t_rc186.DATED
+
+    _t_recent186 = 0
+    _t_offenders186 = []
+    _t_round_cited186 = 0      # recent records that carry a round citation (the CITE186 form)
+    _t_other_cited186 = 0      # recent records that state a non-research source instead
+    _t_below_floor_uncited186 = 0   # fallback count, used only if research_provenance.py won't load
+    for _t_f186 in _t_rc186.shipped_files():
+        try:
+            _t_lines186 = _t_f186.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        _t_rel186 = _t_f186.relative_to(_t_rc186.PLUGIN).as_posix()
+        for _t_i186, _t_line186 in enumerate(_t_lines186, 1):
+            _t_m186 = DATED186.search(_t_line186)
+            if not _t_m186:
+                continue
+            try:
+                _t_when186 = _dt186.datetime.strptime(_t_m186.group(1), "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            _t_cited186 = _t_rc186.record_names_a_round(_t_lines186, _t_i186)
+            if _t_when186 < _RULE_STARTED_186:
+                # Predates the rule -- not in the population, but still counted (as a fallback,
+                # see below) so the backlog stays visible even if research_provenance.py won't load.
+                if not _t_cited186:
+                    _t_below_floor_uncited186 += 1
+                continue
+            _t_recent186 += 1
+            _t_window186 = _t_lines186[_t_i186 - 1:_t_i186 - 1 + _t_rc186.RECORD_CITATION_WINDOW]
+            if _t_cited186:
+                _t_round_cited186 += 1
+            elif any(_NONRESEARCH186.search(_t_l186) for _t_l186 in _t_window186):
+                _t_other_cited186 += 1
+            else:
+                _t_head186 = DATED186.sub("", _t_line186).lstrip("#% ").strip()
+                _t_offenders186.append("%s:%d — %s" % (_t_rel186, _t_i186, _t_head186[:120]))
+
+    # How many records sit BELOW the floor with no citation -- computed by research_provenance.py,
+    # which already derives exactly this number, rather than re-derived here. Imported the same
+    # way as research_citations.py above; if it cannot be loaded, fall back to what this check
+    # itself counted while walking the population above, and say so plainly.
+    _t_rp_path186 = ROOT.parent.parent / ".chamnan" / "tools" / "research_provenance.py"
+    _t_rp186 = None
+    if _t_rp_path186.is_file():
+        try:
+            _t_rp_spec186 = _ilu186.spec_from_file_location("research_provenance186", str(_t_rp_path186))
+            _t_rp186 = _ilu186.module_from_spec(_t_rp_spec186)
+            _t_rp_spec186.loader.exec_module(_t_rp186)
+        except Exception:      # noqa: BLE001 — an unloadable tool falls back, not a false green
+            _t_rp186 = None
+
+    if _t_rp186 is not None:
+        try:
+            _t_below_floor186 = sum(
+                1 for _t_r186 in _t_rp186.records(_t_rc186)
+                if _t_r186["when"] < _RULE_STARTED_186 and not _t_r186["cited"]
+            )
+            _t_below_note186 = ("%d record(s) below the 2026-09-18 floor still name no round "
+                                 "(research_provenance.py)" % _t_below_floor186)
+        except Exception:       # noqa: BLE001 — a broken call falls back, not a false green
+            _t_below_note186 = ("could not compute the below-floor count via research_provenance.py; "
+                                 "this check counted %d itself while walking the population above"
+                                 % _t_below_floor_uncited186)
+    else:
+        _t_below_note186 = ("could not load research_provenance.py to compute the below-floor count; "
+                             "this check counted %d itself while walking the population above"
+                             % _t_below_floor_uncited186)
+
+    if _t_recent186 == 0:
+        skip("  [SKIP] check 186 — no 🐛 defect record dated on or after %s; nothing to assert on"
+             % (_RULE_STARTED_186.isoformat(),))
+    else:
+        if _t_offenders186:
+            for _t_line186 in _t_offenders186[:10]:
+                print("      " + _t_line186)
+        check("EVERY 🐛 RECORD DATED ON OR AFTER %s NAMES WHERE IT CAME FROM (A ROUND, OR A STATED "
+              "NON-RESEARCH SOURCE)" % (_RULE_STARTED_186.isoformat(),),
+              _t_offenders186 == [],
+              saw="%d of %d record(s) since the floor name neither (%d cite a round, %d state a "
+                  "non-research source): %s — %s"
+                  % (len(_t_offenders186), _t_recent186, _t_round_cited186, _t_other_cited186,
+                     _t_offenders186[:5], _t_below_note186))
+# ---- 187_a_narrow_map_cannot_replace_a_whole_one.py
+# --------------------------- a narrow chamnan-map run replaced a whole index, exit 0, no warning
+# 🎯 [2026-09-18] Reproduced end to end before this fix: an 8-file throwaway repository's full map
+# came to 1,025 bytes / 8 file section(s); mapping only ONE subdirectory of that same repository
+# REPLACED `.chamnan/MAP.md` with 568 bytes / 2 file section(s), exit 0, nothing on stdout or
+# stderr to say a write had even happened, and nothing written anywhere else. It had already
+# happened for real on this repository — engineer-operate's own testing turned
+# `.chamnan/state/research/chamnan_research_backlog.md` from 586 files to 1, caught by accident and
+# restored by hand.
+#
+# The fix: before writing, `bin/chamnan-map` now reads which files the existing map already
+# describes (from its own `## \`path\`` headings) and refuses — writes nothing, exits non-zero —
+# if the requested directories would drop any of them, unless `--replace` says to narrow it anyway.
+import re as _re187
+import subprocess as _sp187
+import sys as _sys187
+import tempfile as _tf187
+from pathlib import Path as _P187
+
+_t_cmd187 = ROOT / "bin" / "chamnan-map"
+
+
+def _sections187(map_path):
+    """How many `## `path`` file headings the map at `map_path` carries, or -1 if it is missing."""
+    if not map_path.is_file():
+        return -1
+    return len(_re187.findall(r"(?m)^## `[^`]*`$",
+                              map_path.read_text(encoding="utf-8", errors="replace")))
+
+
+def _fixture187():
+    """A throwaway repository: two files at the top, one in `sub/`, two under `sub/inner/`."""
+    base = _P187(_tf187.mkdtemp())
+    repo = base / "r"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "sub" / "inner").mkdir(parents=True)
+    (repo / "top_a.py").write_text("# top file a\ndef a():\n    return 1\n", encoding="utf-8")
+    (repo / "top_b.py").write_text("# top file b\ndef b():\n    return 2\n", encoding="utf-8")
+    (repo / "sub" / "c.py").write_text("# sub file c\ndef c():\n    return 3\n", encoding="utf-8")
+    (repo / "sub" / "inner" / "d.py").write_text("# inner file d\ndef d():\n    return 4\n",
+                                                  encoding="utf-8")
+    (repo / "sub" / "inner" / "e.py").write_text("# inner file e\ndef e():\n    return 5\n",
+                                                  encoding="utf-8")
+    return base, repo
+
+
+_t_probe187 = None
+try:
+    _t_probe187 = _sp187.run([_sys187.executable, str(_t_cmd187), "--help"],
+                             capture_output=True, text=True, timeout=30)
+except Exception:
+    _t_probe187 = None
+
+if _t_cmd187 is None or not _t_cmd187.is_file() or _t_probe187 is None or _t_probe187.returncode != 0:
+    skip("  [SKIP] narrow-map-cannot-replace check — bin/chamnan-map --help did not run cleanly "
+         "in this environment")
+else:
+    # 1 & 2. Full map, then a narrow one with no flag — must be refused, map left untouched.
+    _t_base1, _t_repo1 = _fixture187()
+    _t_map1 = _t_repo1 / ".chamnan" / "MAP.md"
+    _t_full1 = _sp187.run([_sys187.executable, str(_t_cmd187)], cwd=str(_t_repo1),
+                          capture_output=True, text=True, timeout=60)
+    _t_full_n1 = _sections187(_t_map1)
+    _t_narrow1 = _sp187.run([_sys187.executable, str(_t_cmd187), "sub/inner"], cwd=str(_t_repo1),
+                            capture_output=True, text=True, timeout=60)
+    check("A FULL MAP OF THE FIXTURE BUILDS ALL 5 FILE SECTIONS, SO THE REST OF THIS PROVES SOMETHING",
+          _t_full1.returncode == 0 and _t_full_n1 == 5,
+          saw="full-map exit=%d, section count=%d (expected 0 and 5)"
+              % (_t_full1.returncode, _t_full_n1))
+    check("A NARROW RUN THAT WOULD DROP FILES THE MAP ALREADY DESCRIBES IS REFUSED, EXIT NON-ZERO",
+          _t_narrow1.returncode != 0,
+          saw="`chamnan-map sub/inner` (no --replace) exited %d, stderr=%r"
+              % (_t_narrow1.returncode, _t_narrow1.stderr[:300]))
+    check("...and the map on disk still has its full section count after the refusal",
+          _sections187(_t_map1) == _t_full_n1,
+          saw="%d section(s) on disk after the refused narrow run, expected the untouched full "
+              "count %d" % (_sections187(_t_map1), _t_full_n1))
+
+    # 2b. The SAME narrow run, with --replace — must succeed and actually narrow the map.
+    _t_narrow_ok1 = _sp187.run([_sys187.executable, str(_t_cmd187), "sub/inner", "--replace"],
+                               cwd=str(_t_repo1), capture_output=True, text=True, timeout=60)
+    check("...and THE SAME RUN WITH --replace SUCCEEDS AND NARROWS THE MAP",
+          _t_narrow_ok1.returncode == 0 and _sections187(_t_map1) == 2,
+          saw="`chamnan-map sub/inner --replace` exited %d, section count now %d (expected 0 and 2)"
+              % (_t_narrow_ok1.returncode, _sections187(_t_map1)))
+    _rmtree(_t_base1, ignore_errors=True)
+
+    # 3. A repository with no existing map at all — a narrow run must still work, unrefused.
+    _t_base2, _t_repo2 = _fixture187()
+    _t_map2 = _t_repo2 / ".chamnan" / "MAP.md"
+    _t_first187 = _sp187.run([_sys187.executable, str(_t_cmd187), "sub/inner"], cwd=str(_t_repo2),
+                             capture_output=True, text=True, timeout=60)
+    check("A NARROW RUN AGAINST A REPOSITORY WITH NO EXISTING MAP STILL WORKS, UNREFUSED",
+          _t_first187.returncode == 0 and _sections187(_t_map2) == 2,
+          saw="first-ever narrow run exit=%d, section count=%d (expected 0 and 2), stderr=%r"
+              % (_t_first187.returncode, _sections187(_t_map2), _t_first187.stderr[:300]))
+    _rmtree(_t_base2, ignore_errors=True)
 # ---- 18_a_pointer_does_not_repeat_the_title_above_it.py
 # ------------------------------------------- the reader is looking at the title; give them the path
 # 🐛 [2026-09-09] Each trimmed rule ended with "_…the rest of **<full title>** is in `<path>`._" and
@@ -34150,7 +34824,7 @@ def _t_rules_fixed_ws(n, title_words):
 
 # 50 stores, over the range of title lengths where the duplication actually costs something.
 _t_dupes = []
-for _t_case in range(50):
+for _t_case_18 in range(50):
     _n = _t_rnd3.randint(4, 12)
     _root, _titles = _t_rules_ws(_n, _t_rnd3.randint(3, 14))
     try:
@@ -34170,7 +34844,7 @@ check("a rule's pointer sentence does not repeat the title printed directly abov
 # The pointer still has to name the FILE, which is the half the reader does not have. Dropping the
 # duplication must not become dropping the pointer.
 _t_pathless = []
-for _t_case in range(12):
+for _t_case_18 in range(12):
     _n = _t_rnd3.randint(4, 12)
     _root, _titles = _t_rules_ws(_n, 6)
     try:
@@ -34261,8 +34935,8 @@ def _t_fire(wsdir, sid, transcript, n):
 
 # 50 randomised rounds: one parent and a handful of subagents, all under ONE session id.
 _t_inflated = []
-for _t_case in range(50):
-    _sid = f"sess-{_t_case}"
+for _t_case_19 in range(50):
+    _sid = f"sess-{_t_case_19}"
     _ws19 = _t_ws19()
     try:
         _parent_calls = _t_r19.randint(5, 40)
@@ -34281,8 +34955,8 @@ check("a subagent sharing its parent's session id does not increment the parent'
 # It must still COUNT. A guard that rejects everything would pass the check above and silently
 # retire the one mechanism that gets a session recorded.
 _t_dead = []
-for _t_case in range(12):
-    _sid = f"solo-{_t_case}"
+for _t_case_19 in range(12):
+    _sid = f"solo-{_t_case_19}"
     _ws19 = _t_ws19()
     try:
         _n = _t_r19.randint(3, 60)
@@ -34358,9 +35032,9 @@ check("...and a value inside the bound is still honoured, so the dial still turn
 # One table, reachable by name, so the next door onto the same number asks rather than re-decides.
 _t_priv = "_UPPER" + "_BOUND"
 _t_reaching = []
-for _t_f in sorted((ROOT / "hooks").glob("*.py")) + sorted((ROOT / "bin").glob("chamnan-*")):
-    if _t_priv in _t_f.read_text(encoding="utf-8-sig", errors="replace"):
-        _t_reaching.append(_t_f.name)
+for _t_f_20 in sorted((ROOT / "hooks").glob("*.py")) + sorted((ROOT / "bin").glob("chamnan-*")):
+    if _t_priv in _t_f_20.read_text(encoding="utf-8-sig", errors="replace"):
+        _t_reaching.append(_t_f_20.name)
 check("...and nothing outside workspace.py reaches into the private table to find it",
       not _t_reaching, saw=", ".join(_t_reaching) or None)
 # ---- 21_a_name_may_open_with_a_digit_and_a_tool_has_one_name.py
@@ -34396,34 +35070,34 @@ check("...and a version carrying a suffix still parses rather than vanishing",
 # hyphenated half registered — so the section whose whole job is "prefer these over writing a new
 # script" could never point at the other (R9 agent 2, finding 8). Derived from the directory rather
 # than from the two names that were found, so the third pair is caught by the same check.
-_t_tools = ROOT.parent.parent / ".chamnan" / "tools"
+_t_tools_21 = ROOT.parent.parent / ".chamnan" / "tools"
 _t_by_key, _t_twins = {}, []
-if _t_tools.is_dir():
-    for _t_f in sorted(_t_tools.iterdir()):
-        if not _t_f.is_file():
+if _t_tools_21.is_dir():
+    for _t_f_21 in sorted(_t_tools_21.iterdir()):
+        if not _t_f_21.is_file():
             continue
-        _t_key = _t_f.name.replace("_", "-").lower()
+        _t_key = _t_f_21.name.replace("_", "-").lower()
         if _t_key in _t_by_key:
             try:
-                same = _t_f.read_bytes() == _t_by_key[_t_key].read_bytes()
+                same = _t_f_21.read_bytes() == _t_by_key[_t_key].read_bytes()
             except OSError:
                 same = False
             if same:
-                _t_twins.append(f"{_t_by_key[_t_key].name} == {_t_f.name}")
+                _t_twins.append(f"{_t_by_key[_t_key].name} == {_t_f_21.name}")
         else:
-            _t_by_key[_t_key] = _t_f
+            _t_by_key[_t_key] = _t_f_21
 check("no tool exists twice under two spellings of one name",
       not _t_twins, saw="\n".join(_t_twins) or None)
 
 # A surviving tool must not name its vanished twin in its own usage text — both did.
 _t_wrong_name = []
-for _t_f in sorted(_t_tools.glob("*")) if _t_tools.is_dir() else []:
-    if not _t_f.is_file() or _t_f.suffix not in (".py", ".sh"):
+for _t_f_21 in sorted(_t_tools_21.glob("*")) if _t_tools_21.is_dir() else []:
+    if not _t_f_21.is_file() or _t_f_21.suffix not in (".py", ".sh"):
         continue
-    _t_body = _t_f.read_text(encoding="utf-8-sig", errors="replace")
-    _t_twin = _t_f.name.replace("-", "_") if "-" in _t_f.name else _t_f.name.replace("_", "-")
-    if _t_twin != _t_f.name and _t_twin in _t_body:
-        _t_wrong_name.append(f"{_t_f.name} tells the reader to run {_t_twin}")
+    _t_body = _t_f_21.read_text(encoding="utf-8-sig", errors="replace")
+    _t_twin = _t_f_21.name.replace("-", "_") if "-" in _t_f_21.name else _t_f_21.name.replace("_", "-")
+    if _t_twin != _t_f_21.name and _t_twin in _t_body:
+        _t_wrong_name.append(f"{_t_f_21.name} tells the reader to run {_t_twin}")
 check("...and no tool tells the reader to run a filename that does not exist",
       not _t_wrong_name, saw="\n".join(_t_wrong_name[:4]) or None)
 # ---- 22_a_second_entry_does_not_overwrite_the_first.py
@@ -34451,7 +35125,7 @@ def _t_pair(n):
 
 # --- memory: decisions, lessons and rules
 _t_lost = []
-for _t_case in range(50):
+for _t_case_22 in range(50):
     _n = _t_r22.randint(52, 100)
     _a, _b = _t_pair(_n)
     _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-"))
@@ -34472,7 +35146,7 @@ check("two memory entries whose titles differ only past the cut get two files",
 
 # --- session records: the same shape, narrowed by the date prefix and not closed by it
 _t_sess = []
-for _t_case in range(20):
+for _t_case_22 in range(20):
     _n = _t_r22.randint(42, 90)
     _a, _b = _t_pair(_n)
     _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-s-"))
@@ -34493,7 +35167,7 @@ check("...and two session records written the same day do too, keeping their dat
 # Rewriting the SAME title must still overwrite itself. A guard that gives every write a fresh name
 # turns one record into a pile of near-duplicates, which is a worse failure than the one it fixes.
 _t_grew = []
-for _t_case in range(20):
+for _t_case_22 in range(20):
     _title = _t_pair(_t_r22.randint(52, 100))[0]
     _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-r-"))
     try:
@@ -34516,7 +35190,7 @@ check("...and writing the same entry three times still leaves one file",
 # nothing. A guard that hashes everything passes both checks above and destroys the thing they are
 # guarding, which is exactly what a mutation of this file demonstrated.
 _t_hashed = []
-for _t_case in range(20):
+for _t_case_22 in range(20):
     _title = _t_pair(_t_r22.randint(52, 100))[0]
     _d = Path(tempfile.mkdtemp(prefix="chamnan-slug-p-"))
     try:
@@ -34536,13 +35210,13 @@ check("...and a title that collides with nothing keeps its plain readable name",
       not _t_hashed, saw="\n".join(_t_hashed[:4]) or None)
 
 # The guard lives in one place now. A store that spells its own is the defect coming back.
-_t_own = []
-for _t_f in sorted((ROOT / "lib").glob("*.py")):
-    _t_body = _t_f.read_text(encoding="utf-8-sig", errors="replace")
-    if "hashlib.sha1(want" in _t_body and _t_f.name != "mdblock.py":
-        _t_own.append(_t_f.name)
+_t_own_22 = []
+for _t_f_22 in sorted((ROOT / "lib").glob("*.py")):
+    _t_body = _t_f_22.read_text(encoding="utf-8-sig", errors="replace")
+    if "hashlib.sha1(want" in _t_body and _t_f_22.name != "mdblock.py":
+        _t_own_22.append(_t_f_22.name)
 check("the disambiguation is written once, not once per store",
-      not _t_own, saw=", ".join(_t_own) or None)
+      not _t_own_22, saw=", ".join(_t_own_22) or None)
 # ---- 23_named_as_a_credential_and_never_enforced.py
 # ------------------------------------------- the module named them and redacted none of them
 # 🐛 [2026-09-09] `_CREDENTIAL_PREFIX` lists twenty-two vendor prefixes, and six of them were
@@ -34585,12 +35259,12 @@ _t_VENDORS = [
 ]
 
 _t_leaked = []
-for _name, _pre, _n, _alpha in _t_VENDORS:
-    _v = _pre + _t_body(_pre, _n, _alpha)
+for _name_23, _pre, _n_23, _alpha in _t_VENDORS:
+    _v = _pre + _t_body(_pre, _n_23, _alpha)
     # Bare, assigned, exported, and inside prose — a credential does not only appear one way.
     for _ctx in (_v, f'token = "{_v}"', f"export API_KEY={_v}", f"the key is {_v} and it works"):
         if _v in redact.scrub(_ctx):
-            _t_leaked.append(f"{_name} ({_pre}) survives {_ctx[:28]!r}")
+            _t_leaked.append(f"{_name_23} ({_pre}) survives {_ctx[:28]!r}")
 # SendGrid is three dot-separated parts, not prefix-plus-body.
 _t_sg = "SG." + _t_body("sga", 22, _t_MIX) + "." + _t_body("sgb", 43, _t_MIX)
 for _ctx in (_t_sg, f'key = "{_t_sg}"'):
@@ -34720,14 +35394,14 @@ check("...and the gitattributes matcher folds only when told to, in both directi
 
 # The platform-deciding call must be gone from every site, not from the one that was reported.
 # Derived from source: `fnmatch.fnmatch(` folds by os.name; `fnmatchcase` does not.
-_t_needle = "fnmatch." + "fnmatch("
-_t_left = []
-for _t_f in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
-    _t_body24 = _t_f.read_text(encoding="utf-8-sig", errors="replace")
-    if _t_needle in _t_body24:
-        _t_left.append(_t_f.name)
+_t_needle_24 = "fnmatch." + "fnmatch("
+_t_left_24 = []
+for _t_f_24 in sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py")):
+    _t_body24 = _t_f_24.read_text(encoding="utf-8-sig", errors="replace")
+    if _t_needle_24 in _t_body24:
+        _t_left_24.append(_t_f_24.name)
 check("no module still asks the platform whether to fold case",
-      not _t_left, saw=", ".join(_t_left) or None)
+      not _t_left_24, saw=", ".join(_t_left_24) or None)
 # ---- 25_the_block_log_answers_what_it_records.py
 # ------------------------------------------- five fixes to blocklog, and no test behind any of them
 # 🐛 [2026-09-09] `check_coverage_audit.py` was written to answer the owner's "go back and find what
@@ -34755,10 +35429,10 @@ def _t_block(n_sections=3, pad=200):
 # SessionStart fires for five different reasons and the hook was throwing that away before it got
 # here, so no record could be grouped by what kind of firing it was.
 _t_no_source = []
-for _src in ("startup", "resume", "compact", "clear", "fork"):
-    _rec = blocklog.shape(_t_block(), ceiling=9000, source=_src)
-    if _rec.get("src") != _src:
-        _t_no_source.append(f"{_src} recorded as {_rec.get('src')!r}")
+for _src_25 in ("startup", "resume", "compact", "clear", "fork"):
+    _rec = blocklog.shape(_t_block(), ceiling=9000, source=_src_25)
+    if _rec.get("src") != _src_25:
+        _t_no_source.append(f"{_src_25} recorded as {_rec.get('src')!r}")
 check("every kind of SessionStart firing is recorded as the kind it was",
       not _t_no_source, saw="; ".join(_t_no_source) or None)
 
@@ -34866,11 +35540,11 @@ check("the release gate looks for the publication guard under every name it has 
 
 # And the guard has to be REACHABLE from the gate, not merely named — the defect was that it was
 # named correctly for a file that was no longer there.
-_t_tools = ROOT.parent.parent / ".chamnan" / "tools"
+_t_tools_26 = ROOT.parent.parent / ".chamnan" / "tools"
 _t_found = [n for n in ("publication-guard.py", "publication_guard.py")
-            if (_t_tools / n).is_file()]
+            if (_t_tools_26 / n).is_file()]
 check("...and at least one of those names is a file the gate can actually run",
-      bool(_t_found) or not _t_tools.is_dir(),
+      bool(_t_found) or not _t_tools_26.is_dir(),
       saw=f"present: {_t_found}")
 
 # --- 3. `chamnan-impact` printed its all-clear unconditionally, one line under a warning that the
@@ -34888,8 +35562,8 @@ _t_free = "change it " + "freely"
 
 def _t_prints_allclear(node):
     """True when this statement subtree prints the all-clear line."""
-    for _n in ast.walk(node):
-        if isinstance(_n, ast.Constant) and isinstance(_n.value, str) and _t_free in _n.value:
+    for _n_26 in ast.walk(node):
+        if isinstance(_n_26, ast.Constant) and isinstance(_n_26.value, str) and _t_free in _n_26.value:
             return True
     return False
 
@@ -34898,13 +35572,13 @@ def _t_prints_allclear(node):
 # `elif` node cannot see the chain it belongs to. So the question is asked as ordering inside the
 # enclosing function: the staleness test must be evaluated before the all-clear can be printed.
 _t_conditions = []          # (lineno, source) of every `if` TEST, conditions only, never comments
-for _n in ast.walk(_t_tree26):
-    if isinstance(_n, ast.If):
-        _t_conditions.append((_n.test.lineno, ast.get_source_segment(_t_imp_src, _n.test) or ""))
+for _n_26 in ast.walk(_t_tree26):
+    if isinstance(_n_26, ast.If):
+        _t_conditions.append((_n_26.test.lineno, ast.get_source_segment(_t_imp_src, _n_26.test) or ""))
 
-_t_allclear_lines = [_n.lineno for _n in ast.walk(_t_tree26)
-                     if isinstance(_n, ast.Constant) and isinstance(_n.value, str)
-                     and _t_free in _n.value]
+_t_allclear_lines = [_n_26.lineno for _n_26 in ast.walk(_t_tree26)
+                     if isinstance(_n_26, ast.Constant) and isinstance(_n_26.value, str)
+                     and _t_free in _n_26.value]
 _t_stale_lines = [ln for ln, src in _t_conditions
                   if "moved since" in src or "stale" in src.lower()]
 
@@ -34974,32 +35648,32 @@ if _t_card27:
 # The value FIRST and the label after it, at one and two lines of distance — the direction that was
 # never looked at.
 _t_after = []
-for _t_val, _t_trailing, _t_leading in _t_PAIRS:
+for _t_val_27, _t_trailing, _t_leading in _t_PAIRS:
     for _t_gap in ("\n", "\n\n"):
-        if _t_val in redact.scrub(f"User: my number is {_t_val}{_t_gap}{_t_trailing}"):
-            _t_after.append(f"{_t_val[:4]}...: label {_t_gap.count(chr(10))} line(s) after")
+        if _t_val_27 in redact.scrub(f"User: my number is {_t_val_27}{_t_gap}{_t_trailing}"):
+            _t_after.append(f"{_t_val_27[:4]}...: label {_t_gap.count(chr(10))} line(s) after")
 check("a label that comes AFTER the value still redacts it",
       not _t_after, saw="\n".join(sorted(set(_t_after))[:5]) or None)
 
 # The direction that already worked must keep working — a symmetric window that broke the backward
 # half would pass the check above and lose what it had.
 _t_before = []
-for _t_val, _t_trailing, _t_leading in _t_PAIRS:
-    if _t_val in redact.scrub(f"{_t_leading}\n{_t_val}"):
-        _t_before.append(f"{_t_val[:4]}...: {_t_leading[:34]}")
+for _t_val_27, _t_trailing, _t_leading in _t_PAIRS:
+    if _t_val_27 in redact.scrub(f"{_t_leading}\n{_t_val_27}"):
+        _t_before.append(f"{_t_val_27[:4]}...: {_t_leading[:34]}")
 check("...and a label that comes before it still does, which is what already worked",
       not _t_before, saw="\n".join(_t_before[:4]) or None)
 
 # Precision: a valid-looking number with NO label anywhere near it is not personal data, and this
 # module's whole trade is that it does not redact on shape alone.
 _t_eaten27 = []
-for _t_val in _t_ids27[:3]:
+for _t_val_27 in _t_ids27[:3]:
     for _t_noise in ("build 12345 finished in 4 seconds",
                      "the order total came to 1,299 baht",
                      "see line 4021 of the changelog"):
-        _t_text = f"reference {_t_val}\n{_t_noise}"
-        if _t_val not in redact.scrub(_t_text):
-            _t_eaten27.append(f"{_t_val[:4]}… redacted beside {_t_noise[:34]!r}")
+        _t_text = f"reference {_t_val_27}\n{_t_noise}"
+        if _t_val_27 not in redact.scrub(_t_text):
+            _t_eaten27.append(f"{_t_val_27[:4]}… redacted beside {_t_noise[:34]!r}")
 check("...and a number with no label near it is left alone",
       not _t_eaten27, saw="\n".join(_t_eaten27[:4]) or None)
 # ---- 28_registering_a_tool_twice_keeps_one_entry.py
@@ -35023,31 +35697,31 @@ _t_r28 = __import__("random").Random(20260915)
 
 
 def _t_ws28():
-    _d = Path(tempfile.mkdtemp(prefix="chamnan-ti-"))
-    (_d / ".chamnan" / "tools").mkdir(parents=True)
-    (_d / ".chamnan" / "tools" / "mytool.py").write_text("print(1)\n", encoding="utf-8")
-    return _d
+    _d_28 = Path(tempfile.mkdtemp(prefix="chamnan-ti-"))
+    (_d_28 / ".chamnan" / "tools").mkdir(parents=True)
+    (_d_28 / ".chamnan" / "tools" / "mytool.py").write_text("print(1)\n", encoding="utf-8")
+    return _d_28
 
 
 # Randomised over how many times it is re-registered and how many runs land between registrations,
 # because the defect is about accumulation and a single re-run is the easiest case to pass by luck.
 _t_dupes28, _t_lost_runs = [], []
-for _t_case in range(50):
-    _d = _t_ws28()
+for _t_case_28 in range(50):
+    _d_28 = _t_ws28()
     try:
         _expected = 0
         for _round in range(_t_r28.randint(2, 5)):
-            tools_index.register(_d, {"name": "mytool.py", "desc": f"description {_round}"})
+            tools_index.register(_d_28, {"name": "mytool.py", "desc": f"description {_round}"})
             for _ in range(_t_r28.randint(0, 4)):
-                tools_index.record_call(_d, "mytool.py")
+                tools_index.record_call(_d_28, "mytool.py")
                 _expected += 1
-        _rows = [e for e in tools_index.load(_d) if e.get("name") == "mytool.py"]
+        _rows = [e for e in tools_index.load(_d_28) if e.get("name") == "mytool.py"]
         if len(_rows) != 1:
             _t_dupes28.append(f"{len(_rows)} entries after re-registering")
         elif _rows[0].get("runs") != _expected:
             _t_lost_runs.append(f"{_rows[0].get('runs')} runs recorded, {_expected} happened")
     finally:
-        shutil.rmtree(_d, ignore_errors=True)
+        shutil.rmtree(_d_28, ignore_errors=True)
 
 check("registering a tool that is already registered leaves one entry, not two",
       not _t_dupes28, saw="\n".join(sorted(set(_t_dupes28))[:4]) or None)
@@ -35056,29 +35730,29 @@ check("...and the run count it accumulated survives being re-registered",
 
 # The point of re-registering is to change the description. The newest one must be the one kept,
 # or the fix has traded a duplicate for a value that can never be updated.
-_d = _t_ws28()
+_d_28 = _t_ws28()
 try:
-    tools_index.register(_d, {"name": "mytool.py", "desc": "the first description"})
-    tools_index.record_call(_d, "mytool.py")
-    tools_index.register(_d, {"name": "mytool.py", "desc": "the description I just typed"})
-    _rows = [e for e in tools_index.load(_d) if e.get("name") == "mytool.py"]
+    tools_index.register(_d_28, {"name": "mytool.py", "desc": "the first description"})
+    tools_index.record_call(_d_28, "mytool.py")
+    tools_index.register(_d_28, {"name": "mytool.py", "desc": "the description I just typed"})
+    _rows = [e for e in tools_index.load(_d_28) if e.get("name") == "mytool.py"]
     check("...and the description kept is the one most recently written",
           len(_rows) == 1 and _rows[0].get("desc") == "the description I just typed",
           saw=repr([r.get("desc") for r in _rows]))
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_28, ignore_errors=True)
 
 # Two DIFFERENT tools must still be two entries — a de-duplication that keys on the wrong thing
 # would collapse the index instead of tidying it.
-_d = _t_ws28()
+_d_28 = _t_ws28()
 try:
     for _n in ("alpha.py", "beta.py", "gamma.sh"):
-        tools_index.register(_d, {"name": _n, "desc": f"tool {_n}"})
-    _names = sorted(e.get("name") for e in tools_index.load(_d))
+        tools_index.register(_d_28, {"name": _n, "desc": f"tool {_n}"})
+    _names = sorted(e.get("name") for e in tools_index.load(_d_28))
     check("...and two tools with different names are still two entries",
           _names == ["alpha.py", "beta.py", "gamma.sh"], saw=repr(_names))
 finally:
-    shutil.rmtree(_d, ignore_errors=True)
+    shutil.rmtree(_d_28, ignore_errors=True)
 # ---- 29_the_gate_reads_both_streams.py
 # ------------------------------------------- "0 tracebacks" over a run that crashed
 # 🐛 [2026-09-09] The release gate counted `Traceback (most recent call last)` in `r.stdout`, and a
@@ -35175,36 +35849,36 @@ _t_LEAKY = [
 # The rule redacts on ONE signal — a character no name can contain — because every other signal
 # available here is shared with a value that must survive
 _t_out30 = []
-for _k, _v in _t_LEAKY:
-    for _line in (f'{_k} = "{_v}"', f'{_k}: {_v}', f'"{_k}": "{_v}"'):
-        if _v in redact.scrub(_line):
-            _t_out30.append(f"{_k} = {_v[:28]}…")
+for _k_30, _v_30 in _t_LEAKY:
+    for _line_30 in (f'{_k_30} = "{_v_30}"', f'{_k_30}: {_v_30}', f'"{_k_30}": "{_v_30}"'):
+        if _v_30 in redact.scrub(_line_30):
+            _t_out30.append(f"{_k_30} = {_v_30[:28]}…")
 check("a key that says password, secret, key or token does not get a pass for its last word",
       not _t_out30, saw="\n".join(sorted(set(_t_out30))[:6]) or None)
 
 # The exemption exists for a real reason and must survive: these keys DESCRIBE a mechanism, and the
 # value is a label. Redacting them costs the index real information for nothing.
 _t_eaten30 = []
-for _k, _v in [('password_type', 'bcrypt'),
+for _k_30, _v_30 in [('password_type', 'bcrypt'),
                ('password_hash_type', 'argon2id'),
                ('token_name', 'access_token'),
                ('secret_field_name', 'client_secret'),
                ('key_id', 'primary'),
                ('auth_type', 'oauth2')]:
-    _line = f'{_k} = "{_v}"'
-    if redact.scrub(_line) != _line:
-        _t_eaten30.append(f"{_k} = {_v}")
+    _line_30 = f'{_k_30} = "{_v_30}"'
+    if redact.scrub(_line_30) != _line_30:
+        _t_eaten30.append(f"{_k_30} = {_v_30}")
 check("...and a key whose value is a plain label naming the mechanism is still left alone",
       not _t_eaten30, saw="\n".join(_t_eaten30) or None)
 
 # And nothing about ordinary, credential-free keys may change — this is the population the whole
 # naming-suffix exemption exists to protect.
 _t_ordinary = []
-for _line in ('user_id = "12345"', 'field_name = "email_address"', 'path_type = "absolute"',
+for _line_30 in ('user_id = "12345"', 'field_name = "email_address"', 'path_type = "absolute"',
               'content_type = "application/json"', 'file_path = "/etc/hosts"',
               'display_name = "Wasupon"', 'request_id = "550e8400-e29b-41d4-a716-446655440000"'):
-    if redact.scrub(_line) != _line:
-        _t_ordinary.append(_line)
+    if redact.scrub(_line_30) != _line_30:
+        _t_ordinary.append(_line_30)
 check("...and a key with no credential word in it is untouched, whatever its value looks like",
       not _t_ordinary, saw="\n".join(_t_ordinary) or None)
 # ---- 31_the_generic_separator_has_one_name.py
@@ -35237,9 +35911,9 @@ def _t_nameval_of(tree):
     """Map every module-level `name = value` assignment in `tree` to its value node, so a `Name`
     met while resolving a `compile()` argument can be followed back to what it was assigned."""
     _map = {}
-    for _n in ast.walk(tree):
-        if isinstance(_n, ast.Assign) and _n.targets and hasattr(_n.targets[0], "id"):
-            _map[_n.targets[0].id] = _n.value
+    for _n_31 in ast.walk(tree):
+        if isinstance(_n_31, ast.Assign) and _n_31.targets and hasattr(_n_31.targets[0], "id"):
+            _map[_n_31.targets[0].id] = _n_31.value
     return _map
 
 
@@ -35276,31 +35950,31 @@ def _t_literal_of(node, nameval, seen=()):
 
 # Which module-level name each compile is assigned to, so a failure can be reported by name.
 _t_owner31 = {}
-for _n in ast.walk(_t_tree31):
-    if isinstance(_n, ast.Assign) and _n.targets and hasattr(_n.targets[0], "id"):
-        for _sub in ast.walk(_n.value):
-            _t_owner31[id(_sub)] = _n.targets[0].id
+for _n_31 in ast.walk(_t_tree31):
+    if isinstance(_n_31, ast.Assign) and _n_31.targets and hasattr(_n_31.targets[0], "id"):
+        for _sub in ast.walk(_n_31.value):
+            _t_owner31[id(_sub)] = _n_31.targets[0].id
 
 _t_nameval31 = _t_nameval_of(_t_tree31)
 
 _t_offenders = []
-_t_sites = 0
-for _n in ast.walk(_t_tree31):
-    if not isinstance(_n, ast.Call):
+_t_sites_31 = 0
+for _n_31 in ast.walk(_t_tree31):
+    if not isinstance(_n_31, ast.Call):
         continue
-    if getattr(_n.func, "attr", "") != "compile":
+    if getattr(_n_31.func, "attr", "") != "compile":
         continue
-    if not _n.args:
+    if not _n_31.args:
         continue
-    _t_body31 = _t_literal_of(_n.args[0], _t_nameval31)
+    _t_body31 = _t_literal_of(_n_31.args[0], _t_nameval31)
     if _t_generic not in _t_body31:
         continue
-    _t_sites += 1
-    _t_name31 = _t_owner31.get(id(_n), "<unassigned>")
+    _t_sites_31 += 1
+    _t_name31 = _t_owner31.get(id(_n_31), "<unassigned>")
     # The shared constant is allowed to contain it once — it IS the definition.
     if _t_name31.endswith("_KV_SEP") or _t_name31 == "_KV_SEP":
         continue
-    _t_offenders.append(f"line {_n.lineno}: {_t_name31}")
+    _t_offenders.append(f"line {_n_31.lineno}: {_t_name31}")
 
 check("no rule spells the generic key/value separator itself; they all route through one name",
       not _t_offenders,
@@ -35309,17 +35983,17 @@ check("no rule spells the generic key/value separator itself; they all route thr
 # The gate has to have FOUND something, or it is passing on a walk that matched nothing — which is
 # how a structural check quietly stops being a check at all.
 check("...and the walk really does reach this module's compiled rules",
-      sum(1 for _n in ast.walk(_t_tree31)
-          if isinstance(_n, ast.Call) and getattr(_n.func, "attr", "") == "compile") >= 30,
-      saw=f"{_t_sites} site(s) carrying the generic separator")
+      sum(1 for _n_31 in ast.walk(_t_tree31)
+          if isinstance(_n_31, ast.Call) and getattr(_n_31.func, "attr", "") == "compile") >= 30,
+      saw=f"{_t_sites_31} site(s) carrying the generic separator")
 
 # And the two language-bound rules the reader's own critique named as legitimately different must
 # still be reachable and must still work — a gate that forced them onto the shared separator would
 # break Ruby and YAML to satisfy a rule about neither.
 _t_lang = []
-for _t_line, _t_val in (('password => "s3cr3t-rocket-value-9x"', "s3cr3t-rocket-value-9x"),
+for _t_line, _t_val_31 in (('password => "s3cr3t-rocket-value-9x"', "s3cr3t-rocket-value-9x"),
                         ('  api_secret:\n    "yaml-block-secret-value-42"', "yaml-block-secret-value-42")):
-    if _t_val in redact.scrub(_t_line):
+    if _t_val_31 in redact.scrub(_t_line):
         _t_lang.append(_t_line.replace("\n", " / ")[:60])
 check("...and the rules with a language-bound separator still redact, untouched by this",
       not _t_lang, saw="\n".join(_t_lang) or None)
@@ -35351,21 +36025,21 @@ _t_planted_tree31 = ast.parse(_t_planted_src31)
 _t_planted_nameval31 = _t_nameval_of(_t_planted_tree31)
 
 _t_planted_owner31 = {}
-for _n in ast.walk(_t_planted_tree31):
-    if isinstance(_n, ast.Assign) and _n.targets and hasattr(_n.targets[0], "id"):
-        for _sub in ast.walk(_n.value):
-            _t_planted_owner31[id(_sub)] = _n.targets[0].id
+for _n_31 in ast.walk(_t_planted_tree31):
+    if isinstance(_n_31, ast.Assign) and _n_31.targets and hasattr(_n_31.targets[0], "id"):
+        for _sub in ast.walk(_n_31.value):
+            _t_planted_owner31[id(_sub)] = _n_31.targets[0].id
 
 _t_planted_flagged = []
-for _n in ast.walk(_t_planted_tree31):
-    if not isinstance(_n, ast.Call):
+for _n_31 in ast.walk(_t_planted_tree31):
+    if not isinstance(_n_31, ast.Call):
         continue
-    if getattr(_n.func, "attr", "") != "compile":
+    if getattr(_n_31.func, "attr", "") != "compile":
         continue
-    if not _n.args:
+    if not _n_31.args:
         continue
-    if _t_generic in _t_literal_of(_n.args[0], _t_planted_nameval31):
-        _t_planted_flagged.append(_t_planted_owner31.get(id(_n), "<unassigned>"))
+    if _t_generic in _t_literal_of(_n_31.args[0], _t_planted_nameval31):
+        _t_planted_flagged.append(_t_planted_owner31.get(id(_n_31), "<unassigned>"))
 
 _t_planted_expect31 = {"R_LITERAL", "R_PLUS", "R_NAME", "R_JOIN", "R_MOD"}
 check("...and a planted sample proves the gate can actually fail: "
@@ -35442,40 +36116,40 @@ _t_DEFAULTS = [
 # The value's POSITION, not a substring of the line: `"root" in scrub("mysql_root_password = ...")`
 # is true because the KEY contains it, and the first version of this check reported three false
 # failures that way. What is asked is whether the placeholder replaced the value.
-_t_left = []
-for _k, _v in _t_DEFAULTS:
+_t_left_33 = []
+for _k_33, _v_33 in _t_DEFAULTS:
     # Quoted forms only for the short values. `ASSIGNED_SECRET_BARE` deliberately does not match an
     # unquoted four-character value after a colon — `mode: test`, `env: test`, `level: guest` are
     # ordinary configuration, and redacting them is the noise that gets a redactor switched off.
     # A credential written down lives in a quoted assignment or in JSON, and both are covered.
-    _t_forms = ([f'{_k} = "{_v}"', f'"{_k}": "{_v}"'] if len(_v) < 8
-                else [f'{_k} = "{_v}"', f'{_k}: {_v}', f'"{_k}": "{_v}"'])
-    for _line in _t_forms:
-        _t_got = redact.scrub(_line)
+    _t_forms = ([f'{_k_33} = "{_v_33}"', f'"{_k_33}": "{_v_33}"'] if len(_v_33) < 8
+                else [f'{_k_33} = "{_v_33}"', f'{_k_33}: {_v_33}', f'"{_k_33}": "{_v_33}"'])
+    for _line_33 in _t_forms:
+        _t_got = redact.scrub(_line_33)
         if redact.PLACEHOLDER not in _t_got:
-            _t_left.append(f"{_line}")
+            _t_left_33.append(f"{_line_33}")
 check("a well-known default password is redacted even though the key echoes it",
-      not _t_left, saw="\n".join(sorted(set(_t_left))[:6]) or None)
+      not _t_left_33, saw="\n".join(sorted(set(_t_left_33))[:6]) or None)
 
 # The exemption this heuristic exists for has to survive, or the fix is worse than the defect: a
 # key whose value is its own name is a label, and redacting those is the noise that gets a redactor
 # switched off.
 _t_eaten33 = []
-for _line in ('s_secrets: "Secrets"', 'api_key_name = "api_key"',
+for _line_33 in ('s_secrets: "Secrets"', 'api_key_name = "api_key"',
               'secret_label = "secret"', 'password_field = "password_field"',
               'token_type = "token"', 'credential_key = "credential"'):
-    if redact.scrub(_line) != _line:
-        _t_eaten33.append(_line)
+    if redact.scrub(_line_33) != _line_33:
+        _t_eaten33.append(_line_33)
 check("...and a value that is just the key's own name is still left alone",
       not _t_eaten33, saw="\n".join(_t_eaten33) or None)
 
 # And the list must not have swallowed ordinary prose that happens to contain one of those words.
 _t_prose = []
-for _line in ('the admin panel is at /admin', 'run as root to install',
+for _line_33 in ('the admin panel is at /admin', 'run as root to install',
               'a test password is generated for each run',
               'guest access is disabled in production'):
-    if redact.scrub(_line) != _line:
-        _t_prose.append(_line)
+    if redact.scrub(_line_33) != _line_33:
+        _t_prose.append(_line_33)
 check("...and prose containing one of those words is untouched",
       not _t_prose, saw="\n".join(_t_prose) or None)
 # ---- 34_one_lookalike_letter_does_not_defeat_every_rule.py
@@ -35526,10 +36200,10 @@ check("...and it preserves length, which is what lets a span mean the same thing
 # The fold's output is only ever MATCHED against, never emitted, so changing them costs nothing. The
 # property that matters is that folding ordinary text does not make it look like a credential word.
 _t_matched34 = []
-for _t in ("ราคาสินค้า 1250", "日本語のテキスト", "переменная значение", "ключ значение",
+for _t_34 in ("ราคาสินค้า 1250", "日本語のテキスト", "переменная значение", "ключ значение",
            "Ελληνικά κείμενα", "москва санкт-петербург", "αριθμός τηλεφώνου"):
-    if redact._SECRET_WORD_ANYWHERE.search(redact.fold_confusables(_t)):
-        _t_matched34.append(f"{_t!r} folds to something matching a credential word")
+    if redact._SECRET_WORD_ANYWHERE.search(redact.fold_confusables(_t_34)):
+        _t_matched34.append(f"{_t_34!r} folds to something matching a credential word")
 check("...and folding ordinary non-Latin text does not make it look like a credential word",
       not _t_matched34, saw="\n".join(_t_matched34) or None)
 
@@ -35745,8 +36419,8 @@ def _t_long(tail):
 # Randomised over the tail, because the defect is about what survives the cut and a single pair
 # could differ by luck somewhere else.
 _t_lost37 = []
-for _t_case in range(30):
-    _a, _b = f"black{_t_case}", f"isort{_t_case}"
+for _t_case_37 in range(30):
+    _a, _b = f"black{_t_case_37}", f"isort{_t_case_37}"
     _d = _t_ws37()
     try:
         candidates.upsert(_d, _t_long(_a), 3, "2026-09-10", provenance=_t_PROV)
@@ -35763,10 +36437,10 @@ check("two sequences that differ only past the filename cut get two files",
 # time it sees the habit again — which is the failure the whole store is built to avoid, and the
 # reason the suffix cannot be resolved against the directory the way the memory stores do it.
 _t_grew37 = []
-for _t_case in range(10):
+for _t_case_37 in range(10):
     _d = _t_ws37()
     try:
-        _seq = _t_long(f"ruff{_t_case}")
+        _seq = _t_long(f"ruff{_t_case_37}")
         for _round in range(4):
             candidates.upsert(_d, _seq, 3 + _round, "2026-09-10", provenance=_t_PROV)
         _n = len(list((_d / ".chamnan" / "candidates").glob("*.md")))
@@ -35907,12 +36581,12 @@ def _t_store39(n, pin_at=0, body=900):
 
 # The pinned rule must get MORE than an unpinned one, across store sizes where the budget bites.
 _t_equal39 = []
-for _t_n in (4, 6, 8, 10, 14):
-    _d = _t_store39(_t_n)
+for _t_n_39 in (4, 6, 8, 10, 14):
+    _d = _t_store39(_t_n_39)
     try:
         _text = memory_mod.rules_text(_d)
         _got = {}
-        for _i in range(_t_n):
+        for _i in range(_t_n_39):
             _at = _text.find(f"Rule {_i}")
             if _at < 0:
                 continue
@@ -35942,7 +36616,7 @@ for _t_n in (4, 6, 8, 10, 14):
             _r0e = _text.find("\n\n**", _r0 + 8)
             _whole0 = "the rest is in" not in _text[_r0:_r0e if _r0e > 0 else len(_text)]
             if _others and not _whole0 and _got[0] <= max(_others):
-                _t_equal39.append(f"{_t_n} rules: pinned got {_got[0]}, largest other {max(_others)}")
+                _t_equal39.append(f"{_t_n_39} rules: pinned got {_got[0]}, largest other {max(_others)}")
     finally:
         shutil.rmtree(_d, ignore_errors=True)
 check("a pinned rule is delivered whole, or given a larger share than any unpinned one",
@@ -35951,13 +36625,13 @@ check("a pinned rule is delivered whole, or given a larger share than any unpinn
 # It must not become an exemption. The other rules still have to arrive — starving nine to feed one
 # is a worse store than the one this replaced.
 _t_starved39 = []
-for _t_n in (6, 10, 14):
-    _d = _t_store39(_t_n)
+for _t_n_39 in (6, 10, 14):
+    _d = _t_store39(_t_n_39)
     try:
         _fitted, _title_only = memory_mod.rules_pressure(_d)[:2]
         _n = lambda v: v if isinstance(v, int) else len(v)
         if _n(_fitted) < 1:
-            _t_starved39.append(f"{_t_n} rules: only {_n(_fitted)} arrived with a body")
+            _t_starved39.append(f"{_t_n_39} rules: only {_n(_fitted)} arrived with a body")
     finally:
         shutil.rmtree(_d, ignore_errors=True)
 check("...and the rules nobody pinned still arrive, so it is a weight and not an exemption",
@@ -35970,8 +36644,8 @@ check("...and the rules nobody pinned still arrive, so it is a weight and not an
 # version measured the span from one rule's title to the next bold heading, which runs into whatever
 # follows the last rule and reported a spread that was in the measurement rather than in the code.
 _t_changed39 = []
-for _t_n in (5, 9):
-    _d = _t_store39(_t_n, pin_at=None)
+for _t_n_39 in (5, 9):
+    _d = _t_store39(_t_n_39, pin_at=None)
     try:
         _text = memory_mod.rules_text(_d)
         _cut = [len(_seg) for _seg in _text.split("\n\n_…the rest is in")[:-1]]
@@ -35979,7 +36653,7 @@ for _t_n in (5, 9):
         # the per-rule shares. Compare the shares, not the running totals.
         _spans = [b - a for a, b in zip(_cut, _cut[1:])] if len(_cut) > 2 else []
         if _spans and max(_spans) - min(_spans) > 120:
-            _t_changed39.append(f"{_t_n} rules unpinned: shares span {min(_spans)}..{max(_spans)}")
+            _t_changed39.append(f"{_t_n_39} rules unpinned: shares span {min(_spans)}..{max(_spans)}")
     finally:
         shutil.rmtree(_d, ignore_errors=True)
 check("...and a store that pins nothing is shared out evenly, exactly as before",
@@ -36123,12 +36797,12 @@ import ast as _ast42
 
 _t_unbounded42 = []
 _t_total42 = 0
-for _t_f in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+for _t_f_42 in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
              + sorted((ROOT / "bin").glob("chamnan-*")) + sorted((ROOT / "tools").glob("*.py"))):
-    if not _t_f.is_file():
+    if not _t_f_42.is_file():
         continue
     try:
-        _t_tree42 = _ast42.parse(_t_f.read_text(encoding="utf-8-sig", errors="replace"))
+        _t_tree42 = _ast42.parse(_t_f_42.read_text(encoding="utf-8-sig", errors="replace"))
     except (SyntaxError, ValueError):
         continue
     for _t_n in _ast42.walk(_t_tree42):
@@ -36158,11 +36832,11 @@ for _t_f in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob(
                                 for _t_k in _t_n.keywords)
             _t_kwargs42 = any(_t_k.arg is None for _t_k in _t_n.keywords)   # Popen(argv, **kw)
             if not (_t_detached42 or _t_kwargs42):
-                _t_unbounded42.append(f"{_t_f.name}:{_t_n.lineno} (Popen, neither detached nor "
+                _t_unbounded42.append(f"{_t_f_42.name}:{_t_n.lineno} (Popen, neither detached nor "
                                       f"awaited with a bound)")
             continue
         if not any(_t_k.arg == "timeout" for _t_k in _t_n.keywords):
-            _t_unbounded42.append(f"{_t_f.name}:{_t_n.lineno}")
+            _t_unbounded42.append(f"{_t_f_42.name}:{_t_n.lineno}")
 
 check("every subprocess this package starts is bounded by a timeout",
       not _t_unbounded42, saw="\n".join(_t_unbounded42) or None)
@@ -36179,14 +36853,14 @@ check("...and the walk really did reach this package's subprocess calls",
 # the rule is about interactive commands, where a literal is the normal spelling — a detached job's
 # wall is a different kind of number and belongs to whatever started it.
 _t_silly42 = []
-for _t_f in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
+for _t_f_42 in (sorted((ROOT / "lib").glob("*.py")) + sorted((ROOT / "hooks").glob("*.py"))
              + sorted((ROOT / "bin").glob("chamnan-*"))):
-    if not _t_f.is_file():
+    if not _t_f_42.is_file():
         continue
-    for _t_m in re.finditer(r"timeout=(\d+)", _t_f.read_text(encoding="utf-8-sig", errors="replace")):
+    for _t_m in re.finditer(r"timeout=(\d+)", _t_f_42.read_text(encoding="utf-8-sig", errors="replace")):
         _t_v = int(_t_m.group(1))
         if _t_v < 1 or _t_v > 600:
-            _t_silly42.append(f"{_t_f.name}: timeout={_t_v}")
+            _t_silly42.append(f"{_t_f_42.name}: timeout={_t_v}")
 check("...and each bound is a number somebody would actually wait for",
       not _t_silly42, saw="\n".join(_t_silly42) or None)
 # ---- 43_a_new_skill_cannot_silently_conflict_with_an_installed_one.py
@@ -39485,14 +40159,14 @@ check("...and it is small enough to be worth having",
 # --- 3. Both branches produce something under it, including the worst case. The fallback keeps the
 # COUNT, which is the fact that makes somebody act; the names are recoverable from the command the
 # line already names.
-_t_n = int(_t_cap79.group(1)) if _t_cap79 else 320
+_t_n_79 = int(_t_cap79.group(1)) if _t_cap79 else 320
 
 
 def _t_line79(n_drift, n_ahead, bits):
     line = (f"_⚠ **{n_drift} agent context file(s) were not written by this "
             f"chamnan** — {'; '.join(bits)}. Refresh with `chamnan-context "
             f"--write <agent>`, which also stamps them._")
-    if len(line.encode()) > _t_n:
+    if len(line.encode()) > _t_n_79:
         line = (f"_⚠ **{n_drift} agent context file(s) were not written by this "
                 f"chamnan**, {n_ahead} of them by a NEWER one. `chamnan-map` "
                 f"lists them; `chamnan-context --write <agent>` refreshes one._")
@@ -39506,8 +40180,8 @@ _t_worst79 = _t_line79(15, 5, [
     "4 carrying no version at all, so how old they are is not knowable from here"])
 _t_ordinary79 = _t_line79(2, 1, ["1 written by chamnan 1.10.0", "1 carrying no version at all"])
 check("...and the worst case it can produce still fits under that cap",
-      len(_t_worst79.encode()) <= _t_n,
-      saw="%d bytes against a %d cap" % (len(_t_worst79.encode()), _t_n))
+      len(_t_worst79.encode()) <= _t_n_79,
+      saw="%d bytes against a %d cap" % (len(_t_worst79.encode()), _t_n_79))
 check("...while the capped form still carries the COUNT, which is what makes somebody act",
       "15 agent context file(s)" in _t_worst79 and "chamnan-context --write" in _t_worst79,
       saw=_t_worst79[:150])
@@ -41754,8 +42428,14 @@ for _t_event98, _t_groups98 in _t_registry98.items():
     for _t_group98 in _t_groups98:
         for _t_hook98 in _t_group98.get("hooks", []):
             _t_emitters98.append((_t_event98, _t_hook98.get("command", "")))
+# 🐛 [2026-09-19] (self-measured), from the full gate run of this date. This was `== 6`, a count
+# kept by hand beside a population read out of `hooks.json`. Registering a seventh model-facing
+# hook failed it for a reason that has nothing to do with what it asserts — which, by its own `saw`
+# text, is that the sweep found SOMETHING, so the coverage claims below are not vacuous. A floor
+# says that; an equality says "nobody may add a hook". Every sibling non-vacuity check in this
+# suite is a floor (`>= 4` for emitting hooks, `>= 15` for files that print); this was the odd one.
 check("the preview sweep found every registered model-facing hook: %d" % len(_t_emitters98),
-      len(_t_emitters98) == 6,
+      len(_t_emitters98) >= 6,
       saw="%r — a sweep that found nothing would make every coverage claim below vacuous"
           % (_t_emitters98,))
 
