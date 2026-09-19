@@ -150,15 +150,49 @@ def stale_artefacts(root):
     Not a guess: the SessionStart block already reports agent context files written by a different
     chamnan. This is the same question asked where something can act on the answer.
     """
+    # 🐛 [2026-09-19] (self-measured) The docstring above was true and the code below was not. It
+    # globbed every `.claude/agents/*.md` and called each one an "agent context file" chamnan had
+    # written. Those are Claude Code SUBAGENT definitions — a person's own files, which chamnan
+    # neither writes nor stamps. Two different things share the word "agent": chamnan's agent
+    # context files are the ADAPTER instruction files (`AGENTS.md`, `.cursor/rules/…`), written by
+    # `chamnan-context --write <adapter>`.
+    #
+    # So every repository with subagents was told its own hand-written files were stale, and each
+    # was given `chamnan-context --write <that file's stem>` to fix it — which cannot run: `--write`
+    # takes an adapter name from a fixed list, so every one of those commands exits with
+    # `invalid choice`. Measured here: 8 files reported, 8 unrunnable commands, and
+    # `chamnan-context --written-agents` answering `generic` — one file, a different file.
+    #
+    # `adapters.artefact_drift` is the instrument the docstring names, derives its population from
+    # the adapter registry rather than a glob, and separates behind from ahead from unknown. It was
+    # sitting one import away and the SessionStart hook already uses it.
     out = []
-    agents = Path(root) / ".claude" / "agents"
-    if agents.is_dir():
-        for f in sorted(agents.glob("*.md")):
-            # `.as_posix()`, not `str()`: a relative path rendered as TEXT must carry forward
-            # slashes or the same line reads differently on Windows. The suite asserts this across
-            # the package.
-            out.append({"path": f.relative_to(root).as_posix(), "why": "agent context file",
-                        "fix": f"chamnan-context --write {f.stem}"})
+    try:
+        import adapters
+        drift = adapters.artefact_drift(root)
+    except Exception:          # noqa: BLE001 — a report must not be why a command fails
+        return out
+    # `ahead` is deliberately not offered a fix: rewriting a file DOWN to this version loses what a
+    # newer chamnan put there, which `artefact_drift` states in its own words. `orphan` has no
+    # adapter left to refresh it, so naming one would be inventing a command.
+    _fixable = {"behind": "written by an older chamnan",
+                "unknown": "carries no version, so its age is not knowable from here"}
+    _owner = {}
+    for _name in sorted(getattr(adapters, "ADAPTERS", {})):
+        _rel = getattr(adapters.for_agent(_name), "TARGET", None)
+        if _rel and _rel not in _owner:
+            _owner[_rel] = _name
+    for rel, state, _version in drift:
+        if state not in _fixable:
+            continue
+        adapter = _owner.get(rel)
+        if adapter is None:
+            continue           # nothing claims it; `artefact_drift` calls that an orphan
+        # `.as_posix()`, not `str()`: a relative path rendered as TEXT must carry forward
+        # slashes or the same line reads differently on Windows. The suite asserts this across
+        # the package.
+        out.append({"path": Path(rel).as_posix(), "why": _fixable[state],
+                    "fix": f"chamnan-context --write {adapter}"})
     return out
 
 

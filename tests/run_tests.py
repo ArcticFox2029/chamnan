@@ -35291,6 +35291,76 @@ if _t_ws191 is not None:
         check("...and it reads the value we forced, not the repository's",
               (_t_out191.stdout or "").strip() == "cat",
               saw="core.pager resolved to %r" % (_t_out191.stdout or "").strip())
+# ---- 192_a_remediation_command_that_cannot_run.py
+# ---- 192_a_remediation_command_that_cannot_run.py
+# 🐛 [2026-09-19] (self-measured) `chamnan-setup` told this repository that 8 files were stale and
+# printed a fix for each. Every one of the eight was wrong twice over: they were Claude Code
+# SUBAGENT definitions in `.claude/agents/`, which chamnan neither writes nor stamps, and the fix
+# it printed — `chamnan-context --write <that file's stem>` — cannot run at all, because `--write`
+# takes an adapter name from a fixed list and exits with `invalid choice` for anything else.
+#
+# Eight reported files, eight unrunnable commands, and `chamnan-context --written-agents` sitting
+# beside it answering `generic`: one file, a different file. It shipped in 1.28.0.
+#
+# The class is the point. A tool that DETECTS a problem and hands over a command is trusted twice —
+# once for the finding and once for the remedy — and nothing here had ever checked the second. A
+# command printed as advice is part of the product; if it cannot be invoked, the advice is worse
+# than silence, because the reader spends their time discovering that rather than fixing anything.
+#
+# So this takes every remediation `chamnan-setup` emits and asks whether its argument is one the
+# named command will accept, by reading the command's own declared choices rather than by keeping a
+# second list here. A new adapter is covered because the parser is asked, not remembered.
+_t_ws192 = owner_workspace("the remediation-command sweep")
+if _t_ws192 is not None:
+    import subprocess as _sp192
+
+    _t_setup192 = ROOT / "bin" / "chamnan-setup"
+    _t_ctx192 = ROOT / "bin" / "chamnan-context"
+    if not (_t_setup192.is_file() and _t_ctx192.is_file()):
+        skip("  [SKIP] the remediation-command sweep — chamnan-setup or chamnan-context missing")
+    else:
+        _t_json192 = _sp192.run([sys.executable, str(_t_setup192), "--json"],
+                                cwd=str(ROOT.parent.parent), capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=180)
+        try:
+            _t_rep192 = json.loads(_t_json192.stdout)
+        except (ValueError, TypeError):
+            _t_rep192 = None
+        check("chamnan-setup --json answers at all, so this is not a pass over nothing",
+              isinstance(_t_rep192, dict),
+              saw="exit %d, stdout %r" % (_t_json192.returncode, (_t_json192.stdout or "")[:120]))
+
+        if isinstance(_t_rep192, dict):
+            # The choices the command itself declares, read from its `--help` rather than listed
+            # again here: a second copy is a second answer, which is the defect one level up.
+            _t_help192 = _sp192.run([sys.executable, str(_t_ctx192), "--help"],
+                                    capture_output=True, text=True, encoding="utf-8",
+                                    errors="replace", timeout=120).stdout or ""
+            _t_m192 = re.search(r"--write \{([^}]*)\}", _t_help192)
+            _t_ok192 = set((_t_m192.group(1) if _t_m192 else "").split(","))
+            check("...and chamnan-context declares the arguments it accepts",
+                  len(_t_ok192) > 5, saw="parsed %d choice(s)" % len(_t_ok192))
+
+            # 🐛 [2026-09-19] (self-measured) This read `stale` and `artefacts`, and the key is
+            # `stale_artefacts`. Both lookups returned None, the loop ran over `[]`, and the check
+            # passed — including when run against the very code it was written to catch, which is
+            # how it was found: reverting the fix left it green. A missing key is now a FAILURE,
+            # not an empty population, because those two look identical from the outside and only
+            # one of them is a result.
+            check("...and the report carries the key this reads, so an empty list means empty",
+                  "stale_artefacts" in _t_rep192,
+                  saw="keys present: %s" % sorted(_t_rep192))
+            _t_bad192 = []
+            for _t_row192 in (_t_rep192.get("stale_artefacts") or []):
+                _t_fix192 = (_t_row192 or {}).get("fix") or ""
+                _t_w192 = re.search(r"chamnan-context\s+--write\s+(\S+)", _t_fix192)
+                if _t_w192 and _t_w192.group(1) not in _t_ok192:
+                    _t_bad192.append("%s -> `%s` (not an accepted --write argument)"
+                                     % (_t_row192.get("path"), _t_fix192))
+            for _t_x192 in _t_bad192:
+                print("      " + _t_x192)
+            check("EVERY REMEDIATION chamnan-setup PRINTS NAMES AN ARGUMENT THE COMMAND ACCEPTS",
+                  _t_bad192 == [], saw="%d unrunnable fix line(s)" % len(_t_bad192))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption

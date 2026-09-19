@@ -1,7 +1,7 @@
 # Changelog
 
 Release notes for every version. The newest release is also at the top of the
-[README](README.md#whats-new-in-1280), and every one of these is on the
+[README](README.md#whats-new-in-1281), and every one of these is on the
 [releases page](https://github.com/ArcticFox2029/chamnan/releases).
 
 Kept here rather than in the README because thirteen of them had grown to a third of that file, and
@@ -16,6 +16,71 @@ the version number and a new empty one starts.
 Nothing under **Unreleased** carries a version number, on purpose. Numbering it would put a version
 in this file that no tag matches — and on the machine chamnan is developed on, the installed plugin
 already reports the last released number while running newer code.
+
+---
+
+## What's new in 1.28.1
+
+**A fix for something 1.28.0 shipped: `chamnan-setup` reported files it does not own, and offered
+a command that cannot run.**
+
+`chamnan-setup` lists generated files a version bump can invalidate. It was finding them by
+globbing `.claude/agents/*.md` — which are Claude Code **subagent definitions**, your own
+hand-written files. chamnan neither writes nor stamps those. Two different things share the word
+"agent": chamnan's *agent context files* are the adapter instruction files (`AGENTS.md`,
+`.cursor/rules/…`), written by `chamnan-context --write <adapter>`.
+
+So in any repository with subagents, chamnan announced that your files were stale, and the fix it
+printed for each — `chamnan-context --write <that file's name>` — exits with `invalid choice`,
+because `--write` only accepts an adapter from a fixed list. Measured on the repository chamnan is
+developed in: **8 files reported, 8 unrunnable commands, and the one genuinely stale file not
+among them.**
+
+| | before | after |
+|---|---|---|
+| Files reported stale here | 8 | **1** |
+| Of those, actually written by chamnan | 0 | **1** |
+| Remediation commands that run | 0 of 8 | **1 of 1** |
+
+It now asks `adapters.artefact_drift()` — the function its own docstring already named, which
+derives its population from the adapter registry rather than from a glob, and which the
+SessionStart hook has been using all along. A file written by a *newer* chamnan is still reported
+and still offered no fix, because rewriting it down would lose what the newer one put there.
+
+### What you should notice
+
+If you have subagents in `.claude/agents/`, `chamnan-setup` stops telling you they are out of date.
+Nothing else changes, and nothing needs to be re-run.
+
+### Interesting findings
+
+**The check written to catch this passed against the broken code.** It read the report's JSON for a
+key named `stale`, the key is `stale_artefacts`, the lookup returned nothing, and the loop ran over
+an empty list — so it reported success while examining nothing. It was caught by reverting the fix
+and seeing the check stay green, which is the only way that class of failure announces itself. A
+missing key is now a failure in its own right rather than an empty population, because those two
+look identical from the outside and only one of them is a result.
+
+**A printed command is part of the product.** A tool that detects a problem and hands over a remedy
+is trusted twice, and only the first half had ever been checked here. The new check takes every
+remediation `chamnan-setup` emits and asks whether the argument is one the named command accepts,
+reading that command's own declared choices rather than keeping a second list.
+
+### Verification
+
+```
+1005/1005 folded check(s) passed
+```
+
+Plus the full suite and the public CI matrix on the same commit.
+
+### Upgrade
+
+```
+/plugin update chamnan
+```
+
+Nothing to do afterwards.
 
 ---
 

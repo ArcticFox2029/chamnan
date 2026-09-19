@@ -119,7 +119,7 @@ fails when it and the code disagree.</sub>
 
 **Start here** — [Read this before installing](#read-this-before-installing) ·
 [Requirements](#requirements) · [Quick start](#quick-start) ·
-[What's new in 1.28.0](#whats-new-in-1280) · [Commands](#commands)
+[What's new in 1.28.1](#whats-new-in-1281) · [Commands](#commands)
 
 **Why it exists** — [The real problem: agents forget](#the-real-problem-agents-forget) ·
 [The compounding effect](#the-compounding-effect) · [What it does](#what-it-does) ·
@@ -523,6 +523,16 @@ claude --plugin-dir ./chamnan
 
 The plugin is active for that session only. It creates the empty `.chamnan/` scaffold, and
 nothing else is written until you run `/chamnan:bootstrap` or `chamnan-map`.
+
+## What's new in 1.28.1
+
+**A fix for something 1.28.0 shipped.** `chamnan-setup` was globbing `.claude/agents/*.md` and
+calling those files stale — they are Claude Code subagent definitions, your own files, which
+chamnan neither writes nor stamps. The fix it printed for each could not run either: `--write`
+takes an adapter name, so every one exited with `invalid choice`. Measured here: 8 files reported,
+8 unrunnable commands, and the one genuinely stale file not among them. It now asks the adapter
+registry, which is what its own docstring already said it did. If you have subagents, chamnan stops
+telling you they are out of date; nothing else changes.
 
 ## What's new in 1.28.0
 
