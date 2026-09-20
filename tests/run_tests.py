@@ -35693,6 +35693,79 @@ if _t_ws196 is not None:
             check("%s NAMES A REPORT THE DUPLICATE CHECK CAN READ" % _t_sh196,
                   bool(_t_NAME196.match(_t_name196[0])),
                   saw="built %r (stderr: %s)" % (_t_name196[0], (_t_run196.stderr or "").strip()[:120]))
+# ---- 197_a_pair_read_and_dismissed_is_not_asked_about_again.py
+# ---- 197_a_pair_read_and_dismissed_is_not_asked_about_again.py
+# 🐛 [2026-09-20] (R20 acc4, 2026-09-20; the ceiling it is measured against is R14 acc4's)
+# `rule_conflicts.py` flagged 19 rule pairs, 3 survived its
+# second pass, and every one was read in full and dismissed. Without somewhere to put that
+# judgement the same three come back on the next run and on every run after it -- the shape this
+# repository already pays `housekeeping.py` to avoid, where `nudge_state.json` is never swept
+# because losing the count of how often a one-off piece of advice has been shown makes that advice
+# return forever.
+#
+# R49 measured where that ends: a channel whose positives are mostly wrong teaches its reader to
+# stop opening it. R20 gives the thresholds the output would be judged by elsewhere -- Tricorder
+# turns an analyzer off above 25% not-useful, and this one measured 100%.
+#
+# So the rule is: a pair in the dismissals file is never staged as a candidate. This asserts the
+# BEHAVIOUR (a synthetic dismissal is honoured, including read from the other side, since a pair is
+# the same pair either way) and then the DATA (nothing currently staged is already dismissed).
+_t_ws197 = owner_workspace("the dismissed-pair rule")
+if _t_ws197 is not None:
+    _t_tools197 = ROOT.parent.parent / ".chamnan" / "tools"
+    _t_rc197 = _t_tools197 / "rule_conflicts.py"
+    if not _t_rc197.is_file():
+        skip("  [SKIP] the dismissed-pair rule — no rule_conflicts.py")
+    else:
+        import json as _js197
+        import unittest.mock as _mm197
+
+        sys.path.insert(0, str(_t_tools197))
+        import rule_conflicts as _rc197
+
+        _t_fake197 = {"dismissed": [{"rule": "a.md", "other": "b.md", "why": "read in full"}]}
+        with _mm197.patch.object(_rc197, "DISMISSED", _rc197.DISMISSED):
+            _t_real197 = _rc197._dismissals
+            _rc197._dismissals = lambda: {
+                frozenset(("a.md", "b.md")): "read in full"}
+            try:
+                _t_in197 = [{"rule": "a.md", "other": "b.md", "type": "ambivalence", "reason": "x"},
+                            {"rule": "b.md", "other": "a.md", "type": "overlap", "reason": "x"},
+                            {"rule": "a.md", "other": "c.md", "type": "ambivalence", "reason": "x"}]
+                _t_kept197, _t_drop197 = _rc197.drop_dismissed(_t_in197)
+            finally:
+                _rc197._dismissals = _t_real197
+
+        check("A PAIR ALREADY READ AND DISMISSED IS NOT STAGED AGAIN",
+              len(_t_drop197) == 2 and len(_t_kept197) == 1,
+              saw="dropped %d of 3, kept %d — a dismissal must also hold when the pair is read "
+                  "from the other side" % (len(_t_drop197), len(_t_kept197)))
+        check("...and a pair nobody has dismissed still gets through",
+              bool(_t_kept197) and _t_kept197[0].get("other") == "c.md",
+              saw="kept %r" % (_t_kept197 or None))
+
+        # The data, as it stands on disk: the tool's own output must not contain a pair the
+        # dismissals file already answers. A check of the mechanism alone would pass over a staged
+        # file written before the mechanism existed.
+        _t_out197 = ROOT.parent.parent / ".chamnan" / "state" / "rule_conflict_candidates.json"
+        if not _t_out197.is_file():
+            print("      nothing staged — the data half has no population")
+        else:
+            try:
+                _t_rows197 = _js197.loads(_t_out197.read_text(encoding="utf-8")).get(
+                    "candidates", [])
+            except ValueError:
+                _t_rows197 = []
+            _t_known197 = _rc197._dismissals()
+            _t_bad197 = [r for r in _t_rows197
+                         if frozenset((r.get("rule"), r.get("other"))) in _t_known197]
+            print("      %d staged candidate(s), %d dismissal(s) on record"
+                  % (len(_t_rows197), len(_t_known197)))
+            check("NOTHING STAGED TODAY IS A PAIR ALREADY ANSWERED",
+                  not _t_bad197,
+                  saw="%d staged pair(s) are already dismissed: %s"
+                      % (len(_t_bad197), ", ".join("%s<->%s" % (r.get("rule"), r.get("other"))
+                                                   for r in _t_bad197[:3])))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
