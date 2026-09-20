@@ -35486,6 +35486,213 @@ if _t_ws194 is not None:
               not _t_tight194 or any(_r.get("short") or _r.get("drop") for _r in _t_tight194),
               saw="%d firing(s) sat within 2%% of the ceiling and none recorded a reduction or a "
                   "drop" % len(_t_tight194))
+# ---- 195_a_scheduled_run_records_a_number_the_agent_did_not_supply.py
+# ---- 195_a_scheduled_run_records_a_number_the_agent_did_not_supply.py
+# 🐛 [2026-09-20] (R10 acc3, 2026-09-20) Every field in an agent's run record came from the agent
+# being measured. 73 runs across six agents were recorded that way and none was ever checked.
+# R10's name for the class is a SILENT SEMANTIC VIOLATION — nothing crashes, nothing errors, the
+# behaviour is simply wrong — measured at 20-57% of all failures per system across nine real
+# distributed systems, 39% on average. This repository had a live instance the day before: an agent
+# ran, exited clean, wrote its record, and returned an attribution that did not survive a hand
+# check.
+#
+# `record()` now also stores `WORKLOAD`'s probe, computed by the SCHEDULER from the same material
+# the due-gate uses. That number the agent does not supply, so a claim and an independent count sit
+# side by side and disagree in public.
+#
+# R10 #4 is the constraint this respects: a dead-man's switch went silent for 43 days because the
+# monitor failed in the way it existed to prevent. So the probe is read from the stored record —
+# never by rerunning the agent, which would inherit exactly that class.
+_t_ws195 = owner_workspace("the scheduled-run evidence check")
+if _t_ws195 is not None:
+    _t_sched195 = ROOT.parent.parent / ".chamnan" / "tools" / "agent_schedule.py"
+    if not _t_sched195.is_file():
+        skip("  [SKIP] the scheduled-run evidence check — no agent_schedule.py")
+    else:
+        _t_src195 = _t_sched195.read_text(encoding="utf-8", errors="replace")
+
+        # 🐛 [2026-09-20] (self-measured) This first asked whether the string `"probe"` appeared in
+        # the source. It does — in the docstring, and in the reader that consumes it — so deleting
+        # the line that WRITES the field left the check green. Proved by deleting it: 5/5 passed
+        # over code that no longer did the thing. The recorded lesson is a check that reads its own
+        # source matches itself; the answer is to call the function and look at what it wrote.
+        _t_wrote195 = None
+        try:
+            sys.path.insert(0, str(ROOT.parent.parent / ".chamnan" / "tools"))
+            import unittest.mock as _mm195
+            import agent_schedule as _as195
+            _t_store195 = {}
+            _t_agent0195 = next(iter(getattr(_as195, "WORKLOAD", {})), None)
+            with _mm195.patch.object(_as195, "prune", lambda: (_t_store195, 0)), \
+                 _mm195.patch.object(_as195, "_write", lambda d: None):
+                _as195.record(_t_agent0195, "probe-field behaviour check", 0, 0)
+            _t_wrote195 = (_t_store195.get(_t_agent0195) or [{}])[-1]
+        except Exception as _e195:             # noqa: BLE001 — reported as a failure below
+            _t_wrote195 = {"error": repr(_e195)}
+        check("A RUN RECORD CARRIES A NUMBER THE AGENT DID NOT SUPPLY",
+              isinstance(_t_wrote195, dict) and "probe" in _t_wrote195,
+              saw="record() wrote %s" % sorted(_t_wrote195) if isinstance(_t_wrote195, dict)
+                  else repr(_t_wrote195))
+        # A field nothing reads is the same blind spot one level along, which is why the reader is
+        # asserted too rather than just the writer.
+        check("...and a disagreement between the claim and that number is SHOWN, not just stored",
+              "found nothing while" in _t_src195 and "the probe counted 0" in _t_src195,
+              saw="status_lines() prints the record without comparing the two")
+
+        # And it must fire in both directions, proved by driving the real printer over rows built
+        # here rather than by reading the source for a condition.
+        import unittest.mock as _m195
+        _t_mod195 = None
+        try:
+            sys.path.insert(0, str(ROOT.parent.parent / ".chamnan" / "tools"))
+            import agent_schedule as _t_mod195
+        except Exception:                      # noqa: BLE001 — reported as a failure below
+            _t_mod195 = None
+        if _t_mod195 is None:
+            check("the scheduler imports, so the behaviour could be exercised", False,
+                  saw="agent_schedule could not be imported")
+        else:
+            _t_agent195 = next(iter(getattr(_t_mod195, "WORKLOAD", {})), None)
+            _t_rows195 = {_t_agent195: [
+                {"ts": "2026-01-01T00:00", "summary": "silent", "findings": 0, "fixed": 0,
+                 "probe": {"count": 40, "min": 3, "unit": "u"}},
+                {"ts": "2026-01-01T01:00", "summary": "phantom", "findings": 7, "fixed": 0,
+                 "probe": {"count": 0, "min": 3, "unit": "u"}},
+                {"ts": "2026-01-01T02:00", "summary": "agrees", "findings": 5, "fixed": 5,
+                 "probe": {"count": 9, "min": 3, "unit": "u"}},
+            ]}
+            with _m195.patch.object(_t_mod195, "prune", lambda: (_t_rows195, 0)), \
+                 _m195.patch.object(_t_mod195, "_read", lambda: _t_rows195):
+                _t_out195 = "\n".join(_t_mod195.status_lines())
+            # 🐛 [2026-09-20] (self-measured) These first sliced 120 characters after each summary
+            # and asked whether a ⚠ was in the window. Rows print newest first, so the window after
+            # "agrees" ran straight into the two flagged rows below it and the quiet case reported
+            # a false failure. The unit is the LINE the summary sits on, and nothing else — a check
+            # whose evidence spills into its neighbour is the same defect as a warning that does.
+            def _line195(word):
+                return next((ln for ln in _t_out195.splitlines() if word in ln), "")
+            _t_silent195 = "⚠" in _line195("silent")
+            _t_phantom195 = "⚠" in _line195("phantom")
+            _t_quiet195 = _line195("agrees") != "" and "⚠" not in _line195("agrees")
+            check("...it flags a run that found nothing while work was waiting",
+                  _t_silent195, saw="no warning beside the silent run")
+            check("...and a run that reported findings the probe says were not there",
+                  _t_phantom195, saw="no warning beside the phantom run")
+            check("...and stays QUIET when the claim and the probe agree",
+                  _t_quiet195, saw="warned on a run where the two agreed — a flag that always "
+                                   "fires is the noise R49 measured people learning to ignore")
+# ---- 196_every_writer_of_a_round_name_writes_the_shape_the_counter_reads.py
+# ---- 196_every_writer_of_a_round_name_writes_the_shape_the_counter_reads.py
+# 🐛 [2026-09-20] (self-measured) The archive's documented filename is `R<n>_<slot>_<topic>_<date>.md`
+# and `next_research_round.NAME` reads the SLOT out of the second field -- that is how `rounds()`
+# finds a number handed out twice. Three writers construct that name and all three wrote
+# `R<n>_<date>_<slug>.md` instead, so every report they ever filed was invisible to the duplicate
+# check while the Claude path's hand-named reports were not. Found by preflight warning on three of
+# today's four rounds and staying quiet about the fourth.
+#
+# `next_research_round.py` already carries three 🐛 notes about a round becoming invisible to its own
+# counter, each fixed where it was noticed. This is the fourth route and the reason it is a check
+# rather than a fourth fix: the recorded defect of this project is a rule applied to one member of a
+# set and forgotten in the identical ones beside it. The third writer here was found by sweeping for
+# the population, not by reading the two that were already open.
+#
+# So this asserts the POPULATION (every construction site, derived by scanning, not listed by hand)
+# and then the BEHAVIOUR of each one -- the shell lines are evaluated as shipped, the Python writer
+# is called and the file it writes is read back.
+_t_ws196 = owner_workspace("the round-report filename shape")
+if _t_ws196 is not None:
+    _t_tools196 = ROOT.parent.parent / ".chamnan" / "tools"
+    _t_nrr196 = _t_tools196 / "next_research_round.py"
+    if not _t_nrr196.is_file():
+        skip("  [SKIP] the round-report filename shape — no next_research_round.py")
+    else:
+        import pathlib as _pl196
+        import subprocess as _sp196
+        import tempfile as _tf196
+
+        sys.path.insert(0, str(_t_tools196))
+        import next_research_round as _nrr196
+        _t_NAME196 = _nrr196.NAME
+
+        # --- the population: who builds one of these names at all -----------------------------
+        # A construction site mentions the archive path AND something variable that only a name
+        # being BUILT would carry (the topic, the slug, or a date). A `ls -t .../R${ROUND}*.md`
+        # lookup carries none of those and is a read, not a writer.
+        _t_sites196 = {}
+        for _t_f196 in sorted(_t_tools196.iterdir()):
+            # `_`-prefixed files are generated scratch — `suite_slice.py` writes this very check
+            # into `_suite_batch_run.py` beside the tools, and a scanner that counts its own copy
+            # reports a writer that does not exist.
+            if (not _t_f196.is_file() or _t_f196.suffix not in (".py", ".sh")
+                    or _t_f196.name.startswith("_")):
+                continue
+            _t_txt196 = _t_f196.read_text(encoding="utf-8", errors="replace")
+            # A shell name is built across continuation lines, so join them first: the archive path
+            # sits on one line and the topic and date on the next two. Scanning raw lines found two
+            # of the three writers and would have gone on missing the third.
+            _t_joined196 = _t_txt196.replace("\\\n", " ")
+            for _t_ln196 in _t_joined196.splitlines():
+                if _t_ln196.lstrip().startswith("#"):
+                    continue
+                if "state/research/R" in _t_ln196 and (
+                        "TOPIC" in _t_ln196 or "slug" in _t_ln196 or "%Y-%m-%d" in _t_ln196):
+                    _t_sites196.setdefault(_t_f196.name, []).append(_t_ln196)
+            if "OUT / name" in _t_txt196 and "name = f" in _t_txt196:
+                _t_sites196.setdefault(_t_f196.name, []).append("name = f...")
+        _t_known196 = {"round_report.py", "ask-codex-account.sh", "research-on-account.sh"}
+        print("      %d writer(s) of a round-report filename: %s"
+              % (len(_t_sites196), ", ".join(sorted(_t_sites196)) or "none"))
+        check("EVERY WRITER OF A ROUND-REPORT FILENAME IS ONE THIS CHECK EXERCISES",
+              set(_t_sites196) <= _t_known196,
+              saw="a writer nobody checks: %s" % ", ".join(sorted(set(_t_sites196) - _t_known196)))
+        check("...and none of the three has stopped writing one",
+              _t_known196 <= set(_t_sites196),
+              saw="no name built in: %s" % ", ".join(sorted(_t_known196 - set(_t_sites196))))
+
+        # --- the Python writer, by calling it ---------------------------------------------------
+        import round_report as _rr196
+        with _tf196.TemporaryDirectory() as _t_d196:
+            _t_raw196 = _pl196.Path(_t_d196) / "raw.txt"
+            _t_raw196.write_text("FINAL ANSWER\n\n" + ("a finding line.\n" * 200), encoding="utf-8")
+            _t_old196, _rr196.OUT = _rr196.OUT, _pl196.Path(_t_d196) / "research"
+            try:
+                _rr196.main(["--raw", str(_t_raw196), "--round", "77", "--account", "acc4",
+                             "--topic", "what a writer names its own output",
+                             "--date", "2026-09-20"])
+                _t_made196 = [p.name for p in _rr196.OUT.glob("R77*.md")]
+            finally:
+                _rr196.OUT = _t_old196
+        check("round_report.py NAMES A REPORT THE DUPLICATE CHECK CAN READ",
+              bool(_t_made196) and all(_t_NAME196.match(n) for n in _t_made196),
+              saw="wrote %s, which next_research_round.NAME does not match" % (_t_made196 or "nothing"))
+
+        # --- the two shell writers, by running the line as shipped ------------------------------
+        for _t_sh196 in ("ask-codex-account.sh", "research-on-account.sh"):
+            _t_src196 = (_t_tools196 / _t_sh196).read_text(encoding="utf-8", errors="replace")
+            _t_lines196 = _t_src196.splitlines()
+            _t_start196 = next((i for i, ln in enumerate(_t_lines196)
+                                if ln.lstrip().startswith("OUT=")
+                                and "state/research/R" in ln
+                                and ("TOPIC" in ln or "%Y-%m-%d" in ln
+                                     or "CONFIG" in ln or "ACCOUNT" in ln)), None)
+            if _t_start196 is None:
+                check("%s BUILDS A REPORT NAME AT ALL" % _t_sh196, False,
+                      saw="no OUT= line constructing one")
+                continue
+            _t_snip196 = []
+            for _t_ln196 in _t_lines196[_t_start196:]:
+                _t_snip196.append(_t_ln196.lstrip())
+                if not _t_ln196.rstrip().endswith("\\"):
+                    break
+            _t_script196 = (
+                'ROOT=/tmp/x; ROUND=77; AGENT=""; ACCOUNT=acc4; CONFIG=/x/claude-account4;\n'
+                'TOPIC="What A Writer Names Its Own Output";\n'
+                + "\n".join(_t_snip196) + '\necho "$(basename "$OUT")"\n')
+            _t_run196 = _sp196.run(["bash", "-c", _t_script196], capture_output=True, text=True)
+            _t_name196 = (_t_run196.stdout or "").strip().splitlines()[-1:] or [""]
+            check("%s NAMES A REPORT THE DUPLICATE CHECK CAN READ" % _t_sh196,
+                  bool(_t_NAME196.match(_t_name196[0])),
+                  saw="built %r (stderr: %s)" % (_t_name196[0], (_t_run196.stderr or "").strip()[:120]))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
