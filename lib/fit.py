@@ -291,6 +291,7 @@ def _usage_of(sources, usage):
 
 
 def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
+           briefed_out=None,
            usage=None):
     """Return (body, dropped) with body at or under `ceiling` bytes where that is achievable.
 
@@ -607,6 +608,16 @@ def shrink(header, parts, ceiling=CEILING, sources=None, absent=(), briefs=None,
     # constraints — check these before proposing infrastructure work") while the thing the reader
     # actually needs is the path. Paths, and measured like everything else.
     _short = sorted({(sources or {}).get(title_of(order[i]), "") for i in briefed_at} - {""})
+    # 🐛 [2026-09-20] (self-measured) The set above is the sections that arrived as NAMES ONLY, and
+    # it was computed, printed in one sentence to the reader, and thrown away. That is the behaviour
+    # 1.27.0 leads with -- a section that will not fit leaves its names -- and it was the least
+    # measurable thing the block does: `blocklog` records outright DROPS, which happen on 16% of
+    # firings to one section, while a names-only reduction happens far more often and left no trace
+    # at all. An out-parameter rather than a third return value, because `shrink` has callers and
+    # the codebase already uses the pass-a-list shape (`rulecheck._matches`'s `why`) for exactly
+    # this. Titles, not the source paths `_short` holds, because the log keys sections by title.
+    if briefed_out is not None:
+        briefed_out.extend(sorted({title_of(order[i]) for i in briefed_at}))
     _line = ""
     if _short:
         _named = ", ".join(f"`{_s}`" for _s in _short[:5])

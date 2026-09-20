@@ -2519,8 +2519,9 @@ def main():
         _failed = []
     if _failed:
         header = ("_" + " Also: ".join(_failed) + "._\n\n") + header
+    _briefed = []
     body, dropped = fit.shrink(header, out, ceiling, sources, absent=_never_built,
-                                briefs=briefs, usage=_opens)
+                               briefed_out=_briefed, briefs=briefs, usage=_opens)
     if "--explain" in sys.argv:
         return explain(body, cfg, dropped, ceiling)
     # Not a bare print. On Windows, text-mode stdout falls back to the process's ANSI code page
@@ -2562,6 +2563,10 @@ def main():
                         # answer "was a dropped section reopened later in the same session" alone.
                         session=(payload.get("session_id") if isinstance(payload, dict) else None),
                         dropped=[t for t, _src in dropped],
+                        # The other way a section fails to arrive whole: reduced to its names
+                        # because the full text would not fit. Recorded beside `dropped` because
+                        # they are the same question asked twice, and only one half was answerable.
+                        short=_briefed,
                         index_behind=_behind_seconds)
     try:
         sys.stdout.write(body + "\n")

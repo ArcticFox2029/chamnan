@@ -33,7 +33,7 @@ _SECTION = re.compile(r"^### (.+)$", re.M)
 
 
 def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-          index_behind=None, session=None):
+          index_behind=None, session=None, short=()):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
     🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
@@ -103,11 +103,19 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
         # does not have -- see `check()`, where reading the global list of possible sections instead
         # reported seven "never delivered" on a workspace that had none of them to deliver.
         rec["drop"] = sorted({str(d)[:NAME_CHARS] for d in dropped})
+    # 🐛 [2026-09-20] (self-measured) `drop` is one of two ways a section fails to arrive whole, and
+    # it was the only one recorded. The other -- reduced to its NAMES because the full text would
+    # not fit -- is what 1.27.0's headline feature does, happens far more often than an outright
+    # drop, and left no trace: on this repository `drop` fires on 16% of firings for a single
+    # section, while a block sitting at 99.9% of its ceiling was reducing six at once with nothing
+    # to say so afterwards. Same shape as `drop` so the two can be counted together or apart.
+    if short:
+        rec["short"] = sorted({str(s)[:NAME_CHARS] for s in short})
     return rec
 
 
 def record(root, body, ceiling=None, when=None, source=None, resent=True, dropped=(),
-           index_behind=None, session=None):
+           index_behind=None, session=None, short=()):
     """Append one shape record, trimmed to KEEP. Returns True when it wrote.
 
     Never raises: a session that cannot write its own telemetry is still a session, and the block
@@ -119,7 +127,7 @@ def record(root, body, ceiling=None, when=None, source=None, resent=True, droppe
     # here first, and a second caller (the Agent-result hook) would have made it the eighth function
     # body in this package written in more than one file, in the package that counts them.
     return ws.append_jsonl(root, LOG, shape(body, ceiling, when, source, resent, dropped,
-                                            index_behind, session), KEEP)
+                                            index_behind, session, short), KEEP)
 
 
 

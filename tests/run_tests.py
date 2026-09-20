@@ -35425,6 +35425,67 @@ if _t_ws193 is not None:
     check("...and both populations are non-empty, so neither half passes over nothing",
           len(_t_must_hide193) >= 5 and len(_t_must_keep193) >= 5,
           saw="%d must-hide, %d must-keep" % (len(_t_must_hide193), len(_t_must_keep193)))
+# ---- 194_a_section_reduced_to_names_is_recorded_too.py
+# ---- 194_a_section_reduced_to_names_is_recorded_too.py
+# 🐛 [2026-09-20] (self-measured) There are two ways a section fails to arrive whole, and only one
+# was recorded. `blocklog` kept `drop` — a section cut entirely — which on this repository fires on
+# 16% of firings, for one section. The other way is 1.27.0's headline feature: a section that will
+# not fit leaves its NAMES instead of its title. `fit.shrink` computed that set, printed it to the
+# reader in one sentence, and discarded it.
+#
+# So a firing could be logged as a clean, complete delivery while most of it arrived as names.
+# Measured the day this was wired: a block at 9,483 of 9,500 bytes, `drop` empty, and SEVEN of nine
+# sections reduced. The release note's "9 of 9 sections delivered" was true and the log could not
+# say what nine of nine meant.
+#
+# This asserts the field exists and is REACHED, not merely that the code mentions it — a recorded
+# field nothing ever writes is the same blind spot one level along.
+_t_ws194 = owner_workspace("the reduced-section record")
+if _t_ws194 is not None:
+    _t_log194 = ROOT.parent.parent / ".chamnan" / "logs" / "block_shape.jsonl"
+
+    # The producer must be able to say it. Read from source rather than imported, because importing
+    # the hook runs its module body.
+    _t_fit194 = (ROOT / "lib" / "fit.py").read_text(encoding="utf-8", errors="replace")
+    _t_blk194 = (ROOT / "lib" / "blocklog.py").read_text(encoding="utf-8", errors="replace")
+    _t_hook194 = (ROOT / "hooks" / "chamnan_session_start.py").read_text(
+        encoding="utf-8", errors="replace")
+
+    check("fit CAN REPORT WHAT IT REDUCED TO NAMES, not only what it dropped",
+          "briefed_out" in _t_fit194,
+          saw="fit.py does not accept an out-parameter for the reduced set")
+    check("...and the block log has somewhere to put it",
+          '"short"' in _t_blk194 or "'short'" in _t_blk194,
+          saw="blocklog.py records no `short` field")
+    check("...and the hook actually passes it, so the field is not decorative",
+          "briefed_out=" in _t_hook194 and "short=" in _t_hook194,
+          saw="the hook computes the set but does not hand it to the log")
+
+    # And the population: at least one real firing has been recorded with the field present. A
+    # block that fits entirely writes no `short`, which is correct and not a failure — so this
+    # asks whether ANY record carries it, not whether the newest one does.
+    if not _t_log194.is_file():
+        skip("  [SKIP] the reduced-section record — no block_shape.jsonl yet")
+    else:
+        _t_rows194 = []
+        for _t_ln194 in _t_log194.read_text(encoding="utf-8", errors="replace").splitlines():
+            if not _t_ln194.strip():
+                continue
+            try:
+                _t_rows194.append(json.loads(_t_ln194))
+            except ValueError:
+                continue
+        _t_with194 = [_r for _r in _t_rows194 if _r.get("short")]
+        _t_tight194 = [_r for _r in _t_rows194
+                       if _r.get("bytes", 0) >= (_r.get("ceiling") or 9500) * 0.98]
+        print("      %d of %d record(s) carry a reduced set; %d firing(s) were within 2%% of the "
+              "ceiling" % (len(_t_with194), len(_t_rows194), len(_t_tight194)))
+        # A block pressed against its ceiling that reduced NOTHING and dropped NOTHING would mean
+        # the fitter is not doing the thing this field exists to observe.
+        check("A FIRING AT THE CEILING RECORDS WHICH SECTIONS IT REDUCED",
+              not _t_tight194 or any(_r.get("short") or _r.get("drop") for _r in _t_tight194),
+              saw="%d firing(s) sat within 2%% of the ceiling and none recorded a reduction or a "
+                  "drop" % len(_t_tight194))
 # ---- 19_a_subagent_does_not_inflate_the_session.py
 # ------------------------------------------- eight processes, one session id, one counter
 # 🐛 [2026-09-09] "One state file per session" fixed a lost-update bug and rests on an assumption
