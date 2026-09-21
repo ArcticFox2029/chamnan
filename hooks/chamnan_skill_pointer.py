@@ -163,7 +163,13 @@ def _what_this_repo_already_has(payload):
     if not words:
         return ""
     root = ws.hook_root(payload)
-    recall = Path(root) / "Work-Mode" / "chamnan" / "bin" / "chamnan-recall"
+    # 🐛 [2026-09-22] (self-measured) This built the path from the repository directory plus two
+    # hard-coded segments naming the author's own checkout layout, rather than from where the
+    # plugin is installed. Anywhere else that path does not exist, the guard
+    # below returned "" every time, and the whole feature was dead for every user who is not the
+    # author — silently, because returning "" is also what "nothing matched" looks like.
+    # The plugin knows where it lives: this file is in `hooks/`, so `bin/` is its sibling.
+    recall = Path(__file__).resolve().parents[1] / "bin" / "chamnan-recall"
     if not recall.is_file():
         return ""
     try:
@@ -184,6 +190,70 @@ def _what_this_repo_already_has(payload):
     head += ["  " + ln.strip()[:130] for ln in lines[:7]]
     head.append("  (this ran automatically; `chamnan-recall <words>` is the manual form)")
     return "\n".join(head)
+
+
+UI_SUFFIXES = (".tsx", ".jsx", ".vue", ".svelte")
+# A stem this short is a word, not a component name, and matching on it would fire on anything.
+MIN_STEM = 3
+
+
+def _ui_component_already_here(payload):
+    """A new UI component whose name the index already knows, else "".
+
+    The most-reported complaint about coding agents is that they "create duplicate code or write
+    custom code for pre-existing functions instead of integrating". In UI work that is the same
+    `Button`, `Modal` or `Card` written a fourth time, and chamnan is the only thing installed that
+    already holds every symbol in the repository.
+
+    **Exact stem, case-insensitive, and nothing cleverer.** `Btn` against `Button` is a similarity
+    judgement, and a similarity judgement without a model is a false-positive machine -- which is
+    the detector shape this project has recorded fifteen times. A name that matches exactly is
+    evidence; a name that looks a bit like another is not.
+
+    Only on a file that does NOT exist yet. Editing a component is not the case this is for.
+    """
+    raw = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not raw or not raw.lower().endswith(UI_SUFFIXES):
+        return ""
+    if Path(raw).exists():
+        return ""
+    stem = Path(raw).stem
+    if len(stem) < MIN_STEM or not stem[:1].isalpha():
+        return ""
+    root = ws.hook_root(payload)
+    wsdir = ws.workspace(root)
+    mp = wsdir / "MAP.md"
+    try:
+        if not mp.is_file() or mp.stat().st_size > 4_000_000:
+            return ""
+        text = mp.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+    low = stem.lower()
+    hits = []
+    for m in re.finditer(r"(?m)^## `([^`]+)`$", text):
+        other = m.group(1)
+        if Path(other).stem.lower() == low and Path(other).name != Path(raw).name:
+            hits.append(other)
+        elif Path(other).stem.lower() == low:
+            hits.append(other)
+    if not hits:
+        # Not a file of that name -- a SYMBOL of that name, which is how a component defined
+        # inside a shared file is found.
+        for m in re.finditer(r"(?m)^- `([A-Za-z_][A-Za-z0-9_]*)\(", text):
+            if m.group(1).lower() == low:
+                sec = text.rfind("\n## `", 0, m.start())
+                owner = text[sec:sec + 200].split("`")[1] if sec >= 0 else ""
+                if owner:
+                    hits.append("%s (as `%s`)" % (owner, m.group(1)))
+                break
+    if not hits:
+        return ""
+    named = ", ".join("`%s`" % h for h in hits[:3])
+    more = "" if len(hits) <= 3 else " and %d more" % (len(hits) - 3)
+    return ("chamnan: this repository already has `%s` — %s%s. Reuse or extend it rather than "
+            "writing a second one, or pick a name that says how this one differs."
+            % (stem, named, more))
 
 
 # 🐛 [2026-09-19] (self-measured), from the full gate run of this date. This hook emitted four `additionalContext` payloads and ran none of them through
@@ -398,7 +468,7 @@ def main():
             _emit(_doomed)
             return 0
     if _tool == "Write":
-        _already = _what_this_repo_already_has(payload)
+        _already = _what_this_repo_already_has(payload) or _ui_component_already_here(payload)
         if _already:
             _emit(_already)
             return 0
