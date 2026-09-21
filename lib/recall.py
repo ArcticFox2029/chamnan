@@ -131,9 +131,17 @@ def _needs_substring(line):
     return False
 
 
-def _non_ascii_lines(text, cap=4000):
-    """Only the lines a substring query could ever need."""
-    return "\n".join(ln for ln in text.split("\n") if _needs_substring(ln))[:cap]
+def _non_ascii_lines(text):
+    """Only the lines a substring query could ever need.
+
+    🐛 [2026-09-21] (self-measured) Used to cap the joined result at 4,000 characters, which
+    silently dropped Thai content past that point -- Thai has no word boundaries, so substring
+    matching is the only way Thai content is findable at all. Measured by building the real index
+    both ways against `run_tests.py`'s `index_size <= corpus_size` corpus (78 documents,
+    2,196,408 bytes): capped index 1,268,439 bytes (57.8% of corpus), uncapped 1,487,242 bytes
+    (67.7% of corpus). The cap protected a property that had thirty points of headroom to spare.
+    """
+    return "\n".join(ln for ln in text.split("\n") if _needs_substring(ln))
 
 
 def paths_for(ws_dir, folder):
