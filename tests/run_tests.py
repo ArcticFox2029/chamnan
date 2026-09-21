@@ -17873,6 +17873,23 @@ if _counts:
     check(f"...and its agent-name count matches too: says {_named}, real {len(_all_names)}",
           _named == len(_all_names))
 
+# 🐛 [2026-09-21] (owner) The check above reads ONE sentence, and on 2026-09-21 the README gained a
+# second place stating the same count -- a callout near the top replacing a link to a separate
+# repository for Kiro, which had not existed for some time while the README went on advertising it.
+# Guarding one of two identical claims is this project's most-recorded defect, so the population is
+# swept rather than the sentence named: every "<n> adapters" and every "<n> of them" anywhere in the
+# README must be the registry's own count. A new place stating it is covered the moment it is
+# written, which is the whole point of deriving the population instead of listing it.
+_stated = [(m.group(1), m.group(0)) for m in re.finditer(r"(\d+)\s+adapters?\b", _readme)]
+_stated += [(m.group(1), m.group(0))
+            for m in re.finditer(r"\*\*\[?(\d+) of them\]?", _readme)]
+_wrong_count = [raw for n, raw in _stated if int(n) != len(adapters_mod.ADAPTERS)]
+check(f"the adapter count is stated in {len(_stated)} place(s), so this is not a sweep over nothing",
+      len(_stated) >= 2, saw=f"found {len(_stated)}")
+check("EVERY PLACE THE README STATES THE ADAPTER COUNT AGREES WITH THE REGISTRY",
+      not _wrong_count,
+      saw=f"registry has {len(adapters_mod.ADAPTERS)}; these disagree: {_wrong_count}")
+
 
 # ------------------- a Ruby method with a non-ASCII name was invisible, not mis-spelled
 # 🐛 `rb`'s pattern anchored on `[A-Za-z_]`, so `def คำนวณราคา` was not captured at all. Ruby has

@@ -61,11 +61,13 @@ index is worth sending, never where anything goes.
 runs**; the index's own assertions about the tree check out at **3,701 of 3,701** <!-- live: map_claim_check -->; and **51.1%** of
 the identifiers this repository's sessions actually searched for are answerable from `MAP.md`.
 
-> **Using Kiro instead of Claude Code?** There is a Kiro Power, in its own repository:
-> **[→ chamnan for Kiro](https://github.com/ArcticFox2029/chamnan-kiro)**
+> **Not using Claude Code?** Nothing else is needed. chamnan detects the agent it is installed
+> beside and writes to the file that agent already reads — **[22 of them](#any-agent-not-only-claude-code)**,
+> Kiro and Cursor and Copilot and Zed among them.
 >
-> Same scanner, same artifacts. The context reaches a session through Kiro's steering files rather
-> than hooks, and the bulk-read notice arrives at the next `catch-up` rather than before the read.
+> Same scanner, same artifacts, one install. Where a host has no hook of its own the context
+> arrives through the file it reads at startup instead, and the bulk-read notice waits for the next
+> `catch-up` rather than landing before the read.
 
 > **Do not take any of this on trust — measure it on your own repository:**
 > **[→ arcticfox2029.github.io/chamnan-measure](https://arcticfox2029.github.io/chamnan-measure/)**
