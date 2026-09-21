@@ -1384,6 +1384,22 @@ def main():
             f"_⚠ **{len(_expiring)} written log(s) expire within a day** — {_names}{_rest}. "
             f"`logs/` is scratch and they are deleted on the window; if any of it is worth keeping, "
             f"`/chamnan:remember` puts it somewhere that is not on a timer._\n"))
+    # The repository's own instruction files — CLAUDE.md, AGENTS.md and fifteen more conventions —
+    # say things that stopped being true, and the agent reads one every session and believes it
+    # absolutely. One line, only when something has actually gone: the owner's condition, and the
+    # same reasoning `mapper.py` records as "a warning that fires on a current map teaches the
+    # reader to ignore it".
+    #
+    # Cached on HEAD inside `drift`: 278 ms on the first session after a commit, 46 ms on every
+    # session after, against a session start of 2,133 ms.
+    try:
+        import drift
+        _drifted = drift.notice(root, wsdir)
+        if _drifted:
+            out.append(redact.scrub("_⚠ %s_\n" % _drifted[len("chamnan: "):]
+                                    if _drifted.startswith("chamnan: ") else _drifted))
+    except Exception:
+        pass
     # Set before the guard below, not inside it: the emit step needs all three, and a failure part
     # way through must still be able to print what was built rather than dying on a name.
     header = "## chamnan\n"
