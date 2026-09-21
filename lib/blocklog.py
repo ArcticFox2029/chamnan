@@ -36,6 +36,30 @@ def shape(body, ceiling=None, when=None, source=None, resent=True, dropped=(),
           index_behind=None, session=None, short=(), transcript=None, nonce=None):
     """The record for one assembled block. Pure: no clock, no disk, no workspace.
 
+    🐛 [2026-09-21] (R84 acc4, 2026-09-21) WHAT EACH FIELD MEANS, because a reader of the JSONL had
+    nothing to read and one of them was read as its opposite. `short` was taken to mean "held back
+    because it had gone stale", a wrong conclusion about a real repository was published on the
+    strength of it, and the retraction cost more than this comment. The subject of that round is
+    how a program decides which of its own records to trust; the answer for a log is that the
+    record has to say what it means.
+
+      bytes    the assembled block's size in UTF-8 bytes
+      tok      its cost, script-weighted, from `tokens.estimate`
+      sec      {section heading: bytes} — what the budget was actually spent on
+      early    the block ended with the host's "stopped early" sentence: it was CUT, not shortened
+      ceiling  the byte limit in force for this firing
+      t        when it was assembled
+      src      why SessionStart fired: startup, resume, compact, clear or fork
+      session  the session id this block was assembled for
+      tr       that session's transcript path, last 120 characters
+      nc       the fence nonce the block was written with
+      resent   present and False only when the block was NOT resent into an existing session
+      behind   seconds the architecture index is behind the newest source file
+      drop     sections dropped entirely for want of room
+      short    sections cut down to their NAMES ONLY — this is a BUDGET decision, and it is
+               **not** the ageing pass. Nothing here records `state.age_out`: a section held back
+               for staleness leaves its trace in the block's own text, not in this log.
+
     🐛 [2026-09-09] `source` was not recorded, and it is the one dimension that makes the rest of
     this log answerable. SessionStart fires for five different reasons — startup, resume, compact,
     clear, fork — the hook already reads which, and it was discarded before reaching here. So a
