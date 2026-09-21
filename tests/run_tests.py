@@ -35041,17 +35041,74 @@ if _t_ws189 is not None:
 
     if _t_ln189 is not None:
         _t_seen189, _t_wrong189, _t_unknown189 = _t_ln189.sweep(pkg=ROOT)
-        for _t_x189 in _t_wrong189 + _t_unknown189:
+        # The remedy differs by finding, so it is printed with the findings it actually fixes --
+        # `--fix` rewrites a decayed figure and does nothing for a stale index.
+        _t_fixable189 = _t_wrong189 + [_x for _x in _t_unknown189
+                                       if "the index is stale" not in _x]
+        for _t_x189 in _t_fixable189:
             print("      " + _t_x189)
-        if _t_wrong189 or _t_unknown189:
+        if _t_fixable189:
             print("      fix: python3 .chamnan/tools/live_numbers.py --fix")
-        check("EVERY PUBLISHED NUMBER MARKED LIVE STILL MATCHES WHAT ITS OWN TOOL REPORTS",
-              _t_wrong189 == [] and _t_unknown189 == [],
-              saw="stale: %s | unknown tool: %s" % (_t_wrong189, _t_unknown189))
+        for _t_b189 in getattr(_t_ln189.sweep, "behind", []):
+            print("      " + _t_b189)
+        # A stale index is the map check's finding, not this one's, and this suite must never
+        # rebuild the owner's index to get an answer -- so it says what it could not judge and why.
+        _t_idx189 = [_x for _x in _t_unknown189 if "the index is stale" in _x]
+        _t_judge189 = [_x for _x in _t_unknown189 if _x not in _t_idx189]
+        if _t_idx189 and not _t_wrong189 and not _t_judge189:
+            skip("  [SKIP] the published figures — the index is stale, so there is nothing current "
+                 "to judge them against (rebuild: Work-Mode/chamnan/bin/chamnan-map)")
+        else:
+            check("EVERY PUBLISHED NUMBER MARKED LIVE STILL STATES A TRUE CLAIM",
+                  _t_wrong189 == [] and _t_judge189 == [],
+                  saw="stale: %s | unknown tool: %s" % (_t_wrong189, _t_judge189))
         # A marker nobody uses would make the check above pass while asserting nothing, which is how
         # the prose version failed for three releases.
         check("...and the sweep found marked numbers, so that is not a pass over nothing",
               _t_seen189 >= 3, saw="%d marked number(s) found" % _t_seen189)
+
+        # 🐛 [2026-09-21] (R24 acc4, 2026-09-21) The sweep asked for exact equality until today, so
+        # it fired on every commit that grew the tree — 3,691 → 3,701 in one day, the same WARN with
+        # the same remedy each time, which R24 #5 measures as the shape attention stops reaching.
+        # It now separates a claim that has stopped being TRUE from a figure that merely understates
+        # after growth. That distinction is the whole of the change, and on this repository all
+        # three branches sit at zero on a good day, so asserting them against the live tree proves
+        # nothing. Planted instead, with the derivation replaced so each branch is reachable: the
+        # published pair is what varies, and the walk is the shipped one.
+        import pathlib as _t_pl189
+        import tempfile as _t_tmp189
+        _t_cases189 = (("growth understates, and is NOT a failure", ("3,000", "3,000"),
+                        (3701, 3701), 0, 1),
+                       ("a published figure above the live one OVERSTATES", ("9,000", "9,000"),
+                        (3701, 3701), 1, 0),
+                       # A pair that is not self-consistent means the INDEX is stale, not that
+                       # the README lies — it lands in `unknown` with the rebuild as its remedy.
+                       ("an index too stale to judge against is unverifiable, not false",
+                        ("3,701", "3,701"), (3698, 3701), 0, 0, 1),
+                       ("an exact match is silent in both channels", ("3,701", "3,701"),
+                        (3701, 3701), 0, 0))
+        _t_real189 = _t_ln189.TOOLS
+        _t_got189 = []
+        try:
+            for _t_case189 in _t_cases189:
+                (_t_why189, _t_said189, _t_live189, _t_nstale, _t_nbehind) = _t_case189[:5]
+                _t_nunk189 = _t_case189[5] if len(_t_case189) > 5 else 0
+                _t_d189 = _t_pl189.Path(_t_tmp189.mkdtemp())
+                (_t_d189 / "docs").mkdir()
+                (_t_d189 / "README.md").write_text(
+                    "checks out at **%s of %s** <!-- live: map_claim_check -->.\n" % _t_said189,
+                    encoding="utf-8")
+                _t_ln189.TOOLS = {"map_claim_check": ((lambda v=_t_live189: v), None)}
+                _t_s189, _t_st189, _t_un189 = _t_ln189.sweep(pkg=_t_d189)
+                _t_bh189 = getattr(_t_ln189.sweep, "behind", [])
+                _t_got189.append((_t_why189, len(_t_st189) == _t_nstale
+                                  and len(_t_bh189) == _t_nbehind
+                                  and len(_t_un189) == _t_nunk189 and _t_s189 == 1))
+        finally:
+            _t_ln189.TOOLS = _t_real189
+        for _t_why189, _t_ok189 in _t_got189:
+            check("...planted: %s" % _t_why189, _t_ok189,
+                  saw="the planted README did not sort into the expected channel")
 # ---- 18_a_pointer_does_not_repeat_the_title_above_it.py
 # ------------------------------------------- the reader is looking at the title; give them the path
 # 🐛 [2026-09-09] Each trimmed rule ended with "_…the rest of **<full title>** is in `<path>`._" and
