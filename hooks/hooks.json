@@ -42,11 +42,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Read",
+        "matcher": "Bash|Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_bulk_read_notice.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_skill_pointer.py\""
           }
         ]
       },
@@ -60,11 +60,11 @@
         ]
       },
       {
-        "matcher": "Bash|Edit|Write",
+        "matcher": "Read",
         "hooks": [
           {
             "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_skill_pointer.py\""
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/chamnan_bulk_read_notice.py\""
           }
         ]
       }

@@ -423,6 +423,14 @@ def main():
     # and the harness decodes them straight back into the model's context. See
     # `redact.for_a_terminal`.
     import redact  # deferred; see the import block
+    # One notice per tool call: a Read reaches this hook AND chamnan_file_pointer, and neither
+    # could see the other before this. Fails open -- see lib/turn.py.
+    try:
+        import turn
+        if not turn.claim(payload, ws.workspace(root)):
+            return 0
+    except Exception:
+        pass
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": redact.for_a_terminal(redact.scrub(note))}}))

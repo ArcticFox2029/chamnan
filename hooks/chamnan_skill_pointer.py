@@ -199,9 +199,28 @@ def _what_this_repo_already_has(payload):
 # of commands where the hook says nothing at all. Inside the one function that writes, it is paid
 # only when there is something to write. The cost argument was real; it was an argument about
 # WHERE, not about whether.
+# The payload for THIS process, so the six `_emit` sites below can reach the turn claim without
+# threading it through six signatures. One hook process handles exactly one tool call, so a module
+# global is the whole lifetime of the value -- and `_emit` is called from paths that run before
+# `wsdir` is computed, which a parameter would have to skip.
+_CALL = {}
+
+
 def _emit(text):
-    """The one place this hook writes to stdout. Scrubbed, then control-stripped, then serialised."""
+    """The one place this hook writes to stdout. Scrubbed, then control-stripped, then serialised.
+
+    Gated on `turn.claim`: three PreToolUse hooks run for one tool call, each its own process, and
+    before this gate whichever reached stdout first won by accident of code order. The claim fails
+    OPEN -- see `lib/turn.py` -- so the worst outcome is the behaviour this replaced.
+    """
     import redact
+    if _CALL:
+        try:
+            import turn
+            if not turn.claim(_CALL, ws.workspace(ws.hook_root(_CALL))):
+                return
+        except Exception:
+            pass          # never let the coordinator's own failure silence a notice
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "additionalContext": redact.for_a_terminal(redact.scrub(text))}}))
@@ -321,6 +340,8 @@ def main():
         payload = payload if isinstance(payload, dict) else {}
     except Exception:
         return 0
+    global _CALL
+    _CALL = payload
     _tool = payload.get("tool_name") or ""
     if _tool == "Write":
         _already = _what_this_repo_already_has(payload)
