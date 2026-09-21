@@ -35773,6 +35773,86 @@ if _t_ws196 is not None:
             check("%s NAMES A REPORT THE DUPLICATE CHECK CAN READ" % _t_sh196,
                   bool(_t_NAME196.match(_t_name196[0])),
                   saw="built %r (stderr: %s)" % (_t_name196[0], (_t_run196.stderr or "").strip()[:120]))
+
+        # --- the OTHER population: who decides where a report lands ---------------------------
+        # 🐛 [2026-09-21] (owner) The sweep above asks who BUILDS a round name. `dispatch_research.sh`
+        # builds none -- it takes the path from argv and writes there -- so it sat outside a
+        # population that exists to catch exactly this, correctly by the letter of the definition
+        # and wrongly in every other sense. R63 was dispatched as a bare name and the finished
+        # round was written to the REPOSITORY ROOT with no date and no `.md`, where
+        # `close_a_round.py` cannot see it. That is how a round is lost rather than closed, and it
+        # is the same defect one category up: the rule was applied to the namers and forgotten in
+        # the filer standing beside them.
+        _t_filers196 = set()
+        for _t_f196b in sorted(_t_tools196.iterdir()):
+            if (not _t_f196b.is_file() or _t_f196b.suffix not in (".py", ".sh")
+                    or _t_f196b.name.startswith("_")):
+                continue
+            _t_t196b = _t_f196b.read_text(encoding="utf-8", errors="replace")
+            # A filer of a ROUND is not merely something that writes a file. It takes an agent's
+            # RAW output and puts it somewhere. Detecting "writes a file" alone swept in
+            # `make_brief.py`, `research_citations.py`, `research_screen.py`, `rule_conflicts.py`
+            # and `suite_slice.py`, none of which file a round -- a population that catches five
+            # innocents teaches its reader to widen the allow-list until it catches nothing.
+            _t_writes196 = ('> "$REPORT"' in _t_t196b or '> "$OUT"' in _t_t196b
+                            or ".write_text(" in _t_t196b)
+            _t_raw196 = ("$RAW" in _t_t196b or "--raw" in _t_t196b
+                         or "args.raw" in _t_t196b)
+            if _t_writes196 and _t_raw196:
+                _t_filers196.add(_t_f196b.name)
+        # Three, and the third earns its place: `read_agent_report.py` decides where the EXTRACT
+        # lands, and R63's extract followed its report to the repository root for the same reason.
+        _t_expected196 = {"dispatch_research.sh", "round_report.py", "read_agent_report.py"}
+        print("      %d filer(s) of a finished report: %s"
+              % (len(_t_filers196), ", ".join(sorted(_t_filers196)) or "none"))
+        check("EVERY FILER OF A FINISHED REPORT IS ONE THIS CHECK KNOWS",
+              _t_filers196 == _t_expected196,
+              saw="a filer nobody checks: %s — it decides where a round lands, and a round outside "
+                  "state/research is invisible to close_a_round.py"
+                  % (", ".join(sorted(_t_filers196 ^ _t_expected196)) or "none"))
+
+        # And the behaviour of the one that takes its path from the caller: a bare name must be
+        # completed to the archive path, an explicit path must be left exactly as given.
+        _t_disp196 = _t_tools196 / "dispatch_research.sh"
+        if not _t_disp196.is_file():
+            print("      no dispatch_research.sh — the filer half has no population")
+        else:
+            _t_body196 = _t_disp196.read_text(encoding="utf-8", errors="replace")
+            _t_at196 = _t_body196.find('case "$REPORT" in')
+            if _t_at196 < 0:
+                check("A BARE REPORT NAME IS COMPLETED TO THE ARCHIVE PATH", False,
+                      saw="dispatch_research.sh has no canonicalisation of $REPORT at all — a bare "
+                          "name lands wherever the caller happened to be standing")
+            else:
+                # The block contains a nested `case`, so the first `esac` is not its end.
+                # Taking it was a silent failure: bash got an unbalanced fragment, printed
+                # nothing, and both assertions below read an empty string as a wrong answer.
+                _t_depth196, _t_blk196 = 0, ""
+                for _t_ln196b in _t_body196[_t_at196:].splitlines(keepends=True):
+                    _t_blk196 += _t_ln196b
+                    _t_s196 = _t_ln196b.strip()
+                    if _t_s196.startswith("case ") or _t_s196.endswith(" in"):
+                        _t_depth196 += 1
+                    if _t_s196 == "esac" or _t_s196.endswith(";; esac"):
+                        _t_depth196 -= 1
+                        if _t_depth196 <= 0:
+                            break
+                _t_prog196 = ('set -u\nROOT=/tmp/rootx\nREPORT="$1"\n' + _t_blk196
+                              + '\necho "$REPORT"\n')
+                def _t_ask196(arg):
+                    return (_sp196.run(["bash", "-c", _t_prog196, "_", arg],
+                                       capture_output=True, text=True).stdout or "").strip()
+                _t_bare196 = _t_ask196("R77_acc2_a_bare_name")
+                _t_expl196 = _t_ask196("/tmp/elsewhere/explicit.md")
+                check("A BARE REPORT NAME IS COMPLETED TO THE ARCHIVE PATH",
+                      _t_bare196.startswith("/tmp/rootx/.chamnan/state/research/")
+                      and _t_bare196.endswith(".md")
+                      and bool(_t_NAME196.match(_t_bare196.rsplit("/", 1)[-1])),
+                      saw="bare name became %r — it must land in state/research with a date and "
+                          "a name the duplicate check can read" % _t_bare196)
+                check("...and an explicit path is left exactly as the caller gave it",
+                      _t_expl196 == "/tmp/elsewhere/explicit.md",
+                      saw="explicit path became %r" % _t_expl196)
 # ---- 197_a_pair_read_and_dismissed_is_not_asked_about_again.py
 # ---- 197_a_pair_read_and_dismissed_is_not_asked_about_again.py
 # 🐛 [2026-09-20] (R20 acc4, 2026-09-20; the ceiling it is measured against is R14 acc4's)
@@ -36119,6 +36199,716 @@ _t_src19 = (ROOT / "hooks" / "chamnan_scratch_watch.py").read_text(encoding="utf
                                                                   errors="replace")
 check("the hook itself learns the owning transcript rather than trusting the session id alone",
       'entry.get("owner")' in _t_src19 and 'transcript_path' in _t_src19)
+# ---- 200_one_defect_recorded_twice_is_counted_once.py
+# ---- 200_one_defect_recorded_twice_is_counted_once.py
+# 🐛 [2026-09-21] (owner) The published headline counted one defect once per PLACE it was recorded,
+# and this tree has two ways a record gets copied. `tests/run_tests.py` is generated by
+# `fold_and_verify.sh` from `.chamnan/tools/checks/*.py`, so 191 records existed twice by
+# construction; and a defect fixed across a set of siblings leaves the same record at every member,
+# one of them twelve times. Headline 1,308 against an honest 1,118 — 14.6% of a number this project
+# puts in front of strangers. The file's own prose already excluded `site/lib/` because "counting a
+# mirror doubles every figure" and then counted the other mirror in the tree, which is the
+# set-not-the-member failure this repository records more often than any other.
+#
+# Excluding the generated file was the wrong shape: 244 of its records are native to the suite and
+# real. The fix is that IDENTITY is the record, so it holds for a mirror nobody has made yet.
+#
+# This asserts the BEHAVIOUR (a planted duplicate is counted once) and then the DATA (the total the
+# tool reports today equals the number of distinct records on disk).
+_t_ws200 = owner_workspace("one defect recorded twice is counted once")
+if _t_ws200 is not None:
+    _t_tools200 = ROOT.parent.parent / ".chamnan" / "tools"
+    _t_rc200 = _t_tools200 / "research_citations.py"
+    if not _t_rc200.is_file():
+        skip("  [SKIP] defect-record de-duplication — no research_citations.py")
+    else:
+        import re as _re200
+
+        sys.path.insert(0, str(_t_tools200))
+        import research_citations as _rc200
+
+        _t_mark200 = "\U0001f41b [2099-01-01]"
+        _t_body200 = "# %s (self-measured) a planted record, counted once however often copied" % (
+            _t_mark200,)
+
+        class _P200:
+            """One planted file. `shipped_files()` yields these instead of the tree."""
+
+            def __init__(self, name, text):
+                self.name, self._t = name, text
+
+            def read_text(self, **_):
+                return self._t
+
+        def _count200(files):
+            _t_real = _rc200.shipped_files
+            _rc200.shipped_files = lambda: files
+            try:
+                return sum(_rc200.records_by_origin())
+            finally:
+                _rc200.shipped_files = _t_real
+
+        _t_one200 = _count200([_P200("a.py", _t_body200)])
+        _t_copy200 = _count200([_P200("a.py", _t_body200),
+                                _P200("b.py", _t_body200),
+                                _P200("c.py", _t_body200)])
+        _t_two200 = _count200([_P200("a.py", _t_body200),
+                               _P200("b.py", _t_body200.replace("counted once", "a DIFFERENT one"))])
+
+        check("ONE RECORD COPIED INTO THREE FILES IS COUNTED ONCE",
+              _t_one200 == 1 and _t_copy200 == 1,
+              saw="alone %d, copied into three files %d — a mirror must not multiply the headline"
+                  % (_t_one200, _t_copy200))
+        check("...and two genuinely different records still count as two",
+              _t_two200 == 2,
+              saw="two distinct records counted as %d — de-duplication must not collapse real ones"
+                  % _t_two200)
+
+        # The data as it stands: what the tool reports must equal the distinct records on disk.
+        # 🐛 [2026-09-21] (self-measured) This compiled its own copy of the record pattern,
+        # which is the second-path defect this repository records by name: a question with
+        # two patterns has two answers the first time either is edited. The module that
+        # owns the question owns the pattern; this asks it.
+        _t_dated200 = _rc200.DATED
+        _t_seen200, _t_raw200 = set(), 0
+        for _t_f200 in _rc200.shipped_files():
+            try:
+                _t_ln200 = _t_f200.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for _t_i200, _t_l200 in enumerate(_t_ln200):
+                if not _t_dated200.search(_t_l200):
+                    continue
+                _t_raw200 += 1
+                _t_rec200 = [_t_l200]
+                for _t_n200 in _t_ln200[_t_i200 + 1:_t_i200 + _rc200.RECORD_CITATION_WINDOW]:
+                    if not _t_n200.strip() or _t_dated200.search(_t_n200):
+                        break
+                    _t_rec200.append(_t_n200)
+                _t_seen200.add(_re200.sub(
+                    r"\s+", " ", " ".join(x.strip().lstrip("#").strip()
+                                          for x in _t_rec200)).strip())
+        # 🐛 [2026-09-21] (owner) This asked `sum(records_by_origin())` and called the answer "the
+        # headline". The owner then excluded the records that name no source, the document's figure
+        # became the first two buckets, and this went on summing three -- passing, while titled as
+        # the guard on a number it had stopped reading. A check that re-derives what it guards
+        # drifts the first time the thing it guards changes. It asks `headline_total()` now, which
+        # is the same call the document makes.
+        _t_round200, _t_own200, _t_bare200 = _rc200.records_by_origin()
+        _t_total200 = _rc200.headline_total()
+        print("      %d record(s) on disk, %d distinct, headline reports %d "
+              "(%d unattributed, excluded)"
+              % (_t_raw200, len(_t_seen200), _t_total200, _t_bare200))
+        check("EVERY DISTINCT RECORD IS COUNTED ONCE, IN EXACTLY ONE BUCKET",
+              _t_round200 + _t_own200 + _t_bare200 == len(_t_seen200),
+              saw="buckets total %d against %d distinct (%d raw) — the gap is records counted more "
+                  "than once" % (_t_round200 + _t_own200 + _t_bare200, len(_t_seen200), _t_raw200))
+        check("...and the published figure is exactly the records whose origin is on record",
+              _t_total200 == _t_round200 + _t_own200 and _t_bare200 > 0,
+              saw="headline %d against %d attributed (%d unattributed) — the headline must be what "
+                  "a reader can follow back" % (_t_total200, _t_round200 + _t_own200, _t_bare200))
+# ---- 201_the_host_repos_backend_is_not_chamnans_record.py
+# ---- 201_the_host_repos_backend_is_not_chamnans_record.py
+# 🐛 [2026-09-21] (owner) *"ตัด local_assist.py — agent_schedule.py ออก เพราะไม่เกี่ยว"*. Workspace
+# tooling counts because it IS chamnan; these two are not. `local_assist.py` asks this machine's
+# Ollama to read long things — the owner's own words for it are *"ไม่ใช่ฟีเจอร์ของ chamnan จริงๆ
+# เป็นแค่ส่วนนึงของการทำงานหลังบ้าน"* — and `agent_schedule.py` is the Miki app's maintenance-agent
+# queue. Twelve defect records of the host repository's backend were being published as chamnan's.
+#
+# The boundary is what a file IS, not what it names: five other files in the same directory mention
+# Miki and are chamnan's own tools, `preflight.py` among them — the file whose existence argued for
+# counting workspace tooling in the first place. So it cannot be derived and a named list is the
+# honest shape. What a list cannot survive is a RENAME, which would put a file back in the count
+# with nothing said, so this asserts the exclusion and the existence together.
+_t_ws201 = owner_workspace("the host repository's backend is not chamnan's record")
+if _t_ws201 is not None:
+    _t_tools201 = ROOT.parent.parent / ".chamnan" / "tools"
+    _t_rc201 = _t_tools201 / "research_citations.py"
+    if not _t_rc201.is_file():
+        skip("  [SKIP] host-repo exclusion — no research_citations.py")
+    else:
+        sys.path.insert(0, str(_t_tools201))
+        import research_citations as _rc201
+
+        _t_named201 = dict(_rc201.HOST_REPO_NOT_CHAMNAN)
+        _t_counted201 = {f.name for f in _rc201.shipped_files()}
+        _t_leaked201 = sorted(n for n in _t_named201 if n in _t_counted201)
+        print("      %d file(s) excluded as the host repository's: %s"
+              % (len(_t_named201), ", ".join(sorted(_t_named201))))
+
+        check("THE HOST REPOSITORY'S OWN BACKEND IS NOT COUNTED AS CHAMNAN",
+              not _t_leaked201,
+              saw="still counted: %s" % ", ".join(_t_leaked201))
+
+        # A rename turns the list into a no-op and says nothing. Every name must still be on disk.
+        _t_gone201 = sorted(n for n in _t_named201 if not (_t_tools201 / n).is_file())
+        check("...and every excluded name still exists, so a rename cannot silently re-count it",
+              not _t_gone201,
+              saw="named but not on disk: %s — rename it in HOST_REPO_NOT_CHAMNAN or drop the "
+                  "entry, but do not leave a list that matches nothing"
+                  % ", ".join(_t_gone201))
+
+        # Each entry carries WHY, because the next reader cannot re-derive a judgement.
+        _t_mute201 = sorted(n for n, w in _t_named201.items() if len((w or "").strip()) < 20)
+        check("...and each one says why it is not chamnan",
+              not _t_mute201,
+              saw="no reason recorded for: %s" % ", ".join(_t_mute201))
+
+        # The boundary is what a file IS, not what it names: this one mentions the Miki app in its
+        # own docstring and is the tool whose existence argued for counting workspace tooling.
+        check("...while a chamnan tool that merely MENTIONS the host app still counts",
+              "preflight.py" in _t_counted201,
+              saw="preflight.py is not counted — the exclusion has widened from what a file is to "
+                  "what it names")
+# ---- 202_a_gap_inside_the_noise_is_not_a_difference.py
+# ---- 202_a_gap_inside_the_noise_is_not_a_difference.py
+# 🐛 [2026-09-21] (R45 acc4, 2026-09-21) `_report_spread` printed each cell's median, min, max and
+# spread and then left the comparison to the reader's eye. That is how this project published
+# 845 ms from a three-run sample and re-measured the same thing at 1,106 and 1,228; the change that
+# number justified cost ten tested properties and was reverted. Printing the spread was never the
+# gap -- nothing said whether the DIFFERENCE read off the table was bigger than it.
+#
+# R45 #9 (pyperf) states it the other way round: report that the evidence is insufficient rather
+# than accept the measurement. R45 #10 (Barrett et al., at most 43.5% of VM/benchmark pairs reach a
+# steady state) is why a handful of trials is not assumed to have settled.
+#
+# The committed `results.json` is one trial per cell, so this has no live population and the
+# existing `trials < 2` warning already covers it. An empty population is not a reason to skip a
+# check -- the shapes are planted, both the one that must fire and the one that must not, because a
+# detector that has never fired is a detector nobody has tested.
+_t_ws202 = owner_workspace("a gap inside the noise is not a difference")
+if _t_ws202 is not None:
+    _t_bench202 = ROOT / "bench" / "run_bench.py"
+    if not _t_bench202.is_file():
+        skip("  [SKIP] benchmark separability — no bench/run_bench.py")
+    else:
+        import importlib.util as _iu202
+        import io as _io202
+        import contextlib as _cl202
+
+        _t_spec202 = _iu202.spec_from_file_location("_t_rb202", str(_t_bench202))
+        _t_rb202 = _iu202.module_from_spec(_t_spec202)
+        _t_spec202.loader.exec_module(_t_rb202)
+
+        def _t_run202(cells):
+            _t_buf202 = _io202.StringIO()
+            with _cl202.redirect_stdout(_t_buf202):
+                _t_rb202._report_spread(
+                    {"runs": {k: [{"context_total": v} for v in vals]
+                              for k, vals in cells.items()}}, trials=3)
+            return _t_buf202.getvalue()
+
+        # Planted: a 50-token gap between two arms, inside a 400-token range in one of them.
+        _t_noisy202 = _t_run202({"q1::bare": [1000, 1200, 1400],
+                                 "q1::chamnan": [1100, 1150, 1250]})
+        # Planted: a 7,000-token gap against a 100-token range. Real, and must not be flagged.
+        _t_clear202 = _t_run202({"q2::bare": [9000, 9050, 9100],
+                                 "q2::chamnan": [2000, 2050, 2100]})
+
+        check("A DIFFERENCE INSIDE ONE CELL'S OWN RANGE IS REPORTED AS NOT SEPARABLE",
+              "NOT SEPARABLE" in _t_noisy202 and "bare vs chamnan" in _t_noisy202,
+              saw="a 50-token gap inside a 400-token range was printed without a word: %r"
+                  % _t_noisy202[-260:])
+        check("...and a difference far larger than the noise is NOT flagged",
+              "NOT SEPARABLE" not in _t_clear202,
+              saw="a 7,000-token gap against a 100-token range was called unseparable — a guard "
+                  "that fires on a real result teaches its reader to ignore it: %r"
+                  % _t_clear202[-260:])
+        # One trial cannot separate anything, and the older guard owns that case alone.
+        _t_single202 = _t_run202({"q3::bare": [1000], "q3::chamnan": [1050]})
+        check("...and a single trial is left to the guard that already covers it",
+              "NOT SEPARABLE" not in _t_single202,
+              saw="a one-trial cell was reported as a comparison: %r" % _t_single202[-200:])
+# ---- 203_the_forbidden_flag_is_refused_and_taught_nowhere.py
+# ---- 203_the_forbidden_flag_is_refused_and_taught_nowhere.py
+# 🐛 [2026-09-21] (owner) The flag was removed from the dispatcher and a refusal added at the
+# bottom of the file -- and fourteen lines at the TOP of that same file went on teaching it, ending
+# "Pass it when the answer will change the tree" with a worked example. A reader reaching line 51
+# was told to use what line 179 refuses. The set-not-the-member failure, inside the very file that
+# records the decision.
+#
+# The owner's instruction is what this check is for: *"ไม่อยากให้จำ แต่มันควรเป็นสกิลที่เขียนไว้
+# แล้วทำตาม"* -- do not carry it in a session's memory, write it down and follow it. R44 measured
+# which half does the work: a hard stop reached 94% compliance where a non-blocking reminder
+# reached 6.3%. So prose in the skill AND a machine that refuses, and this fails if either stops.
+#
+# The literal is BUILT here, never written, because a scan for files that teach the flag would
+# otherwise match this file and report itself.
+_t_ws203 = owner_workspace("the forbidden flag is refused and taught nowhere")
+if _t_ws203 is not None:
+    import subprocess as _sp203
+
+    _t_flag203 = "--" + "deep"
+    _t_tools203 = ROOT.parent.parent / ".chamnan" / "tools"
+    _t_ask203 = _t_tools203 / "ask-acc4.sh"
+    _t_skill203 = ROOT.parent.parent / ".chamnan" / "skills" / "working_a_research_round.md"
+
+    if not _t_ask203.is_file() or not _t_skill203.is_file():
+        skip("  [SKIP] the forbidden flag — dispatcher or skill missing")
+    else:
+        # The machine. A clean refusal and a crash look identical if you only assert the exit code,
+        # so this asserts the sentence AND the absence of a traceback.
+        _t_p203 = _sp203.run([str(_t_ask203), _t_flag203, "probe"],
+                             capture_output=True, text=True, timeout=60)
+        _t_said203 = (_t_p203.stderr or "") + (_t_p203.stdout or "")
+        check("THE DISPATCHER REFUSES THE FORBIDDEN FLAG, AND SAYS SO",
+              _t_p203.returncode != 0 and "refusing" in _t_said203.lower()
+              and "Traceback" not in _t_said203 and "command not found" not in _t_said203,
+              saw="exit %d, said %r — a refusal must be a sentence, not a crash or a parse error"
+                  % (_t_p203.returncode, _t_said203[:200]))
+        check("...and the refusal carries the number that decided it",
+              "10%" in _t_said203 or "15-20%" in _t_said203,
+              saw="the refusal names no measurement: %r" % _t_said203[:200])
+
+        # The prose. The skill is where the owner asked for this to live.
+        _t_text203 = _t_skill203.read_text(encoding="utf-8", errors="replace")
+        check("...and the skill states it as forbidden, not merely as removed",
+              _t_flag203 in _t_text203 and "FORBIDDEN" in _t_text203,
+              saw="the skill does not say the flag is forbidden — 'gone' reads as history, and a "
+                  "session that has only read history will pass it again")
+
+        # Nothing in the tree may TEACH it. The population is every file that names a caller.
+        _t_teach203 = []
+        for _t_d203 in (_t_tools203, ROOT.parent.parent / ".chamnan" / "skills",
+                        ROOT.parent.parent / ".chamnan" / "memory" / "rules"):
+            if not _t_d203.is_dir():
+                continue
+            for _t_f203 in sorted(_t_d203.rglob("*")):
+                if not _t_f203.is_file() or _t_f203.name.startswith("203_"):
+                    continue
+                if _t_f203.suffix not in (".sh", ".md", ".py"):
+                    continue
+                try:
+                    _t_ls203 = _t_f203.read_text(encoding="utf-8", errors="replace").splitlines()
+                except OSError:
+                    continue
+                for _t_i203, _t_l203 in enumerate(_t_ls203, 1):
+                    # An INVOCATION showing the flag being passed — not prose naming it.
+                    if "ask-acc" in _t_l203 and _t_flag203 in _t_l203:
+                        _t_teach203.append("%s:%d" % (_t_f203.name, _t_i203))
+        print("      %d line(s) show a caller being invoked with the flag" % len(_t_teach203))
+        check("...and nothing in the tree shows it being passed",
+              not _t_teach203,
+              saw="a worked example survives at: %s — removing the flag and leaving the lines that "
+                  "teach it is how the first one came back"
+                  % ", ".join(_t_teach203[:4]))
+# ---- 204_a_store_names_no_flag_or_call_that_is_gone.py
+# ---- 204_a_store_names_no_flag_or_call_that_is_gone.py
+# 🐛 [2026-09-21] (R50 acc4, 2026-09-21) `dangling-references.py` counts PATHS a store names, and
+# its `_REF` deliberately requires a separator or a source suffix. So a store naming a FLAG or a
+# CALL that no longer exists is invisible to it -- and that happened on this very day: the skill
+# and a rule file both went on naming `--deep` after it was removed from the dispatcher, and it was
+# found because the owner asked, not because anything checked. R50 #1 (DOCER) is the mechanism:
+# extract identifiers from documentation and flag one whose source occurrence count has fallen to
+# zero. Check 203 guards that one flag; this guards the class.
+#
+# SCOPE IS THE WHOLE FINDING. Measured before building: across every store the rate is 8.6% of
+# flags and 2.5% of calls -- but all nine live in the research backlog and dead-ends, where a name
+# absent from the source is the record working, because the entry says we did NOT build it. In the
+# stores a session ACTS on it is 0 of 132. So this reads skills, memory, STATE and environments,
+# and never the research stores.
+#
+# 🐛 [2026-09-21] (self-measured) The population was measured wrong TWICE before it was measured
+# right, both times by scanning too little source: first `.chamnan/tools` and `Work-Mode/chamnan`
+# only, which reported 25% by calling every Miki function dangling; then without `idle-fantacia`,
+# which reported `--no-https` dangling when `server.py:476` reads it. A dangling-reference detector
+# whose source set is incomplete reports the gap in its own scan as a defect in the documentation.
+# That is why the source population below is derived by walking, and why the check prints how much
+# it examined rather than only what it found.
+_t_ws204 = owner_workspace("a store names no flag or call that is gone")
+if _t_ws204 is not None:
+    import re as _re204
+
+    _t_root204 = ROOT.parent.parent
+    _t_wsdir204 = _t_root204 / ".chamnan"
+    _t_flag204 = _re204.compile(r"`(--[a-z][a-z0-9-]{2,})`")
+    _t_call204 = _re204.compile(r"`([a-z_][a-z0-9_]{3,})\(\)?`")
+
+    _t_src204, _t_files204 = [], 0
+    for _t_b204 in (_t_wsdir204, _t_root204 / "Work-Mode", _t_root204 / "miki-hybridge-ai",
+                    _t_root204 / "idle-fantacia"):
+        if not _t_b204.is_dir():
+            continue
+        for _t_p204 in _t_b204.rglob("*"):
+            if (_t_p204.is_file() and _t_p204.suffix in (".py", ".sh", ".json", ".command",
+                                                         ".mjs", ".js")
+                    and "__pycache__" not in _t_p204.as_posix()
+                    and "/.venv/" not in _t_p204.as_posix()
+                    and "node_modules" not in _t_p204.as_posix()):
+                try:
+                    _t_src204.append(_t_p204.read_text(encoding="utf-8", errors="replace"))
+                    _t_files204 += 1
+                except OSError:
+                    pass
+    _t_blob204 = "\n".join(_t_src204)
+
+    if _t_files204 < 100:
+        # An incomplete scan reports documentation defects that are really gaps in the scan. It is
+        # the failure this check was written after, so it refuses rather than reporting.
+        skip("  [SKIP] identifier references — only %d source file(s) found, too few to judge"
+             % _t_files204)
+    else:
+        def _t_scan204(seed):
+            found, bad = 0, []
+            for _t_base204 in seed:
+                _t_fs204 = ([_t_base204] if _t_base204.is_file()
+                            else sorted(_t_base204.rglob("*.md")) if _t_base204.is_dir() else [])
+                for _t_f204 in _t_fs204:
+                    _t_t204 = _t_f204.read_text(encoding="utf-8", errors="replace")
+                    for _t_m204 in list(_t_flag204.finditer(_t_t204)) + \
+                            list(_t_call204.finditer(_t_t204)):
+                        found += 1
+                        if _t_m204.group(1) not in _t_blob204:
+                            bad.append("%s -> %s" % (_t_f204.name, _t_m204.group(1)))
+            return found, bad
+
+        _t_seen204, _t_bad204 = _t_scan204([
+            _t_wsdir204 / "skills", _t_wsdir204 / "memory",
+            _t_wsdir204 / "STATE.md", _t_wsdir204 / "environments.md"])
+        print("      %d identifier(s) named across skills/memory/STATE/environments, "
+              "checked against %d source file(s)" % (_t_seen204, _t_files204))
+        check("NO STORE A SESSION ACTS ON NAMES A FLAG OR CALL THAT IS GONE",
+              not _t_bad204,
+              saw="%d dangling: %s — either the name changed and the store did not, or the store "
+                  "is describing something that was removed"
+                  % (len(_t_bad204), "; ".join(_t_bad204[:5])))
+
+        # The population is zero today, so the detector is proven on planted shapes instead.
+        import tempfile as _tf204
+        import pathlib as _pl204
+        with _tf204.TemporaryDirectory() as _t_d204:
+            _t_dir204 = _pl204.Path(_t_d204)
+            # 🐛 [2026-09-21] (self-measured) The planted names were written as literals here, so
+            # they were IN this file, this file is under `.chamnan/` with a `.py` suffix, and the
+            # source blob therefore contained them -- the detector correctly reported them as
+            # present and the check failed on its own fixture. A check that reads its own source
+            # matches itself; the literal is built at runtime instead.
+            _t_pf204 = "--" + "a-flag-that-is" + "-gone"
+            _t_pc204 = "a_call" + "_that_is" + "_gone"
+            (_t_dir204 / "planted.md").write_text(
+                "a store naming `%s` and `%s()` beside `scrub()` and `--apply`"
+                % (_t_pf204, _t_pc204), encoding="utf-8")
+            _t_n204, _t_p204b = _t_scan204([_t_dir204])
+            check("...and the detector finds a planted flag and a planted call",
+                  len(_t_p204b) == 2
+                  and any(_t_pf204 in x for x in _t_p204b)
+                  and any(_t_pc204 in x for x in _t_p204b),
+                  saw="saw %d of 2 planted: %s (from %d identifier(s) read)"
+                      % (len(_t_p204b), _t_p204b, _t_n204))
+            check("...and does not flag a name that really is in the source",
+                  not any("apply" in x or "scrub" in x for x in _t_p204b),
+                  saw="flagged a live name: %s" % _t_p204b)
+# ---- 205_a_citation_row_quotes_its_own_record.py
+# ---- 205_a_citation_row_quotes_its_own_record.py
+# 🐛 [2026-09-21] (owner) *"ใน 1.28.1 index_cited มันผิด เราต้องแก้ใหม่ให้มัน clean"*. They were
+# right. `citations()` attaches a headline by walking BACK to the nearest dated record, and it
+# started at `i - 1` -- skipping the citation's own line. The dominant shape in this tree is a
+# citation written ON its marker, `🐛 [2026-09-13] R12.26: ...`, and for every one of those the
+# walk fell through to the PREVIOUS record: the row published that record's sentence and that
+# record's DATE under this citation's file and line. `lib/redact.py:178` is dated 2026-09-13 and
+# appeared under 2026-09-21 quoting line 121; `lib/blocklog.py:81` is 2026-09-18 and did the same.
+# 58 of 1,224 rows, 4.7%, in the one document whose whole promise is that a claim can be followed
+# back to what produced it.
+#
+# The ROUND was correct in all 58, which is why it read as a formatting oddity rather than as the
+# index citing the wrong record. The invariant is narrow and total: if the citation line itself
+# carries a dated marker, the row's date is that line's date. Nothing else can be true.
+_t_ws205 = owner_workspace("a citation row quotes its own record")
+if _t_ws205 is not None:
+    _t_tools205 = ROOT.parent.parent / ".chamnan" / "tools"
+    if not (_t_tools205 / "research_citations.py").is_file():
+        skip("  [SKIP] citation headlines — no research_citations.py")
+    else:
+        sys.path.insert(0, str(_t_tools205))
+        import research_citations as _rc205
+
+        _t_rows205 = {(r["file"], r["line"]): r for r in _rc205.citations()}
+        _t_on205, _t_bad205 = 0, []
+        for _t_p205 in _rc205.shipped_files():
+            _t_rel205 = _rc205.rel_name(_t_p205)
+            try:
+                _t_ls205 = _t_p205.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for _t_i205, _t_l205 in enumerate(_t_ls205, 1):
+                if not _rc205.CITE.search(_t_l205):
+                    continue
+                _t_d205 = _rc205.DATED.search(_t_l205)
+                if not _t_d205:
+                    continue          # the citation is not on a marker; the walk back is correct
+                _t_on205 += 1
+                _t_r205 = _t_rows205.get((_t_rel205, _t_i205))
+                if _t_r205 and _t_r205.get("when") != _t_d205.group(1):
+                    _t_bad205.append("%s:%d says %s, row says %s"
+                                     % (_t_rel205, _t_i205, _t_d205.group(1),
+                                        _t_r205.get("when") or "nothing"))
+        print("      %d citation(s) sit on their own dated marker, of %d row(s)"
+              % (_t_on205, len(_t_rows205)))
+        check("A CITATION ON ITS OWN MARKER TAKES THAT MARKER'S DATE, NOT THE RECORD ABOVE IT",
+              not _t_bad205,
+              saw="%d row(s) filed under another record's date: %s"
+                  % (len(_t_bad205), "; ".join(_t_bad205[:4])))
+
+        # There must BE such citations, or the assertion above is vacuous and would keep passing
+        # after the shape it guards stopped existing.
+        check("...and that shape is actually present, so the rule above is not vacuous",
+              _t_on205 > 0,
+              saw="no citation sits on a dated marker — either the convention changed or CITE/DATED "
+                  "stopped agreeing, and this check is guarding nothing")
+
+        # Planted: a citation on its own marker, directly under an OLDER unrelated record. Before
+        # the fix this row took the older record's date and sentence.
+        import tempfile as _tf205
+        import pathlib as _pl205
+        with _tf205.TemporaryDirectory() as _t_d205b:
+            _t_f205 = _pl205.Path(_t_d205b) / "planted.py"
+            _t_f205.write_text(
+                "# \U0001f41b [2020-01-01] an older record that must NOT lend its date\n"
+                "x = 1\n"
+                "# \U0001f41b [2026-09-21] R7 agent 3: the record this citation belongs to\n",
+                encoding="utf-8")
+            _t_real205 = _rc205.shipped_files
+            _rc205.shipped_files = lambda: [_t_f205]
+            try:
+                _t_p205b = _rc205.citations()
+            finally:
+                _rc205.shipped_files = _t_real205
+            check("...and a planted citation under an older record takes its own date",
+                  len(_t_p205b) == 1 and _t_p205b[0]["when"] == "2026-09-21"
+                  and "2020" not in _t_p205b[0]["head"],
+                  saw="planted row: %r" % (_t_p205b or None))
+# ---- 206_the_released_index_has_no_row_a_reader_cannot_follow.py
+# ---- 206_the_released_index_has_no_row_a_reader_cannot_follow.py
+# 🐛 [2026-09-21] (owner) The file attached to v1.28.0 and v1.28.1 carried 256 rows naming
+# `.chamnan/tools/...`, every one without a commit link, and the table beside them called those
+# "not committed yet". They ARE committed -- in Lumin-App, which is private. No link to the public
+# repository could ever resolve for an outside reader, and the release note shipped beside them
+# promises the opposite in its own words: *"a row nobody can follow to a diff is not in it"*.
+#
+# The workspace half is real chamnan and stays in the LOCAL document, where the owner can follow
+# it. `--public` is the mode for the file strangers download, and this asserts the property that
+# mode exists for: in it, every row resolves, and no row names the half that cannot.
+#
+# It also asserts the direction between the two modes, because a "public" figure larger than the
+# local one would mean the flag had stopped narrowing anything.
+_t_ws206 = owner_workspace("the released index has no row a reader cannot follow")
+if _t_ws206 is not None:
+    _t_tools206 = ROOT.parent.parent / ".chamnan" / "tools"
+    if not (_t_tools206 / "research_citations.py").is_file():
+        skip("  [SKIP] the released index — no research_citations.py")
+    else:
+        sys.path.insert(0, str(_t_tools206))
+        import research_citations as _rc206
+
+        _t_was206 = _rc206._PUBLIC
+        try:
+            _rc206._PUBLIC = False
+            _t_local206 = len(_rc206.shipped_files())
+            _rc206._PUBLIC = True
+            _t_pub206 = _rc206.shipped_files()
+            _t_ws_in206 = [_rc206.rel_name(f) for f in _t_pub206
+                           if _rc206.rel_name(f).startswith(".chamnan/")]
+            _t_rows206 = _rc206.citations()
+        finally:
+            _rc206._PUBLIC = _t_was206
+
+        print("      public mode counts %d file(s) of %d, and %d citation row(s)"
+              % (len(_t_pub206), _t_local206, len(_t_rows206)))
+
+        check("THE RELEASED INDEX NAMES NO FILE FROM THE PRIVATE WORKSPACE",
+              not _t_ws_in206,
+              saw="%d workspace file(s) still counted, e.g. %s — a reader outside this machine "
+                  "cannot open any commit that fixed one"
+                  % (len(_t_ws_in206), ", ".join(_t_ws_in206[:3])))
+        check("...and public mode is narrower than the local document, not equal to it",
+              0 < len(_t_pub206) < _t_local206,
+              saw="public %d of local %d — the flag has stopped narrowing anything"
+                  % (len(_t_pub206), _t_local206))
+        check("...and it still has rows, so the mode is not an empty document",
+              len(_t_rows206) > 100,
+              saw="only %d row(s) in public mode" % len(_t_rows206))
+# ---- 207_a_published_row_closes_what_it_opens.py
+# ---- 207_a_published_row_closes_what_it_opens.py
+# 🐛 [2026-09-21] (R56 acc4, 2026-09-21) A row of the index is one line of Markdown, and three of
+# them left a code span open, by two different routes. `head[:150]` cut `lib/redact.py:197`
+# mid-span, ending at "`scrub(scrub(x)) !=" with no closing tick; two more quote a source comment
+# containing a literal triple backtick, which is seven ticks on one line. Everything after an
+# unclosed span renders as code, in a 345 KB document attached to a release.
+#
+# R56 #5 prescribes rendering the output with the real target parser. That is REFUSED and the
+# refusal is the interesting half: there is no Markdown parser on this machine, and chamnan's suite
+# runs on the standard library alone because people install it. What survives without a parser is
+# the part that is a count rather than a grammar -- balance. A narrower check that holds everywhere
+# beats a complete one that cannot ship.
+_t_ws207 = owner_workspace("a published row closes what it opens")
+if _t_ws207 is not None:
+    _t_tools207 = ROOT.parent.parent / ".chamnan" / "tools"
+    if not (_t_tools207 / "research_citations.py").is_file():
+        skip("  [SKIP] published rows — no research_citations.py")
+    else:
+        sys.path.insert(0, str(_t_tools207))
+        import research_citations as _rc207
+
+        # The mechanism, on shapes that produce each route into the defect.
+        _t_cut207 = _rc207._balanced("text ending mid-span `scrub(scrub(x)) !=")
+        _t_fence207 = _rc207._balanced("guards against cutting inside a ``` block and nothing else")
+        _t_even207 = _rc207._balanced("an ordinary `head` with both ticks")
+        check("A ROW TRUNCATED MID-SPAN IS CLOSED BEFORE IT IS PUBLISHED",
+              _t_cut207.count("`") % 2 == 0 and _t_cut207.startswith("text ending"),
+              saw="%r — the quoted text must survive, and the span must close" % _t_cut207)
+        check("...and a quoted triple backtick is balanced too",
+              _t_fence207.count("`") % 2 == 0,
+              saw="%r" % _t_fence207)
+        check("...and a row that was already balanced is left alone",
+              _t_even207 == "an ordinary `head` with both ticks",
+              saw="%r — balancing must not touch a row that needs nothing" % _t_even207)
+
+        # The document as it stands. A mechanism that works on fixtures and a file that was
+        # generated before it are two different claims.
+        _t_doc207 = _rc207.RESEARCH / "INDEX_CITED_IN_CODE.md"
+        if not _t_doc207.is_file():
+            print("      no index on disk yet — the mechanism half stands alone")
+        else:
+            _t_rows207 = [ln for ln in _t_doc207.read_text(encoding="utf-8",
+                                                           errors="replace").splitlines()
+                          if ln.startswith("- ")]
+            _t_open207 = [ln for ln in _t_rows207 if ln.count("`") % 2]
+            print("      %d row(s) in the index on disk, %d leaving a span open"
+                  % (len(_t_rows207), len(_t_open207)))
+            check("...and no row in the index on disk leaves one open",
+                  not _t_open207,
+                  saw="%d row(s), e.g. …%s"
+                      % (len(_t_open207), (_t_open207[0][-90:] if _t_open207 else "")))
+# ---- 208_a_round_is_counted_by_its_shape_not_its_wording.py
+# ---- 208_a_round_is_counted_by_its_shape_not_its_wording.py
+# 🐛 [2026-09-21] (owner) *"acc4 acc5 แค่หา มันไม่จำเป็นต้องใช้ deep"* -- and they are right in a
+# way that turned out to be about OUR side. `round_report.boundaries()` was `body.count("NO if")`,
+# and it returned 0 for every round filed since the report became a table. Five rounds on one day
+# each carried ten findings ending in a cost-and-limit cell, and each was filed under a header
+# reading "0 finding(s) carrying a NO condition". The tool was calling good work bad, and a session
+# reading that header would conclude the account needed a richer prompt when nothing was wrong.
+#
+# It cannot be fixed by looking for a column NAME. Those five rounds spelled that column five ways
+# -- "Published/likely cost", "Cost / limit", "Published cost / limit", "Published cost /
+# limitation", "Cost / boundary" -- and a sixth spelling is not a defect. The STRUCTURE is stable:
+# the findings table's last cell is the boundary, whatever it is called.
+#
+# This plants all five observed spellings and a sixth nobody has written, because the point of the
+# fix is the spelling it has not seen yet.
+_t_ws208 = owner_workspace("a round is counted by its shape, not its wording")
+if _t_ws208 is not None:
+    _t_tools208 = ROOT.parent.parent / ".chamnan" / "tools"
+    if not (_t_tools208 / "round_report.py").is_file():
+        skip("  [SKIP] round boundaries — no round_report.py")
+    else:
+        sys.path.insert(0, str(_t_tools208))
+        import round_report as _rr208
+
+        _t_heads208 = ["Published/likely cost", "Cost / limit", "Published cost / limit",
+                       "Published cost / limitation", "Cost / boundary",
+                       "What would make this wrong"]          # the sixth, never yet written
+        _t_miss208 = []
+        for _t_h208 in _t_heads208:
+            _t_doc208 = ("| # | Outside finding | Measured result | %s |\n"
+                         "|---:|---|---|---|\n" % _t_h208)
+            _t_doc208 += "".join("| %d | a finding | a number | a stated limit |\n" % i
+                                 for i in range(1, 11))
+            _t_got208 = _rr208.boundaries(_t_doc208)
+            if _t_got208 != 10:
+                _t_miss208.append("%s -> %d" % (_t_h208, _t_got208))
+        check("EVERY SPELLING OF THE BOUNDARY COLUMN COUNTS THE SAME",
+              not _t_miss208,
+              saw="counted wrong for: %s — the count must come from the table's shape, not from "
+                  "what the column is called" % "; ".join(_t_miss208))
+
+        # A row whose last cell is EMPTY is a finding without a boundary and must not be counted.
+        _t_empty208 = _rr208.boundaries(
+            "| # | Outside finding | Measured result | Cost / boundary |\n"
+            "|---:|---|---|---|\n"
+            "| 1 | a finding | a number | a stated limit |\n"
+            "| 2 | a finding | a number |  |\n")
+        check("...and a finding with an empty boundary cell is not counted",
+              _t_empty208 == 1,
+              saw="counted %d of 1 — an empty cell must read as a missing boundary" % _t_empty208)
+
+        # The older prose shape still counts what it used to, so nothing regressed.
+        _t_prose208 = _rr208.boundaries("finding one. NO if the corpus is small.\nNO if unmeasured.")
+        check("...and a round filed in the older prose shape still counts",
+              _t_prose208 == 2,
+              saw="prose shape counted %d of 2 — the fallback regressed" % _t_prose208)
+
+        # The reports on disk, if any round is open: what the tool reports must match the rows.
+        _t_open208 = [p for p in sorted((_t_ws208 / "state" / "research").glob("R*.md"))
+                      if ".extract." not in p.name]
+        if not _t_open208:
+            print("      no open round on disk — the mechanism half stands alone")
+        else:
+            _t_bad208 = []
+            for _t_p208 in _t_open208:
+                _t_txt208 = _t_p208.read_text(encoding="utf-8", errors="replace")
+                _t_n208 = _rr208.boundaries(_t_txt208)
+                _t_rows208 = sum(1 for ln in _t_txt208.split("\n")
+                                 if ln.strip().startswith("|")
+                                 and ln.strip().strip("|").split("|")[0].strip().isdigit())
+                if _t_rows208 and _t_n208 < _t_rows208:
+                    _t_bad208.append("%s: %d of %d" % (_t_p208.name[:34], _t_n208, _t_rows208))
+            print("      %d open round(s) on disk, %d under-counted" % (len(_t_open208),
+                                                                       len(_t_bad208)))
+            check("...and no open round is reported as carrying fewer boundaries than it has",
+                  not _t_bad208,
+                  saw="; ".join(_t_bad208[:4]))
+# ---- 209_a_log_field_says_what_it_means.py
+# ---- 209_a_log_field_says_what_it_means.py
+# 🐛 [2026-09-21] (R84 acc4, 2026-09-21) `block_shape.jsonl` carried ten fields and documented none
+# of them. `short` was read as "held back because it had gone stale" when it means "cut down to its
+# name to fit the budget", and a wrong conclusion about a real repository — that the ageing pass had
+# never fired in eighty firings — was published on the strength of it and had to be retracted.
+#
+# R84's subject is how a program decides which of its own records to trust. For a log the answer is
+# narrow and cheap: the record has to say what it means, beside the code that writes it. This
+# asserts that every key `shape()` can emit is named in its docstring, derived by SCANNING the
+# function rather than from a list somebody has to remember to extend — a documented set that is
+# maintained by hand drifts on the first field added, which is this project's most recorded defect.
+_t_ws209 = owner_workspace("a log field says what it means")
+if _t_ws209 is not None:
+    import re as _re209
+
+    _t_bl209 = ROOT / "lib" / "blocklog.py"
+    if not _t_bl209.is_file():
+        skip("  [SKIP] block-record fields — no lib/blocklog.py")
+    else:
+        _t_src209 = _t_bl209.read_text(encoding="utf-8", errors="replace")
+        _t_at209 = _t_src209.find("def shape(")
+        _t_end209 = _t_src209.find("\ndef ", _t_at209 + 1)
+        _t_body209 = _t_src209[_t_at209:_t_end209 if _t_end209 > 0 else len(_t_src209)]
+        # The docstring is the contract; the code below it is the population.
+        _t_q209 = _t_body209.find('"""')
+        _t_doc209 = _t_body209[_t_q209:_t_body209.find('"""', _t_q209 + 3) + 3]
+        _t_code209 = _t_body209[_t_body209.find('"""', _t_q209 + 3) + 3:]
+
+        _t_keys209 = sorted(set(_re209.findall(r'rec\[\s*"([a-z_]+)"\s*\]', _t_code209))
+                            | set(_re209.findall(r'^\s*rec\s*=\s*\{([^}]*)', _t_code209, _re209.M)
+                                  and _re209.findall(r'"([a-z_]+)"\s*:', _t_code209)))
+        _t_missing209 = [k for k in _t_keys209 if not _re209.search(r"^\s+%s\s+\S" % _re209.escape(k),
+                                                                   _t_doc209, _re209.M)]
+        print("      %d field(s) the record can carry, %d undocumented"
+              % (len(_t_keys209), len(_t_missing209)))
+        check("EVERY FIELD THE BLOCK RECORD CARRIES IS NAMED WHERE IT IS WRITTEN",
+              _t_keys209 and not _t_missing209,
+              saw="undocumented: %s — a reader of the JSONL has nothing to read, and one of these "
+                  "was already read as its opposite" % ", ".join(_t_missing209))
+
+        # The one that was actually misread must say what it is NOT, not merely what it is.
+        check("...and `short` says plainly that it is not the ageing pass",
+              "short" in _t_doc209 and "age_out" in _t_doc209,
+              saw="the docstring does not distinguish `short` from staleness — that confusion cost "
+                  "a published retraction on 2026-09-21")
+
+        # Derived, not listed: a field added tomorrow must fail this rather than slip past.
+        check("...and the field list is derived from the code, not typed out",
+              len(_t_keys209) >= 8,
+              saw="only %d field(s) found by scanning `shape()` — the scan has stopped seeing them, "
+                  "which would make this check pass by finding nothing" % len(_t_keys209))
 # ---- 20_one_bound_whichever_door_the_number_came_through.py
 # ------------------------------------------- the same number, clamped on one path and not the other
 # 🐛 [2026-09-09] `.chamnan/config.json`'s `output_byte_ceiling` is range-checked against a shared

@@ -121,7 +121,8 @@ def _split_unquoted(text):
         #
         # The body ends at a line that is exactly the delimiter — optionally indented when the
         # operator was `<<-`, which is what that dash means.
-        # 🐛 [2026-09-21] `i += 1` only used to advance past the newline BEFORE the delimiter
+        # 🐛 [2026-09-21] (self-measured) Found in two real repositories' command ledgers.
+        # `i += 1` only used to advance past the newline BEFORE the delimiter
         # line, leaving the delimiter's own text (`PY`, `EOF`, …) and its trailing newline to be
         # reprocessed as ordinary command text. That was invisible while nothing split on
         # newlines; once newlines became a separator above, the leftover newline turned the
