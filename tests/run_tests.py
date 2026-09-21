@@ -23889,17 +23889,23 @@ if _fn_fp:
 #
 # `$(( … ))` is tracked alongside it, because `<<` there is a left shift. A first fix without that
 # read `echo $((1 << 2)) && ls` as a heredoc named `2` and swallowed the rest of the line.
+# `want` was 2 only while the heredoc terminator line was left unconsumed and silently glued
+# onto the next line; with the terminator consumed, the heredoc command is one part and the
+# trailing `git add a && git commit` is two more, so three is the boundary count these
+# fixtures were always describing.
 _hd = {
     "quoted heredoc keeps its body whole":
-        ("python3 - <<'PY'\nimport x; print(1)\nPY\ngit add a && git commit", 2),
+        ("python3 - <<'PY'\nimport x; print(1)\nPY\ngit add a && git commit", 3),
     "a sed expression inside one is not a command":
-        ("python3 - <<'PY'\nsed -i '' 's/a/b/' f\nPY\ngit add a && git commit", 2),
+        ("python3 - <<'PY'\nsed -i '' 's/a/b/' f\nPY\ngit add a && git commit", 3),
     "an unquoted delimiter works the same":
-        ("cat <<EOF\na; b && c\nEOF\ngit add a && git commit", 2),
+        ("cat <<EOF\na; b && c\nEOF\ngit add a && git commit", 3),
     "<<- allows the terminator to be indented":
-        ("cat <<-EOF\n\ta; b\n\tEOF\ngit add a && git commit", 2),
+        ("cat <<-EOF\n\ta; b\n\tEOF\ngit add a && git commit", 3),
     "a left shift is not a redirect":
-        ("echo $((1 << 2)) && ls\ngit add a && git commit", 3),
+        # want was 3 only because newlines were not yet a separator; now `ls` splits from the
+        # `echo` on its own line, giving four parts: `echo $((1 << 2))`, `ls`, `git add a`, `git commit`.
+        ("echo $((1 << 2)) && ls\ngit add a && git commit", 4),
     "nested arithmetic still closes":
         ("echo $(( (1 << 2) + $((3 << 1)) )) && ls", 2),
     "an ordinary pipeline still splits":
